@@ -357,19 +357,37 @@ function startApp() {
     const json = exportJson().replace(/</g, '\\u003c');
     return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n</script>\n<script id="lt-script">${$('lt-script').textContent}</script>\n</body>\n</html>\n`;
   }
-  function download(name, text, type) {
+  // Saving a file. In a claude.ai page, through its downloads capability (the
+  // viewer confirms each save); in a plain browser, through a download link.
+  // Resolves true once the file is on its way. Framed without the capability,
+  // only the Copy buttons are offered.
+  let saver = null;
+  window.claude?.use?.('downloads').then((d) => {
+    saver = d;
+    if (d && framed) document.querySelectorAll('[data-standalone]').forEach((el) => { el.hidden = false; });
+  }).catch(() => {});
+  async function download(name, data, type) {
+    if (saver) {
+      try { await saver.save({ filename: name, data }); return true; } catch (err) {
+        if (err?.code !== 'declined') toast(`Could not save ${name}: ${err?.message ?? err?.code ?? err}`);
+        return false;
+      }
+    }
+    if (framed) { toast('Saving files is not available here; use Copy JSON or Copy HTML.'); return false; }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
     a.download = name;
     document.body.append(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    return true;
   }
+  app.download = download;
   const stem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
-  $('save').addEventListener('click', () => { download(`${stem()}.json`, exportJson(), 'application/json'); toast('Saved the project as JSON'); });
-  $('export').addEventListener('click', () => { download(`${stem()}.html`, exportHtml(), 'text/html'); toast('Exported a standalone page with this project inside'); });
+  $('save').addEventListener('click', async () => { if (await download(`${stem()}.json`, exportJson(), 'application/json')) toast('Saved the project as JSON'); });
+  $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
   $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
   $('open').addEventListener('click', () => $('file').click());
@@ -435,7 +453,7 @@ function startApp() {
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
     if (mod && e.key.toLowerCase() === 'y' && !inField) { e.preventDefault(); app.redo(); return; }
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed && !saver ? 'copy' : 'save').click(); return; }
     if (!inField && app.tab === 'plant' && $('help-dlg').hidden && plantEditor.handleKey(e)) { e.preventDefault(); return; }
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
