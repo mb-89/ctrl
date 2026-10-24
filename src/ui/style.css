@@ -373,3 +373,34 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .ctlibitem { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); cursor: pointer; font: inherit; font-size: 12.5px; }
 .ctlibitem:hover { border-color: var(--ink-2); }
 .ctlibitem span { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+/* Auto-tune tab: controller | method | goal | progress */
+.tune { display: grid; grid-template-columns: minmax(180px, 230px) minmax(220px, 290px) minmax(200px, 260px) minmax(280px, 1fr); gap: 14px; align-items: stretch; height: 100%; min-height: 0; }
+.tune > .gcol { min-height: 0; overflow: auto; }
+.tumethods { display: flex; flex-direction: column; gap: 4px; }
+.tumethod { flex-direction: column; align-items: flex-start; gap: 1px; }
+.tumethod span { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
+.tumethod.on span { color: var(--lcd-dim); }
+.tune .reps { align-self: flex-start; }
+.tune .pf .reps { grid-column: 2; }
+.turows { flex: 0 0 auto; gap: 1px; margin: 0; list-style: none; }
+.turows:empty { display: none; }
+.turow { display: grid; grid-template-columns: minmax(28px, auto) minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 1px 6px; font-family: var(--mono); font-size: 12.5px; }
+.turows.wide .turow { grid-template-columns: 78px minmax(0, 1fr) minmax(0, auto); }
+.turow > span:first-child { color: var(--lcd-dim); white-space: nowrap; }
+.turow > span:nth-child(2) { text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.turow em { font-style: normal; font-size: 11px; color: var(--lcd-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turow em:empty { display: none; }
+.turow.tucost > span:nth-child(2) { color: #33d17a; }
+.tuhead { display: flex; flex-direction: column; padding: 1px 6px 3px; font-size: 12.5px; }
+.tuhead b { font-family: var(--mono); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tuhead span { font-size: 11px; color: var(--lcd-dim); }
+.tustatus { font-size: 12.5px; line-height: 1.4; color: var(--ink-2); min-height: 18px; }
+.tustatus .dim { color: var(--muted); }
+.tuwhy { color: var(--bad); }
+.tuplot { display: block; width: 100%; height: 118px; flex: 0 0 auto; border-radius: 8px; background: #0a0d10; }
+.tuplot[hidden] { display: none; }
+.tufast { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+@media (max-width: 900px) {
+  .tune { grid-template-columns: minmax(0, 1fr); height: auto; }
+}

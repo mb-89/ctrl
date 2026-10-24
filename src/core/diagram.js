@@ -294,15 +294,16 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const probeList = [];
   const add = (node) => { nodes.push({ inputs: [], ...node }); return nodes.length - 1; };
   let extNode = -1, outNode = -1;
+  const ctrlNodes = [];  // [block id path, node] of every Controller block
 
   // Creates nodes for one level; returns, per block id, where its output
   // ports come from and where its input ports go.
-  function level(d, prefix, root) {
+  function level(d, prefix, root, ids = '') {
     const outs = {}, ins = {};
     for (const b of d.blocks) {
       const name = `${prefix}${b.name ?? b.id}`;
       if (b.type === 'subsystem') {
-        const inner = level(b.diagram, `${name}/`, false);
+        const inner = level(b.diagram, `${name}/`, false, `${ids}${b.id}/`);
         const ports = (t) => b.diagram.blocks.filter((x) => x.type === t).sort((a, c) => a.params.port - c.params.port);
         outs[b.id] = ports('outport').map((x) => inner.outs[x.id][0]);
         ins[b.id] = ports('inport').map((x) => inner.ins[x.id][0]);
@@ -355,6 +356,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: 'pid' });
         const k = add({ kind: 'ctrl', name, ft: false, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts), next: 0, u: 0, x: new Float64Array(nIn) });
         outs[b.id] = [k]; ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+        ctrlNodes.push([`${ids}${b.id}`, k]);
         continue;
       }
       if (def.ode) {
@@ -391,6 +393,15 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     return { outs, ins };
   }
   level(diagram, '', true);
+  // Auto-tune reads each Controller block's r (input 1), y (input 2) and u
+  // under its id path: "ctrl.r", "motor/ctrl.u". A signal name never has a
+  // dot, so no scope channel lists these.
+  for (const [key, k] of ctrlNodes) {
+    const [r = -1, y = -1] = nodes[k].inputs;
+    if (r >= 0) probeList.push([`${key}.r`, r]);
+    if (y >= 0) probeList.push([`${key}.y`, y]);
+    probeList.push([`${key}.u`, k]);
+  }
   if (!opts.standalone) {
     if (outNode < 0) throw new Error(`${path}: add an Out block for the plant output y`);
     if (extNode < 0) warnings.push(`${path}: no In block, so the plant ignores u`);

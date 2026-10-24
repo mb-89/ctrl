@@ -247,7 +247,8 @@ test('2D views compile and move with the signals; library parts combine', async 
   const fromLoop = normalizeProject(applySystem(EXAMPLES[0], msd, ['input', 'plant']));
   assert.equal(fromLoop.candidates.length, 0, 'a whole load leaves no controller of an older project behind');
   assert.equal(loopReady({ ...fromLoop, candidates: EXAMPLES[0].candidates }), false, 'a diagram with its own Sources is never run as a loop plant');
-  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && s.ui.tab === 'plant' && s.plant.views.some((v) => v.name === s.ui.view)), 'every system opens running on its view');
+  // Every system opens running on its view, in the Plant tab; the one made for Auto-tune opens on that tab.
+  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && s.ui.tab === (s.name.includes('badly tuned') ? 'tune' : 'plant') && s.plant.views.some((v) => v.name === s.ui.view)), 'every system opens running on its view');
   assert.deepEqual(p.ui, { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' }, 'a whole load brings how the system opens');
   assert.deepEqual(normalizeProject({ ui: { run: 'fast', tab: 'plant', extra: 1 } }).ui, { tab: 'plant' }, 'unknown ui values are dropped');
   assert.throws(() => normalizeProject({ system: { plant: { type: 'diagram', diagram: { blocks: [], wires: [] }, views: [{ kind: '2d', shapes: [{ type: 'line', x1: 'sin(' }] }] } } }), /views\[0\]/);

@@ -19,6 +19,7 @@ Reader: whoever changes controllers, their library or the Controller tab. **Stat
 | `stateFeedback` | u = kr·r − K·y, one gain per measured state; kr is the static prefilter; optional Tr | Matrix controllers (Zustandsregler), LQR, pole placement |
 | `gainScheduled` | PI with Kp, Ki interpolated from a table over the measurement | Plants whose dynamics change with the operating point |
 | `swingUp` | Far from upright, u = kE·E·ω·cos θ (V = ½E² falls: a Lyapunov design) with cart centring; near upright, state feedback | Swinging a pendulum up and catching it |
+| `relay` | u = u0 ± d by the sign of e, switching when e passes ±ε (hysteresis) | On/off control (a thermostat); Auto-tune's relay experiment |
 
 To add one: an entry in `CONTROLLERS` with `label`, `summary`, `params` and `make(params, Ts)` returning `{ step(inputs) → u }`; a sentence in `ABOUT` in `src/ui/controller.js`; a test.
 
@@ -31,4 +32,4 @@ Comparing: the run before a change stays faded on the display for five runs, so 
 ## Not yet
 
 - Variants that are diagrams (freeform controllers built from blocks); MIMO outputs.
-- Auto-tune over parameters and variants, with goals for following r and rejecting d.
+- Auto-tune over a block's parameters is built ([autotune.md](autotune.md)); flipping through its variants is not.

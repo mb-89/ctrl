@@ -9,7 +9,8 @@ Reader: whoever picks the next piece of work.
 - v2 instrument: display with axis labels and direct manipulation, Run Control, Horizontal, Vertical with editable readouts, Auto Scale, draggable separators ([instrument.md](instrument.md)).
 - Tab 1, Input: the signal generator with named signals, Period, Square with count, Function formulas ([signal-generator.md](signal-generator.md)).
 - Tab 2, Plant: block-diagram editor with Sources, Sinks, Terminator, Switch, subsystems, a resizable folding library, sensors and a cart–pole ([plant-editor.md](plant-editor.md)); 2D views in the plant's JSON ([plant-views.md](plant-views.md)).
-- Tab 3, Controller: Controller blocks with variants (PID, state feedback, gain-scheduled PI, energy swing-up, off), the tab to flip and tune them ([controller-proposal.md](controller-proposal.md)).
+- Tab 3, Controller: Controller blocks with variants (PID, state feedback, gain-scheduled PI, energy swing-up, relay, off), the tab to flip and tune them ([controller-proposal.md](controller-proposal.md)).
+- Tab 4, Auto-tune: Nelder–Mead on a simulated cost (watched iteration by iteration), relay feedback with Ziegler–Nichols, Tyreus–Luyben and no-overshoot rules, step response with SIMC; results as new variants, one undo step; the Oven, badly tuned example ([autotune.md](autotune.md)).
 - System library: five 5-second systems, four of them controlled (motor, conical tank, pendulum swing-up, triple pendulum), with disturbances.
 - Earlier runs fade over five runs for comparison.
 - (Superseded) System library: three systems that move, loaded whole or by part, opening running on their view ([system-library.md](system-library.md)).
@@ -17,7 +18,7 @@ Reader: whoever picks the next piece of work.
 
 ## Next, in order
 
-1. **Auto-tune tab**: goal editor (following r, rejecting d, effort, bounds), score, optimiser (v1's, reshaped) over a Controller block's parameters, flipping through its variants. Add robustness: check against plant variations.
+1. **Auto-tune, more**: the goal saved in the project; a robustness check against plant variations; flipping through a block's variants; AMIGO and Cohen–Coon rules; auto-tune in the CLI and `window.loopTuner`.
 2. **Controller, more**: variants built as diagrams (freeform), MIMO, more library entries (lead/lag, observer-based state feedback, MPC).
 3. **Analysis tab**: root locus, Bode, Nyquist, pole-zero, computed step metrics.
 

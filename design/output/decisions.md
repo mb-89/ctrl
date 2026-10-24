@@ -2,6 +2,19 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.7 ([input](../input/2026-10-24-09-analysis-autotune-triple-swingup.md))
+
+- **Auto-tune tab built** ([autotune.md](autotune.md)): it improves a Controller block's running variant by simulation, with three researched strategies: **Iterate** (Nelder–Mead on a cost, watched iteration by iteration), **Relay** (Åström–Hägglund: Ku, Pu, then Ziegler–Nichols, Tyreus–Luyben or "no overshoot") and **Step response** (FOPDT fit, SIMC). (Person: "research what common auto-tuning strategies are and put them in there"; the choice of three is ours, interpretation.)
+- **Auto-tune: results go into a variant of their own**, "<original> · auto-tuned", "· relay T–L", "· SIMC", so the original stays to compare; one name per method so the rules can be compared by flipping variants (interpretation). **A whole run is one undo step.**
+- **Auto-tune: watching**: while iterating, the display stops sweeping and shows each whole run, earlier ones fading; the experiments sweep in real time (a Fast switch skips the pacing); at the end the starting run stays faded against the result and the run mode is restored. About six iterations a second. (Person: "over a number of iterations … improve the behavior"; the pacing is ours.)
+- **Auto-tune: the cost** is IAE, ITAE or ISE of r − y plus effort, overshoot beyond a bound and time at the limits, over one period of the input, d included; a diverged run costs a large finite amount. Interpretation: effort is the swing of u about its mean (holding a setpoint's power cannot be tuned away), and recovery from a disturbance is not counted as a step's overshoot. The goal settings live in the page session, not yet in the file.
+- **Auto-tune: nothing plant-specific is stored**: gains, Ku, Pu and models are computed in the page when Start is pressed. (Person: "it should be computable in principle".)
+- **Relay (on/off) joins the controller library**: u = u0 ± d with hysteresis, a real on/off controller and the relay experiment's law.
+- **Oven, badly tuned** joins the System library, made for this tab: three lags and a dead time, a PID that rings, reference steps and a door opening (d); it opens on the Auto-tune tab. (Person: "one system library element that's maybe badly tuned by default".)
+- **Auto Scale overlays r and y**: channels of one unit whose fits are within a 1-2-5 step share one scale and offset (interpretation: without it the oven's r showed at 10 °C/div and T at 20, and T seemed never to reach r).
+- **Undo kept open actuator limits as null**, so a restored PID without limits put out 0; the controller library now normalises a variant before running it.
+- **In a view's formulas, a signal named T, E or PI is that signal**: names were read case-insensitively, so the oven's temperature T showed the time. Without such a signal they mean t, e and π as before.
+
 ## 2026-10-24 · v2.6: controllers ([input](../input/2026-10-24-08-controllers-and-5-seconds.md))
 
 - **Demos run 5 s**, and the mass–spring–damper moves slower (k 25 N/m, 0.8 Hz). (Person.)

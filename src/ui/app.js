@@ -6,6 +6,7 @@ import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluat
 import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
 import { createControllerTab } from './controller.js';
+import { createAutotuneTab } from './autotune.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
 import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../core/systems.js';
@@ -19,7 +20,7 @@ const TABS = [
   { key: 'input', label: 'Input' },
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
-  { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
+  { key: 'tune', label: 'Auto-tune' },
   { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
 ];
 
@@ -248,6 +249,17 @@ function startApp() {
       const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
       if (fit) Object.assign(ch, fit);
     }
+    // Channels of one unit whose fits are within a 1-2-5 step of each other
+    // (r and the y that follows it) share one scale and offset, so they overlay.
+    const byUnit = {};
+    for (const ch of app.project.scope.channels) if (ch.on && data.signals[ch.source] && app.unitOf(ch.source) !== '1') (byUnit[app.unitOf(ch.source)] ??= []).push(ch);
+    for (const list of Object.values(byUnit)) {
+      list.sort((a, b) => a.scale - b.scale);
+      let group = [];
+      const share = () => { if (group.length > 1) { const fit = fitChannel(group.flatMap((o) => Array.from(data.signals[o.source]))); for (const o of group) Object.assign(o, fit); } };
+      list.forEach((ch, i) => { if (i && ch.scale > 2.5 * list[i - 1].scale) { share(); group = []; } group.push(ch); });
+      share();
+    }
   }
   app.autoScale = () => {
     app.beginEdit();
@@ -272,6 +284,12 @@ function startApp() {
   const controllerTab = createControllerTab($('tab-controller'), app);
   // Opens the Controller tab on one Controller block (path of block ids).
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
+  // Auto-tune changes the project many times in one run but takes one undo
+  // step for all of it (beginEdit at its start, endEdit at its end); each
+  // change goes through tuneEdit. It shows whole runs while it works.
+  app.tuneEdit = (fn) => { fn(app.project); changed(); };
+  app.setRunMode = (m) => { display.setMode(m); controls.render(display.mode); };
+  const tuneTab = createAutotuneTab($('tab-tune'), app, display);
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -282,6 +300,8 @@ function startApp() {
     $('tab-plant').hidden = app.tab !== 'plant';
     $('tab-controller').hidden = app.tab !== 'controller';
     if (app.tab === 'controller') controllerTab.shown();
+    $('tab-tune').hidden = app.tab !== 'tune';
+    if (app.tab === 'tune') tuneTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
@@ -305,6 +325,7 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    if (app.tab === 'tune') tuneTab.render();
     renderChrome();
     autosave();
   }
