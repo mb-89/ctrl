@@ -1,6 +1,7 @@
 // The scope display: a 10 × 8 division graticule with time labels below and
 // the active channel's values to the left, four channels, a sweep that crosses
-// the screen in real time (the screen is the record), the generator's dashed
+// the screen at the speed set in the header (1×: real time; the screen is the
+// record; core/speed.js sweepClock), the generator's dashed
 // preview, a hover cursor, and direct manipulation:
 //   wheel on the plot     zoom time and values around the cursor
 //   wheel on an axis      zoom that axis only
@@ -14,6 +15,7 @@ import { siUnit, num } from './units.js';
 import { step125 } from '../core/scale.js';
 import { channelSignal, drawFrequency, freqRange } from './freqview.js';
 import { drawXY, vOfX } from './xyview.js';
+import { sweepClock } from '../core/speed.js';
 
 export const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
@@ -346,10 +348,13 @@ export function createDisplay(root, handlers) {
     badges.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => handlers.onSelectChannel(Number(b.dataset.ch))));
   }
 
-  // Sweep
+  // Sweep. Simulated time runs at the header's speed (handlers.speed(): a
+  // factor, or Infinity: each frame completes a sweep); each frame tells
+  // handlers.onSweep how much simulated time it swept, for the achieved speed.
+  // A live feed brings its own scan line and its own clock.
   function frame(now) {
     raf = 0;
-    const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
+    const dt = last ? (now - last) / 1000 : 0;
     last = now;
     if (mode !== 'stop' && data && scope && feed) {
       // Live: data and scan line come from the plant; a finished sweep becomes
@@ -361,11 +366,12 @@ export function createDisplay(root, handlers) {
       if (Object.keys(data.signals).join() !== names) renderBadges();
     } else if (mode !== 'stop' && data && scope) {
       const [w0, w1] = win();
-      if (tScan < w0 || tScan > w1) tScan = w0;
-      tScan += dt;
-      if (tScan >= w1) {
-        if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); }
-        else { tScan = w0 + ((tScan - w0) % (w1 - w0)); keepRun(); }
+      const c = sweepClock(tScan, w0, w1, handlers.speed?.() ?? 1, dt, mode === 'single');
+      tScan = c.scan;
+      handlers.onSweep?.(now / 1000, c.advanced);
+      if (c.ended) {
+        if (mode === 'single') { mode = 'stop'; handlers.onStopped?.(); }
+        else keepRun();
       }
     }
     draw();
@@ -587,6 +593,21 @@ export function createDisplay(root, handlers) {
       draw();
     },
     clearRuns() { past = []; draw(); },
+    // Auto-tune: the earlier runs behind the one on screen, newest first.
+    setPast(list) { past = list.filter(Boolean).slice(0, RUNS - 1); draw(); },
+    // Auto-tune: run d sweeps once across the screen (a Single) at the
+    // header's speed, the runs in list faded behind it; drawn by the next frame.
+    play(d, list) {
+      simData = d;
+      if (!feed) data = d;
+      past = list.filter(Boolean).slice(0, RUNS - 1);
+      if (line !== null && !visible(line)) line = null;
+      renderBadges();
+      mode = 'single';
+      tScan = scope ? win()[0] : 0;
+      last = 0;
+      kick();
+    },
     // Auto-tune: the run on screen (or the run given) becomes the newest faded one.
     keep(d = data) { if (d) past = [d, ...past].slice(0, RUNS - 1); draw(); },
     get data() { return data; },

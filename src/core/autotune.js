@@ -16,7 +16,10 @@
 // the probes compileDiagram adds under "<block path>.r", ".y", ".u".
 // Every strategy is a generator that yields after each run of the loop, so
 // the page can keep drawing while it works (a run of a large plant takes tens
-// of milliseconds); drain() runs one to its end (tests, the command line).
+// of milliseconds) and pace the runs at its speed; a yield after a run says
+// how much time it simulated (seconds), and Iterate's carry the run itself
+// (run), which the page sweeps across the display. drain() runs one to its
+// end (tests, the command line).
 // autotune() is the one entry for the page, the command line and agents.
 
 import { simulateSystem } from './sim.js';
@@ -332,6 +335,7 @@ export function* iterate(project, path, goal = {}, opts = {}) {
   const scales = costScales(startRun, ctx.key, ctx.variant);
   const detail = runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others });
   const start = { cost: detail.J, detail, variant: ctx.variant };
+  const seconds = ctx.sim.duration;
   const x0 = new Array(n).fill(0);
   let evals = 1, best = { variant: ctx.variant, cost: detail, x: x0 }, tried = [detail.J], iteration = 0;
   const report = (partial) => {
@@ -343,12 +347,15 @@ export function* iterate(project, path, goal = {}, opts = {}) {
   // One run of the loop with the gains at x.
   function* f(x) {
     const variant = space.apply(x);
-    let cost;
-    try { cost = variantCost(ctx, variant, g, scales); } catch { cost = { J: 2 * DIVERGED, diverged: true, parts: {} }; }
+    let cost, run = null;
+    try {
+      run = runVariant(ctx, variant);
+      cost = runCost(run, ctx.key, g, { scales, variant, others: ctx.others });
+    } catch { cost = { J: 2 * DIVERGED, diverged: true, parts: {} }; }
     evals++;
     tried.push(cost.J);
     if (cost.J < best.cost.J) best = { variant, cost, x: x.slice() };
-    yield report(true);
+    yield { ...report(true), seconds, run };
     return cost.J;
   }
   let simplex = [], fs = [];
@@ -356,7 +363,7 @@ export function* iterate(project, path, goal = {}, opts = {}) {
     simplex = [xb.slice()]; fs = [fb];
     for (let i = 0; i < n; i++) { const x = xb.slice(); x[i] += step; simplex.push(x); fs.push(yield* f(x)); }
   }
-  yield report(true);
+  yield { ...report(true), seconds, run: startRun };
   yield* build(x0, detail.J);
   yield report(false);
   let mark = best.cost.J, since = 0;
@@ -411,7 +418,7 @@ const NO_RANGE = 'there is no scale for the test signal: the running variant has
 // running variant holds r0 first; the u it needs there is the bias u0.
 function* operatingPoint(ctx) {
   const ownRun = runVariant(ctx, ctx.variant);
-  yield { partial: true, phase: 'operating point' };
+  yield { partial: true, phase: 'operating point', seconds: ctx.sim.duration };
   const own = loopSignals(ownRun, ctx.key);
   const rr = finiteRange(own.r);
   const name = ctx.source, notes = [];
@@ -424,7 +431,7 @@ function* operatingPoint(ctx) {
   } else notes.push('input 1 is not fed by a Source (through gains, lags or subsystem ports), so r cannot be held: the experiment runs with the inputs as they are, and the estimate is rough');
   const sim = { ...ctx.sim };
   const holdRun = runVariant(ctx, ctx.variant, signals, sim);
-  yield { partial: true, phase: 'operating point' };
+  yield { partial: true, phase: 'operating point', seconds: sim.duration };
   const hold = loopSignals(holdRun, ctx.key);
   const k0 = Math.floor(0.75 * hold.u.length);
   const r0 = name ? mean(hold.r, k0) : (rr.lo + rr.hi) / 2;
@@ -455,9 +462,9 @@ const constantU = (u, lo, hi) => normalizeVariant({ name: 'Step test', type: 'pi
 function* openLoopStep(ctx, op, du, sim) {
   const { lo, hi } = limitsOf(ctx.variant);
   const runA = runVariant(ctx, constantU(op.u0, lo, hi), op.signals, sim);
-  yield { partial: true, phase: 'open loop' };
+  yield { partial: true, phase: 'open loop', seconds: sim.duration };
   const runB = runVariant(ctx, constantU(op.u0 + du, lo, hi), op.signals, sim);
-  yield { partial: true, phase: 'open loop' };
+  yield { partial: true, phase: 'open loop', seconds: sim.duration };
   const yA = loopSignals(runA, ctx.key).y, yB = loopSignals(runB, ctx.key).y;
   return { runA, runB, dy: yB.map((v, k) => v - yA[k]) };
 }
@@ -567,7 +574,7 @@ export function* relayExperimentSteps(project, path, opts = {}) {
     if (!(d > 0.1 * want)) return { ...base, ok: false, u0, d, run, sign, why: `the bias u0 = ${fmtN(u0)} needed to hold r0 = ${fmtN(op.r0)} sits at an actuator limit (${fmtN(lo)} … ${fmtN(hi)}): no room for the relay to swing` };
     const relay = normalizeVariant({ name: 'Relay experiment', type: 'relay', params: { d: sign * d, eps, u0, umin: lo, umax: hi } });
     run = runVariant(ctx, relay, op.signals, sim);
-    yield { partial: true, phase: 'relay', run };
+    yield { partial: true, phase: 'relay', run, seconds: sim.duration };
     osc = readOscillation(run, ctx.key, u0, eps);
     if (osc.diverged) return { ...base, ok: false, u0, d, run, sign, why: 'the relay run diverged: the plant may be unstable without its controller' };
     if (!osc.switched) {
@@ -716,13 +723,13 @@ export function* autotuneSteps(project, path, opts = {}) {
   const startRun = runVariant(ctx, ctx.variant);
   const scales = costScales(startRun, ctx.key, ctx.variant);
   const before = { variant: ctx.variant, cost: runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others }) };
-  yield { partial: true, phase: 'start', before };
+  yield { partial: true, phase: 'start', before, seconds: ctx.sim.duration };
   const res = method === 'relay'
     ? yield* relayTuneSteps(project, path, opts.rule ?? 'tl', { amplitude: opts.amplitude, d: opts.d, name })
     : yield* stepTuneSteps(project, path, { amplitude: opts.amplitude, du: opts.du, name });
   if (!res.ok) return { ...res, ...head, before };
   const after = variantCost(ctx, res.variant, g, scales);
-  yield { partial: true, phase: 'score' };
+  yield { partial: true, phase: 'score', seconds: ctx.sim.duration };
   return { ...res, ...head, before, after, better: after.J < before.cost.J };
 }
 

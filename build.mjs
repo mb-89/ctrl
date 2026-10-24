@@ -12,9 +12,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MODULES = [
-  'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/observers.js', 'core/hil.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/spectrum.js', 'core/analysis.js', 'core/autotune.js',
+  'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/speed.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/observers.js', 'core/hil.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/spectrum.js', 'core/analysis.js', 'core/autotune.js',
   'core/live.js', 'core/trace.js', 'core/zip.js',
-  'ui/units.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/controller.js', 'ui/autotune.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/app.js',
+  'ui/units.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/controller.js', 'ui/autotune.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/speed.js', 'ui/app.js',
 ];
 
 // Live mode offers the external plant for download: the files of hil/ ride in
@@ -58,7 +58,7 @@ const HELP = `
 <p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time: the Input tab makes the signals, the Plant tab wires the system as a block diagram, the Controller tab chooses and tunes its controllers, the Auto-tune tab improves them by simulation. Earlier runs stay faded on the display for five runs, so a change can be compared with before.</p>
 <h3>Display</h3>
 <div class="keys">
-  <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record in real time, over and over.</span>
+  <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record at the speed set in the header (1×: real time), over and over.</span>
   <span><kbd>S</kbd></span><span>Single: one sweep, then stop</span>
   <span><kbd>A</kbd></span><span>Auto Scale: fit the timebase and every channel to the data</span>
   <span>Knobs</span><span>Drag, scroll, or focus and use the arrow keys. Double-click a Position knob to zero it. Click a readout to type a value (20m, 100 ms).</span>
@@ -68,7 +68,8 @@ const HELP = `
   <span><kbd>Shift</kbd> + drag</span><span>Zoom to the marked box; a flat band zooms time only, a narrow band values only</span>
   <span>Separators</span><span>Drag the gaps between display, controls and tabs to resize; double-click to reset</span>
 </div>
-<p>The screen is the record: what you see is simulated and swept, in real time. <b>Save ▾</b>, under the screen, stores it: every signal as CSV or JSON, or a picture (PNG). <b>Open…</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>); <b>◀ ▶</b> step through one longer than the screen.</p>
+<p><b>Speed</b>, in the header, sets how fast simulated time runs: 1× is real time, 10× ten times faster, 0.1× slower; type any factor, or -1 or inf for <b>∞</b>, as fast as possible (each frame then sweeps the whole screen). Beside it, the speed achieved over the last second, simulation and drawing included: at ∞, where it caps out. Auto-tune runs at it too. With a live plant connected it stays at 1×: the plant owns the clock.</p>
+<p>The screen is the record: what you see is simulated and swept, at that speed. <b>Save ▾</b>, under the screen, stores it: every signal as CSV or JSON, or a picture (PNG). <b>Open…</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>); <b>◀ ▶</b> step through one longer than the screen.</p>
 <h3>Signal generator</h3>
 <p>Press a waveform key to draft a component: the display shows it dashed on its own and added to the signal. Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
 <div class="keys">
@@ -86,7 +87,7 @@ const HELP = `
 <h3>Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off).</p>
 <h3>Auto-tune</h3>
-<p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>.</p>
+<p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. Every run the tuner tries sweeps across the display at the header's <b>Speed</b> (a 5 s run takes 5 s at 1×, half a second at 10×); at ∞ it computes as fast as it can and shows each improvement. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>.</p>
 <h3>Live (HIL)</h3>
 <p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time. Try <b>HIL: external motor</b> from the System library: Run Control gets a second row, <b>Connect</b>, <b>E-STOP</b>, <b>Reset</b>. <b>plant script…</b> under it gives you <code>hil-plant.zip</code>: unzip it and run <code>sh runme.sh</code> (Linux, macOS) or <code>runme.ps1</code> (Windows), which install what they need; with uv, <code>uv run hil_plant.py</code>. Then Connect. Every cycle the plant sends its outputs, the page runs the diagram and answers with the controller's output; edit the controller meanwhile and it takes effect at the next sample. <b>Run</b> and <b>Stop</b> start and stop the plant (each Run is a fresh run from t = 0), <b>Single</b> runs one screen. E-STOP on the page, Enter in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until Reset. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them.</p>
 <h3>System library</h3>
@@ -95,7 +96,7 @@ const HELP = `
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it) and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it), <code>speed(x?)</code> (sets the speed: a factor, or -1 for as fast as possible; returns the setting, the factor in effect, the achieved speed and why it is held at 1×, if it is) and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
 <p>Live: <code>loopTuner.live.connect(url?)</code>, <code>.disconnect()</code>, <code>.estop()</code>, <code>.reset()</code>, <code>.state()</code> (connection, run mode, the plant's ports and figures, how edits were taken). To tune while it runs, change a variant's parameters with <code>getProject()</code> and <code>setProject(p)</code>: they take effect at the next sample. Traces: <code>loopTuner.record.screen('csv' | 'json')</code> (every signal on the screen), <code>.live(format)</code> (the live record), <code>.reference(text, name)</code>, <code>.clearReferences()</code>, <code>.state()</code>. The protocol, for plants of your own: JSON-RPC 2.0 over a WebSocket, described in <code>hil_plant.py</code>'s header and in the repository's design/output/hil.md.</p>
 <p><button class="key primary" id="help-close">Close</button></p>`;
 
@@ -105,6 +106,12 @@ const SHELL = `<div id="lt-shell" class="app">
   <input id="title" class="title" aria-label="Project title" spellcheck="false">
   <span id="loopnote" class="loopnote"></span>
   <div class="actions">
+    <div class="speed" id="speed" role="group" aria-label="Speed of simulated time">
+      <label class="speed-label" for="speed-in">Speed</label>
+      <div class="speed-set popwrap"><input id="speed-in" class="speed-in" spellcheck="false" autocomplete="off" aria-describedby="speed-got"><button type="button" id="speed-menu" class="speed-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="speed-pop" aria-label="Speed presets">▾</button><div id="speed-pop" class="popover speed-pop" role="menu" aria-label="Speed presets" hidden></div></div>
+      <span id="speed-got" class="speed-got">–</span>
+    </div>
+    <span class="sep"></span>
     <div class="popwrap"><button id="syslib" class="btn" aria-haspopup="true" aria-expanded="false" title="Complete systems: load one whole, or only its input, plant or controller">System library ▾</button><div id="syslib-pop" class="popover" hidden></div></div>
     <span class="sep"></span>
     <button id="undo" class="btn icon" title="Undo (Ctrl+Z)" aria-label="Undo">${ICON.undo}</button>

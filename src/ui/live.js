@@ -235,7 +235,14 @@ export function createLive(app, display, controlsRoot, record) {
     display.clearRuns();
   }
 
+  // The plant's clock against the page's, for the header's achieved speed.
+  let clockT = null;
   function onSamples(m) {
+    if (m.t.length) {
+      const t1 = m.t[m.t.length - 1];
+      app.timeRan?.(performance.now() / 1000, clockT !== null && t1 >= clockT ? t1 - clockT : 0);
+      clockT = t1;
+    }
     if (m.names.join('\n') !== names.join('\n')) { names = m.names; sweep = null; }
     for (let i = 0; i < m.t.length; i++) addSample(m.t[i], m.values[i]);
     record.live.samples(m.names, m.t, m.values);
@@ -293,6 +300,7 @@ runme.ps1        Windows: right-click › Run with PowerShell</pre>
     const hit = external();
     liveEl.hidden = !hit;
     display.renderStatus();
+    app.speedRender?.();  // held at 1× while connected
     if (!hit) return;
     const k = $('lv-connect');
     k.textContent = on() ? 'Disconnect' : 'Connect';
@@ -371,6 +379,8 @@ runme.ps1        Windows: right-click › Run with PowerShell</pre>
       }
       sendProgram();
     },
+    // Why the speed is held at 1×: connected, the plant owns the clock.
+    lockReason: () => (connected() ? 'Live: the external plant owns the clock, so time runs at 1×. Disconnect to change the speed.' : null),
     // The live sweep on the screen (for views and Auto Scale), or null.
     data: () => (feeding && sweep ? view(sweep) : null),
     tag() {

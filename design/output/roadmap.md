@@ -14,6 +14,7 @@ Reader: whoever picks the next piece of work.
 - System library: eight 5-second systems, seven of them controlled (motor, following a sine, encoder, conical tank, pendulum swing-up, triple pendulum, the badly tuned oven), with disturbances.
 - Earlier runs fade over five runs for comparison.
 - Live (HIL) mode: an External plant block, a plant outside the page over WebSocket (JSON-RPC 2.0, 100 Hz, the plant sets the cycle and defines the signals), watchdogs and a latched E-stop on both sides (the page's E-STOP key, the plant's stop key), Run and Stop through the plant, the loop in a Web Worker, live edits of every controller and observer parameter; `hil-plant.zip` (`hil_plant.py` with runme.sh and runme.ps1) and the "HIL: external motor" system; `window.loopTuner.live` for agents ([hil.md](hil.md)).
+- Speed in the header: simulated time at any factor (1× real time, 0.1× … ∞ as fast as possible), saved with the project; the achieved speed measured beside it; Auto-tune runs at it; held at 1× while a live plant is connected ([instrument.md](instrument.md#speed)).
 - Saving traces: Save ▾ stores the screen with every signal (CSV, JSON) or as a picture (PNG); the live record keeps the last minutes of every live signal; saved traces open as dashed references, stepped through when longer than the screen ([instrument.md](instrument.md#save-the-live-record-and-references)).
 - (Superseded) System library: three systems that move, loaded whole or by part, opening running on their view ([system-library.md](system-library.md)).
 - Units on every signal; scope channels list only names the diagram defines; projects carry how they open (`ui`).
@@ -37,7 +38,7 @@ Reader: whoever picks the next piece of work.
 ## Open questions
 
 - Header bar: move the file actions into a menu? (Person raised it, 2026-10-24.)
-- Sweep speed: real time is the rule for now; long windows (minutes) may want a faster mode.
+- Speed at ∞ on a plain sweep: it replays the screen's one simulation, so drawing sets the cap. Should it simulate every sweep anew, so the readout shows the simulation's own speed, as Auto-tune's ∞ does? (Interpretation taken; see decisions.md, time control.)
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
 - Should the input repeat with its period, or stop after one? Repeating is built; see decisions.md.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?

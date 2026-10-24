@@ -19,6 +19,8 @@ import { createGenerator } from './generator.js';
 import { createSplitters } from './layout.js';
 import { createLive } from './live.js';
 import { createRecord } from './record.js';
+import { createSpeed } from './speed.js';
+import { speedToJson } from '../core/speed.js';
 
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
@@ -279,14 +281,25 @@ function startApp() {
 
   // Rendering
   let live = null;  // Live mode (ui/live.js), made below
+  // Speed, in the header (ui/speed.js): the factor every clock of the page
+  // runs at, held at 1× while a live plant is connected (it owns the clock),
+  // and the speed achieved.
+  app.speedLock = () => live?.lockReason() ?? null;
+  app.speedChanged = () => autosave();
+  const speed = createSpeed(app);
+  app.speed = () => speed.effective();
+  app.timeRan = (t, seconds) => speed.ran(t, seconds);
+  app.speedRender = () => speed.render();
   const display = createDisplay($('display'), {
     onSelectChannel: (i) => app.selectChannel(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
-    onStopped: () => { controls.render(display.mode); live?.mode('stop'); },  // a Single ended
+    onStopped: () => { controls.render(display.mode); live?.mode('stop'); app.sweepEnded?.(); },  // a Single ended
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
     liveTag: () => live?.tag(),
+    speed: () => speed.effective(),
+    onSweep: (t, seconds) => speed.ran(t, seconds),
   });
   const controls = createControls($('controls'), app);
   // Save and references under the screen (ui/record.js); Live in Run Control.
@@ -305,6 +318,8 @@ function startApp() {
   // step for all of it (beginEdit at its start, endEdit at its end); each
   // change goes through tuneEdit. It shows whole runs while it works.
   app.tuneEdit = (fn) => { fn(app.project); changed(); };
+  app.showLoop = () => display.setData(acquire());  // the loop's own run back on the display
+  app.playRun = (d, past) => { display.play(d, past); controls.render(display.mode); };  // one run swept once
   app.setRunMode = (m) => { display.setMode(m); controls.render(display.mode); };
   const tuneTab = createAutotuneTab($('tab-tune'), app, display);
 
@@ -356,11 +371,12 @@ function startApp() {
   // `ui` when it is saved, and is applied when a project or system opens.
   let layout = null;
   const withUi = () => {
-    const ui = { run: display.mode, ...(UI_TABS.includes(app.tab) ? { tab: app.tab } : {}), ...(plantEditor.viewName() ? { view: plantEditor.viewName() } : {}), ...(layout ? { setup: layout.setupShare() } : {}) };
+    const ui = { run: display.mode, ...(UI_TABS.includes(app.tab) ? { tab: app.tab } : {}), ...(plantEditor.viewName() ? { view: plantEditor.viewName() } : {}), ...(layout ? { setup: layout.setupShare() } : {}), speed: speedToJson(speed.set) };
     return { ...app.project, ui };
   };
   function applyUi(ui = {}) {
     if (ui.tab) app.tab = ui.tab;
+    if (ui.speed !== undefined) speed.setSpeed(ui.speed);
     plantEditor.view(ui.view ?? '');
     if (ui.setup) layout?.setSetup(ui.setup);
     renderTabs();
@@ -538,6 +554,12 @@ function startApp() {
     run: () => app.setMode('run'),
     stop: () => app.setMode('stop'),
     single: () => app.setMode('single'),
+    // The speed of time: x a factor, or -1 (or 'inf') for as fast as possible.
+    // Returns { speed, effective, achieved, locked } (-1 for as fast as possible).
+    speed: (x) => {
+      if (x !== undefined && !speed.setSpeed(x)) throw new Error('speed: a factor above 0, or -1 for as fast as possible');
+      return { speed: speedToJson(speed.set), effective: speedToJson(speed.effective()), achieved: speed.achieved(), locked: speed.locked() };
+    },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
     live: live.api,  // connect(url), disconnect(), estop(), reset(), state(): design/output/hil.md
     record: record.api,  // screen(format), live(format), reference(text, name), clearReferences(), state()

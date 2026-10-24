@@ -6,7 +6,7 @@ Reader: whoever changes the display or its controls. Reference: [the Keysight pa
 
 ## The screen is the record
 
-What the screen shows is what is simulated and swept: from t = 0 to the right edge (horizontal position + 10 divisions). A simulation has no separate record length: **Save ▾** stores what the screen holds, every signal (below); only live data, which never repeats, also has a record of its own, the last minutes ([Save, the live record and references](#save-the-live-record-and-references)). The sweep crosses the screen in real time: at 100 ms/div it takes 1 s. While it sweeps, the current run is drawn only up to the scan line: what has happened so far. **Earlier runs stay, whole and fading**: the last run at 40 % strength, then 30, 20, 10, and gone after five runs, for every channel. So after an edit the old run shows what lies ahead and the new one can be compared with it. (The person, 2026-10-24.) Loading a project clears them. Stopped, the screen shows the whole last sweep.
+What the screen shows is what is simulated and swept: from t = 0 to the right edge (horizontal position + 10 divisions). A simulation has no separate record length: **Save ▾** stores what the screen holds, every signal (below); only live data, which never repeats, also has a record of its own, the last minutes ([Save, the live record and references](#save-the-live-record-and-references)). The sweep crosses the screen at the header's **[Speed](#speed)**, 1× by default, real time: at 100 ms/div it takes 1 s (at 10×, 0.1 s). While it sweeps, the current run is drawn only up to the scan line: what has happened so far. **Earlier runs stay, whole and fading**: the last run at 40 % strength, then 30, 20, 10, and gone after five runs, for every channel. So after an edit the old run shows what lies ahead and the new one can be compared with it. (The person, 2026-10-24.) Loading a project clears them. Stopped, the screen shows the whole last sweep.
 
 ## Display
 
@@ -68,13 +68,55 @@ Every knob has a readout below it. Click it to type a value: `20m`, `100 ms`, `2
 ## Run Control
 
 - **Run/Stop**: lit green while running, red while stopped. Stop freezes the sweep, not the data: edits still show at once.
-- **Single**: one sweep from the start of the screen (t = 0 at position 0), then stop; lit amber meanwhile. The plant's view replays it (the pendulum drops again). With a live plant, Run, Stop and Single go through the plant ([Live](#live-an-external-plant)).
+- **Single**: one sweep from the start of the screen (t = 0 at position 0), at the [Speed](#speed), then stop; lit amber meanwhile. The plant's view replays it (the pendulum drops again). With a live plant, Run, Stop and Single go through the plant ([Live](#live-an-external-plant)).
 - **A project or system may say how it opens** (`ui`: run state, tab, view, setup height); the System library's systems open running on their view in the Plant tab, except the badly tuned oven, which opens on the Auto-tune tab ([project-format.md](project-format.md)).
 - **Auto Scale**: the timebase shows one period of the input (the smallest 1-2-5 step whose 10 divisions hold the period, position 0); each channel with a signal is scaled to about 6 divisions and centred on a whole division. The channels showing a Controller block's r and the y it compares with r share one scale and offset (if they have one unit), so the reference and the output that follows it overlay (r and T of the oven); nothing else is grouped, and XY mode is left alone ([autotune.md](autotune.md)).
 
+## Speed
+
+The person ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)): "we're going to have to add time control, and we can probably add that to the header bar. And then normally it is 1x, but we can also increase it to like 5x or 10x or infinite. Like, I guess make it optional how many x you want, allow infinite, like with a -1 would be infinite. And also show how fast the time is actually running. So we can see when, if I set to infinite, I see, okay, it caps out at 20x. And then the fast toggle of the autotune, that would go away. … for the hill, in hill we are fixed to 1.0. And when we say we allow arbitrarily fast times, the user could also enter 0.1, right?"
+
+**Speed, in the header bar, sets how fast simulated time runs: simulated seconds per wall-clock second.** Every clock of the page runs at it: the sweep, Auto-tune's runs ([autotune.md](autotune.md#the-tab)); a live plant holds it at 1×.
+
+- **The control**: the factor in a field (1× by default) and **▾** with presets: 0.1× (slow motion), 0.5×, 1× (real time), 2×, 5×, 10×, **∞** (as fast as possible). Type any positive factor (`5`, `0.1`, `20x`, `2,5`); `-1`, `inf` or `∞` is as fast as possible. Anything else (0, other negatives) is refused with a toast and the speed stays. Interpretation: the presets are the person's 1×, 5×, 10×, ∞ and 0.1×, filled in with 0.5× and 2×.
+- **Keyboard**: in the field Enter sets, Esc reverts, ↑ ↓ step through the presets; on ▾, ↓ or Enter opens the presets with the current one focused, ↑ ↓ Home End move, Enter or Space picks, Esc closes (focus back on ▾). Keys typed in the field are not scope shortcuts.
+- **Saved with how the page is set**: `ui.speed` in the project (a positive number, or -1 for ∞; [project-format.md](project-format.md)), so Save, Export HTML and the autosave keep it and opening a project applies it. A project without it leaves the speed as it is (the System library's systems carry none).
+- **Beside it, the speed achieved**, measured, not assumed: the simulated time that really ran over the wall-clock time it took, over a moving window of the last second, updated four times a second ("9.8×", "12×", "0.10×", whole numbers from 100×). Wall-clock time between the frames counts whatever happened there, simulating and drawing included, and so does a pause between two of Auto-tune's runs; so a slow page reads below the setting. "–" when nothing has run for a second (the scope stopped). At ∞ it is where the page caps out.
+- **The sweep clock** (`sweepClock` in `src/core/speed.js`, a pure function of the scan line, the window, the speed and the wall time since the last frame): the scan line advances speed × wall time each frame; a frame counts at most 0.25 s of wall time (a hidden tab or a stall does not throw the sweep forward; a page drawing fewer than four frames a second falls behind at 1×, and the readout shows it). What is left of a frame when a sweep ends carries into the next sweep. **∞ completes the sweep in the frame and starts the next one in the following frame**, so every frame shows a whole run (the scan line at the right edge) and the page yields to the browser between sweeps. A frame ends at most one sweep, so no finite speed sweeps faster than ∞.
+- **Interpretation, said plainly**: the simulation computes the whole screen at once after each change (the screen is the record), and each sweep replays it, since a simulation run twice gives the same run. So at ∞ drawing sets the cap (a sweep per frame), and a re-simulation after an edit counts in the frame it happens in. Auto-tune simulates every run, so its ∞ is the simulation's own speed (below).
+- **Everything keeps working at every speed**: Run, Stop, Single (one sweep at the speed: 50 s at 0.1× on a 5 s screen, one frame at ∞), the fading of earlier runs (one per sweep; at ∞ the five runs pass within five frames, so after an edit the old run is gone at once), Save ▾ › Screen, references, the 2D views (they follow the scan line; at ∞ they show the end of the run), and the FFT, Spectrogram and XY modes (they show what has run so far).
+- **Live**: while a plant is connected the control is held at 1× and disabled, its title saying why ("the external plant owns the clock"); the setting comes back on Disconnect. The readout then shows the plant's clock against the page's, from the time stamps of the plant's messages: "1.00× live" ([hil.md](hil.md#timing)).
+- For agents: `window.loopTuner.speed(x?)` sets it (a factor, or -1) and returns `{ speed, effective, achieved, locked }` (-1 for ∞; `locked` is why it is held at 1×, or null).
+
+Code: `src/core/speed.js` (parsing, the clock, the meter; tests in `test/speed.test.mjs`), `src/ui/speed.js` (the control and the readout), `sweepClock` in `src/ui/display.js`.
+
+### Measured (2026-10-24, the build container: headless Chromium, software rendering, 1440 × 900)
+
+The readout over three seconds after a second of settling, in three runs; the container is shared with other work (load average up to 12 on 4 cores), so frame rates and the ∞ figures vary between runs. The systems from the System library, each a 5 s screen.
+
+| System | View | 1× | 10× | ∞ (frames a second at ∞) |
+|---|---|---|---|---|
+| Triple pendulum | Time, cart and triple pendulum | 1.0× | 10× | 98–145× (12–29) |
+| Encoder errors and torque ripple | Spectrogram | 1.0× | 10× | 265–300× (47–61) |
+| Oven, badly tuned | Time, oven | 1.0× | 10× | 167–175× (37–38) |
+
+- At 1× and 10× the readout holds the setting exactly: every frame took less than 0.25 s. 0.1× reads 0.10× in all four views.
+- At ∞ the cap is drawing: a screen per frame (300× is 60 frames of 5 s). The triple pendulum draws slowest; a CPU profile of it at ∞ shows little script and nearly all of the frame in the browser's own drawing, which software rendering makes slow (a desktop browser with a GPU will do better). Simulating alone, in one Auto-tune call through the API (8 iterations, nothing drawn between runs), the same browser ran 113× (oven), 84× (triple pendulum) and 38× (encoder): about what ∞ would read if every sweep were simulated anew.
+
+Auto-tune, Iterate from the system as it loads, to the end ("the cost stopped falling"):
+
+| System | 1× | 10× | ∞ |
+|---|---|---|---|
+| Oven, badly tuned (77 runs, 385 s simulated) | 1.0× while a run sweeps; 0.80–0.90× over a window with the pause between two runs (a run takes 5 s: 77 runs would take about 6½ min) | 8.2–8.5× (whole tuning 46.5–48.3 s: 8.0–8.3×) | 131–160× while it computes (whole tuning 2.3–3.4 s: 114–170×) |
+| Triple pendulum (104 runs, 520 s simulated) | 1.0×; 0.62–0.87× over a pause | 7.9× (67.8 s: 7.7×) | 137×, down to 18× just after an improvement, when the page redraws the loop with the new gains (5.8 s: 90×) |
+
+- Between two runs the tuner computes the next one, and an improvement puts its gains into the project, which redraws the page (the loop's own run is simulated for the screen again): about 0.1 s here, so 10× reads about 8×. The readout says so rather than hiding it.
+- Relay and Step response on the oven: 1.4–1.6 s at 10× (the experiment's 5 s sweep takes 0.5 s, then 0.4 s on the display), 1.0–1.2 s at ∞.
+- Live, "HIL: external motor" against `hil_plant.py` at 100 Hz: held at 1×, the readout 1.00–1.01× live.
+
 ## Live (an external plant)
 
-A system with an External plant block runs against a plant outside the page ([hil.md](hil.md)). Run Control then has a second row of keys, **Connect / Disconnect**, **E-STOP**, **Reset**, and under it two lines that keep their height: where the plant listens and the state, an E-stop and its cause, or while running the link's rate, jitter and round trip. **Run and Stop go through the plant** (the person): Run starts a fresh run (the plant's clock and the controllers from 0), Stop stops it, Single runs one screen and stops. Live data sweeps the screen as a simulated run does: at position w0 a run's plant time w0 … w0 + W is drawn where the axis says, later screen widths sweep the same window again, and earlier sweeps fade. The status line says LIVE (with the plant's time), CONNECTED, E-STOP (with the reason) or OFFLINE.
+A system with an External plant block runs against a plant outside the page ([hil.md](hil.md)). Run Control then has a second row of keys, **Connect / Disconnect**, **E-STOP**, **Reset**, and under it two lines that keep their height: where the plant listens and the state, an E-stop and its cause, or while running the link's rate, jitter and round trip. **Run and Stop go through the plant** (the person): Run starts a fresh run (the plant's clock and the controllers from 0), Stop stops it, Single runs one screen and stops. Live data sweeps the screen as a simulated run does: at position w0 a run's plant time w0 … w0 + W is drawn where the axis says, later screen widths sweep the same window again, and earlier sweeps fade. The status line says LIVE (with the plant's time), CONNECTED, E-STOP (with the reason) or OFFLINE. While connected the [Speed](#speed) is held at 1×: the plant owns the clock.
 
 ## Save, the live record and references
 
@@ -96,4 +138,4 @@ Two separators can be dragged: between the display and the setup tabs, and betwe
 
 ## Keyboard
 
-`R` run/stop, `S` single, `A` auto scale, `Esc` release the selected line. Ctrl+Z / Ctrl+Shift+Z undo and redo. Digits belong to the numeric entry of the active tab.
+`R` run/stop, `S` single, `A` auto scale, `Esc` release the selected line. Ctrl+Z / Ctrl+Shift+Z undo and redo. Digits belong to the numeric entry of the active tab. The Speed field and its presets take the keys described under [Speed](#speed).
