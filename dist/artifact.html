@@ -342,6 +342,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .pdiag .wire.sel .line { stroke: var(--ink); stroke-width: 2.6; }
 .pdiag .arrowhead { fill: var(--ink-2); }
 #pl-temp { pointer-events: none; }
+.canvas-rename { position: absolute; z-index: 2; border: 2px solid var(--ink); border-radius: 14px; background: var(--panel); color: var(--ink); font-family: var(--mono); font-size: 14px; text-align: center; padding: 0 6px; }
 .pdiag .wire-temp { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
 .pdiag .marquee { fill: rgba(127, 127, 127, 0.12); stroke: var(--ink); stroke-dasharray: 4 3; }
 .pform { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
@@ -2344,7 +2345,7 @@ function normalizeProject(p) {
     format: FORMAT,
     title: String(p.title ?? 'Untitled loop'),
     ...(p.notes ? { notes: String(p.notes) } : {}),
-    sim, system, scope: normalizeScope(p.scope, longestPeriod(signals)), goal, candidates,
+    sim, system, scope: normalizeScope(p.scope, longestPeriod(signals), candidates.length > 0 && !!system.plant), goal, candidates,
     ...(Array.isArray(p.library) && p.library.length ? { library: p.library.map(normalizeLibraryEntry) } : {}),
     ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
   };
@@ -2408,23 +2409,27 @@ function fitChannel(values) {
   return { scale, offset };
 }
 
+// Channel 1 shows r; the others start empty ("" is no source) until the
+// person picks a Source or Sink for them. A closed loop starts with y, u, e.
 const DEFAULT_CHANNELS = [
   { source: 'r', on: true, scale: 0.2, offset: 0 },
-  { source: 'y1', on: true, scale: 0.2, offset: 0 },
-  { source: 'u', on: false, scale: 0.5, offset: 0 },
-  { source: 'e', on: false, scale: 0.2, offset: 0 },
+  { source: '', on: false, scale: 0.2, offset: 0 },
+  { source: '', on: false, scale: 0.5, offset: 0 },
+  { source: '', on: false, scale: 0.2, offset: 0 },
 ];
+const LOOP_CHANNELS = ['r', 'y', 'u', 'e'];
 
 // How the display is set: timebase (s/div, time at the left edge) and four
 // channels (source, on, units/div, offset in units).
-function normalizeScope(scope = {}, period) {
+function normalizeScope(scope = {}, period, loop = false) {
   const tb = scope.timebase ?? {};
   const timebase = { scale: Number(tb.scale ?? ceil125(period / 10)), position: Number(tb.position ?? 0) };
   if (!(timebase.scale > 0)) throw new Error('scope.timebase.scale must be > 0');
   const channels = DEFAULT_CHANNELS.map((d, i) => {
     const c = scope.channels?.[i] ?? {};
-    const ch = { source: c.source ?? d.source, on: c.on ?? d.on, scale: Number(c.scale ?? d.scale), offset: Number(c.offset ?? d.offset) };
-    if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(ch.source)) throw new Error(`scope.channels[${i}].source: a signal name such as r, y1 or u`);
+    const ch = { source: c.source ?? (loop ? LOOP_CHANNELS[i] : d.source), on: c.on ?? (loop || d.on), scale: Number(c.scale ?? d.scale), offset: Number(c.offset ?? d.offset) };
+    if (ch.source !== '' && !/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(ch.source)) throw new Error(`scope.channels[${i}].source: a signal name such as r, y1 or u, or "" for none`);
+    if (ch.source === '') ch.on = false;
     if (!(ch.scale > 0) || !Number.isFinite(ch.offset)) throw new Error(`scope.channels[${i}]: scale must be > 0 and offset a number`);
     ch.on = !!ch.on;
     return ch;
@@ -2530,7 +2535,7 @@ function fmt(v, digits = 3) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, normalizeScope, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
 })();
 // ---- core/tune.js
 __mods['core/tune.js'] = (() => {
@@ -2668,9 +2673,9 @@ const DEFAULT_PROJECT = {
     timebase: { scale: 0.1, position: 0 },
     channels: [
       { source: 'r', on: true, scale: 0.2, offset: -0.4 },
-      { source: 'y1', on: true, scale: 0.2, offset: -0.4 },
-      { source: 'u', on: false, scale: 0.5, offset: 0 },
-      { source: 'e', on: false, scale: 0.2, offset: 0 },
+      { source: '', on: false, scale: 0.2, offset: 0 },
+      { source: '', on: false, scale: 0.5, offset: 0 },
+      { source: '', on: false, scale: 0.2, offset: 0 },
     ],
   },
   candidates: [],
@@ -2791,7 +2796,7 @@ __mods['core/systems.js'] = (() => {
 
 const { EXAMPLE_PLANTS } = __mods['core/plants.js'];
 const { EXAMPLES } = __mods['core/examples.js'];
-const { normalizeProject } = __mods['core/project.js'];
+const { normalizeProject, LOOP_CHANNELS } = __mods['core/project.js'];
 const STEP = { r: { period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } };
 
 const SYSTEM_PARTS = ['input', 'plant', 'controller'];
@@ -2831,6 +2836,8 @@ function applySystem(project, entry, parts) {
     Object.assign(p, { candidates: c.candidates, goal: c.goal, sim: c.sim });
     if (c.selected) p.selected = c.selected; else delete p.selected;
     for (const k of ['actuator', 'sensor', 'disturbance', 'noise']) p.system[k] = c[k];
+    // A closed loop shows its own signals: r, y, u, e.
+    if (p.scope?.channels) p.scope.channels.forEach((ch, i) => { ch.source = LOOP_CHANNELS[i]; ch.on = true; });
   }
   if (SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k))) p.title = entry.name;
   delete p.system.reference;
@@ -3215,9 +3222,9 @@ function createDisplay(root, handlers) {
     badges.innerHTML = scope.channels.map((ch, i) => {
       const has = !!data.signals[ch.source];
       const cls = ['badge', ch.on ? 'on' : 'off', i === selected ? 'sel' : '', has ? '' : 'nosig'].join(' ');
-      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${SOURCE_LABEL[ch.source] ?? ch.source}">
-        <span class="num">${i + 1}</span><span class="src">${ch.source}</span>
-        <span class="val">${has ? `${num(ch.scale)}/div` : 'no signal'}</span></button>`;
+      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${ch.source ? SOURCE_LABEL[ch.source] ?? ch.source : 'no source; pick one under Vertical'}">
+        <span class="num">${i + 1}</span><span class="src">${ch.source || '—'}</span>
+        <span class="val">${has ? `${num(ch.scale)}/div` : ch.source ? 'no signal' : 'none'}</span></button>`;
     }).join('');
     badges.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => handlers.onSelectChannel(Number(b.dataset.ch))));
   }
@@ -3526,7 +3533,8 @@ function createControls(root, app) {
     keys.append(b);
   });
   const src = $('#ch-src');
-  src.addEventListener('change', () => setScope((sc) => { sc.channels[app.channel].source = src.value; }));
+  // Picking a source switches the channel on; "none" switches it off.
+  src.addEventListener('change', () => setScope((sc) => { const c = sc.channels[app.channel]; c.source = src.value; c.on = src.value !== ''; }));
 
   let mode = 'stop';
   function render(m = mode) {
@@ -3541,9 +3549,9 @@ function createControls(root, app) {
       b.classList.toggle('sel', i === app.channel);
       b.setAttribute('aria-pressed', String(sc.channels[i].on));
     });
-    const names = [...new Set([...app.signalNames(), ch().source])];
+    const names = [...new Set([...app.signalNames(), ch().source].filter(Boolean))];
     if (src.dataset.names !== names.join(',')) {
-      src.innerHTML = names.map((n) => `<option value="${n}">${SOURCE_LABEL[n] ?? n}</option>`).join('');
+      src.innerHTML = '<option value="">— none</option>' + names.map((n) => `<option value="${n}">${SOURCE_LABEL[n] ?? n}</option>`).join('');
       src.dataset.names = names.join(',');
     }
     src.value = ch().source;
@@ -4130,7 +4138,7 @@ function createPlantEditor(root, app) {
     const all = diagramNames(rootDiagram());
     const b = template ? structuredClone(template) : { type, params: {} };
     if (!template) for (const p of diagramBlockDef(type).params) b.params[p.key] = p.default;
-    if (type === 'source') b.params.signal = freeName('r', new Set(all.sources), 'r');
+    if (type === 'source') b.params.signal = freeName('r', new Set([...all.sources, ...all.sinks]), 'r');
     if (type === 'sink') b.params.name = freeName('y', new Set([...all.sinks, ...all.sources]));
     if (type === 'inport' || type === 'outport') b.params.port = d.blocks.filter((x2) => x2.type === type).length + 1;
     if (type === 'subsystem' && !b.diagram) b.diagram = { blocks: [{ id: 'in', type: 'inport', params: { port: 1 }, x: 30, y: 60 }, { id: 'out', type: 'outport', params: { port: 1 }, x: 260, y: 60 }], wires: [{ from: 'in', to: 'out' }] };
@@ -4420,7 +4428,7 @@ function createPlantEditor(root, app) {
           const blk = d.blocks.find((x) => x.id === b.id);
           if (f === 'name') { if (raw) blk.name = raw; else delete blk.name; return; }
           const key = f.slice(2);
-          if (blk.type === 'source' && key === 'signal' && value !== blk.params.signal) app.renameSignal(blk.params.signal, value, diagramNames(rootDiagram()).sources.filter((s) => s === blk.params.signal).length);
+          if ((blk.type === 'source' && key === 'signal') || (blk.type === 'sink' && key === 'name')) { renameNamed(blk, value); return false; }
           if (blk.type === 'sum' && key === 'signs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value.length; });
           if (blk.type === 'switch' && key === 'inputs') {
             d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
@@ -4452,6 +4460,36 @@ function createPlantEditor(root, app) {
     if (what === 'delete') remove();
   }
 
+  // Renames a Source (its signal) or a Sink, everywhere it is used: the
+  // Input tab's signal list and the scope channels follow.
+  function renameNamed(b, to) {
+    const from = b.type === 'source' ? b.params.signal : b.params.name;
+    if (to === from) return true;
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(to)) { app.toast('A name is letters, digits and _, starting with a letter: r2, d, y1, pos.'); return false; }
+    const names = diagramNames(rootDiagram());
+    if (b.type === 'sink' && (names.sinks.includes(to) || names.sources.includes(to))) { app.toast(`“${to}” is already used.`); return false; }
+    if (b.type === 'source' && names.sinks.includes(to)) { app.toast(`“${to}” is already a Sink.`); return false; }
+    if (b.type === 'source' && from === 'r' && names.sources.filter((n) => n === 'r').length <= 1) { app.toast('r, the reference, always stays; add another Source for a new signal.'); return false; }
+    if (b.type === 'source') app.renameSignal(from, to, names.sources.filter((n) => n === from).length);
+    else app.renameSink(from, to);
+    return edit((d) => { const x = d.blocks.find((q) => q.id === b.id); if (x.type === 'source') x.params.signal = to; else x.params.name = to; });
+  }
+
+  function renameOnCanvas(b) {
+    const v = view(), [w, h] = size(b);
+    const input = document.createElement('input');
+    input.className = 'canvas-rename';
+    input.value = b.type === 'source' ? b.params.signal : b.params.name;
+    input.setAttribute('aria-label', `Rename ${b.type}`);
+    Object.assign(input.style, { left: `${v.x + b.x * v.k}px`, top: `${v.y + b.y * v.k}px`, width: `${Math.max(70, w * v.k)}px`, height: `${h * v.k}px` });
+    viewEl.append(input);
+    requestAnimationFrame(() => { input.focus(); input.select(); });
+    let done = false;
+    const finish = (save) => { if (done) return; done = true; const to = input.value.trim(); input.remove(); if (save && to) renameNamed(b, to); else render(); };
+    input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
+    input.addEventListener('blur', () => finish(true));
+  }
+
   function enter(id) {
     const b = level().blocks.find((x) => x.id === id);
     if (b?.type !== 'subsystem') return;
@@ -4462,6 +4500,13 @@ function createPlantEditor(root, app) {
 
   function remove() {
     if (!sel.size && wireSel < 0) return;
+    // The reference r always stays: its last Source cannot be deleted.
+    const rSources = (d) => d.blocks.filter((b) => b.type === 'source' && b.params.signal === 'r');
+    if (!path.length && rSources(level()).length && rSources(level()).every((b) => sel.has(b.id)) && diagramNames(rootDiagram()).sources.filter((n) => n === 'r').length <= rSources(level()).length) {
+      for (const b of rSources(level())) sel.delete(b.id);
+      app.toast('r, the reference, always stays.');
+      if (!sel.size) { render(); return; }
+    }
     edit((d) => {
       if (sel.size) {
         d.blocks = d.blocks.filter((b) => !sel.has(b.id));
@@ -4554,7 +4599,9 @@ function createPlantEditor(root, app) {
       if (lastClick.id === id && now - lastClick.t < 400) {
         lastClick = { id: null, t: 0 };
         const blk = level().blocks.find((x) => x.id === id);
-        if (blk?.type === 'switch') edit((d) => { const s2 = d.blocks.find((x) => x.id === id); s2.params.position = (s2.params.position % s2.params.inputs) + 1; });
+        // preventDefault keeps this mouse-down from moving focus off the new field.
+        if (blk?.type === 'source' || blk?.type === 'sink') { e.preventDefault(); renameOnCanvas(blk); }
+        else if (blk?.type === 'switch') edit((d) => { const s2 = d.blocks.find((x) => x.id === id); s2.params.position = (s2.params.position % s2.params.inputs) + 1; });
         else enter(id);
         return;
       }
@@ -4873,7 +4920,8 @@ function startApp() {
   app.channelKey = (i) => {
     const ch = app.project.scope.channels[i];
     app.beginEdit();
-    if (!ch.on) { ch.on = true; app.channel = i; }
+    if (!ch.on && !ch.source) { app.channel = i; toast(`Channel ${i + 1} has no source: pick one under Vertical › Source.`); }
+    else if (!ch.on) { ch.on = true; app.channel = i; }
     else if (app.channel === i) ch.on = false;
     else app.channel = i;
     app.endEdit();
@@ -4927,6 +4975,11 @@ function startApp() {
       for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
     }
     return env;
+  };
+  // A Sink's new name follows into the channels that showed it.
+  app.renameSink = (from, to) => {
+    app.beginEdit();
+    for (const ch of app.project.scope.channels) if (ch.source === from) ch.source = to;
   };
   app.renameSignal = (from, to, users) => {
     const signals = app.project.system.signals;

@@ -9,7 +9,8 @@ Reader: whoever changes how the plant is built or simulated.
 - A **Source** plays a named signal (r, r1, d, …) made in the Input tab. The Input tab's Edit column lists every signal the Sources use; adding a Source with a new name adds a signal.
 - A **Sink** records its input under a name (y1, y2, …); every Sink anywhere in the diagram, also inside subsystems (and later controllers), is a channel source on the scope, as is every Source.
 - Three ways for a signal to end (the person): **Out** passes it up to the enclosing block, **Sink** records it for the scope, **Terminator** just ends it.
-- A diagram with only a Source shows only that signal.
+- A diagram with only a Source shows only that signal. **A new plant is exactly Source r**, and r always stays: its last Source cannot be deleted or renamed away.
+- **Double-click a Source or Sink on the canvas to rename it.** Renaming a Source renames its signal (the Input tab follows); renaming a Sink carries into the scope channels that showed it.
 - **In** and **Out** blocks are the ports of a subsystem (and, later, the plant's connection to the controller).
 
 ## Canvas

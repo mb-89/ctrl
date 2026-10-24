@@ -122,7 +122,8 @@ function startApp() {
   app.channelKey = (i) => {
     const ch = app.project.scope.channels[i];
     app.beginEdit();
-    if (!ch.on) { ch.on = true; app.channel = i; }
+    if (!ch.on && !ch.source) { app.channel = i; toast(`Channel ${i + 1} has no source: pick one under Vertical › Source.`); }
+    else if (!ch.on) { ch.on = true; app.channel = i; }
     else if (app.channel === i) ch.on = false;
     else app.channel = i;
     app.endEdit();
@@ -176,6 +177,11 @@ function startApp() {
       for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
     }
     return env;
+  };
+  // A Sink's new name follows into the channels that showed it.
+  app.renameSink = (from, to) => {
+    app.beginEdit();
+    for (const ch of app.project.scope.channels) if (ch.source === from) ch.source = to;
   };
   app.renameSignal = (from, to, users) => {
     const signals = app.project.system.signals;

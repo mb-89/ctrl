@@ -5,7 +5,7 @@
 
 import { EXAMPLE_PLANTS } from './plants.js';
 import { EXAMPLES } from './examples.js';
-import { normalizeProject } from './project.js';
+import { normalizeProject, LOOP_CHANNELS } from './project.js';
 
 const STEP = { r: { period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } };
 
@@ -46,6 +46,8 @@ export function applySystem(project, entry, parts) {
     Object.assign(p, { candidates: c.candidates, goal: c.goal, sim: c.sim });
     if (c.selected) p.selected = c.selected; else delete p.selected;
     for (const k of ['actuator', 'sensor', 'disturbance', 'noise']) p.system[k] = c[k];
+    // A closed loop shows its own signals: r, y, u, e.
+    if (p.scope?.channels) p.scope.channels.forEach((ch, i) => { ch.source = LOOP_CHANNELS[i]; ch.on = true; });
   }
   if (SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k))) p.title = entry.name;
   delete p.system.reference;

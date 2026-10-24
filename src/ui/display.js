@@ -253,9 +253,9 @@ export function createDisplay(root, handlers) {
     badges.innerHTML = scope.channels.map((ch, i) => {
       const has = !!data.signals[ch.source];
       const cls = ['badge', ch.on ? 'on' : 'off', i === selected ? 'sel' : '', has ? '' : 'nosig'].join(' ');
-      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${SOURCE_LABEL[ch.source] ?? ch.source}">
-        <span class="num">${i + 1}</span><span class="src">${ch.source}</span>
-        <span class="val">${has ? `${num(ch.scale)}/div` : 'no signal'}</span></button>`;
+      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${ch.source ? SOURCE_LABEL[ch.source] ?? ch.source : 'no source; pick one under Vertical'}">
+        <span class="num">${i + 1}</span><span class="src">${ch.source || '—'}</span>
+        <span class="val">${has ? `${num(ch.scale)}/div` : ch.source ? 'no signal' : 'none'}</span></button>`;
     }).join('');
     badges.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => handlers.onSelectChannel(Number(b.dataset.ch))));
   }

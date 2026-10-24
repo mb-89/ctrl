@@ -164,7 +164,7 @@ export function createPlantEditor(root, app) {
     const all = diagramNames(rootDiagram());
     const b = template ? structuredClone(template) : { type, params: {} };
     if (!template) for (const p of diagramBlockDef(type).params) b.params[p.key] = p.default;
-    if (type === 'source') b.params.signal = freeName('r', new Set(all.sources), 'r');
+    if (type === 'source') b.params.signal = freeName('r', new Set([...all.sources, ...all.sinks]), 'r');
     if (type === 'sink') b.params.name = freeName('y', new Set([...all.sinks, ...all.sources]));
     if (type === 'inport' || type === 'outport') b.params.port = d.blocks.filter((x2) => x2.type === type).length + 1;
     if (type === 'subsystem' && !b.diagram) b.diagram = { blocks: [{ id: 'in', type: 'inport', params: { port: 1 }, x: 30, y: 60 }, { id: 'out', type: 'outport', params: { port: 1 }, x: 260, y: 60 }], wires: [{ from: 'in', to: 'out' }] };
@@ -454,7 +454,7 @@ export function createPlantEditor(root, app) {
           const blk = d.blocks.find((x) => x.id === b.id);
           if (f === 'name') { if (raw) blk.name = raw; else delete blk.name; return; }
           const key = f.slice(2);
-          if (blk.type === 'source' && key === 'signal' && value !== blk.params.signal) app.renameSignal(blk.params.signal, value, diagramNames(rootDiagram()).sources.filter((s) => s === blk.params.signal).length);
+          if ((blk.type === 'source' && key === 'signal') || (blk.type === 'sink' && key === 'name')) { renameNamed(blk, value); return false; }
           if (blk.type === 'sum' && key === 'signs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value.length; });
           if (blk.type === 'switch' && key === 'inputs') {
             d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
@@ -486,6 +486,36 @@ export function createPlantEditor(root, app) {
     if (what === 'delete') remove();
   }
 
+  // Renames a Source (its signal) or a Sink, everywhere it is used: the
+  // Input tab's signal list and the scope channels follow.
+  function renameNamed(b, to) {
+    const from = b.type === 'source' ? b.params.signal : b.params.name;
+    if (to === from) return true;
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(to)) { app.toast('A name is letters, digits and _, starting with a letter: r2, d, y1, pos.'); return false; }
+    const names = diagramNames(rootDiagram());
+    if (b.type === 'sink' && (names.sinks.includes(to) || names.sources.includes(to))) { app.toast(`“${to}” is already used.`); return false; }
+    if (b.type === 'source' && names.sinks.includes(to)) { app.toast(`“${to}” is already a Sink.`); return false; }
+    if (b.type === 'source' && from === 'r' && names.sources.filter((n) => n === 'r').length <= 1) { app.toast('r, the reference, always stays; add another Source for a new signal.'); return false; }
+    if (b.type === 'source') app.renameSignal(from, to, names.sources.filter((n) => n === from).length);
+    else app.renameSink(from, to);
+    return edit((d) => { const x = d.blocks.find((q) => q.id === b.id); if (x.type === 'source') x.params.signal = to; else x.params.name = to; });
+  }
+
+  function renameOnCanvas(b) {
+    const v = view(), [w, h] = size(b);
+    const input = document.createElement('input');
+    input.className = 'canvas-rename';
+    input.value = b.type === 'source' ? b.params.signal : b.params.name;
+    input.setAttribute('aria-label', `Rename ${b.type}`);
+    Object.assign(input.style, { left: `${v.x + b.x * v.k}px`, top: `${v.y + b.y * v.k}px`, width: `${Math.max(70, w * v.k)}px`, height: `${h * v.k}px` });
+    viewEl.append(input);
+    requestAnimationFrame(() => { input.focus(); input.select(); });
+    let done = false;
+    const finish = (save) => { if (done) return; done = true; const to = input.value.trim(); input.remove(); if (save && to) renameNamed(b, to); else render(); };
+    input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
+    input.addEventListener('blur', () => finish(true));
+  }
+
   function enter(id) {
     const b = level().blocks.find((x) => x.id === id);
     if (b?.type !== 'subsystem') return;
@@ -496,6 +526,13 @@ export function createPlantEditor(root, app) {
 
   function remove() {
     if (!sel.size && wireSel < 0) return;
+    // The reference r always stays: its last Source cannot be deleted.
+    const rSources = (d) => d.blocks.filter((b) => b.type === 'source' && b.params.signal === 'r');
+    if (!path.length && rSources(level()).length && rSources(level()).every((b) => sel.has(b.id)) && diagramNames(rootDiagram()).sources.filter((n) => n === 'r').length <= rSources(level()).length) {
+      for (const b of rSources(level())) sel.delete(b.id);
+      app.toast('r, the reference, always stays.');
+      if (!sel.size) { render(); return; }
+    }
     edit((d) => {
       if (sel.size) {
         d.blocks = d.blocks.filter((b) => !sel.has(b.id));
@@ -588,7 +625,9 @@ export function createPlantEditor(root, app) {
       if (lastClick.id === id && now - lastClick.t < 400) {
         lastClick = { id: null, t: 0 };
         const blk = level().blocks.find((x) => x.id === id);
-        if (blk?.type === 'switch') edit((d) => { const s2 = d.blocks.find((x) => x.id === id); s2.params.position = (s2.params.position % s2.params.inputs) + 1; });
+        // preventDefault keeps this mouse-down from moving focus off the new field.
+        if (blk?.type === 'source' || blk?.type === 'sink') { e.preventDefault(); renameOnCanvas(blk); }
+        else if (blk?.type === 'switch') edit((d) => { const s2 = d.blocks.find((x) => x.id === id); s2.params.position = (s2.params.position % s2.params.inputs) + 1; });
         else enter(id);
         return;
       }

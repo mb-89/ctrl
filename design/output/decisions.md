@@ -8,6 +8,7 @@ Reader: anyone who wants to know why something is the way it is. Newest first. "
 - **Sensors and Physics groups**: Quantizer and Noise; a nonlinear Cart–pole with two outputs and an initial angle. Interpretation of "sensors would also be selected from that".
 - **Terminator and Switch blocks**; Out passes up, Sink records, Terminator ends. Double-click a Switch to move it to its next input. (Person.)
 - **Scope channels list every Source and Sink in the diagram** at any depth, whether or not the system simulates. (Person: they were "not in sync".)
+- **A new plant is Source r alone; r always stays.** Channels 2–4 start with no source and nothing is put on the scope by itself; picking a source switches a channel on. Double-click a Source or Sink on the canvas to rename it; renames follow into the Input tab and the channels. (Person.)
 - **Plants carry views in their JSON; there is no view editor beyond the JSON panel.** (Person.) Two kinds: `2d` shapes (ours, simple for agents) and `svg`, a standard SVG drawing with attribute bindings. 3D will use URDF. (Person: "if there are standards … we can use them".) Formulas in views read signals by name, through the same parser as the Function waveform.
 - **Views follow the scope's time**: the scan line, the hover cursor, or the screen's right edge. Interpretation: it ties the animation to the sweep the person already has.
 - **SVG views are cleaned before display** (no scripts, handlers, outside links) and bindings cannot target events or links: a shared file cannot run code. Interpretation, for safety.

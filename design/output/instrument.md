@@ -34,16 +34,11 @@ Wheel and knob zooms step 1-2-5; a box zoom shows exactly the marked region.
 
 ## Channels (Vertical)
 
-Four channels, in the classic colours: 1 yellow, 2 green, 3 blue, 4 magenta. Each has a source signal, an on/off state, a scale (units per division) and an offset.
+Four channels, in the classic colours: 1 yellow, 2 green, 3 blue, 4 magenta. Each has a source, an on/off state, a scale (units per division) and an offset.
 
-| Channel | Default source |
-|---|---|
-| 1 | r, the reference |
-| 2 | y, the plant output |
-| 3 | u, the control effort |
-| 4 | e, the error r − y |
-
-A channel whose source does not exist yet (no plant, no controller) shows "no signal" and draws nothing.
+- **A channel's source is any Source or Sink in the plant diagram** (at any depth), picked under Vertical › Source; once a controller exists, also y, u, e of the loop.
+- **Channel 1 shows r; channels 2–4 start with no source ("none").** Nothing the person adds is put on the scope by itself. (The person, 2026-10-24.) Picking a source switches the channel on; "none" switches it off. A closed-loop system from the library starts with r, y, u, e.
+- A channel whose source has no data shows "no signal" and draws nothing.
 
 - A channel key selects that channel for the Vertical knobs; pressing the selected channel's key again turns it off; pressing an off channel turns it on and selects it.
 - **Scale** knob: 1-2-5 steps. **Position** knob: 0.1 division per detent; double-click (the knob's push) sets it to 0.

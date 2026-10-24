@@ -13,9 +13,9 @@ export const DEFAULT_PROJECT = {
     timebase: { scale: 0.1, position: 0 },
     channels: [
       { source: 'r', on: true, scale: 0.2, offset: -0.4 },
-      { source: 'y1', on: true, scale: 0.2, offset: -0.4 },
-      { source: 'u', on: false, scale: 0.5, offset: 0 },
-      { source: 'e', on: false, scale: 0.2, offset: 0 },
+      { source: '', on: false, scale: 0.2, offset: 0 },
+      { source: '', on: false, scale: 0.5, offset: 0 },
+      { source: '', on: false, scale: 0.2, offset: 0 },
     ],
   },
   candidates: [],

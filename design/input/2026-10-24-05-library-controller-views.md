@@ -23,3 +23,7 @@ Reader: anyone who needs the person's own words on these points. Verbatim; trans
 ## Follow-up 5
 
 > And I guess SVG is fine, but then we would have to be able to connect certain elements of the SVG with our inputs and outputs, right? That's okay. So maybe one of the source, I guess the sinks could be, a sink could link to an SVG, I guess. But yeah, this is just a demo.
+
+## Follow-up 6
+
+> Yeah, okay, something with the signals in the plant editor and the OSC, it doesn't work. So you need to clean that up. You're going to have sinks and sources in the library, and if you drag something down, one of them is added, I suppose. Or you have sources and sinks in the library. If you drag them onto the plant, then you can rename them by double clicking on them, and then you can select those into your OSC. And the default that's always there is R for reference. So an empty plant always starts with R and nothing else. So that will always be there. But the others, they will just not be selected from the beginning.

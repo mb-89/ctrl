@@ -74,7 +74,7 @@ export function normalizeProject(p) {
     format: FORMAT,
     title: String(p.title ?? 'Untitled loop'),
     ...(p.notes ? { notes: String(p.notes) } : {}),
-    sim, system, scope: normalizeScope(p.scope, longestPeriod(signals)), goal, candidates,
+    sim, system, scope: normalizeScope(p.scope, longestPeriod(signals), candidates.length > 0 && !!system.plant), goal, candidates,
     ...(Array.isArray(p.library) && p.library.length ? { library: p.library.map(normalizeLibraryEntry) } : {}),
     ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
   };
@@ -138,23 +138,27 @@ export function fitChannel(values) {
   return { scale, offset };
 }
 
+// Channel 1 shows r; the others start empty ("" is no source) until the
+// person picks a Source or Sink for them. A closed loop starts with y, u, e.
 const DEFAULT_CHANNELS = [
   { source: 'r', on: true, scale: 0.2, offset: 0 },
-  { source: 'y1', on: true, scale: 0.2, offset: 0 },
-  { source: 'u', on: false, scale: 0.5, offset: 0 },
-  { source: 'e', on: false, scale: 0.2, offset: 0 },
+  { source: '', on: false, scale: 0.2, offset: 0 },
+  { source: '', on: false, scale: 0.5, offset: 0 },
+  { source: '', on: false, scale: 0.2, offset: 0 },
 ];
+export const LOOP_CHANNELS = ['r', 'y', 'u', 'e'];
 
 // How the display is set: timebase (s/div, time at the left edge) and four
 // channels (source, on, units/div, offset in units).
-export function normalizeScope(scope = {}, period) {
+export function normalizeScope(scope = {}, period, loop = false) {
   const tb = scope.timebase ?? {};
   const timebase = { scale: Number(tb.scale ?? ceil125(period / 10)), position: Number(tb.position ?? 0) };
   if (!(timebase.scale > 0)) throw new Error('scope.timebase.scale must be > 0');
   const channels = DEFAULT_CHANNELS.map((d, i) => {
     const c = scope.channels?.[i] ?? {};
-    const ch = { source: c.source ?? d.source, on: c.on ?? d.on, scale: Number(c.scale ?? d.scale), offset: Number(c.offset ?? d.offset) };
-    if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(ch.source)) throw new Error(`scope.channels[${i}].source: a signal name such as r, y1 or u`);
+    const ch = { source: c.source ?? (loop ? LOOP_CHANNELS[i] : d.source), on: c.on ?? (loop || d.on), scale: Number(c.scale ?? d.scale), offset: Number(c.offset ?? d.offset) };
+    if (ch.source !== '' && !/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(ch.source)) throw new Error(`scope.channels[${i}].source: a signal name such as r, y1 or u, or "" for none`);
+    if (ch.source === '') ch.on = false;
     if (!(ch.scale > 0) || !Number.isFinite(ch.offset)) throw new Error(`scope.channels[${i}]: scale must be > 0 and offset a number`);
     ch.on = !!ch.on;
     return ch;

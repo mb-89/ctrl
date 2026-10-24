@@ -30,8 +30,8 @@ One JSON document. Everything the person sets up is in it, including how the dis
     "channels": [
       { "source": "r", "on": true, "scale": 0.2, "offset": -0.4 },
       { "source": "y1", "on": true, "scale": 0.2, "offset": -0.4 },
-      { "source": "u", "on": false, "scale": 0.5, "offset": 0 },
-      { "source": "e", "on": false, "scale": 0.2, "offset": 0 }
+      { "source": "", "on": false, "scale": 0.5, "offset": 0 },
+      { "source": "", "on": false, "scale": 0.2, "offset": 0 }
     ]
   },
   "goal": { "minimize": { "itae": 1 }, "subjectTo": {} },
@@ -44,7 +44,7 @@ One JSON document. Everything the person sets up is in it, including how the dis
 - `sim.sampleTime` is the controller's sample time, present once a controller defines it; without it the window is sampled at 2000 points.
 - `system.signals`: named signals, each a `period` (it repeats with it) and summed `components` (see [signal-generator.md](signal-generator.md)). A component may carry `"enabled": false`; a Function carries `"expr"`; an Arb carries `"points": [[t, v], …]`. Every Source block's signal exists here.
 - `system.plant`: a diagram (`"type": "diagram"`, see [plant-editor.md](plant-editor.md)) or a single model block (`{ "type": "firstOrder", "params": … }`). A diagram block is `id`, `type`, `params`, `x`, `y`, optional `name` and `flip`; a subsystem carries its own `diagram`. A wire end is a block id, with `:k` for port k (0-based). A diagram plant may carry `views`, its 2D representations ([plant-views.md](plant-views.md)). Actuator, sensor, disturbance and noise (used in a closed loop) default to ideal / none.
-- `scope.channels[i].source` is any signal name: a Source signal, a Sink, or a loop signal (y, u, e) once a controller exists.
+- `scope.channels[i].source` is any signal name: a Source signal, a Sink, or a loop signal (y, u, e) once a controller exists; `""` is no source.
 - `library`: subsystems the person saved to My blocks.
 - `scope.channels[i].offset` is in the channel's units: the value drawn on the centre line is `−offset`.
 - Older files still load: `system.reference` becomes `system.signals.r`; version 1 (one reference block, `sim.duration`) becomes one component with a period no shorter than the old run; a `pulse` becomes a Square with count 1; a Square's `duty` becomes its high time.

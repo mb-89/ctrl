@@ -117,7 +117,8 @@ export function createControls(root, app) {
     keys.append(b);
   });
   const src = $('#ch-src');
-  src.addEventListener('change', () => setScope((sc) => { sc.channels[app.channel].source = src.value; }));
+  // Picking a source switches the channel on; "none" switches it off.
+  src.addEventListener('change', () => setScope((sc) => { const c = sc.channels[app.channel]; c.source = src.value; c.on = src.value !== ''; }));
 
   let mode = 'stop';
   function render(m = mode) {
@@ -132,9 +133,9 @@ export function createControls(root, app) {
       b.classList.toggle('sel', i === app.channel);
       b.setAttribute('aria-pressed', String(sc.channels[i].on));
     });
-    const names = [...new Set([...app.signalNames(), ch().source])];
+    const names = [...new Set([...app.signalNames(), ch().source].filter(Boolean))];
     if (src.dataset.names !== names.join(',')) {
-      src.innerHTML = names.map((n) => `<option value="${n}">${SOURCE_LABEL[n] ?? n}</option>`).join('');
+      src.innerHTML = '<option value="">— none</option>' + names.map((n) => `<option value="${n}">${SOURCE_LABEL[n] ?? n}</option>`).join('');
       src.dataset.names = names.join(',');
     }
     src.value = ch().source;
