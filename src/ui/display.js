@@ -13,7 +13,7 @@
 import { siUnit, num } from './units.js';
 import { step125 } from '../core/scale.js';
 import { channelSignal, drawFrequency, freqRange } from './freqview.js';
-import { drawXY, vOfX } from './xyview.js';
+import { drawXY, vOfX, valueLabel, valueTargets, xyStatus, xyFrame, xyNearest } from './xyview.js';
 
 export const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
@@ -35,6 +35,9 @@ export function createDisplay(root, handlers) {
   let W = 0, H = 0, dpr = 1;
   let data = null, scope = null, preview = null, selected = 0, line = null;
   let mode = 'stop', tScan = 0, last = 0, raf = 0, hover = null, box = null;
+  // Where the cursor last pointed in time, kept after it leaves the screen
+  // (until a run starts): the instant the Analysis tab's "Scope time" uses.
+  let cursorT = null;
   // Earlier runs, newest first; each fades a step per run and is gone after
   // five (the person, 2026-10-24), so an edit can be compared with before.
   const RUNS = 5;
@@ -51,11 +54,26 @@ export function createDisplay(root, handlers) {
     draw();
   }
   // The plot area; wider right margin when a second axis is shown there.
+  // The value axes get room for their widest label, so a long one (−0.0121)
+  // keeps its sign instead of starting off the canvas.
   const viewMode = () => scope?.view?.mode ?? 'time';
   const rightAxis = () => (viewMode() === 'time' ? rightSet() : null);
+  const labelsWidth = (i) => {
+    if (i === null || i === undefined || !visible(i)) return 0;
+    ctx.font = `10.5px ${MONO}`;
+    let w = 0;
+    for (let j = 0; j <= DIVY; j++) w = Math.max(w, ctx.measureText(valueLabel(scope.channels[i], j)).width);
+    return w;
+  };
   function layout() {
-    const wide = scope && (viewMode() === 'spectrogram' || rightAxis() !== null);
-    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - (wide ? PAD_RIGHT_AXIS : PAD.r), b: H - PAD.b });
+    const vm = viewMode(), wide = scope && (vm === 'spectrogram' || rightAxis() !== null);
+    let l = PAD.l, r = wide ? PAD_RIGHT_AXIS : PAD.r;
+    if (scope && data && (vm === 'time' || vm === 'xy')) {
+      const left = vm === 'xy' ? xyFrame({ data, scope, axis: axisChannel(), k: data.t.length - 1, win }).axis : axisChannel();
+      l = Math.max(PAD.l, Math.ceil(labelsWidth(left)) + 26);
+      if (rightAxis() !== null) r = Math.max(PAD_RIGHT_AXIS, Math.ceil(labelsWidth(rightAxis())) + 10);
+    }
+    Object.assign(P, { l, t: PAD.t, r: W - r, b: H - PAD.b });
     P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
   }
 
@@ -111,21 +129,14 @@ export function createDisplay(root, handlers) {
     if (!visible(ci)) return;
     g.fillStyle = CHANNEL_COLORS[ci];
     g.textAlign = 'right'; g.textBaseline = 'middle';
-    for (let j = 0; j <= DIVY; j++) {
-      const y = P.t + j * P.dy;
-      const v = (DIVY / 2 - j) * ch.scale - ch.offset;
-      g.fillText(num(Math.abs(v) < ch.scale * 1e-9 ? 0 : v, 3), P.l - 22, Math.min(P.b - 5, Math.max(P.t + 5, y)));
-    }
+    for (let j = 0; j <= DIVY; j++) g.fillText(valueLabel(ch, j), P.l - 22, Math.min(P.b - 5, Math.max(P.t + 5, P.t + j * P.dy)));
     // A second channel's values at the right (the person, 2026-10-24).
     const ri = rightAxis();
     if (ri === null) return;
     const rc = scope.channels[ri];
     g.fillStyle = CHANNEL_COLORS[ri];
     g.textAlign = 'left';
-    for (let j = 0; j <= DIVY; j++) {
-      const v = (DIVY / 2 - j) * rc.scale - rc.offset;
-      g.fillText(num(Math.abs(v) < rc.scale * 1e-9 ? 0 : v, 3), P.r + 6, Math.min(P.b - 5, Math.max(P.t + 5, P.t + j * P.dy)));
-    }
+    for (let j = 0; j <= DIVY; j++) g.fillText(valueLabel(rc, j), P.r + 6, Math.min(P.b - 5, Math.max(P.t + 5, P.t + j * P.dy)));
   }
 
   // Polyline of v over t for samples [from, to], collapsing samples that share
@@ -170,7 +181,7 @@ export function createDisplay(root, handlers) {
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
     layout();
     if (viewMode() === 'xy') {
-      drawXY({ g: ctx, P, data, past, scope, k: mode !== 'stop' ? indexAt(tScan) : data.t.length - 1, axis: axisChannel(), line, colors: CHANNEL_COLORS, drawGrid, unitLabel, vy, win, runs: RUNS });
+      drawXY({ ...xyArgs(), g: ctx, past, colors: CHANNEL_COLORS, drawGrid, runs: RUNS, hover: box || !hover || region(hover.x, hover.y) !== 'plot' ? null : hover });
       renderStatus();
       return;
     }
@@ -303,7 +314,7 @@ export function createDisplay(root, handlers) {
     const vm = viewMode(), fr = vm === 'fft' || vm === 'spectrogram' ? freqRange(scope, data) : null;
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
       ${fr ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
-      ${vm === 'xy' ? `<span class="st st-view">XY${scope.view?.delta ? ' · Δ X − Y' : ''}</span>` : ''}
+      ${vm === 'xy' ? `<span class="st st-view">${xyStatus(scope, unitLabel, visible)}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
       ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
@@ -338,7 +349,7 @@ export function createDisplay(root, handlers) {
       }
     }
     draw();
-    if (mode !== 'stop') raf = requestAnimationFrame(frame);
+    if (mode !== 'stop') { raf = requestAnimationFrame(frame); handlers.onTime?.(); }
     else last = 0;
   }
   const kick = () => { if (!raf) raf = requestAnimationFrame(frame); };
@@ -377,9 +388,19 @@ export function createDisplay(root, handlers) {
   }
 
   // The channels a vertical gesture acts on: the selected line, or every
-  // channel that shows a signal.
-  // In XY mode channel 1 is the horizontal axis, so not among them.
-  const targets = () => (line !== null ? [line] : [0, 1, 2, 3].filter((i) => visible(i) && !(i === 0 && viewMode() === 'xy')));
+  // channel that shows a signal; in XY never channel 1, the horizontal axis.
+  const targets = () => valueTargets(viewMode(), line, visible);
+  // What XY needs to find its figure (drawing, and the sample under the pointer).
+  const xyArgs = () => ({ P, data, scope, k: mode !== 'stop' ? indexAt(tScan) : data.t.length - 1, axis: axisChannel(), line, unitLabel, vy, win });
+  // The time under the pointer, where the screen shows time across (Time,
+  // Spectrogram), or of the XY figure's sample nearest it; else null.
+  function hoverTime() {
+    if (!hover || box || !data || !scope || region(hover.x, hover.y) !== 'plot') return null;
+    const vm = viewMode();
+    if (vm === 'time' || vm === 'spectrogram') return Math.max(0, Math.min(data.t[data.t.length - 1], xt(hover.x)));
+    if (vm === 'xy') { const near = xyNearest(xyArgs(), hover.x, hover.y); return near ? data.t[near.j] : null; }
+    return null;
+  }
   // XY mode: channel 1's scale and position, around a screen column.
   function zoomX(sc, x, dir) {
     const ch = sc.channels[0], vc = vOfX(P, ch, x), kx = (x - P.l - P.w / 2) / P.dx;
@@ -489,6 +510,8 @@ export function createDisplay(root, handlers) {
     }
     const where = region(p.x, p.y);
     canvas.style.cursor = hitLine(p.x, p.y) !== null ? 'grab' : where === 'xaxis' ? 'ew-resize' : where === 'yaxis' ? 'ns-resize' : 'crosshair';
+    const ht = hoverTime();
+    if (ht !== null && ht !== cursorT) { cursorT = ht; handlers.onTime?.(); }
     redraw();
   });
   const finish = () => {
@@ -535,15 +558,30 @@ export function createDisplay(root, handlers) {
     handlers.endEdit();
   }
 
+  function instant() {
+    if (!scope) return { t: 0, from: 'edge' };
+    const h = hoverTime();
+    if (h !== null) return { t: h, from: 'cursor' };
+    if (mode !== 'stop') return { t: tScan, from: 'sweep' };
+    if (cursorT !== null) return { t: cursorT, from: 'cursor' };
+    return { t: win()[1], from: 'edge' };
+  }
+
   new ResizeObserver(resize).observe(screen);
   document.fonts?.ready.then(() => draw());
 
   return {
     setData(d) { data = d; if (line !== null && !visible(line)) line = null; renderBadges(); draw(); },
-    setScope(s, sel) { scope = s; selected = sel; if (line !== null && line !== sel) line = null; renderBadges(); draw(); },
+    setScope(s, sel) {
+      scope = s; selected = sel;
+      // In XY, channel 1 is the X axis: a line selected on it in Time is released.
+      if (line !== null && (line !== sel || (viewMode() === 'xy' && line === 0))) line = null;
+      renderBadges(); draw();
+    },
     setPreview(p) { preview = p; draw(); },
     setMode(m, { restart = false } = {}) {
       if ((m === 'single' || restart) && scope) { if (m === 'single' && mode !== 'single') keepRun(); tScan = win()[0]; }
+      if (m !== 'stop') cursorT = null;
       mode = m;
       last = 0;
       kick();
@@ -554,13 +592,12 @@ export function createDisplay(root, handlers) {
     keep(d = data) { if (d) past = [d, ...past].slice(0, RUNS - 1); draw(); },
     get data() { return data; },
     releaseLine() { if (line === null) return false; selectLine(null); return true; },
-    // The instant other views follow: the hover cursor, else the scan line
-    // while sweeping, else the right edge of the screen.
-    time() {
-      if (!scope) return 0;
-      if (hover && region(hover.x, hover.y) === 'plot') return xt(hover.x);
-      return mode !== 'stop' ? tScan : win()[1];
-    },
+    // The instant other views follow: the cursor's time (where the screen
+    // shows time across, or the XY sample under it), else the scan line while
+    // sweeping, else where the cursor last pointed, else the right edge of
+    // the screen. timeFrom() says which one it is.
+    time() { return instant().t; },
+    timeFrom() { return instant().from; },
     get mode() { return mode; },
   };
 }

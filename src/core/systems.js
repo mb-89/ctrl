@@ -30,6 +30,9 @@ function fromPlant(e) {
 // value has its own tone, the same on every card. The opposites Linear and
 // Nonlinear take the warm and cool poles. Tones are the eight slots of a
 // palette validated for colour-vision deficiency; the label is always shown.
+// A tone is not shared with a tag a value appears beside, nor by two values
+// of one kind in the filter row: Disturbance is violet (red is Nonlinear,
+// beside it on three cards), so XY moved to yellow.
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
 export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
@@ -37,7 +40,7 @@ const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'green',
   PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
   'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
-  Disturbance: 'red', FFT: 'blue', Spectrogram: 'magenta', XY: 'violet', 'Auto-tune': 'green', HIL: 'orange',
+  Disturbance: 'violet', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
 };
 // A value without its own tone gets one from its label, so it stays put.
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
@@ -64,7 +67,10 @@ export function systemTags(e) {
   if (!ctrls.length) add('No controller', 'none');
   for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
   for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
-  if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd')) add('Disturbance', 'feature');
+  // A disturbance only when d plays something: a Source d whose signal has
+  // no components stays at 0 (Following a sine keeps one for the person to fill).
+  const plays = (name) => !e.signals || (e.signals[name]?.components?.length ?? 0) > 0;
+  if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd') && plays('d')) add('Disturbance', 'feature');
   if (e.scope?.view?.mode) add({ fft: 'FFT', spectrogram: 'Spectrogram', xy: 'XY' }[e.scope.view.mode], 'feature');
   if (e.ui?.tab === 'tune') add('Auto-tune', 'feature');
   for (const t of e.tags ?? []) add(t.label, t.kind ?? 'feature');

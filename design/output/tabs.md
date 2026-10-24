@@ -10,6 +10,6 @@ Reader: whoever adds or changes a tab.
 | 2 | Plant | The system as a block diagram: Sources play signals, Sinks are what the scope shows ([plant-editor.md](plant-editor.md)) | built |
 | 3 | Controller | The plant's Controller blocks and their variants: pick the one that runs, edit its parameters, add more from the controller library ([controller-proposal.md](controller-proposal.md)) | built |
 | 4 | Auto-tune | Improving a Controller block's running variant by simulation: the goal (IAE/ITAE/ISE, effort, overshoot bound; d included), and three methods: iterate (Nelder–Mead), relay (Ku, Pu, a rule), step response (SIMC) ([autotune.md](autotune.md)) | built |
-| 5 | Analysis | Computed views: root locus, Bode, Nyquist, pole-zero, step metrics | planned |
+| 5 | Analysis | A Controller block's loop, linearised at an operating point: key numbers (stability, gain and phase margins, Ms, poles, the linear step), root locus, Bode, Nyquist, the step r → y ([analysis.md](analysis.md)) | built; waits for the design layer's plant model (`app.loopModel`, branch `feat/designs`) and says so until it is merged |
 
-Tabs not built yet are shown, so the path is visible, but say plainly that they come later.
+Tabs not built yet are shown, so the path is visible, but say plainly that they come later. A tab that is built but still needs a part from another branch says what it waits for.

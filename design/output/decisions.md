@@ -2,6 +2,19 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.7, review of the Analysis tab and XY
+
+A review found 21 problems (numerics and browser); all are fixed on `feat/review-fixes`, each with a test where it can be tested ([analysis.md](analysis.md), [instrument.md](instrument.md)).
+
+- **The gain interval counts the crossings of −1 at z = 1 and z = −1**, where L is real; before, the library pendulum's catch loop read ×0.349 … ∞ while its poles say ×0.349 … ×12.2. The interval is checked on the closed-loop poles.
+- **An unstable loop is not graded.** Its gain row reads "Stable for gain ×a … ×b" (the gains at which it would be stable), its delay margin "—". Interpretation: a margin of a loop that is already unstable misleads.
+- **Marginal is its own verdict** ("! marginal": a pole on the unit circle, a free integrator or an undamped mode), not "stable". Poles within 10⁻⁷ of |z| = 1 are on the circle and in neither P nor Z; repeated poles are judged by their mean. Interpretation: the tolerance; at Ts = 1 ms it calls a pole slower than τ ≈ 10⁴ s an integrator.
+- **Dead time is exact to a fraction of a sample** (modified z-transform), so a fraction no longer rounds away. The frequency grid starts a decade below the loop's slowest pole instead of at 10⁻⁴·π/Ts, and the phase adds the loop's dead time exactly.
+- **The linear step's final value is the closed loop's DC gain**, and a response that does not settle in its window (ten time constants of the slowest pole) says so.
+- **"Scope time" follows the scope**: the cursor, or where it last pointed until the next run; the sweep while running (recomputed up to four times a second); else the right edge. The notes say which. Interpretation: remembering the last cursor position, because the cursor is on the button when Scope time is pressed.
+- **XY**: channel 1 is never moved by a gesture on the screen (a line 1 selected in Time is released on entering XY); hovering marks the figure's nearest sample, and the views follow its time (the X pixel is not a time in XY, nor the frequency in FFT); a channel that switches between X − Y and itself is fitted again (pressing Time on *Following a sine* left the angle at the error's scale). Interpretation: refitting rather than keeping two scales per channel, so the project format stays as it is.
+- **Tags**: *Disturbance* only where d plays something; *Disturbance* violet, not Nonlinear's red beside it on three cards, and *XY* yellow, so no two features share a tone in the filter row. (The person's rule: values that differ look different at a glance.)
+
 ## 2026-10-24 · v2.7 ([input](../input/2026-10-24-09-analysis-autotune-triple-swingup.md))
 
 - **The physics is never wrong; a controller may be.** (Person: "The control loops can be stupid, but the physics can't be wrong.") Each physics block is held by tests to conservation laws and textbook results (`test/physics.test.mjs`). A picture draws the state as it is: no clamped positions, so it never shows what the model does not do. Found by the person: the pendulum on "State feedback only" (designed for upright, started hanging) saturates and accelerates the cart at 20 m/s², and the picture pinned the cart at the rail's end while the pole trailed at 64°, which looked impossible. The model was right; the picture lied.

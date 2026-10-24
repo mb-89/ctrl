@@ -11,6 +11,8 @@ Reader: whoever picks the next piece of work.
 - Tab 2, Plant: block-diagram editor with Sources, Sinks, Terminator, Switch, subsystems, a resizable folding library, sensors and a cart–pole ([plant-editor.md](plant-editor.md)); 2D views in the plant's JSON ([plant-views.md](plant-views.md)).
 - Tab 3, Controller: Controller blocks with variants (PID, state feedback, gain-scheduled PI, energy swing-up, relay, off), the tab to flip and tune them ([controller-proposal.md](controller-proposal.md)).
 - Tab 4, Auto-tune: Nelder–Mead on a simulated cost (watched iteration by iteration), relay feedback with Ziegler–Nichols, Tyreus–Luyben and no-overshoot rules, step response with SIMC; results as new variants, one undo step; the Oven, badly tuned example; `node cli.mjs autotune` and `window.loopTuner.autotune()` for agents ([autotune.md](autotune.md)).
+- Tab 5, Analysis: key numbers (stable, marginal or unstable; gain interval on both sides, phase and delay margins, Ms, Mt, poles, P/N/Z, the linear step with its DC-gain final value), root locus, Bode, Nyquist, step; discrete as simulated, dead time exact to a fraction of a sample; reviewed and fixed ([analysis.md](analysis.md)). It waits for the design layer's plant model (`app.loopModel`, branch `feat/designs`) and says so until then.
+- The scope's XY mode with Δ (the error over the reference), its gestures, status and refit on a mode change ([instrument.md](instrument.md)).
 - System library: eight 5-second systems, seven of them controlled (motor, following a sine, encoder, conical tank, pendulum swing-up, triple pendulum, the badly tuned oven), with disturbances.
 - Earlier runs fade over five runs for comparison.
 - (Superseded) System library: three systems that move, loaded whole or by part, opening running on their view ([system-library.md](system-library.md)).
@@ -20,7 +22,7 @@ Reader: whoever picks the next piece of work.
 
 1. **Auto-tune, more**: the goal saved in the project; a robustness check against plant variations; flipping through a block's variants; AMIGO and Cohen–Coon rules, phase-margin placement from the relay's measured point; simulations in a Worker.
 2. **Controller, more**: variants built as diagrams (freeform), MIMO, more library entries (lead/lag, observer-based state feedback, MPC).
-3. **Analysis tab**: root locus, Bode, Nyquist, pole-zero, computed step metrics.
+3. **Analysis, wired**: merge the design layer so `app.loopModel` gives the tab its plant; then the gain marker on the locus, the gang of four, Nichols, disk margins, and the root locus in a Worker for loops with long dead times ([analysis.md](analysis.md), "Not built yet").
 
 ## Later
 
