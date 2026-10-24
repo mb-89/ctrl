@@ -5,6 +5,7 @@
 //   node build.mjs            -> dist/loop-tuner.html (standalone) and dist/artifact.html (page fragment)
 //   import { buildHtml } ...  -> used by the CLI to embed a project
 
+import { stripComments } from './tools/strip-comments.mjs';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,7 +20,9 @@ const MODULES = [
 // and its imports are read back from it.
 export function bundleScript() {
   const parts = MODULES.map((m) => {
-    const src = readFileSync(join(ROOT, 'src', m), 'utf8');
+    // The page carries code, not the repository's comments (and no trace of
+    // where it was made: test/provenance.test.mjs).
+    const src = stripComments(readFileSync(join(ROOT, 'src', m), 'utf8'));
     if (/^export\s+(default|\{)/m.test(src)) throw new Error(`${m}: only "export function/const" is supported`);
     const names = [...src.matchAll(/^export\s+(?:function\*?|const|let|class)\s+([A-Za-z_$][\w$]*)/gm)].map((x) => x[1]);
     const body = src
@@ -136,13 +139,16 @@ const jsonScript = (project) => `<script type="application/json" id="loop-tuner-
 
 // fragment: the page body for hosts that supply their own document skeleton.
 export function buildHtml({ project = null, fragment = false } = {}) {
-  const css = readFileSync(join(ROOT, 'src/ui/style.css'), 'utf8');
+  const css = readFileSync(join(ROOT, 'src/ui/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\n\s*\n+/g, '\n');
   const js = bundleScript().replace(/<\/script/gi, '<\\/script');
   const title = project?.title ? `${project.title} · Loop Tuner` : 'Loop Tuner';
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const body = `${SHELL}\n${project ? jsonScript(project) : '<script type="application/json" id="loop-tuner-project"></script>'}\n<script id="lt-script">${js}</script>`;
   if (fragment) {
-    return `<title>${esc(title)}</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n${FONTS}\n<style id="lt-style">${css}</style>\n${body}\n`;
+    // Only the hosted page gets the host's save adapter; the standalone page
+    // (and every page it exports) knows nothing of the host.
+    const host = '<script id="lt-host">window.__ltHost = { saver: () => window.claude?.use?.(\'downloads\') ?? Promise.resolve(null) };</script>';
+    return `<title>${esc(title)}</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n${FONTS}\n<style id="lt-style">${css}</style>\n${host}\n${body}\n`;
   }
   return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(title)}</title>\n${FONTS}\n<style id="lt-style">${css}</style>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
 }

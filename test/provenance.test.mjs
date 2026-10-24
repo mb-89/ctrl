@@ -1,0 +1,30 @@
+// The built page must not say where it was made: no person's name, account,
+// repository, session, e-mail address or local path, and no quotes from the
+// design conversation (the person, 2026-10-24: "I don't want this to have any
+// provenance information"). The repository keeps its history; the page is
+// built without the source's comments, and only the hosted build carries the
+// host's save adapter.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { buildHtml } from '../build.mjs';
+
+const FORBIDDEN = [
+  /github|gitlab|bitbucket/i, /mb-89/i, /markus/i, /gmail/i, /[\w.+-]+@[\w-]+\.[a-z]{2,}/i,
+  /claude\.ai|anthropic/i, /session_[0-9A-Za-z]{6,}/, /co-authored-by/i, /claude-session/i,
+  /\/home\/[a-z]|\/Users\/[A-Za-z]|[A-Z]:\\\\Users/, /\/tmp\/claude|scratchpad/i,
+  /the person/i, /\b20\d\d-\d\d-\d\d\b/,
+];
+const snippet = (s, m) => s.slice(Math.max(0, m.index - 60), m.index + 60).replace(/\s+/g, ' ');
+
+test('the built page carries no provenance (names, accounts, repositories, sessions, paths, conversation quotes)', () => {
+  const pages = { standalone: buildHtml(), hosted: buildHtml({ fragment: true }), exported: buildHtml({ project: { title: 'x' } }) };
+  for (const [name, html] of Object.entries(pages)) {
+    for (const re of FORBIDDEN) {
+      const m = re.exec(html);
+      assert.equal(m, null, `${name}: ${re} matches "…${m && snippet(html, m)}…"`);
+    }
+  }
+  // The standalone page does not even name the host it was first shown in.
+  assert.equal(/claude/i.exec(pages.standalone), null, 'the standalone page mentions the host');
+  assert.ok(!/\/\/ ---- ui\//.test('') && pages.standalone.includes('\n// ---- ui/'), 'module markers stay (the live worker finds the core by them)');
+});
