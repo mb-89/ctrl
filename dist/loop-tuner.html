@@ -421,6 +421,27 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .taglegend .tag { --tone: var(--muted); }
 
 .ctable { grid-column: 2; font-family: var(--mono); }
+
+/* Analysis tab: key numbers at the left, four plots in the scope's style. */
+.an { display: grid; grid-template-columns: minmax(230px, 290px) 1fr; gap: 12px; height: 100%; min-height: 0; }
+.an-side { overflow: auto; min-height: 0; }
+.an-op { display: flex; gap: 4px; flex-wrap: wrap; }
+.an-op .key, .an-tg .key { min-height: 22px; padding: 0 7px; }
+.an-tg { display: flex; gap: 3px; }
+.an-verdict { font-size: 12.5px; line-height: 1.4; }
+.kw { border-collapse: collapse; font-size: 12px; width: 100%; }
+.kw th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 2px 8px 2px 0; white-space: nowrap; vertical-align: top; }
+.kw td { font-family: var(--mono); font-size: 11.5px; padding: 2px 6px 2px 0; color: var(--ink); vertical-align: top; }
+.grade { font-weight: 700; font-size: 11px; white-space: nowrap; }
+.grade-good { color: #0b8a0b; } .grade-fair { color: #a66f00; } .grade-poor { color: #c62f2f; }
+:root[data-theme="dark"] .grade-good { color: #2fd36f; } :root[data-theme="dark"] .grade-fair { color: #fab219; } :root[data-theme="dark"] .grade-poor { color: #ff6b6b; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .grade-good { color: #2fd36f; } :root:not([data-theme="light"]) .grade-fair { color: #fab219; } :root:not([data-theme="light"]) .grade-poor { color: #ff6b6b; } }
+.an-grid { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(190px, 1fr); gap: 8px; min-height: 0; overflow: auto; }
+.an-fig { margin: 0; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bezel); border-radius: 6px; padding: 4px; }
+.an-fig figcaption { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; color: var(--lcd-ink); padding: 0 4px 3px; font-family: var(--mono); white-space: nowrap; overflow: hidden; }
+.an-fig figcaption .dim { color: var(--lcd-dim); overflow: hidden; text-overflow: ellipsis; }
+.an-fig canvas { flex: 1 1 0; min-height: 0; width: 100%; display: block; }
+@media (max-width: 900px) { .an { grid-template-columns: 1fr; } .an-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -460,6 +481,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
     <div id="tab-input" role="tabpanel"></div>
     <div id="tab-plant" role="tabpanel" hidden></div>
     <div id="tab-controller" role="tabpanel" hidden></div>
+    <div id="tab-analysis" role="tabpanel" hidden></div>
     <div id="tab-later" role="tabpanel" hidden></div>
   </div>
 </section>
@@ -3960,7 +3982,7 @@ function normalizeProject(p) {
 // representation shown, and the setup area's share of the page height.
 // Unknown values are dropped.
 const UI_RUN = ['run', 'stop', 'single'];
-const UI_TABS = ['input', 'plant', 'controller'];
+const UI_TABS = ['input', 'plant', 'controller', 'analysis'];
 function normalizeUi(ui) {
   if (!ui || typeof ui !== 'object') return null;
   const out = {};
@@ -4978,6 +5000,210 @@ function dbScale(amp, floorDb = -100) {
 }
 
 return { nextPow2, fft, WINDOWS, coherentGain, amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale };
+})();
+// ---- core/analysis.js
+__mods['core/analysis.js'] = (() => {
+// Loop analysis for the Analysis tab: from the plant a Controller block sees
+// (linearised, continuous) and the controller's own discrete model, the open
+// loop L(z) cut at the actuator, and what control engineers read from it:
+// closed-loop poles (with ζ and ωn), the root locus, the frequency response
+// (Bode, Nyquist / Ortskurve), and the margins. Everything is discrete-time,
+// as the simulation samples (zero-order hold at the controller's Ts), so the
+// margins include the sampling delay. Research and sources:
+// design/research/analysis.md.
+//
+// Conventions: a state-space model is { A, B, C, D } with matrices as arrays
+// of rows. The plant has one input u and m outputs (the controller's
+// measurement inputs, in port order). The controller model has inputs
+// [r, y1 … ym] and one output u. L is SISO with negative feedback: the loop is
+// stable when 1 + L(z) has no zero on or outside the unit circle.
+
+const { c2d, eig, csolve } = __mods['core/linalg.js'];
+const zerosM = (r, c) => Array.from({ length: r }, () => new Array(c).fill(0));
+const col = (M, j) => M.map((row) => row[j]);
+
+// The plant as the controller samples it: discretised with a zero-order hold
+// at Ts, with each measurement's dead time (plant.delay[k], seconds) as a
+// chain of round(delay / Ts) unit delays, exact in discrete time.
+function discretePlant(plant, Ts) {
+  const { Ad, Bd } = c2d(plant.A, plant.B, Ts);
+  const n = Ad.length, m = plant.C.length, D0 = plant.D ?? zerosM(m, 1);
+  const d = Array.from({ length: m }, (_, k) => Math.max(0, Math.round((plant.delay?.[k] ?? 0) / Ts)));
+  const N = n + d.reduce((a, b) => a + b, 0);
+  const A = zerosM(N, N), B = zerosM(N, 1), C = zerosM(m, N), D = zerosM(m, 1);
+  for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) A[i][j] = Ad[i][j]; B[i][0] = Bd[i][0]; }
+  let o = n;
+  for (let k = 0; k < m; k++) {
+    if (!d[k]) { for (let j = 0; j < n; j++) C[k][j] = plant.C[k][j]; D[k][0] = D0[k][0]; continue; }
+    // The first delay state takes this sample's measurement, each next one the one before.
+    for (let j = 0; j < n; j++) A[o][j] = plant.C[k][j];
+    B[o][0] = D0[k][0];
+    for (let i = 1; i < d[k]; i++) A[o + i][o + i - 1] = 1;
+    C[k][o + d[k] - 1] = 1;
+    o += d[k];
+  }
+  return { A, B, C, D, delaySamples: d };
+}
+
+// The open loop cut at u (u_p = v, the controller output u_c read but not
+// applied): L(z) = −u_c / v with r = 0. Plant discretised with a ZOH at Ts.
+function openLoop(plant, ctrl, Ts) {
+  const P = discretePlant(plant, Ts);
+  const Ad = P.A, Bd = P.B, Cp = P.C, Dp = P.D;
+  const n = Ad.length, m = Cp.length, nc = ctrl.A.length;
+  // Controller columns that act on the measurements (inputs 1 … m); a law
+  // with fewer gains than measurements ignores the rest.
+  const cols = (row) => Array.from({ length: m }, (_, k) => row[1 + k] ?? 0);
+  const Bcy = ctrl.B.map(cols), Dcy = cols(ctrl.D[0]);
+  const N = n + nc;
+  const A = zerosM(N, N), B = zerosM(N, 1), C = [new Array(N).fill(0)];
+  for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) A[i][j] = Ad[i][j]; B[i][0] = Bd[i][0]; }
+  for (let i = 0; i < nc; i++) {
+    for (let j = 0; j < nc; j++) A[n + i][n + j] = ctrl.A[i][j];
+    for (let j = 0; j < n; j++) { let s = 0; for (let k = 0; k < m; k++) s += Bcy[i][k] * Cp[k][j]; A[n + i][j] = s; }
+    let s = 0; for (let k = 0; k < m; k++) s += Bcy[i][k] * Dp[k][0]; B[n + i][0] = s;
+  }
+  for (let j = 0; j < n; j++) { let s = 0; for (let k = 0; k < m; k++) s += Dcy[k] * Cp[k][j]; C[0][j] = -s; }
+  for (let j = 0; j < nc; j++) C[0][n + j] = -ctrl.C[0][j];
+  let D = 0; for (let k = 0; k < m; k++) D -= Dcy[k] * Dp[k][0];
+  return { A, B, C, D, Ts, n: N, delaySamples: P.delaySamples };
+}
+
+// Closed-loop poles in z for the loop gain multiplied by k (k = 1: as tuned).
+function closedLoop(L, k = 1) {
+  const den = 1 + k * L.D;
+  if (Math.abs(den) < 1e-12) return [];
+  return eig(L.A.map((row, i) => row.map((v, j) => v - (k * L.B[i][0] * L.C[0][j]) / den)));
+}
+
+// A z-plane pole as its continuous equivalent s = ln(z)/Ts, with ωn and ζ.
+function sOf(z, Ts) {
+  const r = Math.hypot(z.re, z.im);
+  if (r < 1e-300) return { re: -Infinity, im: 0, wn: Infinity, zeta: 1 };
+  const re = Math.log(r) / Ts, im = Math.atan2(z.im, z.re) / Ts, wn = Math.hypot(re, im);
+  return { re, im, wn, zeta: wn > 0 ? -re / wn : 1 };
+}
+
+// L(e^{jωTs}) at one angular frequency ω (rad/s).
+function respondAt(L, w) {
+  const N = L.A.length, zr = Math.cos(w * L.Ts), zi = Math.sin(w * L.Ts);
+  if (!N) return { re: L.D, im: 0 };
+  const Mr = L.A.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v));
+  const Mi = L.A.map((row, i) => row.map((_, j) => (i === j ? zi : 0)));
+  const x = csolve(Mr, Mi, col(L.B, 0), new Array(N).fill(0));
+  if (!x) return { re: NaN, im: NaN };
+  let re = L.D, im = 0;
+  for (let i = 0; i < N; i++) { re += L.C[0][i] * x.xr[i]; im += L.C[0][i] * x.xi[i]; }
+  return { re, im };
+}
+
+// Frequency response on a log grid up to just below Nyquist (π/Ts), with the
+// phase unwrapped along the grid (dense enough that it moves less than 180°
+// between points; refined where it moves fast).
+function frequencyData(L, { points = 400, wmin } = {}) {
+  const wN = Math.PI / L.Ts, lo = wmin ?? wN * 1e-4;
+  const w = [];
+  for (let i = 0; i < points; i++) w.push(lo * (0.999 * wN / lo) ** (i / (points - 1)));
+  const G = w.map((x) => respondAt(L, x));
+  const mag = G.map((g) => Math.hypot(g.re, g.im));
+  const phase = [];
+  for (let i = 0; i < G.length; i++) {
+    let ph = (Math.atan2(G[i].im, G[i].re) * 180) / Math.PI;
+    if (i) ph += 360 * Math.round((phase[i - 1] - ph) / 360);
+    else if (ph > 0) ph -= 360;   // start on the lagging branch, as an engineer reads it
+    phase.push(ph);
+  }
+  return { w, re: G.map((g) => g.re), im: G.map((g) => g.im), mag, phase };
+}
+
+// Margins from the frequency data. Gain crossings |L| = 1 give phase margins
+// and delay margins ((∠L + 180°) mod 360° / ωc, valid for unstable loops too);
+// phase crossings ∠L = −180° (mod 360°) give the gain factors at which the
+// loop would cross −1. Ms = max |S| = max 1/|1 + L|, Mt = max |T| = max |L/(1+L)|.
+function loopMargins(fd, Ts) {
+  const { w, mag, phase, re, im } = fd;
+  const lerp = (a, b, f) => a + (b - a) * f;
+  const gainCrossings = [], phaseCrossings = [];
+  for (let i = 1; i < w.length; i++) {
+    const a = Math.log(mag[i - 1]), b = Math.log(mag[i]);
+    if (Number.isFinite(a) && Number.isFinite(b) && a * b <= 0 && a !== b) {
+      const f = a / (a - b), wc = Math.exp(lerp(Math.log(w[i - 1]), Math.log(w[i]), f)), ph = lerp(phase[i - 1], phase[i], f);
+      const pm = ((((ph + 180) % 360) + 540) % 360) - 180;
+      const dm = ((((ph + 180) % 360) + 360) % 360) * (Math.PI / 180) / wc;
+      gainCrossings.push({ w: wc, pm, dm, dmSamples: dm / Ts });
+    }
+    const pa = phase[i - 1] + 180, pb = phase[i] + 180;
+    const ka = Math.floor(pa / 360), kb = Math.floor(pb / 360);
+    if (ka !== kb) {
+      const target = 360 * Math.max(ka, kb) - 180;
+      const f = (target - phase[i - 1]) / (phase[i] - phase[i - 1]);
+      const wx = Math.exp(lerp(Math.log(w[i - 1]), Math.log(w[i]), f)), mx = Math.exp(lerp(Math.log(mag[i - 1]), Math.log(mag[i]), f));
+      phaseCrossings.push({ w: wx, mag: mx, gm: 1 / mx, gmDb: -20 * Math.log10(mx) });
+    }
+  }
+  let ms = 0, wMs = NaN, mt = 0, wMt = NaN;
+  for (let i = 0; i < w.length; i++) {
+    const d = Math.hypot(1 + re[i], im[i]);
+    if (1 / d > ms) { ms = 1 / d; wMs = w[i]; }
+    if (mag[i] / d > mt) { mt = mag[i] / d; wMt = w[i]; }
+  }
+  // The gain interval that keeps the loop where it is: the nearest crossings
+  // of −1 above and below the present gain.
+  const up = phaseCrossings.filter((c) => c.gm > 1).map((c) => c.gm), down = phaseCrossings.filter((c) => c.gm < 1).map((c) => c.gm);
+  const main = gainCrossings.reduce((best, c) => (!best || Math.abs(c.pm) < Math.abs(best.pm) ? c : best), null);
+  return {
+    gainCrossings, phaseCrossings,
+    wc: main?.w ?? NaN, pm: main?.pm ?? Infinity, dm: main ? Math.min(...gainCrossings.map((c) => c.dm)) : Infinity,
+    get dmSamples() { return this.dm / Ts; },
+    gmUp: up.length ? Math.min(...up) : Infinity, gmDown: down.length ? Math.max(...down) : 0,
+    ms, wMs, mt, wMt,
+  };
+}
+
+// The closed loop's response to a unit step in r (prefilter left out): the
+// first measurement y and the controller output u at each sample, for K
+// samples. The plant must not pass u straight to a measurement (D = 0), as
+// physical plants do not.
+function stepResponse(plant, ctrl, Ts, K = 200) {
+  const P = discretePlant(plant, Ts), n = P.A.length, m = P.C.length, nc = ctrl.A.length;
+  const col = (row, j) => row[j] ?? 0;
+  let xp = new Array(n).fill(0), xc = new Array(nc).fill(0);
+  const t = [], y = [], u = [];
+  for (let k = 0; k <= K; k++) {
+    const ym = P.C.map((row) => row.reduce((s, c, j) => s + c * xp[j], 0));
+    let uk = col(ctrl.D[0], 0);
+    for (let j = 0; j < m; j++) uk += col(ctrl.D[0], 1 + j) * ym[j];
+    for (let j = 0; j < nc; j++) uk += ctrl.C[0][j] * xc[j];
+    t.push(k * Ts); y.push(ym[0]); u.push(uk);
+    xp = P.A.map((row, i) => row.reduce((s, a, j) => s + a * xp[j], 0) + P.B[i][0] * uk);
+    xc = ctrl.A.map((row, i) => row.reduce((s, a, j) => s + a * xc[j], 0) + col(ctrl.B[i], 0) + ym.reduce((s, v, j) => s + col(ctrl.B[i], 1 + j) * v, 0));
+  }
+  return { t, y, u };
+}
+
+// Root locus: closed-loop poles for the loop gain scaled by each k.
+function locus(L, ks) { return ks.map((k) => ({ k, poles: closedLoop(L, k) })); }
+
+// Everything the tab shows, from the plant and controller models.
+function analyzeLoop(plant, ctrl, Ts, { points = 400 } = {}) {
+  const L = openLoop(plant, ctrl, Ts);
+  const olPoles = eig(L.A), clPoles = closedLoop(L, 1);
+  const outside = (ps) => ps.filter((p) => Math.hypot(p.re, p.im) > 1 + 1e-9).length;
+  const P = outside(olPoles), Z = outside(clPoles);
+  const fd = frequencyData(L, { points });
+  const margins = loopMargins(fd, Ts);
+  const cl = clPoles.map((z) => ({ z, s: sOf(z, Ts) }));
+  const oscillating = cl.filter((p) => Math.abs(p.s.im) > 1e-6);
+  const zetaMin = oscillating.length ? Math.min(...oscillating.map((p) => p.s.zeta)) : 1;
+  const slowest = cl.filter((p) => Number.isFinite(p.s.re)).reduce((a, p) => (!a || p.s.re > a.s.re ? p : a), null);
+  const ks = Array.from({ length: 121 }, (_, i) => 10 ** (-2 + (4 * i) / 120));
+  return {
+    L, Ts, olPoles, clPoles: cl, stable: Z === 0, P, Z, N: Z - P, zetaMin, slowest,
+    fd, margins, locus: locus(L, ks),
+  };
+}
+
+return { discretePlant, openLoop, closedLoop, sOf, respondAt, frequencyData, loopMargins, stepResponse, locus, analyzeLoop };
 })();
 // ---- ui/units.js
 __mods['ui/units.js'] = (() => {
@@ -6081,6 +6307,445 @@ function createDisplay(root, handlers) {
 }
 
 return { CHANNEL_COLORS, createDisplay };
+})();
+// ---- ui/plots.js
+__mods['ui/plots.js'] = (() => {
+// Small plots in the scope's style (dark screen, dotted grid, mono labels)
+// for the Analysis tab: a frame with linear or logarithmic axes, and helpers
+// to draw curves, points and markers in data coordinates.
+
+const { siUnit, num } = __mods['ui/units.js'];
+const BG = '#0a0d10';
+const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+const PLOT_COLORS = { ink: 'rgba(235, 240, 245, 0.9)', dim: 'rgba(200, 210, 218, 0.7)', grid: 'rgba(160, 175, 190, 0.18)', axis: 'rgba(160, 175, 190, 0.45)' };
+
+// Ticks for a linear axis: about n steps of 1, 2 or 5 × 10^k.
+function niceTicks(lo, hi, n = 6) {
+  const span = hi - lo;
+  if (!(span > 0)) return [lo];
+  const raw = span / n, mag = 10 ** Math.floor(Math.log10(raw)), f = raw / mag;
+  const step = (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * mag;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  return out;
+}
+// Padded range of values, ignoring non-finite ones.
+function extent(values, pad = 0.08) {
+  let lo = Infinity, hi = -Infinity;
+  for (const v of values) if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (!Number.isFinite(lo)) return [-1, 1];
+  if (lo === hi) { const d = Math.abs(lo) || 1; return [lo - d / 2, hi + d / 2]; }
+  const d = (hi - lo) * pad;
+  return [lo - d, hi + d];
+}
+
+// A plot in a canvas: create once, then frame() and draw on each render.
+function createPlot(canvas) {
+  const g = canvas.getContext('2d');
+  let W = 0, H = 0, P = null, ax = null;
+  function size() {
+    const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    W = Math.max(60, r.width); H = Math.max(60, r.height);
+    if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  const X = (x) => P.l + (ax.xlog ? (Math.log10(x) - Math.log10(ax.x0)) / (Math.log10(ax.x1) - Math.log10(ax.x0)) : (x - ax.x0) / (ax.x1 - ax.x0)) * (P.r - P.l);
+  const Y = (y) => P.b - ((y - ax.y0) / (ax.y1 - ax.y0)) * (P.b - P.t);
+  return {
+    g,
+    get P() { return P; },
+    X, Y,
+    // axes: { x0, x1, y0, y1, xlog, title, xlabel, ylabel, xunit, yunit, equal }
+    frame(axes) {
+      size();
+      ax = { ...axes };
+      P = { l: 52, t: axes.title ? 20 : 8, r: W - 10, b: H - 24 };
+      if (ax.equal) {
+        // Same scale on both axes (pole maps, Nyquist): widen the shorter range.
+        const sx = (ax.x1 - ax.x0) / (P.r - P.l), sy = (ax.y1 - ax.y0) / (P.b - P.t);
+        if (sx > sy) { const c = (ax.y0 + ax.y1) / 2, h = (sx * (P.b - P.t)) / 2; ax.y0 = c - h; ax.y1 = c + h; } else { const c = (ax.x0 + ax.x1) / 2, h = (sy * (P.r - P.l)) / 2; ax.x0 = c - h; ax.x1 = c + h; }
+      }
+      g.fillStyle = BG; g.fillRect(0, 0, W, H);
+      g.font = `10.5px ${MONO}`;
+      if (axes.title) { g.fillStyle = PLOT_COLORS.ink; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(axes.title, P.l, 4); }
+      // Grid and tick labels.
+      g.lineWidth = 1;
+      const xt = ax.xlog ? decades(ax.x0, ax.x1) : niceTicks(ax.x0, ax.x1, Math.max(3, Math.floor((P.r - P.l) / 70)));
+      const yt = niceTicks(ax.y0, ax.y1, Math.max(3, Math.floor((P.b - P.t) / 34)));
+      g.strokeStyle = PLOT_COLORS.grid;
+      g.beginPath();
+      for (const v of xt) { const x = Math.round(X(v)) + 0.5; g.moveTo(x, P.t); g.lineTo(x, P.b); }
+      for (const v of yt) { const y = Math.round(Y(v)) + 0.5; g.moveTo(P.l, y); g.lineTo(P.r, y); }
+      g.stroke();
+      g.fillStyle = PLOT_COLORS.dim;
+      g.textAlign = 'center'; g.textBaseline = 'top';
+      for (const v of xt) g.fillText(ax.xunit ? siUnit(v, ax.xunit, 3) : num(v, 3), X(v), P.b + 5);
+      g.textAlign = 'right'; g.textBaseline = 'middle';
+      for (const v of yt) g.fillText(ax.yunit ? siUnit(v, ax.yunit, 3) : num(v, 3), P.l - 5, Y(v));
+      // Zero lines, if inside.
+      g.strokeStyle = PLOT_COLORS.axis;
+      g.beginPath();
+      if (!ax.xlog && ax.x0 < 0 && ax.x1 > 0) { const x = Math.round(X(0)) + 0.5; g.moveTo(x, P.t); g.lineTo(x, P.b); }
+      if (ax.y0 < 0 && ax.y1 > 0) { const y = Math.round(Y(0)) + 0.5; g.moveTo(P.l, y); g.lineTo(P.r, y); }
+      g.stroke();
+      g.strokeRect(P.l + 0.5, P.t + 0.5, P.r - P.l - 1, P.b - P.t - 1);
+      if (axes.xlabel) { g.textAlign = 'right'; g.textBaseline = 'bottom'; g.fillStyle = PLOT_COLORS.dim; g.fillText(axes.xlabel, P.r - 3, P.b - 3); }
+      if (axes.ylabel) { g.textAlign = 'left'; g.textBaseline = 'top'; g.fillStyle = PLOT_COLORS.dim; g.fillText(axes.ylabel, P.l + 4, P.t + 3); }
+      return ax;
+    },
+    // Clip to the plot area for the drawing in fn.
+    clip(fn) { g.save(); g.beginPath(); g.rect(P.l, P.t, P.r - P.l, P.b - P.t); g.clip(); fn(); g.restore(); },
+    line(xs, ys, { color = PLOT_COLORS.ink, width = 1.5, dash = null, alpha = 1 } = {}) {
+      g.strokeStyle = color; g.lineWidth = width; g.globalAlpha = alpha; if (dash) g.setLineDash(dash);
+      g.beginPath();
+      let pen = false;
+      for (let i = 0; i < xs.length; i++) {
+        const x = X(xs[i]), y = Y(ys[i]);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) { pen = false; continue; }
+        if (pen) g.lineTo(x, y); else { g.moveTo(x, y); pen = true; }
+      }
+      g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+    },
+    // Markers: 'x' (pole), 'o' (zero), 'dot', '+'.
+    mark(x, y, { shape = 'dot', color = PLOT_COLORS.ink, size = 4, width = 1.6 } = {}) {
+      const px = X(x), py = Y(y);
+      if (!Number.isFinite(px) || !Number.isFinite(py)) return;
+      g.strokeStyle = color; g.fillStyle = color; g.lineWidth = width;
+      g.beginPath();
+      if (shape === 'x') { g.moveTo(px - size, py - size); g.lineTo(px + size, py + size); g.moveTo(px + size, py - size); g.lineTo(px - size, py + size); g.stroke(); }
+      else if (shape === 'o') { g.arc(px, py, size, 0, 2 * Math.PI); g.stroke(); }
+      else if (shape === '+') { g.moveTo(px - size, py); g.lineTo(px + size, py); g.moveTo(px, py - size); g.lineTo(px, py + size); g.stroke(); }
+      else { g.arc(px, py, size / 2, 0, 2 * Math.PI); g.fill(); }
+    },
+    text(x, y, s, { color = PLOT_COLORS.dim, align = 'left', base = 'middle', dx = 0, dy = 0 } = {}) {
+      g.font = `10.5px ${MONO}`; g.fillStyle = color; g.textAlign = align; g.textBaseline = base;
+      g.fillText(s, X(x) + dx, Y(y) + dy);
+    },
+    note(s, color = PLOT_COLORS.dim) {
+      g.font = `11px ${MONO}`; g.fillStyle = color; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(s, (P.l + P.r) / 2, (P.t + P.b) / 2);
+    },
+  };
+}
+
+function decades(a, b) {
+  const out = [];
+  for (let e = Math.floor(Math.log10(a)); e <= Math.ceil(Math.log10(b)); e++) { const v = 10 ** e; if (v >= a * 0.999 && v <= b * 1.001) out.push(v); }
+  return out.length ? out : [a, b];
+}
+
+return { PLOT_COLORS, niceTicks, extent, createPlot };
+})();
+// ---- ui/analysis.js
+__mods['ui/analysis.js'] = (() => {
+// Tab 5, Analysis: what control engineers read from a loop, computed from the
+// plant a Controller block sees (linearised at an operating point) and the
+// controller's own linear law, discrete at its sample time Ts as the
+// simulation runs it (the person, 2026-10-24: root locus, Ortskurve, Bode,
+// stability diagrams). Key numbers at the left; root locus, Bode, Nyquist and
+// the linear step response at the right. Hovering the Bode plot marks the
+// same frequency on the Nyquist curve. The X–Y plot is the scope's XY mode.
+// Research and thresholds: design/research/analysis.md; core: core/analysis.js.
+
+const { analyzeLoop, stepResponse, sOf, respondAt } = __mods['core/analysis.js'];
+const { createPlot, extent, PLOT_COLORS } = __mods['ui/plots.js'];
+const { CHANNEL_COLORS } = __mods['ui/display.js'];
+const { num } = __mods['ui/units.js'];
+const OPS = [
+  { key: 'origin', label: 'At rest', title: 'All states and u at 0 (the pendulums upright)' },
+  { key: 'initial', label: 'Start', title: 'The state the run starts from' },
+  { key: 't', label: 'Scope time', title: 'The state at the time under the cursor, or at the end of the screen' },
+];
+const [C_L, C_CL, C_OL, C_U] = CHANNEL_COLORS;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const deg = (r) => (r * 180) / Math.PI;
+
+// Good / fair / poor against the usual ranges (Åström & Murray §9.3,
+// Skogestad §2.4.3), always with a word, never colour alone.
+const GRADES = { good: ['✓', 'good'], fair: ['!', 'fair'], poor: ['✕', 'poor'] };
+const grade = (g) => (g ? `<span class="grade grade-${g}" title="${GRADES[g][1]}">${GRADES[g][0]} ${GRADES[g][1]}</span>` : '');
+const gradeMs = (ms) => (ms <= 1.4 ? 'good' : ms <= 2 ? 'fair' : 'poor');
+const gradePm = (pm) => (pm >= 45 ? 'good' : pm >= 30 ? 'fair' : 'poor');
+const gradeGm = (gm) => (gm >= 2.5 ? 'good' : gm >= 1.7 ? 'fair' : 'poor');
+
+// Log-compressed radius for the Nyquist plot: unchanged up to 1, then
+// 1 + ln ρ, so integrators and large gains fit while −1 stays put.
+const squash = (re, im) => { const r = Math.hypot(re, im); if (!(r > 1)) return [re, im]; const k = (1 + Math.log(r)) / r; return [re * k, im * k]; };
+
+// Step metrics of the linear response: final value, overshoot, 2 % settling.
+function stepMetrics(st) {
+  const y = st.y, yf = y.at(-1);
+  if (!Number.isFinite(yf) || Math.abs(yf) < 1e-12) return { yf };
+  const peak = Math.max(...y.map((v) => v / yf));
+  let k = y.length - 1;
+  while (k > 0 && Math.abs(y[k - 1] / yf - 1) <= 0.02) k--;
+  return { yf, overshoot: Math.max(0, (peak - 1) * 100), settle: st.t[k] };
+}
+
+function createAnalysisTab(host, app) {
+  let target = null, op = 'origin', plane = 's', cursorW = null, last = null, lastKey = '';
+  // Wheel zoom of the locus and the Nyquist plot (1 = the automatic view).
+  const zoom = { locus: 1, nyq: 1 };
+
+  host.innerHTML = `
+    <div class="an">
+      <section class="gcol an-side" aria-label="Key numbers">
+        <div class="ghead"><h3 class="glabel">Analysis</h3></div>
+        <div id="an-blocks" class="ctblocks"></div>
+        <div class="an-op" role="group" aria-label="Operating point">${OPS.map((o) => `<button class="key small" data-op="${o.key}" title="${o.title}">${o.label}</button>`).join('')}</div>
+        <div id="an-verdict" class="an-verdict"></div>
+        <table class="kw" id="an-kw"></table>
+        <div id="an-notes" class="phelp"></div>
+      </section>
+      <div class="an-grid" id="an-grid">
+        <figure class="an-fig"><figcaption><span>Root locus · poles</span><span class="an-tg"><button class="key small" data-plane="s">s</button><button class="key small" data-plane="z">z</button></span></figcaption><canvas id="an-locus" aria-label="Root locus"></canvas></figure>
+        <figure class="an-fig"><figcaption><span>Bode · open loop L</span><span id="an-bode-read" class="dim"></span></figcaption><canvas id="an-mag" aria-label="Bode magnitude"></canvas><canvas id="an-phase" aria-label="Bode phase"></canvas></figure>
+        <figure class="an-fig"><figcaption><span>Nyquist · Ortskurve of L</span><span id="an-nyq-read" class="dim"></span></figcaption><canvas id="an-nyq" aria-label="Nyquist plot"></canvas></figure>
+        <figure class="an-fig"><figcaption><span>Step r → y · linear model</span><span id="an-step-read" class="dim"></span></figcaption><canvas id="an-step" aria-label="Step response"></canvas></figure>
+      </div>
+    </div>
+    <div class="ctempty" id="an-empty" hidden></div>`;
+  const $ = (s) => host.querySelector(s);
+  const plots = { locus: createPlot($('#an-locus')), mag: createPlot($('#an-mag')), phase: createPlot($('#an-phase')), nyq: createPlot($('#an-nyq')), step: createPlot($('#an-step')) };
+
+  // Every Controller block, at any depth.
+  function controllers() {
+    const out = [], d = app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null;
+    const walk = (dd, path, where) => {
+      for (const b of dd.blocks) {
+        if (b.type === 'controller') out.push({ path: [...path, b.id], block: b, where: [...where, b.name ?? b.id].join(' / ') });
+        if (b.type === 'subsystem') walk(b.diagram, [...path, b.id], [...where, b.name ?? b.id]);
+      }
+    };
+    if (d) walk(d, [], []);
+    return out;
+  }
+
+  host.querySelectorAll('[data-op]').forEach((b) => b.addEventListener('click', () => { op = b.dataset.op; render(); }));
+  host.querySelectorAll('[data-plane]').forEach((b) => b.addEventListener('click', () => { plane = b.dataset.plane; draw(); }));
+  for (const id of ['#an-mag', '#an-phase']) {
+    const c = $(id);
+    c.addEventListener('pointermove', (e) => {
+      const P = plots.mag.P;
+      if (!last?.res || !P) return;
+      const r = c.getBoundingClientRect(), x = e.clientX - r.left, w = last.res.fd.w;
+      const f = (x - P.l) / (P.r - P.l);
+      cursorW = f < 0 || f > 1 ? null : w[0] * (w.at(-1) / w[0]) ** f;
+      draw();
+    });
+    c.addEventListener('pointerleave', () => { cursorW = null; draw(); });
+  }
+
+  for (const [id, k] of [['#an-locus', 'locus'], ['#an-nyq', 'nyq']]) {
+    $(id).addEventListener('wheel', (e) => { e.preventDefault(); zoom[k] = Math.min(1e3, Math.max(1e-3, zoom[k] * 1.25 ** Math.sign(e.deltaY))); draw(); }, { passive: false });
+    $(id).addEventListener('dblclick', () => { zoom[k] = 1; draw(); });
+    $(id).title = 'Wheel to zoom, double-click for the automatic view';
+  }
+
+  // The operating point as the provider takes it.
+  const opSpec = () => (op === 't' ? { t: app.scopeTime?.() ?? 0 } : op);
+
+  function compute() {
+    const all = controllers();
+    const c = all.find((x) => target && x.path.join('/') === target.join('/')) ?? all[0];
+    if (!c) return { empty: 'This system has no Controller block. Add one in the Plant tab, wire the reference to its first input and the measurements to the others.' };
+    target = c.path;
+    if (!app.loopModel) return { c, all, error: 'The analysis needs the plant a block sees, linearised at an operating point. That comes with the design layer.' };
+    const spec = opSpec();
+    const key = JSON.stringify([app.project.system, c.path, spec]);
+    if (key === lastKey && last) return last;
+    lastKey = key;
+    try {
+      const m = app.loopModel(c.path, spec);
+      const res = analyzeLoop(m.plant, m.ctrl, m.Ts);
+      const T = Math.min(20, Math.max(2, 8 / Math.max(1e-3, ...res.clPoles.map((p) => -p.s.re).filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b).slice(0, 1))));
+      const st = res.stable ? stepResponse(m.plant, m.ctrl, m.Ts, Math.min(4000, Math.round(T / m.Ts))) : null;
+      last = { c, all, m, res, st, sm: st ? stepMetrics(st) : null };
+    } catch (err) {
+      last = { c, all, error: err.message };
+    }
+    return last;
+  }
+
+  function renderSide(v) {
+    $('#an-blocks').innerHTML = v.all?.length > 1
+      ? v.all.map((x) => `<button class="sigkey ${x === v.c ? 'on' : ''}" data-path="${esc(x.path.join('/'))}">${esc(x.where)}</button>`).join('')
+      : v.c ? `<div class="ctname">${esc(v.c.where)} · ${esc(v.c.block.variants?.[v.c.block.variant ?? 0]?.name ?? '')}</div>` : '';
+    $('#an-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
+    host.querySelectorAll('[data-op]').forEach((b) => { b.classList.toggle('lit-view', b.dataset.op === op); b.setAttribute('aria-pressed', String(b.dataset.op === op)); });
+    if (!v.res) {
+      $('#an-verdict').innerHTML = '';
+      $('#an-kw').innerHTML = '';
+      $('#an-notes').textContent = v.error ?? '';
+      return;
+    }
+    const { res, m, sm } = v, g = res.margins, Ts = m.Ts;
+    $('#an-verdict').innerHTML = res.stable
+      ? `<span class="grade grade-good">✓ stable</span> <span class="dim">every closed-loop pole inside the unit circle</span>`
+      : `<span class="grade grade-poor">✕ unstable</span> <span class="dim">${res.Z} closed-loop pole${res.Z > 1 ? 's' : ''} outside the unit circle</span>`;
+    const rows = [];
+    const row = (k, val, extra = '', title = '') => rows.push(`<tr title="${esc(title)}"><th>${k}</th><td>${val}</td><td>${extra}</td></tr>`);
+    const gm = Number.isFinite(g.gmUp) ? `×${num(g.gmUp, 3)} (${num(20 * Math.log10(g.gmUp), 3)} dB)` : '∞';
+    row('Gain margin', g.gmDown > 0 ? `×${num(g.gmDown, 3)} … ${gm}` : gm, Number.isFinite(g.gmUp) ? grade(gradeGm(g.gmUp)) : '', 'The loop gain may change by these factors before the loop crosses −1');
+    row('Phase margin', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° at ${num(g.wc, 3)} rad/s` : '—', Number.isFinite(g.pm) ? grade(gradePm(g.pm)) : '', 'At the crossover |L| = 1, the phase left before −180°');
+    row('Delay margin', Number.isFinite(g.dm) ? `${num(g.dm * 1000, 3)} ms (${num(g.dmSamples, 3)} Ts)` : '—', '', 'The extra dead time the loop tolerates');
+    row('Ms = max |S|', `${num(g.ms, 3)} at ${num(g.wMs, 3)} rad/s`, grade(gradeMs(g.ms)), 'Peak sensitivity; 1/Ms is the closest approach to −1');
+    row('Mt = max |T|', `${num(g.mt, 3)}`, '', 'Peak complementary sensitivity');
+    if (res.slowest) {
+      const s = res.slowest.s;
+      row('Slowest pole', `τ = ${num(-1 / s.re, 3)} s`, '', `s = ${num(s.re, 3)} ${s.im >= 0 ? '+' : '−'} ${num(Math.abs(s.im), 3)}j`);
+    }
+    row('Least damping', `ζ = ${num(res.zetaMin, 3)}`, res.zetaMin < 1 ? grade(res.zetaMin >= 0.5 ? 'good' : res.zetaMin >= 0.25 ? 'fair' : 'poor') : '', 'Smallest damping ratio of the oscillating closed-loop poles');
+    row('Nyquist', `P ${res.P} · N ${res.N} · Z ${res.Z}`, '', 'P open-loop poles outside the unit circle, N clockwise encirclements of −1, Z = N + P closed-loop poles outside');
+    if (sm?.overshoot !== undefined) row('Step (linear)', `${num(sm.overshoot, 3)} % overshoot, settles ${num(sm.settle, 3)} s`, '', `final value ${num(sm.yf, 4)}`);
+    $('#an-kw').innerHTML = rows.join('');
+    const notes = [
+      `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
+      ...(res.L.delaySamples?.some((d) => d) ? [`dead time: ${res.L.delaySamples.map((d) => `${d} Ts`).join(', ')}, exact in discrete time`] : []),
+      'Linear: u is assumed inside its limits; the prefilter on r is outside the loop.',
+      ...(m.warnings ?? []),
+    ];
+    $('#an-notes').innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join('');
+  }
+
+  // Root locus in the s-plane (s = ln z / Ts) or the z-plane.
+  function drawLocus(v) {
+    const p = plots.locus, { res, m } = v, Ts = m.Ts;
+    const map = plane === 's' ? (z) => { const s = sOf(z, Ts); return Number.isFinite(s.re) ? [s.re, s.im] : null; } : (z) => [z.re, z.im];
+    let ax, hidden = 0;
+    if (plane === 'z') ax = { x0: -1.25 / zoom.locus, x1: 1.25 / zoom.locus, y0: -1.25 / zoom.locus, y1: 1.25 / zoom.locus };
+    else {
+      // The region the loop works in: poles up to ten times the crossover
+      // (or the slowest pole); faster ones (an armature, a derivative filter)
+      // are counted, not drawn.
+      const pts = [...res.olPoles, ...res.clPoles.map((q) => q.z)].map(map).filter(Boolean);
+      const mags = res.clPoles.map((q) => Math.hypot(q.s.re, q.s.im)).filter((x) => Number.isFinite(x) && x > 1e-9).sort((a, b) => a - b);
+      const lim = 10 * Math.max(Number.isFinite(res.margins.wc) ? res.margins.wc : 0, mags[0] ?? 1);
+      const near = pts.filter((q) => Math.hypot(q[0], q[1]) <= lim);
+      hidden = res.clPoles.filter((q) => Math.hypot(q.s.re, q.s.im) > lim).length;
+      const R = (Math.max(1e-6, ...near.map((q) => Math.hypot(q[0], q[1]))) * 1.3) / zoom.locus;
+      ax = { x0: -R, x1: 0.35 * R, y0: -0.8 * R, y1: 0.8 * R };
+    }
+    p.frame({ ...ax, equal: true, xlabel: plane === 's' ? 'Re s' : 'Re z', ylabel: plane === 's' ? 'Im s' : 'Im z' });
+    p.clip(() => {
+      const g = p.g;
+      // Stability boundary and, in s, the band edges ±π/Ts.
+      if (plane === 'z') {
+        const th = Array.from({ length: 181 }, (_, i) => (i / 180) * 2 * Math.PI);
+        p.line(th.map(Math.cos), th.map(Math.sin), { color: PLOT_COLORS.axis, width: 1.2 });
+      } else {
+        // ζ = 0.7 rays.
+        const c = Math.cos(Math.acos(0.7)), s = Math.sin(Math.acos(0.7)), R = Math.max(Math.abs(ax.x0), Math.abs(ax.y1)) * 2;
+        p.line([0, -R * c], [0, R * s], { color: PLOT_COLORS.grid, width: 1, dash: [3, 4] });
+        p.line([0, -R * c], [0, -R * s], { color: PLOT_COLORS.grid, width: 1, dash: [3, 4] });
+      }
+      g.globalAlpha = 0.55;
+      for (const { poles } of res.locus) for (const z of poles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'dot', color: C_L, size: 2.4 }); }
+      g.globalAlpha = 1;
+      for (const z of res.olPoles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'x', color: C_U, size: 5 }); }
+      for (const { z } of res.clPoles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'dot', color: C_CL, size: 8 }); }
+    });
+    p.text(ax.x0, ax.y0, ` × open loop  ● closed loop  · gain ×0.01…×100${hidden ? `  · ${hidden} faster off the plot` : ''}`, { base: 'bottom', dy: -4, dx: 4 });
+  }
+
+  function drawBode(v) {
+    const { res, m } = v, fd = res.fd, g = res.margins;
+    const dB = fd.mag.map((x) => 20 * Math.log10(x));
+    const [d0, d1] = extent(dB.filter((x) => x > -200), 0.08);
+    const a = plots.mag.frame({ x0: fd.w[0], x1: fd.w.at(-1), xlog: true, y0: Math.max(d0, -120), y1: Math.min(d1, 160), ylabel: '|L| dB' });
+    plots.mag.clip(() => {
+      plots.mag.line([a.x0, a.x1], [0, 0], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
+      plots.mag.line(fd.w, dB, { color: C_L, width: 1.8 });
+      for (const c of g.gainCrossings) plots.mag.mark(c.w, 0, { shape: 'o', color: C_CL, size: 4 });
+      for (const c of g.phaseCrossings) {
+        plots.mag.line([c.w, c.w], [20 * Math.log10(c.mag), 0], { color: C_U, width: 1.5 });
+        // Only the crossings that bound the gain interval get a label.
+        if (c.gm === g.gmUp || c.gm === g.gmDown) plots.mag.text(c.w, 20 * Math.log10(c.mag) / 2, `GM ×${num(c.gm, 3)}`, { color: C_U, dx: 5 });
+      }
+      if (cursorW) plots.mag.line([cursorW, cursorW], [a.y0, a.y1], { color: PLOT_COLORS.ink, width: 1, alpha: 0.6 });
+    });
+    const [p0, p1] = extent(fd.phase, 0.08);
+    const b = plots.phase.frame({ x0: fd.w[0], x1: fd.w.at(-1), xlog: true, y0: Math.min(p0, -190), y1: Math.max(p1, -80), xlabel: `ω rad/s · Nyquist ${num(Math.PI / m.Ts, 3)}`, ylabel: '∠L °' });
+    plots.phase.clip(() => {
+      for (let k = Math.ceil((b.y0 + 180) / 360); k * 360 - 180 <= b.y1; k++) plots.phase.line([b.x0, b.x1], [k * 360 - 180, k * 360 - 180], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
+      plots.phase.line(fd.w, fd.phase, { color: C_L, width: 1.8 });
+      for (const c of g.gainCrossings) {
+        const ph = respondPhase(fd, c.w);
+        plots.phase.line([c.w, c.w], [ph, ph - c.pm], { color: C_CL, width: 1.5 });
+        plots.phase.text(c.w, ph - c.pm / 2, `PM ${num(c.pm, 3)}°`, { color: C_CL, dx: -5, align: 'right' });
+      }
+      if (cursorW) plots.phase.line([cursorW, cursorW], [b.y0, b.y1], { color: PLOT_COLORS.ink, width: 1, alpha: 0.6 });
+    });
+    const at = cursorW ? respondAt(res.L, cursorW) : null;
+    $('#an-bode-read').textContent = at ? `ω ${num(cursorW, 3)} rad/s · |L| ${num(20 * Math.log10(Math.hypot(at.re, at.im)), 3)} dB · ∠ ${num(deg(Math.atan2(at.im, at.re)), 3)}°` : 'hover for a frequency';
+  }
+  // The unwrapped phase at ω, interpolated on the grid.
+  function respondPhase(fd, w) {
+    const i = Math.max(1, fd.w.findIndex((x) => x >= w));
+    const f = (Math.log(w) - Math.log(fd.w[i - 1])) / (Math.log(fd.w[i]) - Math.log(fd.w[i - 1]));
+    return fd.phase[i - 1] + f * (fd.phase[i] - fd.phase[i - 1]);
+  }
+
+  function drawNyquist(v) {
+    const p = plots.nyq, { res } = v, fd = res.fd, g = res.margins;
+    const pts = fd.re.map((re, i) => squash(re, fd.im[i]));
+    const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+    // Around −1, where the margins are read; the wheel zooms out to the rest.
+    const z = zoom.nyq;
+    p.frame({ x0: -1 - 2.2 / z, x1: -1 + 2.6 / z, y0: -2 / z, y1: 2 / z, equal: true, xlabel: 'Re L', ylabel: 'Im L  (|L| > 1: 1 + ln|L|)' });
+    p.clip(() => {
+      const th = Array.from({ length: 181 }, (_, i) => (i / 180) * 2 * Math.PI);
+      p.line(th.map(Math.cos), th.map(Math.sin), { color: PLOT_COLORS.axis, width: 1 });
+      // The Ms circle: |1 + L| = 1/Ms, the closest approach to −1.
+      const ring = th.map((a) => squash(-1 + Math.cos(a) / g.ms, Math.sin(a) / g.ms));
+      p.line(ring.map((q) => q[0]), ring.map((q) => q[1]), { color: C_U, width: 1.2, dash: [4, 3] });
+      p.line(xs, ys.map((y) => -y), { color: C_L, width: 1.2, dash: [5, 4], alpha: 0.6 });
+      p.line(xs, ys, { color: C_L, width: 1.8 });
+      p.mark(-1, 0, { shape: '+', color: '#ffffff', size: 6, width: 2 });
+      if (cursorW) { const at = respondAt(res.L, cursorW), q = squash(at.re, at.im); p.mark(q[0], q[1], { shape: 'o', color: '#ffffff', size: 5 }); }
+    });
+    $('#an-nyq-read').textContent = `P ${res.P} · N ${res.N} · Z ${res.Z} · Ms ${num(g.ms, 3)}`;
+  }
+
+  function drawStep(v) {
+    const p = plots.step, { st, sm, res } = v;
+    if (!st) { p.frame({ x0: 0, x1: 1, y0: -1, y1: 1 }); p.note(res?.stable === false ? 'unstable: no step response' : ''); $('#an-step-read').textContent = ''; return; }
+    const [y0, y1] = extent([...st.y, 0, 1], 0.08);
+    p.frame({ x0: 0, x1: st.t.at(-1), y0, y1, xunit: 's', ylabel: 'y (r = 1)' });
+    p.clip(() => {
+      p.line([0, st.t.at(-1)], [1, 1], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
+      p.line(st.t, st.y, { color: C_CL, width: 1.8 });
+    });
+    $('#an-step-read').textContent = sm?.overshoot !== undefined ? `final ${num(sm.yf, 3)} · overshoot ${num(sm.overshoot, 3)} %` : '';
+  }
+
+  function draw() {
+    const v = last;
+    if (!v?.res || host.hidden || $('#an-grid').hidden) return;
+    host.querySelectorAll('[data-plane]').forEach((b) => b.classList.toggle('lit-view', b.dataset.plane === plane));
+    drawLocus(v); drawBode(v); drawNyquist(v); drawStep(v);
+  }
+
+  function render() {
+    const v = compute();
+    $('#an-empty').hidden = !v.empty;
+    host.querySelector('.an').hidden = !!v.empty;
+    if (v.empty) { $('#an-empty').textContent = v.empty; return; }
+    renderSide(v);
+    $('#an-grid').hidden = !v.res;
+    if (!v.res) return;
+    requestAnimationFrame(draw);
+  }
+
+  new ResizeObserver(() => { if (!host.hidden) draw(); }).observe(host);
+  return {
+    render,
+    shown() { lastKey = ''; render(); },
+    open(path) { target = path; },
+  };
+}
+
+return { createAnalysisTab };
 })();
 // ---- ui/controls.js
 __mods['ui/controls.js'] = (() => {
@@ -7763,6 +8428,7 @@ const { diagramNames } = __mods['core/diagram.js'];
 const { createPlantEditor } = __mods['ui/plant.js'];
 const { isDelta } = __mods['ui/xyview.js'];
 const { createControllerTab } = __mods['ui/controller.js'];
+const { createAnalysisTab } = __mods['ui/analysis.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { DEFAULT_PROJECT } = __mods['core/examples.js'];
 const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = __mods['core/systems.js'];
@@ -7776,7 +8442,7 @@ const TABS = [
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
   { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
-  { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
+  { key: 'analysis', label: 'Analysis' },
 ];
 
 function startApp() {
@@ -8034,6 +8700,10 @@ function startApp() {
   const controllerTab = createControllerTab($('tab-controller'), app);
   // Opens the Controller tab on one Controller block (path of block ids).
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
+  // The Analysis tab; the scope's time (cursor, sweep or right edge) is its
+  // "Scope time" operating point.
+  const analysisTab = createAnalysisTab($('tab-analysis'), app);
+  app.scopeTime = () => display.time();
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -8044,6 +8714,8 @@ function startApp() {
     $('tab-plant').hidden = app.tab !== 'plant';
     $('tab-controller').hidden = app.tab !== 'controller';
     if (app.tab === 'controller') controllerTab.shown();
+    $('tab-analysis').hidden = app.tab !== 'analysis';
+    if (app.tab === 'analysis') analysisTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
@@ -8067,6 +8739,7 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    if (app.tab === 'analysis') analysisTab.render();
     renderChrome();
     autosave();
   }

@@ -7,6 +7,7 @@ import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
 import { isDelta } from './xyview.js';
 import { createControllerTab } from './controller.js';
+import { createAnalysisTab } from './analysis.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
 import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../core/systems.js';
@@ -21,7 +22,7 @@ const TABS = [
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
   { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
-  { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
+  { key: 'analysis', label: 'Analysis' },
 ];
 
 function startApp() {
@@ -279,6 +280,10 @@ function startApp() {
   const controllerTab = createControllerTab($('tab-controller'), app);
   // Opens the Controller tab on one Controller block (path of block ids).
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
+  // The Analysis tab; the scope's time (cursor, sweep or right edge) is its
+  // "Scope time" operating point.
+  const analysisTab = createAnalysisTab($('tab-analysis'), app);
+  app.scopeTime = () => display.time();
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -289,6 +294,8 @@ function startApp() {
     $('tab-plant').hidden = app.tab !== 'plant';
     $('tab-controller').hidden = app.tab !== 'controller';
     if (app.tab === 'controller') controllerTab.shown();
+    $('tab-analysis').hidden = app.tab !== 'analysis';
+    if (app.tab === 'analysis') analysisTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
@@ -312,6 +319,7 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    if (app.tab === 'analysis') analysisTab.render();
     renderChrome();
     autosave();
   }
