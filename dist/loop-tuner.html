@@ -364,6 +364,9 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .filtparams { display: flex; gap: 4px; flex: 2 1 auto; min-width: 0; }
 .filtparams .field { width: 0; flex: 1 1 52px; min-width: 44px; font-family: var(--mono); font-size: 12px; padding: 1px 4px; }
 .filtparams select.field { flex: 0 1 46px; }
+.lvrow { margin-top: 2px; gap: 4px; }
+.lvrow .field { width: 0; flex: 1 1 52px; min-width: 40px; font-family: var(--mono); font-size: 12px; padding: 1px 4px; text-align: right; }
+.lvrow .field:disabled { opacity: 0.55; }
 .tone-blue { --tone: #2a78d6; } .tone-orange { --tone: #eb6834; } .tone-aqua { --tone: #1baf7a; } .tone-yellow { --tone: #eda100; }
 .tone-magenta { --tone: #e87ba4; } .tone-green { --tone: #008300; } .tone-violet { --tone: #6250d6; } .tone-red { --tone: #e34948; }
 @media (prefers-color-scheme: dark) {
@@ -442,6 +445,55 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
   .tune { grid-template-columns: minmax(0, 1fr); height: auto; }
   .tune > .tuprogress { order: -1; }
 }
+.st-live { background: transparent; color: var(--lit-green); box-shadow: inset 0 0 0 1px var(--lit-green); }
+.st-estop { background: var(--lit-red); color: #3a0606; }
+.st-wait { background: transparent; color: var(--lit-amber); box-shadow: inset 0 0 0 1px var(--lit-amber); }
+.st-offline { background: transparent; color: #8a97a1; box-shadow: inset 0 0 0 1px #4a555e; }
+.lv { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.lv-line { display: flex; align-items: center; gap: 8px; }
+.lv-url { flex: 1; min-width: 0; height: 20px; padding: 0 4px; margin-left: -4px; border: 1px solid transparent; border-radius: 4px; background: transparent; font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
+.lv-url:hover:not(:disabled) { border-color: var(--line-strong); }
+.lv-url:focus { outline: none; background: var(--lcd); color: var(--lcd-ink); border-color: var(--lcd-ink); }
+.lv-url:disabled { color: var(--ink-2); }
+.lv-link { border: 0; background: none; padding: 0; font-size: 11.5px; color: var(--ink-2); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; white-space: nowrap; }
+.lv-link:hover { color: var(--ink); }
+.lv-stats { font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--ink-2); min-height: 1.45em; }
+.lv-stats > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lv-line[hidden] + .lv-stats { min-height: calc(24px + 1.45em); }  
+.lv-stats .bad { color: var(--bad); font-weight: 600; }
+.lv-stats .ok { color: var(--lit-green); }
+.key.estop:not(.lit-red):not(:disabled) { color: var(--bad); }
+.lv-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.display { grid-template-columns: minmax(0, 1fr) auto; }
+.display > .status, .display > .screen { grid-column: 1 / -1; }
+.display > .status { grid-row: 1; }
+.display > .screen { grid-row: 2; }
+.display > .badges { grid-row: 3; grid-column: 1; }
+.recbar { grid-row: 3; grid-column: 2; display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; color: #c9d3da; white-space: nowrap; }
+.recbar .rc-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #7f8c96; }
+.recbar .rc-state { color: #9aa7b1; }
+.recbar .rc-len { width: 54px; height: 24px; padding: 0 4px; border-radius: 4px; border: 1px solid #333a40; background: var(--lcd); color: var(--lcd-ink); font: inherit; text-align: center; }
+.recbar .rc-len:focus { outline: none; border-color: var(--lcd-ink); }
+.recbar .rkey { height: 26px; padding: 0 9px; border-radius: 4px; border: 1px solid #333a40; background: #13171b; color: #c9d3da; font: inherit; cursor: pointer; white-space: nowrap; }
+.recbar .rkey:hover { border-color: #5d6973; color: #e7ebee; }
+.recbar .rkey:focus-visible { outline: 2px solid #c9d3da; outline-offset: 1px; }
+.rc-menu { position: relative; }
+.rc-pop { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 5; display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 6px; border: 1px solid #333a40; background: #0f1316; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); }
+.rc-pop .rkey { height: 24px; padding: 0 8px; }
+.rc-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.rc-what { display: flex; flex-direction: column; color: #e7ebee; font-size: 12px; line-height: 1.25; }
+.rc-note { color: #7f8c96; font-size: 11px; }
+.rc-keys { display: flex; gap: 4px; }
+.rc-rec { display: inline-flex; align-items: center; gap: 6px; }
+.recbar .rc-step { padding: 0 7px; }
+.recbar .rkey:disabled { opacity: 0.4; cursor: default; }
+.rc-refs { display: inline-flex; gap: 4px; }
+.recbar .rc-ref { border-style: dashed; color: #9aa7b1; }
+@media (max-width: 900px) {
+  .display { grid-template-rows: 22px minmax(0, 1fr) 30px auto; height: 420px; }
+  .recbar { grid-row: 4; grid-column: 1 / -1; flex-wrap: wrap; }
+}
+@media (max-width: 560px) { .display { height: 340px; } }
 </style>
 </head>
 <body>
@@ -502,8 +554,9 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
   <span>Drag</span><span>Pan. Click a trace or its marker first to move and zoom that line alone; <kbd>Esc</kbd> releases it.</span>
   <span><kbd>Shift</kbd> + drag</span><span>Zoom to the marked box; a flat band zooms time only, a narrow band values only</span>
   <span>Separators</span><span>Drag the gaps between display, controls and tabs to resize; double-click to reset</span>
+  <span>Spectrogram levels</span><span>The strip at the right edge: a histogram of the amplitudes shown (dB) beside the colour bar. Below the floor is black, above the ceiling the brightest colour. Drag a handle or the band between them; the wheel moves the floor, <kbd>Shift</kbd> + wheel the ceiling; double-click for automatic levels (the floor 10 dB above the median, the noise). Levels belong to the signal shown; Run Control › Levels types them (↑ ↓: 1 dB, Shift: 10 dB).</span>
 </div>
-<p>The screen is the record: what you see is simulated and swept, in real time.</p>
+<p>The screen is the record: what you see is simulated and swept, in real time. <b>Save ▾</b>, under the screen, stores it: every signal as CSV or JSON, or a picture (PNG). <b>Open…</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>); <b>◀ ▶</b> step through one longer than the screen.</p>
 <h3>Signal generator</h3>
 <p>Press a waveform key to draft a component: the display shows it dashed on its own and added to the signal. Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
 <div class="keys">
@@ -522,19 +575,24 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off).</p>
 <h3>Auto-tune</h3>
 <p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>.</p>
+<h3>Live (HIL)</h3>
+<p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time. Try <b>HIL: external motor</b> from the System library: Run Control gets a second row, <b>Connect</b>, <b>E-STOP</b>, <b>Reset</b>. <b>plant script…</b> under it gives you <code>hil-plant.zip</code>: unzip it and run <code>sh runme.sh</code> (Linux, macOS) or <code>runme.ps1</code> (Windows), which install what they need; with uv, <code>uv run hil_plant.py</code>. Then Connect. Every cycle the plant sends its outputs, the page runs the diagram and answers with the controller's output; edit the controller meanwhile and it takes effect at the next sample. <b>Run</b> and <b>Stop</b> start and stop the plant (each Run is a fresh run from t = 0), <b>Single</b> runs one screen. E-STOP on the page, Enter in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until Reset. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them.</p>
 <h3>System library</h3>
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code> and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it) and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
+<p>Live: <code>loopTuner.live.connect(url?)</code>, <code>.disconnect()</code>, <code>.estop()</code>, <code>.reset()</code>, <code>.state()</code> (connection, run mode, the plant's ports and figures, how edits were taken). To tune while it runs, change a variant's parameters with <code>getProject()</code> and <code>setProject(p)</code>: they take effect at the next sample. Traces: <code>loopTuner.record.screen('csv' | 'json')</code> (every signal on the screen), <code>.live(format)</code> (the live record), <code>.reference(text, name)</code>, <code>.clearReferences()</code>, <code>.state()</code>. The protocol, for plants of your own: JSON-RPC 2.0 over a WebSocket, described in <code>hil_plant.py</code>'s header and in the repository's design/output/hil.md.</p>
 <p><button class="key primary" id="help-close">Close</button></p></div></div>
 </div>
 <script type="application/json" id="loop-tuner-project"></script>
 <script id="lt-script">(() => {
 'use strict';
 const __mods = {};
+// hil/: the external plant, offered under Live
+const __HIL_FILES = {"hil_plant.py":"#!/usr/bin/env python3\n# /// script\n# requires-python = \">=3.9\"\n# dependencies = [\"websockets>=13\"]\n# ///\n\"\"\"Loop Tuner external plant: a DC motor swinging an unbalanced arm, simulated\nin real time at 100 Hz on your computer, for Loop Tuner's Live (HIL) mode.\n\n    uv run hil_plant.py             uv installs websockets by itself\n    python3 hil_plant.py            with websockets installed (pip install websockets)\n    python3 hil_plant.py --check    runs the physics for 3 s, no server, no websockets\n    python3 hil_plant.py --describe prints what it tells the page about itself\n\nThen, in Loop Tuner: System library > \"HIL: external motor\" > Load, and press\nConnect under Live. The scope's Run and Stop start and stop this plant. Press\nEnter here to E-stop it (its own stop button); Ctrl+C ends it. Its physics\nvaries from nominal by up to ±15 % (--vary, --seed, --set), and the page is\nnot told. Options: --port, --rate, --watchdog, --vary, --seed, --set,\n--allow-origin, --strict-origin (python3 hil_plant.py --help).\n\nThe protocol is JSON-RPC 2.0, one message per WebSocket text frame, at\nws://127.0.0.1:8765 (Loop Tuner's design/output/hil.md has all of it):\n\n  page -> plant  {\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"describe\"}\n                 requests \"start\", \"stop\", \"reset\", \"estop\", each answered\n                 {\"jsonrpc\": \"2.0\", \"method\": \"u\", \"params\": {\"seq\": 42, \"u\": [3.1, 0]}}\n  plant -> page  {\"jsonrpc\": \"2.0\", \"method\": \"y\", \"params\": {\"seq\": 42, \"t\": 0.42, \"y\": [1.2, 0.3, 0.8]}}\n                 {\"jsonrpc\": \"2.0\", \"method\": \"estop\", \"params\": {\"reason\": \"...\", \"t\": 1.23}}\n                 {\"jsonrpc\": \"2.0\", \"method\": \"status\", \"params\": {...}}  once a second\n\nThis script owns the clock: every cycle it integrates the physics, sends the\noutputs y and applies each input u from the moment it arrives. It is also the\nsafety authority: if no u comes for 10 cycles, the page goes away while\nrunning, the page asks for it, or Enter is pressed here, it applies the safe\ninputs and latches an emergency stop (E-stop) until the page sends \"reset\".\n\nTo put real hardware behind Loop Tuner, keep the server, the watchdog and the\ncycle, and replace Motor with your device's I/O.\n\"\"\"\n\nimport argparse\nimport asyncio\nimport json\nimport math\nimport random\nimport re\nimport sys\nimport threading\nimport time\n\nPROTOCOL = \"loop-tuner-hil/1\"\n\n\nclass Motor:\n    \"\"\"A DC motor (armature resistance R, inductance L, torque and back-EMF\n    constant k) turning an arm with an unbalanced mass: gravity pulls with\n    m g l sin(angle), angle 0 hanging down, positive counter-clockwise. Viscous\n    friction b and Coulomb friction Tc (smoothed around standstill) brake it;\n    `load` is an extra torque on the shaft, from a test rig, positive along +angle.\n    The page's PID has to beat gravity (it needs integral action to hold the\n    arm up) and friction, with the motor's 12 V.\"\"\"\n\n    R, L, k = 2.0, 4e-3, 0.1        # ohm, H, N·m/A (= V·s/rad)\n    J, b = 2.5e-3, 2e-3             # kg·m², N·m·s/rad\n    Tc, w_eps = 0.01, 0.01          # N·m, rad/s\n    mgl = 0.1                       # N·m: the arm's unbalance\n    H = 5e-4                        # s: integration substep (the electrical time constant is 2 ms)\n\n    INPUTS = [\n        {\"name\": \"V\", \"unit\": \"V\", \"min\": -12.0, \"max\": 12.0, \"safe\": 0.0},\n        {\"name\": \"load\", \"unit\": \"N·m\", \"min\": -0.2, \"max\": 0.2, \"safe\": 0.0},\n    ]\n    OUTPUTS = [\n        {\"name\": \"angle\", \"unit\": \"rad\"},\n        {\"name\": \"speed\", \"unit\": \"rad/s\"},\n        {\"name\": \"current\", \"unit\": \"A\"},\n    ]\n\n    # The physical parameters, which the page does not know (see plant_params).\n    PHYSICS = {\"R\": \"ohm\", \"L\": \"H\", \"k\": \"N·m/A\", \"J\": \"kg·m²\", \"b\": \"N·m·s/rad\", \"Tc\": \"N·m\", \"mgl\": \"N·m\"}\n\n    def __init__(self, params=None):\n        for name, value in (params or {}).items():\n            setattr(self, name, value)\n        self.i = self.w = self.angle = 0.0\n\n    def rates(self, i, w, angle, V, load):\n        di = (V - self.R * i - self.k * w) / self.L\n        friction = self.b * w + self.Tc * math.tanh(w / self.w_eps)\n        dw = (self.k * i - friction - self.mgl * math.sin(angle) + load) / self.J\n        return di, dw, w\n\n    def advance(self, span, u):\n        \"\"\"Integrates `span` seconds with the inputs u held (fixed-step RK4).\"\"\"\n        if span <= 0:\n            return\n        n = max(1, math.ceil(span / self.H - 1e-9))\n        h = span / n\n        V, load = u\n        s = (self.i, self.w, self.angle)\n        for _ in range(n):\n            k1 = self.rates(*s, V, load)\n            k2 = self.rates(*(x + 0.5 * h * d for x, d in zip(s, k1)), V, load)\n            k3 = self.rates(*(x + 0.5 * h * d for x, d in zip(s, k2)), V, load)\n            k4 = self.rates(*(x + h * d for x, d in zip(s, k3)), V, load)\n            s = tuple(x + h / 6 * (a + 2 * b + 2 * c + d) for x, a, b, c, d in zip(s, k1, k2, k3, k4))\n        self.i, self.w, self.angle = s\n\n    def outputs(self):\n        return [self.angle, self.w, self.i]\n\n\nclass Stats:\n    \"\"\"Mean and maximum of what happened in the last second.\"\"\"\n\n    def __init__(self):\n        self.values = []\n\n    def add(self, v):\n        self.values.append(v)\n\n    def take(self):\n        v, self.values = self.values, []\n        return {\"mean\": round(sum(v) / len(v), 3) if v else None, \"max\": round(max(v), 3) if v else None}\n\n\nclass Plant:\n    def __init__(self, args):\n        self.args = args\n        self.rate = args.rate\n        self.dt = 1.0 / args.rate\n        self.motor = Motor(plant_params(args))\n        self.safe = [p[\"safe\"] for p in Motor.INPUTS]\n        self.u = list(self.safe)          # the inputs applied now\n        self.pending = []                 # (arrival time, u) received since the last cycle\n        self.client = None                # the one connected page\n        self.running = False              # sending y and taking u\n        self.estop_reason = None          # latched E-stop, until \"reset\"\n        self.k = 0                        # cycle counter since this script started\n        self.k_start = 0                  # cycle of the last \"start\": seq = k - k_start\n        self.since_u = 0                  # cycles without a new u (the watchdog)\n        self.sent = {}                    # seq -> when its y was sent, for the round trip\n        self.late = 0                     # cycles that began without a new u\n        self.overruns = 0                 # cycles skipped because the computer stalled\n        self.dropped = 0                  # y not sent because the page did not read them\n        self.jitter, self.rtt = Stats(), Stats()\n\n    # ---- the page\n\n    def origin_ok(self, origin):\n        \"\"\"A browser says which page opened the connection. Allowed: no Origin\n        (scripts), localhost, every --allow-origin, and \"null\", which a page\n        opened from a file sends (Loop Tuner's usual case). Other web sites are\n        refused, since WebSockets have no CORS. But a sandboxed frame on any\n        web site also sends \"null\": with --strict-origin it is refused too\n        (then serve the page from localhost). For real hardware, use that.\"\"\"\n        allowed = self.args.allow_origin\n        if origin is None or \"*\" in allowed or origin in allowed or (origin == \"null\" and not self.args.strict_origin):\n            return True\n        return re.fullmatch(r\"https?://(localhost|127\\.0\\.0\\.1|\\[::1\\])(:\\d+)?\", origin) is not None\n\n    async def handler(self, ws):\n        origin = ws.request.headers.get(\"Origin\")\n        if not self.origin_ok(origin):\n            print(f\"refused a page from {origin}: start with --allow-origin {origin} to allow it\")\n            await ws.close(1008, \"origin not allowed; see the plant's console\")\n            return\n        if self.client is not None:\n            await ws.close(1013, \"busy: another page is connected\")\n            return\n        self.client = ws\n        print(f\"page connected ({origin or 'no origin'})\")\n        try:\n            async for text in ws:\n                await self.on_message(ws, text)\n        except Exception as err:  # a broken connection ends like a closed one\n            print(f\"connection error: {err}\")\n        finally:\n            self.client = None\n            if self.running:\n                self.trip(\"connection lost\")\n            self.running = False\n            print(\"page disconnected\")\n\n    async def on_message(self, ws, text):\n        try:\n            msg = json.loads(text)\n        except ValueError:\n            await self.reply(ws, None, error=(-32700, \"parse error: not JSON\"))\n            return\n        if not isinstance(msg, dict) or msg.get(\"jsonrpc\") != \"2.0\" or not isinstance(msg.get(\"method\"), str):\n            await self.reply(ws, msg.get(\"id\") if isinstance(msg, dict) else None, error=(-32600, \"invalid request\"))\n            return\n        method, params, rid = msg[\"method\"], msg.get(\"params\") or {}, msg.get(\"id\")\n        if method == \"u\":\n            self.take_u(params)\n            return\n        handlers = {\"describe\": self.describe, \"start\": self.start, \"stop\": self.stop, \"reset\": self.reset, \"estop\": self.manual_estop}\n        if method not in handlers:\n            if rid is not None:\n                await self.reply(ws, rid, error=(-32601, f\"no method {method}; methods: {', '.join(handlers)}, u\"))\n            return\n        try:\n            result = handlers[method](params)\n        except RuntimeError as err:\n            await self.reply(ws, rid, error=(-32000, str(err)))\n            return\n        if rid is not None:\n            await self.reply(ws, rid, result=result)\n\n    async def reply(self, ws, rid, result=None, error=None):\n        msg = {\"jsonrpc\": \"2.0\", \"id\": rid}\n        if error:\n            msg[\"error\"] = {\"code\": error[0], \"message\": error[1]}\n        else:\n            msg[\"result\"] = result\n        await ws.send(json.dumps(msg))\n\n    def describe(self, _params):\n        return {\n            \"protocol\": PROTOCOL,\n            \"name\": \"DC motor with an unbalanced arm (simulated)\",\n            \"rate_hz\": self.rate,\n            \"watchdog_cycles\": self.args.watchdog,\n            \"inputs\": Motor.INPUTS,\n            \"outputs\": Motor.OUTPUTS,\n            \"running\": self.running,\n            \"estop\": self.estop_reason,\n        }\n\n    def start(self, _params):\n        if self.estop_reason:\n            raise RuntimeError(f\"E-stop latched ({self.estop_reason}); send reset first\")\n        if not self.running:\n            self.running = True\n            self.k_start = self.k              # the next cycle is seq 0, t 0\n            self.since_u = 0\n            self.sent.clear()\n            print(\"started\")\n        return {\"rate_hz\": self.rate}\n\n    def stop(self, _params):\n        if self.running:\n            print(\"stopped\")\n        self.running = False\n        self.u = list(self.safe)\n        self.pending.clear()\n        return {}\n\n    def reset(self, _params):\n        if self.estop_reason:\n            print(f\"E-stop reset (was: {self.estop_reason})\")\n        self.estop_reason = None\n        self.since_u = 0\n        return {}\n\n    def manual_estop(self, params):\n        self.trip(str(params.get(\"reason\") or \"pressed on the page\"))\n        return {}\n\n    def take_u(self, params):\n        \"\"\"A new input, from the moment it arrives. Ignored while stopped or\n        E-stopped; clamped to each input's limits; a bad value is the safe one.\"\"\"\n        if not self.running or self.estop_reason:\n            return\n        u = params.get(\"u\")\n        if not isinstance(u, list) or len(u) != len(Motor.INPUTS):\n            return\n        clean = []\n        for v, spec in zip(u, Motor.INPUTS):\n            ok = isinstance(v, (int, float)) and math.isfinite(v)\n            clean.append(min(spec[\"max\"], max(spec[\"min\"], v)) if ok else spec[\"safe\"])\n        now = time.perf_counter()\n        sent = self.sent.pop(params.get(\"seq\"), None)\n        if sent is not None:\n            self.rtt.add(1000 * (now - sent))\n        self.pending.append((now, clean))\n        self.since_u = 0\n\n    # ---- safety\n\n    def trip(self, reason):\n        \"\"\"Emergency stop: safe inputs now, latched until \"reset\".\"\"\"\n        if self.estop_reason:\n            return\n        self.estop_reason = reason\n        self.u = list(self.safe)\n        self.pending.clear()\n        print(f\"E-STOP: {reason}; safe inputs applied, latched until the page resets it\")\n        self.notify(\"estop\", {\"reason\": reason, \"t\": round((self.k - self.k_start) * self.dt, 6)})\n\n    async def shutdown(self, reason):\n        \"\"\"Ctrl+C: safe inputs, and the page hears why before the connection\n        closes (an E-stop if it was running), not just a lost connection.\"\"\"\n        self.u = list(self.safe)\n        ws, self.client = self.client, None\n        if ws is None:\n            return\n        try:\n            if self.running:\n                self.estop_reason = reason\n                msg = {\"jsonrpc\": \"2.0\", \"method\": \"estop\", \"params\": {\"reason\": reason, \"t\": round((self.k - self.k_start) * self.dt, 6)}}\n                await asyncio.wait_for(ws.send(json.dumps(msg)), 0.5)\n            await asyncio.wait_for(ws.close(1001, reason), 0.5)\n        except Exception:  # the page may be gone already\n            pass\n\n    def notify(self, method, params):\n        \"\"\"Sends a notification without ever blocking the cycle: if the page is\n        not reading (its buffer is full), the message is dropped and counted.\"\"\"\n        ws = self.client\n        if ws is None:\n            return\n        if ws.transport is not None and ws.transport.get_write_buffer_size() > 65536:\n            self.dropped += 1\n            return\n        task = asyncio.ensure_future(ws.send(json.dumps({\"jsonrpc\": \"2.0\", \"method\": method, \"params\": params})))\n        task.add_done_callback(lambda f: f.cancelled() or f.exception())  # a closed page is handled by handler()\n\n    # ---- the cycle\n\n    def cycle(self, now, last, span):\n        \"\"\"One cycle: the physics over the last `span` seconds, each u applied\n        from the moment it arrived; then the watchdog; then y.\"\"\"\n        at = 0.0\n        for arrived, u in self.pending:\n            off = min(max(arrived - last, 0.0), span)\n            self.motor.advance(off - at, self.u)\n            self.u, at = u, off\n        self.motor.advance(span - at, self.u)\n        had_u = bool(self.pending)\n        self.pending.clear()\n        if not self.running:\n            return\n        seq = self.k - self.k_start\n        # The watchdog counts y the page left unanswered: cycles this script\n        # skipped itself (a stalled computer) sent no y, so they do not count.\n        if seq > 0 and not had_u:\n            self.since_u += 1\n            if not self.estop_reason:\n                self.late += 1\n        if self.since_u >= self.args.watchdog and not self.estop_reason:\n            self.trip(f\"no u for {self.since_u} cycles\")\n        self.sent[seq] = time.perf_counter()\n        self.sent.pop(seq - 50, None)\n        self.notify(\"y\", {\"seq\": seq, \"t\": round(seq * self.dt, 6), \"y\": [round(v, 6) for v in self.motor.outputs()]})\n\n    async def run(self):\n        \"\"\"The real-time loop: deadlines are absolute (start + k·dt), so sleep\n        errors never add up; a stall longer than 5 cycles is skipped over in\n        one physics step, and the skipped cycles show as a gap in seq. With\n        --spin, the last milliseconds before a deadline are waited out by\n        yielding to the event loop, for operating systems with coarse timers.\"\"\"\n        t0 = time.perf_counter()\n        last = t0\n        next_status = t0 + 1.0\n        cycles = 0\n        spin = self.args.spin / 1000\n        while True:\n            deadline = t0 + self.k * self.dt\n            wait = deadline - time.perf_counter() - spin\n            if wait > 0:\n                await asyncio.sleep(wait)\n            while spin and time.perf_counter() < deadline:\n                await asyncio.sleep(0)\n            now = time.perf_counter()\n            skip = int((now - deadline) / self.dt) if now - deadline > 5 * self.dt else 0\n            if skip:\n                self.overruns += skip\n                self.k += skip\n                deadline = t0 + self.k * self.dt\n            self.jitter.add(1000 * (now - deadline))\n            self.cycle(now, last, (skip + 1) * self.dt)\n            last = now\n            cycles += 1\n            self.k += 1\n            if now >= next_status:\n                self.status(cycles / (now - next_status + 1.0))\n                cycles = 0\n                next_status = now + 1.0\n\n    def status(self, rate):\n        jitter, rtt = self.jitter.take(), self.rtt.take()\n        s = {\"t\": round((self.k - self.k_start) * self.dt, 3) if self.running else None, \"rate_hz\": round(rate, 2), \"jitter_ms\": jitter, \"rtt_ms\": rtt,\n             \"late\": self.late, \"overruns\": self.overruns, \"dropped\": self.dropped, \"running\": self.running, \"estop\": self.estop_reason}\n        self.notify(\"status\", s)\n        # The console: one line rewritten every second in a terminal, a new line every 5 s otherwise.\n        tty = sys.stdout.isatty()\n        if tty or self.k % round(5 * self.rate) < self.rate:\n            state = f\"E-STOP ({self.estop_reason})\" if self.estop_reason else \"running\" if self.running else \"waiting\" if self.client else \"no page\"\n            fmt = lambda st: f\"{st['mean']:.2f}/{st['max']:.2f} ms\" if st[\"mean\"] is not None else \"-\"\n            print(f\"\\r{state:<28.28} {rate:6.1f} Hz  jitter {fmt(jitter)}  round trip {fmt(rtt)}  late {self.late}  \"\n                  f\"angle {self.motor.angle:+6.2f} rad  V {self.u[0]:+6.2f}   \", end=\"\" if tty else \"\\n\", flush=True)\n\n\ndef plant_params(args):\n    \"\"\"The plant this run simulates: by default every physical parameter\n    differs from the nominal one by a random factor within ±15 % (--vary), so\n    the page, which is not told, has to identify it as it would a real one.\n    --seed gives the same plant again; --set fixes a parameter. Printed at\n    the start, for whoever runs the plant.\"\"\"\n    rng = random.Random(args.seed)\n    params = {}\n    for name in Motor.PHYSICS:\n        params[name] = getattr(Motor, name) * (1 + args.vary * rng.uniform(-1, 1))\n    for item in args.set:\n        name, _, value = item.partition(\"=\")\n        if name not in Motor.PHYSICS:\n            sys.exit(f\"--set {item}: one of {', '.join(Motor.PHYSICS)}\")\n        params[name] = float(value)\n    return params\n\n\ndef check():\n    \"\"\"--check: 3 s of physics with a PD at 100 Hz, no server. The arm should\n    rise to about 1.2 rad (gravity leaves an offset without integral action).\"\"\"\n    m = Motor()\n    for k in range(300):\n        V = max(-12.0, min(12.0, 6 * (1.5 - m.angle) - 0.6 * m.w))\n        m.advance(0.01, [V, 0.0])\n    print(f\"angle {m.angle:.3f} rad, speed {m.w:.3f} rad/s, current {m.i:.3f} A after 3 s of PD control towards 1.5 rad\")\n    return 0 if 1.0 < m.angle < 1.4 else 1\n\n\ndef stop_key(loop, plant):\n    \"\"\"The plant's own stop button (the page has its E-STOP): every Enter in\n    this window latches an E-stop, which the page's Reset clears.\"\"\"\n    try:\n        for _ in sys.stdin:\n            loop.call_soon_threadsafe(plant.trip, \"stop pressed at the plant\")\n    except (OSError, ValueError):  # no console\n        pass\n\n\nasync def serve_forever(args):\n    try:\n        from websockets.asyncio.server import serve\n    except ImportError:\n        sys.exit(\"hil_plant.py needs websockets 13 or newer:\\n  uv run hil_plant.py        (installs it by itself)\\n  pip install 'websockets>=13' && python3 hil_plant.py\")\n    plant = Plant(args)\n    async with serve(plant.handler, args.host, args.port, max_size=2 ** 20):\n        print(f\"Loop Tuner external plant: {plant.describe({})['name']}\")\n        varied = f\"varied up to ±{args.vary:.0%}, seed {args.seed}\" if args.vary else \"nominal\"\n        print(f\"this plant ({varied}; the page is not told): \" + \", \".join(f\"{n} {getattr(plant.motor, n):.4g} {u}\" for n, u in Motor.PHYSICS.items()))\n        print(f\"listening on ws://{args.host}:{args.port} at {args.rate:g} Hz; watchdog {args.watchdog} cycles.\")\n        print(\"In Loop Tuner: System library > HIL: external motor > Load, then Connect under Live; Run and Stop start and stop this plant.\")\n        if sys.stdin is not None and sys.stdin.isatty():\n            threading.Thread(target=stop_key, args=(asyncio.get_running_loop(), plant), daemon=True).start()\n            print(\"Enter: E-stop (the page's Reset clears it). Ctrl+C: end.\")\n        else:\n            print(\"Ctrl+C: end.\")\n        try:\n            await plant.run()\n        finally:\n            await plant.shutdown(\"the plant was shut down (Ctrl+C)\")\n\n\ndef main():\n    p = argparse.ArgumentParser(description=\"Loop Tuner external plant (HIL demo): a DC motor with an unbalanced arm, in real time.\")\n    p.add_argument(\"--host\", default=\"127.0.0.1\", help=\"address to listen on (default 127.0.0.1: this computer only)\")\n    p.add_argument(\"--port\", type=int, default=8765, help=\"port (default 8765)\")\n    p.add_argument(\"--rate\", type=float, default=100.0, help=\"cycle rate in Hz (default 100)\")\n    p.add_argument(\"--watchdog\", type=int, default=10, help=\"E-stop after this many cycles without u (default 10)\")\n    p.add_argument(\"--allow-origin\", action=\"append\", default=[], metavar=\"ORIGIN\",\n                   help=\"also accept pages from this origin, e.g. https://example.org ('*' accepts any page)\")\n    p.add_argument(\"--strict-origin\", action=\"store_true\",\n                   help=\"also refuse pages with Origin null: a page opened from a file sends it, but so does a sandboxed frame on any web site \"\n                        \"(serve the page from localhost then; recommended for real hardware)\")\n    p.add_argument(\"--spin\", type=float, default=2.0 if sys.platform == \"win32\" else 0.0, metavar=\"MS\",\n                   help=\"wait out the last MS milliseconds of each cycle actively, for coarse OS timers (default: 2 on Windows, else 0)\")\n    p.add_argument(\"--vary\", type=float, default=0.15, metavar=\"F\",\n                   help=\"each physical parameter differs from nominal by a random factor within ±F, unknown to the page (default 0.15; 0: the nominal plant)\")\n    p.add_argument(\"--seed\", type=int, default=None, help=\"seed for --vary: the same plant again (default: a new one each start)\")\n    p.add_argument(\"--set\", action=\"append\", default=[], metavar=\"NAME=VALUE\",\n                   help=\"fix a physical parameter: \" + \", \".join(f\"{n} [{u}]\" for n, u in Motor.PHYSICS.items()))\n    p.add_argument(\"--check\", action=\"store_true\", help=\"run 3 s of the nominal physics without a server and exit\")\n    p.add_argument(\"--describe\", action=\"store_true\", help=\"print the answer to describe (JSON) and exit\")\n    args = p.parse_args()\n    if args.seed is None:\n        args.seed = random.randrange(10000)\n    if args.check:\n        sys.exit(check())\n    if args.describe:\n        print(json.dumps(Plant(args).describe({}), ensure_ascii=False))\n        return\n    try:\n        asyncio.run(serve_forever(args))\n    except KeyboardInterrupt:\n        print(\"\\nstopped: the plant applies its safe inputs\")\n    except OSError as err:\n        sys.exit(f\"cannot listen on {args.host}:{args.port}: {err}\")\n\n\nif __name__ == \"__main__\":\n    main()\n","runme.sh":"#!/bin/sh\n# Loop Tuner's external plant (Live mode): installs what it needs, then runs.\n# Linux and macOS:  sh runme.sh      (options go to hil_plant.py: sh runme.sh --help)\n# It needs only curl or wget: uv (https://docs.astral.sh/uv/) installs itself\n# into ~/.local/bin, then fetches Python and the websockets package for\n# hil_plant.py. Run it again any time; what is installed stays.\nset -e\ncd \"$(dirname \"$0\")\"\nPATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$PATH\"\nif ! command -v uv >/dev/null 2>&1; then\n  echo \"Installing uv, the Python runner (https://docs.astral.sh/uv/) ...\"\n  if command -v curl >/dev/null 2>&1; then curl -LsSf https://astral.sh/uv/install.sh | sh\n  elif command -v wget >/dev/null 2>&1; then wget -qO- https://astral.sh/uv/install.sh | sh\n  else\n    echo \"runme.sh needs curl or wget to install uv. Or, with Python 3.9+: pip install websockets && python3 hil_plant.py\"\n    exit 1\n  fi\nfi\nexec uv run hil_plant.py \"$@\"\n","runme.ps1":"# Loop Tuner's external plant (Live mode): installs what it needs, then runs.\n# Windows: right-click > Run with PowerShell, or in a terminal:\n#   powershell -ExecutionPolicy Bypass -File runme.ps1      (options go to hil_plant.py: ... runme.ps1 --help)\n# It installs uv (https://docs.astral.sh/uv/) with winget, or with uv's own\n# installer where there is no winget; uv then fetches Python and the\n# websockets package for hil_plant.py. Run it again any time; what is\n# installed stays.\n$ErrorActionPreference = 'Stop'\nSet-Location $PSScriptRoot\n$env:Path = \"$env:USERPROFILE\\.local\\bin;$env:Path\"\nif (-not (Get-Command uv -ErrorAction SilentlyContinue)) {\n  Write-Host 'Installing uv, the Python runner (https://docs.astral.sh/uv/) ...'\n  if (Get-Command winget -ErrorAction SilentlyContinue) {\n    winget install --id=astral-sh.uv -e --accept-source-agreements --accept-package-agreements\n  } else {\n    powershell -NoProfile -ExecutionPolicy Bypass -Command 'irm https://astral.sh/uv/install.ps1 | iex'\n  }\n  # The installer changed PATH for new windows; read it back for this one.\n  $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine') + \";$env:USERPROFILE\\.local\\bin\"\n}\nuv run hil_plant.py @args\nif ($LASTEXITCODE) { Read-Host 'hil_plant.py stopped with an error; press Enter to close' }\n","README.txt":"Loop Tuner: the external plant for Live (HIL) mode\n==================================================\n\nhil_plant.py is a DC motor swinging an unbalanced arm, simulated in real time\nat 100 Hz on your computer: the plant of the system \"HIL: external motor\" in\nLoop Tuner's System library. It listens on ws://127.0.0.1:8765 (this computer\nonly), sends its outputs every cycle and applies the inputs the page sends\nback.\n\nStart it\n  Linux, macOS:  sh runme.sh\n  Windows:       right-click runme.ps1 > Run with PowerShell\n                 (or: powershell -ExecutionPolicy Bypass -File runme.ps1)\n  With uv:       uv run hil_plant.py\n  With Python:   pip install websockets, then python3 hil_plant.py\n\nThe runme scripts install uv if it is missing (curl or wget on Linux and\nmacOS; winget on Windows), and uv fetches Python and the websockets package.\n\nThen, in Loop Tuner: System library > HIL: external motor > Load, and press\nConnect under Run Control. Run and Stop on the scope start and stop the plant.\n\nSafety: if the plant hears nothing for 10 cycles, or you press Enter in its\nwindow, it applies its safe inputs (0 V) and stays stopped (E-stop) until the\npage's Reset. Ctrl+C ends it.\n\nThe plant is not quite the nominal one: each physical parameter differs by up\nto 15 % (--vary 0.15), a new plant each start unless --seed is given; --set\nJ=0.003 fixes a parameter, --vary 0 gives the nominal plant. It prints the\nplant it runs; Loop Tuner is not told, as with a real device.\n\nOptions: --port, --rate, --watchdog, --vary, --seed, --set, --allow-origin,\n--strict-origin, --check, --describe (sh runme.sh --help).\n\nThe protocol is JSON-RPC 2.0 over a WebSocket, described in hil_plant.py's\nheader; any language can implement it, so real hardware can take the motor's\nplace.\n"};
 // ---- core/poly.js
 __mods['core/poly.js'] = (() => {
 
@@ -1966,11 +2024,14 @@ const START = num('u0', 'Start output u0', 0, { unit: 'u', help: 'the integral p
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
 
-function prefilter(Tr, Ts) {
-  if (!(Tr > 0)) return (r) => r;
-  const a = Math.exp(-Ts / Tr);
-  let rf = null;
-  return (r) => { rf = rf === null ? r : a * rf + (1 - a) * r; return rf; };
+function prefilter(p, Ts) {
+  let rf = null, Tr = null, a = 0;
+  return (r) => {
+    if (!(p.Tr > 0)) { rf = r; return r; }
+    if (p.Tr !== Tr) { Tr = p.Tr; a = Math.exp(-Ts / Tr); }
+    rf = rf === null ? r : a * rf + (1 - a) * r;
+    return rf;
+  };
 }
 
 function lookup(xs, ys, x) {
@@ -2019,7 +2080,7 @@ const CONTROLLERS = {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
     params: [num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1), PREFILTER, START, ...LIMITS],
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
+      const pre = prefilter(p, Ts), core = pidCore(Ts, p.u0);
       return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
     },
     linear: (p, Ts, at) => pidLinear(p, Ts, at?.y?.length || 1),
@@ -2028,7 +2089,7 @@ const CONTROLLERS = {
     label: 'State feedback', summary: 'u = kr r − K · y',
     params: [vec('K', 'Gains K', [1]), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts);
+      const pre = prefilter(p, Ts);
       return {
         step(x) {
           let u = p.kr * pre(x[0]);
@@ -2044,12 +2105,13 @@ const CONTROLLERS = {
     params: [vec('at', 'At y =', [0, 1]), vec('Kp', 'Kp', [1, 1]), vec('Ki', 'Ki', [0, 0]), PREFILTER, START, ...LIMITS],
     check(p) { if (p.Kp.length !== p.at.length || p.Ki.length !== p.at.length) return 'At, Kp and Ki need the same number of values'; if (p.at.some((v, i) => i && v <= p.at[i - 1])) return 'the At values must increase'; return ''; },
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
+      const pre = prefilter(p, Ts), core = pidCore(Ts, p.u0);
       const g = { Kp: 0, Ki: 0, Kd: 0, Tf: 0, b: 1, umin: p.umin, umax: p.umax };
       return {
         step(x) {
           const y = x[1] ?? 0;
           g.Kp = lookup(p.at, p.Kp, y); g.Ki = lookup(p.at, p.Ki, y);
+          g.umin = p.umin; g.umax = p.umax;
           return core(pre(x[0]), y, g);
         },
       };
@@ -2132,8 +2194,11 @@ function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
   return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
 }
 
+const same = (a, b) => (Array.isArray(b) ? Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]) : a === b);
 function makeLaw(variant, Ts, lib = CONTROLLERS) {
-  return lib[variant.type].make(normalizeVariant(variant, 'variant', lib).params, Ts);
+  const { params } = normalizeVariant(variant, 'variant', lib);
+  const keep = variant.params && Object.keys(params).every((k) => same(variant.params[k], params[k]));
+  return lib[variant.type].make(keep ? variant.params : params, Ts);
 }
 
 
@@ -2161,11 +2226,20 @@ function checkModel(p) {
   return '';
 }
 
-function estimator({ n, m, Ad, Bd, C, L }) {
-  const x = new Float64Array(n), xp = new Float64Array(n), out = new Float64Array(n);
-  let first = true;
+function estimator(p, keys, design) {
+  let d = null, seen = [], x, xp, out, first = true;
+  const current = () => {
+    if (d && keys.every((k, i) => p[k] === seen[i])) return d;
+    seen = keys.map((k) => p[k]);
+    const next = design();
+    if (!d || next.n !== d.n) { x = new Float64Array(next.n); xp = new Float64Array(next.n); out = new Float64Array(next.n); first = true; }
+    d = next;
+    return d;
+  };
+  current();
   return {
     step(inp) {
+      const { n, m, Ad, Bd, C, L } = current();
       const u = inp[0] ?? 0;
       if (first) { first = false; } else {
         for (let i = 0; i < n; i++) { let s = Bd[i][0] * u; for (let j = 0; j < n; j++) s += Ad[i][j] * x[j]; xp[i] = s; }
@@ -2188,11 +2262,13 @@ const OBSERVERS = {
     params: [...MODEL, vec('Q', 'Process noise Q (diag)', [1, 1]), vec('R', 'Measurement noise R (diag)', [1])],
     check(p) { const bad = checkModel(p); if (bad) return bad; if (p.Q.length !== p.B.length) return 'Q needs one value per state'; if (p.R.length !== p.C.length / p.B.length) return 'R needs one value per measurement'; return ''; },
     make(p, Ts) {
-      const { n, m, A, B, C } = model(p);
-      const { Ad, Bd } = c2d(A, B, Ts);
-      const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
-      const { L } = dlqe(Ad, C, diag(p.Q), diag(p.R));
-      return estimator({ n, m, Ad, Bd, C, L });
+      return estimator(p, ['A', 'B', 'C', 'Q', 'R'], () => {
+        const { n, m, A, B, C } = model(p);
+        const { Ad, Bd } = c2d(A, B, Ts);
+        const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
+        const { L } = dlqe(Ad, C, diag(p.Q), diag(p.R));
+        return { n, m, Ad, Bd, C, L };
+      });
     },
   },
   luenberger: {
@@ -2200,10 +2276,12 @@ const OBSERVERS = {
     params: [...MODEL, vec('L', 'Gain L (rows)', [0.5, 10])],
     check(p) { const bad = checkModel(p); if (bad) return bad; if (p.L.length !== p.C.length) return 'L needs n × m values, row by row'; return ''; },
     make(p, Ts) {
-      const { n, m, A, B, C } = model(p);
-      const { Ad, Bd } = c2d(A, B, Ts);
-      const L = Array.from({ length: n }, (_, i) => p.L.slice(i * m, i * m + m));
-      return estimator({ n, m, Ad, Bd, C, L });
+      return estimator(p, ['A', 'B', 'C', 'L'], () => {
+        const { n, m, A, B, C } = model(p);
+        const { Ad, Bd } = c2d(A, B, Ts);
+        const L = Array.from({ length: n }, (_, i) => p.L.slice(i * m, i * m + m));
+        return { n, m, Ad, Bd, C, L };
+      });
     },
   },
   difference: {
@@ -2211,9 +2289,9 @@ const OBSERVERS = {
     params: [num('Tf', 'Rate filter Tf', 0, { unit: 's', min: 0 })],
     make(p, Ts) {
       let prev = null, rate = null, out = null;
-      const a = p.Tf > 0 ? Ts / (p.Tf + Ts) : 1;
       return {
         step(inp) {
+          const a = p.Tf > 0 ? Ts / (p.Tf + Ts) : 1;
           const y = Array.from(inp).slice(1);
           out ??= new Float64Array(2 * y.length);
           prev ??= y; rate ??= y.map(() => 0);
@@ -2231,6 +2309,180 @@ const OBSERVER_TYPES = Object.keys(OBSERVERS);
 
 return { OBSERVERS, OBSERVER_TYPES };
 })();
+// ---- core/hil.js
+__mods['core/hil.js'] = (() => {
+
+const HIL_URL = 'ws://127.0.0.1:8765';
+const HIL_PROTOCOL = 'loop-tuner-hil/1';
+const WATCHDOG_CYCLES = 10;
+
+const rpcRequest = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) });
+const rpcNotice = (method, params) => JSON.stringify({ jsonrpc: '2.0', method, params });
+const uMessage = (seq, u) => rpcNotice('u', { seq, u: Array.from(u, (v) => (Number.isFinite(v) ? Number(v.toPrecision(9)) : null)) });
+
+const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+
+function parseMessage(text) {
+  let m;
+  try { m = JSON.parse(text); } catch { return { kind: 'invalid', error: 'not JSON' }; }
+  if (!m || typeof m !== 'object' || m.jsonrpc !== '2.0') return { kind: 'invalid', error: 'not a JSON-RPC 2.0 message' };
+  if (m.id !== undefined && m.id !== null && !m.method) {
+    if (m.error) return { kind: 'error', id: m.id, error: String(m.error.message ?? 'error'), code: m.error.code };
+    return { kind: 'result', id: m.id, result: m.result };
+  }
+  if (m.id === null && m.error) return { kind: 'invalid', error: String(m.error.message ?? 'error') };
+  const p = m.params ?? {};
+  if (m.method === 'y') {
+    if (!Number.isInteger(p.seq) || !finite(p.t) || !Array.isArray(p.y)) return { kind: 'invalid', error: 'y needs seq (integer), t (s) and y (a list)' };
+    return { kind: 'y', seq: p.seq, t: p.t, y: p.y.map((v) => (finite(v) ? v : NaN)) };
+  }
+  if (m.method === 'estop') return { kind: 'estop', reason: String(p.reason ?? 'E-stop'), t: finite(p.t) ? p.t : null };
+  if (m.method === 'status') return { kind: 'status', status: p };
+  return { kind: 'invalid', error: `unknown method ${m.method}` };
+}
+
+const PORT_NAME = /^[A-Za-z][A-Za-z0-9_]{0,15}$/;
+const checkUnit = (u, where) => {
+  const s = String(u ?? '1').trim() || '1';
+  if (s.length > 12 || /[<>"{},]/.test(s)) throw new Error(`${where}: a short unit such as V, rad/s or 1`);
+  return s;
+};
+
+function checkDescription(d) {
+  if (!d || typeof d !== 'object') throw new Error('describe: expected an object');
+  const rate = Number(d.rate_hz);
+  if (!(rate >= 1 && rate <= 1000)) throw new Error('describe: rate_hz between 1 and 1000');
+  const port = (p, i, side) => {
+    const where = `describe: ${side}[${i}]`;
+    if (!PORT_NAME.test(p?.name ?? '')) throw new Error(`${where}.name: letters, digits and _, up to 16`);
+    return { name: p.name, unit: checkUnit(p.unit, `${where}.unit`) };
+  };
+  if (!Array.isArray(d.inputs) || !d.inputs.length || d.inputs.length > 8) throw new Error('describe: inputs, a list of 1 to 8');
+  if (!Array.isArray(d.outputs) || !d.outputs.length || d.outputs.length > 16) throw new Error('describe: outputs, a list of 1 to 16');
+  const inputs = d.inputs.map((p, i) => {
+    const q = port(p, i, 'inputs');
+    const min = Number(p.min), max = Number(p.max), safe = Number(p.safe ?? 0);
+    if (!finite(min) || !finite(max) || !(min <= max)) throw new Error(`describe: inputs[${i}] needs min <= max`);
+    if (!(safe >= min && safe <= max)) throw new Error(`describe: inputs[${i}].safe must lie within min and max`);
+    return { ...q, min, max, safe };
+  });
+  return {
+    protocol: String(d.protocol ?? ''),
+    name: String(d.name ?? 'external plant').slice(0, 80),
+    rate_hz: rate,
+    inputs,
+    outputs: d.outputs.map((p, i) => port(p, i, 'outputs')),
+    watchdog: Number.isInteger(d.watchdog_cycles) && d.watchdog_cycles > 0 ? d.watchdog_cycles : WATCHDOG_CYCLES,
+    estop: d.estop ? String(d.estop) : null,
+    running: !!d.running,
+  };
+}
+
+
+const split = (v) => (Array.isArray(v) ? v : String(v ?? '').split(/[,;]/)).map((x) => String(x).trim()).filter((x) => x !== '');
+const numbers = (v, where) => split(v).map((x) => {
+  const n = Number(String(x).replace(/−/g, '-'));
+  if (!finite(n)) throw new Error(`${where}: numbers separated by commas`);
+  return n;
+});
+const fit = (list, n, def) => Array.from({ length: n }, (_, i) => list[i] ?? (typeof def === 'function' ? def(i) : def));
+
+const EXTERNAL_BLOCK = {
+  label: 'External plant', group: 'Live', formula: 'u → plant → y, live over WebSocket',
+  params: [
+    { key: 'url', label: 'Plant at', default: HIL_URL, kind: 'text' },
+    { key: 'rate', label: 'Cycle rate', default: 100, unit: 'Hz', min: 1, max: 1000 },
+    { key: 'inputs', label: 'Inputs u', default: ['u'], kind: 'list' },
+    { key: 'inUnits', label: 'Units of u', default: ['1'], kind: 'list' },
+    { key: 'min', label: 'u min', default: [-1], kind: 'list' },
+    { key: 'max', label: 'u max', default: [1], kind: 'list' },
+    { key: 'safe', label: 'Safe u', default: [0], kind: 'list' },
+    { key: 'outputs', label: 'Outputs y', default: ['y'], kind: 'list' },
+    { key: 'outUnits', label: 'Units of y', default: ['1'], kind: 'list' },
+  ],
+  ports: (p) => [p.inputs.length, p.outputs.length],
+  outputs: (p) => p.outputs,
+  inputNames: (p) => p.inputs,  
+  summary: (p) => `${p.rate} Hz`,
+  normalize(params = {}, where = 'external') {
+    const d = Object.fromEntries(EXTERNAL_BLOCK.params.map((p) => [p.key, params[p.key] ?? p.default]));
+    const url = String(d.url).trim();
+    if (!/^wss?:\/\/[^\s"'<>]{1,200}$/.test(url)) throw new Error(`${where}.url: a WebSocket address such as ${HIL_URL}`);
+    const rate = Number(d.rate);
+    if (!(rate >= 1 && rate <= 1000)) throw new Error(`${where}.rate: between 1 and 1000 Hz`);
+    const names = (v, key) => {
+      const out = split(v);
+      if (!out.length || out.length > 16) throw new Error(`${where}.${key}: 1 to 16 names, separated by commas`);
+      for (const n of out) if (!PORT_NAME.test(n)) throw new Error(`${where}.${key}: "${n}" is not a name (letters, digits, _)`);
+      return out;
+    };
+    const inputs = names(d.inputs, 'inputs'), outputs = names(d.outputs, 'outputs');
+    const n = inputs.length;
+    const min = fit(numbers(d.min, `${where}.min`), n, -1), max = fit(numbers(d.max, `${where}.max`), n, 1);
+    for (let i = 0; i < n; i++) if (min[i] > max[i]) [min[i], max[i]] = [max[i], min[i]];
+    const safe = fit(numbers(d.safe, `${where}.safe`), n, (i) => Math.min(max[i], Math.max(min[i], 0))).map((v, i) => Math.min(max[i], Math.max(min[i], v)));
+    return {
+      url, rate, inputs,
+      inUnits: fit(split(d.inUnits), n, '1').map((u, i) => checkUnit(u, `${where}.inUnits[${i}]`)),
+      min, max, safe, outputs,
+      outUnits: fit(split(d.outUnits), outputs.length, '1').map((u, i) => checkUnit(u, `${where}.outUnits[${i}]`)),
+    };
+  },
+};
+
+function externalParams(desc, url = HIL_URL) {
+  return EXTERNAL_BLOCK.normalize({
+    url, rate: desc.rate_hz,
+    inputs: desc.inputs.map((p) => p.name), inUnits: desc.inputs.map((p) => p.unit),
+    min: desc.inputs.map((p) => p.min), max: desc.inputs.map((p) => p.max), safe: desc.inputs.map((p) => p.safe),
+    outputs: desc.outputs.map((p) => p.name), outUnits: desc.outputs.map((p) => p.unit),
+  });
+}
+
+function findExternal(d) {
+  for (const b of d?.blocks ?? []) {
+    if (b.type === 'external') return { block: b, level: d };
+    if (b.type === 'subsystem') { const hit = findExternal(b.diagram); if (hit) return hit; }
+  }
+  return null;
+}
+
+const samePorts = (params, desc) => params.inputs.join() === desc.inputs.map((p) => p.name).join() && params.outputs.join() === desc.outputs.map((p) => p.name).join();
+
+function sameDescription(params, desc) {
+  const want = externalParams(desc, params.url);
+  return JSON.stringify(want) === JSON.stringify(EXTERNAL_BLOCK.normalize(params));
+}
+
+function pageWatchdog({ now, lastY, rateHz, cycles = WATCHDOG_CYCLES }) {
+  const silent = Math.max(0, Math.floor(((now - lastY) / 1000) * rateHz + 1e-9));
+  return { silent, trip: silent >= cycles };
+}
+
+function createLinkStats(rateHz) {
+  let n = 0, t0 = null, last = null, lastSeq = null, jitter = 0, compute = 0, computeMax = 0;
+  let missed = 0;
+  const period = 1000 / rateHz;
+  return {
+    add(at, seq, computeMs = 0) {
+      if (lastSeq !== null && seq > lastSeq + 1) missed += seq - lastSeq - 1;
+      if (last !== null && lastSeq !== null && seq === lastSeq + 1) jitter = Math.max(jitter, Math.abs(at - last - period));
+      t0 ??= at;
+      n++; last = at; lastSeq = seq;
+      compute += computeMs; computeMax = Math.max(computeMax, computeMs);
+    },
+    read() {
+      const span = n > 1 ? (last - t0) / 1000 : 0;
+      const out = { rate: span > 0 ? (n - 1) / span : 0, jitter, missed, compute: n ? compute / n : 0, computeMax };
+      jitter = 0; compute = 0; computeMax = 0;
+      t0 = last; n = last === null ? 0 : 1;
+      return out;
+    },
+  };
+}
+
+return { HIL_URL, HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, rpcNotice, uMessage, parseMessage, checkDescription, EXTERNAL_BLOCK, externalParams, findExternal, samePorts, sameDescription, pageWatchdog, createLinkStats };
+})();
 // ---- core/diagram.js
 __mods['core/diagram.js'] = (() => {
 
@@ -2240,6 +2492,7 @@ const { gaussAt } = __mods['core/signals.js'];
 const { compileExpr } = __mods['core/expr.js'];
 const { normalizeVariant, makeLaw } = __mods['core/controllers.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
+const { EXTERNAL_BLOCK } = __mods['core/hil.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
 const ELEMENTS = {
@@ -2320,6 +2573,7 @@ const ELEMENTS = {
     ports: (p) => [p.inputs, p.outputs],
     outputs: (p) => Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`),
   },
+  external: EXTERNAL_BLOCK,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
@@ -2397,6 +2651,7 @@ function parseEnd(end) {
 
 function normalizeParams(type, params = {}, where) {
   if (diagramBlockDef(type).model) return normalizeBlock('plant', { type, params }).params;
+  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where);  
   const out = {};
   for (const p of ELEMENTS[type].params) {
     let v = params[p.key] ?? p.default;
@@ -2497,6 +2752,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   const warnings = [];
   const probeList = [];
   const add = (node) => { nodes.push({ inputs: [], ...node }); return nodes.length - 1; };
+  const externals = [];
   let extNode = -1, outNode = -1;
   const ctrlNodes = [];  
 
@@ -2561,6 +2817,13 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         outs[b.id] = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j })) : [k];
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         if (b.type === 'controller') ctrlNodes.push([`${ids}${b.id}`, k]); 
+        continue;
+      }
+      if (b.type === 'external') {
+        const k = add({ kind: 'xplant', name, ft: false, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut) });
+        externals.push(k);
+        outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
+        ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
       if (def.ode) {
@@ -2669,6 +2932,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
           case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
           case 'tap': y = nodes[nd.parent].outv[nd.j]; break;
           case 'ctrl': y = nd.u; break;
+          case 'xplant': y = nd.outv[0]; break;
           default: {
             const { ss } = nd;
             const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
@@ -2695,6 +2959,11 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     },
     probes: () => probeList.map(([name, k]) => [name, vals[k]]),
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
+    externals: externals.map((k) => {
+      const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
+      const shows = nodes[k].inputs.map((s) => (s < 0 ? [] : probeList.flatMap(([, pk], j) => (nodes[pk].kind === 'pass' && origin(pk) === origin(s) ? [j] : []))));
+      return { name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])), shows };
+    }),
   };
   return self;
 }
@@ -3132,7 +3401,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Encoder errors and torque ripple',
-    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing. Try FFT mode, and a notch filter on the channel.',
+    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing. Up there it is weaker than the noise at low frequencies, so the automatic levels leave it black. Zoom the frequency axis to 100–200 Hz (the levels follow what is shown) to see 6× reach the Nyquist frequency and turn, with the 3× and 4× orders; drag the floor of the levels strip at the right edge down to about −60 dB to see the whole fold-back. Try FFT mode, and a notch filter on the channel.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'ramp', params: { amplitude: 300, time: 0.5, rise: 4 } }] },
     },
@@ -3336,6 +3605,53 @@ const EXAMPLE_PLANTS = [
         { type: 'line', x1: 0.66, y1: '-0.45 + 0.011*r', x2: 0.86, y2: '-0.45 + 0.011*r', stroke: 'ch1', lineWidth: 3 },
         { type: 'text', x: 0.92, y: '-0.45 + 0.011*r', text: 'r', size: 12, fill: 'ch1', anchor: 'start' },
         { type: 'text', x: 0, y: 0.82, text: 'T {T:5.1} °C   r {r:4.0} °C   heater {P:5.1} %   door loss {d:4.0} %', size: 13 },
+      ],
+    }],
+  },
+  {
+    name: 'HIL: external motor',
+    notes: 'The plant runs outside this page: hil_plant.py, a DC motor swinging an unbalanced arm, simulated in real time at 100 Hz on your computer. Under Live, get the script, run it with "uv run hil_plant.py" and press Connect; then tune the controller against it while it runs. The P it starts with leaves the arm short of r (gravity pulls it back); flip to PD or PID. A load torque d pushes the arm at 3.6 s. Offline the plant reads 0.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
+      d: { period: PERIOD, components: [pulse(0.1, 3.6, 0.6)] },
+    },
+    scope: { channels: channels('r', 'angle', 'V', 'd') },
+    ui: { ...ui('Arm'), setup: 0.36 },  
+    tags: [{ label: 'Nonlinear', kind: 'plant' }],  
+    diagram: {
+      blocks: [
+        src('r', 30, 156, 'rad'),
+        src('d', 230, 250, 'N·m'),
+        ctrl(130, 150, 2, 0.01, [
+          { name: 'P, untuned', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
+          { name: 'PD', type: 'pid', params: { Kp: 6, Kd: 0.6, Tf: 0.01, umin: -12, umax: 12 } },
+          { name: 'PID with prefilter', type: 'pid', params: { Kp: 10, Ki: 20, Kd: 0.6, Tf: 0.01, Tr: 0.1, umin: -12, umax: 12 } },
+          { name: 'Off', type: 'off', params: {} },
+        ]),
+        {
+          id: 'motor', type: 'external', name: 'motor', x: 340, y: 96,
+          params: { url: 'ws://127.0.0.1:8765', rate: 100, inputs: ['V', 'load'], inUnits: ['V', 'N·m'], min: [-12, -0.2], max: [12, 0.2], safe: [0, 0], outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'] },
+        },
+        sink('angle', 600, 98, 'rad'), sink('speed', 600, 134, 'rad/s'), sink('current', 600, 170, 'A'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'ctrl', to: 'V' },
+        { from: 'motor', to: 'angle' }, { from: 'motor:1', to: 'speed' }, { from: 'motor:2', to: 'current' }, { from: 'motor', to: 'ctrl:1' },
+      ],
+    },
+    views: [{
+      name: 'Arm', kind: '2d', view: [-1.1, -1.05, 1.1, 1.0],
+      shapes: [
+        { type: 'circle', cx: 0, cy: 0, r: 0.75, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        ...ticks(0.75),
+        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: -0.8, x2: 0, y2: -0.95, stroke: 'ch1', lineWidth: 5 }] },
+        { type: 'group', angle: 'angle', shapes: [
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: -0.6, stroke: 'ch2', lineWidth: 7 },
+          { type: 'circle', cx: 0, cy: -0.6, r: 0.11, fill: 'ch2' },
+        ] },
+        { type: 'circle', cx: 0, cy: 0, r: 0.12, fill: 'ink' },
+        { type: 'text', x: 0, y: 0.9, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:4.2} N·m', size: 13 },
       ],
     }],
   },
@@ -3697,8 +4013,35 @@ function normalizeScopeView(v) {
   if (v.db === false) out.db = false;
   if (v.delta === true) out.delta = true;
   if ([64, 128, 256, 512, 1024].includes(Number(v.size))) out.size = Number(v.size);
+  const levels = normalizeLevels(v.levels);
+  if (levels) out.levels = levels;
   return Object.keys(out).length ? out : null;
 }
+
+function normalizeLevels(l) {
+  if (!l || typeof l !== 'object' || Array.isArray(l)) return null;
+  const out = {};
+  for (const [name, pair] of Object.entries(l)) {
+    const lv = normalizeLevelPair(pair);
+    if (name && name !== '__proto__' && lv) out[name] = lv;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function normalizeLevelPair(l) {
+  if (!Array.isArray(l) || l.length !== 2 || l.some((x) => typeof x !== 'number')) return null;
+  const [a, b] = l.map((x) => Math.round(x * 10) / 10).sort((x, y) => x - y);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b - a < 1 || a < -300 || b > 300) return null;
+  return [a, b];
+}
+
+function withLevels(view, source, pair) {
+  const levels = { ...(view?.levels ?? {}) };
+  if (pair) levels[source] = pair; else delete levels[source];
+  const out = { ...(view ?? {}), levels };
+  if (!Object.keys(levels).length) delete out.levels;
+  return out;
+}
+const levelsOf = (view, source) => (view?.levels && Object.hasOwn(view.levels, source) ? view.levels[source] : null);
 
 function channelNames(project) {
   const plant = project.system.plant;
@@ -3804,7 +4147,7 @@ function fmt(v, digits = 3) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, FILTER_TYPES, VIEW_MODES, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, FILTER_TYPES, VIEW_MODES, withLevels, levelsOf, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
 })();
 // ---- core/tune.js
 __mods['core/tune.js'] = (() => {
@@ -4089,7 +4432,8 @@ function systemTags(e) {
   walk(e.diagram);
   const tags = [];
   const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind, tone: toneOf(label) }); };
-  add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
+  const own = blocks.some((b) => b.type === 'external') ? (e.tags ?? []).filter((t) => t.kind === 'plant') : [];
+  if (own.length) for (const t of own) add(t.label, 'plant'); else add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
   if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
@@ -4476,7 +4820,75 @@ function dbScale(amp, floorDb = -100) {
   return out;
 }
 
-return { nextPow2, fft, WINDOWS, coherentGain, amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale };
+
+const DB_FLOOR = -240;
+
+function spectrogramWindow(sg, values, { t0 = -Infinity, t1 = Infinity, f0 = 0, f1 = Infinity } = {}) {
+  if (!sg.frames) return new Float32Array(0);
+  const df = sg.f.length > 1 ? sg.f[1] - sg.f[0] : 1, hop = sg.t.length > 1 ? sg.t[1] - sg.t[0] : 0;
+  const b0 = Math.max(0, Math.ceil(f0 / df - 0.5)), b1 = Math.min(sg.bins - 1, Math.floor(f1 / df + 0.5));
+  const frames = [];
+  for (let i = 0; i < sg.frames; i++) if (sg.t[i] + hop / 2 >= t0 && sg.t[i] - hop / 2 <= t1) frames.push(i);
+  if (b1 < b0 || !frames.length) return new Float32Array(0);
+  const out = new Float32Array(frames.length * (b1 - b0 + 1));
+  let q = 0;
+  for (const i of frames) for (let b = b0; b <= b1; b++) out[q++] = values[i * sg.bins + b];
+  return out;
+}
+
+function levelHistogram(values, lo, hi, bins) {
+  const n = Math.max(1, Math.floor(bins)), width = (hi - lo) / n;
+  if (!(width > 0)) throw new Error(`levelHistogram: need lo < hi, got ${lo}, ${hi}`);
+  const counts = new Uint32Array(n);
+  let below = 0, above = 0, total = 0;
+  for (let k = 0; k < values.length; k++) {
+    const v = values[k];
+    if (Number.isNaN(v)) continue;
+    total++;
+    if (v < lo) below++;
+    else if (v > hi) above++;
+    else counts[Math.min(n - 1, Math.floor((v - lo) / width))]++;
+  }
+  return { lo, hi, width, counts, below, above, total };
+}
+
+function quantileSorted(sorted, q) {
+  const n = sorted.length;
+  if (!n) return NaN;
+  const r = Math.min(1, Math.max(0, q)) * (n - 1), i = Math.floor(r), f = r - i;
+  return i + 1 < n ? sorted[i] + f * (sorted[i + 1] - sorted[i]) : sorted[i];
+}
+
+function firstAbove(sorted, zero) {
+  let a = 0, b = sorted.length;
+  while (a < b) { const m = (a + b) >> 1; if (sorted[m] <= zero) a = m + 1; else b = m; }
+  return a;
+}
+
+const AUTO_LEVELS = { margin: 10, depth: 80, span: 20 };
+function autoLevels(values, { margin = AUTO_LEVELS.margin, depth = AUTO_LEVELS.depth, span = AUTO_LEVELS.span, zero = DB_FLOOR } = {}) {
+  const sorted = Float32Array.from(values).filter((v) => !Number.isNaN(v)).sort();
+  const zeros = firstAbove(sorted, zero), real = sorted.subarray(zeros);
+  if (!real.length) return null;
+  const ceiling = real[real.length - 1], median = quantileSorted(real, 0.5), raw = median + margin;
+  const rule = raw > ceiling - span ? 'span' : raw < ceiling - depth ? 'depth' : 'median';
+  const floor = rule === 'span' ? ceiling - span : rule === 'depth' ? ceiling - depth : raw;
+  return { floor, ceiling, median, rule, zeros, sorted };
+}
+
+function levelRange(sorted, levels, zero = DB_FLOOR) {
+  let lo = -100, hi = 0;
+  const real = sorted.subarray ? sorted.subarray(firstAbove(sorted, zero)) : sorted.slice(firstAbove(sorted, zero));
+  if (real.length) {
+    hi = 10 * Math.ceil((real[real.length - 1] + 5) / 10) + 0;   
+    lo = Math.max(hi - 200, 10 * Math.floor((quantileSorted(real, 0.01) - 5) / 10));
+  }
+  if (levels) { lo = Math.min(lo, 10 * Math.floor(levels[0] / 10)); hi = Math.max(hi, 10 * Math.ceil(levels[1] / 10)); }
+  if (hi - lo < 20) lo = hi - 20;
+  return [lo, hi];
+}
+
+return { nextPow2, fft, WINDOWS, coherentGain, amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, spectrogramWindow, levelHistogram, quantileSorted, AUTO_LEVELS, autoLevels, levelRange };
 })();
 // ---- core/analysis.js
 __mods['core/analysis.js'] = (() => {
@@ -5515,6 +5927,474 @@ function fmtN(v) {
 
 return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, stepExperimentSteps, stepExperiment, simcGains, stepTuneSteps, stepTune, METHODS, autotuneSteps, autotune, tuneReport, baseName, resultName, placeVariant, pidVariant };
 })();
+// ---- core/live.js
+__mods['core/live.js'] = (() => {
+
+const { compileDiagram, normalizeDiagram } = __mods['core/diagram.js'];
+const { referenceFn } = __mods['core/signals.js'];
+const { HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, uMessage, parseMessage, checkDescription, pageWatchdog, createLinkStats } = __mods['core/hil.js'];
+const SAMPLED = ['controller', 'observer'];
+function structureKey(diagram) {
+  return JSON.stringify(diagram, function (k, v) {
+    if ((k === 'x' || k === 'y') && typeof v === 'number' && this.id !== undefined) return undefined;
+    if (k === 'variants' && SAMPLED.includes(this.type) && Array.isArray(v)) return v.map((x) => x.type);
+    return v;
+  });
+}
+
+function copyParams(own, next) {
+  own.blocks.forEach((b, i) => {
+    const n = next.blocks[i];
+    if (SAMPLED.includes(b.type)) Object.assign(b.variants[b.variant].params, n.variants[n.variant].params);
+    if (b.type === 'subsystem') copyParams(b.diagram, n.diagram);
+  });
+}
+
+function createLiveRunner(diagram, signals) {
+  const fns = {};
+  let own, key, el, ext, keep, X, Xt, k1, k2, k3, k4, tPrev, h;
+
+  function setSignals(sigs) {
+    for (const name of Object.keys(fns)) delete fns[name];
+    for (const [name, ref] of Object.entries(sigs ?? {})) fns[name] = referenceFn(ref, { sampleTime: h ?? 0.01 });
+  }
+  function build(d) {
+    own = normalizeDiagram(structuredClone(d));
+    key = structureKey(own);
+    const sources = new Proxy({}, { get: (_, name) => (t) => (fns[name] ? fns[name](t) : 0) });
+    el = compileDiagram(own, 'plant', { standalone: true, sources });
+    keep = el.probes().flatMap(([n], i) => (n.includes('.') ? [] : [i]));
+    if (el.externals.length !== 1) throw new Error(el.externals.length ? 'one External plant per system, for now' : 'this system has no External plant block: add one from the Live group in the Plant tab');
+    ext = el.externals[0];
+    const dt = 1 / ext.params.rate;
+    const m = Math.max(1, Math.ceil(dt / (el.bound > 0 ? Math.min(0.5 / el.bound, el.minTs) : Math.min(dt, el.minTs)) - 1e-9));
+    h = dt / m;
+    el.setStep(h);
+    X = new Float64Array(el.n); Xt = new Float64Array(el.n);
+    k1 = new Float64Array(el.n); k2 = new Float64Array(el.n); k3 = new Float64Array(el.n); k4 = new Float64Array(el.n);
+    el.init(X, 0);
+    tPrev = null;
+  }
+  build(diagram);
+  setSignals(signals);
+  const names = () => { const all = el.probes(); return keep.map((i) => all[i][0]); };
+
+  function rk4(t, dt) {
+    const N = el.n;
+    el.eval(t, X, 0, 0, k1);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k1[i];
+    el.eval(t + 0.5 * dt, Xt, 0, 0, k2);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
+    el.eval(t + 0.5 * dt, Xt, 0, 0, k3);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
+    el.eval(t + dt, Xt, 0, 0, k4);
+    for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+  }
+
+  return {
+    names,
+    get port() { return ext.params; },
+    step(t, y, held = false) {
+      if (tPrev !== null && t > tPrev) {
+        const m = Math.max(1, Math.round((t - tPrev) / h));
+        const dt = (t - tPrev) / m;
+        for (let s = 0; s < m; s++) {
+          const ts = tPrev + s * dt;
+          if (el.n) rk4(ts, dt);
+          if (s < m - 1) { el.eval(ts + dt, X, 0, 0, null); el.sample(ts + dt, X, 0, 0); el.record(); }
+        }
+      }
+      for (let j = 0; j < ext.y.length; j++) ext.y[j] = Number.isFinite(y[j]) ? y[j] : 0;
+      el.eval(t, X, 0, 0, null);
+      el.sample(t, X, 0, 0);
+      el.record();
+      tPrev = t;
+      const p = ext.params;
+      const all = el.probes();
+      if (held) ext.shows.forEach((js, i) => { for (const j of js) all[j][1] = p.safe[i]; });
+      const values = keep.map((i) => all[i][1]);
+      if (held) return { u: [...p.safe], values };
+      const u = ext.u().map((v, i) => (Number.isFinite(v) ? Math.min(p.max[i], Math.max(p.min[i], v)) : p.safe[i]));
+      return { u, values };
+    },
+    update(d, sigs) {
+      if (sigs) setSignals(sigs);
+      if (!d) return 'signals';
+      const next = normalizeDiagram(structuredClone(d));
+      if (structureKey(next) === key) { copyParams(own, next); return 'kept'; }
+      build(next);
+      return 'rebuilt';
+    },
+    restart() { build(own); },
+  };
+}
+
+function createLiveLoop(post, env = globalThis) {
+  const now = () => env.performance.now();
+  let ws = null, desc = null, runner = null, program = null;
+  let running = false, latched = null, lastY = 0, watchdog = 0;
+  let stats = null, plantStatus = null, lastStats = 0;
+  let batch = { t: [], values: [] }, lastFlush = 0, names = [];
+  let id = 0;
+  const calls = new Map();
+
+  const say = (state, detail = '') => post({ type: 'state', state, detail });
+  const fail = (message) => post({ type: 'error', message });
+  function call(method, params) {
+    return new Promise((resolve, reject) => {
+      if (!ws || ws.readyState !== 1) { reject(new Error('not connected')); return; }
+      const i = ++id;
+      calls.set(i, { resolve, reject });
+      ws.send(rpcRequest(i, method, params));
+    });
+  }
+
+  function flush() {
+    if (!batch.t.length) return;
+    post({ type: 'samples', names, t: batch.t, values: batch.values });
+    batch = { t: [], values: [] };
+  }
+  function latch(by, reason) {
+    if (latched) return;
+    latched = { by, reason };
+    flush();
+    post({ type: 'estop', by, reason });
+  }
+  function stopWatchdog() { if (watchdog) env.clearInterval(watchdog); watchdog = 0; }
+  function startWatchdog() {
+    stopWatchdog();
+    lastY = now();
+    const cycles = desc?.watchdog ?? WATCHDOG_CYCLES;
+    watchdog = env.setInterval(() => {
+      if (!running || latched) return;
+      const w = pageWatchdog({ now: now(), lastY, rateHz: desc.rate_hz, cycles });
+      if (w.trip) {
+        latch('page', `plant silent for ${w.silent} cycles`);
+        call('estop', { reason: 'the page heard no y' }).catch(() => {});
+      }
+    }, Math.max(5, 1000 / desc.rate_hz));
+  }
+
+  function makeRunner() {
+    if (!program) throw new Error('nothing to run yet');
+    runner = createLiveRunner(program.diagram, program.signals);
+    names = runner.names();
+  }
+
+  function onY(m) {
+    const at = now();
+    lastY = at;
+    if (!runner) return;
+    let res;
+    try { res = runner.step(m.t, m.y, !!latched); } catch (err) { latch('page', `the diagram failed: ${err.message}`); return; }
+    if (running && !latched && ws?.readyState === 1) ws.send(uMessage(m.seq, res.u));
+    stats?.add(at, m.seq, now() - at);
+    batch.t.push(m.t);
+    batch.values.push(res.values);
+    if (at - lastFlush >= 33) { lastFlush = at; flush(); }
+    if (stats && at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
+  }
+
+  function onText(text) {
+    const m = parseMessage(text);
+    if (m.kind === 'y') onY(m);
+    else if (m.kind === 'result' || m.kind === 'error') {
+      const c = calls.get(m.id);
+      calls.delete(m.id);
+      if (m.kind === 'result') c?.resolve(m.result); else c?.reject(new Error(m.error));
+    } else if (m.kind === 'estop') latch('plant', m.reason);
+    else if (m.kind === 'status') plantStatus = m.status;
+    else fail(`the plant sent something unexpected: ${m.error}`);
+  }
+
+  async function start() {
+    if (!desc) throw new Error('not connected');
+    if (running) { running = false; stopWatchdog(); flush(); await call('stop'); }
+    makeRunner();
+    post({ type: 'run' });  
+    stats = createLinkStats(desc.rate_hz);
+    lastStats = now();
+    running = true;
+    startWatchdog();
+    try { await call('start'); } catch (err) { running = false; stopWatchdog(); throw err; }
+    say('running', desc.name);
+  }
+
+  const handlers = {
+    connect({ url }) {
+      if (ws) return;
+      say('connecting', url);
+      try { ws = new env.WebSocket(url); } catch (err) { ws = null; say('closed', `cannot open ${url}: ${err.message}`); return; }
+      let opened = false;
+      ws.onopen = async () => {
+        opened = true;
+        say('open', url);
+        try {
+          desc = checkDescription(await call('describe'));
+          latched = desc.estop ? { by: 'plant', reason: desc.estop } : null;
+          if (desc.protocol !== HIL_PROTOCOL) fail(`the plant speaks ${desc.protocol || 'an unnamed protocol'}, this page ${HIL_PROTOCOL}: it may not work`);
+          post({ type: 'described', desc });
+          if (latched) post({ type: 'estop', by: 'plant', reason: desc.estop });
+        } catch (err) { fail(`describe: ${err.message}`); ws?.close(); }
+      };
+      ws.onmessage = (e) => onText(e.data);
+      ws.onclose = (e) => {
+        const wasRunning = running;
+        running = false; ws = null; desc = null;
+        stopWatchdog(); flush();
+        for (const c of calls.values()) c.reject(new Error('connection closed'));
+        calls.clear();
+        if (wasRunning && !latched) latch('page', 'connection lost');
+        say('closed', e.reason || (opened ? 'the connection was lost' : e.code === 1006 ? 'no plant answered at that address (or this page may not open connections)' : `code ${e.code}`));
+      };
+      ws.onerror = () => {};  
+    },
+    program(p) {
+      program = p;
+      if (!runner) return;
+      try {
+        const how = runner.update(p.diagram, p.signals);
+        if (how === 'rebuilt') names = runner.names();
+        post({ type: 'programmed', how });
+      } catch (err) { latch('page', err.message); }
+    },
+    async start() { try { await start(); } catch (err) { fail(err.message); } },
+    async stop() {
+      running = false; stopWatchdog(); flush();
+      try { await call('stop'); } catch {   }
+      say('open', 'stopped');
+    },
+    async estop() {
+      latch('page', 'pressed on this page');
+      try { await call('estop', { reason: 'E-STOP pressed on the page' }); } catch {   }
+    },
+    async reset({ start: go = true } = {}) {
+      try {
+        await call('reset');
+        latched = null;
+        if (running) { runner?.restart(); startWatchdog(); say('running', desc.name); } else if (go) await start(); else say('open', 'reset');
+      } catch (err) { fail(`reset: ${err.message}`); }
+    },
+    async disconnect() {
+      if (!ws) return;
+      running = false; stopWatchdog(); flush();
+      await Promise.race([call('stop').catch(() => {}), new Promise((r) => env.setTimeout(r, 300))]);
+      ws?.close(1000, 'disconnected by the page');
+    },
+  };
+  return {
+    handle(msg) { const f = handlers[msg.type]; if (f) f(msg); },
+    protocol: HIL_PROTOCOL,
+  };
+}
+
+function liveWorker(scope) {
+  const loop = createLiveLoop((msg) => scope.postMessage(msg), scope);
+  scope.onmessage = (e) => loop.handle(e.data);
+  scope.postMessage({ type: 'ready' });
+}
+
+return { createLiveRunner, createLiveLoop, liveWorker };
+})();
+// ---- core/trace.js
+__mods['core/trace.js'] = (() => {
+
+const TRACE_FORMAT = 'loop-tuner-trace/1';
+const MAX_RECORD_VALUES = 2 ** 24;
+
+const sweepStart = (t, w0, W) => w0 + W * Math.floor((t - w0) / W + 1e-9);
+
+function refShift(t0, t1, w0, W, step = 0) {
+  const base = t1 >= w0 && t0 < w0 + W ? 0 : w0 - sweepStart(t0, w0, W);
+  return base - step * W;
+}
+function refSteps(t0, t1, w0, W) {
+  const base = refShift(t0, t1, w0, W);
+  return { min: Math.floor((t0 + base - w0 - W) / W + 1e-9) + 1, max: Math.max(0, Math.ceil((t1 + base - w0) / W - 1e-9) - 1) };
+}
+
+function createRecorder(seconds = 300, maxValues = MAX_RECORD_VALUES) {
+  let names = [], units = {}, cap = 0, n = 0, head = 0, t = new Float64Array(0), cols = [];
+  let lastIn = null, map = [];
+  const limit = () => Math.floor(maxValues / (names.length + 1));
+  const oldest = () => (head - n + cap) % cap;
+  function relayout(c) {
+    const keep = Math.min(n, c), from = (head - keep + cap) % (cap || 1);
+    const move = (src) => { const dst = new Float64Array(c).fill(NaN); for (let i = 0; i < keep; i++) dst[i] = src[(from + i) % cap]; return dst; };
+    t = move(t); cols = cols.map(move);
+    cap = c; n = keep; head = keep % c;
+  }
+  function column(name) {
+    let j = names.indexOf(name);
+    if (j >= 0) return j;
+    names.push(name);
+    cols.push(new Float64Array(cap).fill(NaN));
+    if (cap > limit()) relayout(limit());
+    j = names.length - 1;
+    return j;
+  }
+  function evict(now) { while (n && t[oldest()] < now - seconds - 1e-9) n--; }
+  const self = {
+    get seconds() { return seconds; },
+    get names() { return names; },
+    get length() { return n; },
+    span() { return n > 1 ? t[(head - 1 + cap) % cap] - t[oldest()] : 0; },
+    last() { return n ? t[(head - 1 + cap) % cap] : null; },
+    longest() {
+      const s = self.span();
+      return n > 1 && s > 0 ? (limit() * s) / (n - 1) : Infinity;
+    },
+    setUnits(u) { Object.assign(units, u); },
+    setLength(s) { seconds = s; const now = self.last(); if (now !== null) evict(now); },
+    clear() { names = []; units = {}; cap = 0; n = 0; head = 0; t = new Float64Array(0); cols = []; lastIn = null; map = []; },
+    push(time, nms, values) {
+      if (nms !== lastIn) { map = nms.map(column); lastIn = nms; }
+      evict(time);
+      if (n === cap) {
+        if (cap < limit()) relayout(Math.min(limit(), Math.max(1024, 2 * cap)));
+        else n--;  
+      }
+      t[head] = time;
+      for (let j = 0; j < cols.length; j++) cols[j][head] = NaN;
+      for (let i = 0; i < map.length; i++) cols[map[i]][head] = values[i];
+      head = (head + 1) % cap;
+      n++;
+    },
+    snapshot() {
+      const out = { t: new Float64Array(n), signals: {}, units: Object.fromEntries(names.map((nm) => [nm, units[nm] ?? '1'])) };
+      const from = oldest();
+      const copy = (src, dst) => { for (let i = 0; i < n; i++) dst[i] = src[(from + i) % cap]; };
+      if (n) copy(t, out.t);
+      names.forEach((nm, j) => { out.signals[nm] = new Float64Array(n); if (n) copy(cols[j], out.signals[nm]); });
+      return out;
+    },
+  };
+  return self;
+}
+
+function traceWindow(trace, a, b) {
+  let i0 = 0, i1 = trace.t.length;
+  while (i0 < i1 && trace.t[i0] < a - 1e-9) i0++;
+  while (i1 > i0 && trace.t[i1 - 1] > b + 1e-9) i1--;
+  return { t: trace.t.slice(i0, i1), signals: Object.fromEntries(Object.entries(trace.signals).map(([nm, v]) => [nm, v.slice(i0, i1)])), units: { ...trace.units } };
+}
+
+const cell = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(9))) : '');
+const ROWS = 20000;  
+
+function traceToCsvParts(trace, { title = '', source = '' } = {}) {
+  const names = Object.keys(trace.signals);
+  const unit = (nm) => trace.units?.[nm] ?? '1';
+  const head = `# ${TRACE_FORMAT}${title ? ` · ${title}` : ''}${source ? ` · ${source}` : ''} · ${trace.t.length} samples\n${['t [s]', ...names.map((nm) => `${nm} [${unit(nm)}]`)].join(',')}\n`;
+  const parts = [head], cs = names.map((nm) => trace.signals[nm]);
+  for (let a = 0; a < trace.t.length; a += ROWS) {
+    const lines = [];
+    for (let i = a; i < Math.min(trace.t.length, a + ROWS); i++) lines.push(`${cell(trace.t[i])}${cs.map((v) => `,${cell(v[i])}`).join('')}`);
+    parts.push(`${lines.join('\n')}\n`);
+  }
+  return parts;
+}
+const traceToCsv = (trace, meta) => traceToCsvParts(trace, meta).join('');
+
+function traceToJsonParts(trace, { title = '', source = '' } = {}) {
+  const arr = (a) => {
+    const out = [];
+    for (let i = 0; i < a.length; i += ROWS) out.push(Array.from(a.subarray ? a.subarray(i, i + ROWS) : a.slice(i, i + ROWS), (v) => (Number.isFinite(v) ? Number(v.toPrecision(9)) : 'null')).join(','));
+    return `[${out.join(',')}]`;
+  };
+  const parts = [`{"format":${JSON.stringify(TRACE_FORMAT)},"title":${JSON.stringify(title)},"source":${JSON.stringify(source)},"units":${JSON.stringify({ t: 's', ...trace.units })},"t":${arr(trace.t)},"signals":{`];
+  Object.entries(trace.signals).forEach(([nm, v], i) => parts.push(`${i ? ',' : ''}${JSON.stringify(nm)}:${arr(v)}`));
+  parts.push('}}');
+  return parts;
+}
+const traceToJson = (trace, meta) => traceToJsonParts(trace, meta).join('');
+
+function parseTrace(text) {
+  const s = String(text).replace(/^\uFEFF/, '');
+  if (/^\s*\{/.test(s)) {
+    const j = JSON.parse(s);
+    if (!Array.isArray(j.t) || !j.signals || typeof j.signals !== 'object') throw new Error('a trace needs "t" and "signals"');
+    const num = (a) => Float64Array.from(a, (v) => (v === null || v === '' ? NaN : Number(v)));
+    const signals = {};
+    for (const [nm, v] of Object.entries(j.signals)) {
+      if (!Array.isArray(v) || v.length !== j.t.length) throw new Error(`signal ${nm}: one value per time`);
+      signals[nm] = num(v);
+    }
+    const units = { ...(j.units ?? {}) };
+    delete units.t;
+    return { title: String(j.title ?? ''), t: num(j.t), signals, units };
+  }
+  const lines = s.split(/\r?\n/).filter((l) => l.trim() && !l.startsWith('#'));
+  if (lines.length < 2) throw new Error('a CSV trace needs a header and at least one row');
+  const head = lines[0].split(/[,;\t]/).map((h) => h.trim().replace(/^"|"$/g, ''));
+  const cols = head.map((h) => /^(.*?)\s*(?:\[(.*)\])?$/.exec(h));
+  const t = new Float64Array(lines.length - 1);
+  const values = cols.slice(1).map(() => new Float64Array(lines.length - 1));
+  for (let i = 1; i < lines.length; i++) {
+    const f = lines[i].split(/[,;\t]/);
+    t[i - 1] = f[0] === '' ? NaN : Number(f[0]);
+    for (let j = 1; j < cols.length; j++) values[j - 1][i - 1] = f[j] === undefined || f[j].trim() === '' ? NaN : Number(f[j]);
+  }
+  if (!t.every(Number.isFinite)) throw new Error('the first column must be the time, in seconds');
+  const signals = {}, units = {};
+  cols.slice(1).forEach((c, j) => { const nm = c[1] || `col${j + 2}`; signals[nm] = values[j]; units[nm] = c[2] || '1'; });
+  return { title: '', t, signals, units };
+}
+
+return { TRACE_FORMAT, MAX_RECORD_VALUES, sweepStart, refShift, refSteps, createRecorder, traceWindow, traceToCsvParts, traceToCsv, traceToJsonParts, traceToJson, parseTrace };
+})();
+// ---- core/zip.js
+__mods['core/zip.js'] = (() => {
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function zipFiles(files, date = new Date()) {
+  const enc = new TextEncoder();
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | (date.getSeconds() >> 1);
+  const day = ((Math.max(1980, date.getFullYear()) - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  const parts = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = typeof f.data === 'string' ? enc.encode(f.data) : f.data;
+    const crc = crc32(data);
+    const common = (v) => { v.setUint16(0, 20, true); v.setUint16(2, 0x0800, true); v.setUint16(4, 0, true); v.setUint16(6, time, true); v.setUint16(8, day, true); v.setUint32(10, crc, true); v.setUint32(14, data.length, true); v.setUint32(18, data.length, true); v.setUint16(22, name.length, true); };
+    const local = new Uint8Array(30 + name.length), lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true);
+    common(new DataView(local.buffer, 4));
+    local.set(name, 30);
+    const head = new Uint8Array(46 + name.length), cv = new DataView(head.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, (3 << 8) | 20, true);  
+    common(new DataView(head.buffer, 6));
+    cv.setUint32(38, (((f.mode ?? 0o644) | 0o100000) << 16) >>> 0, true);
+    cv.setUint32(42, offset, true);
+    head.set(name, 46);
+    parts.push(local, data);
+    central.push(head);
+    offset += local.length + data.length;
+  }
+  const size = central.reduce((s, h) => s + h.length, 0);
+  const end = new Uint8Array(22), ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true);
+  ev.setUint32(12, size, true); ev.setUint32(16, offset, true);
+  const out = new Uint8Array(offset + size + 22);
+  let at = 0;
+  for (const p of [...parts, ...central, end]) { out.set(p, at); at += p.length; }
+  return out;
+}
+
+return { crc32, zipFiles };
+})();
 // ---- ui/units.js
 __mods['ui/units.js'] = (() => {
 
@@ -5627,7 +6507,8 @@ return { createDial };
 // ---- ui/freqview.js
 __mods['ui/freqview.js'] = (() => {
 
-const { amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks } = __mods['core/spectrum.js'];
+const { amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, AUTO_LEVELS, spectrogramWindow, levelHistogram, autoLevels, levelRange } = __mods['core/spectrum.js'];
+const { levelsOf } = __mods['core/project.js'];
 const { siUnit, num } = __mods['ui/units.js'];
 const DIVX = 10, DIVY = 8, DB_PER_DIV = 10;
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
@@ -5672,10 +6553,14 @@ function heat(x) {
   const s = Math.max(0, Math.min(1, x)) * (STOPS.length - 1), i = Math.min(STOPS.length - 2, Math.floor(s)), f = s - i;
   return STOPS[i].map((c, j) => Math.round(c + f * (STOPS[i + 1][j] - c)));
 }
+const LUT = new Uint8ClampedArray(256 * 3);
+for (let k = 0; k < 256; k++) LUT.set(heat(k / 255), 3 * k);
+const lutIndex = (db, floor, span) => { const x = (db - floor) / span; return x <= 0 ? 0 : x >= 1 ? 255 : Math.round(x * 255); };
 
 function drawFrequency(v) {
   const mode = v.scope.view?.mode;
-  if (mode === 'fft') drawFft(v); else drawSpectrogram(v);
+  if (mode === 'fft') { drawFft(v); return null; }
+  return drawSpectrogram(v);
 }
 
 function axisText(g, P, labels, side, color) {
@@ -5782,49 +6667,79 @@ function drawFft(v) {
   g.restore();
 }
 
-function drawSpectrogram(v) {
-  const { g, P, data, scope, axis, colors, tx, vy, hover } = v;
-  v.drawGrid(g);
-  const i = scope.channels[axis]?.on && channelSignal(data, scope.channels[axis]) ? axis : [0, 1, 2, 3].find((c) => scope.channels[c].on && channelSignal(data, scope.channels[c]));
-  if (i === undefined) return;
-  const ch = scope.channels[i], sig = channelSignal(data, ch), dt = dtOf(data), n = data.t.length - 1;
-  const [f0, f1] = freqRange(scope, data);
-  const size = scope.view?.size ?? Math.max(64, Math.min(512, 2 ** Math.round(Math.log2(n / 16))));
+function spectrogramOf(data, ch, size) {
   const key = `sg|${ch.source}|${JSON.stringify(ch.filter ?? null)}|${size}`;
-  const img = cached(data, key, () => {
-    const sg = spectrogram(sig, dt, { size, overlap: 0.875, detrend: 'linear' });   
-    if (!sg.frames) return null;
-    let mx = -Infinity;
-    for (let q = 0; q < sg.amp.length; q++) mx = Math.max(mx, sg.amp[q]);
-    const top = 20 * Math.log10(Math.max(mx, 1e-12)), range = 80;
-    const cv = document.createElement('canvas');
-    cv.width = sg.frames; cv.height = sg.bins;
-    const im = cv.getContext('2d').createImageData(sg.frames, sg.bins);
-    for (let fr = 0; fr < sg.frames; fr++) for (let b = 0; b < sg.bins; b++) {
-      const a = sg.amp[fr * sg.bins + b], c = heat((20 * Math.log10(Math.max(a, 1e-12)) - top + range) / range);
-      const o = ((sg.bins - 1 - b) * sg.frames + fr) * 4;
-      im.data[o] = c[0]; im.data[o + 1] = c[1]; im.data[o + 2] = c[2]; im.data[o + 3] = 255;
-    }
-    cv.getContext('2d').putImageData(im, 0, 0);
-    return { cv, sg, top };
+  const s = cached(data, key, () => {
+    const sg = spectrogram(channelSignal(data, ch), dtOf(data), { size, overlap: 0.875, detrend: 'linear' });   
+    return sg.frames ? { sg, db: dbScale(sg.amp, DB_FLOOR) } : null;
   });
+  return { key, s };
+}
+function shownOf(data, key, s, win) {
+  return cached(data, `${key}|win|${win.join('|')}`, () => {
+    const auto = autoLevels(spectrogramWindow(s.sg, s.db, { t0: win[0], t1: win[1], f0: win[2], f1: win[3] }));
+    return { auto, sorted: auto?.sorted ?? new Float32Array(0), hist: null };
+  });
+}
+const imageCache = new WeakMap();
+function imageOf(data, key, { sg, db }, floor, ceiling) {
+  let per = imageCache.get(data);
+  if (!per) { per = new Map(); imageCache.set(data, per); }
+  const hit = per.get(key);
+  if (hit && hit.floor === floor && hit.ceiling === ceiling) return hit.cv;
+  const cv = hit?.cv ?? document.createElement('canvas');
+  if (!hit) { if (per.size > 8) per.clear(); cv.width = sg.frames; cv.height = sg.bins; }
+  const cx = cv.getContext('2d'), im = cx.createImageData(sg.frames, sg.bins), span = ceiling - floor;
+  for (let fr = 0; fr < sg.frames; fr++) for (let b = 0; b < sg.bins; b++) {
+    const c = 3 * lutIndex(db[fr * sg.bins + b], floor, span), o = ((sg.bins - 1 - b) * sg.frames + fr) * 4;
+    im.data[o] = LUT[c]; im.data[o + 1] = LUT[c + 1]; im.data[o + 2] = LUT[c + 2]; im.data[o + 3] = 255;
+  }
+  cx.putImageData(im, 0, 0);
+  per.set(key, { cv, floor, ceiling });
+  return cv;
+}
+
+function drawSpectrogram(v) {
+  const { g, P, scope, axis, colors, tx, vy, hover } = v;
+  v.drawGrid(g);
+  const prev = v.live && v.sweeping && v.past?.[0]?.t.length > 1 ? v.past[0] : null;
+  const data = prev && v.data.t.length < 2 ? null : v.data, base = data ?? prev;
+  const has = (d, c) => scope.channels[c]?.on && channelSignal(d, scope.channels[c]);
+  const i = has(base, axis) ? axis : [0, 1, 2, 3].find((c) => has(base, c));
+  if (i === undefined) return null;
+  const ch = scope.channels[i], sig = data && channelSignal(data, ch), dt = dtOf(base);
+  const [f0, f1] = freqRange(scope, base);
+  const ref = prev && channelSignal(prev, ch) && Math.abs(dtOf(prev) - dt) <= 1e-3 * dt ? prev : data;
+  const n = (ref ?? base).t.length - 1;
+  const size = scope.view?.size ?? Math.max(64, Math.min(512, 2 ** Math.round(Math.log2(n / 16))));
+  const { key, s } = sig ? spectrogramOf(data, ch, size) : { key: null, s: null };
+  const r = ref === data ? { key, s } : spectrogramOf(ref, ch, size);
+  const t0 = data?.t[0] ?? 0, tr = ref?.t[0] ?? 0;
+  const shown = r.s && shownOf(ref, r.key, r.s, [v.xt(P.l) - tr, v.xt(P.r) - tr, f0, f1]);
+  const fixed = levelsOf(scope.view, ch.source);
+  const levels = fixed ?? (shown?.auto ? [shown.auto.floor, shown.auto.ceiling] : null);
   freqLabelsTime(v);
   axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, siUnit(Number((f1 - ((f1 - f0) * j) / DIVY).toPrecision(4)), 'Hz', 3)]), 'left', 'rgba(200, 210, 218, 0.75)');
   axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, num((DIVY / 2 - j) * ch.scale - ch.offset, 3)]), 'right', colors[i]);
   g.save();
   g.beginPath(); g.rect(P.l, P.t, P.w, P.h); g.clip();
-  if (img) {
-    const { cv, sg } = img, hop = sg.t.length > 1 ? sg.t[1] - sg.t[0] : dt;
-    const b0 = Math.max(0, Math.floor(f0 / (sg.f[1] - sg.f[0]))), b1 = Math.min(sg.bins - 1, Math.ceil(f1 / (sg.f[1] - sg.f[0])));
-    const xa = tx(sg.t[0] - hop / 2), xb = tx(sg.t[sg.frames - 1] + hop / 2);
+  const sg = s?.sg, hop = sg && sg.t.length > 1 ? sg.t[1] - sg.t[0] : dt;
+  if (s && levels) {
+    const cv = imageOf(data, key, s, levels[0], levels[1]);
+    const df = sg.f[1] - sg.f[0], fy = (f) => P.b - ((f - f0) / (f1 - f0)) * P.h;
+    const b0 = Math.max(0, Math.ceil(f0 / df - 0.5)), b1 = Math.min(sg.bins - 1, Math.floor(f1 / df + 0.5));
+    const xa = tx(t0 + sg.t[0] - hop / 2), xb = tx(t0 + sg.t[sg.frames - 1] + hop / 2);
     const xEnd = v.sweeping ? Math.min(xb, tx(v.tScan)) : xb;
-    g.save();
-    g.beginPath(); g.rect(P.l, P.t, Math.max(0, xEnd - P.l), P.h); g.clip();
-    g.imageSmoothingEnabled = true;
-    g.drawImage(cv, 0, sg.bins - 1 - b1, sg.frames, b1 - b0 + 1, xa, P.t, xb - xa, P.h);
-    g.restore();
+    if (b1 >= b0) {
+      g.save();
+      g.beginPath(); g.rect(P.l, P.t, Math.max(0, xEnd - P.l), P.h); g.clip();
+      g.imageSmoothingEnabled = true;
+      const ya = fy((b1 + 0.5) * df), yb = fy((b0 - 0.5) * df);
+      g.drawImage(cv, 0, sg.bins - 1 - b1, sg.frames, b1 - b0 + 1, xa, ya, xb - xa, yb - ya);
+      g.restore();
+    }
   }
-  const k = v.k;
+  const k = sig ? v.k : -1;
   g.strokeStyle = colors[i]; g.lineWidth = 1.4; g.globalAlpha = 0.9;
   g.beginPath();
   let started = false;
@@ -5839,11 +6754,106 @@ function drawSpectrogram(v) {
     const x = Math.round(tx(v.tScan)) + 0.5;
     g.strokeStyle = 'rgba(235, 240, 245, 0.35)'; g.beginPath(); g.moveTo(x, P.t); g.lineTo(x, P.b); g.stroke();
   }
+  const unit = v.unitLabel(ch.source);
   if (hover && hover.x >= P.l && hover.x <= P.r && hover.y >= P.t && hover.y <= P.b) {
     const t = v.xt(hover.x), f = f1 - ((hover.y - P.t) / P.h) * (f1 - f0);
-    readout(g, P, hover.x, [[`t  ${siUnit(t, 's', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`f  ${siUnit(f, 'Hz', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`${i + 1} ${ch.source}`, colors[i]]]);
+    const rows = [[`t  ${siUnit(t, 's', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`f  ${siUnit(f, 'Hz', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`${i + 1} ${ch.source}`, colors[i]]];
+    if (sg && (!v.sweeping || t <= v.tScan)) {
+      const fr = Math.round((t - t0 - sg.t[0]) / hop), b = Math.round(f / (sg.f[1] - sg.f[0]));
+      if (fr >= 0 && fr < sg.frames && b >= 0 && b < sg.bins) rows.push([`A  ${num(sg.amp[fr * sg.bins + b])} ${unit}  ${fmtDb(s.db[fr * sg.bins + b], 1)} dB`, colors[i]]);
+    }
+    readout(g, P, hover.x, rows);
   }
   g.restore();
+  if (!shown || !levels) return null;
+  const [lo, hi] = v.levelScale ?? levelRange(shown.sorted, levels);
+  const st = { channel: i, source: ch.source, floor: levels[0], ceiling: levels[1], auto: !fixed, rule: shown.auto?.rule, lo, hi, sorted: shown.sorted, unit, median: shown.auto?.median };
+  drawStrip(v, st, shown);
+  return st;
+}
+
+const fmtDb = (d, digits = 0) => `${d < 0 ? '−' : ''}${Math.abs(d).toFixed(Math.abs(d) < 10 && digits === 0 ? 1 : digits).replace(/\.0$/, '')}`;
+function autoText(st) {
+  if (st.rule === 'depth') return `auto: ${AUTO_LEVELS.depth} dB below the ceiling (at most)`;
+  if (st.rule === 'span') return `auto: ${AUTO_LEVELS.span} dB below the ceiling (at least)`;
+  return `auto: median ${fmtDb(st.median ?? 0, 1)} dB + ${AUTO_LEVELS.margin} dB`;
+}
+function shareAbove(sorted, d) {
+  let a = 0, b = sorted.length;
+  while (a < b) { const m = (a + b) >> 1; if (sorted[m] <= d) a = m + 1; else b = m; }
+  return sorted.length ? (sorted.length - a) / sorted.length : 0;
+}
+
+const BAR_W = 9;
+function drawStrip(v, st, shown) {
+  const { g, S, hover } = v;
+  const { lo, hi, floor, ceiling } = st;
+  const H = S.b - S.t, yOf = (d) => S.b - ((d - lo) / (hi - lo)) * H;
+  const barL = S.r - BAR_W, hL = S.l, hR = barL - 2;
+  const nb = Math.max(8, Math.round(H / 3)), hk = `${lo}|${hi}|${nb}`;
+  if (shown.histKey !== hk) { shown.hist = levelHistogram(shown.sorted, lo, hi, nb); shown.histKey = hk; }
+  const { counts, width } = shown.hist;
+  const yc = yOf(ceiling), yf = yOf(floor);
+  g.fillStyle = 'rgba(235, 240, 245, 0.07)';
+  g.fillRect(hL, yc, hR - hL, yf - yc);
+  const ticks = [];
+  for (let d = 20 * Math.ceil(lo / 20); d <= hi; d += 20) ticks.push(d);
+  g.strokeStyle = 'rgba(200, 210, 218, 0.16)'; g.lineWidth = 1;
+  for (const d of ticks) { const y = Math.round(yOf(d)) + 0.5; g.beginPath(); g.moveTo(hL, y); g.lineTo(hR, y); g.stroke(); }
+  let mx = 0;
+  for (const c of counts) mx = Math.max(mx, c);
+  const L = mx || 1;
+  for (let k = 0; k < counts.length; k++) {
+    if (!counts[k]) continue;
+    const d0 = lo + k * width, len = (counts[k] / L) * (hR - hL), y0 = yOf(d0 + width), y1 = yOf(d0);
+    const inside = d0 + width / 2 >= floor && d0 + width / 2 <= ceiling;
+    g.fillStyle = inside ? 'rgba(214, 222, 229, 0.78)' : 'rgba(160, 175, 190, 0.32)';
+    g.fillRect(hR - len, y0, len, Math.max(1, y1 - y0));
+  }
+  const span = ceiling - floor;
+  for (let y = Math.floor(S.t); y < S.b; y++) {
+    const c = 3 * lutIndex(lo + ((S.b - y - 0.5) / H) * (hi - lo), floor, span);
+    g.fillStyle = `rgb(${LUT[c]}, ${LUT[c + 1]}, ${LUT[c + 2]})`;
+    g.fillRect(barL, y, BAR_W, 1);
+  }
+  g.strokeStyle = 'rgba(160, 175, 190, 0.5)'; g.lineWidth = 1;
+  g.strokeRect(barL - 0.5, S.t + 0.5, BAR_W + 1, H - 1);
+  const yC = Math.round(yOf(ceiling)) + 0.5, yF = Math.round(yOf(floor)) + 0.5;
+  const tops = [Math.max(S.t + 1, yC - 15), Math.min(S.b - 14, yF + 3)];
+  g.font = `9px ${MONO}`; g.textAlign = 'left'; g.textBaseline = 'middle';
+  if (hR - hL >= 26) for (const d of ticks) {
+    const y = Math.round(yOf(d)), t = fmtDb(d);
+    if (y < S.t + 11 || y > S.b - 3 || tops.some((ty) => y > ty - 4 && y < ty + 24)) continue;
+    g.lineWidth = 3; g.strokeStyle = 'rgba(10, 13, 16, 0.9)'; g.strokeText(t, hL + 2, y - 5);
+    g.fillStyle = 'rgba(200, 210, 218, 0.6)'; g.fillText(t, hL + 2, y - 5);
+  }
+  g.font = `10px ${MONO}`; g.textAlign = 'left';
+  for (const [d, y, ty] of [[ceiling, yC, tops[0]], [floor, yF, tops[1]]]) {
+    g.strokeStyle = '#e8edf2'; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(hL, y); g.lineTo(S.r, y); g.stroke();
+    g.fillStyle = '#e8edf2';
+    g.beginPath(); g.moveTo(hL - 1, y - 5); g.lineTo(hL + 5, y); g.lineTo(hL - 1, y + 5); g.closePath(); g.fill();
+    const s = fmtDb(d), w = g.measureText(s).width;
+    g.fillStyle = 'rgba(10, 13, 16, 0.8)'; g.fillRect(hL + 6, ty, w + 4, 12);
+    g.fillStyle = '#e8edf2'; g.textBaseline = 'top'; g.fillText(s, hL + 8, ty + 1);
+  }
+  g.font = `10.5px ${MONO}`; g.textBaseline = 'top'; g.textAlign = 'center';
+  g.fillStyle = 'rgba(200, 210, 218, 0.75)';
+  g.fillText(st.auto ? 'dB auto' : 'dB', (S.l + S.r) / 2, S.b + 5);
+  if (hover && hover.x >= S.l - 6 && hover.y >= S.t && hover.y <= S.b) {
+    const d = lo + ((S.b - hover.y) / H) * (hi - lo), grey = 'rgba(235, 240, 245, 0.9)', dim = 'rgba(200, 210, 218, 0.7)';
+    const y = Math.round(hover.y) + 0.5;
+    g.strokeStyle = 'rgba(235, 240, 245, 0.5)'; g.setLineDash([2, 3]); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(hL, y); g.lineTo(S.r, y); g.stroke(); g.setLineDash([]);
+    readout(g, v.P, S.l - 4, [
+      [`${fmtDb(d, 1)} dB = ${num(10 ** (d / 20))} ${st.unit}`, grey],
+      [`${Math.round(100 * shareAbove(st.sorted, d))} % of the shown bins above`, grey],
+      [`floor ${fmtDb(floor, 1)} dB · ceiling ${fmtDb(ceiling, 1)} dB`, grey],
+      [st.auto ? autoText(st) : `set by hand for ${st.source} · double-click: auto`, dim],
+      ['drag a handle or the band', dim],
+      ['wheel: floor · Shift+wheel: ceiling', dim],
+    ], Math.max(S.t + 2, Math.min(S.b - 104, hover.y - 40)));
+  }
 }
 
 function freqLabelsTime(v) {
@@ -5858,14 +6868,14 @@ function freqLabelsTime(v) {
   }
 }
 
-function readout(g, P, x, rows) {
+function readout(g, P, x, rows, top = P.t + 6) {
   g.font = `11.5px ${MONO}`;
   g.textAlign = 'left'; g.textBaseline = 'top';
   const w = Math.max(...rows.map(([s]) => g.measureText(s).width)) + 14;
-  const bx = x + 10 + w > P.r ? x - 10 - w : x + 10;
-  g.fillStyle = 'rgba(10, 13, 16, 0.85)'; g.fillRect(bx, P.t + 6, w, rows.length * 16 + 8);
-  g.strokeStyle = 'rgba(160, 175, 190, 0.4)'; g.strokeRect(bx + 0.5, P.t + 6.5, w - 1, rows.length * 16 + 7);
-  rows.forEach(([s, c], j) => { g.fillStyle = c; g.fillText(s, bx + 7, P.t + 11 + j * 16); });
+  const bx = Math.max(2, x < (P.l + P.r) / 2 ? P.r - 6 - w : P.l + 6);
+  g.fillStyle = 'rgba(10, 13, 16, 0.85)'; g.fillRect(bx, top, w, rows.length * 16 + 8);
+  g.strokeStyle = 'rgba(160, 175, 190, 0.4)'; g.strokeRect(bx + 0.5, top + 0.5, w - 1, rows.length * 16 + 7);
+  rows.forEach(([s, c], j) => { g.fillStyle = c; g.fillText(s, bx + 7, top + 5 + j * 16); });
 }
 
 return { channelSignal, dtOf, nyquist, freqRange, drawFrequency };
@@ -6066,13 +7076,20 @@ __mods['ui/display.js'] = (() => {
 const { siUnit, num } = __mods['ui/units.js'];
 const { step125 } = __mods['core/scale.js'];
 const { channelSignal, drawFrequency, freqRange } = __mods['ui/freqview.js'];
+const { withLevels, levelsOf } = __mods['core/project.js'];
 const { drawXY, vOfX, valueLabel, valueTargets, xyStatus, xyFrame, xyNearest } = __mods['ui/xyview.js'];
 const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
 const PAD_RIGHT_AXIS = 50;   
+const STRIP_W = 60;          
+const STRIP_W_NARROW = 40;   
+const NARROW = 600;
+const LEVEL_STEP = 2;        
 const BG = '#0a0d10';
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+const dbText = (d) => `${d < 0 ? '−' : ''}${Math.abs(Math.round(d))}`;
+const r1 = (d) => Math.round(d * 10) / 10;
 
 function createDisplay(root, handlers) {
   const status = root.querySelector('.status');
@@ -6080,7 +7097,7 @@ function createDisplay(root, handlers) {
   const badges = root.querySelector('.badges');
   const canvas = document.createElement('canvas');
   canvas.setAttribute('role', 'img');
-  canvas.setAttribute('aria-label', 'Oscilloscope display. Wheel to zoom, drag to pan, click a trace to select it, Shift-drag to zoom to a box.');
+  canvas.setAttribute('aria-label', 'Oscilloscope display. Wheel to zoom, drag to pan, click a trace to select it, Shift-drag to zoom to a box. In Spectrogram mode the strip at the right sets the colour levels: drag its handles or the band between them, wheel for the floor, Shift+wheel for the ceiling, double-click for automatic levels.');
   screen.append(canvas);
   const ctx = canvas.getContext('2d');
 
@@ -6091,7 +7108,10 @@ function createDisplay(root, handlers) {
   const RUNS = 5;
   let past = [];
   const keepRun = () => { if (data) past = [data, ...past].slice(0, RUNS - 1); };
+  let feed = null, simData = null, refs = [];
   const P = { l: 0, t: 0, r: 0, b: 0, w: 0, h: 0, dx: 0, dy: 0 };
+  const S = { l: 0, r: 0, t: 0, b: 0 };
+  let strip = null, levelScale = null, levelsSig = '';
 
   function resize() {
     const r = screen.getBoundingClientRect();
@@ -6111,15 +7131,17 @@ function createDisplay(root, handlers) {
     return w;
   };
   function layout() {
-    const vm = viewMode(), wide = scope && (vm === 'spectrogram' || rightAxis() !== null);
+    const vm = viewMode(), spec = !!scope && vm === 'spectrogram';
+    const wide = scope && (spec || rightAxis() !== null);
     let l = PAD.l, r = wide ? PAD_RIGHT_AXIS : PAD.r;
     if (scope && data && (vm === 'time' || vm === 'xy')) {
       const left = vm === 'xy' ? xyFrame({ data, scope, axis: axisChannel(), k: data.t.length - 1, win }).axis : axisChannel();
       l = Math.max(PAD.l, Math.ceil(labelsWidth(left)) + 26);
       if (rightAxis() !== null) r = Math.max(PAD_RIGHT_AXIS, Math.ceil(labelsWidth(rightAxis())) + 10);
     }
-    Object.assign(P, { l, t: PAD.t, r: W - r, b: H - PAD.b });
+    Object.assign(P, { l, t: PAD.t, r: W - r - (spec ? (W < NARROW ? STRIP_W_NARROW : STRIP_W) : 0), b: H - PAD.b });
     P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
+    Object.assign(S, spec ? { l: P.r + PAD_RIGHT_AXIS + 4, r: W - 6, t: P.t, b: P.b } : { l: 0, r: 0, t: 0, b: 0 });
   }
 
   const tx = (t) => P.l + ((t - scope.timebase.position) / scope.timebase.scale) * P.dx;
@@ -6127,7 +7149,8 @@ function createDisplay(root, handlers) {
   const vy = (ch, v) => P.t + P.h / 2 - ((v + ch.offset) / ch.scale) * P.dy;
   const divsAt = (y) => (P.t + P.h / 2 - y) / P.dy;
   const win = () => [Math.max(0, scope.timebase.position), scope.timebase.position + DIVX * scope.timebase.scale];
-  const region = (x, y) => (x < P.l ? 'yaxis' : y > P.b ? 'xaxis' : 'plot');
+  const inStrip = (x, y) => S.r > S.l && x >= S.l - 6 && y >= S.t - 4 && y <= S.b + 4;
+  const region = (x, y) => (inStrip(x, y) ? 'strip' : x < P.l ? 'yaxis' : y > P.b ? 'xaxis' : 'plot');
   const visible = (i) => scope.channels[i].on && !!data?.signals[scope.channels[i].source];
   const sig = (d, i) => channelSignal(d, scope.channels[i]);
   const rightSet = () => (Number.isInteger(scope?.view?.right) && visible(scope.view.right) ? scope.view.right : null);
@@ -6206,7 +7229,7 @@ function createDisplay(root, handlers) {
   function indexAt(t) {
     const tt = data.t;
     if (tt.length < 2) return 0;
-    return Math.max(0, Math.min(tt.length - 1, Math.round(t / (tt[1] - tt[0]))));
+    return Math.max(0, Math.min(tt.length - 1, Math.round((t - tt[0]) / (tt[1] - tt[0]))));
   }
 
   function markerY(i) {
@@ -6220,17 +7243,26 @@ function createDisplay(root, handlers) {
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
     layout();
     if (viewMode() === 'xy') {
+      strip = null;
+      delete canvas.dataset.levels;
+      levelsChanged();
       drawXY({ ...xyArgs(), g: ctx, past, colors: CHANNEL_COLORS, drawGrid, runs: RUNS, hover: box || !hover || region(hover.x, hover.y) !== 'plot' ? null : hover });
       renderStatus();
       return;
     }
     if (viewMode() !== 'time') {
       const n = data.t.length - 1;
-      drawFrequency({ g: ctx, P, W, H, data, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
-        sweeping: mode !== 'stop', tScan, tx, xt, vy, colors: CHANNEL_COLORS, drawGrid, unitLabel });
+      strip = drawFrequency({ g: ctx, P, S, W, H, data, past, live: !!feed, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
+        sweeping: mode !== 'stop', tScan, tx, xt, vy, colors: CHANNEL_COLORS, drawGrid, unitLabel, levelScale });
+      if (strip) canvas.dataset.levels = `${[strip.floor, strip.ceiling, strip.lo, strip.hi].map((d) => d.toFixed(1)).join(' ')} ${strip.auto ? 'auto' : 'fixed'}`;
+      else delete canvas.dataset.levels;
+      levelsChanged();
       renderStatus();
       return;
     }
+    strip = null;
+    delete canvas.dataset.levels;
+    levelsChanged();
     drawGrid(ctx);
     drawAxes(ctx);
     ctx.save();
@@ -6254,6 +7286,20 @@ function createDisplay(root, handlers) {
         trace(ctx, d.t, v, ch, 0, d.t.length - 1);
       }
     });
+    if (refs.length) {
+      ctx.setLineDash([6, 4]); ctx.lineWidth = 1.3; ctx.globalAlpha = 0.6;
+      const first = (t, x) => { let lo = 0, hi = t.length - 1; while (lo < hi) { const mid = (lo + hi) >> 1; if (t[mid] < x) lo = mid + 1; else hi = mid; } return lo; };
+      for (const ref of refs) {
+        const a = Math.max(0, first(ref.t, xt(P.l)) - 1), b = Math.min(ref.t.length - 1, first(ref.t, xt(P.r)) + 1);
+        for (const i of order) {
+          const ch = scope.channels[i], v = ref.signals[ch.source];
+          if (!ch.on || !v) continue;
+          ctx.strokeStyle = CHANNEL_COLORS[i];
+          trace(ctx, ref.t, v, ch, a, b);
+        }
+      }
+      ctx.setLineDash([]);
+    }
     for (const i of order) {
       const ch = scope.channels[i];
       const v = sig(data, i);
@@ -6347,9 +7393,13 @@ function createDisplay(root, handlers) {
     if (!scope || !data) return;
     const state = { run: ['run', 'Run'], stop: ['stop', 'Stop'], single: ['single', 'Single'] }[mode];
     const tb = scope.timebase;
+    const live = handlers.liveTag?.();
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const vm = viewMode(), fr = vm === 'fft' || vm === 'spectrogram' ? freqRange(scope, data) : null;
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
+      ${live ? `<span class="st ${live.cls}">${esc(live.text)}</span>${live.note ? `<span class="dim">${esc(live.note)}</span>` : ''}` : ''}
       ${fr ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
+      ${vm === 'spectrogram' && strip ? `<span title="Spectrogram levels of ${strip.source}: below the floor black, above the ceiling the brightest colour">${dbText(strip.floor)} … ${dbText(strip.ceiling)} dB · ceiling ${num(10 ** (strip.ceiling / 20), 3)} ${unitLabel(strip.source)}</span><span class="dim">${strip.auto ? 'auto' : 'levels set'}</span>` : ''}
       ${vm === 'xy' ? `<span class="st st-view">${xyStatus(scope, unitLabel, visible)}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
@@ -6374,7 +7424,13 @@ function createDisplay(root, handlers) {
     raf = 0;
     const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
     last = now;
-    if (mode !== 'stop' && data && scope) {
+    if (mode !== 'stop' && data && scope && feed) {
+      const s = feed(), names = Object.keys(data.signals).join();
+      if (s.past) past = [s.past, ...past].slice(0, RUNS - 1);
+      if (s.done && mode === 'single') { data = s.done; tScan = win()[1]; mode = 'stop'; handlers.onStopped?.(); }
+      else { if (s.done) past = [s.done, ...past].slice(0, RUNS - 1); data = s.data; tScan = s.scan; }
+      if (Object.keys(data.signals).join() !== names) renderBadges();
+    } else if (mode !== 'stop' && data && scope) {
       const [w0, w1] = win();
       if (tScan < w0 || tScan > w1) tScan = w0;
       tScan += dt;
@@ -6434,16 +7490,44 @@ function createDisplay(root, handlers) {
     ch.offset = Number((kx * ch.scale - vc).toPrecision(6));
   }
 
+  function setLevels(source, f, c) {
+    const lv = [r1(f), r1(Math.max(c, f + 1))];
+    if (lv[1] - lv[0] < 1) lv[1] = r1(lv[0] + 1);
+    handlers.edit((sc) => { sc.view = withLevels(sc.view, source, lv); });
+  }
+  function levelsChanged() {
+    const sig = strip ? `${strip.source}|${strip.floor.toFixed(1)}|${strip.ceiling.toFixed(1)}|${strip.auto}` : '';
+    if (sig !== levelsSig) { levelsSig = sig; handlers.onLevels?.(); }
+  }
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const stripDb = (y, lo, hi) => lo + ((S.b - y) / (S.b - S.t)) * (hi - lo);
+  const stripY = (d) => S.b - ((d - strip.lo) / (strip.hi - strip.lo)) * (S.b - S.t);
+  function stripPart(y) {
+    const yc = stripY(strip.ceiling), yf = stripY(strip.floor);
+    if (Math.abs(y - yc) <= 6 && Math.abs(y - yc) <= Math.abs(y - yf)) return ['ceiling', true];
+    if (Math.abs(y - yf) <= 6) return ['floor', true];
+    if (y > yc && y < yf) return ['both', true];
+    return [y < yc ? 'ceiling' : 'floor', false];
+  }
+
   let wheelAcc = 0, wheelTimer = null;
   canvas.addEventListener('wheel', (e) => {
     if (!scope || !data) return;
     e.preventDefault();
-    wheelAcc += e.deltaY * (e.deltaMode === 1 ? 20 : 1);
+    const { x, y } = pos(e);
+    const where = region(x, y);
+    wheelAcc += (where === 'strip' && !e.deltaY ? e.deltaX : e.deltaY) * (e.deltaMode === 1 ? 20 : 1);
     const steps = Math.trunc(wheelAcc / 60);
     if (!steps) return;
     wheelAcc -= steps * 60;
-    const { x, y } = pos(e);
-    const where = region(x, y);
+    if (where === 'strip') {
+      if (!strip) return;
+      const d = -steps * LEVEL_STEP, { floor: f, ceiling: c, lo, hi } = strip;
+      if (e.shiftKey) setLevels(strip.source, f, clamp(c + d, f + 1, hi)); else setLevels(strip.source, clamp(f + d, lo, c - 1), c);
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => handlers.endEdit(), 400);
+      return;
+    }
     if (viewMode() === 'fft' || (viewMode() === 'spectrogram' && where !== 'xaxis')) {
       const [f0, f1] = freqRange(scope, data), fn = 0.5 / (data.t[1] - data.t[0]);
       const a = viewMode() === 'fft' ? (x - P.l) / P.w : (P.b - y) / P.h;
@@ -6497,6 +7581,13 @@ function createDisplay(root, handlers) {
     if (e.button !== 0 || !scope || !data) return;
     const { x, y } = pos(e);
     canvas.setPointerCapture(e.pointerId);
+    if (region(x, y) === 'strip') {
+      if (!strip) return;
+      const [part, grab] = stripPart(y), at = stripDb(y, strip.lo, strip.hi);
+      levelScale = [strip.lo, strip.hi];
+      gesture = { kind: 'levels', part, y, moved: false, source: strip.source, lv: [strip.floor, strip.ceiling], at, off: grab && part !== 'both' ? at - (part === 'floor' ? strip.floor : strip.ceiling) : 0 };
+      return;
+    }
     if (e.shiftKey && region(x, y) === 'plot') { box = { x0: x, y0: y, x1: x, y1: y }; gesture = { kind: 'box' }; return; }
     const hit = hitLine(x, y);
     if (hit !== null) selectLine(hit);
@@ -6507,6 +7598,18 @@ function createDisplay(root, handlers) {
     const p = pos(e);
     hover = p;
     if (gesture?.kind === 'box') { box.x1 = Math.max(P.l, Math.min(P.r, p.x)); box.y1 = Math.max(P.t, Math.min(P.b, p.y)); draw(); return; }
+    if (gesture?.kind === 'levels') {
+      if (!gesture.moved && Math.abs(p.y - gesture.y) < 2) return;
+      gesture.moved = true;
+      const [lo, hi] = levelScale, at = stripDb(p.y, lo, hi);
+      let [f, c] = gesture.lv;
+      if (gesture.part === 'both') { const d = clamp(at - gesture.at, lo - f, hi - c); f += d; c += d; }
+      else if (gesture.part === 'floor') f = clamp(at - gesture.off, lo, c - 1);
+      else c = clamp(at - gesture.off, f + 1, hi);
+      canvas.style.cursor = gesture.part === 'both' ? 'grabbing' : 'ns-resize';
+      setLevels(gesture.source, f, c);
+      return;
+    }
     if (gesture?.kind === 'pan') {
       const dx = p.x - gesture.x, dy = p.y - gesture.y;
       if (!gesture.moved && Math.hypot(dx, dy) < 3) return;
@@ -6533,21 +7636,31 @@ function createDisplay(root, handlers) {
       return;
     }
     const where = region(p.x, p.y);
-    canvas.style.cursor = hitLine(p.x, p.y) !== null ? 'grab' : where === 'xaxis' ? 'ew-resize' : where === 'yaxis' ? 'ns-resize' : 'crosshair';
+    if (where === 'strip') canvas.style.cursor = strip ? (stripPart(p.y)[0] === 'both' ? 'grab' : 'ns-resize') : 'default';
+    else canvas.style.cursor = hitLine(p.x, p.y) !== null ? 'grab' : where === 'xaxis' ? 'ew-resize' : where === 'yaxis' ? 'ns-resize' : 'crosshair';
     const ht = hoverTime();
     if (ht !== null && ht !== cursorT) { cursorT = ht; handlers.onTime?.(); }
     redraw();
   });
   const finish = () => {
     if (!gesture) return;
-    if (gesture.kind === 'box') applyBox();
+    levelScale = null;
+    if (gesture.kind === 'levels') { if (gesture.moved) handlers.endEdit(); }
+    else if (gesture.kind === 'box') applyBox();
     else if (gesture.moved) handlers.endEdit();
     else if (gesture.hit === null && line !== null) selectLine(null);
     gesture = null;
     canvas.style.cursor = 'crosshair';
   };
   canvas.addEventListener('pointerup', finish);
-  canvas.addEventListener('pointercancel', () => { box = null; gesture = null; draw(); });
+  canvas.addEventListener('pointercancel', () => { box = null; gesture = null; levelScale = null; draw(); });
+  canvas.addEventListener('dblclick', (e) => {
+    const { x, y } = pos(e);
+    if (region(x, y) !== 'strip' || !strip || !levelsOf(scope.view, strip.source)) return;
+    const source = strip.source;
+    handlers.edit((sc) => { sc.view = withLevels(sc.view, source, null); });
+    handlers.endEdit();
+  });
   canvas.addEventListener('pointerleave', () => { if (!gesture) { hover = null; redraw(); } });
 
   function applyBox() {
@@ -6593,7 +7706,10 @@ function createDisplay(root, handlers) {
   document.fonts?.ready.then(() => draw());
 
   return {
-    setData(d) { data = d; if (line !== null && !visible(line)) line = null; renderBadges(); draw(); },
+    setData(d) { simData = d; if (!feed) data = d; if (line !== null && !visible(line)) line = null; renderBadges(); draw(); },
+    setFeed(fn) { feed = fn; data = fn ? fn().data : simData; renderBadges(); draw(); },
+    setRefs(list) { refs = list; draw(); },
+    renderStatus,  
     setScope(s, sel) {
       scope = s; selected = sel;
       if (line !== null && (line !== sel || (viewMode() === 'xy' && line === 0))) line = null;
@@ -6615,6 +7731,8 @@ function createDisplay(root, handlers) {
     time() { return instant().t; },
     timeFrom() { return instant().from; },
     get mode() { return mode; },
+    get levels() { return strip && { source: strip.source, unit: strip.unit, floor: strip.floor, ceiling: strip.ceiling, auto: strip.auto }; },
+    setLevels(source, pair) { if (pair) setLevels(source, pair[0], pair[1]); else handlers.edit((sc) => { sc.view = withLevels(sc.view, source, null); }); handlers.endEdit(); },
   };
 }
 
@@ -7072,6 +8190,12 @@ function createControls(root, app) {
         <button class="key small" data-view="xy" title="XY: channel 1 across, the other channels against it (a Lissajous figure)">XY</button>
         <button class="key small" id="k-delta" title="XY: draw channel 1 minus each channel (r on 1 and y on 2: the error e = r − y over r)">Δ</button>
       </div>
+      <div class="srcrow lvrow" id="lv-row" hidden><span>Levels</span>
+        <input class="field" data-lv="0" aria-label="Spectrogram floor, dB" title="Floor: below it black. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
+        <span class="dim">…</span>
+        <input class="field" data-lv="1" aria-label="Spectrogram ceiling, dB" title="Ceiling: above it the brightest colour. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
+        <span class="dim">dB</span>
+        <button class="key small axbtn" id="lv-auto" title="Automatic levels: the ceiling at the largest amplitude shown, the floor 10 dB above the median (the noise)">Auto</button></div>
     </section>
     <section class="group">
       <h3 class="glabel">Horizontal</h3>
@@ -7214,6 +8338,49 @@ function createControls(root, app) {
     if (view.right === app.channel) delete view.right; else view.right = app.channel;
     sc.view = view;
   }));
+  const lvRow = $('#lv-row'), lvIn = [...lvRow.querySelectorAll('[data-lv]')];
+  const shownLevels = () => app.display?.levels;
+  function typeLevel(j, v) {
+    const lv = shownLevels();
+    if (!lv) return;
+    const pair = [lv.floor, lv.ceiling];
+    pair[j] = v;
+    if (!(pair[1] - pair[0] >= 1)) { app.toast('The floor must be at least 1 dB below the ceiling.'); renderLevels(true); return; }
+    if (pair[0] < -300 || pair[1] > 300) { app.toast('Levels between −300 and 300 dB.'); renderLevels(true); return; }
+    app.display.setLevels(lv.source, pair);
+  }
+  lvIn.forEach((el, j) => {
+    el.addEventListener('change', () => {
+      const v = parseSI(el.value, 'dB');
+      if (!Number.isFinite(v)) { app.toast('Type a level in dB, e.g. −60.'); renderLevels(true); return; }
+      typeLevel(j, v);
+    });
+    el.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') el.blur();
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      const lv = shownLevels();
+      if (!lv) return;
+      typeLevel(j, Math.round(((j ? lv.ceiling : lv.floor) + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1)) * 10) / 10);
+      renderLevels(true);
+    });
+  });
+  $('#lv-auto').addEventListener('click', () => { const lv = shownLevels(); if (lv && !lv.auto) app.display.setLevels(lv.source, null); });
+  function renderLevels(force = false) {
+    const lv = shownLevels(), vm = app.project.scope.view?.mode;
+    lvRow.hidden = vm !== 'spectrogram';
+    const fmt = (d) => `${d < 0 ? '−' : ''}${Math.abs(Math.round(d * 10) / 10)}`;
+    lvIn.forEach((el, j) => {
+      el.disabled = !lv;
+      if (force || document.activeElement !== el) el.value = lv ? fmt(j ? lv.ceiling : lv.floor) : '';
+    });
+    const auto = $('#lv-auto');
+    auto.disabled = !lv;
+    auto.classList.toggle('lit-view', !!lv?.auto);
+    auto.setAttribute('aria-pressed', String(!!lv?.auto));
+    lvRow.title = lv ? `The spectrogram's levels of ${lv.source} (dB of ${lv.unit}: 0 dB is 1 ${lv.unit})${lv.auto ? ', automatic' : ''}` : '';
+  }
   const src = $('#ch-src');
   src.addEventListener('change', () => setScope((sc) => { const c = sc.channels[app.channel]; c.source = src.value; c.on = src.value !== ''; }));
 
@@ -7255,9 +8422,10 @@ function createControls(root, app) {
     $('#ch-right').classList.toggle('lit-view', sc.view?.right === app.channel);
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
+    renderLevels();
   }
 
-  return { render };
+  return { render, renderLevels };
 }
 
 return { createControls };
@@ -7670,6 +8838,7 @@ const GROUPS = [
   ['Models', ['fopdt', 'lagChain', 'integratorLag', 'doubleIntegrator', 'inverseResponse']],
   ['Sensors', ['quantizer', 'noise']],
   ['Physics', ['cartPole', 'pendulumCart', 'conicalTank']],
+  ['Live', ['external']],  
   ['Nonlinear', ['saturation']],
   ['Structure', ['subsystem', 'inport', 'outport']],
 ];
@@ -7685,6 +8854,7 @@ function size(b) {
   if (diagramBlockDef(b.type).ode) return [150, Math.max(60, 18 * blockPorts(b)[1] + 12)];
   if (b.type === 'controller') return [150, Math.max(60, 18 * blockPorts(b)[0] + 12)];
   if (b.type === 'terminator') return [26, 26];
+  if (b.type === 'external') return [150, 18 * Math.max(...blockPorts(b)) + 32];  
   if (b.type === 'switch') { const n = b.params.inputs; return [56, Math.max(40, 18 * n + 8)]; }
   const [ni, no] = blockPorts(b);
   return [130, Math.max(48, 18 * Math.max(ni, no) + 12)];
@@ -7918,8 +9088,9 @@ function createPlantEditor(root, app) {
         text = `<text class="bt" x="${b.x + 9}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${b.x + 9}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
-    const outNames = outputNames(def, b.params);
+    const outNames = outputNames(def, b.params), inNames = def.inputNames?.(b.params) ?? [];
     const ports = g.outs.map((p, i) => (outNames[i] ? `<text class="pn" x="${p.x + (b.flip ? 8 : -8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'start' : 'end'}">${esc(outNames[i])}</text>` : '')).join('')
+      + g.ins.map((p, i) => (inNames[i] ? `<text class="pn" x="${p.x + (b.flip ? -8 : 8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'end' : 'start'}">${esc(inNames[i])}</text>` : '')).join('')
       + g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
       + g.outs.map((p, i) => `<circle class="port out" data-port="out" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('');
     const stack = b.type === 'subsystem' ? `<rect class="stack" x="${b.x + 4}" y="${b.y + 4}" width="${g.w}" height="${g.h}" rx="5"/>` : '';
@@ -7928,7 +9099,7 @@ function createPlantEditor(root, app) {
 
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const text = def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
     const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
@@ -8011,7 +9182,7 @@ function createPlantEditor(root, app) {
       for (const p of def.params) {
         const v = b.params[p.key];
         const hint = p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}`;
-        html += field(`p:${p.key}`, p.label, p.kind === 'vector' ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', hint);
+        html += field(`p:${p.key}`, p.label, p.kind === 'vector' || Array.isArray(v) ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', hint);
       }
       html += '</div><div class="pbtns">';
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="key small" data-act="flip">Flip</button>`;
@@ -9049,6 +10220,572 @@ function createSplitters(shell) {
 
 return { createSplitters };
 })();
+// ---- ui/record.js
+__mods['ui/record.js'] = (() => {
+
+const { findExternal } = __mods['core/hil.js'];
+const { createRecorder, traceToCsv, traceToCsvParts, traceToJsonParts, parseTrace, traceWindow, refShift, refSteps } = __mods['core/trace.js'];
+const { CHANNEL_COLORS } = __mods['ui/display.js'];
+const { num } = __mods['ui/units.js'];
+const RECORD_KEY = 'loop-tuner:record-seconds';
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function parseDuration(text) {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(h|min|m|s)?\s*$/i.exec(String(text).replace(',', '.'));
+  if (!m) return NaN;
+  return Number(m[1]) * ({ h: 3600, min: 60, m: 60, s: 1 }[(m[2] ?? 's').toLowerCase()]);
+}
+function duration(s) {
+  if (!Number.isFinite(s)) return '–';
+  if (s >= 3600 && s % 3600 === 0) return `${s / 3600} h`;
+  if (s >= 60) return Number.isInteger(s / 60) ? `${s / 60} min` : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')} min`;
+  return `${Number(s.toFixed(s < 10 ? 1 : 0))} s`;
+}
+const span = (tr) => (tr.t.length > 1 ? tr.t[tr.t.length - 1] - tr.t[0] : 0);
+const listed = (names) => (names.length > 6 ? `${names.slice(0, 6).join(', ')} and ${names.length - 6} more` : names.join(', '));
+
+function createRecord(app, display) {
+  const bar = document.createElement('div');
+  bar.className = 'recbar';
+  bar.setAttribute('aria-label', 'Save and references');
+  bar.innerHTML = `
+    <span class="rc-rec" id="rc-rec" hidden><span class="rc-label" title="Rec: the last minutes of every live signal are kept, to be saved">Rec</span>
+      <span class="rc-state" id="rc-state"></span><input class="rc-len" id="rc-len" spellcheck="false" aria-label="Record length" title="How much live data is kept: 5 min, 30 s, 1 h"></span>
+    <span class="rc-menu"><button class="rkey" id="rc-save" aria-haspopup="true" aria-expanded="false" title="Save the screen (every signal, or a picture) or the live record">Save ▾</button><span class="rc-pop" id="rc-pop" role="menu" hidden></span></span>
+    <button class="rkey" id="rc-open" title="Open a saved trace (CSV or JSON): it is drawn dashed on the channels with the same names">Open…</button>
+    <span class="rc-refs" id="rc-refs" hidden></span>
+    <input type="file" id="rc-file" accept=".csv,.json,text/csv,application/json" hidden>`;
+  document.getElementById('display').append(bar);
+  const $ = (id) => document.getElementById(id);
+  const unitsOf = (list) => Object.fromEntries(list.map((nm) => [nm, app.unitOf(nm)]));
+  const windowOf = () => { const tb = app.project.scope.timebase; const w0 = Math.max(0, tb.position); return [w0, tb.position + 10 * tb.scale]; };
+
+  function screenTrace() {
+    const d = display.data;
+    if (!(d?.t?.length > 1)) return null;
+    const live = d.plantOffset !== undefined;
+    const [w0, w1] = windowOf();
+    const tr = traceWindow(d, live ? -Infinity : w0, live ? Infinity : w1);
+    if (tr.t.length < 2) return null;
+    for (const nm of Object.keys(tr.signals)) if (nm.includes('.')) delete tr.signals[nm];
+    tr.units = unitsOf(Object.keys(tr.signals));
+    return { trace: tr, what: 'screen', source: live ? `the screen: a live sweep, t is screen time (plant time = t + ${num(d.plantOffset, 6)} s)` : 'the screen: a simulated run' };
+  }
+
+  let seconds = 300;
+  try { seconds = Number(localStorage.getItem(RECORD_KEY)) || 300; } catch {   }
+  const rec = createRecorder(seconds);
+  let began = null, runOffset = null, lastPlantT = null, lastT = null, recKey = '', recNames = null;
+  const clock = () => performance.now() / 1000;
+  const recordTrace = () => (rec.length > 1 ? { trace: rec.snapshot(), what: 'live record', source: 'the live record: t in seconds from its first sample; each run is the plant\'s own time, placed when it started' } : null);
+  const live = {
+    run() { runOffset = null; },
+    samples(names, ts, values) {
+      const key = names.join('\n');
+      if (key !== recKey) { recKey = key; recNames = names; rec.setUnits(unitsOf(names)); }
+      for (let i = 0; i < ts.length; i++) {
+        const t = ts[i];
+        if (runOffset === null || (lastPlantT !== null && t < lastPlantT)) {
+          began ??= clock() - t;
+          runOffset = Math.max(clock() - began - t, lastT === null ? -Infinity : lastT - t + 1e-6);
+        }
+        lastPlantT = t; lastT = t + runOffset;
+        rec.push(lastT, recNames, values[i]);
+      }
+    },
+  };
+
+  const stem = (what) => `${app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'trace'}-${what === 'screen' ? 'screen' : 'record'}-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}`;
+  async function save(what, kind) {
+    closePop();
+    if (kind === 'png') { if (await app.download(`${stem('screen')}.png`, await screenshot(), 'image/png')) app.toast('Saved a picture of the screen (PNG)'); return; }
+    const x = what === 'screen' ? screenTrace() : recordTrace();
+    if (!x) { app.toast(what === 'screen' ? 'Nothing on the screen yet.' : 'The live record is empty: connect a plant and Run.'); return; }
+    const meta = { title: app.project.title, source: x.source };
+    const names = Object.keys(x.trace.signals), n = x.trace.t.length;
+    if (kind === 'copy') { app.copy(traceToCsv(x.trace, meta), `The ${x.what} (${n} samples of ${names.length} signals, CSV)`); return; }
+    const file = kind === 'json' ? new Blob(traceToJsonParts(x.trace, meta), { type: 'application/json' }) : new Blob(['\uFEFF', ...traceToCsvParts(x.trace, meta)], { type: 'text/csv' });
+    if (await app.download(`${stem(what)}.${kind}`, file, file.type)) app.toast(`Saved ${duration(span(x.trace))} of ${listed(names)} (${x.what}, ${kind.toUpperCase()})`);
+  }
+  function screenshot() {
+    const src = document.querySelector('#display .screen canvas');
+    const k = src.width / Math.max(1, src.getBoundingClientRect().width);
+    const pad = Math.round(10 * k), line = Math.round(20 * k);
+    const c = document.createElement('canvas');
+    c.width = src.width + 2 * pad; c.height = src.height + 2 * line + 2 * pad;
+    const g = c.getContext('2d');
+    g.fillStyle = '#0a0d10'; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(src, pad, pad + line);
+    g.font = `${Math.round(12 * k)}px "IBM Plex Mono", ui-monospace, monospace`;
+    g.textBaseline = 'middle';
+    g.fillStyle = '#c9d3da';
+    const status = [...document.querySelector('#display .status').children].map((e) => e.textContent.trim()).filter(Boolean).join('  ');
+    g.fillText(`${app.project.title} · ${status}`, pad, pad + line / 2);
+    g.textAlign = 'right'; g.fillStyle = '#7f8c96';
+    g.fillText(new Date().toLocaleString(), c.width - pad, pad + line / 2);
+    g.textAlign = 'left';
+    let x = pad;
+    app.project.scope.channels.forEach((ch, i) => {
+      if (!ch.on || !ch.source) return;
+      const text = `${i + 1} ${ch.source}  ${num(ch.scale)} ${app.unitOf(ch.source)}/div`;
+      g.fillStyle = CHANNEL_COLORS[i];
+      g.fillText(text, x, c.height - pad - line / 2);
+      x += g.measureText(text).width + 22 * k;
+    });
+    return new Promise((resolve) => c.toBlob(resolve, 'image/png'));
+  }
+
+  const pop = $('rc-pop');
+  function renderPop() {
+    const scr = screenTrace(), lr = rec.length > 1;
+    const key = (what, kind, text, title) => `<button class="rkey" role="menuitem" data-save="${what}:${kind}" title="${esc(title)}">${text}</button>`;
+    const keys = (what, png) => (!app.canDownload() ? key(what, 'copy', 'Copy CSV', 'CSV to the clipboard (files cannot be saved here)')
+      : key(what, 'csv', 'CSV', 't and every signal, units in the header: for spreadsheets') + key(what, 'json', 'JSON', 'the same as JSON: for scripts')
+        + (png ? key(what, 'png', 'PNG', 'a picture of the screen as it is') : '') + key(what, 'copy', 'Copy', 'CSV to the clipboard'));
+    const row = (label, note, body) => `<div class="rc-row"><span class="rc-what">${label}<span class="rc-note">${esc(note)}</span></span><span class="rc-keys">${body}</span></div>`;
+    pop.innerHTML = row('Screen', scr ? `${duration(span(scr.trace))} · ${Object.keys(scr.trace.signals).length} signals` : 'nothing yet', scr ? keys('screen', true) : '')
+      + (lr ? row('Live record', `${duration(rec.span())} · ${rec.names.length} signals`, keys('record', false)) : '');
+    pop.querySelectorAll('[data-save]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); const [what, kind] = b.dataset.save.split(':'); save(what, kind); }));
+  }
+  function closePop() { if (!pop.hidden) { pop.hidden = true; $('rc-save').setAttribute('aria-expanded', 'false'); } }
+  $('rc-save').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (pop.hidden) renderPop();
+    pop.hidden = !pop.hidden;
+    $('rc-save').setAttribute('aria-expanded', String(!pop.hidden));
+  });
+  document.addEventListener('click', closePop);
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) { closePop(); e.stopImmediatePropagation(); } }, true);
+
+  const lenEl = $('rc-len');
+  lenEl.value = duration(seconds);
+  lenEl.addEventListener('focus', () => lenEl.select());
+  lenEl.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') lenEl.blur(); if (e.key === 'Escape') { lenEl.value = duration(seconds); lenEl.blur(); } });
+  lenEl.addEventListener('blur', () => {
+    const s = parseDuration(lenEl.value);
+    if (!(s >= 1 && s <= 24 * 3600)) { if (lenEl.value !== duration(seconds)) app.toast('A record length from 1 s to 24 h: 5 min, 30 s, 1 h.'); lenEl.value = duration(seconds); return; }
+    seconds = s;
+    rec.setLength(s);
+    lenEl.value = duration(s);
+    try { localStorage.setItem(RECORD_KEY, String(s)); } catch {   }
+    const most = rec.longest();
+    if (most < s) app.toast(`At this rate the memory holds about ${duration(Math.floor(most))} of these signals; older samples go first.`);
+    renderRec();
+  });
+  function renderRec() {
+    if (!app.project) return;  
+    const shown = !!findExternal(app.project.system.plant?.diagram) || rec.length > 0;
+    $('rc-rec').hidden = !shown;
+    if (!shown) return;
+    const st = $('rc-state'), most = rec.longest();
+    st.textContent = `${duration(rec.span())} /`;
+    st.title = rec.length > 1 ? `${duration(rec.span())} of live data kept, ${rec.names.length} signals; the last ${duration(seconds)} are kept${most < seconds ? ` (at this rate the memory holds ${duration(Math.floor(most))})` : ''}. Save ▾ › Live record.` : 'Nothing recorded yet: the record fills while a live plant runs';
+  }
+  setInterval(renderRec, 500);
+
+  const refs = [];
+  function placeRefs() {
+    const [w0, w1] = windowOf(), W = Math.max(w1 - w0, 1e-9);
+    display.setRefs(refs.map((r) => {
+      const { min, max } = refSteps(r.t0, r.t1, w0, W);
+      r.step = Math.min(max, Math.max(min, r.step));
+      r.range = [min, max];
+      const shift = refShift(r.t0, r.t1, w0, W, r.step);
+      if (r.shift !== shift) { r.shift = shift; r.shown = { t: r.t.map((x) => x + shift), signals: r.signals }; }
+      r.part = [Math.max(r.t0, w0 - shift), Math.min(r.t1, w1 - shift)];
+      return r.shown;
+    }));
+    renderRefs();
+  }
+  const partText = (r) => (r.part[1] < r.part[0] ? 'nothing on the screen' : `${num(r.part[0], 5)}–${num(r.part[1], 5)} s of ${num(r.t0, 5)}–${num(r.t1, 5)} s`);
+  function renderRefs() {
+    const box = $('rc-refs');
+    box.hidden = !refs.length;
+    if (!refs.length) { box.innerHTML = ''; return; }
+    const lo = Math.max(...refs.map((r) => r.range[0])), hi = Math.min(...refs.map((r) => r.range[1]));
+    const stepping = refs.some((r) => r.range[0] < r.range[1]);
+    const at = refs[0].step;
+    box.innerHTML = `${stepping ? `<button class="rkey rc-step" id="rc-back" title="Show the screen width before" ${at <= lo ? 'disabled' : ''}>◀</button>` : ''}<button class="rkey rc-ref" id="rc-clear" title="References (dashed): ${esc(refs.map((r) => `${r.name}: ${partText(r)}`).join('; '))}. Click to clear them.">ref${refs.length > 1 ? ` ×${refs.length}` : ''} ✕</button>${stepping ? `<button class="rkey rc-step" id="rc-fwd" title="Show the next screen width" ${at >= hi ? 'disabled' : ''}>▶</button>` : ''}`;
+    $('rc-clear').addEventListener('click', () => { refs.length = 0; display.setRefs([]); renderRefs(); app.toast('References cleared'); });
+    const step = (d) => { for (const r of refs) r.step += d; placeRefs(); app.toast(`Reference: ${partText(refs[0])}`); };
+    $('rc-back')?.addEventListener('click', () => step(-1));
+    $('rc-fwd')?.addEventListener('click', () => step(1));
+  }
+  function addReference(text, name) {
+    const tr = parseTrace(text);
+    if (tr.t.length < 1) throw new Error('no samples');
+    const r = { name, ...tr, t0: tr.t[0], t1: tr.t[tr.t.length - 1], step: 0, shift: null };
+    refs.push(r);
+    placeRefs();
+    const all = Object.keys(tr.signals), shown = all.filter((nm) => app.project.scope.channels.some((c) => c.on && c.source === nm));
+    const where = r.part[1] < r.part[0] ? '' : `, ${partText(r)}${r.range[0] < r.range[1] ? ' (◀ ▶ move through it)' : ''}`;
+    app.toast(shown.length ? `Reference “${name}”: ${listed(shown)} dashed on the scope${where}${shown.length < all.length ? `; ${listed(all.filter((x) => !shown.includes(x)))} not on a channel` : ''}`
+      : `Reference “${name}” holds ${listed(all)}; none of them is on a channel.`);
+    return all;
+  }
+  $('rc-open').addEventListener('click', () => $('rc-file').click());
+  $('rc-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try { addReference(await f.text(), f.name.replace(/\.(csv|json)$/i, '')); } catch (err) { app.toast(`Could not read ${f.name}: ${err.message}`); }
+  });
+
+  renderRec();
+  return {
+    live,
+    changed() { if (refs.length) placeRefs(); renderRec(); },
+    api: {
+      screen: (format = 'csv') => { const x = screenTrace(); return x ? (format === 'json' ? traceToJsonParts : traceToCsvParts)(x.trace, { title: app.project.title, source: x.source }).join('') : ''; },
+      live: (format = 'csv') => { const x = recordTrace(); return x ? (format === 'json' ? traceToJsonParts : traceToCsvParts)(x.trace, { title: app.project.title, source: x.source }).join('') : ''; },
+      reference: (text, name = 'reference') => addReference(text, name),
+      clearReferences: () => { refs.length = 0; display.setRefs([]); renderRefs(); },
+      state: () => ({ recorded: rec.span(), seconds, signals: [...rec.names], references: refs.map((r) => ({ name: r.name, shown: r.part })) }),
+    },
+  };
+}
+
+return { createRecord };
+})();
+// ---- ui/live.js
+__mods['ui/live.js'] = (() => {
+
+const { HIL_URL, externalParams, sameDescription, samePorts, findExternal } = __mods['core/hil.js'];
+const { createLiveLoop } = __mods['core/live.js'];
+const { normalizeDiagram, parseEnd } = __mods['core/diagram.js'];
+const { sweepStart } = __mods['core/trace.js'];
+const { zipFiles } = __mods['core/zip.js'];
+const { fitChannel } = __mods['core/project.js'];
+const MAX_SWEEP = 200000;
+const HIL_FILES = typeof __HIL_FILES === 'object' ? __HIL_FILES : {};
+const PLANT_PY = HIL_FILES['hil_plant.py'] ?? '';
+const RUN_PY = 'uv run hil_plant.py';
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ms = (v) => (Number.isFinite(v) ? `${v < 10 ? v.toFixed(2) : v.toFixed(1)} ms` : '–');
+
+function createLive(app, display, controlsRoot, record) {
+  const framed = window.self !== window.top;
+
+  const liveEl = document.createElement('div');
+  liveEl.className = 'lv';
+  liveEl.setAttribute('aria-label', 'Live: the external plant');
+  liveEl.innerHTML = `
+    <div class="row">
+      <button class="key" id="lv-connect" title="Connect to the external plant; Run and Stop then start and stop it">Connect</button>
+      <button class="key estop" id="lv-estop" title="Emergency stop: the plant applies its safe inputs until Reset">E-STOP</button>
+      <button class="key" id="lv-reset" title="Clear the E-stop and go on, the controllers afresh">Reset</button>
+    </div>
+    <div class="lv-line" id="lv-where"><input class="lv-url" id="lv-url" spellcheck="false" aria-label="Where the plant listens" title="Where the plant listens: click to type (kept in the External plant block)"><button class="lv-link" id="lv-script" title="The external plant of HIL: external motor, a Python script for your computer">plant script…</button></div>
+    <div class="lv-stats" id="lv-stats" aria-live="polite"></div>`;
+  controlsRoot.querySelector('.group').append(liveEl);
+  const $ = (id) => document.getElementById(id);
+
+  const rootDiagram = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
+  const external = () => findExternal(rootDiagram());
+  function editExternal(fn) {
+    const next = structuredClone(rootDiagram());
+    const hit = findExternal(next);
+    if (!hit) return false;
+    fn(hit.block, hit.level);
+    try { app.setPlant(normalizeDiagram(next)); return true; } catch (err) { app.toast(err.message); return false; }
+  }
+  function takePorts(dsc) {
+    return editExternal((b, lv) => {
+      b.params = externalParams(dsc, b.params.url);
+      const nIn = b.params.inputs.length, nOut = b.params.outputs.length;
+      lv.wires = lv.wires.filter((w) => { const f = parseEnd(w.from), t = parseEnd(w.to); return !(t.id === b.id && t.port >= nIn) && !(f.id === b.id && f.port >= nOut); });
+    });
+  }
+  const portText = (dsc) => `in ${dsc.inputs.map((p) => p.name).join(', ')}; out ${dsc.outputs.map((p) => p.name).join(', ')}`;
+
+  let host = null;
+  function workerSource() {
+    const src = document.getElementById('lt-script')?.textContent ?? '';
+    const cut = src.indexOf('\n// ---- ui/');
+    return cut < 0 ? null : `${src.slice(0, cut)}\n__mods['core/live.js'].liveWorker(self);\n})();\n`;
+  }
+  function openHost() {
+    return new Promise((resolve) => {
+      const onPage = () => { const loop = createLiveLoop(receive); resolve({ post: (m) => loop.handle(m), kind: 'page' }); };
+      const src = api.worker === false ? null : workerSource();
+      if (!src) { onPage(); return; }
+      let w = null, url = '', settled = false;
+      const fallback = () => {
+        if (settled) return;
+        settled = true;
+        try { w?.terminate(); } catch {   }
+        URL.revokeObjectURL(url);
+        onPage();
+      };
+      try {
+        url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+        w = new Worker(url, { name: 'loop-tuner-live' });
+      } catch { fallback(); return; }
+      w.onerror = (e) => { e.preventDefault(); if (!settled) fallback(); else app.toast(`Live: ${e.message}`); };
+      w.onmessage = (e) => {
+        if (settled) { receive(e.data); return; }
+        if (e.data?.type !== 'ready') return;
+        settled = true;
+        URL.revokeObjectURL(url);
+        resolve({ post: (m) => w.postMessage(m), kind: 'worker' });
+      };
+      setTimeout(fallback, 3000);
+    });
+  }
+
+  let state = 'idle', detail = '', estop = null, desc = null, link = null, plantStatus = null, programKey = '';
+  const updates = {};  
+  function receive(m) {
+    if (m.type === 'state') onState(m.state, m.detail);
+    else if (m.type === 'described') onDescribed(m.desc);
+    else if (m.type === 'estop') { estop = { by: m.by, reason: m.reason }; app.toast(`E-STOP${m.by === 'plant' ? ' from the plant' : ''}: ${m.reason}. Reset goes on.`); render(); }
+    else if (m.type === 'run') onRun();
+    else if (m.type === 'samples') onSamples(m);
+    else if (m.type === 'stats') { link = m.link; plantStatus = m.plant; renderStats(); }
+    else if (m.type === 'programmed') {
+      updates[m.how] = (updates[m.how] ?? 0) + 1;
+      if (m.how === 'rebuilt') app.toast('The diagram changed: the controllers start afresh.');
+    }
+    else if (m.type === 'error') app.toast(`Live: ${m.message}`);
+  }
+
+  function onState(s, d) {
+    const was = state;
+    state = s; detail = d;
+    if (s === 'connecting') { estop = null; desc = null; link = null; plantStatus = null; programKey = ''; }
+    if (s === 'running') { estop = null; attach(); }
+    if (s === 'open' && d === 'reset') estop = null;  
+    if (s === 'closed' && was !== 'closed') {
+      app.toast(was === 'connecting' ? `Could not connect: ${d}` : `Disconnected: ${d}`);
+      if (feeding && display.mode !== 'stop') app.setMode('stop');
+    }
+    render();
+  }
+
+  function onDescribed(dsc) {
+    desc = dsc;
+    const hit = external();
+    if (hit && !sameDescription(hit.block.params, desc) && takePorts(desc)) app.toast(`The External plant block took the plant's ports: ${portText(desc)}. Ctrl+Z goes back.`);
+    sendProgram();  
+    if (!desc.estop && display.mode !== 'stop') host.post({ type: 'start' });
+    render();
+  }
+
+  function sendProgram() {
+    const d = rootDiagram();
+    const key = JSON.stringify([d, app.project.system.signals]);
+    if (key === programKey) return;
+    programKey = key;
+    host.post({ type: 'program', diagram: structuredClone(d), signals: structuredClone(app.project.system.signals) });
+  }
+
+  async function connect(url) {
+    const hit = external();
+    if (!hit) { app.toast('This system has no External plant block: add one from the Live group in the Plant tab, or load “HIL: external motor”.'); return; }
+    if (!window.WebSocket) { app.toast('This browser has no WebSocket.'); return; }
+    if (url && url !== hit.block.params.url && !editExternal((b) => { b.params.url = url; })) return;
+    state = 'connecting'; render();
+    host ??= await openHost();
+    host.post({ type: 'connect', url: external().block.params.url });
+  }
+
+  let names = [], sweep = null, done = null, earlier = null, lastT = null, feeding = false;
+  const empty = { t: new Float64Array(0), signals: {} };
+  function windowOf() {
+    const tb = app.project.scope.timebase;
+    const w0 = Math.max(0, tb.position);
+    return [w0, Math.max(tb.position + 10 * tb.scale - w0, 1e-6)];
+  }
+  const view = (s) => ({ t: s.t.subarray(0, s.n), signals: Object.fromEntries(names.map((nm, j) => [nm, s.cols[j].subarray(0, s.n)])), plantOffset: s.start - s.w0 });
+  function newSweep(t, w0, W) {
+    const rate = desc?.rate_hz ?? 100;
+    const every = Math.max(1, Math.ceil((W * rate) / MAX_SWEEP));
+    const cap = Math.ceil((W * rate) / every) + 2;
+    if (sweep?.n) done = view(sweep);
+    sweep = { w0, W, start: sweepStart(t, w0, W), every, k: 0, n: 0, cap, t: new Float64Array(cap), cols: names.map(() => new Float64Array(cap)) };
+  }
+  function addSample(t, vals) {
+    const [w0, W] = windowOf();
+    lastT = t;
+    if (t < w0 - 1e-9) return;
+    if (!sweep || sweep.w0 !== w0 || sweep.W !== W || t < sweep.start - 1e-9 || t - sweep.start >= W - 1e-9) newSweep(t, w0, W);
+    const s = sweep;
+    if (s.k++ % s.every || s.n >= s.cap) return;
+    s.t[s.n] = s.w0 + (t - s.start);
+    for (let j = 0; j < names.length; j++) s.cols[j][s.n] = vals[j];
+    s.n++;
+  }
+  function onRun() {
+    if (sweep?.n) earlier = view(sweep);
+    sweep = null; done = null; lastT = null;
+    record.live.run();
+    attach();
+  }
+  function poll() {
+    const out = { data: sweep ? view(sweep) : empty, scan: sweep && lastT !== null ? sweep.w0 + (lastT - sweep.start) : windowOf()[0], done, past: earlier };
+    if (done && fitPending !== null) { const d = done, was = fitPending; fitPending = null; setTimeout(() => fitTo(d, was)); }
+    done = null; earlier = null;
+    return out;
+  }
+  let fitPending = null;
+  function fitTo(d, was) {
+    if (JSON.stringify(app.project.scope.channels) !== was) return;
+    app.editScope((sc) => { for (const ch of sc.channels) { const fit = d.signals[ch.source] && fitChannel(d.signals[ch.source]); if (fit) Object.assign(ch, fit); } });
+    app.endEdit();
+    app.toast('Channels fitted to the first live sweep (Auto Scale). Ctrl+Z goes back.');
+  }
+  function attach() {
+    if (feeding) return;
+    feeding = true;
+    fitPending = JSON.stringify(app.project.scope.channels);
+    display.clearRuns();
+    display.setFeed(poll);
+  }
+  function detach() {
+    if (!feeding) return;
+    feeding = false;
+    sweep = null; done = null; earlier = null; lastT = null;
+    display.setFeed(null);
+    display.clearRuns();
+  }
+
+  function onSamples(m) {
+    if (m.names.join('\n') !== names.join('\n')) { names = m.names; sweep = null; }
+    for (let i = 0; i < m.t.length; i++) addSample(m.t[i], m.values[i]);
+    record.live.samples(m.names, m.t, m.values);
+  }
+
+  const plantZip = () => new Blob([zipFiles(Object.entries(HIL_FILES).map(([name, data]) => ({ name: `hil-plant/${name}`, data, mode: name.endsWith('.sh') ? 0o755 : 0o644 })))], { type: 'application/zip' });
+  const dlg = document.createElement('div');
+  dlg.className = 'overlay';
+  dlg.hidden = true;
+  dlg.innerHTML = `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="lv-dlg-title">
+    <h2 id="lv-dlg-title">The external plant</h2>
+    <p><code>hil_plant.py</code> is a DC motor swinging an unbalanced arm, simulated in real time at 100 Hz on your computer: the plant of <b>HIL: external motor</b>. It listens on <code>${HIL_URL}</code>, sends its outputs every cycle and applies the inputs this page sends back. The scope's Run and Stop start and stop it. If it hears nothing for 10 cycles it stops the motor (E-stop) until you press Reset; Enter in its window stops it too.</p>
+    <p><b>hil-plant.zip</b> holds it with two scripts that install what it needs (uv, which brings Python and the websockets package) and start it:</p>
+    <pre>sh runme.sh      Linux, macOS
+runme.ps1        Windows: right-click › Run with PowerShell</pre>
+    <p>With uv already there: <code>${RUN_PY}</code>. With Python: <code>pip install websockets</code>, then <code>python3 hil_plant.py</code>. <code>--help</code> lists its options (port, rate, watchdog, and how far its plant varies from nominal: up to ±15 %, unknown to this page).</p>
+    <p class="dim" id="lv-dlg-note"></p>
+    <p class="lv-btns"><button class="key primary" id="lv-dl-zip">Download hil-plant.zip</button><button class="key" id="lv-dl">Download hil_plant.py</button><button class="key" id="lv-copy-py">Copy the script</button><button class="key" id="lv-close">Close</button></p>
+  </div>`;
+  document.getElementById('lt-shell').append(dlg);
+  const closeDlg = () => { dlg.hidden = true; };
+  $('lv-script').addEventListener('click', () => {
+    const can = app.canDownload();
+    $('lv-dl-zip').hidden = !can;
+    $('lv-dl').hidden = !can || framed;
+    $('lv-dlg-note').textContent = framed ? 'This viewer may not let the page connect to your computer: use Copy HTML, save it as a file and open that in your browser to go live.'
+      : 'To put real hardware behind Loop Tuner, keep the script\'s server, cycle and watchdog and replace its Motor with your device; any language that speaks the protocol works.';
+    dlg.hidden = false;
+    ($('lv-dl-zip').hidden ? $('lv-copy-py') : $('lv-dl-zip')).focus();
+  });
+  $('lv-close').addEventListener('click', closeDlg);
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) closeDlg(); });
+  dlg.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeDlg(); } });
+  $('lv-dl-zip').addEventListener('click', async () => { if (await app.download('hil-plant.zip', plantZip(), 'application/zip')) app.toast('Saved hil-plant.zip: unzip it and run runme.sh (Linux, macOS) or runme.ps1 (Windows).'); });
+  $('lv-dl').addEventListener('click', async () => { if (await app.download('hil_plant.py', PLANT_PY, 'text/x-python')) app.toast(`Saved hil_plant.py. Run it with: ${RUN_PY}`); });
+  $('lv-copy-py').addEventListener('click', () => app.copy(PLANT_PY, 'hil_plant.py'));
+
+  const on = () => ['connecting', 'open', 'running'].includes(state);
+  const connected = () => ['open', 'running'].includes(state);
+  $('lv-connect').addEventListener('click', () => { if (on()) host?.post({ type: 'disconnect' }); else connect(); });
+  $('lv-estop').addEventListener('click', () => { if (connected()) host.post({ type: 'estop' }); });
+  $('lv-reset').addEventListener('click', () => { if (connected()) host.post({ type: 'reset', start: display.mode !== 'stop' }); });
+  const urlEl = $('lv-url');
+  urlEl.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') urlEl.blur(); if (e.key === 'Escape') { urlEl.value = external()?.block.params.url ?? ''; urlEl.blur(); } });
+  urlEl.addEventListener('blur', () => {
+    const v = urlEl.value.trim(), hit = external();
+    if (hit && v !== hit.block.params.url && !editExternal((b) => { b.params.url = v; })) urlEl.value = hit.block.params.url;
+  });
+
+  function render() {
+    const hit = external();
+    liveEl.hidden = !hit;
+    display.renderStatus();
+    if (!hit) return;
+    const k = $('lv-connect');
+    k.textContent = on() ? 'Disconnect' : 'Connect';
+    k.className = `key ${state === 'running' ? 'lit-green' : on() ? 'lit-amber' : ''}`;
+    $('lv-estop').className = `key estop ${estop ? 'lit-red' : ''}`;
+    $('lv-estop').disabled = !connected();
+    $('lv-reset').disabled = !(estop && connected());
+    if (document.activeElement !== urlEl) urlEl.value = hit.block.params.url;
+    urlEl.disabled = on();
+    renderStats();
+  }
+  function renderStats() {
+    const el = $('lv-stats');
+    const running = state === 'running' && link && !estop;
+    $('lv-where').hidden = running || !!estop;
+    el.title = '';
+    const lines = (...ls) => { el.innerHTML = ls.map((l) => `<div>${l}</div>`).join(''); };
+    if (estop) {
+      lines(`<span class="bad">E-STOP: ${esc(estop.reason)}</span>`, `${estop.by === 'plant' ? 'by the plant · safe' : 'safe inputs'} until ${connected() ? 'Reset' : 'Connect, Reset'}`);
+      el.title = `E-STOP: ${estop.reason}`;
+      return;
+    }
+    if (!running) {
+      lines(esc({
+        idle: 'start the plant, then Connect',
+        connecting: 'connecting…',
+        open: detail === 'stopped' ? 'stopped · Run starts it again' : 'connected · Run starts the plant',
+        running: 'running',
+        closed: `not connected${detail ? `: ${detail}` : ''}`,
+      }[state]));
+      el.title = detail;
+      return;
+    }
+    const p = plantStatus;
+    lines(`<span class="ok">●</span> ${link.rate.toFixed(1)} Hz · jitter ${ms(link.jitter)} · ${host.kind === 'worker' ? 'worker' : 'page'}`, `round trip ${ms(p?.rtt_ms?.mean)} · missed ${link.missed} · late ${p?.late ?? '–'}`);
+    el.title = `Page: arrivals deviate up to ${ms(link.jitter)} from the cycle; ${ms(link.compute)} per cycle (at most ${ms(link.computeMax)}) to answer.\n`
+      + (p ? `Plant: ${p.rate_hz} Hz, cycle start late by ${ms(p.jitter_ms?.mean)} on average (at most ${ms(p.jitter_ms?.max)}); round trip ${ms(p.rtt_ms?.mean)} (at most ${ms(p.rtt_ms?.max)}); ${p.late} cycles without a new u, ${p.overruns} skipped, ${p.dropped} y dropped.` : '');
+  }
+
+  const api = {
+    worker: true,  
+    connect: (url) => connect(url),
+    disconnect: () => host?.post({ type: 'disconnect' }),
+    estop: () => { if (connected()) host.post({ type: 'estop' }); },
+    reset: () => { if (connected()) host.post({ type: 'reset', start: display.mode !== 'stop' }); },
+    state: () => ({ state, detail, run: display.mode, estop, plant: desc ? { name: desc.name, rate_hz: desc.rate_hz, inputs: desc.inputs, outputs: desc.outputs } : null, where: host?.kind ?? null, link, status: plantStatus, t: lastT, updates: { ...updates } }),
+  };
+
+  return {
+    api,
+    mode(m) {
+      if (!connected()) { if (m !== 'stop' && feeding && !on()) detach(); return; }
+      if (m === 'stop') { if (state === 'running') host.post({ type: 'stop' }); return; }
+      if (estop) { app.toast('E-STOP is latched: Reset goes on.'); return; }
+      if (m === 'single' || state !== 'running') host.post({ type: 'start' });  
+    },
+    changed() {
+      render();
+      const hit = external();
+      if (!hit && feeding) detach();
+      if (!host || !on()) return;
+      if (!hit) { app.toast('This system has no External plant block: Live disconnected.'); host.post({ type: 'disconnect' }); return; }
+      if (!desc) return;
+      if (!samePorts(hit.block.params, desc)) {
+        if (takePorts(desc)) setTimeout(() => app.toast(`While connected, the External plant block keeps the plant's ports (${portText(desc)}); Disconnect to change them.`));
+        return;
+      }
+      sendProgram();
+    },
+    data: () => (feeding && sweep ? view(sweep) : null),
+    tag() {
+      if (!external()) return null;
+      if (estop) return { cls: 'st-estop', text: 'E-STOP', note: estop.reason };
+      if (state === 'running') return { cls: 'st-live', text: 'Live', note: `plant t ${lastT === null ? '–' : lastT.toFixed(2)} s` };
+      if (state === 'open') return { cls: 'st-wait', text: 'Connected', note: 'Run starts the plant' };
+      if (on()) return { cls: 'st-wait', text: 'Connecting' };
+      return { cls: 'st-offline', text: 'Offline', note: feeding ? 'the last live sweeps · Connect to go on' : 'external plant not connected: it reads 0 · Connect' };
+    },
+  };
+}
+
+return { createLive };
+})();
 // ---- ui/app.js
 __mods['ui/app.js'] = (() => {
 
@@ -9067,6 +10804,8 @@ const { createDisplay } = __mods['ui/display.js'];
 const { createControls } = __mods['ui/controls.js'];
 const { createGenerator } = __mods['ui/generator.js'];
 const { createSplitters } = __mods['ui/layout.js'];
+const { createLive } = __mods['ui/live.js'];
+const { createRecord } = __mods['ui/record.js'];
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
   { key: 'input', label: 'Input' },
@@ -9218,11 +10957,11 @@ function startApp() {
     autosave();
   };
   app.sceneEnv = () => {
-    const data = acquire();
+    const data = live?.data() ?? acquire();  
     const t = display.time();
     const env = { t };
     if (data?.t?.length > 1) {
-      const k = Math.max(0, Math.min(data.t.length - 1, Math.round(t / (data.t[1] - data.t[0]))));
+      const k = Math.max(0, Math.min(data.t.length - 1, Math.round((t - data.t[0]) / (data.t[1] - data.t[0]))));
       env.t = data.t[k];
       for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
     }
@@ -9269,11 +11008,12 @@ function startApp() {
     display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase(), signal: app.signal });
   }
 
-  app.toggleRun = () => { display.setMode(display.mode === 'stop' ? 'run' : 'stop'); controls.render(display.mode); };
-  app.single = () => { display.setMode('single'); controls.render(display.mode); };
+  app.setMode = (m) => { display.setMode(m); controls.render(display.mode); live?.mode(m); };
+  app.toggleRun = () => app.setMode(display.mode === 'stop' ? 'run' : 'stop');
+  app.single = () => app.setMode('single');
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
-    const data = acquire();
+    const data = live?.data() ?? acquire();  
     const sc = app.project.scope;
     sc.channels.forEach((ch, i) => {
       const v = drawnValues(data.signals, sc, i, app.unitOf), fit = v && fitChannel(v);
@@ -9293,16 +11033,23 @@ function startApp() {
     toast('Auto Scale: one period of the input, every channel fitted');
   };
 
+  let live = null;  
   const display = createDisplay($('display'), {
     onSelectChannel: (i) => app.selectChannel(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
-    onStopped: () => controls.render(display.mode),
+    onStopped: () => { controls.render(display.mode); live?.mode('stop'); },  
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
     onTime: () => app.onScopeTime?.(),
+    liveTag: () => live?.tag(),
+    onLevels: () => app.renderLevels?.(),  
   });
+  app.display = display;
   const controls = createControls($('controls'), app);
+  app.renderLevels = controls.renderLevels;
+  const record = createRecord(app, display);
+  live = createLive(app, display, $('controls'), record);
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
   const controllerTab = createControllerTab($('tab-controller'), app);
@@ -9353,6 +11100,8 @@ function startApp() {
     if (app.tab === 'controller') controllerTab.render();
     if (app.tab === 'tune') tuneTab.render();
     if (app.tab === 'analysis') analysisTab.render();
+    live.changed();  
+    record.changed();  
     renderChrome();
     autosave();
   }
@@ -9415,10 +11164,12 @@ function startApp() {
     return true;
   }
   app.download = download;
+  app.canDownload = () => !framed || !!saver;  
   const stem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
+  app.copy = copy;  
   $('save').addEventListener('click', async () => { if (await download(`${stem()}.json`, exportJson(), 'application/json')) toast('Saved the project as JSON'); });
   $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
@@ -9526,9 +11277,12 @@ function startApp() {
     addComponent: (c) => { app.addComponent(c); return structuredClone(refs()); },
     reference: () => { const { t, r } = referenceTrace(app.project); return { t: Array.from(t), r: Array.from(r) }; },
     autoScale: () => app.autoScale(),
-    run: () => { display.setMode('run'); controls.render('run'); },
-    stop: () => { display.setMode('stop'); controls.render('stop'); },
+    run: () => app.setMode('run'),
+    stop: () => app.setMode('stop'),
+    single: () => app.setMode('single'),
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
+    live: live.api,  
+    record: record.api,  
     autotune: (opts = {}) => {
       tuneTab.stop();
       let res;

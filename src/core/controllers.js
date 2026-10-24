@@ -7,6 +7,10 @@
 //
 // Each runs digitally at the block's sample time Ts. make(params, Ts) returns
 // { step(inputs) -> u }, called once per sample with the inputs at that instant.
+// A law reads its parameters at every step, so an edit while running (Live
+// mode changes the params object in place) takes effect at the next sample
+// and the law keeps its state; only u0, the integral at the start, waits for
+// the next start.
 //
 // A law that is linear about an operating point also has linear(params, Ts, at)
 // for the Analysis tab: its discrete state space { A, B, C, D } (arrays of
@@ -24,11 +28,16 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
 
 // A first-order prefilter on the reference (Vorfilter), exact for a held input.
-function prefilter(Tr, Ts) {
-  if (!(Tr > 0)) return (r) => r;
-  const a = Math.exp(-Ts / Tr);
-  let rf = null;
-  return (r) => { rf = rf === null ? r : a * rf + (1 - a) * r; return rf; };
+// It reads p.Tr at every sample, so a change made while running (Live mode)
+// takes effect at the next one and the filtered value carries on.
+function prefilter(p, Ts) {
+  let rf = null, Tr = null, a = 0;
+  return (r) => {
+    if (!(p.Tr > 0)) { rf = r; return r; }
+    if (p.Tr !== Tr) { Tr = p.Tr; a = Math.exp(-Ts / Tr); }
+    rf = rf === null ? r : a * rf + (1 - a) * r;
+    return rf;
+  };
 }
 
 // Linear interpolation in a table, held flat beyond its ends.
@@ -85,7 +94,7 @@ export const CONTROLLERS = {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
     params: [num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1), PREFILTER, START, ...LIMITS],
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
+      const pre = prefilter(p, Ts), core = pidCore(Ts, p.u0);
       return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
     },
     linear: (p, Ts, at) => pidLinear(p, Ts, at?.y?.length || 1),
@@ -94,7 +103,7 @@ export const CONTROLLERS = {
     label: 'State feedback', summary: 'u = kr r − K · y',
     params: [vec('K', 'Gains K', [1]), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts);
+      const pre = prefilter(p, Ts);
       return {
         step(x) {
           let u = p.kr * pre(x[0]);
@@ -110,12 +119,13 @@ export const CONTROLLERS = {
     params: [vec('at', 'At y =', [0, 1]), vec('Kp', 'Kp', [1, 1]), vec('Ki', 'Ki', [0, 0]), PREFILTER, START, ...LIMITS],
     check(p) { if (p.Kp.length !== p.at.length || p.Ki.length !== p.at.length) return 'At, Kp and Ki need the same number of values'; if (p.at.some((v, i) => i && v <= p.at[i - 1])) return 'the At values must increase'; return ''; },
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
+      const pre = prefilter(p, Ts), core = pidCore(Ts, p.u0);
       const g = { Kp: 0, Ki: 0, Kd: 0, Tf: 0, b: 1, umin: p.umin, umax: p.umax };
       return {
         step(x) {
           const y = x[1] ?? 0;
           g.Kp = lookup(p.at, p.Kp, y); g.Ki = lookup(p.at, p.Ki, y);
+          g.umin = p.umin; g.umax = p.umax;
           return core(pre(x[0]), y, g);
         },
       };
@@ -218,8 +228,13 @@ export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
 }
 
 // The law of a block's active variant. Normalised first: a project restored
-// from JSON (undo, redo) has its open limits as null, not ±Infinity.
+// from JSON (undo, redo) has its open limits as null, not ±Infinity. Params
+// already in normal form are used as they are, so an edit of them while the
+// law runs (Live mode) reaches it.
+const same = (a, b) => (Array.isArray(b) ? Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]) : a === b);
 export function makeLaw(variant, Ts, lib = CONTROLLERS) {
-  return lib[variant.type].make(normalizeVariant(variant, 'variant', lib).params, Ts);
+  const { params } = normalizeVariant(variant, 'variant', lib);
+  const keep = variant.params && Object.keys(params).every((k) => same(variant.params[k], params[k]));
+  return lib[variant.type].make(keep ? variant.params : params, Ts);
 }
 

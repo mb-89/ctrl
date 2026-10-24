@@ -60,7 +60,9 @@ export function systemTags(e) {
   walk(e.diagram);
   const tags = [];
   const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind, tone: toneOf(label) }); };
-  add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
+  // An External plant's physics is outside the page: its entry says what it is.
+  const own = blocks.some((b) => b.type === 'external') ? (e.tags ?? []).filter((t) => t.kind === 'plant') : [];
+  if (own.length) for (const t of own) add(t.label, 'plant'); else add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
   if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');

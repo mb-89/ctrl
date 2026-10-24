@@ -41,3 +41,39 @@
 ## Added while this was being built: identification is experiment first, for a tester who knows no control theory
 
 > About the competing designs, it will be experiment first. Like, you can ask some general questions about the system, but really the expectation is the system saves itself from any, like, you can start with slow control efforts and then increase this over time. Like, you don't have to give it 100% straight from the beginning. So you can ease into it, but the responsibility of saving, of keeping the system safe is with the plant. And so you need to assume that somebody's using the system who has no idea of control theory. He doesn't know if this thing is integrating or not. He doesn't know anything. So you have a, I guess, normalized control effort. Well, I guess we can have limits on the control effort, and we can have limits on the actual values and reference values. That, I guess, that information we do have. That should be like in the, yeah. And then you ease into it and you do it via experiment. Assume that the guy who uses that is a tester who is not really familiar with control theory. So he's not going to give you a model. He's not going to give you a gray box.
+
+## Added while this was being built: a diagram of what the controller does; feedforward in the standard controller
+
+> And then I guess for now it's okay if we don't have configurable controllers, but I would still like to have a small diagram of what the controller does in the corner that's still open. For example, I wonder if our controllers really have a good feed forward. So set point weight, is that the feed forward? Like, I'm not sure. I wonder if autotune currently goes only over the current control architecture, right? It doesn't go over all. I guess that's okay. I just feel like with feed forward, the PID controller would be much better. There's no reason. Yeah, we know, if we know that the reference value changes, we can apply a feed forward to it instantly. So that should be part of a, that's part of a standard controller in general, I feel.
+
+> So yeah, you usually, yeah, I would also assume that you have a set point. You have a set point feed forward, if that makes sense. You have an position and acceleration feed forward, if that makes sense. I feel like in badly tuned controllers, you can still set that to a bad value. But yeah, nobody that does serious control theory does it without feed forward. So our controllers need to support it.
+
+> And yeah, anti-windup is also a feature that we can have in, and then for one example where we want it badly tuned, we can flip it off. But again, that's also something I would consider just state of the art, so it needs to be in.
+
+## Added while this was being built: the page always sends the effort; the reference goes along for the plant's log
+
+> About reference mode, I feel like what is you? Is you the effort? We should never say, like, we are. Normally, we would send the reference value and we would send. Wait. No, I guess maybe I was wrong about the reference mode. We know the reference in our system. We should send it to the other system so they can log it on their side. But yeah, obviously, we are always sending the control effort. Yeah, I was tripping there. Sorry.
+
+## Added while this was being built: both HIL modes, settled
+
+> Okay, maybe I have to revise myself again about the reference mode. If we want to be tuning the controllers, then obviously we are always going to be sending the control effort, but that's not all we want to do. We may just want to use that thing to log data, and then we would send reference values. So we need both modes. It's just like the reference mode, obviously, I feel like we should then display something in the controllers, that the controllers are not in the loop. And also the auto-tuning is not in the loop. And yeah, I guess we can identify to some extent with a reference mode. So yeah, it should be in. The hill mode should support it. Write that down so we find it later, so we don't make that same mistake again of going back and forward on this.
+
+## Added while this was being built: Live controls in the plant panel; a clear plant download
+
+> Okay, I feel like for the hill example, the plant script is not clear enough. I'm not sure if I want the hill stuff in the Ostsee controls. Just put them in the plant controls in the bottom right corner. And make it clear, like, yeah, that's too small, the download button for the script. I guess I'm not gonna test it today. But yeah, you can still fix that.
+
+(Transcription: "Ostsee controls" is "oscilloscope controls", the Run Control panel; "hill" is HIL.)
+
+> It's okay if e-stop stays visible from anywhere, but then put it into the header bar. Make it red, put it into the header bar, right in the middle, next to system library, that's fine.
+
+> And I guess the two sentences on what it is, they can go into the help, right?
+
+> And really, when the hill is offline, I also don't want the traces to run. So even when you have connected, you still need to press the run button so that we actually start.
+
+## Added while this was being built: sliding mode in practice; a controller benchmark (backlog, last); spectrogram levels
+
+> Yeah, okay. That's what I expected. I mean, that the thing that we use it in observers, I didn't think about that. That's actually smart. Yeah, that makes sense. But I really like the idea of the way I understand it. Basically, you can set up the effective inertia of a system by defining the slope of the line, right? I really like that. Inertia control, this can be very useful. Okay, I guess at some point I want to get to a place where we can compare different controller types at the same plant, so we can have a controller benchmark running. But that's another feature. I could imagine we do this, we identify a plant. If we are sure that we have identified it, then we run a controller benchmark against all the controllers we know. And then we produce a report. I guess put that in the backlog at the very end. If we have nothing else, again, you have tokens to burn tonight. So you can try to do that benchmark mode on your own. So you get a plant, and you basically build a benchmark matrix. You know, you have a lot of different types of controllers. You tune all of them. You look up what a PUC matrix is. You would create a PUC matrix with criteria. You judge the different options by, and then you would select the best option. And then I think keep the automatic flow as the default. Yes, we can still slide up and down to see if we miss something, but the delta mode, I like that. Like dB above the local noise, I like that. Maybe you can make that switchable. Make that a switch. Yeah.
+
+(Transcription: "PUC matrix" is a Pugh matrix; "automatic flow" is the automatic floor of the spectrogram levels.)
+
+> And maybe make the tooltip show up on the other side. The tooltip is useful, I think, but it blocks the view on the diagram. So that's annoying.
