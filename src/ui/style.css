@@ -84,13 +84,20 @@ button, input, select { font: inherit; color: inherit; }
 .speed-label { font-size: 13px; color: var(--ink-2); }
 .speed-set { display: inline-flex; align-items: stretch; height: 30px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--panel-2); }
 .speed-set:focus-within { border-color: var(--ink-2); }
-.speed-in { width: 56px; min-width: 0; border: 0; border-radius: 5px 0 0 5px; background: transparent; padding: 0 4px 0 8px; font-family: var(--mono); font-size: 13px; text-align: right; }
+.speed-in { width: calc(9ch + 12px); min-width: 0; border: 0; border-radius: 5px 0 0 5px; background: transparent; padding: 0 4px 0 8px; font-family: var(--mono); font-size: 13px; text-align: right; }
 .speed-in:focus { outline: none; background: var(--panel); }
 .speed-btn { width: 24px; padding: 0; border: 0; border-left: 1px solid var(--line); border-radius: 0 5px 5px 0; background: transparent; color: var(--ink-2); font-size: 11px; cursor: pointer; }
-.speed-btn:hover:not(:disabled) { background: var(--recess); color: var(--ink); }
-.speed.locked .speed-set { opacity: 0.5; }
-.speed-in:disabled, .speed-btn:disabled { cursor: not-allowed; }
-.speed-got { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 5ch; white-space: nowrap; }
+.speed-btn:hover:not([aria-disabled="true"]) { background: var(--recess); color: var(--ink); }
+/* Held at 1× by a live plant: read-only, in the secondary ink, with a lock
+   over the field's empty left end (nothing moves). */
+.speed-lock { display: none; position: absolute; left: 7px; top: 0; bottom: 0; align-items: center; color: var(--ink-2); pointer-events: none; }
+.speed-lock svg { width: 12px; height: 12px; }
+.speed.locked .speed-lock { display: inline-flex; }
+.speed.locked .speed-in { color: var(--ink-2); }
+.speed.locked .speed-in, .speed.locked .speed-btn { cursor: not-allowed; }
+.speed.locked .speed-btn { color: var(--muted); }
+.speed-got { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 10ch; white-space: nowrap; }
+.speed-got.held { color: var(--ink-2); }
 .popover.speed-pop { left: 0; right: auto; width: 220px; padding: 4px; }
 .speed-item { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; font-size: 13px; }
 .speed-item b { min-width: 4ch; font-family: var(--mono); font-weight: 600; }

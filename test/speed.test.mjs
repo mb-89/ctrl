@@ -2,7 +2,7 @@
 // and stored, the sweep clock, and the achieved-speed meter.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSpeed, speedToJson, formatSpeed, formatAchieved, stepPreset, sweepClock, createSpeedMeter, SPEED_PRESETS, AS_FAST, MAX_FRAME } from '../src/core/speed.js';
+import { parseSpeed, speedToJson, formatSpeed, formatAchieved, stepPreset, sweepClock, paceOf, createSpeedMeter, SPEED_PRESETS, AS_FAST, MAX_FRAME } from '../src/core/speed.js';
 import { normalizeProject, normalizeUi } from '../src/core/project.js';
 
 const close = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg}: ${a} vs ${b}`);
@@ -12,7 +12,9 @@ test('a speed is any positive factor, or as fast as possible (-1, inf, ∞)', ()
     assert.equal(parseSpeed(v), want, JSON.stringify(v));
   }
   for (const v of [-1, '-1', '−1', '-1x', 'inf', 'INF', 'Infinity', '∞', 'max', Infinity]) assert.equal(parseSpeed(v), AS_FAST, JSON.stringify(v));
-  for (const v of [0, '0', -2, '-0.5', NaN, 'fastest', '', 'x', '5 s', null, undefined, {}, [5]]) assert.equal(parseSpeed(v), null, JSON.stringify(v));
+  for (const v of [0, '0', -2, '-0.5', NaN, 'fastest', '', 'x', '5 s', null, undefined, {}, [5], '-0', '5xx', '1/2', '0x10']) assert.equal(parseSpeed(v), null, JSON.stringify(v));
+  assert.equal(parseSpeed('1e400'), null, 'a number too large to hold is not taken for ∞');
+  assert.equal(parseSpeed('1e300'), 1e300);
   assert.equal(speedToJson(AS_FAST), -1, 'as fast as possible is stored as -1');
   assert.equal(speedToJson(5), 5);
 });
@@ -34,7 +36,9 @@ test('the control shows the factor; the readout shows what was achieved', () => 
   assert.equal(formatSpeed(1), '1×');
   assert.equal(formatSpeed(0.1), '0.1×');
   assert.equal(formatSpeed(2.5), '2.5×');
-  assert.equal(formatSpeed(1 / 3), '0.3333×');
+  assert.equal(formatSpeed(1 / 3), '0.333333×', 'six digits');
+  assert.equal(formatSpeed(123456), '123456×', 'a typed factor shows as typed, not rounded');
+  assert.equal(formatSpeed(0.0001), '0.0001×');
   assert.equal(formatSpeed(AS_FAST), '∞');
   assert.equal(formatAchieved(9.8123), '9.8×');
   assert.equal(formatAchieved(12.3), '12×');
@@ -86,22 +90,43 @@ test('the sweep clock runs simulated time at speed × wall time', () => {
   assert.equal(sweepClock(1, 0, 5, 2, -1).advanced, 0, 'time never runs backwards');
 });
 
-test('as fast as possible completes a sweep each frame and starts the next', () => {
+test('a finite speed keeps time on any screen: a short one wraps round several times a frame', () => {
+  // 1× on a 10 ms screen (1 ms/div): every frame ends a sweep or two, and all of the time counts.
+  const short = runClock({ w0: 0, w1: 0.01, speed: 1, seconds: 2 });
+  close(short.swept, 2 - 1 / 60, 1e-9, '1× on a 10 ms screen is real time');
+  assert.ok(short.scans.every((x) => x >= 0 && x < 0.01), 'the scan line stays on the screen');
+  // 5× and 10× on a 100 ms screen.
+  for (const speed of [5, 10]) close(runClock({ w0: 0, w1: 0.1, speed, seconds: 2 }).swept, speed * (2 - 1 / 60), 1e-9, `${speed}× on a 100 ms screen`);
+  // Where the scan line lands: the rest of the frame, round the screen.
+  const c = sweepClock(0.004, 0, 0.01, 1, 1 / 60);
+  assert.equal(c.ended, true);
+  close(c.advanced, 1 / 60, 1e-12, 'the whole frame counts');
+  close(c.scan, (0.004 + 1 / 60) % 0.01, 1e-12, 'the scan line after wrapping');
+  // A frame that ends exactly at the right edge starts the next sweep.
+  assert.deepEqual(sweepClock(4.75, 0, 5, 1, 0.25), { scan: 0, advanced: 0.25, ended: true });
+});
+
+test('no speed runs faster than the page simulates the screen; ∞ runs at that speed', () => {
+  assert.equal(paceOf(1, 113), 1);
+  assert.equal(paceOf(10, 113), 10);
+  assert.equal(paceOf(500, 113), 113, 'a faster setting is held to the simulation');
+  assert.equal(paceOf(AS_FAST, 113), 113, '∞ is the simulation\'s speed');
+  assert.equal(paceOf(1, 0.2), 0.2, 'a screen simulated slower than real time holds 1× below real time');
+  assert.equal(paceOf(AS_FAST, null), AS_FAST, 'with no timing, ∞ stays as fast as possible');
+  assert.equal(paceOf(AS_FAST, 0), AS_FAST);
+  assert.equal(paceOf(0, 50), 1, 'an invalid setting runs at 1×');
+  // ∞ without a simulation speed (no timing yet): the sweep completes in the frame.
   const inf = runClock({ speed: AS_FAST, seconds: 1 });
   assert.equal(inf.ended, 60, 'one sweep per frame');
-  assert.ok(inf.scans.every((x) => x === 5), 'every frame shows the whole run: the scan line at the right edge');
-  close(inf.swept, 60 * 5, 1e-9, 'a screen per frame: 300 s at 60 frames a second');
-  // From the middle of a sweep it finishes that one first.
-  assert.deepEqual(sweepClock(2, 0, 5, AS_FAST, 0), { scan: 5, advanced: 3, ended: true });
-  // No finite speed sweeps more than as fast as possible: a frame ends at most one sweep.
-  for (const speed of [400, 1000, 1e6]) {
-    const r = runClock({ speed, seconds: 1 });
-    assert.ok(r.swept <= inf.swept + 1e-9, `${speed}× sweeps no more than ∞ (${r.swept} s)`);
-    assert.ok(r.ended <= 60, `${speed}×: at most one sweep per frame`);
+  assert.ok(inf.scans.every((x) => x === 5), 'every frame shows the whole run');
+  assert.deepEqual(sweepClock(2, 0, 5, AS_FAST, 0), { scan: 5, advanced: 3, ended: true }, 'from the middle of a sweep it finishes that one');
+  // Paced by the simulation, every speed is at most ∞, on any screen, at any frame rate.
+  for (const [w1, sim] of [[5, 113], [0.01, 0.6], [0.1, 3], [50, 600]]) {
+    const at = (speed) => runClock({ w0: 0, w1, speed: paceOf(speed, sim), seconds: 2 }).swept;
+    const top = at(AS_FAST);
+    close(top, sim * (2 - 1 / 60), 1e-6, `∞ on a ${w1} s screen runs at the simulation's ${sim}×`);
+    for (const speed of [1, 10, 400, 1e6]) assert.ok(at(speed) <= top + 1e-9, `${speed}× is not faster than ∞ on a ${w1} s screen`);
   }
-  // Just under a screen per frame: a little short of ∞, never above.
-  const near = runClock({ speed: 280, seconds: 1 });
-  assert.ok(near.swept <= inf.swept && near.swept > 0.9 * inf.swept, `280×: ${near.swept} s`);
 });
 
 test('Single sweeps once and stops at the right edge, at every speed', () => {
@@ -168,9 +193,12 @@ test('the clock and the meter together: the readout of a 60 Hz page', () => {
   close(reading(1), 1, 1e-9, '1×');
   close(reading(10), 10, 1e-9, '10×');
   close(reading(0.1), 0.1, 1e-9, '0.1×');
-  close(reading(AS_FAST), 300, 1e-6, '∞ on a 5 s screen at 60 frames a second caps at 300×');
-  close(reading(AS_FAST, 20), 100, 1e-6, '… and at 100× when drawing takes 50 ms a frame');
-  close(reading(AS_FAST, 60, 1), 60, 1e-6, '… and at 60× on a 1 s screen');
+  // ∞ reads the simulation's speed, whatever the screen and the frame rate.
+  close(reading(paceOf(AS_FAST, 113)), 113, 1e-6, '∞, a 5 s screen simulated at 113×: the readout says 113×');
+  close(reading(paceOf(AS_FAST, 113), 20), 113, 1e-6, '… also when drawing takes 50 ms a frame');
+  close(reading(paceOf(AS_FAST, 113), 60, 1), 113, 1e-6, '… and on a 1 s screen');
+  close(reading(1, 60, 0.01), 1, 1e-9, '1× on a 10 ms screen');
+  close(reading(10, 60, 0.1), 10, 1e-9, '10× on a 100 ms screen');
   // Slow frames (a heavy page): 1× falls behind once a frame takes longer than MAX_FRAME.
   close(reading(1, 2), MAX_FRAME / 0.5, 1e-9, '2 frames a second: 1× reads 0.5×');
 });

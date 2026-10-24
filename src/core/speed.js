@@ -2,8 +2,10 @@
 //   speed      a factor: 1 is real time, 10 ten times faster, 0.1 slower;
 //              Infinity is "as fast as possible" (written -1 in a project file,
 //              as the person put it, design/output/instrument.md#speed).
+//   paceOf     the speed the sweep really runs at: the setting, but never
+//              faster than the page simulates the screen (∞ is that speed).
 //   sweepClock one frame of the display's sweep: a pure function of the scan
-//              line, the window, the speed and the wall time since the last
+//              line, the window, the pace and the wall time since the last
 //              frame.
 //   meter      the achieved speed: simulated seconds per wall-clock second over
 //              a moving window, measured from what really ran.
@@ -15,7 +17,8 @@ export const AS_FAST = Infinity;
 
 // A speed from what was typed or stored: a positive number ("5", "5x", "0.1×",
 // "2,5"), or as fast as possible ("inf", "∞", "max", -1). Anything else
-// (0, other negatives, words) is null.
+// (0, other negatives, words, a number too large to hold such as 1e400) is
+// null.
 export function parseSpeed(v) {
   if (typeof v === 'number') {
     if (v === -1 || v === Infinity) return AS_FAST;
@@ -26,7 +29,8 @@ export function parseSpeed(v) {
   if (['inf', 'infinite', 'infinity', '∞', 'max', 'as fast as possible'].includes(word)) return AS_FAST;
   const s = word.replace(/−/g, '-').replace(/,/g, '.').replace(/\s*[x×]$/, '').trim();
   if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/.test(s)) return null;
-  return parseSpeed(Number(s));
+  const n = Number(s);
+  return Number.isFinite(n) ? parseSpeed(n) : null;
 }
 
 // The next preset above (dir > 0) or below a speed, for the arrow keys.
@@ -38,10 +42,11 @@ export function stepPreset(s, dir) {
 // How a speed is stored in a project's ui: a positive number, or -1.
 export const speedToJson = (s) => (s === AS_FAST ? -1 : s);
 
-// The factor as the control shows it: "1×", "0.1×", "2.5×", "∞".
+// The factor as the control shows it, to six digits: "1×", "0.1×", "2.5×",
+// "123456×", "∞".
 export function formatSpeed(s) {
   if (s === AS_FAST) return '∞';
-  return `${Number(s.toPrecision(4))}×`;
+  return `${Number(s.toPrecision(6))}×`;
 }
 
 // The achieved speed as the readout shows it: two digits ("9.8×", "12×",
@@ -57,29 +62,39 @@ export function formatAchieved(x, { live = false } = {}) {
 // not throw the sweep forward.
 export const MAX_FRAME = 0.25;
 
+// The pace of the sweep: the speed set, but never faster than the page
+// simulates the screen. simRate is that, measured: the screen's simulated
+// seconds over the wall time its simulation took (Infinity or null when not
+// known). As fast as possible runs at it; so does any faster setting, and the
+// readout shows it (design/output/instrument.md#speed).
+export function paceOf(speed, simRate) {
+  const cap = Number.isFinite(simRate) && simRate > 0 ? simRate : AS_FAST;
+  const s = speed === AS_FAST || (Number.isFinite(speed) && speed > 0) ? speed : 1;
+  return Math.min(s, cap);
+}
+
 // One frame of the sweep over the window [w0, w1].
 //   scan    where the scan line was; at w1 (a sweep just ended) or outside
 //           the window (it moved), a new sweep starts at w0
-//   speed   simulated seconds per wall second; Infinity completes the sweep
-//           in this frame
+//   pace    simulated seconds per wall second (paceOf); Infinity, with no
+//           simulation speed to pace it, completes the sweep in this frame
 //   dt      wall seconds since the last frame (counted up to MAX_FRAME)
 //   single  a Single: the sweep that ends here is the last one
 // Returns { scan, advanced, ended }: the new scan line, the simulated seconds
 // swept in this frame (what the achieved speed counts) and whether a sweep
-// ended. A frame ends at most one sweep: what is left of it goes on into the
-// next sweep, unless that would end the next one too; then the frame stops
-// at w1, showing the whole run. So no speed sweeps more than a screen per
-// frame, and as fast as possible is the fastest.
-export function sweepClock(scan, w0, w1, speed, dt, single = false) {
+// ended. A finite pace keeps time across sweeps: what is left of a frame when
+// a sweep ends goes on into the next, round the screen as often as it takes
+// (at 1× a 10 ms screen ends a sweep or two in every frame), and all of it
+// counts. A Single stops at w1.
+export function sweepClock(scan, w0, w1, pace, dt, single = false) {
   const W = w1 - w0;
   if (!(W > 0)) return { scan: w0, advanced: 0, ended: true };  // nothing to sweep (a window before t = 0): a Single ends at once
   const from = scan >= w0 && scan < w1 ? scan : w0;
   const wall = Math.min(MAX_FRAME, Math.max(0, Number.isFinite(dt) ? dt : 0));
-  const want = speed === AS_FAST ? Infinity : Math.max(0, Number.isFinite(speed) ? speed : 1) * wall;
+  const want = pace === AS_FAST ? Infinity : Math.max(0, Number.isFinite(pace) ? pace : 1) * wall;
   if (from + want < w1) return { scan: from + want, advanced: want, ended: false };
-  const rest = from + want - w1;
-  if (!single && rest > 0 && rest < W) return { scan: w0 + rest, advanced: want, ended: true };
-  return { scan: w1, advanced: w1 - from, ended: true };
+  if (single || want === Infinity) return { scan: w1, advanced: w1 - from, ended: true };
+  return { scan: w0 + ((from + want - w0) % W), advanced: want, ended: true };
 }
 
 // The achieved speed: samples (wall time t in seconds, simulated seconds run

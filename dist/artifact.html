@@ -79,13 +79,18 @@ button, input, select { font: inherit; color: inherit; }
 .speed-label { font-size: 13px; color: var(--ink-2); }
 .speed-set { display: inline-flex; align-items: stretch; height: 30px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--panel-2); }
 .speed-set:focus-within { border-color: var(--ink-2); }
-.speed-in { width: 56px; min-width: 0; border: 0; border-radius: 5px 0 0 5px; background: transparent; padding: 0 4px 0 8px; font-family: var(--mono); font-size: 13px; text-align: right; }
+.speed-in { width: calc(9ch + 12px); min-width: 0; border: 0; border-radius: 5px 0 0 5px; background: transparent; padding: 0 4px 0 8px; font-family: var(--mono); font-size: 13px; text-align: right; }
 .speed-in:focus { outline: none; background: var(--panel); }
 .speed-btn { width: 24px; padding: 0; border: 0; border-left: 1px solid var(--line); border-radius: 0 5px 5px 0; background: transparent; color: var(--ink-2); font-size: 11px; cursor: pointer; }
-.speed-btn:hover:not(:disabled) { background: var(--recess); color: var(--ink); }
-.speed.locked .speed-set { opacity: 0.5; }
-.speed-in:disabled, .speed-btn:disabled { cursor: not-allowed; }
-.speed-got { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 5ch; white-space: nowrap; }
+.speed-btn:hover:not([aria-disabled="true"]) { background: var(--recess); color: var(--ink); }
+.speed-lock { display: none; position: absolute; left: 7px; top: 0; bottom: 0; align-items: center; color: var(--ink-2); pointer-events: none; }
+.speed-lock svg { width: 12px; height: 12px; }
+.speed.locked .speed-lock { display: inline-flex; }
+.speed.locked .speed-in { color: var(--ink-2); }
+.speed.locked .speed-in, .speed.locked .speed-btn { cursor: not-allowed; }
+.speed.locked .speed-btn { color: var(--muted); }
+.speed-got { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 10ch; white-space: nowrap; }
+.speed-got.held { color: var(--ink-2); }
 .popover.speed-pop { left: 0; right: auto; width: 220px; padding: 4px; }
 .speed-item { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; font-size: 13px; }
 .speed-item b { min-width: 4ch; font-family: var(--mono); font-weight: 600; }
@@ -517,7 +522,7 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
   <div class="actions">
     <div class="speed" id="speed" role="group" aria-label="Speed of simulated time">
       <label class="speed-label" for="speed-in">Speed</label>
-      <div class="speed-set popwrap"><input id="speed-in" class="speed-in" spellcheck="false" autocomplete="off" aria-describedby="speed-got"><button type="button" id="speed-menu" class="speed-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="speed-pop" aria-label="Speed presets">▾</button><div id="speed-pop" class="popover speed-pop" role="menu" aria-label="Speed presets" hidden></div></div>
+      <div class="speed-set popwrap"><span class="speed-lock" title="Held at 1×: a live plant is connected"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7 V5 a2.5 2.5 0 0 1 5 0 V7" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span><input id="speed-in" class="speed-in" spellcheck="false" autocomplete="off" aria-describedby="speed-got"><button type="button" id="speed-menu" class="speed-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="speed-pop" aria-label="Speed presets">▾</button><div id="speed-pop" class="popover speed-pop" role="menu" aria-label="Speed presets" hidden></div></div>
       <span id="speed-got" class="speed-got">–</span>
     </div>
     <span class="sep"></span>
@@ -574,7 +579,7 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
   <span>Separators</span><span>Drag the gaps between display, controls and tabs to resize; double-click to reset</span>
   <span>Spectrogram levels</span><span>The strip at the right edge: a histogram of the amplitudes shown (dB) beside the colour bar. Below the floor is black, above the ceiling the brightest colour. Drag a handle or the band between them; the wheel moves the floor, <kbd>Shift</kbd> + wheel the ceiling; double-click for automatic levels (the floor 10 dB above the median, the noise). Levels belong to the signal shown; Run Control › Levels types them (↑ ↓: 1 dB, Shift: 10 dB).</span>
 </div>
-<p><b>Speed</b>, in the header, sets how fast simulated time runs: 1× is real time, 10× ten times faster, 0.1× slower; type any factor, or -1 or inf for <b>∞</b>, as fast as possible (each frame then sweeps the whole screen). Beside it, the speed achieved over the last second, simulation and drawing included: at ∞, where it caps out. Auto-tune runs at it too. With a live plant connected it stays at 1×: the plant owns the clock.</p>
+<p><b>Speed</b>, in the header, sets how fast simulated time runs: 1× is real time, 10× ten times faster, 0.1× slower; type any factor, or -1 or inf for <b>∞</b>, as fast as possible. No speed runs faster than this page simulates the screen (timed after each change); ∞ runs at that, so it depends on the system and on the time per division (a finer screen takes more steps per second). Beside it, the speed achieved over the last second; its tooltip gives the simulation's speed. Auto-tune runs at it too. With a live plant connected it stays at 1× (a lock shows it): the plant owns the clock.</p>
 <p>The screen is the record: what you see is simulated and swept, at that speed. <b>Save ▾</b>, under the screen, stores it: every signal as CSV or JSON, or a picture (PNG). <b>Open…</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>); <b>◀ ▶</b> step through one longer than the screen.</p>
 <h3>Signal generator</h3>
 <p>Press a waveform key to draft a component: the display shows it dashed on its own and added to the signal. Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
@@ -593,7 +598,7 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
 <h3>Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off).</p>
 <h3>Auto-tune</h3>
-<p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. Every run the tuner tries sweeps across the display at the header's <b>Speed</b> (a 5 s run takes 5 s at 1×, half a second at 10×); at ∞ it computes as fast as it can and shows each improvement. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>.</p>
+<p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. Every run the tuner tries sweeps across the display at the header's <b>Speed</b> and lasts its own length, one period of the input, whatever the screen shows (a 5 s run takes 5 s at 1×, half a second at 10×); at ∞ it computes as fast as it can and shows each improvement. The scope's Stop stops the tuning too. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>.</p>
 <h3>Live (HIL)</h3>
 <p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time. Try <b>HIL: external motor</b> from the System library: Run Control gets a second row, <b>Connect</b>, <b>E-STOP</b>, <b>Reset</b>. <b>plant script…</b> under it gives you <code>hil-plant.zip</code>: unzip it and run <code>sh runme.sh</code> (Linux, macOS) or <code>runme.ps1</code> (Windows), which install what they need; with uv, <code>uv run hil_plant.py</code>. Then Connect. Every cycle the plant sends its outputs, the page runs the diagram and answers with the controller's output; edit the controller meanwhile and it takes effect at the next sample. <b>Run</b> and <b>Stop</b> start and stop the plant (each Run is a fresh run from t = 0), <b>Single</b> runs one screen. E-STOP on the page, Enter in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until Reset. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them.</p>
 <h3>System library</h3>
@@ -602,7 +607,7 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it), <code>speed(x?)</code> (sets the speed: a factor, or -1 for as fast as possible; returns the setting, the factor in effect, the achieved speed and why it is held at 1×, if it is) and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it), <code>speed(x?)</code> (sets the speed: a factor, or -1 for as fast as possible; returns the setting, the factor in effect, the achieved speed, the simulation's speed and why it is held at 1×, if it is) and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
 <p>Live: <code>loopTuner.live.connect(url?)</code>, <code>.disconnect()</code>, <code>.estop()</code>, <code>.reset()</code>, <code>.state()</code> (connection, run mode, the plant's ports and figures, how edits were taken). To tune while it runs, change a variant's parameters with <code>getProject()</code> and <code>setProject(p)</code>: they take effect at the next sample. Traces: <code>loopTuner.record.screen('csv' | 'json')</code> (every signal on the screen), <code>.live(format)</code> (the live record), <code>.reference(text, name)</code>, <code>.clearReferences()</code>, <code>.state()</code>. The protocol, for plants of your own: JSON-RPC 2.0 over a WebSocket, described in <code>hil_plant.py</code>'s header and in the repository's design/output/hil.md.</p>
 <p><button class="key primary" id="help-close">Close</button></p></div></div>
 </div>
@@ -1342,7 +1347,8 @@ function parseSpeed(v) {
   if (['inf', 'infinite', 'infinity', '∞', 'max', 'as fast as possible'].includes(word)) return AS_FAST;
   const s = word.replace(/−/g, '-').replace(/,/g, '.').replace(/\s*[x×]$/, '').trim();
   if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/.test(s)) return null;
-  return parseSpeed(Number(s));
+  const n = Number(s);
+  return Number.isFinite(n) ? parseSpeed(n) : null;
 }
 
 function stepPreset(s, dir) {
@@ -1354,7 +1360,7 @@ const speedToJson = (s) => (s === AS_FAST ? -1 : s);
 
 function formatSpeed(s) {
   if (s === AS_FAST) return '∞';
-  return `${Number(s.toPrecision(4))}×`;
+  return `${Number(s.toPrecision(6))}×`;
 }
 
 function formatAchieved(x, { live = false } = {}) {
@@ -1365,16 +1371,21 @@ function formatAchieved(x, { live = false } = {}) {
 
 const MAX_FRAME = 0.25;
 
-function sweepClock(scan, w0, w1, speed, dt, single = false) {
+function paceOf(speed, simRate) {
+  const cap = Number.isFinite(simRate) && simRate > 0 ? simRate : AS_FAST;
+  const s = speed === AS_FAST || (Number.isFinite(speed) && speed > 0) ? speed : 1;
+  return Math.min(s, cap);
+}
+
+function sweepClock(scan, w0, w1, pace, dt, single = false) {
   const W = w1 - w0;
   if (!(W > 0)) return { scan: w0, advanced: 0, ended: true };  
   const from = scan >= w0 && scan < w1 ? scan : w0;
   const wall = Math.min(MAX_FRAME, Math.max(0, Number.isFinite(dt) ? dt : 0));
-  const want = speed === AS_FAST ? Infinity : Math.max(0, Number.isFinite(speed) ? speed : 1) * wall;
+  const want = pace === AS_FAST ? Infinity : Math.max(0, Number.isFinite(pace) ? pace : 1) * wall;
   if (from + want < w1) return { scan: from + want, advanced: want, ended: false };
-  const rest = from + want - w1;
-  if (!single && rest > 0 && rest < W) return { scan: w0 + rest, advanced: want, ended: true };
-  return { scan: w1, advanced: w1 - from, ended: true };
+  if (single || want === Infinity) return { scan: w1, advanced: w1 - from, ended: true };
+  return { scan: w0 + ((from + want - w0) % W), advanced: want, ended: true };
 }
 
 function createSpeedMeter(span = 1) {
@@ -1402,7 +1413,7 @@ function createSpeedMeter(span = 1) {
   };
 }
 
-return { SPEED_PRESETS, AS_FAST, parseSpeed, stepPreset, speedToJson, formatSpeed, formatAchieved, MAX_FRAME, sweepClock, createSpeedMeter };
+return { SPEED_PRESETS, AS_FAST, parseSpeed, stepPreset, speedToJson, formatSpeed, formatAchieved, MAX_FRAME, paceOf, sweepClock, createSpeedMeter };
 })();
 // ---- core/blocks.js
 __mods['core/blocks.js'] = (() => {
@@ -6882,7 +6893,7 @@ const { step125 } = __mods['core/scale.js'];
 const { channelSignal, drawFrequency, freqRange } = __mods['ui/freqview.js'];
 const { withLevels, levelsOf } = __mods['core/project.js'];
 const { drawXY, vOfX } = __mods['ui/xyview.js'];
-const { sweepClock } = __mods['core/speed.js'];
+const { sweepClock, paceOf, MAX_FRAME, AS_FAST } = __mods['core/speed.js'];
 const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
@@ -6922,6 +6933,7 @@ function createDisplay(root, handlers) {
   let W = 0, H = 0, dpr = 1;
   let data = null, scope = null, preview = null, selected = 0, line = null;
   let mode = 'stop', tScan = 0, last = 0, raf = 0, hover = null, box = null;
+  let run = null, framing = false;
   const RUNS = 5;
   let past = [];
   const keepRun = () => { if (data) past = [data, ...past].slice(0, RUNS - 1); };
@@ -7218,7 +7230,7 @@ function createDisplay(root, handlers) {
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
       ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
       <span class="grow"></span>
-      ${mode !== 'stop' ? `<span class="dim">t ${siUnit(tScan, 's', 3)}</span>` : ''}`;
+      ${mode !== 'stop' ? `<span class="dim">t ${siUnit(run ? run.t : tScan, 's', 3)}</span>` : ''}`;
   }
 
   function renderBadges() {
@@ -7235,6 +7247,7 @@ function createDisplay(root, handlers) {
 
   function frame(now) {
     raf = 0;
+    framing = true;
     const dt = last ? (now - last) / 1000 : 0;
     last = now;
     if (mode !== 'stop' && data && scope && feed) {
@@ -7243,18 +7256,33 @@ function createDisplay(root, handlers) {
       if (s.done && mode === 'single') { data = s.done; tScan = win()[1]; mode = 'stop'; handlers.onStopped?.(); }
       else { if (s.done) past = [s.done, ...past].slice(0, RUNS - 1); data = s.data; tScan = s.scan; }
       if (Object.keys(data.signals).join() !== names) renderBadges();
+    } else if (mode !== 'stop' && data && scope && run) {
+      const sp = handlers.speed?.() ?? 1;
+      const c = sweepClock(run.t, 0, run.T, sp, dt, true);
+      run.t = c.scan;
+      const [w0, w1] = win();
+      tScan = Math.min(Math.max(run.t, w0), w1);
+      handlers.onSweep?.(now / 1000, sp === AS_FAST ? 0 : c.advanced);
+      if (c.ended) {
+        const rest = sp === AS_FAST ? 0 : Math.max(0, Math.min(MAX_FRAME, dt) - c.advanced / sp);
+        run = null;
+        mode = 'stop';
+        last = now - 1000 * rest;
+        handlers.onStopped?.();
+      }
     } else if (mode !== 'stop' && data && scope) {
       const [w0, w1] = win();
-      const c = sweepClock(tScan, w0, w1, handlers.speed?.() ?? 1, dt, mode === 'single');
+      const c = sweepClock(tScan, w0, w1, paceOf(handlers.speed?.() ?? 1, handlers.simRate?.()), dt, mode === 'single');
       tScan = c.scan;
       handlers.onSweep?.(now / 1000, c.advanced);
       if (c.ended) {
         if (mode === 'single') { mode = 'stop'; handlers.onStopped?.(); }
-        else keepRun();
+        else if ((handlers.speed?.() ?? 1) !== AS_FAST || past[0] !== data) keepRun();
       }
     }
+    framing = false;
     draw();
-    if (mode !== 'stop') raf = requestAnimationFrame(frame);
+    if (mode !== 'stop') { if (!raf) raf = requestAnimationFrame(frame); }
     else last = 0;
   }
   const kick = () => { if (!raf) raf = requestAnimationFrame(frame); };
@@ -7511,6 +7539,7 @@ function createDisplay(root, handlers) {
     setMode(m, { restart = false } = {}) {
       if ((m === 'single' || restart) && scope) { if (m === 'single' && mode !== 'single') keepRun(); tScan = win()[0]; }
       mode = m;
+      run = null;
       last = 0;
       kick();
       draw();
@@ -7524,8 +7553,9 @@ function createDisplay(root, handlers) {
       if (line !== null && !visible(line)) line = null;
       renderBadges();
       mode = 'single';
+      run = { t: 0, T: d.t.length ? d.t[d.t.length - 1] : 0 };
       tScan = scope ? win()[0] : 0;
-      last = 0;
+      if (!framing) last = performance.now();
       kick();
     },
     keep(d = data) { if (d) past = [d, ...past].slice(0, RUNS - 1); draw(); },
@@ -7534,6 +7564,7 @@ function createDisplay(root, handlers) {
     time() {
       if (!scope) return 0;
       if (hover && region(hover.x, hover.y) === 'plot') return xt(hover.x);
+      if (run) return run.t;  
       return mode !== 'stop' ? tScan : win()[1];
     },
     get mode() { return mode; },
@@ -9533,9 +9564,10 @@ const METHODS = {
     about: 'Opens the loop and steps u. The reaction curve gives a gain K, a lag τ and a dead time θ, and SIMC (Skogestad 2003) a PI with closed-loop time τc = θ. For plants that settle on their own.',
   },
 };
-const SLICE = 30;  
-const HOLD = 400;  
-const POLL = 100;  
+const SLICE = 30;    
+const HOLD = 400;    
+const POLL = 100;    
+const IMPROVE = 250; 
 const GOAL_ABOUT = 'The cost of one run: the error r − y (IAE, ITAE or ISE), plus the effort (the swing of u), the overshoot beyond the bound, and the time u sits at a limit. Over one period of the input, the disturbance d included.';
 
 function createAutotuneTab(host, app, display) {
@@ -9671,9 +9703,9 @@ function createAutotuneTab(host, app, display) {
   }
 
 
-  function place(variant, run) {
+  function place(variant, run, from = null) {
     if (!job.edit) { app.beginEdit(); job.edit = true; }
-    app.tuneEdit((p) => placeVariant(p, job.path, variant, { run }));
+    app.tuneEdit((p) => placeVariant(p, job.path, variant, { run }), from);
     if (run) job.ran = true;
     shown.placed = structuredClone(variant);
   }
@@ -9687,39 +9719,56 @@ function createAutotuneTab(host, app, display) {
     const name = resultName(c.block, st.method, st.rule);
     const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, amplitude: st.amplitude, maxIter: st.maxIter, name });
     shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null };
-    job = { gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, mode: display.mode, startData: display.data, timer: 0, edit: false, ran: false, swept: false, showing: false, applied: Infinity, runs: 0, bests: [display.data] };
-    if (st.method === 'iterate') { app.setRunMode('stop'); display.clearRuns(); }
+    job = {
+      gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, ctx, mode: display.mode, startData: display.data,
+      timer: 0, lookTimer: 0, improveTimer: 0, improvedAt: 0, stepMs: 0, queue: [], playing: false,
+      edit: false, ran: false, swept: false, showing: false, applied: Infinity, runs: 0, bests: [display.data], seenBest: null, bestRun: null,
+    };
+    app.setRunMode('stop');
+    if (st.method === 'iterate') display.clearRuns();
     renderAll();
-    job.timer = setTimeout(tick);
+    schedule();
   }
 
   const replaced = () => job && app.project.system.plant !== job.plant;
+  const schedule = () => { if (job && !job.timer) job.timer = setTimeout(() => { if (job) { job.timer = 0; tick(); } }, 0); };
+
+  function compute() {
+    const t0 = performance.now();
+    let s;
+    try { s = job.gen.next(); } catch (err) { s = { error: err }; }
+    job.stepMs = Math.max(performance.now() - t0, 0.8 * job.stepMs);
+    return s;
+  }
+  const step = () => (job.queue.length ? job.queue.shift() : compute());
 
   function tick() {
     if (!job) return;
     if (replaced()) { end('Stopped: the plant changed while tuning.', { gone: true }); return; }
-    if (job.kind === 'iterate' && app.speed() !== AS_FAST) { sweepNext(); return; }
+    if (job.kind === 'iterate' && app.speed() !== AS_FAST) { ahead(); return; }
+    if (job.playing) return;  
     const t0 = performance.now(), counting = app.speed() === AS_FAST && display.mode === 'stop';
     let iterated = false, seconds = 0;
     const count = () => { if (counting) { app.timeRan(t0 / 1000, 0); app.timeRan(performance.now() / 1000, seconds); } };
     for (;;) {
-      let s;
-      try { s = job.gen.next(); } catch (err) { end(`Stopped: ${err.message}.`); return; }
+      const s = step();
+      if (s.error) { end(`Stopped: ${s.error.message}.`); return; }
       if (s.done) { count(); improve(); finish(s.value); return; }
       seconds += s.value.seconds ?? 0;
       if (take(s.value)) iterated = true;
-      if (performance.now() - t0 > SLICE) break;
+      if (performance.now() - t0 + job.stepMs > SLICE) break;
     }
     count();
-    if (iterated) improve();
+    if (iterated) improveSoon();
     if (job.kind !== 'iterate') shown.status = `Running the ${job.kind === 'relay' ? 'relay experiment' : 'step test'}… (${job.runs} run${job.runs === 1 ? '' : 's'} of the loop)`;
     renderProgress();
-    job.timer = setTimeout(tick, 0);
+    schedule();
   }
 
   function take(v) {
     if (v.seconds) job.runs++;
     if (v.before) shown.before ??= v.before;
+    if (v.best && v.best !== job.seenBest) { job.seenBest = v.best; job.bestRun = v.run ?? null; }
     if (v.start) {
       shown.before ??= { variant: v.start.variant, cost: v.start.detail };
       Object.assign(shown, { best: v.best, iteration: v.iteration, evals: v.evals });
@@ -9732,46 +9781,66 @@ function createAutotuneTab(host, app, display) {
     return false;
   }
 
-  function sweepNext() {
+  const ready = () => { const s = job.queue.at(-1); return !!s && (!!s.error || !!s.done || !!s.value?.run); };
+  function ahead() {
     const t0 = performance.now();
-    for (;;) {
-      let s;
-      try { s = job.gen.next(); } catch (err) { end(`Stopped: ${err.message}.`); return; }
+    while (!ready()) {
+      job.queue.push(compute());
+      if (!ready() && performance.now() - t0 + job.stepMs > SLICE) { schedule(); return; }
+    }
+    if (!job.playing) playNext();
+  }
+  function playNext() {
+    while (job.queue.length) {
+      const s = job.queue.shift();
+      if (s.error) { end(`Stopped: ${s.error.message}.`); return; }
       if (s.done) { improve(); finish(s.value); return; }
-      const v = s.value;
-      take(v);
-      if (v.run) { sweep(v.run); break; }
-      if (performance.now() - t0 > SLICE) { renderProgress(); job.timer = setTimeout(tick, 0); return; }
+      take(s.value);
+      if (s.value.run) { sweep(s.value.run); break; }
     }
     renderProgress();
-    afterSweep(swept);
+    schedule();
   }
   function afterSweep(then) {
-    const go = () => { if (!job || job.next !== go) return; job.next = null; clearTimeout(job.timer); then(); };
+    const go = () => { if (!job || job.next !== go) return; job.next = null; clearTimeout(job.lookTimer); then(); };
     job.next = go;
-    const look = () => { if (!job || job.next !== go) return; if (display.mode !== 'single') go(); else job.timer = setTimeout(look, POLL); };
-    job.timer = setTimeout(look, POLL);
+    const look = () => { if (!job || job.next !== go) return; if (display.mode !== 'single') go(); else job.lookTimer = setTimeout(look, POLL); };
+    job.lookTimer = setTimeout(look, POLL);
   }
-  app.sweepEnded = () => { const go = job?.next; if (go) setTimeout(go, 0); };
+  app.sweepEnded = () => job?.next?.();
   function sweep(run) {
     job.showing = true;
+    job.playing = true;
     app.playRun({ t: run.t, signals: run.signals }, job.bests.slice(0, 4));
     const sp = formatSpeed(app.speed());
     shown.status = job.runs <= 1 ? `Scoring the running variant: its run sweeps at ${sp}.`
       : `Run ${job.runs}${shown.iteration ? `, iteration ${shown.iteration}` : ''}, sweeping at ${sp}; the best so far fades behind it.`;
+    afterSweep(swept);
   }
   function swept() {
     if (!job) return;
+    job.playing = false;
     if (replaced()) { end('Stopped: the plant changed while tuning.', { gone: true }); return; }
     improve();
-    job.timer = setTimeout(tick, 0);  
+    if (job.kind === 'iterate' && app.speed() !== AS_FAST && ready()) playNext();
+    else schedule();
+  }
+  function improveSoon() {
+    if (job.improveTimer) return;
+    job.improveTimer = setTimeout(() => {
+      if (!job) return;
+      job.improveTimer = 0;
+      job.improvedAt = performance.now();
+      improve();
+    }, Math.max(0, job.improvedAt + IMPROVE - performance.now()));
   }
 
   function improve() {
     const b = shown.best;
     if (!b || !(b.cost.J < job.applied) || !(b.cost.J < shown.before.cost.J)) return;
     job.applied = b.cost.J;
-    place({ ...b.variant, name: job.name }, true);
+    const variant = { ...b.variant, name: job.name };
+    place(variant, true, job.seenBest === b && job.bestRun ? { run: job.bestRun, ctx: job.ctx, variant } : null);
     job.bests.unshift(display.data);
     display.setPast(job.bests.slice(1, 5));
   }
@@ -9794,6 +9863,7 @@ function createAutotuneTab(host, app, display) {
       + (res.ok ? '' : ` It gives no result: ${res.why}.`);
     renderAll();
     afterSweep(() => {
+      clearTimeout(job.timer);
       job.timer = setTimeout(() => {
         if (!job) return;
         if (replaced()) { end('Stopped: the plant changed during the experiment.', { gone: true }); return; }
@@ -9811,9 +9881,9 @@ function createAutotuneTab(host, app, display) {
     end(`The result scores worse than ${res.before.variant.name} (cost ×${num(res.after.J / res.before.cost.J, 2)}): it was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
   }
 
-  function end(status = '', { gone = false } = {}) {
+  function end(status = '', { gone = false, mode = null } = {}) {
     if (!job) return;
-    clearTimeout(job.timer);
+    for (const t of [job.timer, job.lookTimer, job.improveTimer]) clearTimeout(t);
     const j = job;
     job = null;
     if (status && shown) shown.status = status;
@@ -9823,7 +9893,7 @@ function createAutotuneTab(host, app, display) {
       display.clearRuns();
       if (j.ran) display.keep(j.startData);
     }
-    if (!gone || display.mode === 'stop') app.setRunMode(j.mode === 'single' ? 'stop' : j.mode);
+    if (!gone || display.mode === 'stop') app.setRunMode(mode ?? (j.mode === 'single' ? 'stop' : j.mode));
     if (gone) { shown = null; app.toast(status); }
     else if (j.ran) {
       const after = shown.res?.after ?? shown.best?.cost;
@@ -9938,6 +10008,7 @@ function createAutotuneTab(host, app, display) {
     render() { if (!host.hidden) renderAll(); },
     shown: renderAll,
     stop() { if (job) end('Stopped.'); },
+    scopeStopped() { if (job?.next) end(job.kind === 'iterate' ? 'Stopped. The best gains so far are kept.' : 'Stopped before the result was applied.', { mode: 'stop' }); },
   };
 }
 
@@ -10165,7 +10236,7 @@ function createRecord(app, display) {
   function closePop() { if (!pop.hidden) { pop.hidden = true; $('rc-save').setAttribute('aria-expanded', 'false'); } }
   $('rc-save').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (pop.hidden) renderPop();
+    if (pop.hidden) { document.dispatchEvent(new MouseEvent('click')); renderPop(); }  
     pop.hidden = !pop.hidden;
     $('rc-save').setAttribute('aria-expanded', String(!pop.hidden));
   });
@@ -10613,9 +10684,9 @@ return { createLive };
 // ---- ui/speed.js
 __mods['ui/speed.js'] = (() => {
 
-const { SPEED_PRESETS, AS_FAST, parseSpeed, formatSpeed, formatAchieved, createSpeedMeter, stepPreset } = __mods['core/speed.js'];
+const { SPEED_PRESETS, AS_FAST, parseSpeed, formatSpeed, formatAchieved, createSpeedMeter, stepPreset, paceOf } = __mods['core/speed.js'];
 const NOTES = new Map([[0.1, 'slow motion'], [1, 'real time'], [AS_FAST, 'as fast as possible']]);
-const HELP = 'Speed: simulated seconds per second. 1× is real time. Type a factor (5, 0.1, 20) or -1 or inf for as fast as possible (∞); ↑ ↓ step through the presets.';
+const HELP = 'Speed: simulated seconds per second. 1× is real time. Type a factor (5, 0.1, 20) or -1 or inf for as fast as possible (∞); ↑ ↓ step through the presets, Esc goes back.';
 
 function createSpeed(app) {
   const $ = (id) => document.getElementById(id);
@@ -10623,6 +10694,7 @@ function createSpeed(app) {
   const meter = createSpeedMeter(1);
   let set = 1;      
   let lock = null;  
+  let before = 1;   
 
   const effective = () => (lock ? 1 : set);
 
@@ -10630,8 +10702,9 @@ function createSpeed(app) {
     const was = lock;
     lock = app.speedLock?.() ?? null;
     if (!was !== !lock) meter.reset();  
-    if (document.activeElement !== inp) inp.value = formatSpeed(effective());
-    inp.disabled = btn.disabled = !!lock;
+    if (document.activeElement !== inp || lock) inp.value = formatSpeed(effective());
+    inp.readOnly = !!lock;
+    for (const el of [inp, btn]) el.setAttribute('aria-disabled', String(!!lock));
     box.classList.toggle('locked', !!lock);
     for (const el of [box, inp, btn]) el.title = lock ?? (el === btn ? 'Speed presets' : HELP);
     if (lock) closePop();
@@ -10642,8 +10715,11 @@ function createSpeed(app) {
     const r = meter.rate(performance.now() / 1000);
     const text = formatAchieved(r, { live: !!lock });
     if (got.textContent !== text) got.textContent = text;
+    const sim = app.simRate?.(), held = !lock && effective() !== AS_FAST && paceOf(effective(), sim) < effective();
+    got.classList.toggle('held', held);
     got.title = lock ? 'Achieved: the live plant\'s clock against this page\'s clock, over the last second. The plant runs in real time.'
-      : `Achieved: simulated seconds per second of wall-clock time, over the last second, simulation and drawing included.${effective() === AS_FAST ? ' This is where ∞ caps out. The screen is simulated once after each change and each sweep replays it, so drawing sets the cap (a sweep per frame); Auto-tune simulates every run, so there it is the simulation\'s own speed.' : ''}`;
+      : 'Achieved: simulated seconds per second of wall-clock time, over the last second, as the sweep and Auto-tune really ran.'
+        + (Number.isFinite(sim) ? ` This page simulates the screen at about ${formatAchieved(sim)} (timed); no speed runs faster, and ∞ runs at that.${held ? ' The speed set is faster, so it is held there.' : ''}` : '');
   }
   setInterval(readout, 250);
 
@@ -10655,11 +10731,13 @@ function createSpeed(app) {
     return true;
   }
 
-  inp.addEventListener('focus', () => inp.select());
+  inp.addEventListener('focus', () => { before = set; inp.select(); });
+  inp.addEventListener('click', () => { if (lock) app.toast(lock); });
   inp.addEventListener('keydown', (e) => {
     e.stopPropagation();
     if (e.key === 'Enter') inp.blur();
-    else if (e.key === 'Escape') { inp.value = formatSpeed(effective()); inp.blur(); }
+    else if (lock) { if (e.key === 'Escape') inp.blur(); }
+    else if (e.key === 'Escape') { setSpeed(before); inp.value = formatSpeed(effective()); inp.blur(); }
     else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault();
       setSpeed(stepPreset(set, e.key === 'ArrowUp' ? 1 : -1));
@@ -10676,7 +10754,8 @@ function createSpeed(app) {
 
   const items = () => [...pop.querySelectorAll('[role="menuitemradio"]')];
   function openPop() {
-    if (lock) return;
+    if (lock) { app.toast(lock); return; }
+    document.dispatchEvent(new MouseEvent('click'));  
     pop.innerHTML = SPEED_PRESETS.map((s) => `<button type="button" class="speed-item" role="menuitemradio" aria-checked="${s === set}" data-speed="${s === AS_FAST ? 'inf' : s}" tabindex="-1">
       <b>${formatSpeed(s)}</b><span>${NOTES.get(s) ?? ''}</span></button>`).join('');
     pop.hidden = false;
@@ -10737,7 +10816,7 @@ const { createPlantEditor } = __mods['ui/plant.js'];
 const { isDelta } = __mods['ui/xyview.js'];
 const { createControllerTab } = __mods['ui/controller.js'];
 const { createAutotuneTab } = __mods['ui/autotune.js'];
-const { loopOverlays, autotune, placeVariant, tuneReport } = __mods['core/autotune.js'];
+const { loopOverlays, autotune, placeVariant, tuneReport, withVariant } = __mods['core/autotune.js'];
 const { createAnalysisTab } = __mods['ui/analysis.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { DEFAULT_PROJECT } = __mods['core/examples.js'];
@@ -10786,18 +10865,29 @@ function startApp() {
   let saveTimer = null;
   const startText = embeddedText || JSON.stringify(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY[0], SYSTEM_PARTS.filter((k) => SYSTEM_LIBRARY[0][k])));
   const base = `${startText.length}:${hash(startText)}`;
+  const saveNow = () => { saveTimer = null; try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch {   } };
   function autosave() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch {   } }, 300);
+    saveTimer = setTimeout(saveNow, 300);
   }
+  const flushSave = () => { if (saveTimer) { clearTimeout(saveTimer); saveNow(); } };
+  window.addEventListener('pagehide', flushSave);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
 
   let acqKey = '', acq = null, loopNote = '';
   app.systemError = '';
+  const acqKeyOf = (p) => JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal]);
   function acquire() {
     const p = app.project;
-    const key = JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal]);
+    const key = acqKeyOf(p);
     if (key === acqKey) return acq;
     acqKey = key;
+    const t0 = performance.now();
+    acq = simulateScreen(p);
+    timedSim(key, simOf(p).duration, performance.now() - t0, () => simulateScreen(p));
+    return acq;
+  }
+  function simulateScreen(p) {
     loopNote = '';
     app.systemError = '';
     if (loopReady(p)) {
@@ -10809,20 +10899,51 @@ function startApp() {
         Object.assign(signals, { y: result.y, u: result.u, e: result.e, ym: result.ym, d: result.d });
         loopNote = `loop: ${cand.name}`;
       } catch (err) { app.systemError = err.message; }
-      acq = { t, signals };
-      return acq;
+      return { t, signals };
     }
     try {
       const sys = evaluateSystem(p);
-      acq = { t: sys.t, signals: sys.signals };
+      return { t: sys.t, signals: sys.signals };
     } catch (err) {
       app.systemError = err.message;
       const signals = {};
       let t = null;
       for (const name of Object.keys(p.system.signals)) { const tr = referenceTrace(p, name); signals[name] = tr.r; t = tr.t; }
-      acq = { t, signals };
+      return { t, signals };
     }
-    return acq;
+  }
+  let simTiming = { key: '', duration: 0, ms: [], again: null, at: 0, timer: 0 };
+  function timedSim(key, duration, ms, again) {
+    let n = 1;
+    if (ms < 2) { const t0 = performance.now() - ms; while (performance.now() - t0 < 2 && n < 64) { again(); n++; } ms = (performance.now() - t0) / n; }
+    clearTimeout(simTiming.timer);
+    simTiming = { key, duration, ms: [ms], again, at: performance.now(), timer: 0 };
+  }
+  app.simRate = ({ retime = false } = {}) => {
+    const ms = Math.min(...simTiming.ms);
+    const rate = ms > 0 && simTiming.duration > 0 ? simTiming.duration / (ms / 1000) : Infinity;
+    if (retime && simTiming.ms.length < 3 && !simTiming.timer && simTiming.again && performance.now() - simTiming.at > 1000 && (app.speed?.() ?? 1) >= rate) {
+      const t = simTiming;
+      t.timer = setTimeout(() => {
+        t.timer = 0;
+        if (t !== simTiming || acqKeyOf(app.project) !== t.key) return;
+        const t0 = performance.now();
+        t.again();
+        t.ms.push(performance.now() - t0);
+        t.at = performance.now();
+      }, 0);
+    }
+    return rate;
+  };
+  function adoptRun({ run, ctx, variant }) {
+    const p = app.project;
+    if (!run || !ctx || loopReady(p) || p.system.plant?.type !== 'diagram') return;
+    if (JSON.stringify(simOf(p)) !== JSON.stringify(ctx.sim) || JSON.stringify(p.system.signals) !== JSON.stringify(ctx.signals)) return;
+    if (JSON.stringify(withVariant(p.system.plant.diagram, ctx.path, variant)) !== JSON.stringify(withVariant(ctx.diagram, ctx.path, variant))) return;
+    acqKey = acqKeyOf(p);
+    acq = { t: run.t, signals: run.signals };
+    loopNote = '';
+    app.systemError = '';
   }
   app.signalNames = () => channelNames(app.project);
   app.sourceNames = () => { const n = app.signalNames().filter((x) => app.project.system.signals[x]); return n.length ? n : ['r']; };
@@ -10952,7 +11073,10 @@ function startApp() {
     display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase(), signal: app.signal });
   }
 
-  app.setMode = (m) => { display.setMode(m); controls.render(display.mode); live?.mode(m); };
+  app.setMode = (m) => {
+    if (m === 'stop') tuneTab?.scopeStopped();
+    display.setMode(m); controls.render(display.mode); live?.mode(m);
+  };
   app.toggleRun = () => app.setMode(display.mode === 'stop' ? 'run' : 'stop');
   app.single = () => app.setMode('single');
   function fitScope() {
@@ -10979,6 +11103,7 @@ function startApp() {
   };
 
   let live = null;  
+  let tuneTab = null;  
   app.speedLock = () => live?.lockReason() ?? null;
   app.speedChanged = () => autosave();
   const speed = createSpeed(app);
@@ -10994,6 +11119,7 @@ function startApp() {
     endEdit: () => app.endEdit(),
     liveTag: () => live?.tag(),
     speed: () => speed.effective(),
+    simRate: () => app.simRate({ retime: true }),
     onSweep: (t, seconds) => speed.ran(t, seconds),
     onLevels: () => app.renderLevels?.(),  
   });
@@ -11008,11 +11134,11 @@ function startApp() {
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
   const analysisTab = createAnalysisTab($('tab-analysis'), app);
   app.scopeTime = () => display.time();
-  app.tuneEdit = (fn) => { fn(app.project); changed(); };
+  app.tuneEdit = (fn, from) => { fn(app.project); if (from) adoptRun(from); changed(); };
   app.showLoop = () => display.setData(acquire());  
   app.playRun = (d, past) => { display.play(d, past); controls.render(display.mode); };  
   app.setRunMode = (m) => { display.setMode(m); controls.render(display.mode); };
-  const tuneTab = createAutotuneTab($('tab-tune'), app, display);
+  tuneTab = createAutotuneTab($('tab-tune'), app, display);
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -11173,7 +11299,12 @@ function startApp() {
   }
   renderLibrary();
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
-  $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });
+  $('syslib').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (pop.hidden) document.dispatchEvent(new MouseEvent('click'));  
+    pop.hidden = !pop.hidden;
+    $('syslib').setAttribute('aria-expanded', String(!pop.hidden));
+  });
   pop.addEventListener('click', (e) => {
     e.stopPropagation();
     const tag = e.target.closest('[data-tag]');
@@ -11235,7 +11366,8 @@ function startApp() {
     single: () => app.setMode('single'),
     speed: (x) => {
       if (x !== undefined && !speed.setSpeed(x)) throw new Error('speed: a factor above 0, or -1 for as fast as possible');
-      return { speed: speedToJson(speed.set), effective: speedToJson(speed.effective()), achieved: speed.achieved(), locked: speed.locked() };
+      const sim = app.simRate();
+      return { speed: speedToJson(speed.set), effective: speedToJson(speed.effective()), achieved: speed.achieved(), simulation: Number.isFinite(sim) ? sim : null, locked: speed.locked() };
     },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
     live: live.api,  
