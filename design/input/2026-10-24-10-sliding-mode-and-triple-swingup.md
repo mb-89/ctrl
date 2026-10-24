@@ -101,3 +101,5 @@
 ## Added while this was being built: the time control stays in the header; the input repeats
 
 > I didn't know speed control was joining. Ah, you mean the time control? Okay. Keep it in the header for now. And the input repeat with its period as it does now or play once. Should the input repeat with its period? Yeah, it should. That's the point. Okay. Bake that in.
+
+> And just because I see you downloading something from PyPy, do what you want for your work, but don't forget that we want a standalone HTML, right? So if you put this into the Python thing, into the external hill, that's, I guess, fine, but we want this working in HTML, everything.
