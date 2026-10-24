@@ -19,6 +19,30 @@ Reader: anyone who wants to know why something is the way it is. Newest first. "
 - **Auto-tune refuses an External plant** (HIL): offline its outputs read 0, so the step test asked whether the controller was wired and Iterate "improved" a PID to Kd 600 on a plant that does not move. The reason names the block and points to tuning live in the Controller tab. Interpretation: Auto-tune on a live plant needs identification first (roadmap).
 - **The experiment's sweep stops where its record ends** (the motor's ramp test is 0.9 s of a 5 s screen), and in XY, FFT or Spectrogram mode the status says that Time shows the test over time.
 
+## 2026-10-24 · v2.7, review of the Analysis tab and XY
+
+A review found 21 problems (numerics and browser); all are fixed on `feat/review-fixes`, each with a test where it can be tested ([analysis.md](analysis.md), [instrument.md](instrument.md)).
+
+- **The gain interval counts the crossings of −1 at z = 1 and z = −1**, where L is real; before, the library pendulum's catch loop read ×0.349 … ∞ while its poles say ×0.349 … ×12.2. The interval is checked on the closed-loop poles.
+- **An unstable loop is not graded.** Its gain row reads "Stable for gain ×a … ×b" (the gains at which it would be stable), its delay margin "—". Interpretation: a margin of a loop that is already unstable misleads.
+- **Marginal is its own verdict** ("! marginal": a pole on the unit circle, a free integrator or an undamped mode), not "stable". Poles within 10⁻⁷ of |z| = 1 are on the circle and in neither P nor Z; repeated poles are judged by their mean. Interpretation: the tolerance; at Ts = 1 ms it calls a pole slower than τ ≈ 10⁴ s an integrator.
+- **Dead time is exact to a fraction of a sample** (modified z-transform), so a fraction no longer rounds away. The frequency grid starts a decade below the loop's slowest pole instead of at 10⁻⁴·π/Ts, and the phase adds the loop's dead time exactly.
+- **The linear step's final value is the closed loop's DC gain**, and a response that does not settle in its window (ten time constants of the slowest pole) says so.
+- **"Scope time" follows the scope**: the cursor, or where it last pointed until the next run; the sweep while running (recomputed up to four times a second); else the right edge. The notes say which. Interpretation: remembering the last cursor position, because the cursor is on the button when Scope time is pressed.
+- **XY**: channel 1 is never moved by a gesture on the screen (a line 1 selected in Time is released on entering XY); hovering marks the figure's nearest sample, and the views follow its time (the X pixel is not a time in XY, nor the frequency in FFT); a channel that switches between X − Y and itself is fitted again (pressing Time on *Following a sine* left the angle at the error's scale). Interpretation: refitting rather than keeping two scales per channel, so the project format stays as it is.
+- **Tags**: *Disturbance* only where d plays something; *Disturbance* violet, not Nonlinear's red beside it on three cards, and *XY* yellow, so no two features share a tone in the filter row. (The person's rule: values that differ look different at a glance.)
+
+Verifying the fixes found regressions and smaller problems; fixed on the same branch, each with a test ([analysis.md](analysis.md)):
+
+- **Close poles are not merged for being close.** Grouping poles within 10⁻⁴ of each other averaged real, distinct slow poles onto the circle (s = ±0.03 at 1 ms read "marginal, P 0, Z 0"; 1/(s − 0.05) with PI read P 2). Now the matrix decides: where close poles near the circle fall on different sides, it is changed by a few hundred eps and the eigenvalues found again; only poles that rounding moves (the pieces of a repeated pole) are graded by their mean.
+- **"Stable for" means every pole strictly inside.** A stretch of gains where poles only sit on the circle (within the 10⁻⁷ tolerance) is not stable, and the stretch the tuned gain is in is judged at the tuned gain itself: a double integrator under P, or 2s/(s² − 0.04), now reads "no gain" (before ×0 … ×0.126 and ×0 … ×10⁷). Interpretation: the margin of a loop with no pole outside still runs until a pole goes outside, so a marginal loop keeps its gain interval.
+- **The step's settling time is exact to the sample** past the first 20 000 samples, and a fast mode that the strides would miss is run out sample by sample first.
+- **Measurements with different dead times**: the frequency response is solved from the loop's parts (each delay exactly z^−len, no delay states), and a linear grid follows the phase the remaining chain turns; every −180° crossing is found.
+- **Scope time cannot freeze the page**: it recomputes at most four times a second counted from the end of the last analysis, and waits twice as long as that took. A big loop's root locus has fewer gains (a 100-sample dead time: 0.3 s instead of 1.4 s).
+- **An unstable loop's plots do not speak of margins**: "stable below ×b", "… from −180°", and the side table's "Phase at |L| = 1". The gain label at the ω = 0 end no longer covers the axis title.
+- **Tags**: *Dead time* magenta, not Auto-tune's green beside it on the oven (the same rule; it predates the review). No tag shares its tone with another on its card, now checked for every card.
+- **XY**: the screen says to turn channel 1 on "with the channel key 1 under Vertical"; "Press 1" read as a keyboard key, which does nothing.
+
 ## 2026-10-24 · v2.7 ([input](../input/2026-10-24-09-analysis-autotune-triple-swingup.md))
 
 - **Identify: experiment first, for a tester with no control theory** ([identification.md](identification.md), research [../research/identification.md](../research/identification.md); input 10). (Person: "it will be experiment first … you can start with slow control efforts and then increase this over time … the responsibility of … keeping the system safe is with the plant … He doesn't know if this thing is integrating or not … we can have limits on the control effort, and … on the actual values and reference values … he's not going to give you a model. He's not going to give you a gray box.")

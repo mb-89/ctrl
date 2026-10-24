@@ -5,7 +5,7 @@
 import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } from '../core/project.js';
 import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
-import { isDelta } from './xyview.js';
+import { drawnValues, refitSwitched } from './xyview.js';
 import { createControllerTab } from './controller.js';
 import { createAutotuneTab } from './autotune.js';
 import { loopOverlays, autotune, placeVariant, tuneReport } from '../core/autotune.js';
@@ -253,12 +253,10 @@ function startApp() {
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
     const data = live?.data() ?? acquire();  // live: the sweep on the screen
-    const sc = app.project.scope, x = data.signals[sc.channels[0].source];
+    const sc = app.project.scope;
     sc.channels.forEach((ch, i) => {
-      let v = data.signals[ch.source];
       // XY with Δ: the channels draw channel 1 minus themselves; fit that.
-      if (v && x && sc.view?.mode === 'xy' && isDelta(sc, i, app.unitOf)) v = v.map((y, j) => x[j] - y);
-      const fit = v && fitChannel(v);
+      const v = drawnValues(data.signals, sc, i, app.unitOf), fit = v && fitChannel(v);
       if (fit) Object.assign(ch, fit);
     });
     // A Controller block's r and the y it compares with r share one scale and
@@ -269,6 +267,9 @@ function startApp() {
       if (fit) for (const i of g) Object.assign(sc.channels[i], fit);
     }
   }
+  // After a change of display mode or Δ: a channel that now draws another
+  // quantity (X − Y in XY, itself elsewhere) is fitted to it.
+  app.refitSwitched = (before, sc) => { const d = display.data; if (d) refitSwitched(before, sc, d.signals, app.unitOf); };
   app.autoScale = () => {
     app.beginEdit();
     fitScope();
@@ -286,6 +287,7 @@ function startApp() {
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
+    onTime: () => app.onScopeTime?.(),
     liveTag: () => live?.tag(),
     onLevels: () => app.renderLevels?.(),  // the typed spectrogram levels follow the strip
   });
@@ -300,10 +302,13 @@ function startApp() {
   const controllerTab = createControllerTab($('tab-controller'), app);
   // Opens the Controller tab on one Controller block (path of block ids).
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
-  // The Analysis tab; the scope's time (cursor, sweep or right edge) is its
-  // "Scope time" operating point.
+  // The Analysis tab; the scope's time (the cursor, the sweep, where the
+  // cursor last was, or the right edge) is its "Scope time" operating point,
+  // and the tab follows it as it moves.
   const analysisTab = createAnalysisTab($('tab-analysis'), app);
   app.scopeTime = () => display.time();
+  app.scopeTimeFrom = () => display.timeFrom();
+  app.onScopeTime = () => analysisTab.followTime();
   // Auto-tune changes the project many times in one run but takes one undo
   // step for all of it (beginEdit at its start, endEdit at its end); each
   // change goes through tuneEdit. It shows whole runs while it works.
