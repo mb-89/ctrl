@@ -418,6 +418,57 @@ export const EXAMPLE_PLANTS = [
       ],
     }],
   },
+  // Live mode (design/output/hil.md): the plant is hil_plant.py, outside the
+  // page; the External plant block's ports match what it describes. The
+  // controller gains are chosen by hand: a P that gravity defeats, then better.
+  {
+    name: 'HIL: external motor',
+    notes: 'The plant runs outside this page: hil_plant.py, a DC motor swinging an unbalanced arm, simulated in real time at 100 Hz on your computer. Under Live, get the script, run it with "uv run hil_plant.py" and press Connect; then tune the controller against it while it runs. The P it starts with leaves the arm short of r (gravity pulls it back); flip to PD or PID. A load torque d pushes the arm at 3.6 s. Offline the plant reads 0.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
+      d: { period: PERIOD, components: [pulse(0.1, 3.6, 0.6)] },
+    },
+    scope: { channels: channels('r', 'angle', 'V', 'd') },
+    ui: { ...ui('Arm'), setup: 0.36 },  // Live adds a row to Run Control
+    tags: [{ label: 'Nonlinear', kind: 'plant' }],  // the arm: gravity and Coulomb friction, outside the page
+    diagram: {
+      blocks: [
+        src('r', 30, 156, 'rad'),
+        src('d', 230, 250, 'N·m'),
+        ctrl(130, 150, 2, 0.01, [
+          { name: 'P, untuned', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
+          { name: 'PD', type: 'pid', params: { Kp: 6, Kd: 0.6, Tf: 0.01, umin: -12, umax: 12 } },
+          { name: 'PID with prefilter', type: 'pid', params: { Kp: 10, Ki: 20, Kd: 0.6, Tf: 0.01, Tr: 0.1, umin: -12, umax: 12 } },
+          { name: 'Off', type: 'off', params: {} },
+        ]),
+        {
+          id: 'motor', type: 'external', name: 'motor', x: 340, y: 96,
+          params: { url: 'ws://127.0.0.1:8765', rate: 100, inputs: ['V', 'load'], inUnits: ['V', 'N·m'], min: [-12, -0.2], max: [12, 0.2], safe: [0, 0], outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'] },
+        },
+        sink('angle', 600, 98, 'rad'), sink('speed', 600, 134, 'rad/s'), sink('current', 600, 170, 'A'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'ctrl', to: 'V' },
+        { from: 'motor', to: 'angle' }, { from: 'motor:1', to: 'speed' }, { from: 'motor:2', to: 'current' }, { from: 'motor', to: 'ctrl:1' },
+      ],
+    },
+    views: [{
+      // The arm hangs at angle 0 and turns counter-clockwise; the yellow mark is r.
+      name: 'Arm', kind: '2d', view: [-1.1, -1.05, 1.1, 1.0],
+      shapes: [
+        { type: 'circle', cx: 0, cy: 0, r: 0.75, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        ...ticks(0.75),
+        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: -0.8, x2: 0, y2: -0.95, stroke: 'ch1', lineWidth: 5 }] },
+        { type: 'group', angle: 'angle', shapes: [
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: -0.6, stroke: 'ch2', lineWidth: 7 },
+          { type: 'circle', cx: 0, cy: -0.6, r: 0.11, fill: 'ch2' },
+        ] },
+        { type: 'circle', cx: 0, cy: 0, r: 0.12, fill: 'ink' },
+        { type: 'text', x: 0, y: 0.9, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:4.2} N·m', size: 13 },
+      ],
+    }],
+  },
 ];
 
 // A new project's plant: the reference alone.

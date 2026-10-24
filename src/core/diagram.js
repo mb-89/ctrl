@@ -17,6 +17,7 @@ import { gaussAt } from './signals.js';
 import { compileExpr } from './expr.js';
 import { normalizeVariant, makeLaw } from './controllers.js';
 import { OBSERVERS } from './observers.js';
+import { EXTERNAL_BLOCK } from './hil.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -115,6 +116,9 @@ export const ELEMENTS = {
     ports: (p) => [p.inputs, p.outputs],
     outputs: (p) => Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`),
   },
+  // A plant outside the page (Live mode, hil.js): its outputs come from the
+  // plant every cycle, its inputs are sent back; offline the outputs hold 0.
+  external: EXTERNAL_BLOCK,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
@@ -198,6 +202,7 @@ export function parseEnd(end) {
 
 function normalizeParams(type, params = {}, where) {
   if (diagramBlockDef(type).model) return normalizeBlock('plant', { type, params }).params;
+  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where);  // blocks that check their own (external)
   const out = {};
   for (const p of ELEMENTS[type].params) {
     let v = params[p.key] ?? p.default;
@@ -306,6 +311,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const warnings = [];
   const probeList = [];
   const add = (node) => { nodes.push({ inputs: [], ...node }); return nodes.length - 1; };
+  const externals = [];
   let extNode = -1, outNode = -1;
   const ctrlNodes = [];  // [block id path, node] of every Controller block
 
@@ -372,6 +378,15 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         outs[b.id] = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j })) : [k];
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         if (b.type === 'controller') ctrlNodes.push([`${ids}${b.id}`, k]); // auto-tune probes (below)
+        continue;
+      }
+      if (b.type === 'external') {
+        // Live mode sets its outputs (outv) each cycle and reads its inputs;
+        // one tap node per output, as for a physics block.
+        const k = add({ kind: 'xplant', name, ft: false, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut) });
+        externals.push(k);
+        outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
+        ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
       if (def.ode) {
@@ -493,6 +508,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
           case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
           case 'tap': y = nodes[nd.parent].outv[nd.j]; break;
           case 'ctrl': y = nd.u; break;
+          case 'xplant': y = nd.outv[0]; break;
           default: {
             const { ss } = nd;
             const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
@@ -521,6 +537,15 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     probes: () => probeList.map(([name, k]) => [name, vals[k]]),
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
+    // External plants (Live mode): y is written by the caller, u() reads what
+    // the diagram feeds the block after the last eval, and shows[i] lists the
+    // probes (Sinks) on the same signal as input i, which show what the plant
+    // applies during a stop.
+    externals: externals.map((k) => {
+      const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
+      const shows = nodes[k].inputs.map((s) => (s < 0 ? [] : probeList.flatMap(([, pk], j) => (nodes[pk].kind === 'pass' && origin(pk) === origin(s) ? [j] : []))));
+      return { name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])), shows };
+    }),
   };
   return self;
 }

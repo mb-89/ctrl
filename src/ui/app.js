@@ -17,6 +17,8 @@ import { createDisplay } from './display.js';
 import { createControls } from './controls.js';
 import { createGenerator } from './generator.js';
 import { createSplitters } from './layout.js';
+import { createLive } from './live.js';
+import { createRecord } from './record.js';
 
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
@@ -188,11 +190,11 @@ function startApp() {
   };
   // Signal values at the scope's current instant, for 2D views.
   app.sceneEnv = () => {
-    const data = acquire();
+    const data = live?.data() ?? acquire();  // live: the sweep on the screen
     const t = display.time();
     const env = { t };
     if (data?.t?.length > 1) {
-      const k = Math.max(0, Math.min(data.t.length - 1, Math.round(t / (data.t[1] - data.t[0]))));
+      const k = Math.max(0, Math.min(data.t.length - 1, Math.round((t - data.t[0]) / (data.t[1] - data.t[0]))));
       env.t = data.t[k];
       for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
     }
@@ -242,14 +244,15 @@ function startApp() {
     display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase(), signal: app.signal });
   }
 
-  // Run control
-  app.toggleRun = () => { display.setMode(display.mode === 'stop' ? 'run' : 'stop'); controls.render(display.mode); };
-  app.single = () => { display.setMode('single'); controls.render(display.mode); };
+  // Run control. In Live mode Run and Stop go through the plant (ui/live.js).
+  app.setMode = (m) => { display.setMode(m); controls.render(display.mode); live?.mode(m); };
+  app.toggleRun = () => app.setMode(display.mode === 'stop' ? 'run' : 'stop');
+  app.single = () => app.setMode('single');
   // Auto Scale: one period of the input across the screen, then every
   // channel with a signal fitted to about six divisions.
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
-    const data = acquire();
+    const data = live?.data() ?? acquire();  // live: the sweep on the screen
     const sc = app.project.scope, x = data.signals[sc.channels[0].source];
     sc.channels.forEach((ch, i) => {
       let v = data.signals[ch.source];
@@ -275,15 +278,20 @@ function startApp() {
   };
 
   // Rendering
+  let live = null;  // Live mode (ui/live.js), made below
   const display = createDisplay($('display'), {
     onSelectChannel: (i) => app.selectChannel(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
-    onStopped: () => controls.render(display.mode),
+    onStopped: () => { controls.render(display.mode); live?.mode('stop'); },  // a Single ended
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
+    liveTag: () => live?.tag(),
   });
   const controls = createControls($('controls'), app);
+  // Save and references under the screen (ui/record.js); Live in Run Control.
+  const record = createRecord(app, display);
+  live = createLive(app, display, $('controls'), record);
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
   const controllerTab = createControllerTab($('tab-controller'), app);
@@ -338,6 +346,8 @@ function startApp() {
     if (app.tab === 'controller') controllerTab.render();
     if (app.tab === 'tune') tuneTab.render();
     if (app.tab === 'analysis') analysisTab.render();
+    live.changed();  // a running loop takes the edit at its next cycle
+    record.changed();  // references follow the window
     renderChrome();
     autosave();
   }
@@ -408,10 +418,12 @@ function startApp() {
     return true;
   }
   app.download = download;
+  app.canDownload = () => !framed || !!saver;  // else Save offers Copy (ui/record.js)
   const stem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
+  app.copy = copy;  // for Save and the plant script (ui/record.js, ui/live.js)
   $('save').addEventListener('click', async () => { if (await download(`${stem()}.json`, exportJson(), 'application/json')) toast('Saved the project as JSON'); });
   $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
@@ -523,9 +535,12 @@ function startApp() {
     addComponent: (c) => { app.addComponent(c); return structuredClone(refs()); },
     reference: () => { const { t, r } = referenceTrace(app.project); return { t: Array.from(t), r: Array.from(r) }; },
     autoScale: () => app.autoScale(),
-    run: () => { display.setMode('run'); controls.render('run'); },
-    stop: () => { display.setMode('stop'); controls.render('stop'); },
+    run: () => app.setMode('run'),
+    stop: () => app.setMode('stop'),
+    single: () => app.setMode('single'),
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
+    live: live.api,  // connect(url), disconnect(), estop(), reset(), state(): design/output/hil.md
+    record: record.api,  // screen(format), live(format), reference(text, name), clearReferences(), state()
     // Auto-tune a Controller block at once, as the Auto-tune tab does step by
     // step: opts { block (id path, 'ctrl'), method, goal, rule, amplitude,
     // maxIter, apply = true }. Applied, the result goes into a variant of its
