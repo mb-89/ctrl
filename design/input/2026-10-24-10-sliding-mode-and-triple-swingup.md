@@ -23,3 +23,7 @@
 ## Added while this was being built: filter the System library by tag
 
 > And then I guess when you show the tags in the system library, show all available tags. And if we click on it, we filter for them. So somebody could filter for linear or for non-linear, for like someone would see what feature, and when we click on it, we filter for that. I guess that would be useful.
+
+## Added while this was being built: a histogram of amplitudes for the spectrogram
+
+> And I guess something that would be useful for the spectrogram, although I'm not sure where to put it, would be a histogram of the amplitudes where you can select the cutoff. I mean, so see how PyQt graph does it, where I can select which amplitudes I want to show, because I feel like the amplitudes we see in the spectrogram are not clear enough because there's too much noise. And if we could like cut off lower amplitudes, then we would reduce that noise. I just wonder where we put that, but yeah, figure it out.
