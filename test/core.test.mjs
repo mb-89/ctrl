@@ -374,3 +374,15 @@ test('XY: following a sine, the error figure closes from a wide ellipse (P) to a
   const [p, pd, pid] = ['P', 'PD', 'PID'].map(spread);
   assert.ok(p > 1.5 * pd && pd > 5 * pid && pid < 0.02 && p > 0.1, `σ: P ${p}, PD ${pd}, PID ${pid}`);
 });
+
+test('System library tags: every tag listed once, grouped; filtering keeps systems that carry all chosen tags', async () => {
+  const { SYSTEM_LIBRARY, libraryTags, filterByTags } = await import('../src/core/systems.js');
+  const tags = libraryTags();
+  assert.equal(new Set(tags.map((t) => t.label)).size, tags.length);
+  assert.ok(tags.findIndex((t) => t.kind === 'plant') < tags.findIndex((t) => t.kind === 'feature'));
+  assert.deepEqual(filterByTags([]), SYSTEM_LIBRARY.map((e, i) => i));
+  const lin = filterByTags(['Linear']), non = filterByTags(['Nonlinear']);
+  assert.ok(lin.length && non.length && lin.length + non.length === SYSTEM_LIBRARY.length, 'every system is linear or nonlinear');
+  const both = filterByTags(['Nonlinear', 'Disturbance']);
+  assert.ok(both.every((i) => non.includes(i) && SYSTEM_LIBRARY[i].tags.some((t) => t.label === 'Disturbance')));
+});

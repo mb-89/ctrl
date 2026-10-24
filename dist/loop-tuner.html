@@ -417,6 +417,10 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .tag-feature { background: var(--panel-2); color: var(--ink-2); }
 .tag-feature::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); margin-right: 5px; vertical-align: 0; }
 .tag-none { border: 1px dashed var(--muted); color: var(--muted); background: transparent; font-weight: 500; }
+button.tag { cursor: pointer; font-family: inherit; }
+button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 1px; }
+.tagfilter { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 0 6px 8px; border-bottom: 1px solid var(--line); }
+.tagcount { margin-left: auto; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .taglegend { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 2px 6px 6px; color: var(--muted); font-size: 11px; }
 .taglegend .tag { --tone: var(--muted); }
 
@@ -4685,6 +4689,17 @@ function systemTags(e) {
 
 const SYSTEM_LIBRARY = EXAMPLE_PLANTS.map(fromPlant);
 
+// Every tag the library uses, once, grouped by what it is about (plant,
+// controller, observer, feature) in the order the systems show them.
+const KIND_ORDER = ['plant', 'none', 'controller', 'observer', 'feature'];
+function libraryTags(library = SYSTEM_LIBRARY) {
+  const seen = new Map();
+  for (const e of library) for (const t of e.tags) if (!seen.has(t.label)) seen.set(t.label, t);
+  return [...seen.values()].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
+}
+// The systems that carry every one of the given tags (no tags: all).
+const filterByTags = (labels, library = SYSTEM_LIBRARY) => library.map((e, i) => i).filter((i) => labels.every((l) => library[i].tags.some((t) => t.label === l)));
+
 // Copies the chosen parts of a library entry into a raw project (before
 // normalisation). parts: any of 'input', 'plant', 'controller'. A whole load
 // also takes the system's title, its scope setup and how it opens (ui).
@@ -4716,7 +4731,7 @@ function applySystem(project, entry, parts) {
   return p;
 }
 
-return { SYSTEM_PARTS, TAG_TONES, systemTags, SYSTEM_LIBRARY, applySystem };
+return { SYSTEM_PARTS, TAG_TONES, systemTags, SYSTEM_LIBRARY, libraryTags, filterByTags, applySystem };
 })();
 // ---- core/spectrum.js
 __mods['core/spectrum.js'] = (() => {
@@ -9814,7 +9829,7 @@ const { loopOverlays, autotune, placeVariant, tuneReport } = __mods['core/autotu
 const { createAnalysisTab } = __mods['ui/analysis.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { DEFAULT_PROJECT } = __mods['core/examples.js'];
-const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = __mods['core/systems.js'];
+const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem, libraryTags, filterByTags } = __mods['core/systems.js'];
 const { createDisplay } = __mods['ui/display.js'];
 const { createControls } = __mods['ui/controls.js'];
 const { createGenerator } = __mods['ui/generator.js'];
@@ -10251,14 +10266,27 @@ function startApp() {
   };
   const pop = $('syslib-pop');
   const PART_LABEL = { input: 'Input', plant: 'Plant', controller: 'Controller' };
-  pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
-    + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
-    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => `<span class="tag tag-${t.kind} tone-${t.tone}">${esc(t.label)}</span>`).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
-      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>`).join('');
+  // Tags filter the list: every tag in the library is a chip at the top; a
+  // click on one there or on a card toggles it; systems must carry them all.
+  const tagFilter = new Set();
+  const chip = (t, extra = '') => `<button type="button" class="tag tag-${t.kind} tone-${t.tone}${extra}" data-tag="${esc(t.label)}" aria-pressed="${tagFilter.has(t.label)}" title="Show only systems tagged ${esc(t.label)}">${esc(t.label)}</button>`;
+  function renderLibrary() {
+    const shown = new Set(filterByTags([...tagFilter]));
+    pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
+      + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
+      + `<div class="tagfilter" role="group" aria-label="Filter by tag">${libraryTags().map((t) => chip(t)).join('')}`
+      + `<span class="tagcount">${tagFilter.size ? `${shown.size} of ${SYSTEM_LIBRARY.length} <button type="button" class="key small" data-tagclear>Clear</button>` : `${SYSTEM_LIBRARY.length} systems · click a tag to filter`}</span></div>`
+      + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
+      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>` : '')).join('');
+  }
+  renderLibrary();
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
   $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });
   pop.addEventListener('click', (e) => {
     e.stopPropagation();
+    const tag = e.target.closest('[data-tag]');
+    if (tag) { if (!tagFilter.delete(tag.dataset.tag)) tagFilter.add(tag.dataset.tag); renderLibrary(); return; }
+    if (e.target.closest('[data-tagclear]')) { tagFilter.clear(); renderLibrary(); return; }
     const b = e.target.closest('[data-sys]');
     if (!b) return;
     const entry = SYSTEM_LIBRARY[Number(b.dataset.sys)];

@@ -12,7 +12,7 @@ import { loopOverlays, autotune, placeVariant, tuneReport } from '../core/autotu
 import { createAnalysisTab } from './analysis.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
-import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../core/systems.js';
+import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem, libraryTags, filterByTags } from '../core/systems.js';
 import { createDisplay } from './display.js';
 import { createControls } from './controls.js';
 import { createGenerator } from './generator.js';
@@ -450,14 +450,27 @@ function startApp() {
   };
   const pop = $('syslib-pop');
   const PART_LABEL = { input: 'Input', plant: 'Plant', controller: 'Controller' };
-  pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
-    + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
-    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => `<span class="tag tag-${t.kind} tone-${t.tone}">${esc(t.label)}</span>`).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
-      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>`).join('');
+  // Tags filter the list: every tag in the library is a chip at the top; a
+  // click on one there or on a card toggles it; systems must carry them all.
+  const tagFilter = new Set();
+  const chip = (t, extra = '') => `<button type="button" class="tag tag-${t.kind} tone-${t.tone}${extra}" data-tag="${esc(t.label)}" aria-pressed="${tagFilter.has(t.label)}" title="Show only systems tagged ${esc(t.label)}">${esc(t.label)}</button>`;
+  function renderLibrary() {
+    const shown = new Set(filterByTags([...tagFilter]));
+    pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
+      + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
+      + `<div class="tagfilter" role="group" aria-label="Filter by tag">${libraryTags().map((t) => chip(t)).join('')}`
+      + `<span class="tagcount">${tagFilter.size ? `${shown.size} of ${SYSTEM_LIBRARY.length} <button type="button" class="key small" data-tagclear>Clear</button>` : `${SYSTEM_LIBRARY.length} systems · click a tag to filter`}</span></div>`
+      + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
+      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>` : '')).join('');
+  }
+  renderLibrary();
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
   $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });
   pop.addEventListener('click', (e) => {
     e.stopPropagation();
+    const tag = e.target.closest('[data-tag]');
+    if (tag) { if (!tagFilter.delete(tag.dataset.tag)) tagFilter.add(tag.dataset.tag); renderLibrary(); return; }
+    if (e.target.closest('[data-tagclear]')) { tagFilter.clear(); renderLibrary(); return; }
     const b = e.target.closest('[data-sys]');
     if (!b) return;
     const entry = SYSTEM_LIBRARY[Number(b.dataset.sys)];

@@ -73,6 +73,17 @@ export function systemTags(e) {
 
 export const SYSTEM_LIBRARY = EXAMPLE_PLANTS.map(fromPlant);
 
+// Every tag the library uses, once, grouped by what it is about (plant,
+// controller, observer, feature) in the order the systems show them.
+const KIND_ORDER = ['plant', 'none', 'controller', 'observer', 'feature'];
+export function libraryTags(library = SYSTEM_LIBRARY) {
+  const seen = new Map();
+  for (const e of library) for (const t of e.tags) if (!seen.has(t.label)) seen.set(t.label, t);
+  return [...seen.values()].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
+}
+// The systems that carry every one of the given tags (no tags: all).
+export const filterByTags = (labels, library = SYSTEM_LIBRARY) => library.map((e, i) => i).filter((i) => labels.every((l) => library[i].tags.some((t) => t.label === l)));
+
 // Copies the chosen parts of a library entry into a raw project (before
 // normalisation). parts: any of 'input', 'plant', 'controller'. A whole load
 // also takes the system's title, its scope setup and how it opens (ui).
