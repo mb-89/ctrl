@@ -23,6 +23,12 @@ export function createControls(root, app) {
         <button class="key small" data-view="xy" title="XY: channel 1 across, the other channels against it (a Lissajous figure)">XY</button>
         <button class="key small" id="k-delta" title="XY: draw channel 1 minus each channel (r on 1 and y on 2: the error e = r − y over r)">Δ</button>
       </div>
+      <div class="srcrow lvrow" id="lv-row" hidden><span>Levels</span>
+        <input class="field" data-lv="0" aria-label="Spectrogram floor, dB" title="Floor: below it black. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
+        <span class="dim">…</span>
+        <input class="field" data-lv="1" aria-label="Spectrogram ceiling, dB" title="Ceiling: above it the brightest colour. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
+        <span class="dim">dB</span>
+        <button class="key small axbtn" id="lv-auto" title="Automatic levels: the ceiling at the largest amplitude shown, the floor 10 dB above the median (the noise)">Auto</button></div>
     </section>
     <section class="group">
       <h3 class="glabel">Horizontal</h3>
@@ -168,6 +174,51 @@ export function createControls(root, app) {
     if (view.right === app.channel) delete view.right; else view.right = app.channel;
     sc.view = view;
   }));
+  // The spectrogram's levels, typed (the same as the strip at the right of
+  // the screen): for the signal the spectrogram shows.
+  const lvRow = $('#lv-row'), lvIn = [...lvRow.querySelectorAll('[data-lv]')];
+  const shownLevels = () => app.display?.levels;
+  function typeLevel(j, v) {
+    const lv = shownLevels();
+    if (!lv) return;
+    const pair = [lv.floor, lv.ceiling];
+    pair[j] = v;
+    if (!(pair[1] - pair[0] >= 1)) { app.toast('The floor must be at least 1 dB below the ceiling.'); renderLevels(true); return; }
+    if (pair[0] < -300 || pair[1] > 300) { app.toast('Levels between −300 and 300 dB.'); renderLevels(true); return; }
+    app.display.setLevels(lv.source, pair);
+  }
+  lvIn.forEach((el, j) => {
+    el.addEventListener('change', () => {
+      const v = parseSI(el.value, 'dB');
+      if (!Number.isFinite(v)) { app.toast('Type a level in dB, e.g. −60.'); renderLevels(true); return; }
+      typeLevel(j, v);
+    });
+    el.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') el.blur();
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      const lv = shownLevels();
+      if (!lv) return;
+      typeLevel(j, Math.round(((j ? lv.ceiling : lv.floor) + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1)) * 10) / 10);
+      renderLevels(true);
+    });
+  });
+  $('#lv-auto').addEventListener('click', () => { const lv = shownLevels(); if (lv && !lv.auto) app.display.setLevels(lv.source, null); });
+  function renderLevels(force = false) {
+    const lv = shownLevels(), vm = app.project.scope.view?.mode;
+    lvRow.hidden = vm !== 'spectrogram';
+    const fmt = (d) => `${d < 0 ? '−' : ''}${Math.abs(Math.round(d * 10) / 10)}`;
+    lvIn.forEach((el, j) => {
+      el.disabled = !lv;
+      if (force || document.activeElement !== el) el.value = lv ? fmt(j ? lv.ceiling : lv.floor) : '';
+    });
+    const auto = $('#lv-auto');
+    auto.disabled = !lv;
+    auto.classList.toggle('lit-view', !!lv?.auto);
+    auto.setAttribute('aria-pressed', String(!!lv?.auto));
+    lvRow.title = lv ? `The spectrogram's levels of ${lv.source} (dB of ${lv.unit}: 0 dB is 1 ${lv.unit})${lv.auto ? ', automatic' : ''}` : '';
+  }
   const src = $('#ch-src');
   // Picking a source switches the channel on; "none" switches it off.
   src.addEventListener('change', () => setScope((sc) => { const c = sc.channels[app.channel]; c.source = src.value; c.on = src.value !== ''; }));
@@ -210,7 +261,8 @@ export function createControls(root, app) {
     $('#ch-right').classList.toggle('lit-view', sc.view?.right === app.channel);
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
+    renderLevels();
   }
 
-  return { render };
+  return { render, renderLevels };
 }

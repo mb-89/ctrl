@@ -300,8 +300,11 @@ function startApp() {
     liveTag: () => live?.tag(),
     speed: () => speed.effective(),
     onSweep: (t, seconds) => speed.ran(t, seconds),
+    onLevels: () => app.renderLevels?.(),  // the typed spectrogram levels follow the strip
   });
+  app.display = display;
   const controls = createControls($('controls'), app);
+  app.renderLevels = controls.renderLevels;
   // Save and references under the screen (ui/record.js); Live in Run Control.
   const record = createRecord(app, display);
   live = createLive(app, display, $('controls'), record);

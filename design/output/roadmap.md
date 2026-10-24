@@ -42,3 +42,8 @@ Reader: whoever picks the next piece of work.
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
 - Should the input repeat with its period, or stop after one? Repeating is built; see decisions.md.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?
+- ~~Spectrogram levels by default~~: answered (2026-10-24): the automatic floor stays the default, with a switch to dB above the local noise (decisions.md).
+
+## Backlog, at the very end (the person, 2026-10-24)
+
+- **Controller benchmark with a Pugh matrix and a report.** Once a plant is identified (and we trust the model), tune every controller type the library knows on it (PID with feedforward and anti-windup, state feedback/LQR, gain scheduling, sliding mode variants, …), score each against criteria (following, disturbance rejection, overshoot, robustness to the plant's ±15 % variation, effort and actuator wear, noise sensitivity, complexity) in a Pugh matrix against a datum (the PID), pick the best and produce a report. The person: "If we have nothing else … you can try to do that benchmark mode on your own." Input file 10.

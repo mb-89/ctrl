@@ -12,6 +12,16 @@ Reader: whoever changes Live mode, its protocol, the plant and its download, or 
 
 **A system can have its plant outside the page. The plant runs in real time on its own clock; every cycle it sends its outputs, the page runs the rest of the diagram (Sources, Controller and Observer blocks, anything else) against them and answers at once with the inputs to apply. The controller is tuned in the page while the plant runs; the scope's Run and Stop start and stop the plant.** The System library's **HIL: external motor** is made for it; its plant ships in the page as `hil-plant.zip`.
 
+
+## Two modes (settled; see decisions.md v2.7 before changing)
+
+| Mode | The page sends each cycle | Who controls | In the page |
+|---|---|---|---|
+| **Control** (tune a controller) | the control effort u, plus r and e for the plant's log | the page's Controller blocks | everything works: tuning, Auto-tune, Analysis on an identified model |
+| **Reference** (log data, or drive a plant with its own controller) | reference values | the plant's own controller | the Controller blocks and Auto-tune are shown as **not in the loop**; recording, the scope and (partly) identification work |
+
+The plant declares which it takes, through its inputs in `describe`; the page follows. The person went back and forth on this once and then settled on both: keep both.
+
 ## Why the plant is the server
 
 A web page cannot listen on a TCP or UDP port. It can open a WebSocket client to `ws://127.0.0.1:PORT`: localhost counts as a potentially trustworthy origin, so even an https page may connect to it (no mixed-content block). So the plant is the server, and the page connects to it. A standalone HTML file opened from disk works; the claude.ai artifact viewer may block the connection (see Limits).
