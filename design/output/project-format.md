@@ -48,6 +48,8 @@ One JSON document. Everything the person sets up is in it, including how the dis
 - `scope.channels[i].source` is a name the diagram defines: a Source signal or a Sink, or a loop signal once a controller exists; `""` is no source. Names that no longer exist are cleared when the file loads.
 - `library`: subsystems the person saved to My blocks.
 - A Controller block carries `variants` and `variant` ([controller-proposal.md](controller-proposal.md)).
+- An External plant block (`"type": "external"`, [hil.md](hil.md)) carries the plant's ports: `{ "url": "ws://127.0.0.1:8765", "rate": 100, "inputs": ["V", "load"], "inUnits": ["V", "N·m"], "min": [-12, -0.2], "max": [12, 0.2], "safe": [0, 0], "outputs": ["angle", "speed", "current"], "outUnits": ["rad", "rad/s", "A"] }`. The lists may also be written as comma-separated strings.
+- Saved traces are files of their own, not part of the project: CSV (`t [s]`, then `name [unit]` columns) or JSON (`{ "format": "loop-tuner-trace/1", "title", "source", "units", "t": [...], "signals": { name: [...] } }`).
 - `ui` (optional): how the page opens: `run` (`run`, `stop`, `single`), `tab` (`input`, `plant`, `controller`), `view` (a view's name; else the diagram), `setup` (the setup area's share of the page height, 0–1). Saving and Export HTML write the page's current state here; opening a file or loading a system applies it once. Unknown values are dropped.
 - Source and Sink blocks carry `unit` (default `"1"`). `system.signals` holds one signal per Source name, nothing else (`r` when the diagram has no Source).
 - A diagram with its own Sources is a whole system: old `candidates` beside it are not run as a closed loop, and loading a whole system from the library replaces them.

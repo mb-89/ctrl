@@ -59,6 +59,20 @@ Every knob has a readout below it. Click it to type a value: `20m`, `100 ms`, `2
 - **A project or system may say how it opens** (`ui`: run state, tab, view, setup height); the System library's systems open running on their view in the Plant tab ([project-format.md](project-format.md)).
 - **Auto Scale**: the timebase shows one period of the input (the smallest 1-2-5 step whose 10 divisions hold the period, position 0); each channel with a signal is scaled to about 6 divisions and centred on a whole division.
 
+## Live (an external plant)
+
+A system with an External plant block runs against a plant outside the page ([hil.md](hil.md)). Run Control then has a second row of keys, **Connect / Disconnect**, **E-STOP**, **Reset**, and under it where the plant listens, or while running the link's rate, jitter and round trip. Live data sweeps the screen as the simulation does: each sweep is one run and the earlier ones fade; sweeps start at multiples of the screen width in the plant's time, so they line up with the input's period. Run/Stop and Single freeze the screen, never the loop. The status line says LIVE (with the plant's time), E-STOP (with the reason) or OFFLINE.
+
+## Record and references
+
+**Rec**, under the screen beside the channel badges (like a scope's save keys), is the scope's deep memory: it keeps the last *length* (5 min unless set; click it to type 30 s, 10 min, 1 h; kept per viewer) of every Source and Sink, live or simulated. (The person: "if I set a trace to 5 minutes, I should be able to store that".)
+
+- **Live**, every cycle is recorded at the plant's rate, with the plant's time.
+- **Simulated**, every sweep the scope completes is appended after the one before, so the record's time runs on and an edit shows where it happened. Interpretation: the recorder records what the scope acquires, in both modes, rather than simulating minutes at once.
+- A change of the signals (or of the sample rate) starts a new record.
+- **Save ▾**: a CSV file (`t [s]`, then every signal as `name [unit]`; a `#` line says what it is), a JSON file (`format`, `title`, `source`, `units`, `t`, `signals`), or the CSV to the clipboard. Where downloads are blocked (the claude.ai viewer) it is **Copy CSV** only. With nothing recorded yet, Save writes the screen.
+- **Open…** reads a saved trace (CSV or JSON; any CSV whose first column is time) and draws it **dashed** on every channel showing a signal of the same name, at its recorded time, until cleared (**ref ✕**). References never fade (earlier runs do); several can be open.
+
 ## Knobs
 
 Endless rotary encoders, like a scope's: every detent is one step. Drag up or right to turn clockwise, scroll, or use the arrow keys when focused.

@@ -11,9 +11,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MODULES = [
-  'core/poly.js', 'core/scale.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js',
-  'ui/units.js', 'ui/dial.js', 'ui/display.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/controller.js', 'ui/layout.js', 'ui/app.js',
+  'core/poly.js', 'core/scale.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/hil.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js',
+  'core/live.js', 'core/trace.js',
+  'ui/units.js', 'ui/dial.js', 'ui/display.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/controller.js', 'ui/layout.js', 'ui/live.js', 'ui/app.js',
 ];
+
+// Live mode offers the external plant script for download: its text rides in
+// the bundle as __HIL_PLANT_PY (ui/live.js), so an exported page has it too.
+const hilPlant = () => `// hil/hil_plant.py, offered under Live\nconst __HIL_PLANT_PY = ${JSON.stringify(readFileSync(join(ROOT, 'hil/hil_plant.py'), 'utf8'))};`;
 
 // Each module runs in its own function scope; its exports go into a registry
 // and its imports are read back from it.
@@ -32,7 +37,7 @@ export function bundleScript() {
     if (/^import\s/m.test(body)) throw new Error(`${m}: only single-line named imports are supported`);
     return `// ---- ${m}\n__mods['${m}'] = (() => {\n${body}\nreturn { ${names.join(', ')} };\n})();`;
   });
-  return `(() => {\n'use strict';\nconst __mods = {};\n${parts.join('\n')}\n})();\n`;
+  return `(() => {\n'use strict';\nconst __mods = {};\n${hilPlant()}\n${parts.join('\n')}\n})();\n`;
 }
 
 const FONTS = '<link id="lt-fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@400;600&display=swap">';
@@ -75,6 +80,9 @@ const HELP = `
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
+<h3>Live (HIL) and Record</h3>
+<p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time. Try <b>HIL: external motor</b> from the System library: Run Control gets a second row, <b>Connect</b>, <b>E-STOP</b>, <b>Reset</b>; <b>plant script…</b> under it gives you <code>hil_plant.py</code>; run <code>uv run hil_plant.py</code>, then Connect. Every cycle the plant sends its outputs, the page runs the diagram and answers with the controller's output; edit the controller meanwhile and it takes effect at the next cycle. If either side hears nothing for 10 cycles it stops (E-STOP) until Reset. Live data sweeps the screen like a simulation.</p>
+<p><b>Rec</b>, under the screen, keeps the last minutes of every signal, live or simulated (click the length to change it). <b>Save</b> writes them as CSV or JSON; <b>Open</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>).</p>
 <h3>System library</h3>
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>

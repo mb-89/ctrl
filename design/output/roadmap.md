@@ -12,6 +12,8 @@ Reader: whoever picks the next piece of work.
 - Tab 3, Controller: Controller blocks with variants (PID, state feedback, gain-scheduled PI, energy swing-up, off), the tab to flip and tune them ([controller-proposal.md](controller-proposal.md)).
 - System library: five 5-second systems, four of them controlled (motor, conical tank, pendulum swing-up, triple pendulum), with disturbances.
 - Earlier runs fade over five runs for comparison.
+- Live (HIL) mode: an External plant block, a plant outside the page over WebSocket (JSON-RPC 2.0, 100 Hz), watchdogs and a latched E-stop on both sides, the loop in a Web Worker; `hil/hil_plant.py` (uv) and the "HIL: external motor" system ([hil.md](hil.md)).
+- Record: the last minutes of every signal, live or simulated; Save as CSV or JSON (Copy CSV where downloads are blocked); saved traces open as dashed references ([instrument.md](instrument.md#record-and-references)).
 - (Superseded) System library: three systems that move, loaded whole or by part, opening running on their view ([system-library.md](system-library.md)).
 - Units on every signal; scope channels list only names the diagram defines; projects carry how they open (`ui`).
 
@@ -23,6 +25,7 @@ Reader: whoever picks the next piece of work.
 
 ## Later
 
+- Live, more: signals the plant only logs, several External blocks, remote plants (wss://, authentication), a trigger for live sweeps, a plant recording on its own side ([hil.md](hil.md#not-yet)).
 - 3D views (URDF); MIMO; WebAssembly for the simulation core if a feature needs the speed (the person: fine, not required); system identification from measured data (Arb input + measured output); WebAssembly if a feature needs the speed.
 
 ## Plant editor, not yet

@@ -13,6 +13,7 @@ Reader: whoever adds an example system or changes how systems load.
 | Conical tank, gain scheduling | r: 0.15 → 0.45 → 0.8 m; d: water drawn off at 2.2 s | Gain-scheduled PI · PI tuned for full · PI tuned for empty · Off | The level climbs; a fixed PI oscillates when nearly empty or crawls when full |
 | Pendulum swing-up | d: 4 N push at 3.5 s | Swing-up + state feedback · State feedback only · Off | Energy pumping (Lyapunov) swings the pole up from hanging, then state feedback holds it |
 | Triple pendulum | r: cart to 0.5 m at 2.5 s; d: 4 N push at 1 s | LQR · LQR gentle · Off | Three rods held upright on a moving cart; the force arrow is the control effort |
+| HIL: external motor | r: 0 ↔ 1.5 rad every 2.5 s; d: 0.1 N·m load torque at 3.6 s | P, untuned · PD · PID with prefilter · Off | The plant is `hil/hil_plant.py`, outside the page ([hil.md](hil.md)): a motor swinging an unbalanced arm. Offline it reads 0; connected, the P leaves the arm short of r (gravity), PD less so, the PID holds it |
 
 - **Signals are named for what they are** (F in N, x in m, θ in rad, …). Controlled systems have a reference **r** and a disturbance **d**, so both following and rejection can be tuned (the person).
 - **The page opens the Mass–spring–damper**, running, on its view. **Loading a system shows it running**: a whole load takes the title, scope channels and `ui` (run, Plant tab, its view, setup area at 42 %).
@@ -25,5 +26,6 @@ Reader: whoever adds an example system or changes how systems load.
 - Tank: linearised at level h, the tank is (1/A(h)) / (s + 1/τ(h)) with τ = 2A√h / (a√(2g)). A PI by pole cancellation for a 0.25 s closed loop gives Kp = A(h)/0.25, Ki = a√(2g) / (2√h · 0.25); the scheduled PI tabulates these at 0.1 … 1 m; the fixed ones use h = 0.8 and h = 0.15. A 0.1 s pipe dead time makes the too-strong one oscillate. u0 starts the loop balanced.
 - Pendulums: discrete LQR (Ts = 10 ms) at the upright rest, from a numerical linearisation of the physics block and the Riccati iteration; Q weighs cart 10, angles 50–100, rates 1; R = 0.1 (gentle: 1). The swing-up gains (kE 3, kx 8, kv 5, catch below 0.4 rad, ±25 N) were found by simulation: up in about 2 s, cart within ±1.2 m.
 - Each is checked in `test/core.test.mjs`.
+- HIL motor: gains by hand against the script's physics (R 2 Ω, L 4 mH, k 0.1 N·m/A, J 2.5·10⁻³ kg·m², unbalance m g l 0.1 N·m, Coulomb friction 0.01 N·m): P with Kp 2 is slow and holding the arm up needs 2 V that it only gets from an error; PD (Kp 6, Kd 0.6) is fast with a smaller offset; the PID (Kp 10, Ki 20, Kd 0.6, Tr 0.1 s) settles on r. `test/live.test.mjs` checks that the script describes exactly the ports the system's External plant block has. It opens with the setup area at 36 %, since Live adds a row to Run Control.
 
 To add a system: add it to `plants.js` (name, notes, `signals`, `scope`, `ui`, `diagram`, `views`); it must move visibly with its own input within 5 s, and a test checks its behaviour.

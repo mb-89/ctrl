@@ -2,6 +2,27 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.7 ([input](../input/2026-10-24-09-analysis-autotune-triple-swingup.md))
+
+Live (HIL) mode and Record ([hil.md](hil.md), [instrument.md](instrument.md#record-and-references)):
+
+- **A HIL mode: the plant runs outside the page, in real time, and the controller is tuned in the page against it.** (Person: "a HIL mode … a Python script that you run with uv … our external plant … 100 Hertz … tune a controller here … against the external thing running".)
+- **The plant is the server and the page connects to it**, over a WebSocket to `ws://127.0.0.1:8765`, speaking JSON-RPC 2.0 (`describe`, `start`, `stop`, `reset`, `estop`; `y` each cycle, `u` in answer). A page cannot listen on a port; it may open a WebSocket to localhost. (Fact; the person asked whether a page can listen and offered JSON-RPC.)
+- **The plant owns the clock and is the safety authority**: 10 unanswered cycles, a lost page or an `estop` request apply the safe inputs and latch an E-stop until `reset`. The page has its own watchdog (no `y` for 10 cycles: E-STOP, it stops answering). (Person: "if we miss 10 cycles, we push an emergency stop".) Both latch until **Reset**, which starts the controllers afresh. Interpretation: latching and the fresh start are ours, so nothing restarts by itself and no wound-up integral kicks.
+- **The watchdog counts unanswered y, not elapsed time**: cycles the plant skipped itself (its computer stalled) are not the page's fault. Found while testing: a stalled plant tripped its own watchdog.
+- **Each u acts from the moment it arrives**: the simulated plant integrates each cycle piecewise, so the loop's delay is the real round trip (about 2 ms), as with a real device. Interpretation.
+- **Units are declared once, in the description**; each cycle's messages carry seq, t and the numbers. Interpretation of "units and seq/t in every message", to keep 100 Hz small.
+- **The loop runs in a Web Worker** made from the page's own script, so drawing never delays an answer; on the page where workers are blocked. Measured here: in the worker a round trip of about 2 ms, untouched by 400 ms main-thread blocks; on the page 21–44 ms, and such a block trips the plant's watchdog.
+- **The External plant block** (Plant tab, group Live) holds the plant's ports as design inputs (names, units, limits, safe values, rate, address), so the diagram is valid offline, where its outputs hold 0. Connecting to a plant that describes other ports updates the block (one undo step).
+- **Live sits in Run Control, as a second row of the same keys** (Connect/Disconnect, E-STOP, Reset), and only for a system with an External plant. Interpretation: the person said "a Live mode"; a group of its own pushed the Vertical knobs off the screen.
+- **Live data sweeps the screen like the simulation**: each sweep is a run, earlier sweeps fade, sweeps start at multiples of the screen width in plant time (so they line up with the input's period); Run/Stop freezes the screen, never the loop. **The first live sweep fits the channels** unless they were set meanwhile (offline they were scaled on zeros). Interpretation.
+- **Tuning while running**: a variant's parameters take effect at the next cycle with the controller's state kept; a change of structure (blocks, wires, variant, Ts, prefilter Tr) restarts the controllers, and says so.
+- **Record is the scope's deep memory, live or simulated**: the last 5 minutes (settable, per viewer) of every Source and Sink. (Person: "in the HIL mode, or in general, we would be able to store traces … set a trace to 5 minutes … store that".) Simulated, each completed sweep is appended after the last. Interpretation: it records what the scope acquires, in both modes.
+- **Save writes CSV (units in the header) or JSON; Copy CSV where downloads are blocked** (the claude.ai viewer). **Open shows a saved trace dashed on the channels with the same names, until cleared.** Interpretation: a stored trace is also something to compare against.
+- **Record sits under the screen, beside the channel badges**, like a scope's save keys. Interpretation: the controls column has no room left.
+- **The plant script**, `hil/hil_plant.py`: one file, PEP 723 metadata so `uv run hil_plant.py` installs websockets itself; a DC motor swinging an unbalanced arm with friction and a load-torque input (gravity makes integral action necessary: something to tune, safe at 0 V); listens on localhost only and refuses pages from other web origins unless allowed (WebSockets have no CORS). The page embeds it for download. Interpretation of "one model that is made for that HIL mode".
+- **System library: "HIL: external motor"**, appended last: P (untuned), PD, PID with prefilter, Off. Its gains are chosen by hand, nothing computed offline is stored (person: nothing plant-specific baked in).
+
 ## 2026-10-24 · v2.6: controllers ([input](../input/2026-10-24-08-controllers-and-5-seconds.md))
 
 - **Demos run 5 s**, and the mass–spring–damper moves slower (k 25 N/m, 0.8 Hz). (Person.)

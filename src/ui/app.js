@@ -13,6 +13,7 @@ import { createDisplay } from './display.js';
 import { createControls } from './controls.js';
 import { createGenerator } from './generator.js';
 import { createSplitters } from './layout.js';
+import { createLive } from './live.js';
 
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
@@ -182,11 +183,11 @@ function startApp() {
   };
   // Signal values at the scope's current instant, for 2D views.
   app.sceneEnv = () => {
-    const data = acquire();
+    const data = live?.data() ?? acquire();  // live: the sweep on the screen
     const t = display.time();
     const env = { t };
     if (data?.t?.length > 1) {
-      const k = Math.max(0, Math.min(data.t.length - 1, Math.round(t / (data.t[1] - data.t[0]))));
+      const k = Math.max(0, Math.min(data.t.length - 1, Math.round((t - data.t[0]) / (data.t[1] - data.t[0]))));
       env.t = data.t[k];
       for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
     }
@@ -243,7 +244,7 @@ function startApp() {
   // channel with a signal fitted to about six divisions.
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
-    const data = acquire();
+    const data = live?.data() ?? acquire();
     for (const ch of app.project.scope.channels) {
       const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
       if (fit) Object.assign(ch, fit);
@@ -258,6 +259,7 @@ function startApp() {
   };
 
   // Rendering
+  let live = null;  // Live mode and Record (ui/live.js), made below
   const display = createDisplay($('display'), {
     onSelectChannel: (i) => app.selectChannel(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
@@ -265,8 +267,11 @@ function startApp() {
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
+    onSweep: (d, w0, w1) => live?.sweep(d, w0, w1),
+    liveTag: () => live?.tag(),
   });
   const controls = createControls($('controls'), app);
+  live = createLive(app, display, $('controls'));
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
   const controllerTab = createControllerTab($('tab-controller'), app);
@@ -305,6 +310,7 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    live.changed();  // a running loop takes the edit at its next cycle
     renderChrome();
     autosave();
   }
@@ -361,6 +367,7 @@ function startApp() {
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
+  Object.assign(app, { download, copy });  // for Record and the plant script (ui/live.js)
   $('save').addEventListener('click', () => { download(`${stem()}.json`, exportJson(), 'application/json'); toast('Saved the project as JSON'); });
   $('export').addEventListener('click', () => { download(`${stem()}.html`, exportHtml(), 'text/html'); toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
@@ -461,6 +468,7 @@ function startApp() {
     run: () => { display.setMode('run'); controls.render('run'); },
     stop: () => { display.setMode('stop'); controls.render('stop'); },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
+    live: live.api,  // connect(), disconnect(), estop(), reset(), state(), csv(); design/output/hil.md
   };
 
   // Boot: the embedded project, unless this browser has newer work on it.

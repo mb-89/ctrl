@@ -1,0 +1,298 @@
+// Live (HIL) mode, the loop: a diagram stepped one plant cycle at a time
+// against an external plant (createLiveRunner), and the connection that feeds
+// it (createLiveLoop), which runs in a Web Worker so that drawing never delays
+// an answer, or on the page if workers are blocked. No DOM. See
+// design/output/hil.md.
+//
+// Each cycle the plant sends y (seq, t). The runner sets the External plant
+// block's outputs to y, advances the rest of the diagram to t (Sources play
+// at t, Controller blocks sample on their own Ts), and reads the block's
+// inputs: that is the u sent back, at once, with the same seq.
+
+import { compileDiagram } from './diagram.js';
+import { referenceFn } from './signals.js';
+import { CONTROLLER_TYPES } from './controllers.js';
+import { HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, uMessage, parseMessage, checkDescription, pageWatchdog, createLinkStats } from './hil.js';
+
+// What a running loop cannot take over in place: everything but block
+// positions and the parameters of controller variants. A prefilter Tr is
+// fixed when a law is made, so a change of it restarts the controllers.
+function structureKey(diagram) {
+  return JSON.stringify(diagram, function (k, v) {
+    if ((k === 'x' || k === 'y') && typeof v === 'number' && this.id !== undefined) return undefined;
+    if (k === 'params' && CONTROLLER_TYPES.includes(this.type) && this.id === undefined) return { Tr: v.Tr };
+    return v;
+  });
+}
+
+// Copies the running variants' parameters into the ones the laws hold, so the
+// next sample uses them and the controllers keep their state (integral, filters).
+function copyParams(own, next) {
+  own.blocks.forEach((b, i) => {
+    const n = next.blocks[i];
+    if (b.type === 'controller') Object.assign(b.variants[b.variant].params, n.variants[n.variant].params);
+    if (b.type === 'subsystem') copyParams(b.diagram, n.diagram);
+  });
+}
+
+// diagram: a normalised plant diagram with one External plant block.
+// signals: the project's named signals (the Sources play them).
+export function createLiveRunner(diagram, signals) {
+  const fns = {};
+  let own, key, el, ext, X, Xt, k1, k2, k3, k4, tPrev, h;
+
+  function setSignals(sigs) {
+    for (const name of Object.keys(fns)) delete fns[name];
+    for (const [name, ref] of Object.entries(sigs ?? {})) fns[name] = referenceFn(ref, { sampleTime: h ?? 0.01 });
+  }
+  function build(d) {
+    own = structuredClone(d);
+    key = structureKey(d);
+    const sources = new Proxy({}, { get: (_, name) => (t) => (fns[name] ? fns[name](t) : 0) });
+    el = compileDiagram(own, 'plant', { standalone: true, sources });
+    if (el.externals.length !== 1) throw new Error(el.externals.length ? 'one External plant per system, for now' : 'this system has no External plant block: add one from the Live group in the Plant tab');
+    ext = el.externals[0];
+    // Continuous blocks on the page integrate between cycles, in steps no
+    // longer than their dynamics allow.
+    const dt = 1 / ext.params.rate;
+    const m = Math.max(1, Math.ceil(dt / (el.bound > 0 ? Math.min(0.5 / el.bound, el.minTs) : Math.min(dt, el.minTs)) - 1e-9));
+    h = dt / m;
+    el.setStep(h);
+    X = new Float64Array(el.n); Xt = new Float64Array(el.n);
+    k1 = new Float64Array(el.n); k2 = new Float64Array(el.n); k3 = new Float64Array(el.n); k4 = new Float64Array(el.n);
+    el.init(X, 0);
+    tPrev = null;
+  }
+  // Sources are looked up when called, so signals change without a rebuild;
+  // probes() lists them only for the names the diagram actually plays.
+  build(diagram);
+  setSignals(signals);
+  const names = () => el.probes().map(([n]) => n);
+
+  function rk4(t, dt) {
+    const N = el.n;
+    el.eval(t, X, 0, 0, k1);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k1[i];
+    el.eval(t + 0.5 * dt, Xt, 0, 0, k2);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
+    el.eval(t + 0.5 * dt, Xt, 0, 0, k3);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
+    el.eval(t + dt, Xt, 0, 0, k4);
+    for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+  }
+
+  return {
+    names,
+    // The External block's ports, as the diagram has them now.
+    get port() { return ext.params; },
+    // One cycle: the plant's outputs y at its time t. Returns u, clamped to the
+    // plant's limits (a value that is not a number becomes the safe one), and
+    // the values of every Source and Sink at t, in the order of names().
+    step(t, y) {
+      if (tPrev !== null && t > tPrev) {
+        // Between cycles the plant's outputs hold their last value.
+        const m = Math.max(1, Math.round((t - tPrev) / h));
+        const dt = (t - tPrev) / m;
+        for (let s = 0; s < m; s++) {
+          const ts = tPrev + s * dt;
+          if (el.n) rk4(ts, dt);
+          if (s < m - 1) { el.eval(ts + dt, X, 0, 0, null); el.sample(ts + dt, X, 0, 0); el.record(); }
+        }
+      }
+      for (let j = 0; j < ext.y.length; j++) ext.y[j] = Number.isFinite(y[j]) ? y[j] : 0;
+      el.eval(t, X, 0, 0, null);
+      el.sample(t, X, 0, 0);
+      el.record();
+      tPrev = t;
+      const p = ext.params;
+      const u = ext.u().map((v, i) => (Number.isFinite(v) ? Math.min(p.max[i], Math.max(p.min[i], v)) : p.safe[i]));
+      return { u, values: el.probes().map(([, v]) => v) };
+    },
+    // A new version of the diagram or the signals while running: parameters
+    // of controller variants take effect at the next cycle, keeping the
+    // controllers' state; anything else rebuilds (controllers start afresh).
+    update(d, sigs) {
+      if (sigs) setSignals(sigs);
+      if (!d) return 'signals';
+      if (structureKey(d) === key) { copyParams(own, d); return 'kept'; }
+      build(d);
+      return 'rebuilt';
+    },
+    // Controllers start afresh, as after an E-stop.
+    restart() { build(own); },
+  };
+}
+
+// The connection: one WebSocket to the plant, the runner, both watchdogs'
+// page side, and statistics. It talks to the page through post(msg):
+//   in:  connect { url }, program { diagram, signals }, start, stop, estop,
+//        reset, disconnect
+//   out: state { state, detail }, described { desc }, estop { by, reason },
+//        samples { names, t, values }, stats { link, plant }, error { message }
+// The same object runs in a worker (liveWorker) or on the page.
+export function createLiveLoop(post, env = globalThis) {
+  const now = () => env.performance.now();
+  let ws = null, desc = null, runner = null, program = null;
+  let running = false, latched = null, lastY = 0, watchdog = 0;
+  let stats = null, plantStatus = null, lastStats = 0;
+  let batch = { t: [], values: [] }, lastFlush = 0, names = [];
+  let id = 0;
+  const calls = new Map();
+
+  const say = (state, detail = '') => post({ type: 'state', state, detail });
+  const fail = (message) => post({ type: 'error', message });
+  function call(method, params) {
+    return new Promise((resolve, reject) => {
+      if (!ws || ws.readyState !== 1) { reject(new Error('not connected')); return; }
+      const i = ++id;
+      calls.set(i, { resolve, reject });
+      ws.send(rpcRequest(i, method, params));
+    });
+  }
+
+  function flush() {
+    if (!batch.t.length) return;
+    post({ type: 'samples', names, t: batch.t, values: batch.values });
+    batch = { t: [], values: [] };
+  }
+  function latch(by, reason) {
+    if (latched) return;
+    latched = { by, reason };
+    flush();
+    post({ type: 'estop', by, reason });
+  }
+  function stopWatchdog() { if (watchdog) env.clearInterval(watchdog); watchdog = 0; }
+  // The page's watchdog: no y for the plant's watchdog cycles means the plant
+  // is silent; the controller stops (no more u) until Reset.
+  function startWatchdog() {
+    stopWatchdog();
+    lastY = now();
+    const cycles = desc?.watchdog ?? WATCHDOG_CYCLES;
+    watchdog = env.setInterval(() => {
+      if (!running || latched) return;
+      const w = pageWatchdog({ now: now(), lastY, rateHz: desc.rate_hz, cycles });
+      if (w.trip) {
+        latch('page', `plant silent for ${w.silent} cycles`);
+        call('estop', { reason: 'the page heard no y' }).catch(() => {});
+      }
+    }, Math.max(5, 1000 / desc.rate_hz));
+  }
+
+  function makeRunner() {
+    if (!program) throw new Error('nothing to run yet');
+    runner = createLiveRunner(program.diagram, program.signals);
+    names = runner.names();
+  }
+
+  function onY(m) {
+    const at = now();
+    lastY = at;
+    if (!runner) return;
+    let res;
+    try { res = runner.step(m.t, m.y); } catch (err) { latch('page', `the diagram failed: ${err.message}`); return; }
+    // The answer goes out first; everything else can wait.
+    if (running && !latched && ws?.readyState === 1) ws.send(uMessage(m.seq, res.u));
+    stats?.add(at, m.seq, now() - at);
+    batch.t.push(m.t);
+    batch.values.push(res.values);
+    if (at - lastFlush >= 33) { lastFlush = at; flush(); }
+    if (at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
+  }
+
+  function onText(text) {
+    const m = parseMessage(text);
+    if (m.kind === 'y') onY(m);
+    else if (m.kind === 'result' || m.kind === 'error') {
+      const c = calls.get(m.id);
+      calls.delete(m.id);
+      if (m.kind === 'result') c?.resolve(m.result); else c?.reject(new Error(m.error));
+    } else if (m.kind === 'estop') latch('plant', m.reason);
+    else if (m.kind === 'status') plantStatus = m.status;
+    else fail(`the plant sent something unexpected: ${m.error}`);
+  }
+
+  async function start() {
+    if (!desc) throw new Error('not connected');
+    makeRunner();
+    await call('start');
+    running = true;
+    stats = createLinkStats(desc.rate_hz);
+    startWatchdog();
+    say('running', desc.name);
+  }
+
+  const handlers = {
+    connect({ url }) {
+      if (ws) return;
+      say('connecting', url);
+      try { ws = new env.WebSocket(url); } catch (err) { ws = null; say('closed', `cannot open ${url}: ${err.message}`); return; }
+      let opened = false;
+      ws.onopen = async () => {
+        opened = true;
+        say('open', url);
+        try {
+          desc = checkDescription(await call('describe'));
+          latched = desc.estop ? { by: 'plant', reason: desc.estop } : null;
+          post({ type: 'described', desc });
+          if (latched) post({ type: 'estop', by: 'plant', reason: desc.estop });
+        } catch (err) { fail(`describe: ${err.message}`); ws?.close(); }
+      };
+      ws.onmessage = (e) => onText(e.data);
+      ws.onclose = (e) => {
+        const wasRunning = running;
+        running = false; ws = null; desc = null;
+        stopWatchdog(); flush();
+        for (const c of calls.values()) c.reject(new Error('connection closed'));
+        calls.clear();
+        if (wasRunning && !latched) latch('page', 'connection lost');
+        say('closed', e.reason || (opened ? 'the connection was lost' : e.code === 1006 ? 'no plant answered at that address (or this page may not open connections)' : `code ${e.code}`));
+      };
+      ws.onerror = () => {};  // onclose follows with the reason
+    },
+    program(p) {
+      program = p;
+      if (!runner) return;
+      try {
+        const how = runner.update(p.diagram, p.signals);
+        if (how === 'rebuilt') names = runner.names();
+        post({ type: 'programmed', how });
+      } catch (err) { latch('page', err.message); }
+    },
+    async start() { try { await start(); } catch (err) { fail(err.message); } },
+    async stop() {
+      running = false; stopWatchdog(); flush();
+      try { await call('stop'); } catch { /* already gone */ }
+      say('open', 'stopped');
+    },
+    async estop() {
+      latch('page', 'E-STOP pressed');
+      try { await call('estop', { reason: 'E-STOP pressed on the page' }); } catch { /* the plant's watchdog trips anyway */ }
+    },
+    // Reset clears both latches and starts again, the controllers afresh.
+    async reset() {
+      try {
+        await call('reset');
+        latched = null;
+        if (running) { runner?.restart(); startWatchdog(); say('running', desc.name); } else await start();
+      } catch (err) { fail(`reset: ${err.message}`); }
+    },
+    async disconnect() {
+      if (!ws) return;
+      running = false; stopWatchdog(); flush();
+      // Stop first, so the plant does not take the closing for a lost page.
+      await Promise.race([call('stop').catch(() => {}), new Promise((r) => env.setTimeout(r, 300))]);
+      ws?.close(1000, 'disconnected by the page');
+    },
+  };
+  return {
+    handle(msg) { const f = handlers[msg.type]; if (f) f(msg); },
+    protocol: HIL_PROTOCOL,
+  };
+}
+
+// The worker's entry: the bundle's core modules, then this.
+export function liveWorker(scope) {
+  const loop = createLiveLoop((msg) => scope.postMessage(msg), scope);
+  scope.onmessage = (e) => loop.handle(e.data);
+  scope.postMessage({ type: 'ready' });
+}

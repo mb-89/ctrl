@@ -18,6 +18,7 @@ const GROUPS = [
   ['Models', ['fopdt', 'lagChain', 'integratorLag', 'doubleIntegrator', 'inverseResponse']],
   ['Sensors', ['quantizer', 'noise']],
   ['Physics', ['cartPole', 'pendulumCart', 'conicalTank']],
+  ['Live', ['external']],  // a plant outside the page (design/output/hil.md)
   ['Nonlinear', ['saturation']],
   ['Structure', ['subsystem', 'inport', 'outport']],
 ];
@@ -288,7 +289,7 @@ export function createPlantEditor(root, app) {
   // parameters are on the right), else its first parameters, cut to fit.
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const text = def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
     const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }

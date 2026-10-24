@@ -17,6 +17,7 @@ Reader: whoever changes how the plant is built or simulated.
 - **Controller** (group Control): a digital controller, inputs r then the measurements, output u held between samples at its own Ts. It holds variants; double-click it (or "Open in the Controller tab") to choose and tune them ([controller-proposal.md](controller-proposal.md)). Its canvas label shows the variant that runs.
 - **Physics**: Cart–pole (`F → x, θ, v, ω`), Pendulum chain on cart (1–3 rods, `F → x, θ…, v, ω…`, Lagrange's equations solved each step), Conical tank (`q → h`, Torricelli outlet). Physics blocks give their state rates as outputs, so state feedback can use them.
 - **Dead time** has an output before L (default 0): a pipe that was already flowing starts at its flow.
+- **External plant** (group Live): a plant outside the page, run live over a WebSocket ([hil.md](hil.md)). Its inputs are what the page sends, its outputs what the plant measures; their names, units, limits and safe values, the cycle rate and the address are its parameters (comma lists), taken from the plant when it connects. Offline its outputs hold 0.
 
 ## Canvas
 

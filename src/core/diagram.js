@@ -16,6 +16,7 @@ import { tf2ss, rootBound } from './poly.js';
 import { gaussAt } from './signals.js';
 import { compileExpr } from './expr.js';
 import { normalizeVariant, makeLaw } from './controllers.js';
+import { EXTERNAL_BLOCK } from './hil.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -127,6 +128,9 @@ export const ELEMENTS = {
     params: [num('inputs', 'Inputs (r, y…)', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.01, { unit: 's', min: 1e-4 })],
     ports: (p) => [p.inputs, 1],
   },
+  // A plant outside the page (Live mode, hil.js): its outputs come from the
+  // plant every cycle, its inputs are sent back; offline the outputs hold 0.
+  external: EXTERNAL_BLOCK,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
@@ -186,6 +190,7 @@ export function parseEnd(end) {
 
 function normalizeParams(type, params = {}, where) {
   if (diagramBlockDef(type).model) return normalizeBlock('plant', { type, params }).params;
+  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where);  // blocks that check their own (external)
   const out = {};
   for (const p of ELEMENTS[type].params) {
     let v = params[p.key] ?? p.default;
@@ -293,6 +298,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const warnings = [];
   const probeList = [];
   const add = (node) => { nodes.push({ inputs: [], ...node }); return nodes.length - 1; };
+  const externals = [];
   let extNode = -1, outNode = -1;
 
   // Creates nodes for one level; returns, per block id, where its output
@@ -355,6 +361,15 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: 'pid' });
         const k = add({ kind: 'ctrl', name, ft: false, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts), next: 0, u: 0, x: new Float64Array(nIn) });
         outs[b.id] = [k]; ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+        continue;
+      }
+      if (b.type === 'external') {
+        // Live mode sets its outputs (outv) each cycle and reads its inputs;
+        // one tap node per output, as for a physics block.
+        const k = add({ kind: 'xplant', name, ft: false, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut) });
+        externals.push(k);
+        outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
+        ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
       if (def.ode) {
@@ -466,6 +481,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
           case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
           case 'tap': y = nodes[nd.parent].outv[nd.j]; break;
           case 'ctrl': y = nd.u; break;
+          case 'xplant': y = nd.outv[0]; break;
           default: {
             const { ss } = nd;
             const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
@@ -494,6 +510,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     probes: () => probeList.map(([name, k]) => [name, vals[k]]),
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
+    // External plants (Live mode): y is written by the caller, u() reads what
+    // the diagram feeds the block after the last eval.
+    externals: externals.map((k) => ({ name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])) })),
   };
   return self;
 }

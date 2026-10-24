@@ -37,6 +37,10 @@ export function createDisplay(root, handlers) {
   const RUNS = 5;
   let past = [];
   const keepRun = () => { if (data) past = [data, ...past].slice(0, RUNS - 1); };
+  // Live mode (ui/live.js): a feed gives the data and the scan line instead
+  // of the simulation, whose last data waits in simData. References are
+  // saved traces, drawn dashed until cleared.
+  let feed = null, simData = null, refs = [];
   const P = { l: 0, t: 0, r: 0, b: 0, w: 0, h: 0, dx: 0, dy: 0 };
 
   function resize() {
@@ -128,7 +132,7 @@ export function createDisplay(root, handlers) {
   function indexAt(t) {
     const tt = data.t;
     if (tt.length < 2) return 0;
-    return Math.max(0, Math.min(tt.length - 1, Math.round(t / (tt[1] - tt[0]))));
+    return Math.max(0, Math.min(tt.length - 1, Math.round((t - tt[0]) / (tt[1] - tt[0]))));
   }
 
   function markerY(i) {
@@ -164,6 +168,21 @@ export function createDisplay(root, handlers) {
         trace(ctx, d.t, v, ch, 0, d.t.length - 1);
       }
     });
+    // References: on the channels showing their names, only the part on screen.
+    if (refs.length) {
+      ctx.setLineDash([6, 4]); ctx.lineWidth = 1.3; ctx.globalAlpha = 0.6;
+      const first = (t, x) => { let lo = 0, hi = t.length - 1; while (lo < hi) { const mid = (lo + hi) >> 1; if (t[mid] < x) lo = mid + 1; else hi = mid; } return lo; };
+      for (const ref of refs) {
+        const a = Math.max(0, first(ref.t, xt(P.l)) - 1), b = Math.min(ref.t.length - 1, first(ref.t, xt(P.r)) + 1);
+        for (const i of order) {
+          const ch = scope.channels[i], v = ref.signals[ch.source];
+          if (!ch.on || !v) continue;
+          ctx.strokeStyle = CHANNEL_COLORS[i];
+          trace(ctx, ref.t, v, ch, a, b);
+        }
+      }
+      ctx.setLineDash([]);
+    }
     for (const i of order) {
       const ch = scope.channels[i];
       const v = data.signals[ch.source];
@@ -259,7 +278,11 @@ export function createDisplay(root, handlers) {
     if (!scope || !data) return;
     const state = { run: ['run', 'Run'], stop: ['stop', 'Stop'], single: ['single', 'Single'] }[mode];
     const tb = scope.timebase;
+    // Live mode's state (Live, E-STOP, Offline) and what goes with it.
+    const live = handlers.liveTag?.();
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
+      ${live ? `<span class="st ${live.cls}">${esc(live.text)}</span>${live.note ? `<span class="dim">${esc(live.note)}</span>` : ''}` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
       ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
@@ -284,13 +307,21 @@ export function createDisplay(root, handlers) {
     raf = 0;
     const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
     last = now;
-    if (mode !== 'stop' && data && scope) {
+    if (mode !== 'stop' && data && scope && feed) {
+      // Live: data and scan line come from the plant; a finished sweep becomes
+      // an earlier run, or ends a Single.
+      const s = feed(), names = Object.keys(data.signals).join();
+      if (s.done && mode === 'single') { data = s.done; tScan = win()[1]; mode = 'stop'; handlers.onStopped?.(); }
+      else { if (s.done) past = [s.done, ...past].slice(0, RUNS - 1); data = s.data; tScan = s.scan; }
+      if (Object.keys(data.signals).join() !== names) renderBadges();
+    } else if (mode !== 'stop' && data && scope) {
       const [w0, w1] = win();
       if (tScan < w0 || tScan > w1) tScan = w0;
       tScan += dt;
       if (tScan >= w1) {
-        if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); }
-        else { tScan = w0 + ((tScan - w0) % (w1 - w0)); keepRun(); }
+        // A completed sweep goes to the recorder (ui/live.js) as well.
+        if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); handlers.onSweep?.(data, w0, w1); }
+        else { tScan = w0 + ((tScan - w0) % (w1 - w0)); handlers.onSweep?.(data, w0, w1); keepRun(); }
       }
     }
     draw();
@@ -439,7 +470,12 @@ export function createDisplay(root, handlers) {
   document.fonts?.ready.then(() => draw());
 
   return {
-    setData(d) { data = d; if (line !== null && !visible(line)) line = null; renderBadges(); draw(); },
+    setData(d) { simData = d; if (!feed) data = d; if (line !== null && !visible(line)) line = null; renderBadges(); draw(); },
+    // Live mode: fn() -> { data, scan, done } each frame; null returns to the
+    // simulation (earlier live sweeps stay faded behind it).
+    setFeed(fn) { feed = fn; data = fn ? fn().data : simData; renderBadges(); draw(); },
+    setRefs(list) { refs = list; draw(); },
+    get data() { return data; },
     setScope(s, sel) { scope = s; selected = sel; if (line !== null && line !== sel) line = null; renderBadges(); draw(); },
     setPreview(p) { preview = p; draw(); },
     setMode(m, { restart = false } = {}) {
