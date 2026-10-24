@@ -24,8 +24,10 @@ export function openLoop(plant, ctrl, Ts) {
   const { Ad, Bd } = c2d(plant.A, plant.B, Ts);
   const n = Ad.length, m = plant.C.length, nc = ctrl.A.length;
   const Cp = plant.C, Dp = plant.D ?? zerosM(m, 1);
-  // Controller columns that act on the measurements (inputs 1 … m).
-  const Bcy = ctrl.B.map((row) => row.slice(1, 1 + m)), Dcy = ctrl.D[0].slice(1, 1 + m);
+  // Controller columns that act on the measurements (inputs 1 … m); a law
+  // with fewer gains than measurements ignores the rest.
+  const cols = (row) => Array.from({ length: m }, (_, k) => row[1 + k] ?? 0);
+  const Bcy = ctrl.B.map(cols), Dcy = cols(ctrl.D[0]);
   const N = n + nc;
   const A = zerosM(N, N), B = zerosM(N, 1), C = [new Array(N).fill(0)];
   for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) A[i][j] = Ad[i][j]; B[i][0] = Bd[i][0]; }

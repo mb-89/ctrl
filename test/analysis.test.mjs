@@ -47,3 +47,35 @@ test('an open-loop unstable plant stabilised by feedback counts P = 1, Z = 0, N 
   const s = a.clPoles[0].s;
   assert.ok(Math.abs(s.re + 2) < 0.01, `pole ${s.re}`);
 });
+
+test("each linear law's state space reproduces its step() while u is inside its limits", async () => {
+  const { CONTROLLERS } = await import('../src/core/controllers.js');
+  const Ts = 0.01;
+  const cases = [
+    ['pid', { Kp: 2, Ki: 3, Kd: 0.4, Tf: 0.02, b: 0.7, Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    ['pid', { Kp: 1.5, Ki: 0, Kd: 0, Tf: 0.01, b: 1, Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    ['stateFeedback', { K: [1, -2, 0.5], kr: 3, Tr: 0, umin: -Infinity, umax: Infinity }, 3],
+    ['gainScheduled', { at: [0, 1], Kp: [1, 3], Ki: [0.5, 2], Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    ['swingUp', { kE: 1, kx: 0, kv: 0, l: 0.5, g: 9.81, thetaS: 0.4, K: [-1, -30, -2, -5], kr: -1, umin: -Infinity, umax: Infinity }, 4],
+  ];
+  for (const [type, p, m] of cases) {
+    // About an operating point: the scheduled PI at y = 0.5 sees small moves only.
+    const y0 = type === 'gainScheduled' ? 0.5 : 0;
+    const law = CONTROLLERS[type].make(p, Ts), lin = CONTROLLERS[type].linear(p, Ts, { y: new Array(m).fill(y0) });
+    const n = lin.A.length;
+    let x = new Array(n).fill(0), worst = 0, u0 = null;
+    for (let k = 0; k < 200; k++) {
+      const v = k === 0 ? new Array(m + 1).fill(0) : Array.from({ length: m + 1 }, (_, i) => 1e-3 * Math.sin(0.3 * k * (i + 1) + i));
+      const inp = v.map((d) => d + y0);
+      const uLaw = law.step(inp);
+      u0 ??= uLaw;   // the law's output at the operating point
+      let u = lin.D[0].reduce((s, d, i) => s + d * v[i], 0);
+      for (let j = 0; j < n; j++) u += lin.C[0][j] * x[j];
+      x = lin.A.map((row, i) => row.reduce((s, a, j) => s + a * x[j], 0) + lin.B[i].reduce((s, b, j) => s + b * v[j], 0));
+      worst = Math.max(worst, Math.abs(uLaw - u0 - u));
+    }
+    // The scheduled PI's slope term is second order in the small moves.
+    assert.ok(worst < (type === 'gainScheduled' ? 1e-5 : 1e-12), `${type}: worst ${worst}`);
+  }
+  assert.throws(() => CONTROLLERS.swingUp.linear(cases[4][1], Ts, { y: [0, Math.PI, 0, 0] }), /pumps energy/);
+});
