@@ -267,7 +267,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   .gen { grid-template-columns: minmax(0, 1fr); }
   .status { gap: 8px; font-size: 11px; }
 }
-@media (prefers-reduced-motion: reduce) { .caret { animation: none; } .sw::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .caret { animation: none; } .sw::after, .cbox .cbar span { transition: none; } }
 
 /* Plant tab: library | canvas | parameters, filling the setup area */
 .tabpanel > [role="tabpanel"] { height: 100%; }
@@ -410,6 +410,11 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .cbox .cmsg { color: var(--lcd-dim); }
 .cbox .cwarn { margin: 2px 0 0; padding-left: 14px; color: #d9bb72; }
 .cbox .pbtns { margin: 4px 0 0; }
+.cbox .cprog { display: flex; flex-direction: column; gap: 3px; margin: 2px 0; }
+.cbox .cbar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06); overflow: hidden; }
+.cbox .cbar span { display: block; height: 100%; background: var(--lit-amber); transition: width 0.1s linear; }
+.cbox .cprogline { font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cbox .csub { margin-top: 2px; }
 .ctlib { display: flex; flex-direction: column; gap: 6px; }
 .ctlibhead { margin: 4px 0 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 .ctlibhead:first-child { margin-top: 0; }

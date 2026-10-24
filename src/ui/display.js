@@ -511,6 +511,16 @@ export function createDisplay(root, handlers) {
       draw();
     },
     clearRuns() { past = []; draw(); },
+    // A design settled on its own (a plan made in the background): the run
+    // so far stays, faded, and the sweep starts again at the window's start,
+    // so the new run is seen from its beginning. Call before setData.
+    restartSweep() {
+      if (mode === 'stop' || !scope) return;
+      keepRun();
+      tScan = win()[0];
+      last = 0;
+      kick();
+    },
     releaseLine() { if (line === null) return false; selectLine(null); return true; },
     // The instant other views follow: the hover cursor, else the scan line
     // while sweeping, else the right edge of the screen.

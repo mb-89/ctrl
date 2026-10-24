@@ -72,24 +72,45 @@ export function plantKey(diagram) {
 //   const job = store.begin(diagram, () => compileDiagram(diagram, 'plant', { mode: 'model' }));
 //   const status = job.resolve(block, variant, lib);   // status.values: what make() takes, or null
 //   job.end();
-// block: { idPath, name, kind: 'controller' | 'observer', Ts, inputs (labels), input (u's label) }.
+// block: { idPath, name, kind: 'controller' | 'observer', Ts, inputs (labels), input (u's label), outputs }.
 // A status is what the Controller tab, the CLI and agents see; its values
 // are not enumerable, so a status prints and serialises without them.
-// The 'sync' mode runs every design at once (Node, the CLI, tests, and the
-// page until the background store of step 10), heavy ones (a plan) too.
 // A heavy computation is kept apart (an LRU of 8), keyed by what it reads
 // only: a plan by the plant, the block, Ts and the plan's own inputs, never
 // Q or R, so tuning those re-runs the light part of a design, not the plan.
-export function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
-  if (mode !== 'sync') throw new Error(`design store mode "${mode}": only 'sync' exists so far`);
+//
+// mode 'sync' runs every design at once, heavy ones (a plan) too: Node, the
+// CLI, tests. mode 'async' is the page's: a heavy miss queues a job and the
+// design is 'pending' (u = 0), or 'stale' (the block's previous values run,
+// when compatible: the same number of measurements and Ts, unless the type
+// says otherwise). The page pumps the queue in short slices:
+//   store.runJobs(ms) → { busy, finished, waitMs }   work for about ms; finished jobs bump generation
+// A job starts debounceMs after it was first asked for (wheeling a mass
+// plans once, not twenty times), and only the jobs the latest compile asked
+// for are kept (the newest wins). cancel(key) and retry(key) take a status's
+// key; onProgress(fn) hears the queue at most 10 times a second; idle()
+// resolves when nothing is queued. Results never depend on the timing: a
+// job is the same generator the sync store drains.
+export function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 } = {}) {
+  if (mode !== 'sync' && mode !== 'async') throw new Error(`design store mode "${mode}": 'sync' or 'async'`);
   const designs = new Map(), models = new Map(), heavies = new Map();
   const counts = { runs: 0, hits: 0, heavyRuns: 0 };
   const remember = (map, key, value, size) => { map.delete(key); map.set(key, value); if (map.size > size) map.delete(map.keys().next().value); };
+  // The background (async mode): queued jobs by heavy key, in the order
+  // they were asked for; per slot (a block's variant) the last values that
+  // ran, and a cancelled heavy key; per design key the heavy key it waits on.
+  const jobs = new Map(), slots = new Map(), cancelled = new Map(), waitsOn = new Map();
+  const listeners = new Set();
+  let waiters = [], lastEmit = -Infinity;
+  const settleWaiters = () => { if (jobs.size) return; const w = waiters; waiters = []; for (const res of w) res(); };
+  const queue = () => [...jobs.values()].map((j) => ({ key: j.key, path: j.path, block: j.block, variant: j.variant, title: j.title, running: !!j.gen, progress: j.progress }));
+  const emit = () => { lastEmit = now(); const list = queue(); for (const fn of listeners) fn(list); };
 
   // Runs one design; never throws. A DesignError becomes the status's error;
-  // anything else is a bug, reported with code 'internal'.
-  function run(def, p, block, compiled, seeThrough, plant) {
-    const used = { model: null, at: '', warnings: [] };
+  // anything else is a bug, reported with code 'internal'. A design waiting
+  // on a heavy job comes back { pending: true } and is not cached.
+  function run(def, p, block, compiled, seeThrough, plant, slot, asked) {
+    const used = { model: null, at: '', warnings: [], heavy: null };
     const lins = new Map();
     const ctx = {
       Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs,
@@ -117,26 +138,52 @@ export function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
       },
       // A long computation: start() returns a generator (planner.js) whose
       // value is kept under kind and inputs, for this plant, block and Ts.
-      // → { status: 'ready', value, ms } (the async store of step 10 may
-      // also answer { status: 'pending', progress }).
-      heavy(kind, inputs, start) {
+      // → { status: 'ready', value, ms }; in async mode also { status:
+      // 'pending', progress } (queued, or running) or { status: 'cancelled' }.
+      // title names it in the page ('Swing-up': "Swing-up planned in 4.1 s").
+      heavy(kind, inputs, start, { title = '' } = {}) {
         const key = hashKey(canonical([kind, inputs, plant(), block.idPath, block.Ts]));
+        used.heavy = { key, status: 'ready' };
         let h = heavies.get(key);
-        if (!h) {
+        if (!h && mode === 'sync') {
           counts.heavyRuns++;
           const t0 = now();
           const value = runPlan(start());
           h = { value, ms: now() - t0 };
         }
-        remember(heavies, key, h, 8);
-        return { status: 'ready', value: h.value, ms: h.ms, key };
+        if (h) {
+          remember(heavies, key, h, 8);
+          if (h.error) throw h.error;
+          return { status: 'ready', value: h.value, ms: h.ms, key };
+        }
+        // Cancelled until the inputs change (a new key) or retry().
+        const mark = cancelled.get(slot);
+        if (mark === key) { used.heavy.status = 'cancelled'; return { status: 'cancelled', key }; }
+        if (mark) cancelled.delete(slot);
+        let job = jobs.get(key);
+        if (!job) {
+          job = { key, kind, title, path: block.idPath, block: block.name, variant: slot.split('#')[1], start, asked: now(), gen: null, started: 0, progress: null };
+          jobs.set(key, job);
+        }
+        asked.add(key);
+        used.heavy.status = 'pending';
+        return { status: 'pending', progress: job.progress, key };
       },
     };
     const t0 = now();
     let out;
     try {
       out = def.design(p, ctx);
-      if (!out || out.pending) throw new DesignError('pending', 'this design runs in the background, which this store cannot do yet');
+      if (!out) throw new Error(`${block.idPath}: the design returned nothing`);
+      if ('pending' in out) {
+        if (!used.heavy || used.heavy.status === 'ready') throw new Error('a design came back pending without waiting on a heavy job');
+        const mdl = used.model;
+        return {
+          pending: true, cancelled: used.heavy.status === 'cancelled', heavy: used.heavy.key, progress: out.pending ?? null,
+          status: 'pending', values: null, rows: [], warnings: [...new Set([...(mdl?.warnings ?? []), ...used.warnings, ...(out.warnings ?? [])])],
+          quality: null, error: null, at: out.at ?? used.at, states: mdl ? mdl.states.map((s) => s.name) : null, ms: now() - t0,
+        };
+      }
     } catch (err) {
       out = { error: { code: err.code ?? 'internal', message: err.message, hint: err.hint ?? '' } };
     }
@@ -154,7 +201,7 @@ export function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
     };
   }
 
-  return {
+  const store = {
     mode,
     generation: 0,
     begin(diagram, compileModel) {
@@ -171,31 +218,116 @@ export function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
       // Designed observers whose estimates a Controller looks through:
       // observer idPath → the global state index of each estimate.
       const seeThrough = new Map();
+      // The heavy jobs this compile asked for (async: the newest wins).
+      const asked = new Set();
       return {
         resolve(block, variant, lib) {
           const def = lib[variant.type];
           const key = hashKey(canonical([variant.type, def.version ?? 1, variant.params, block.Ts, plant(), block.idPath]));
+          // A slot is a block's variant: what ran there last may run while its next design is computed.
+          const slot = `${block.idPath}#${variant.name}#${variant.type}`;
           let entry = designs.get(key), cached = !!entry;
           if (cached) counts.hits++;
-          else { counts.runs++; entry = run(def, variant.params, block, compiled, seeThrough, plant); }
-          remember(designs, key, entry, limit);
-          if (block.kind === 'observer' && entry.values?.stateIndex) seeThrough.set(block.idPath, entry.values.stateIndex);
+          else { counts.runs++; entry = run(def, variant.params, block, compiled, seeThrough, plant, slot, asked); }
+          let { status, values, rows } = entry;
+          if (entry.pending) {
+            // Waiting on a heavy job: the previous values of this slot run if
+            // they fit (the same number of measurements and Ts), else u = 0.
+            remember(waitsOn, key, { heavy: entry.heavy, slot }, limit);
+            const before = slots.get(slot), here = { m: block.inputs.length - 1, Ts: block.Ts };
+            const fits = !!before && (def.compatible ? def.compatible(before, here) : before.m === here.m && before.Ts === here.Ts);
+            status = entry.cancelled ? 'cancelled' : fits ? 'stale' : 'pending';
+            values = fits ? before.values : null;
+            rows = fits ? before.rows : [];
+          } else {
+            remember(designs, key, entry, limit);
+            if (values) remember(slots, slot, { values, rows, m: block.inputs.length - 1, Ts: block.Ts }, limit);
+          }
+          if (block.kind === 'observer' && values?.stateIndex) seeThrough.set(block.idPath, values.stateIndex);
           const seen = entry.states ? `${block.input} → ${block.inputs.slice(1).join(', ')} · ${entry.states.length} state${entry.states.length === 1 ? '' : 's'} (${entry.states.join(', ')})` : '';
-          const status = {
+          const out = {
             path: block.idPath, block: block.name, variant: variant.name, type: variant.type, key,
-            status: entry.status, ms: Number(entry.ms.toFixed(2)), cached,
-            at: entry.at, seen, rows: entry.rows, warnings: entry.warnings, error: entry.error, progress: null,
+            status, ms: Number(entry.ms.toFixed(2)), cached,
+            at: entry.at, seen, rows, warnings: entry.warnings, error: entry.error, progress: entry.pending ? entry.progress : null,
           };
-          Object.defineProperty(status, 'values', { value: entry.values, enumerable: false });
-          return status;
+          Object.defineProperty(out, 'values', { value: values, enumerable: false });
+          return out;
         },
-        end() {},
+        // The compile is done: jobs it did not ask for are dropped.
+        end() {
+          if (mode !== 'async') return;
+          for (const k of [...jobs.keys()]) if (!asked.has(k)) jobs.delete(k);
+          settleWaiters();
+        },
       };
     },
-    // How often designs ran and were found in the cache.
+    // Works on the queue, oldest job first, for about budgetMs (async mode).
+    // A job's generator yields every few ms, so a slice ends close to its
+    // budget. → { busy, finished: [{ key, path, block, variant, title, ms, error }], waitMs }
+    // (waitMs: how long until the next job may start, while it waits out
+    // its debounce). Every finished job bumps generation: compile again.
+    runJobs(budgetMs = 8) {
+      const t0 = now(), finished = [];
+      let waitMs = 0, moved = false;
+      while (jobs.size && now() - t0 < budgetMs) {
+        const job = jobs.values().next().value;
+        if (!job.gen) {
+          const wait = job.asked + debounceMs - now();
+          if (wait > 0) { waitMs = wait; break; }
+          job.started = now();
+          job.gen = job.start();
+          moved = true;
+        }
+        let done = null;
+        try {
+          for (;;) {
+            const s = job.gen.next();
+            if (s.done) { done = { value: s.value }; break; }
+            if (s.value) { job.progress = s.value; moved = true; }
+            if (now() - t0 >= budgetMs) break;
+          }
+        } catch (err) { done = { error: err }; }
+        if (!done) continue;
+        const ms = now() - job.started;
+        jobs.delete(job.key);
+        remember(heavies, job.key, { ...done, ms }, 8);
+        counts.heavyRuns++;
+        store.generation++;
+        finished.push({ key: job.key, path: job.path, block: job.block, variant: job.variant, title: job.title, ms, error: done.error ? done.error.message : null });
+      }
+      if (moved && listeners.size && now() - lastEmit >= 100) emit();
+      settleWaiters();
+      return { busy: jobs.size > 0, finished, waitMs };
+    },
+    // Is a job queued or running? The queue, oldest first.
+    busy: () => jobs.size > 0,
+    queue,
+    // Cancel the heavy job a status (by its key) waits on: the block runs
+    // u = 0 (or its previous values) until its inputs change or retry(key).
+    cancel(key) {
+      const w = waitsOn.get(key) ?? [...waitsOn.values()].find((x) => x.heavy === key);
+      if (!w) return false;
+      jobs.delete(w.heavy);
+      cancelled.set(w.slot, w.heavy);
+      store.generation++;
+      settleWaiters();
+      return true;
+    },
+    retry(key) {
+      const w = waitsOn.get(key) ?? [...waitsOn.values()].find((x) => x.heavy === key);
+      if (!w || cancelled.get(w.slot) !== w.heavy) return false;
+      cancelled.delete(w.slot);
+      store.generation++;
+      return true;
+    },
+    // fn(queue) at most 10 times a second while jobs make progress; returns a function that stops it.
+    onProgress(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    // Resolves when nothing is queued (at once in sync mode).
+    idle: () => (jobs.size ? new Promise((res) => waiters.push(res)) : Promise.resolve()),
+    // How often designs ran and were found in the cache, and plans were made.
     stats: () => ({ ...counts }),
-    idle: () => Promise.resolve(),
   };
+  return store;
 }
 
 // The store compileDiagram uses when it is given none.
@@ -337,12 +469,22 @@ export function trajectoryDesign(p, ctx) {
   const model = ctx.model();
   const labels = lin.outputs.map((o) => o.label), uName = lin.input.label;
   const Fmax = p.planShare * Math.min(-p.umin, p.umax);
+  // Where it starts, states with the same value grouped: 'θ1, θ2, θ3 = 3.142 rad → origin'.
+  const groups = [];
+  model.states.forEach((s, i) => {
+    const v = model.x0[i], text = `${fmt(v)}${s.unit ? ` ${s.unit}` : ''}`;
+    if (Math.abs(v) < 1e-12) return;
+    const g = groups.at(-1);
+    if (g && g.text === text) g.names.push(s.name); else groups.push({ names: [s.name], text });
+  });
+  const at = `${groups.length ? groups.map((g) => `${g.names.join(', ')} = ${g.text}`).join(', ') : 'rest'} → origin`;
   const h = ctx.heavy('plan', { version: PLAN_VERSION, T: p.T, segments: p.segments, Fmax }, function* plan() {
     const pl = yield* planTransfer(model, { T: p.T, Ts, segments: p.segments, Fmax });
     const along = yield* alongPlanSteps(model, pl);
     return { plan: pl, along };
-  });
-  if (h.status !== 'ready') return { pending: h.progress ?? null };
+  }, { title: 'Swing-up' });
+  // In the page the plan is made in the background: until then u = 0 (or the previous plan).
+  if (h.status !== 'ready') return { pending: h.progress ?? null, at, warnings: up.warnings };
   const { plan, along } = h.value;
   const Kx = tvlqrGains(along, { Q: up.Qx, R: p.R, Pend: up.P });
   const values = planValues(model, along, Kx, { C: lin.C, K: up.K, kr: up.kr });
@@ -368,14 +510,5 @@ export function trajectoryDesign(p, ctx) {
     { label: 'K upright', value: up.K, labels },
     ...up.rows.slice(1),
   ];
-  // Where it starts, states with the same value grouped: 'θ1, θ2, θ3 = 3.142 rad → origin'.
-  const groups = [];
-  model.states.forEach((s, i) => {
-    const v = model.x0[i], text = `${fmt(v)}${s.unit ? ` ${s.unit}` : ''}`;
-    if (Math.abs(v) < 1e-12) return;
-    const g = groups.at(-1);
-    if (g && g.text === text) g.names.push(s.name); else groups.push({ names: [s.name], text });
-  });
-  const at = `${groups.length ? groups.map((g) => `${g.names.join(', ')} = ${g.text}`).join(', ') : 'rest'} → origin`;
   return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }

@@ -534,20 +534,22 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   // come first, so a Controller's design can look through a designed one.
   const designs = [];
   if (laws) {
-    let job = null;
+    // Every compile tells the store when it is done, designed variants or
+    // not: in the page, background jobs this compile did not ask for (a plan
+    // for a variant no longer running) are dropped then.
+    // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
+    const job = (opts.designs ?? SYNC_DESIGNS).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }));
     for (const nd of ctrls) {
       if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
-      // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
-      job ??= (opts.designs ?? SYNC_DESIGNS).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }));
       const inputs = blockInputNames(diagram, nd.idPath);
       // What u is called: the Sink that records a Controller's output, or what feeds an Observer's u.
       const sink = nd.observer ? null : probeList.find(([, k]) => nodes[k].kind === 'pass' && nodes[k].inputs[0] === nd.i);
-      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: nd.observer ? inputs[0] : sink?.[0] ?? 'u' };
+      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: nd.observer ? inputs[0] : sink?.[0] ?? 'u', outputs: nd.outv.length };
       const status = job.resolve(block, nd.variant, nd.lib);
       nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
       designs.push(status);
     }
-    job?.end();
+    job.end();
   }
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
@@ -725,7 +727,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
           const v = new Float64Array(o.outv.length), hv = held[o.idPath];
           if (typeof hv === 'number') v.fill(hv); else if (hv) v.set(Array.from(hv).slice(0, v.length));
           setO.push([o.i, v]);
-          notes.push(`estimates of '${o.name}' are held; the design does not look through a hand observer`);
+          // A looked-through observer may have more estimates than states: those stand for none.
+          const extra = o.taps.filter((tp) => !see.has(tp)).map((tp) => nodes[tp].name.slice(o.name.length + 1));
+          notes.push(o.taps.some((tp) => see.has(tp)) ? `${extra.join(', ')} of '${o.name}' ${extra.length === 1 ? 'stands' : 'stand'} for no state of this plant and ${extra.length === 1 ? 'is' : 'are'} held` : `estimates of '${o.name}' are held; the design does not look through a hand observer`);
         }
       }
     }

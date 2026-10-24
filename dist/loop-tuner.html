@@ -274,7 +274,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   .gen { grid-template-columns: minmax(0, 1fr); }
   .status { gap: 8px; font-size: 11px; }
 }
-@media (prefers-reduced-motion: reduce) { .caret { animation: none; } .sw::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .caret { animation: none; } .sw::after, .cbox .cbar span { transition: none; } }
 
 /* Plant tab: library | canvas | parameters, filling the setup area */
 .tabpanel > [role="tabpanel"] { height: 100%; }
@@ -417,6 +417,11 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .cbox .cmsg { color: var(--lcd-dim); }
 .cbox .cwarn { margin: 2px 0 0; padding-left: 14px; color: #d9bb72; }
 .cbox .pbtns { margin: 4px 0 0; }
+.cbox .cprog { display: flex; flex-direction: column; gap: 3px; margin: 2px 0; }
+.cbox .cbar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06); overflow: hidden; }
+.cbox .cbar span { display: block; height: 100%; background: var(--lit-amber); transition: width 0.1s linear; }
+.cbox .cprogline { font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cbox .csub { margin-top: 2px; }
 .ctlib { display: flex; flex-direction: column; gap: 6px; }
 .ctlibhead { margin: 4px 0 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 .ctlibhead:first-child { margin-top: 0; }
@@ -521,14 +526,14 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %; in a list such as Q, click into a value first), or add a variant from the library.</p>
-<p>Variants <b>from the plant</b> (LQR, PI from the plant, swing-up with an LQR catch) hold only weights, levels and limits: their gains are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
+<p>Variants <b>from the plant</b> (LQR, PI from the plant, swing-up with an LQR catch, the planned swing-up) hold only weights, levels and limits: their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
 <h3>System library</h3>
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code> and <code>designs()</code> (what the designed controllers computed).</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>designs()</code> (what the designed controllers computed) and <code>whenDesigned()</code> (resolves once no plan is being made, with the same list).</p>
 <p><button class="key primary" id="help-close">Close</button></p></div></div>
 </div>
 <script type="application/json" id="loop-tuner-project"></script>
@@ -3042,24 +3047,45 @@ function plantKey(diagram) {
 //   const job = store.begin(diagram, () => compileDiagram(diagram, 'plant', { mode: 'model' }));
 //   const status = job.resolve(block, variant, lib);   // status.values: what make() takes, or null
 //   job.end();
-// block: { idPath, name, kind: 'controller' | 'observer', Ts, inputs (labels), input (u's label) }.
+// block: { idPath, name, kind: 'controller' | 'observer', Ts, inputs (labels), input (u's label), outputs }.
 // A status is what the Controller tab, the CLI and agents see; its values
 // are not enumerable, so a status prints and serialises without them.
-// The 'sync' mode runs every design at once (Node, the CLI, tests, and the
-// page until the background store of step 10), heavy ones (a plan) too.
 // A heavy computation is kept apart (an LRU of 8), keyed by what it reads
 // only: a plan by the plant, the block, Ts and the plan's own inputs, never
 // Q or R, so tuning those re-runs the light part of a design, not the plan.
-function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
-  if (mode !== 'sync') throw new Error(`design store mode "${mode}": only 'sync' exists so far`);
+//
+// mode 'sync' runs every design at once, heavy ones (a plan) too: Node, the
+// CLI, tests. mode 'async' is the page's: a heavy miss queues a job and the
+// design is 'pending' (u = 0), or 'stale' (the block's previous values run,
+// when compatible: the same number of measurements and Ts, unless the type
+// says otherwise). The page pumps the queue in short slices:
+//   store.runJobs(ms) → { busy, finished, waitMs }   work for about ms; finished jobs bump generation
+// A job starts debounceMs after it was first asked for (wheeling a mass
+// plans once, not twenty times), and only the jobs the latest compile asked
+// for are kept (the newest wins). cancel(key) and retry(key) take a status's
+// key; onProgress(fn) hears the queue at most 10 times a second; idle()
+// resolves when nothing is queued. Results never depend on the timing: a
+// job is the same generator the sync store drains.
+function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 } = {}) {
+  if (mode !== 'sync' && mode !== 'async') throw new Error(`design store mode "${mode}": 'sync' or 'async'`);
   const designs = new Map(), models = new Map(), heavies = new Map();
   const counts = { runs: 0, hits: 0, heavyRuns: 0 };
   const remember = (map, key, value, size) => { map.delete(key); map.set(key, value); if (map.size > size) map.delete(map.keys().next().value); };
+  // The background (async mode): queued jobs by heavy key, in the order
+  // they were asked for; per slot (a block's variant) the last values that
+  // ran, and a cancelled heavy key; per design key the heavy key it waits on.
+  const jobs = new Map(), slots = new Map(), cancelled = new Map(), waitsOn = new Map();
+  const listeners = new Set();
+  let waiters = [], lastEmit = -Infinity;
+  const settleWaiters = () => { if (jobs.size) return; const w = waiters; waiters = []; for (const res of w) res(); };
+  const queue = () => [...jobs.values()].map((j) => ({ key: j.key, path: j.path, block: j.block, variant: j.variant, title: j.title, running: !!j.gen, progress: j.progress }));
+  const emit = () => { lastEmit = now(); const list = queue(); for (const fn of listeners) fn(list); };
 
   // Runs one design; never throws. A DesignError becomes the status's error;
-  // anything else is a bug, reported with code 'internal'.
-  function run(def, p, block, compiled, seeThrough, plant) {
-    const used = { model: null, at: '', warnings: [] };
+  // anything else is a bug, reported with code 'internal'. A design waiting
+  // on a heavy job comes back { pending: true } and is not cached.
+  function run(def, p, block, compiled, seeThrough, plant, slot, asked) {
+    const used = { model: null, at: '', warnings: [], heavy: null };
     const lins = new Map();
     const ctx = {
       Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs,
@@ -3087,26 +3113,52 @@ function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
       },
       // A long computation: start() returns a generator (planner.js) whose
       // value is kept under kind and inputs, for this plant, block and Ts.
-      // → { status: 'ready', value, ms } (the async store of step 10 may
-      // also answer { status: 'pending', progress }).
-      heavy(kind, inputs, start) {
+      // → { status: 'ready', value, ms }; in async mode also { status:
+      // 'pending', progress } (queued, or running) or { status: 'cancelled' }.
+      // title names it in the page ('Swing-up': "Swing-up planned in 4.1 s").
+      heavy(kind, inputs, start, { title = '' } = {}) {
         const key = hashKey(canonical([kind, inputs, plant(), block.idPath, block.Ts]));
+        used.heavy = { key, status: 'ready' };
         let h = heavies.get(key);
-        if (!h) {
+        if (!h && mode === 'sync') {
           counts.heavyRuns++;
           const t0 = now();
           const value = runPlan(start());
           h = { value, ms: now() - t0 };
         }
-        remember(heavies, key, h, 8);
-        return { status: 'ready', value: h.value, ms: h.ms, key };
+        if (h) {
+          remember(heavies, key, h, 8);
+          if (h.error) throw h.error;
+          return { status: 'ready', value: h.value, ms: h.ms, key };
+        }
+        // Cancelled until the inputs change (a new key) or retry().
+        const mark = cancelled.get(slot);
+        if (mark === key) { used.heavy.status = 'cancelled'; return { status: 'cancelled', key }; }
+        if (mark) cancelled.delete(slot);
+        let job = jobs.get(key);
+        if (!job) {
+          job = { key, kind, title, path: block.idPath, block: block.name, variant: slot.split('#')[1], start, asked: now(), gen: null, started: 0, progress: null };
+          jobs.set(key, job);
+        }
+        asked.add(key);
+        used.heavy.status = 'pending';
+        return { status: 'pending', progress: job.progress, key };
       },
     };
     const t0 = now();
     let out;
     try {
       out = def.design(p, ctx);
-      if (!out || out.pending) throw new DesignError('pending', 'this design runs in the background, which this store cannot do yet');
+      if (!out) throw new Error(`${block.idPath}: the design returned nothing`);
+      if ('pending' in out) {
+        if (!used.heavy || used.heavy.status === 'ready') throw new Error('a design came back pending without waiting on a heavy job');
+        const mdl = used.model;
+        return {
+          pending: true, cancelled: used.heavy.status === 'cancelled', heavy: used.heavy.key, progress: out.pending ?? null,
+          status: 'pending', values: null, rows: [], warnings: [...new Set([...(mdl?.warnings ?? []), ...used.warnings, ...(out.warnings ?? [])])],
+          quality: null, error: null, at: out.at ?? used.at, states: mdl ? mdl.states.map((s) => s.name) : null, ms: now() - t0,
+        };
+      }
     } catch (err) {
       out = { error: { code: err.code ?? 'internal', message: err.message, hint: err.hint ?? '' } };
     }
@@ -3124,7 +3176,7 @@ function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
     };
   }
 
-  return {
+  const store = {
     mode,
     generation: 0,
     begin(diagram, compileModel) {
@@ -3141,31 +3193,116 @@ function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
       // Designed observers whose estimates a Controller looks through:
       // observer idPath → the global state index of each estimate.
       const seeThrough = new Map();
+      // The heavy jobs this compile asked for (async: the newest wins).
+      const asked = new Set();
       return {
         resolve(block, variant, lib) {
           const def = lib[variant.type];
           const key = hashKey(canonical([variant.type, def.version ?? 1, variant.params, block.Ts, plant(), block.idPath]));
+          // A slot is a block's variant: what ran there last may run while its next design is computed.
+          const slot = `${block.idPath}#${variant.name}#${variant.type}`;
           let entry = designs.get(key), cached = !!entry;
           if (cached) counts.hits++;
-          else { counts.runs++; entry = run(def, variant.params, block, compiled, seeThrough, plant); }
-          remember(designs, key, entry, limit);
-          if (block.kind === 'observer' && entry.values?.stateIndex) seeThrough.set(block.idPath, entry.values.stateIndex);
+          else { counts.runs++; entry = run(def, variant.params, block, compiled, seeThrough, plant, slot, asked); }
+          let { status, values, rows } = entry;
+          if (entry.pending) {
+            // Waiting on a heavy job: the previous values of this slot run if
+            // they fit (the same number of measurements and Ts), else u = 0.
+            remember(waitsOn, key, { heavy: entry.heavy, slot }, limit);
+            const before = slots.get(slot), here = { m: block.inputs.length - 1, Ts: block.Ts };
+            const fits = !!before && (def.compatible ? def.compatible(before, here) : before.m === here.m && before.Ts === here.Ts);
+            status = entry.cancelled ? 'cancelled' : fits ? 'stale' : 'pending';
+            values = fits ? before.values : null;
+            rows = fits ? before.rows : [];
+          } else {
+            remember(designs, key, entry, limit);
+            if (values) remember(slots, slot, { values, rows, m: block.inputs.length - 1, Ts: block.Ts }, limit);
+          }
+          if (block.kind === 'observer' && values?.stateIndex) seeThrough.set(block.idPath, values.stateIndex);
           const seen = entry.states ? `${block.input} → ${block.inputs.slice(1).join(', ')} · ${entry.states.length} state${entry.states.length === 1 ? '' : 's'} (${entry.states.join(', ')})` : '';
-          const status = {
+          const out = {
             path: block.idPath, block: block.name, variant: variant.name, type: variant.type, key,
-            status: entry.status, ms: Number(entry.ms.toFixed(2)), cached,
-            at: entry.at, seen, rows: entry.rows, warnings: entry.warnings, error: entry.error, progress: null,
+            status, ms: Number(entry.ms.toFixed(2)), cached,
+            at: entry.at, seen, rows, warnings: entry.warnings, error: entry.error, progress: entry.pending ? entry.progress : null,
           };
-          Object.defineProperty(status, 'values', { value: entry.values, enumerable: false });
-          return status;
+          Object.defineProperty(out, 'values', { value: values, enumerable: false });
+          return out;
         },
-        end() {},
+        // The compile is done: jobs it did not ask for are dropped.
+        end() {
+          if (mode !== 'async') return;
+          for (const k of [...jobs.keys()]) if (!asked.has(k)) jobs.delete(k);
+          settleWaiters();
+        },
       };
     },
-    // How often designs ran and were found in the cache.
+    // Works on the queue, oldest job first, for about budgetMs (async mode).
+    // A job's generator yields every few ms, so a slice ends close to its
+    // budget. → { busy, finished: [{ key, path, block, variant, title, ms, error }], waitMs }
+    // (waitMs: how long until the next job may start, while it waits out
+    // its debounce). Every finished job bumps generation: compile again.
+    runJobs(budgetMs = 8) {
+      const t0 = now(), finished = [];
+      let waitMs = 0, moved = false;
+      while (jobs.size && now() - t0 < budgetMs) {
+        const job = jobs.values().next().value;
+        if (!job.gen) {
+          const wait = job.asked + debounceMs - now();
+          if (wait > 0) { waitMs = wait; break; }
+          job.started = now();
+          job.gen = job.start();
+          moved = true;
+        }
+        let done = null;
+        try {
+          for (;;) {
+            const s = job.gen.next();
+            if (s.done) { done = { value: s.value }; break; }
+            if (s.value) { job.progress = s.value; moved = true; }
+            if (now() - t0 >= budgetMs) break;
+          }
+        } catch (err) { done = { error: err }; }
+        if (!done) continue;
+        const ms = now() - job.started;
+        jobs.delete(job.key);
+        remember(heavies, job.key, { ...done, ms }, 8);
+        counts.heavyRuns++;
+        store.generation++;
+        finished.push({ key: job.key, path: job.path, block: job.block, variant: job.variant, title: job.title, ms, error: done.error ? done.error.message : null });
+      }
+      if (moved && listeners.size && now() - lastEmit >= 100) emit();
+      settleWaiters();
+      return { busy: jobs.size > 0, finished, waitMs };
+    },
+    // Is a job queued or running? The queue, oldest first.
+    busy: () => jobs.size > 0,
+    queue,
+    // Cancel the heavy job a status (by its key) waits on: the block runs
+    // u = 0 (or its previous values) until its inputs change or retry(key).
+    cancel(key) {
+      const w = waitsOn.get(key) ?? [...waitsOn.values()].find((x) => x.heavy === key);
+      if (!w) return false;
+      jobs.delete(w.heavy);
+      cancelled.set(w.slot, w.heavy);
+      store.generation++;
+      settleWaiters();
+      return true;
+    },
+    retry(key) {
+      const w = waitsOn.get(key) ?? [...waitsOn.values()].find((x) => x.heavy === key);
+      if (!w || cancelled.get(w.slot) !== w.heavy) return false;
+      cancelled.delete(w.slot);
+      store.generation++;
+      return true;
+    },
+    // fn(queue) at most 10 times a second while jobs make progress; returns a function that stops it.
+    onProgress(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    // Resolves when nothing is queued (at once in sync mode).
+    idle: () => (jobs.size ? new Promise((res) => waiters.push(res)) : Promise.resolve()),
+    // How often designs ran and were found in the cache, and plans were made.
     stats: () => ({ ...counts }),
-    idle: () => Promise.resolve(),
   };
+  return store;
 }
 
 // The store compileDiagram uses when it is given none.
@@ -3307,12 +3444,22 @@ function trajectoryDesign(p, ctx) {
   const model = ctx.model();
   const labels = lin.outputs.map((o) => o.label), uName = lin.input.label;
   const Fmax = p.planShare * Math.min(-p.umin, p.umax);
+  // Where it starts, states with the same value grouped: 'θ1, θ2, θ3 = 3.142 rad → origin'.
+  const groups = [];
+  model.states.forEach((s, i) => {
+    const v = model.x0[i], text = `${fmt(v)}${s.unit ? ` ${s.unit}` : ''}`;
+    if (Math.abs(v) < 1e-12) return;
+    const g = groups.at(-1);
+    if (g && g.text === text) g.names.push(s.name); else groups.push({ names: [s.name], text });
+  });
+  const at = `${groups.length ? groups.map((g) => `${g.names.join(', ')} = ${g.text}`).join(', ') : 'rest'} → origin`;
   const h = ctx.heavy('plan', { version: PLAN_VERSION, T: p.T, segments: p.segments, Fmax }, function* plan() {
     const pl = yield* planTransfer(model, { T: p.T, Ts, segments: p.segments, Fmax });
     const along = yield* alongPlanSteps(model, pl);
     return { plan: pl, along };
-  });
-  if (h.status !== 'ready') return { pending: h.progress ?? null };
+  }, { title: 'Swing-up' });
+  // In the page the plan is made in the background: until then u = 0 (or the previous plan).
+  if (h.status !== 'ready') return { pending: h.progress ?? null, at, warnings: up.warnings };
   const { plan, along } = h.value;
   const Kx = tvlqrGains(along, { Q: up.Qx, R: p.R, Pend: up.P });
   const values = planValues(model, along, Kx, { C: lin.C, K: up.K, kr: up.kr });
@@ -3338,15 +3485,6 @@ function trajectoryDesign(p, ctx) {
     { label: 'K upright', value: up.K, labels },
     ...up.rows.slice(1),
   ];
-  // Where it starts, states with the same value grouped: 'θ1, θ2, θ3 = 3.142 rad → origin'.
-  const groups = [];
-  model.states.forEach((s, i) => {
-    const v = model.x0[i], text = `${fmt(v)}${s.unit ? ` ${s.unit}` : ''}`;
-    if (Math.abs(v) < 1e-12) return;
-    const g = groups.at(-1);
-    if (g && g.text === text) g.names.push(s.name); else groups.push({ names: [s.name], text });
-  });
-  const at = `${groups.length ? groups.map((g) => `${g.names.join(', ')} = ${g.text}`).join(', ') : 'rest'} → origin`;
   return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }
 
@@ -4283,20 +4421,22 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   // come first, so a Controller's design can look through a designed one.
   const designs = [];
   if (laws) {
-    let job = null;
+    // Every compile tells the store when it is done, designed variants or
+    // not: in the page, background jobs this compile did not ask for (a plan
+    // for a variant no longer running) are dropped then.
+    // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
+    const job = (opts.designs ?? SYNC_DESIGNS).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }));
     for (const nd of ctrls) {
       if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
-      // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
-      job ??= (opts.designs ?? SYNC_DESIGNS).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }));
       const inputs = blockInputNames(diagram, nd.idPath);
       // What u is called: the Sink that records a Controller's output, or what feeds an Observer's u.
       const sink = nd.observer ? null : probeList.find(([, k]) => nodes[k].kind === 'pass' && nodes[k].inputs[0] === nd.i);
-      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: nd.observer ? inputs[0] : sink?.[0] ?? 'u' };
+      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: nd.observer ? inputs[0] : sink?.[0] ?? 'u', outputs: nd.outv.length };
       const status = job.resolve(block, nd.variant, nd.lib);
       nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
       designs.push(status);
     }
-    job?.end();
+    job.end();
   }
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
@@ -4474,7 +4614,9 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
           const v = new Float64Array(o.outv.length), hv = held[o.idPath];
           if (typeof hv === 'number') v.fill(hv); else if (hv) v.set(Array.from(hv).slice(0, v.length));
           setO.push([o.i, v]);
-          notes.push(`estimates of '${o.name}' are held; the design does not look through a hand observer`);
+          // A looked-through observer may have more estimates than states: those stand for none.
+          const extra = o.taps.filter((tp) => !see.has(tp)).map((tp) => nodes[tp].name.slice(o.name.length + 1));
+          notes.push(o.taps.some((tp) => see.has(tp)) ? `${extra.join(', ')} of '${o.name}' ${extra.length === 1 ? 'stands' : 'stand'} for no state of this plant and ${extra.length === 1 ? 'is' : 'are'} held` : `estimates of '${o.name}' are held; the design does not look through a hand observer`);
         }
       }
     }
@@ -5208,7 +5350,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Triple pendulum',
-    notes: 'Three rods hang below a cart. When the system loads, the page plans a swing-up from the cart and rods themselves (this takes a few seconds): a force that brings all three up in 2.4 s, followed with time-varying LQR, then LQR holds them. At 3.5 s the cart is pushed (d). Flip to "LQR only" to see that a controller for the top alone cannot get there.',
+    notes: 'Three rods hang below a cart. When the system loads, the page plans a swing-up from the cart and rods themselves; until the plan is ready (a few seconds, its progress beside the title) the rods hang. The plan is a force that brings all three up in 2.4 s, followed with time-varying LQR, then LQR holds them. At 3.5 s the cart is pushed (d). Flip to "LQR only" to see that a controller for the top alone cannot get there.',
     signals: {
       r: { period: PERIOD, components: [] },
       d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
@@ -7460,6 +7602,16 @@ function createDisplay(root, handlers) {
       draw();
     },
     clearRuns() { past = []; draw(); },
+    // A design settled on its own (a plan made in the background): the run
+    // so far stays, faded, and the sweep starts again at the window's start,
+    // so the new run is seen from its beginning. Call before setData.
+    restartSweep() {
+      if (mode === 'stop' || !scope) return;
+      keepRun();
+      tScan = win()[0];
+      last = 0;
+      kick();
+    },
     releaseLine() { if (line === null) return false; selectLine(null); return true; },
     // The instant other views follow: the hover cursor, else the scan line
     // while sweeping, else the right edge of the screen.
@@ -8006,7 +8158,7 @@ function createScene(host, app) {
   svg.setAttribute('class', 'pscene');
   svg.setAttribute('role', 'img');
   host.append(svg);
-  let view = null, scene = null, raf = 0, error = '', svgRoot = null, binds = null;
+  let view = null, scene = null, raf = 0, error = '', svgRoot = null, binds = null, last = '';
 
   // An SVG view: the drawing is cleaned (no scripts, event handlers, outside
   // links), inserted once, and its bound attributes updated every frame.
@@ -8066,7 +8218,8 @@ function createScene(host, app) {
       }
       html += `<text class="sctime" x="10" y="${r.height - 10}">t = ${env.t.toFixed(3)} s</text>`;
     } catch (err) { html += `<text class="scerr" x="10" y="20">${String(err.message)}</text>`; }
-    svg.innerHTML = html;
+    // Unchanged (the scope stopped, the cursor still): nothing to lay out and paint again.
+    if (html !== last) { svg.innerHTML = html; last = html; }
     raf = requestAnimationFrame(draw);
   }
 
@@ -8085,7 +8238,7 @@ function createScene(host, app) {
       if (!raf) raf = requestAnimationFrame(draw);
       return error;
     },
-    stop() { if (raf) cancelAnimationFrame(raf); raf = 0; view = null; unmountSvg(); },
+    stop() { if (raf) cancelAnimationFrame(raf); raf = 0; view = null; last = ''; unmountSvg(); },
   };
 }
 
@@ -8826,7 +8979,9 @@ __mods['ui/controller.js'] = (() => {
 // its design computed from the plant shows read-only in the Computed box
 // beside (or, when narrow, below) its parameters. renderComputed() patches
 // that box, the variant glyphs and nothing else, so a field being typed in
-// keeps its focus when a design settles.
+// keeps its focus when a design settles; renderProgress() only the progress
+// of a plan being made (its bar, its line, the glyph), so its Cancel button
+// stays where it is.
 
 const { CONTROLLERS, normalizeVariant } = __mods['core/controllers.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
@@ -8848,7 +9003,8 @@ const ABOUT = {
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
 };
 const LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
-const STATUS_WORD = { ok: 'ok', warn: 'warning', error: 'error', pending: 'pending', stale: 'previous values', cancelled: 'cancelled' };
+const STATUS_WORD = { ok: 'ok', warn: 'warning', error: 'error', pending: 'planning', stale: 're-planning', cancelled: 'cancelled' };
+const WAITING = ['pending', 'stale'];
 
 function createControllerTab(host, app) {
   let target = null;   // path of subsystem ids and the Controller block id
@@ -8917,8 +9073,8 @@ function createControllerTab(host, app) {
     return true;
   }
 
-  function field(key, label, value, hint, kind = 'number', title = '') {
-    return `<label class="pf${kind === 'vector' ? ' wide' : ''}" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
+  function field(key, label, value, hint, kind = 'number', title = '', nullable = false) {
+    return `<label class="pf${kind === 'vector' ? ' wide' : ''}" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" ${nullable ? 'data-null="1"' : ''} value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
   }
   const show = (v) => (Array.isArray(v) ? v.map((x) => num(x, 5)).join(', ') : Number.isFinite(v) ? num(v, 6) : '');
   // A parameter's hint: its unit, and for a vector what its entries stand
@@ -8926,7 +9082,7 @@ function createControllerTab(host, app) {
   function hintOf(p, names) {
     const meas = names.slice(1);
     const per = p.per === 'measurement' ? `for ${meas.join(', ')}` : p.per === 'level' ? `levels of ${meas[0] ?? 'y1'}` : '';
-    return [p.kind === 'vector' ? 'comma-separated' : '', per, p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · ');
+    return [p.kind === 'vector' ? 'comma-separated' : '', per, p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : '', p.nullable ? p.empty ?? 'empty: from the plant' : ''].filter(Boolean).join(' · ');
   }
 
   function render() {
@@ -8956,7 +9112,7 @@ function createControllerTab(host, app) {
     const v = b.variants[b.variant];
     const def = lib[v.type];
     $('#ct-ptitle').textContent = `${v.name} · ${def.summary}`;
-    const one = (p) => p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), hintOf(p, names), p.kind ?? 'number', p.help ?? '');
+    const one = (p) => p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), hintOf(p, names), p.kind ?? 'number', p.help ?? '', !!p.nullable);
     // Inputs that start a long computation (a plan) sit in a fold, so they
     // are changed on purpose, not nudged by the way.
     const light = def.params.filter((p) => !p.heavy), heavy = def.params.filter((p) => p.heavy);
@@ -8979,21 +9135,7 @@ function createControllerTab(host, app) {
     const c = current();
     if (!c || $('.ctl').hidden) return;
     const b = c.block, lib = LIBS[b.type], st = statusOf(c);
-    host.querySelectorAll('#ct-vars [data-v]').forEach((row) => {
-      const i = Number(row.dataset.v), v = b.variants[i], def = lib[v.type];
-      const g = row.querySelector('.vtype');
-      let text = def.label, cls = '';
-      if (def.designed) {
-        const s = i === b.variant ? st : null;
-        if (s?.status === 'error') { text = '! no design'; cls = 'bad'; }
-        else if (s?.status === 'warn') { text = '! computed'; cls = 'warn'; }
-        else if (s?.status === 'pending' || s?.status === 'stale') { text = `⟳ ${Math.round(100 * (s.progress?.fraction ?? 0))} %`; }
-        else text = 'computed';
-      }
-      g.textContent = text;
-      g.className = `vtype ${cls}`;
-      row.title = def.designed ? `${def.label}: computed from the plant${i === b.variant && st?.error ? `. ${st.error.message}` : ''}` : def.label;
-    });
+    renderGlyphs(c, st);
     const box = $('#ct-computed');
     const v = b.variants[b.variant], def = lib[v.type];
     box.hidden = !def.designed;
@@ -9003,16 +9145,69 @@ function createControllerTab(host, app) {
       box.innerHTML = `<div class="chead"><h4 class="glabel">Computed</h4></div><p class="cmsg">Not computed: ${app.systemError ? 'the plant does not run (see the Plant tab)' : 'the plant has not run yet'}.</p>`;
       return;
     }
-    const canCopy = st.values && def.manual;
-    const time = st.cached ? 'cached' : st.ms >= 1000 ? `${(st.ms / 1000).toFixed(1)} s` : `${st.ms < 10 ? st.ms.toFixed(1) : Math.round(st.ms)} ms`;
+    const waiting = WAITING.includes(st.status);
+    const canCopy = st.values && def.manual && !waiting && st.status !== 'cancelled';
+    const time = waiting ? percent(st) : st.status === 'cancelled' ? '' : st.cached ? 'cached' : st.ms >= 1000 ? `${(st.ms / 1000).toFixed(1)} s` : `${st.ms < 10 ? st.ms.toFixed(1) : Math.round(st.ms)} ms`;
     let body = `<p class="cline"><b>${esc(def.label)}</b>${st.at ? ` at ${esc(st.at)}` : ''}</p>`;
     if (st.seen) body += `<p class="cline"><span class="ck">plant seen</span> ${esc(st.seen)}</p>`;
     if (st.error) body += `<p class="cerr">${esc(st.error.message)}</p>${st.error.hint ? `<p class="cmsg">${esc(st.error.hint)}</p>` : ''}<p class="cmsg">Until then the block puts out ${off}.</p>`;
+    // A plan being made in the background: its progress, and what runs meanwhile.
+    // Its Cancel (or, once cancelled, Plan) sits right under it, above the rows.
+    if (waiting) {
+      body += `<div class="cprog" data-key="${esc(st.key)}"><div class="cbar" role="progressbar" aria-label="Planning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(100 * (st.progress?.fraction ?? 0))}"><span style="width:${(100 * (st.progress?.fraction ?? 0)).toFixed(1)}%"></span></div>`
+        + `<p class="cmsg cprogline">${esc(progressLine(st.progress))}</p></div>`
+        + `<p class="cmsg">${st.status === 'stale' ? 'Meanwhile the block runs the previous plan; the display takes the new one from its start when it is ready.' : `Until it is ready the block puts out ${off}; the display then takes the new run from its start.`}</p>`
+        + '<div class="pbtns"><button class="key small" id="ct-cancel" title="Stop planning; the block keeps what it runs now">Cancel</button></div>';
+    }
+    if (st.status === 'cancelled') {
+      body += `<p class="cmsg">Planning was cancelled. ${st.values ? 'The block runs the previous plan' : `The block puts out ${off}`} until you press Plan or change its inputs.</p>`
+        + '<div class="pbtns"><button class="key small primary" id="ct-plan" title="Plan again with these inputs">Plan</button></div>';
+    }
+    if ((st.status === 'stale' || st.status === 'cancelled') && st.rows.length) body += '<p class="cmsg csub">The previous plan:</p>';
     body += st.rows.map(rowHtml).join('');
     if (st.warnings.length) body += `<ul class="cwarn">${st.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>`;
-    box.innerHTML = `<div class="chead"><h4 class="glabel">Computed</h4><span class="cst cst-${esc(st.status)}">${esc(STATUS_WORD[st.status] ?? st.status)}</span><span class="cmeta" title="the design's key: the same inputs give the same numbers">${time} · #${esc(st.key.slice(0, 6))}</span></div>${body}`
-      + (canCopy ? `<div class="pbtns"><button class="key small" id="ct-copy" title="Add a hand variant with these numbers after this one, and run it">Copy as numbers</button></div>` : '');
+    box.innerHTML = `<div class="chead"><h4 class="glabel">Computed</h4><span class="cst cst-${esc(st.status)}">${esc(STATUS_WORD[st.status] ?? st.status)}</span><span class="cmeta" title="the design's key: the same inputs give the same numbers">${time ? `${time} · ` : ''}#${esc(st.key.slice(0, 6))}</span></div>${body}`
+      + (canCopy ? '<div class="pbtns"><button class="key small" id="ct-copy" title="Add a hand variant with these numbers after this one, and run it">Copy as numbers</button></div>' : '');
     $('#ct-copy')?.addEventListener('click', () => copyAsNumbers(c, st));
+    $('#ct-cancel')?.addEventListener('click', () => app.cancelDesign(st.key));
+    $('#ct-plan')?.addEventListener('click', () => app.retryDesign(st.key));
+  }
+
+  // The variant glyphs: "computed", or how its design stands when it runs.
+  function renderGlyphs(c, st) {
+    const b = c.block, lib = LIBS[b.type];
+    host.querySelectorAll('#ct-vars [data-v]').forEach((row) => {
+      const i = Number(row.dataset.v), v = b.variants[i], def = lib[v.type];
+      const g = row.querySelector('.vtype');
+      let text = def.label, cls = '';
+      if (def.designed) {
+        const s = i === b.variant ? st : null;
+        if (s?.status === 'error') { text = '! no design'; cls = 'bad'; }
+        else if (s?.status === 'warn') { text = '! computed'; cls = 'warn'; }
+        else if (s && WAITING.includes(s.status)) text = `⟳ ${percent(s)}`;
+        else if (s?.status === 'cancelled') { text = 'cancelled'; cls = 'warn'; }
+        else text = 'computed';
+      }
+      g.textContent = text;
+      g.className = `vtype ${cls}`;
+      row.title = def.designed ? `${def.label}: computed from the plant${i === b.variant && st?.error ? `. ${st.error.message}` : ''}` : def.label;
+    });
+  }
+
+  // A plan's progress, at most 10 times a second: the bar, its line, the
+  // glyph and the percentage; the rest of the box (and its Cancel button)
+  // stays. Anything else changed: the whole box.
+  function renderProgress() {
+    const c = current();
+    if (!c || $('.ctl').hidden) return;
+    const st = statusOf(c), box = $('#ct-computed'), prog = box.querySelector('.cprog');
+    if (!st || !WAITING.includes(st.status) || !prog || prog.dataset.key !== st.key) { renderComputed(); return; }
+    const f = 100 * (st.progress?.fraction ?? 0);
+    prog.querySelector('.cbar span').style.width = `${f.toFixed(1)}%`;
+    prog.querySelector('.cbar').setAttribute('aria-valuenow', String(Math.round(f)));
+    prog.querySelector('.cprogline').textContent = progressLine(st.progress);
+    box.querySelector('.cmeta').textContent = `${percent(st)} · #${st.key.slice(0, 6)}`;
+    renderGlyphs(c, st);
   }
 
   // Copy as numbers: the design's numbers as a hand variant after this one,
@@ -9035,7 +9230,8 @@ function createControllerTab(host, app) {
     // committing them would change what the variant holds.
     if (inp.value === inp.defaultValue) return;
     let value;
-    if (inp.dataset.kind === 'vector') {
+    if (raw === '' && inp.dataset.null) value = null;
+    else if (inp.dataset.kind === 'vector') {
       value = raw.split(/[\s,;]+/).filter(Boolean).map(parseSI);
       if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas.'); render(); return; }
     } else if (raw === '' && /^p:umin|p:umax$/.test(k)) value = null;
@@ -9046,7 +9242,7 @@ function createControllerTab(host, app) {
     // An unchanged field is left alone: re-rendering on every blur would
     // swallow the click that moved the focus away.
     const c = current(), old = k.startsWith('b:') ? c.block.params[k.slice(2)] : c.block.variants[c.block.variant].params[k.slice(2)];
-    const same = Array.isArray(value) ? Array.isArray(old) && value.length === old.length && value.every((x, i) => x === old[i]) : value === null ? !Number.isFinite(old) : value === old;
+    const same = Array.isArray(value) ? Array.isArray(old) && value.length === old.length && value.every((x, i) => x === old[i]) : value === null ? old === null || (typeof old === 'number' && !Number.isFinite(old)) : value === old;
     if (same) return;
     edit((blk, lv) => {
       if (k.startsWith('b:')) {
@@ -9135,9 +9331,20 @@ function createControllerTab(host, app) {
     render() { if (!host.hidden) render(); },
     // Only the Computed box and the variant glyphs, for designs that settle on their own.
     renderComputed() { if (!host.hidden) renderComputed(); },
+    // Only a plan's progress in the box, its glyph and percentage.
+    renderProgress() { if (!host.hidden) renderProgress(); },
     shown: render,
     open(path) { target = path; },
   };
+}
+
+// How far a plan is: '43 %'.
+const percent = (st) => `${Math.round(100 * (st.progress?.fraction ?? 0))} %`;
+// A plan's progress in words: the stage, iteration, cost and defect (planner.js).
+function progressLine(p) {
+  if (!p) return 'starting';
+  const e = (x) => (Number.isFinite(x) ? x.toExponential(1) : '–');
+  return `stage ${p.stage} of ${p.stages} · iteration ${p.iteration} · cost ${e(p.cost)} · defect ${e(p.defect)}${p.start > 1 ? ` · start ${p.start} of ${p.starts}` : ''}`;
 }
 
 // One row of a design's status: labelled values (K for x, θ, …), a number
@@ -9258,6 +9465,7 @@ __mods['ui/app.js'] = (() => {
 
 const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } = __mods['core/project.js'];
 const { diagramNames } = __mods['core/diagram.js'];
+const { createDesignStore } = __mods['core/design.js'];
 const { createPlantEditor } = __mods['ui/plant.js'];
 const { createControllerTab } = __mods['ui/controller.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
@@ -9313,13 +9521,20 @@ function startApp() {
     saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch { /* storage unavailable */ } }, 300);
   }
 
+  // Designs computed from the plant (design/output/designs.md). Light ones
+  // are computed while the diagram compiles; a heavy one (a swing-up plan)
+  // runs in the background, in slices between frames, while its block runs
+  // u = 0 or its previous values. When it is done, the store's generation
+  // goes up and the acquisition is made again.
+  const designs = createDesignStore({ mode: 'async' });
+
   // The acquisition: every signal the display can show. Without a plant and a
   // controller there is only r(t).
   let acqKey = '', acq = null, loopNote = '';
   app.systemError = '';
   function acquire() {
     const p = app.project;
-    const key = JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal]);
+    const key = JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal, designs.generation]);
     if (key === acqKey) return acq;
     acqKey = key;
     loopNote = '';
@@ -9340,7 +9555,7 @@ function startApp() {
     // No controller yet: the diagram is the whole system. If it cannot run,
     // the signals still show and the Plant tab says why.
     try {
-      const sys = evaluateSystem(p);
+      const sys = evaluateSystem(p, { designs });
       acq = { t: sys.t, signals: sys.signals };
       app.designStatuses = sys.info.designs ?? [];
     } catch (err) {
@@ -9350,8 +9565,66 @@ function startApp() {
       for (const name of Object.keys(p.system.signals)) { const tr = referenceTrace(p, name); signals[name] = tr.r; t = tr.t; }
       acq = { t, signals };
     }
+    pumpDesigns();
     return acq;
   }
+
+  // The pump: while the store has jobs, a slice of work per task. A
+  // MessageChannel message starts the next slice at once (setTimeout would
+  // wait at least 4 ms), and the browser draws frames between slices. A
+  // slice lasts as long as the browser was away since the last one (mostly
+  // drawing), between 8 and 16 ms: on a quick screen the display keeps its
+  // 60 frames a second, on a slow one the plan still gets about half the
+  // time. While a job waits out its debounce, a timer.
+  const pumpChannel = new MessageChannel();
+  let pumping = false, sliceEnd = 0;
+  function pumpDesigns() {
+    if (pumping || !designs.busy()) return;
+    pumping = true;
+    sliceEnd = 0;
+    pumpChannel.port2.postMessage(0);
+  }
+  pumpChannel.port1.onmessage = () => {
+    const away = sliceEnd ? performance.now() - sliceEnd : 0;
+    const r = designs.runJobs(Math.min(16, Math.max(8, away)));
+    sliceEnd = performance.now();
+    if (r.finished.length) designsSettled(r.finished);
+    if (!designs.busy()) { pumping = false; return; }
+    if (r.waitMs > 0) setTimeout(() => pumpChannel.port2.postMessage(0), r.waitMs);
+    else pumpChannel.port2.postMessage(0);
+  };
+  // Progress, at most 10 times a second: only the Computed box, the variant
+  // marker and the note beside the title change; no input is re-rendered.
+  designs.onProgress((queue) => {
+    for (const s of app.designStatuses ?? []) {
+      const job = queue.find((j) => j.path === s.path);
+      if (job && (s.status === 'pending' || s.status === 'stale')) s.progress = job.progress;
+    }
+    controllerTab.renderProgress();
+    renderNote();
+  });
+  // A background design is done (generation went up): the light path. The
+  // display takes the new run from the start of the sweep (the run before
+  // stays faded), the Computed box and the note follow, and the Controller
+  // tab's inputs are left alone, so typing in them goes on. An Auto Scale
+  // made while the design was pending is made again on the new run.
+  function designsSettled(finished) {
+    display.restartSweep();
+    const refit = fitPending;
+    if (refit) fitScope();
+    display.setData(acquire());
+    if (refit) { display.setScope(app.project.scope, app.channel); controls.render(display.mode); autosave(); }
+    controllerTab.renderComputed();
+    renderChrome();
+    const f = finished.at(-1), st = (app.designStatuses ?? []).find((s) => s.path === f.path);
+    const what = f.title || 'The plan';
+    if (f.error) toast(`${what} failed: ${f.error}`);
+    else toast(`${f.title ? `${f.title} planned` : 'Planned'} in ${(f.ms / 1000).toFixed(1)} s${st?.status === 'warn' ? ', with a warning: see the Controller tab' : ''}`);
+  }
+  // Cancel the plan a status waits on, or plan again after a cancel.
+  function designsChanged() { display.setData(acquire()); controllerTab.renderComputed(); renderChrome(); }
+  app.cancelDesign = (key) => { if (designs.cancel(key)) { designsChanged(); toast('Planning cancelled'); } };
+  app.retryDesign = (key) => { if (designs.retry(key)) designsChanged(); };
   // What a scope channel can show: only names the diagram gives (its Sources
   // and Sinks, r always), each with its unit.
   app.signalNames = () => channelNames(app.project);
@@ -9370,6 +9643,7 @@ function startApp() {
   // re-acquires; a window with too many controller samples is refused.
   app.editScope = (fn) => {
     const before = JSON.stringify(app.project.scope);
+    fitPending = false;
     app.beginEdit();
     fn(app.project.scope);
     const sim = simOf(app.project);
@@ -9497,7 +9771,11 @@ function startApp() {
   app.toggleRun = () => { display.setMode(display.mode === 'stop' ? 'run' : 'stop'); controls.render(display.mode); };
   app.single = () => { display.setMode('single'); controls.render(display.mode); };
   // Auto Scale: one period of the input across the screen, then every
-  // channel with a signal fitted to about six divisions.
+  // channel with a signal fitted to about six divisions. Fitted while a
+  // design is still being computed (a plan, when a system loads), it fits
+  // the run without it, so it is made again when the design settles, unless
+  // the scope was set by hand in between.
+  let fitPending = false;
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
     const data = acquire();
@@ -9505,6 +9783,7 @@ function startApp() {
       const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
       if (fit) Object.assign(ch, fit);
     }
+    fitPending = (app.designStatuses ?? []).some((s) => s.status === 'pending' || s.status === 'stale');
   }
   app.autoScale = () => {
     app.beginEdit();
@@ -9547,19 +9826,24 @@ function startApp() {
     }
   }
 
-  // The note beside the title: a plant that does not run, or a design that
-  // failed (later: one being planned); a click opens the tab that says why.
+  // The note beside the title: a plant that does not run, a design that
+  // failed, or one being planned; a click opens the tab that says why.
   let noteAction = null;
   function designNote() {
-    const s = (app.designStatuses ?? []).find((x) => ['error', 'warn', 'pending', 'stale'].includes(x.status));
+    const order = ['error', 'pending', 'stale', 'cancelled', 'warn'];
+    const s = (app.designStatuses ?? []).filter((x) => order.includes(x.status)).sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status))[0];
     if (!s) return null;
-    const what = s.status === 'error' ? 'no design' : s.status === 'warn' ? 'check its design' : `planning ${Math.round(100 * (s.progress?.fraction ?? 0))} %`;
+    const pct = `${Math.round(100 * (s.progress?.fraction ?? 0))} %`;
+    const what = { error: 'no design', warn: 'check its design', pending: `planning ${pct}`, stale: `re-planning ${pct}`, cancelled: 'planning cancelled' }[s.status];
     return { text: `${s.block} · ${s.variant}: ${what}`, path: s.path };
   }
   function renderChrome() {
     $('undo').disabled = !undoStack.length;
     $('redo').disabled = !redoStack.length;
-    $('title').value = app.project.title;
+    if (document.activeElement !== $('title')) $('title').value = app.project.title;
+    renderNote();
+  }
+  function renderNote() {
     const note = app.systemError ? null : designNote();
     const el = $('loopnote');
     el.textContent = app.systemError ? 'plant: see the Plant tab' : note?.text ?? loopNote;
@@ -9735,6 +10019,15 @@ function startApp() {
     stop: () => { display.setMode('stop'); controls.render('stop'); },
     // What each running designed variant computed from the plant (status, rows, errors).
     designs: () => { acquire(); return structuredClone(app.designStatuses ?? []); },
+    // Resolves, with the statuses, once no design is being computed in the
+    // background (a plan) and the display shows the run that uses it.
+    whenDesigned: async () => {
+      for (;;) {
+        acquire();
+        if (!designs.busy()) return structuredClone(app.designStatuses ?? []);
+        await designs.idle();
+      }
+    },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
   };
 

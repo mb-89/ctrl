@@ -75,14 +75,14 @@ const HELP = `
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %; in a list such as Q, click into a value first), or add a variant from the library.</p>
-<p>Variants <b>from the plant</b> (LQR, PI from the plant, swing-up with an LQR catch) hold only weights, levels and limits: their gains are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
+<p>Variants <b>from the plant</b> (LQR, PI from the plant, swing-up with an LQR catch, the planned swing-up) hold only weights, levels and limits: their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
 <h3>System library</h3>
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code> and <code>designs()</code> (what the designed controllers computed).</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>designs()</code> (what the designed controllers computed) and <code>whenDesigned()</code> (resolves once no plan is being made, with the same list).</p>
 <p><button class="key primary" id="help-close">Close</button></p>`;
 
 const SHELL = `<div id="lt-shell" class="app">

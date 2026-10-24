@@ -314,7 +314,7 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Triple pendulum',
-    notes: 'Three rods hang below a cart. When the system loads, the page plans a swing-up from the cart and rods themselves (this takes a few seconds): a force that brings all three up in 2.4 s, followed with time-varying LQR, then LQR holds them. At 3.5 s the cart is pushed (d). Flip to "LQR only" to see that a controller for the top alone cannot get there.',
+    notes: 'Three rods hang below a cart. When the system loads, the page plans a swing-up from the cart and rods themselves; until the plan is ready (a few seconds, its progress beside the title) the rods hang. The plan is a force that brings all three up in 2.4 s, followed with time-varying LQR, then LQR holds them. At 3.5 s the cart is pushed (d). Flip to "LQR only" to see that a controller for the top alone cannot get there.',
     signals: {
       r: { period: PERIOD, components: [] },
       d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },

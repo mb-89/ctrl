@@ -8,7 +8,9 @@
 // its design computed from the plant shows read-only in the Computed box
 // beside (or, when narrow, below) its parameters. renderComputed() patches
 // that box, the variant glyphs and nothing else, so a field being typed in
-// keeps its focus when a design settles.
+// keeps its focus when a design settles; renderProgress() only the progress
+// of a plan being made (its bar, its line, the glyph), so its Cancel button
+// stays where it is.
 
 import { CONTROLLERS, normalizeVariant } from '../core/controllers.js';
 import { OBSERVERS } from '../core/observers.js';
@@ -31,7 +33,8 @@ const ABOUT = {
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
 };
 const LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
-const STATUS_WORD = { ok: 'ok', warn: 'warning', error: 'error', pending: 'pending', stale: 'previous values', cancelled: 'cancelled' };
+const STATUS_WORD = { ok: 'ok', warn: 'warning', error: 'error', pending: 'planning', stale: 're-planning', cancelled: 'cancelled' };
+const WAITING = ['pending', 'stale'];
 
 export function createControllerTab(host, app) {
   let target = null;   // path of subsystem ids and the Controller block id
@@ -100,8 +103,8 @@ export function createControllerTab(host, app) {
     return true;
   }
 
-  function field(key, label, value, hint, kind = 'number', title = '') {
-    return `<label class="pf${kind === 'vector' ? ' wide' : ''}" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
+  function field(key, label, value, hint, kind = 'number', title = '', nullable = false) {
+    return `<label class="pf${kind === 'vector' ? ' wide' : ''}" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" ${nullable ? 'data-null="1"' : ''} value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
   }
   const show = (v) => (Array.isArray(v) ? v.map((x) => num(x, 5)).join(', ') : Number.isFinite(v) ? num(v, 6) : '');
   // A parameter's hint: its unit, and for a vector what its entries stand
@@ -109,7 +112,7 @@ export function createControllerTab(host, app) {
   function hintOf(p, names) {
     const meas = names.slice(1);
     const per = p.per === 'measurement' ? `for ${meas.join(', ')}` : p.per === 'level' ? `levels of ${meas[0] ?? 'y1'}` : '';
-    return [p.kind === 'vector' ? 'comma-separated' : '', per, p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · ');
+    return [p.kind === 'vector' ? 'comma-separated' : '', per, p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : '', p.nullable ? p.empty ?? 'empty: from the plant' : ''].filter(Boolean).join(' · ');
   }
 
   function render() {
@@ -139,7 +142,7 @@ export function createControllerTab(host, app) {
     const v = b.variants[b.variant];
     const def = lib[v.type];
     $('#ct-ptitle').textContent = `${v.name} · ${def.summary}`;
-    const one = (p) => p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), hintOf(p, names), p.kind ?? 'number', p.help ?? '');
+    const one = (p) => p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), hintOf(p, names), p.kind ?? 'number', p.help ?? '', !!p.nullable);
     // Inputs that start a long computation (a plan) sit in a fold, so they
     // are changed on purpose, not nudged by the way.
     const light = def.params.filter((p) => !p.heavy), heavy = def.params.filter((p) => p.heavy);
@@ -162,21 +165,7 @@ export function createControllerTab(host, app) {
     const c = current();
     if (!c || $('.ctl').hidden) return;
     const b = c.block, lib = LIBS[b.type], st = statusOf(c);
-    host.querySelectorAll('#ct-vars [data-v]').forEach((row) => {
-      const i = Number(row.dataset.v), v = b.variants[i], def = lib[v.type];
-      const g = row.querySelector('.vtype');
-      let text = def.label, cls = '';
-      if (def.designed) {
-        const s = i === b.variant ? st : null;
-        if (s?.status === 'error') { text = '! no design'; cls = 'bad'; }
-        else if (s?.status === 'warn') { text = '! computed'; cls = 'warn'; }
-        else if (s?.status === 'pending' || s?.status === 'stale') { text = `⟳ ${Math.round(100 * (s.progress?.fraction ?? 0))} %`; }
-        else text = 'computed';
-      }
-      g.textContent = text;
-      g.className = `vtype ${cls}`;
-      row.title = def.designed ? `${def.label}: computed from the plant${i === b.variant && st?.error ? `. ${st.error.message}` : ''}` : def.label;
-    });
+    renderGlyphs(c, st);
     const box = $('#ct-computed');
     const v = b.variants[b.variant], def = lib[v.type];
     box.hidden = !def.designed;
@@ -186,16 +175,69 @@ export function createControllerTab(host, app) {
       box.innerHTML = `<div class="chead"><h4 class="glabel">Computed</h4></div><p class="cmsg">Not computed: ${app.systemError ? 'the plant does not run (see the Plant tab)' : 'the plant has not run yet'}.</p>`;
       return;
     }
-    const canCopy = st.values && def.manual;
-    const time = st.cached ? 'cached' : st.ms >= 1000 ? `${(st.ms / 1000).toFixed(1)} s` : `${st.ms < 10 ? st.ms.toFixed(1) : Math.round(st.ms)} ms`;
+    const waiting = WAITING.includes(st.status);
+    const canCopy = st.values && def.manual && !waiting && st.status !== 'cancelled';
+    const time = waiting ? percent(st) : st.status === 'cancelled' ? '' : st.cached ? 'cached' : st.ms >= 1000 ? `${(st.ms / 1000).toFixed(1)} s` : `${st.ms < 10 ? st.ms.toFixed(1) : Math.round(st.ms)} ms`;
     let body = `<p class="cline"><b>${esc(def.label)}</b>${st.at ? ` at ${esc(st.at)}` : ''}</p>`;
     if (st.seen) body += `<p class="cline"><span class="ck">plant seen</span> ${esc(st.seen)}</p>`;
     if (st.error) body += `<p class="cerr">${esc(st.error.message)}</p>${st.error.hint ? `<p class="cmsg">${esc(st.error.hint)}</p>` : ''}<p class="cmsg">Until then the block puts out ${off}.</p>`;
+    // A plan being made in the background: its progress, and what runs meanwhile.
+    // Its Cancel (or, once cancelled, Plan) sits right under it, above the rows.
+    if (waiting) {
+      body += `<div class="cprog" data-key="${esc(st.key)}"><div class="cbar" role="progressbar" aria-label="Planning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(100 * (st.progress?.fraction ?? 0))}"><span style="width:${(100 * (st.progress?.fraction ?? 0)).toFixed(1)}%"></span></div>`
+        + `<p class="cmsg cprogline">${esc(progressLine(st.progress))}</p></div>`
+        + `<p class="cmsg">${st.status === 'stale' ? 'Meanwhile the block runs the previous plan; the display takes the new one from its start when it is ready.' : `Until it is ready the block puts out ${off}; the display then takes the new run from its start.`}</p>`
+        + '<div class="pbtns"><button class="key small" id="ct-cancel" title="Stop planning; the block keeps what it runs now">Cancel</button></div>';
+    }
+    if (st.status === 'cancelled') {
+      body += `<p class="cmsg">Planning was cancelled. ${st.values ? 'The block runs the previous plan' : `The block puts out ${off}`} until you press Plan or change its inputs.</p>`
+        + '<div class="pbtns"><button class="key small primary" id="ct-plan" title="Plan again with these inputs">Plan</button></div>';
+    }
+    if ((st.status === 'stale' || st.status === 'cancelled') && st.rows.length) body += '<p class="cmsg csub">The previous plan:</p>';
     body += st.rows.map(rowHtml).join('');
     if (st.warnings.length) body += `<ul class="cwarn">${st.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>`;
-    box.innerHTML = `<div class="chead"><h4 class="glabel">Computed</h4><span class="cst cst-${esc(st.status)}">${esc(STATUS_WORD[st.status] ?? st.status)}</span><span class="cmeta" title="the design's key: the same inputs give the same numbers">${time} · #${esc(st.key.slice(0, 6))}</span></div>${body}`
-      + (canCopy ? `<div class="pbtns"><button class="key small" id="ct-copy" title="Add a hand variant with these numbers after this one, and run it">Copy as numbers</button></div>` : '');
+    box.innerHTML = `<div class="chead"><h4 class="glabel">Computed</h4><span class="cst cst-${esc(st.status)}">${esc(STATUS_WORD[st.status] ?? st.status)}</span><span class="cmeta" title="the design's key: the same inputs give the same numbers">${time ? `${time} · ` : ''}#${esc(st.key.slice(0, 6))}</span></div>${body}`
+      + (canCopy ? '<div class="pbtns"><button class="key small" id="ct-copy" title="Add a hand variant with these numbers after this one, and run it">Copy as numbers</button></div>' : '');
     $('#ct-copy')?.addEventListener('click', () => copyAsNumbers(c, st));
+    $('#ct-cancel')?.addEventListener('click', () => app.cancelDesign(st.key));
+    $('#ct-plan')?.addEventListener('click', () => app.retryDesign(st.key));
+  }
+
+  // The variant glyphs: "computed", or how its design stands when it runs.
+  function renderGlyphs(c, st) {
+    const b = c.block, lib = LIBS[b.type];
+    host.querySelectorAll('#ct-vars [data-v]').forEach((row) => {
+      const i = Number(row.dataset.v), v = b.variants[i], def = lib[v.type];
+      const g = row.querySelector('.vtype');
+      let text = def.label, cls = '';
+      if (def.designed) {
+        const s = i === b.variant ? st : null;
+        if (s?.status === 'error') { text = '! no design'; cls = 'bad'; }
+        else if (s?.status === 'warn') { text = '! computed'; cls = 'warn'; }
+        else if (s && WAITING.includes(s.status)) text = `⟳ ${percent(s)}`;
+        else if (s?.status === 'cancelled') { text = 'cancelled'; cls = 'warn'; }
+        else text = 'computed';
+      }
+      g.textContent = text;
+      g.className = `vtype ${cls}`;
+      row.title = def.designed ? `${def.label}: computed from the plant${i === b.variant && st?.error ? `. ${st.error.message}` : ''}` : def.label;
+    });
+  }
+
+  // A plan's progress, at most 10 times a second: the bar, its line, the
+  // glyph and the percentage; the rest of the box (and its Cancel button)
+  // stays. Anything else changed: the whole box.
+  function renderProgress() {
+    const c = current();
+    if (!c || $('.ctl').hidden) return;
+    const st = statusOf(c), box = $('#ct-computed'), prog = box.querySelector('.cprog');
+    if (!st || !WAITING.includes(st.status) || !prog || prog.dataset.key !== st.key) { renderComputed(); return; }
+    const f = 100 * (st.progress?.fraction ?? 0);
+    prog.querySelector('.cbar span').style.width = `${f.toFixed(1)}%`;
+    prog.querySelector('.cbar').setAttribute('aria-valuenow', String(Math.round(f)));
+    prog.querySelector('.cprogline').textContent = progressLine(st.progress);
+    box.querySelector('.cmeta').textContent = `${percent(st)} · #${st.key.slice(0, 6)}`;
+    renderGlyphs(c, st);
   }
 
   // Copy as numbers: the design's numbers as a hand variant after this one,
@@ -218,7 +260,8 @@ export function createControllerTab(host, app) {
     // committing them would change what the variant holds.
     if (inp.value === inp.defaultValue) return;
     let value;
-    if (inp.dataset.kind === 'vector') {
+    if (raw === '' && inp.dataset.null) value = null;
+    else if (inp.dataset.kind === 'vector') {
       value = raw.split(/[\s,;]+/).filter(Boolean).map(parseSI);
       if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas.'); render(); return; }
     } else if (raw === '' && /^p:umin|p:umax$/.test(k)) value = null;
@@ -229,7 +272,7 @@ export function createControllerTab(host, app) {
     // An unchanged field is left alone: re-rendering on every blur would
     // swallow the click that moved the focus away.
     const c = current(), old = k.startsWith('b:') ? c.block.params[k.slice(2)] : c.block.variants[c.block.variant].params[k.slice(2)];
-    const same = Array.isArray(value) ? Array.isArray(old) && value.length === old.length && value.every((x, i) => x === old[i]) : value === null ? !Number.isFinite(old) : value === old;
+    const same = Array.isArray(value) ? Array.isArray(old) && value.length === old.length && value.every((x, i) => x === old[i]) : value === null ? old === null || (typeof old === 'number' && !Number.isFinite(old)) : value === old;
     if (same) return;
     edit((blk, lv) => {
       if (k.startsWith('b:')) {
@@ -318,9 +361,20 @@ export function createControllerTab(host, app) {
     render() { if (!host.hidden) render(); },
     // Only the Computed box and the variant glyphs, for designs that settle on their own.
     renderComputed() { if (!host.hidden) renderComputed(); },
+    // Only a plan's progress in the box, its glyph and percentage.
+    renderProgress() { if (!host.hidden) renderProgress(); },
     shown: render,
     open(path) { target = path; },
   };
+}
+
+// How far a plan is: '43 %'.
+const percent = (st) => `${Math.round(100 * (st.progress?.fraction ?? 0))} %`;
+// A plan's progress in words: the stage, iteration, cost and defect (planner.js).
+function progressLine(p) {
+  if (!p) return 'starting';
+  const e = (x) => (Number.isFinite(x) ? x.toExponential(1) : '–');
+  return `stage ${p.stage} of ${p.stages} · iteration ${p.iteration} · cost ${e(p.cost)} · defect ${e(p.defect)}${p.start > 1 ? ` · start ${p.start} of ${p.starts}` : ''}`;
 }
 
 // One row of a design's status: labelled values (K for x, θ, …), a number
