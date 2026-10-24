@@ -41,16 +41,22 @@ function startApp() {
   const app = { project: null, channel: 0, tab: 'input', signal: 'r' };
 
   // History: snapshots of the project, taken before each edit.
+  // An edit that changed nothing (a lit key pressed again) leaves no step,
+  // and the redo it cleared comes back.
   const undoStack = [], redoStack = [];
-  let editOpen = false;
+  let editOpen = false, redoBefore = [];
   app.beginEdit = () => {
     if (editOpen) return;
     undoStack.push(JSON.stringify(app.project));
     if (undoStack.length > 300) undoStack.shift();
-    redoStack.length = 0;
+    redoBefore = redoStack.splice(0);
     editOpen = true;
   };
-  app.endEdit = () => { editOpen = false; renderChrome(); };
+  app.endEdit = () => {
+    if (editOpen && undoStack.at(-1) === JSON.stringify(app.project)) { undoStack.pop(); redoStack.push(...redoBefore); }
+    editOpen = false; redoBefore = [];
+    renderChrome();
+  };
   const restore = (s) => { app.project = JSON.parse(s); changed(); };
   app.undo = () => { if (!undoStack.length) return; redoStack.push(JSON.stringify(app.project)); restore(undoStack.pop()); toast('Undone'); };
   app.redo = () => { if (!redoStack.length) return; undoStack.push(JSON.stringify(app.project)); restore(redoStack.pop()); toast('Redone'); };

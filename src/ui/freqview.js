@@ -16,7 +16,7 @@
 // A channel's display filter changes what the scope shows and analyses, in
 // every mode; the system is not changed. See design/output/instrument.md.
 
-import { amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, AUTO_LEVELS, spectrogramWindow, levelHistogram, autoLevels, levelRange, noiseLevel, aboveNoise } from '../core/spectrum.js';
+import { amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, AUTO_LEVELS, spectrogramWindow, levelHistogram, autoLevels, levelRange, spectrogramNoise, aboveNoise } from '../core/spectrum.js';
 import { levelsOf } from '../core/project.js';
 import { siUnit, num } from './units.js';
 
@@ -106,7 +106,9 @@ function freqLabels(g, P, f0, f1) {
 function drawFft(v) {
   const { g, P, data, scope, k, axis, line, colors, hover } = v;
   v.drawGrid(g);
-  const [f0, f1] = freqRange(scope, data);
+  // A Live sweep just begun has no sampling rate yet: the last one's axis.
+  const fd = data.t.length > 1 ? data : v.past?.find((d) => d.t.length > 1) ?? data;
+  const [f0, f1] = freqRange(scope, fd);
   const fx = (f) => P.l + ((f - f0) / (f1 - f0)) * P.w;
   const db = scope.view?.db !== false;
   const shown = [0, 1, 2, 3].filter((i) => scope.channels[i].on && channelSignal(data, scope.channels[i]));
@@ -124,7 +126,7 @@ function drawFft(v) {
 
   g.save();
   g.beginPath(); g.rect(P.l, P.t, P.w, P.h); g.clip();
-  const fn = nyquist(data);
+  const fn = nyquist(fd);
   if (fn >= f0 && fn <= f1) {
     const x = Math.round(fx(fn)) + 0.5;
     g.strokeStyle = 'rgba(235, 240, 245, 0.35)'; g.setLineDash([3, 4]);
@@ -194,19 +196,22 @@ function drawFft(v) {
 }
 
 // The spectrogram of a channel and its amplitudes in dB, kept per run.
+const SG_OPTS = { overlap: 0.875, detrend: 'linear' };   // linear: a ramp would flood the lowest bins
 function spectrogramOf(data, ch, size) {
   const key = `sg|${ch.source}|${JSON.stringify(ch.filter ?? null)}|${size}`;
   const s = cached(data, key, () => {
-    const sg = spectrogram(channelSignal(data, ch), dtOf(data), { size, overlap: 0.875, detrend: 'linear' });   // a ramp would flood the lowest bins
+    const sg = spectrogram(channelSignal(data, ch), dtOf(data), { ...SG_OPTS, size });
     return sg.frames ? { sg, db: dbScale(sg.amp, DB_FLOOR) } : null;
   });
   return { key, s };
 }
-// The noise level of each frequency row (core/spectrum.js noiseLevel), from
-// the frames on the screen; every row counts, so zooming the frequency does
-// not change it. Null without a value that is not zero.
-function noiseOf(data, key, s, win) {
-  return cached(data, `${key}|noise|${win[0]}|${win[1]}`, () => noiseLevel(s.sg, s.db, { t0: win[0], t1: win[1] }));
+// The noise level of each frequency row (core/spectrum.js spectrogramNoise:
+// the lower of the estimates on this spectrogram and on a low-leakage one
+// with the same frames and rows), from the frames on the screen; every row
+// counts, so zooming the frequency does not change it. Null when the signal
+// has no noise (its bins mostly exact zeros).
+function noiseOf(data, ch, key, s, size, win) {
+  return cached(data, `${key}|noise|${win[0]}|${win[1]}`, () => spectrogramNoise(channelSignal(data, ch), dtOf(data), { ...SG_OPTS, size }, { t0: win[0], t1: win[1], shown: s }));
 }
 // A noise estimate made on one spectrogram's rows (from, in Live the last
 // whole sweep's) on another's (sg), row by row at the nearest frequency: a
@@ -290,16 +295,18 @@ function drawSpectrogram(v) {
   // Live, of the last whole sweep, so the colours hold still as the levels
   // do), and the values as dB above it.
   const win = [v.xt(P.l) - tr, v.xt(P.r) - tr, f0, f1];
-  const above = !!scope.view?.aboveNoise, noise = above && r.s ? noiseOf(ref, r.key, r.s, win) : null;
-  // Above the noise needs an estimate (none when every bin is zero).
-  const ok = !above || !!noise, nz = noise && s ? onRows(noise, r.s.sg, s.sg) : null;
+  // Without noise on the screen (a noise-free signal, whose bins are mostly
+  // exact zeros) there is nothing to count from: the colours stay absolute,
+  // and the status line and the switch say so.
+  const above = !!scope.view?.aboveNoise, noise = above && r.s ? noiseOf(ref, ch, r.key, r.s, size, win) : null;
+  const nz = noise && s ? onRows(noise, r.s.sg, s.sg) : null;
   const values = s && (nz ? aboveNoiseOf(data, key, s, nz) : s.db);
   // The levels: those set for this signal in this unit (dB of one unit are
   // not dB of another, nor dB above the noise), or automatic from the bins
   // on the screen.
-  const shown = ok && r.s && shownOf(ref, r.key, r.s, win, noise);
-  const fixed = levelsOf(scope.view, ch.source, above);
-  const levels = ok ? fixed ?? (shown?.auto ? [shown.auto.floor, shown.auto.ceiling] : null) : null;
+  const shown = r.s && shownOf(ref, r.key, r.s, win, noise);
+  const fixed = levelsOf(scope.view, ch.source, !!noise);
+  const levels = fixed ?? (shown?.auto ? [shown.auto.floor, shown.auto.ceiling] : null);
   freqLabelsTime(v);
   axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, siUnit(Number((f1 - ((f1 - f0) * j) / DIVY).toPrecision(4)), 'Hz', 3)]), 'left', 'rgba(200, 210, 218, 0.75)');
   axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, num((DIVY / 2 - j) * ch.scale - ch.offset, 3)]), 'right', colors[i]);
@@ -349,7 +356,7 @@ function drawSpectrogram(v) {
       const fr = Math.round((t - t0 - sg.t[0]) / hop), b = Math.round(f / (sg.f[1] - sg.f[0]));
       if (fr >= 0 && fr < sg.frames && b >= 0 && b < sg.bins) {
         rows.push([`A  ${num(sg.amp[fr * sg.bins + b])} ${unit}  ${fmtDb(s.db[fr * sg.bins + b], 1)} dB`, colors[i]]);
-        if (nz && s.db[fr * sg.bins + b] > DB_FLOOR) rows.push([`   ${fmtDb(values[fr * sg.bins + b], 1, true)} dB above the noise (${fmtDb(nz[b], 1)} dB)`, colors[i]]);
+        if (nz && s.db[fr * sg.bins + b] > DB_FLOOR) rows.push([`   ${relText(values[fr * sg.bins + b])} (the noise: ${fmtDb(nz[b], 1)} dB)`, colors[i]]);
       }
     }
     readout(g, P, hover.x, rows);
@@ -357,13 +364,15 @@ function drawSpectrogram(v) {
   g.restore();
   if (!shown || !levels) return null;
   const [lo, hi] = v.levelScale ?? levelRange(shown.sorted, levels);
-  const st = { channel: i, source: ch.source, floor: levels[0], ceiling: levels[1], auto: !fixed, rule: shown.auto?.rule, lo, hi, sorted: shown.sorted, unit, median: shown.auto?.median, aboveNoise: !!noise };
+  const st = { channel: i, source: ch.source, floor: levels[0], ceiling: levels[1], auto: !fixed, rule: shown.auto?.rule, lo, hi, sorted: shown.sorted, unit, median: shown.auto?.median, aboveNoise: !!noise, switchOn: above, noNoise: above && !noise };
   drawStrip(v, st, shown);
   return st;
 }
 
 // −36, 20, −4.5: dB with a real minus sign; with sign, +20 for dB above the noise.
 const fmtDb = (d, digits = 0, sign = false) => `${d < 0 ? '−' : sign && d > 0 ? '+' : ''}${Math.abs(d).toFixed(Math.abs(d) < 10 && digits === 0 ? 1 : digits).replace(/\.0$/, '')}`;
+// A value in dB above the noise, in words: 3 dB below it rather than −3 dB above.
+const relText = (d) => (Math.abs(d) < 0.05 ? 'at the noise' : d < 0 ? `${fmtDb(-d, 1)} dB below the noise` : `${fmtDb(d, 1, true)} dB above the noise`);
 // Which rule of the automatic levels set the floor (core/spectrum.js autoLevels).
 function autoText(st) {
   if (st.rule === 'depth') return `auto: ${AUTO_LEVELS.depth} dB below the ceiling (at most)`;
@@ -459,16 +468,24 @@ function drawStrip(v, st, shown) {
   const sw = { l: S.l, r: S.r, t: S.st, b: S.t - 4 };
   st.switchBox = sw;
   const swHover = hover && hover.x >= sw.l - 2 && hover.x <= sw.r + 2 && hover.y >= sw.t - 2 && hover.y <= sw.b + 2;
-  g.fillStyle = sign ? '#2a3540' : swHover ? 'rgba(235, 240, 245, 0.08)' : 'rgba(10, 13, 16, 0.6)';
+  const on = st.switchOn;
+  g.fillStyle = on ? '#2a3540' : swHover ? 'rgba(235, 240, 245, 0.08)' : 'rgba(10, 13, 16, 0.6)';
   g.fillRect(sw.l, sw.t, sw.r - sw.l, sw.b - sw.t);
-  g.strokeStyle = sign ? 'rgba(242, 199, 24, 0.7)' : 'rgba(160, 175, 190, 0.55)'; g.lineWidth = 1;
+  g.strokeStyle = on ? 'rgba(242, 199, 24, 0.7)' : 'rgba(160, 175, 190, 0.55)'; g.lineWidth = 1;
   g.strokeRect(sw.l + 0.5, sw.t + 0.5, sw.r - sw.l - 1, sw.b - sw.t - 1);
   g.font = `600 9.5px ${MONO}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillStyle = sign ? '#f2c718' : 'rgba(200, 210, 218, 0.85)';
-  g.fillText(sign ? 'noise' : 'abs', (sw.l + sw.r) / 2, (sw.t + sw.b) / 2 + 0.5);
+  g.fillStyle = on ? '#f2c718' : 'rgba(200, 210, 218, 0.85)';
+  g.fillText(on ? 'noise' : 'abs', (sw.l + sw.r) / 2, (sw.t + sw.b) / 2 + 0.5);
   const grey = 'rgba(235, 240, 245, 0.9)', dim = 'rgba(200, 210, 218, 0.7)';
+  // Its readout goes beside the strip, outside the screen, as the strip's does.
   if (swHover) {
-    readout(g, v.P, S.l - 4, sign ? [
+    st.tip = { y: (sw.t + sw.b) / 2, rows: st.noNoise ? [
+      ['Colour: dB above the noise, but', grey],
+      [`${st.source} has no noise on the screen`, grey],
+      ['(its bins are mostly exact zeros):', grey],
+      [`absolute shown, dB of ${st.unit}`, grey],
+      ['click: absolute', dim],
+    ] : sign ? [
       ['Colour: dB above the noise', grey],
       ['at each frequency (0 dB: the noise there)', grey],
       ['click: absolute, dB of ' + st.unit, dim],
@@ -476,7 +493,7 @@ function drawStrip(v, st, shown) {
       [`Colour: absolute, dB of ${st.unit}`, grey],
       [`(0 dB: 1 ${st.unit})`, grey],
       ['click: dB above the noise at each frequency', dim],
-    ], S.st + 2);
+    ] };
     return;
   }
   // Hovering the strip: the level under the pointer and how to use it.
@@ -488,7 +505,7 @@ function drawStrip(v, st, shown) {
     // The readout goes to the right of the strip, outside the screen (the
     // display places it), so the plot stays in view while the levels move.
     st.tip = { y: hover.y, rows: [
-      [sign ? `${fmtDb(d, 1, true)} dB above the noise` : `${fmtDb(d, 1)} dB = ${num(10 ** (d / 20))} ${st.unit}`, grey],
+      [sign ? relText(d) : `${fmtDb(d, 1)} dB = ${num(10 ** (d / 20))} ${st.unit}`, grey],
       [`${Math.round(100 * shareAbove(st.sorted, d))} % of the shown bins above`, grey],
       [`floor ${fmtDb(floor, 1, sign)} dB · ceiling ${fmtDb(ceiling, 1, sign)} dB`, grey],
       [st.auto ? autoText(st) : `set by hand for ${st.source} · double-click: auto`, dim],

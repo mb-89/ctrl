@@ -570,7 +570,14 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
   .display { grid-template-rows: 22px minmax(0, 1fr) 30px auto; height: 420px; }
   .recbar { grid-row: 4; grid-column: 1 / -1; flex-wrap: wrap; }
 }
-@media (max-width: 560px) { .display { height: 340px; } }
+/* On a phone the status line takes two lines (it would be cut off at the
+   levels), and the display grows by the second, so the screen keeps its size;
+   the absolute ceiling in the unit is left to the strip's hover there. */
+@media (max-width: 560px) {
+  .display { height: 356px; grid-template-rows: 38px minmax(0, 1fr) 30px auto; }
+  .status { flex-wrap: wrap; align-content: flex-start; row-gap: 2px; }
+  .status .wide { display: none; }
+}
 
 /* The spectrogram levels strip's readout, outside the screen to its right. */
 .striptip { position: fixed; z-index: 30; pointer-events: none; background: rgba(10, 13, 16, 0.92); border: 1px solid rgba(160, 175, 190, 0.4); border-radius: 4px; padding: 5px 8px; font: 11.5px/16px var(--mono); white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
