@@ -404,3 +404,86 @@ export function dbScale(amp, floorDb = -100) {
   }
   return out;
 }
+
+// ---- Levels of the spectrogram's heat map, after pyqtgraph's
+// HistogramLUTItem: a histogram of the amplitudes shown, in dB, and two
+// levels. Below the floor a bin is black, above the ceiling it has the
+// brightest colour, in between the colour follows the dB value linearly.
+// Levels are dB of the amplitude in the channel's unit (0 dB = 1 unit), as
+// the FFT's axis.
+
+// What an amplitude of zero reads (20·log10(1e-12)).
+export const DB_FLOOR = -240;
+
+// The values of the bins the screen shows, in a new Float32Array: frames
+// whose centre lies in [t0, t1] (± half a hop, as each is drawn that wide),
+// frequency rows whose cell overlaps [f0, f1]. values is laid out like
+// sg.amp (frame-major); t0 and t1 are seconds from the first sample.
+export function spectrogramWindow(sg, values, { t0 = -Infinity, t1 = Infinity, f0 = 0, f1 = Infinity } = {}) {
+  if (!sg.frames) return new Float32Array(0);
+  const df = sg.f.length > 1 ? sg.f[1] - sg.f[0] : 1, hop = sg.t.length > 1 ? sg.t[1] - sg.t[0] : 0;
+  const b0 = Math.max(0, Math.ceil(f0 / df - 0.5)), b1 = Math.min(sg.bins - 1, Math.floor(f1 / df + 0.5));
+  const frames = [];
+  for (let i = 0; i < sg.frames; i++) if (sg.t[i] + hop / 2 >= t0 && sg.t[i] - hop / 2 <= t1) frames.push(i);
+  if (b1 < b0 || !frames.length) return new Float32Array(0);
+  const out = new Float32Array(frames.length * (b1 - b0 + 1));
+  let q = 0;
+  for (const i of frames) for (let b = b0; b <= b1; b++) out[q++] = values[i * sg.bins + b];
+  return out;
+}
+
+// Counts of values in `bins` equal bins over [lo, hi] (the last bin closed);
+// values outside go to below and above, NaN is left out.
+export function levelHistogram(values, lo, hi, bins) {
+  const n = Math.max(1, Math.floor(bins)), width = (hi - lo) / n;
+  if (!(width > 0)) throw new Error(`levelHistogram: need lo < hi, got ${lo}, ${hi}`);
+  const counts = new Uint32Array(n);
+  let below = 0, above = 0, total = 0;
+  for (let k = 0; k < values.length; k++) {
+    const v = values[k];
+    if (Number.isNaN(v)) continue;
+    total++;
+    if (v < lo) below++;
+    else if (v > hi) above++;
+    else counts[Math.min(n - 1, Math.floor((v - lo) / width))]++;
+  }
+  return { lo, hi, width, counts, below, above, total };
+}
+
+// The q-quantile (0..1) of an ascending array, interpolated between ranks.
+export function quantileSorted(sorted, q) {
+  const n = sorted.length;
+  if (!n) return NaN;
+  const r = Math.min(1, Math.max(0, q)) * (n - 1), i = Math.floor(r), f = r - i;
+  return i + 1 < n ? sorted[i] + f * (sorted[i + 1] - sorted[i]) : sorted[i];
+}
+
+// Automatic levels. Most bins of a spectrogram are noise, so their median is
+// the noise's level: the floor sits `margin` dB above it, the ceiling at the
+// largest value. The floor stays within `depth` dB of the ceiling (the fixed
+// range the scope had before) and at least `span` dB below it, so a picture of
+// noise alone shows its noise rather than a few specks.
+// For white noise a bin's amplitude is Rayleigh distributed: its 95th
+// percentile lies 6.3 dB above its median, its 99th 8.2 dB, its 99.9th 10 dB.
+export const AUTO_LEVELS = { margin: 10, depth: 80, span: 20 };
+export function autoLevels(values, { margin = AUTO_LEVELS.margin, depth = AUTO_LEVELS.depth, span = AUTO_LEVELS.span } = {}) {
+  const sorted = Float32Array.from(values).filter((v) => !Number.isNaN(v)).sort();
+  if (!sorted.length) return null;
+  const ceiling = sorted[sorted.length - 1], median = quantileSorted(sorted, 0.5);
+  const floor = Math.min(ceiling - span, Math.max(ceiling - depth, median + margin));
+  return { floor, ceiling, median, sorted };
+}
+
+// The dB range of the levels strip: the shown values from their 1st
+// percentile to their largest, with room around, in whole 10 dB, at most
+// 200 dB deep; the levels always inside.
+export function levelRange(sorted, levels) {
+  let lo = -100, hi = 0;
+  if (sorted.length) {
+    hi = 10 * Math.ceil((sorted[sorted.length - 1] + 5) / 10);
+    lo = Math.max(hi - 200, 10 * Math.floor((quantileSorted(sorted, 0.01) - 5) / 10));
+  }
+  if (levels) { lo = Math.min(lo, 10 * Math.floor(levels[0] / 10)); hi = Math.max(hi, 10 * Math.ceil(levels[1] / 10)); }
+  if (hi - lo < 20) lo = hi - 20;
+  return [lo, hi];
+}

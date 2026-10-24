@@ -205,7 +205,8 @@ function normalizeFilter(f, where) {
 // How the screen shows the channels: in time (the default), as amplitude
 // spectra (FFT), as one channel's spectrogram, or XY (channel 1 across, the
 // others against it; delta: they draw channel 1 minus themselves); and which
-// channel, if any, has its values on a second axis at the right.
+// channel, if any, has its values on a second axis at the right; the
+// spectrogram's levels (absent: automatic).
 export const VIEW_MODES = ['time', 'fft', 'spectrogram', 'xy'];
 function normalizeScopeView(v) {
   if (!v || typeof v !== 'object') return null;
@@ -217,7 +218,19 @@ function normalizeScopeView(v) {
   if (v.db === false) out.db = false;
   if (v.delta === true) out.delta = true;
   if ([64, 128, 256, 512, 1024].includes(Number(v.size))) out.size = Number(v.size);
+  const levels = normalizeLevels(v.levels);
+  if (levels) out.levels = levels;
   return Object.keys(out).length ? out : null;
+}
+
+// The spectrogram's levels: [floor, ceiling] in dB of the channel's unit,
+// rounded to 0.1 dB, floor first (a reversed pair is swapped), at least 1 dB
+// apart and within ±300 dB. Anything else means automatic levels (absent).
+function normalizeLevels(l) {
+  if (!Array.isArray(l) || l.length !== 2 || l.some((x) => typeof x !== 'number')) return null;
+  const [a, b] = l.map((x) => Math.round(x * 10) / 10).sort((x, y) => x - y);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b - a < 1 || a < -300 || b > 300) return null;
+  return [a, b];
 }
 
 // Every name a scope channel can show: the signals (one per Source) and the

@@ -7,6 +7,8 @@
 //   drag                  pan (time sideways; values up and down)
 //   click a trace/marker  select that line: drag and wheel then act on it alone
 //   Shift + drag          zoom to the marked box (or band)
+//   levels strip          (spectrogram) drag a handle or the band; wheel:
+//                         floor, Shift + wheel: ceiling; double-click: auto
 // Every gesture sets the same scope settings as the knobs.
 // See design/output/instrument.md.
 
@@ -19,8 +21,12 @@ export const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
 const PAD_RIGHT_AXIS = 50;   // room for a second value axis at the right
+const STRIP_W = 60;          // the spectrogram's levels strip, right of that axis
+const LEVEL_STEP = 2;        // dB per wheel step over the strip
 const BG = '#0a0d10';
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+const dbText = (d) => `${d < 0 ? '−' : ''}${Math.abs(Math.round(d))}`;
+const r1 = (d) => Math.round(d * 10) / 10;
 
 export function createDisplay(root, handlers) {
   const status = root.querySelector('.status');
@@ -28,7 +34,7 @@ export function createDisplay(root, handlers) {
   const badges = root.querySelector('.badges');
   const canvas = document.createElement('canvas');
   canvas.setAttribute('role', 'img');
-  canvas.setAttribute('aria-label', 'Oscilloscope display. Wheel to zoom, drag to pan, click a trace to select it, Shift-drag to zoom to a box.');
+  canvas.setAttribute('aria-label', 'Oscilloscope display. Wheel to zoom, drag to pan, click a trace to select it, Shift-drag to zoom to a box. In Spectrogram mode the strip at the right sets the colour levels: drag its handles or the band between them, wheel for the floor, Shift+wheel for the ceiling, double-click for automatic levels.');
   screen.append(canvas);
   const ctx = canvas.getContext('2d');
 
@@ -41,6 +47,10 @@ export function createDisplay(root, handlers) {
   let past = [];
   const keepRun = () => { if (data) past = [data, ...past].slice(0, RUNS - 1); };
   const P = { l: 0, t: 0, r: 0, b: 0, w: 0, h: 0, dx: 0, dy: 0 };
+  // The spectrogram's levels strip (empty in the other modes), and what it
+  // showed last: levels, their dB scale (see freqview.js drawStrip).
+  const S = { l: 0, r: 0, t: 0, b: 0 };
+  let strip = null, levelScale = null;
 
   function resize() {
     const r = screen.getBoundingClientRect();
@@ -54,9 +64,11 @@ export function createDisplay(root, handlers) {
   const viewMode = () => scope?.view?.mode ?? 'time';
   const rightAxis = () => (viewMode() === 'time' ? rightSet() : null);
   function layout() {
-    const wide = scope && (viewMode() === 'spectrogram' || rightAxis() !== null);
-    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - (wide ? PAD_RIGHT_AXIS : PAD.r), b: H - PAD.b });
+    const spec = !!scope && viewMode() === 'spectrogram';
+    const wide = scope && (spec || rightAxis() !== null);
+    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - (wide ? PAD_RIGHT_AXIS : PAD.r) - (spec ? STRIP_W : 0), b: H - PAD.b });
     P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
+    Object.assign(S, spec ? { l: P.r + PAD_RIGHT_AXIS + 4, r: W - 6, t: P.t, b: P.b } : { l: 0, r: 0, t: 0, b: 0 });
   }
 
   // Coordinates
@@ -65,7 +77,8 @@ export function createDisplay(root, handlers) {
   const vy = (ch, v) => P.t + P.h / 2 - ((v + ch.offset) / ch.scale) * P.dy;
   const divsAt = (y) => (P.t + P.h / 2 - y) / P.dy;
   const win = () => [Math.max(0, scope.timebase.position), scope.timebase.position + DIVX * scope.timebase.scale];
-  const region = (x, y) => (x < P.l ? 'yaxis' : y > P.b ? 'xaxis' : 'plot');
+  const inStrip = (x, y) => S.r > S.l && x >= S.l - 6 && y >= S.t - 4 && y <= S.b + 4;
+  const region = (x, y) => (inStrip(x, y) ? 'strip' : x < P.l ? 'yaxis' : y > P.b ? 'xaxis' : 'plot');
   const visible = (i) => scope.channels[i].on && !!data?.signals[scope.channels[i].source];
   const sig = (d, i) => channelSignal(d, scope.channels[i]);
   // The left axis shows the selected line or channel, unless that one is on
@@ -170,17 +183,23 @@ export function createDisplay(root, handlers) {
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
     layout();
     if (viewMode() === 'xy') {
+      strip = null;
+      delete canvas.dataset.levels;
       drawXY({ g: ctx, P, data, past, scope, k: mode !== 'stop' ? indexAt(tScan) : data.t.length - 1, axis: axisChannel(), line, colors: CHANNEL_COLORS, drawGrid, unitLabel, vy, win, runs: RUNS });
       renderStatus();
       return;
     }
     if (viewMode() !== 'time') {
       const n = data.t.length - 1;
-      drawFrequency({ g: ctx, P, W, H, data, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
-        sweeping: mode !== 'stop', tScan, tx, xt, vy, colors: CHANNEL_COLORS, drawGrid, unitLabel });
+      strip = drawFrequency({ g: ctx, P, S, W, H, data, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
+        sweeping: mode !== 'stop', tScan, tx, xt, vy, colors: CHANNEL_COLORS, drawGrid, unitLabel, levelScale });
+      // For agents and tests: the levels as drawn (floor ceiling lo hi, dB) and whether automatic.
+      canvas.dataset.levels = strip ? `${[strip.floor, strip.ceiling, strip.lo, strip.hi].map((d) => d.toFixed(1)).join(' ')} ${strip.auto ? 'auto' : 'fixed'}` : '';
       renderStatus();
       return;
     }
+    strip = null;
+    delete canvas.dataset.levels;
     drawGrid(ctx);
     drawAxes(ctx);
     ctx.save();
@@ -303,6 +322,7 @@ export function createDisplay(root, handlers) {
     const vm = viewMode(), fr = vm === 'fft' || vm === 'spectrogram' ? freqRange(scope, data) : null;
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
       ${fr ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
+      ${vm === 'spectrogram' && strip ? `<span title="Spectrogram levels: below the floor black, above the ceiling the brightest colour; the ceiling also in the channel's unit">${dbText(strip.floor)} … ${dbText(strip.ceiling)} dB (${num(10 ** (strip.ceiling / 20))} ${unitLabel(scope.channels[strip.channel].source)})</span><span class="dim">${strip.auto ? 'auto' : 'levels set'}</span>` : ''}
       ${vm === 'xy' ? `<span class="st st-view">XY${scope.view?.delta ? ' · Δ X − Y' : ''}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
@@ -387,16 +407,47 @@ export function createDisplay(root, handlers) {
     ch.offset = Number((kx * ch.scale - vc).toPrecision(6));
   }
 
+  // The spectrogram's levels: [floor, ceiling] in dB, kept at least 1 dB
+  // apart; stored in the scope view, rounded to 0.1 dB.
+  function setLevels(f, c) {
+    const lv = [r1(f), r1(Math.max(c, f + 1))];
+    if (lv[1] - lv[0] < 1) lv[1] = r1(lv[0] + 1);
+    handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), levels: lv }; });
+  }
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const stripDb = (y, lo, hi) => lo + ((S.b - y) / (S.b - S.t)) * (hi - lo);
+  const stripY = (d) => S.b - ((d - strip.lo) / (strip.hi - strip.lo)) * (S.b - S.t);
+  // What a press on the strip takes: a handle (within 6 px), the band
+  // between them, or, above or below the band, the nearer handle, which
+  // then jumps to the pointer.
+  function stripPart(y) {
+    const yc = stripY(strip.ceiling), yf = stripY(strip.floor);
+    if (Math.abs(y - yc) <= 6 && Math.abs(y - yc) <= Math.abs(y - yf)) return ['ceiling', true];
+    if (Math.abs(y - yf) <= 6) return ['floor', true];
+    if (y > yc && y < yf) return ['both', true];
+    return [y < yc ? 'ceiling' : 'floor', false];
+  }
+
   let wheelAcc = 0, wheelTimer = null;
   canvas.addEventListener('wheel', (e) => {
     if (!scope || !data) return;
     e.preventDefault();
-    wheelAcc += e.deltaY * (e.deltaMode === 1 ? 20 : 1);
+    const { x, y } = pos(e);
+    const where = region(x, y);
+    // Shift turns the wheel sideways in some browsers: over the strip, either counts.
+    wheelAcc += (where === 'strip' && !e.deltaY ? e.deltaX : e.deltaY) * (e.deltaMode === 1 ? 20 : 1);
     const steps = Math.trunc(wheelAcc / 60);
     if (!steps) return;
     wheelAcc -= steps * 60;
-    const { x, y } = pos(e);
-    const where = region(x, y);
+    if (where === 'strip') {
+      // Wheel up raises the floor (Shift: the ceiling).
+      if (!strip) return;
+      const d = -steps * LEVEL_STEP, { floor: f, ceiling: c, lo, hi } = strip;
+      if (e.shiftKey) setLevels(f, clamp(c + d, f + 1, hi)); else setLevels(clamp(f + d, lo, c - 1), c);
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => handlers.endEdit(), 400);
+      return;
+    }
     if (viewMode() === 'fft' || (viewMode() === 'spectrogram' && where !== 'xaxis')) {
       // Frequency axis: around the cursor (x in FFT, y in the spectrogram).
       const [f0, f1] = freqRange(scope, data), fn = 0.5 / (data.t[1] - data.t[0]);
@@ -452,6 +503,14 @@ export function createDisplay(root, handlers) {
     if (e.button !== 0 || !scope || !data) return;
     const { x, y } = pos(e);
     canvas.setPointerCapture(e.pointerId);
+    if (region(x, y) === 'strip') {
+      if (!strip) return;
+      const [part, grab] = stripPart(y), at = stripDb(y, strip.lo, strip.hi);
+      // The scale stays as it is while dragging, so the handle stays under the pointer.
+      levelScale = [strip.lo, strip.hi];
+      gesture = { kind: 'levels', part, y, moved: false, lv: [strip.floor, strip.ceiling], at, off: grab && part !== 'both' ? at - (part === 'floor' ? strip.floor : strip.ceiling) : 0 };
+      return;
+    }
     if (e.shiftKey && region(x, y) === 'plot') { box = { x0: x, y0: y, x1: x, y1: y }; gesture = { kind: 'box' }; return; }
     const hit = hitLine(x, y);
     if (hit !== null) selectLine(hit);
@@ -462,6 +521,18 @@ export function createDisplay(root, handlers) {
     const p = pos(e);
     hover = p;
     if (gesture?.kind === 'box') { box.x1 = Math.max(P.l, Math.min(P.r, p.x)); box.y1 = Math.max(P.t, Math.min(P.b, p.y)); draw(); return; }
+    if (gesture?.kind === 'levels') {
+      if (!gesture.moved && Math.abs(p.y - gesture.y) < 2) return;
+      gesture.moved = true;
+      const [lo, hi] = levelScale, at = stripDb(p.y, lo, hi);
+      let [f, c] = gesture.lv;
+      if (gesture.part === 'both') { const d = clamp(at - gesture.at, lo - f, hi - c); f += d; c += d; }
+      else if (gesture.part === 'floor') f = clamp(at - gesture.off, lo, c - 1);
+      else c = clamp(at - gesture.off, f + 1, hi);
+      canvas.style.cursor = gesture.part === 'both' ? 'grabbing' : 'ns-resize';
+      setLevels(f, c);
+      return;
+    }
     if (gesture?.kind === 'pan') {
       const dx = p.x - gesture.x, dy = p.y - gesture.y;
       if (!gesture.moved && Math.hypot(dx, dy) < 3) return;
@@ -488,19 +559,29 @@ export function createDisplay(root, handlers) {
       return;
     }
     const where = region(p.x, p.y);
-    canvas.style.cursor = hitLine(p.x, p.y) !== null ? 'grab' : where === 'xaxis' ? 'ew-resize' : where === 'yaxis' ? 'ns-resize' : 'crosshair';
+    if (where === 'strip') canvas.style.cursor = strip ? (stripPart(p.y)[0] === 'both' ? 'grab' : 'ns-resize') : 'default';
+    else canvas.style.cursor = hitLine(p.x, p.y) !== null ? 'grab' : where === 'xaxis' ? 'ew-resize' : where === 'yaxis' ? 'ns-resize' : 'crosshair';
     redraw();
   });
   const finish = () => {
     if (!gesture) return;
-    if (gesture.kind === 'box') applyBox();
+    levelScale = null;
+    if (gesture.kind === 'levels') { if (gesture.moved) handlers.endEdit(); }
+    else if (gesture.kind === 'box') applyBox();
     else if (gesture.moved) handlers.endEdit();
     else if (gesture.hit === null && line !== null) selectLine(null);
     gesture = null;
     canvas.style.cursor = 'crosshair';
   };
   canvas.addEventListener('pointerup', finish);
-  canvas.addEventListener('pointercancel', () => { box = null; gesture = null; draw(); });
+  canvas.addEventListener('pointercancel', () => { box = null; gesture = null; levelScale = null; draw(); });
+  // A double-click on the strip returns to automatic levels.
+  canvas.addEventListener('dblclick', (e) => {
+    const { x, y } = pos(e);
+    if (region(x, y) !== 'strip' || !scope?.view?.levels) return;
+    handlers.edit((sc) => { const view = { ...sc.view }; delete view.levels; sc.view = view; });
+    handlers.endEdit();
+  });
   canvas.addEventListener('pointerleave', () => { if (!gesture) { hover = null; redraw(); } });
 
   // Shift-drag: show exactly the marked box. A flat box zooms time only, a
