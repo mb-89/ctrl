@@ -11,12 +11,13 @@ Reader: whoever picks the next piece of work.
 - Tab 2, Plant: block-diagram editor with Sources, Sinks, Terminator, Switch, subsystems, a resizable folding library, sensors and a cart–pole ([plant-editor.md](plant-editor.md)); 2D views in the plant's JSON ([plant-views.md](plant-views.md)).
 - Tab 3, Controller: Controller blocks with variants (PID, state feedback, gain-scheduled PI, energy swing-up, relay, off), the tab to flip and tune them ([controller-proposal.md](controller-proposal.md)).
 - Tab 4, Auto-tune: Nelder–Mead on a simulated cost (watched iteration by iteration), relay feedback with Ziegler–Nichols, Tyreus–Luyben and no-overshoot rules, step response with SIMC; results as new variants, one undo step; the Oven, badly tuned example; `node cli.mjs autotune` and `window.loopTuner.autotune()` for agents ([autotune.md](autotune.md)).
-- System library: eight 5-second systems, seven of them controlled (motor, following a sine, encoder, conical tank, pendulum swing-up, triple pendulum, the badly tuned oven), with disturbances.
+- System library: nine 5-second systems, eight of them controlled (motor, following a sine, the motor in sliding mode, encoder, conical tank, pendulum swing-up, triple pendulum, the badly tuned oven), with disturbances; and the HIL motor.
 - Earlier runs fade over five runs for comparison.
 - Live (HIL) mode: an External plant block, a plant outside the page over WebSocket (JSON-RPC 2.0, 100 Hz, the plant sets the cycle and defines the signals), watchdogs and a latched E-stop on both sides (the page's E-STOP key, the plant's stop key), Run and Stop through the plant, the loop in a Web Worker, live edits of every controller and observer parameter; `hil-plant.zip` (`hil_plant.py` with runme.sh and runme.ps1) and the "HIL: external motor" system; `window.loopTuner.live` for agents ([hil.md](hil.md)).
 - Saving traces: Save ▾ stores the screen with every signal (CSV, JSON) or as a picture (PNG); the live record keeps the last minutes of every live signal; saved traces open as dashed references, stepped through when longer than the screen ([instrument.md](instrument.md#save-the-live-record-and-references)).
 - (Superseded) System library: three systems that move, loaded whole or by part, opening running on their view ([system-library.md](system-library.md)).
 - Units on every signal; scope channels list only names the diagram defines; projects carry how they open (`ui`).
+- Sliding mode: the `slidingMode` (relay, boundary layer) and `superTwisting` controller types, the *DC motor, sliding mode* system (XY phase portrait), the motor rebuilt from Transfer function blocks with its current as a Sink, the scope's Measure readout, controllers sampling exactly at k·Ts, a library entry's own record step ([sliding-mode.md](../research/sliding-mode.md), [instrument.md](instrument.md#measure)).
 
 ## Next, in order
 
@@ -28,6 +29,8 @@ Reader: whoever picks the next piece of work.
 
 - Live, more ([hil.md](hil.md#not-yet)), from the person's words of 2026-10-24: a plant that runs its own loop and takes the reference r from the page ("we could also be sending the reference value"); signals the plant only logs ("use our page here just to log stuff"); an agent tuning a live loop through MCP ("could we also connect an agent to that web page"); identifying the live plant, which varies by up to ±15 % and is not described to the page, so Auto-tune and Analysis work for HIL ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)); then several External blocks, remote plants (wss://, a token), a trigger for live sweeps, a plant recording on its own side. Check `runme.ps1` and the plant's timing on Windows (untested here).
 - 3D views (URDF); MIMO; WebAssembly for the simulation core if a feature needs the speed (the person: fine, not required); system identification from measured data (Arb input + measured output); WebAssembly if a feature needs the speed.
+
+- Sliding mode, later (research Recommendation 9): a model-based law (equivalent control) and implicit super-twisting as designed twins once the design layer is in; `s` as a controller signal on the scope; the Motor in Gain/Sum/Integrator form, after a step bound that sees integrator loops (a finite-difference Jacobian in `compileDiagram`), and a **Product** primitive (copper loss, electrical and mechanical power as exact signals; the cart–pole rebuild needs it too); Levant's robust differentiator as an Observer; a spacecraft axis with on/off thrusters (phase-plane control with deadband and hysteresis) as a second example; "time at a limit" in the CLI's metrics.
 
 ## Plant editor, not yet
 
@@ -41,6 +44,7 @@ Reader: whoever picks the next piece of work.
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
 - Should the input repeat with its period, or stop after one? Repeating is built; see decisions.md.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?
+- An accuracy step bound for every system: today's bound h ≤ 0.5/bound is a stability bound, and a switching law can lock into a different limit cycle at h = τ/2 (the relay at a 5 ms step: 24 against 43 mrad). The sliding-mode system avoids it by its own record step; tightening the bound everywhere changes other systems' runs slightly and needs its own check.
 - Spectrogram levels by default: automatic (the floor 10 dB above the median, as built; on *Encoder errors and torque ripple* it hides the 6× line above about 100 Hz and its fold-back until the frequency is zoomed or the floor dragged) or the old fixed 80 dB below the largest amplitude (pyqtgraph's way: everything, noise included)? A third way would show every line there: a floor that follows the noise at each frequency, but a colour would then mean "dB above the local noise", not an amplitude. For the person.
 
 ## Backlog, at the very end (the person, 2026-10-24)

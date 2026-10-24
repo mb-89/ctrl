@@ -9,7 +9,12 @@
 
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
-const channels = (...sources) => [0, 1, 2, 3].map((i) => ({ source: sources[i] ?? '', on: !!sources[i], scale: 1, offset: 0 }));
+// Scope channels 1–4: a signal name each (on), or { source, on, measure } for
+// one that is assigned but off, or carries a Measure line.
+const channels = (...sources) => [0, 1, 2, 3].map((i) => {
+  const c = typeof sources[i] === 'object' ? sources[i] : { source: sources[i] ?? '' };
+  return { source: c.source, on: c.on ?? !!c.source, scale: 1, offset: 0, ...(c.measure ? { measure: true } : {}) };
+});
 const ui = (view) => ({ run: 'run', tab: 'plant', setup: 0.42, view });
 const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: 'controller', name: 'controller', params: { inputs, Ts }, variants, variant, x, y });
 const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
@@ -17,28 +22,37 @@ const PERIOD = 5;
 
 // The DC motor with its angle, shared by the systems built on it: a
 // Controller (variants given) sets the voltage V, the load torque d brakes it.
-const motorDiagram = (variants) => ({
+// Motor is built from blocks whose parameters are the physics, each once
+// (no black box; design/research/sliding-mode.md, Recommendation 1):
+//   armature 1/(L·s + R)   R = 1 Ω, L = 10 mH; its output is the current i
+//   Kt (= Ke), Ke (= Kt)   0.5 N·m/A and 0.5 V·s/rad: equal in SI units, or
+//                          the motor would make or lose energy
+//   rotor 1/(J·s + b)      J = 0.02 kg·m², b = 0.1 N·m·s/rad; out: the speed
+// opts.inputs 3 also feeds the speed to the Controller (input 3), and adds
+// the error e = r − angle as a Sink; opts.Ts is the Controller's sample time.
+const motorDiagram = (variants, { inputs = 2, Ts = 0.01 } = {}) => ({
       blocks: [
         src('r', 30, 112, 'rad'),
         src('d', 180, 230, 'N·m'),
-        ctrl(130, 90, 2, 0.01, variants),
+        ctrl(130, 90, inputs, Ts, variants),
         {
           id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
           diagram: {
             blocks: [
               { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
-              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 300, y: 220 },
+              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 330, y: 220 },
               { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
-              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 360, y: 100 },
-              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
-              { id: 'mech', type: 'firstOrder', name: 'load', params: { K: 10, tau: 0.2 }, x: 510, y: 96 },
-              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 360, y: 280, flip: true },
+              { id: 'arm', type: 'tf', name: 'armature 1/(Ls + R)', params: { num: [1], den: [0.01, 1], delay: 0 }, x: 190, y: 96 },
+              sink('i', 360, 20, 'A'),
+              { id: 'kt', type: 'gain', name: 'Kt (= Ke)', params: { K: 0.5 }, x: 370, y: 100 },
+              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 460, y: 104 },
+              { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 530, y: 96 },
+              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 720, y: 112 },
+              { id: 'ke', type: 'gain', name: 'Ke (= Kt)', params: { K: 0.5 }, x: 370, y: 290, flip: true },
             ],
             wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
-              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'i' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
+              { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'ke', to: 'sum:1' },
             ],
           },
         },
@@ -46,10 +60,12 @@ const motorDiagram = (variants) => ({
         sink('angle', 690, 106, 'rad'),
         sink('speed', 690, 30, 'rad/s'),
         sink('V', 330, 20, 'V'),
+        ...(inputs >= 3 ? [{ id: 'esum', type: 'sum', params: { signs: '+-' }, x: 600, y: 300 }, sink('e', 690, 308, 'rad')] : []),
       ],
       wires: [
         { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
         { from: 'motor', to: 'speed' }, { from: 'int', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
+        ...(inputs >= 3 ? [{ from: 'motor', to: 'ctrl:2' }, { from: 'r', to: 'esum' }, { from: 'int', to: 'esum:1' }, { from: 'esum', to: 'e' }] : []),
       ],
     });
 const motorViews = () => ([{
@@ -66,7 +82,7 @@ const motorViews = () => ([{
           { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
         ] },
         { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
+        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   i {i:5.1} A   load {d:3.1} N·m', size: 13 },
       ],
     }]);
 
@@ -195,6 +211,29 @@ export const EXAMPLE_PLANTS = [
       { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
       { name: 'PID', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, umin: -12, umax: 12 } },
     ]),
+    views: motorViews(),
+  },
+  {
+    // Sliding mode on the library motor (design/research/sliding-mode.md):
+    // three variants, each showing one thing; the gains are design inputs
+    // (λ, φ, limits) and hand gains (K, k1, k2), nothing computed from the plant.
+    name: 'DC motor, sliding mode',
+    notes: 'A sliding-mode controller holds the shaft. It computes s = λ·e + ė (e = r − angle, λ = 10 1/s) and drives s to zero; once there, the error can only decay as e^(−λt), whatever the load or the inertia. So λ sets the error\'s time constant, 1/λ = 0.1 s, independent of the inertia: the slope of the line decides how the shaft settles, not its mass (as long as 12 V can hold it on the line). The scope opens in XY: across is the error e, up is the speed. After each step the beam runs at full voltage towards the line speed = 10·e (reaching), then slides along it into the origin (sliding). Over the whole run the readout\'s best line also fits the reaching arcs (a ≈ 7). To read λ, set Horizontal to 100 ms/div at position 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: the screen holds only the sliding after the first step (the run now ends at 1.4 s, so the load drops out), the line runs at 45°, a reads λ and σ is how tightly the motor slides. The first variant is the textbook relay, V = 12 V·sign(s): the shaft looks perfect, but press Time and switch on channels 3 and 4 with their Measure lines. The voltage slams between ±12 V 63 times a second, the current ripples 10 A peak to peak (5 N·m of torque ripple: a hum), and the motor turns 7.6 W into heat standing still (the heat is R·i², R = 1 Ω: square the rms on channel 4\'s Measure line; over the whole run it is about 10 W). Boundary layer: the same law, proportional inside |s| < 2 rad/s, which makes it a stiff PD there (Kp 60 V/rad, Kd 6 V·s/rad; the Analysis tab shows it). No chatter, but the load at 3.2 s now leaves an error of 33 mrad (the relay\'s is about 5 mrad, from sampling at 1 ms). Super-twisting: a continuous voltage whose integral part rejects the load, to below 1 mrad; a small 36 Hz ripple is left, caused by the armature (open Motor). A PID\'s integral would remove the load error too; what super-twisting adds is convergence in finite time with a continuous voltage. Try: open Motor and triple the inertia (rotor den [0.02, 0.1] → [0.06, 0.1]). In the same window the relay and the boundary layer stay on the line (slopes 10.0 and 10.9): the heavier shaft still settles with 1/λ. Super-twisting first overshoots the line, because its integral part has wound up during the longer reaching, then slides along it from about 0.6 s. Or make the armature ten times faster (den [0.01, 1] → [0.001, 1]): the relay\'s chatter jumps to 250 Hz and it burns about 35 W.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
+      d: { period: PERIOD, components: [pulse(1, 3.2, 0.5)] },
+    },
+    // No channel scales: Auto Scale sets them on load.
+    scope: { channels: channels('e', 'speed', { source: 'V', on: false, measure: true }, { source: 'i', on: false, measure: true }), view: { mode: 'xy' } },
+    // Four records per controller sample: the relay's current is resolved and
+    // every switch of V lands between two records (Recommendation 6).
+    sim: { sampleTime: 0.00025 },
+    ui: ui('Motor shaft'),
+    diagram: motorDiagram([
+      { name: 'Sliding mode, relay (theory)', type: 'slidingMode', params: { lambda: 10, K: 12, phi: 0, umin: -12, umax: 12 } },
+      { name: 'Sliding mode, boundary layer (practice)', type: 'slidingMode', params: { lambda: 10, K: 12, phi: 2, umin: -12, umax: 12 } },
+      { name: 'Super-twisting (continuous)', type: 'superTwisting', params: { lambda: 10, k1: 4, k2: 44, umin: -12, umax: 12 } },
+    ], { inputs: 3, Ts: 0.001 }),
     views: motorViews(),
   },
   {

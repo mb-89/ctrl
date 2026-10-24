@@ -274,6 +274,8 @@ const UNTUNABLE = {
 //   pid            Kp, Ki, Kd
 //   gainScheduled  the Kp table and the Ki table, each scaled as a whole
 //   stateFeedback  each gain in K, and the prefilter kr
+//   slidingMode    λ and K, and φ when it is above 0 (a relay stays a relay)
+//   superTwisting  λ, k1 and k2
 export function tuningSpace(variant) {
   const p = variant.params;
   const f = (x) => Math.exp(Math.max(-LOG_LIMIT, Math.min(LOG_LIMIT, x)));
@@ -296,6 +298,13 @@ export function tuningSpace(variant) {
       if (on(p.kr)) q.kr = p.kr * f(x[idx.length]);
       return q;
     };
+  } else if (variant.type === 'slidingMode' || variant.type === 'superTwisting') {
+    // λ and the switching gains; a boundary layer's width too, but a relay
+    // (φ = 0) stays a relay. The cost counts the time u sits at a limit, so
+    // it can trade tracking for less chattering.
+    const keys = (variant.type === 'slidingMode' ? ['lambda', 'K', 'phi'] : ['lambda', 'k1', 'k2']).filter((k) => on(p[k]));
+    names = keys.map((k) => (k === 'lambda' ? 'λ' : k === 'phi' ? 'φ' : k));
+    apply = (x) => { const q = { ...p }; keys.forEach((k, i) => { q[k] = p[k] * f(x[i]); }); return q; };
   } else throw new Error(UNTUNABLE[variant.type] ?? `a ${variant.type} variant cannot be tuned`);
   if (!names.length) throw new Error('every gain of this variant is 0; give the gains it should use a start value, then tune');
   return { names, apply: (x) => ({ ...variant, params: apply(x) }) };
@@ -307,6 +316,8 @@ export function tunedValues(variant) {
   if (variant.type === 'pid') return ['Kp', 'Ki', 'Kd'].map((k) => [k, p[k]]);
   if (variant.type === 'gainScheduled') return [['Kp', p.Kp], ['Ki', p.Ki]];
   if (variant.type === 'stateFeedback') return [['K', p.K], ['kr', p.kr]];
+  if (variant.type === 'slidingMode') return [['λ', p.lambda], ['K', p.K], ['φ', p.phi]];
+  if (variant.type === 'superTwisting') return [['λ', p.lambda], ['k1', p.k1], ['k2', p.k2]];
   return [];
 }
 

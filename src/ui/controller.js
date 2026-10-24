@@ -17,6 +17,8 @@ const ABOUT = {
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
   relay: 'On/off control, as a thermostat: full push one way or the other by the sign of the error, switching once it passes ±ε. Around a setpoint it makes the loop oscillate; the Auto-tune tab reads Ku and Pu from that oscillation.',
+  slidingMode: 'Sliding mode (inputs r, y, ẏ): drives s = λ·e + ė to zero by switching u = u0 ± K. On the line s = 0 the error decays as e^(−λt) whatever the inertia or the load, so λ sets how the loop settles. φ = 0 is the textbook relay: robust, but it chatters at the sampling rate, hard on the actuator. φ > 0 is a boundary layer: proportional inside |s| < φ (a stiff PD, Kp = K·λ/φ, Kd = K/φ), smooth, but a load leaves an error. Needs a clean ẏ; put a differentiator in the diagram, not in the law.',
+  superTwisting: 'Super-twisting, a second-order sliding mode (inputs r, y, ẏ): u = k1·√|s|·sign(s) + v, with the integral part v rising at k2 by the sign of s. The voltage is continuous and v rejects a constant load; actuator dynamics leave a small ripple, and a long reaching phase winds v up, so s overshoots the line before it slides. Size k1, k2 for the weakest plant.',
   kalman: 'Predicts the states with the model, then corrects with the measurements, weighing them by the noise you expect: a large R trusts the model, a large Q trusts the measurements. The gain is the steady-state Kalman gain.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
@@ -92,6 +94,11 @@ export function createControllerTab(host, app) {
       if (!w) return 'not connected';
       const f = parseEnd(w.from), src = lv.blocks.find((b) => b.id === f.id);
       if (src.type === 'source') return src.params.signal;
+      // A subsystem's output is named by its Out block ("speed" from Motor).
+      if (src.type === 'subsystem') {
+        const out = src.diagram.blocks.find((b) => b.type === 'outport' && b.params.port === f.port + 1);
+        return out?.name ? `${out.name} (${src.name ?? src.id})` : (src.name ?? src.id);
+      }
       const port = outputNames(diagramBlockDef(src.type), src.params)[f.port];
       return port || (src.name ?? src.id);
     });

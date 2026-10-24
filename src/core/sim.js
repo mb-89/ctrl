@@ -219,6 +219,32 @@ function gaussian(seed) {
   };
 }
 
+// Integration steps per record step T. Every sample instant k·Ts of every
+// Controller and Observer lies on the grid, so each samples exactly on its own
+// clock (with a 2.5 ms record and Ts = 1 ms: at 0, 1, 2 … ms, not 0, 1.667,
+// 2.5 …). With g the greatest common divisor of T and every Ts (in whole
+// nanoseconds), the step T/m with m a multiple of T/g puts k·Ts on the grid;
+// m is the smallest such multiple at or above T/hmax, the stability bound of
+// the continuous blocks. When that costs more steps than the budget allows,
+// the steps fall back to the bound and samples land on the first step at or
+// after their instant, with a warning.
+const ns = (x) => Math.round(x * 1e9);
+const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a; };
+export function substeps(T, bound, sampleTimes = [], K = 1, warnings = []) {
+  const hmax = bound > 0 ? 0.5 / bound : T;
+  const need = Math.max(1, Math.ceil(T / hmax - 1e-9));
+  let g = ns(T);
+  for (const Ts of sampleTimes) g = gcd(g, ns(Ts));
+  const base = g > 0 ? ns(T) / g : 1;
+  let m = base * Math.ceil(need / base - 1e-9);
+  if (K * m <= MAX_STEPS) return m;
+  const minTs = Math.min(Infinity, ...sampleTimes);
+  m = Math.max(1, Math.ceil(T / Math.min(hmax, minTs) - 1e-9));
+  if (K * m > MAX_STEPS) { m = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
+  else warnings.push(`the record step ${T} s and the sample times ${sampleTimes.join(', ')} s share no common step within the step budget: samples land on the first integration step at or after their instant`);
+  return m;
+}
+
 // The diagram as the whole system, before any controller: every Source plays
 // its signal, every Sink is recorded. Returns { t, signals: { name: values } }.
 export function simulateSystem(diagram, signals, sim) {
@@ -227,10 +253,7 @@ export function simulateSystem(diagram, signals, sim) {
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
   const el = compileDiagram(diagram, 'plant', { sources, standalone: true });
   const warnings = [...el.warnings];
-  // Steps no longer than a controller's sample time, so it samples on time.
-  const hmax = Math.min(el.bound > 0 ? 0.5 / el.bound : Ts, el.minTs);
-  let m = Math.max(1, Math.ceil(Ts / hmax - 1e-9));
-  if (K * m > MAX_STEPS) { m = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
+  const m = substeps(Ts, el.bound, el.sampleTimes, K, warnings);
   const h = Ts / m, N = el.n;
   el.setStep(h);
   const X = new Float64Array(N), Xt = new Float64Array(N);

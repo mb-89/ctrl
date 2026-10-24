@@ -44,6 +44,26 @@ Four channels, in the classic colours: 1 yellow, 2 green, 3 blue, 4 magenta. Eac
 
 - A channel key selects that channel for the Vertical knobs; pressing the selected channel's key again turns it off; pressing an off channel turns it on and selects it.
 - **Scale** knob: 1-2-5 steps. **Position** knob: 0.1 division per detent; double-click (the knob's push) sets it to 0.
+- **Measure** key (Vertical, beside R axis): a Measure line under the screen for the selected channel ([below](#measure)).
+
+## Measure
+
+(Research: [sliding-mode.md](../research/sliding-mode.md), Recommendation 5: "hard on the actuator" has to be a number the person reads, not an impression of a dense trace.) A channel with Measure on gets **one line under the screen, in its colour**, in every display mode. The plot gives up 15 px per line. The line covers the samples the screen shows: inside the timebase window, up to the sweep while it runs (the samples XY draws), the display-filtered signal when the channel has a filter. A channel that is off shows no line; its Measure stays on, so the line returns with the channel.
+
+| Value | Definition |
+|---|---|
+| mean | (1/n)·Σx |
+| rms | √((1/n)·Σx²); for a current i through R, the heat is R·i_rms² (R read from the armature block) |
+| ac | √((1/n)·Σ(x − mean)²): the rms of what moves |
+| p-p | max − min |
+| TV | Σ\|x_j − x_(j−1)\| / (t_last − t_first), the total variation per second: how far the signal travels, the actuator's wear (the repository's uTV, per second so windows compare) |
+| rev | reversals per second: how often x turns after moving more than h, an edge count with hysteresis as bench scopes offer it (PicoScope); h = 0.1 division (the channel's scale / 10), shown in the line |
+
+Example, the sliding-mode motor's relay over the whole run at 5 V/div: `3 V  mean 0.193 V  rms 11.7 V  ac 11.7 V  p-p 24 V  TV 2.79 kV/s  rev 116/s (h 0.5 V)`. Values below a thousandth of the channel's scale read 0; SI prefixes from below 0.1 and from 1000 up.
+
+**Under-resolved.** RMS, ac and p-p of a waveform that is not resolved are wrong: a relay-driven current sampled at 4 points per period reads 1.5× its true mean square. When reversals/s × record step > 0.2, fewer than 10 samples per period (two reversals per period), the line ends with "under-resolved: n samples per period" in amber. The sliding-mode system records at 0.25 ms so that its relay current (62.5 Hz: 64 samples per period) and the 250 Hz try-this (16) are resolved.
+
+For agents and tests the lines are in the canvas's `data-measure`. Code: `src/ui/measure.js` (`measure`, `measureLine`), drawn by `src/ui/display.js`; tests in `test/smc.test.mjs`.
 
 ## Display modes: Time, FFT, Spectrogram, XY (the person, 2026-10-24)
 
@@ -60,6 +80,7 @@ Four keys under Run Control switch what the screen shows; the setting is part of
   - The levels belong to the scope view, **per signal** (`scope.view.levels`, [project-format.md](project-format.md)): dB of rad/s are not dB of V, so levels set on one signal do not carry over to a channel showing another, which keeps its own (or automatic) levels; back on the first signal, its levels return. They stay when the display mode changes, are saved with the project, and apply while the sweep runs and when stopped.
   - **The FFT view is unchanged** (interpretation): there an amplitude is a height, not a colour, so noise does not hide a line; and an FFT bin's noise level depends on the record length (an amplitude spectrum, not a density), so the spectrogram's dB levels would not line up with it.
 - **XY**: channel 1 drives the beam across at its own scale, the other shown channels draw against it, as on a bench scope; the beam draws the samples inside the timebase window, so moving the window past the start-up leaves the settled figure. The **Δ** key (shown in XY) makes every channel in channel 1's unit draw channel 1 minus itself: with r on 1 and y on 2 that is the error e = r − y over r, the person's plot ("ideally a line, usually an ellipse"): perfect following is a flat line, a gain error tilts it, a lag opens it into an ellipse. Each figure reads out its best line Y ≈ a·X + b and its spread σ around it (σ ≈ 0: a line). Wheel, drag and Shift-drag on the screen act on the Y channels, below it on channel 1. Auto Scale fits the Δ figure. It sits on the display rather than the Analysis tab because it needs no linear model and works for any plant (research: [analysis.md](../research/analysis.md) §6). Example: *Following a sine (XY)*.
+  - **The phase portrait is XY without Δ** (*DC motor, sliding mode*): the error e on channel 1, the speed on channel 2. While r is held ė = −ω, so a sliding mode's line s = λ·e + ė = 0 is speed = λ·e, a slope of +λ through the origin; the beam runs along a reaching arc at full voltage, then along the line. The readout's slope a reads λ in a window that starts after reaching (100 ms/div at 0.4 s: 9.89 for λ = 10; the whole run gives about 7, as the line also fits the arcs), and σ, the rms vertical residual, is then the rms of s: the band the motor slides in, in rad/s. With the scales in the ratio λ (0.1 rad/div, 1 rad/s/div) the line runs at 45°. Δ stays off: e (rad) and the speed (rad/s) differ in unit.
 - **Display filters**: each channel can have one (Vertical › Filter: low-pass or high-pass Butterworth of order 2–8, band-pass, notch), applied live in every mode: the scope shows and analyses the filtered signal; the system is not changed. The wheel over its frequency sweeps it. Implemented in `src/core/spectrum.js` (second-order sections, bilinear transform with prewarping).
 - **R axis**: one channel can have its values on a second axis at the right of the screen (Vertical › R axis); the left axis then shows another channel.
 

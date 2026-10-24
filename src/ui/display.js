@@ -17,10 +17,12 @@ import { step125 } from '../core/scale.js';
 import { channelSignal, drawFrequency, freqRange } from './freqview.js';
 import { withLevels, levelsOf } from '../core/project.js';
 import { drawXY, vOfX } from './xyview.js';
+import { measure, measureLine } from './measure.js';
 
 export const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
+const MEASURE_ROW = 15;      // a Measure line under the screen, per measured channel
 const PAD_RIGHT_AXIS = 50;   // room for a second value axis at the right
 const STRIP_W = 60;          // the spectrogram's levels strip, right of that axis
 const STRIP_W_NARROW = 40;   // … on a screen narrower than NARROW px
@@ -88,7 +90,8 @@ export function createDisplay(root, handlers) {
   function layout() {
     const spec = !!scope && viewMode() === 'spectrogram';
     const wide = scope && (spec || rightAxis() !== null);
-    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - (wide ? PAD_RIGHT_AXIS : PAD.r) - (spec ? (W < NARROW ? STRIP_W_NARROW : STRIP_W) : 0), b: H - PAD.b });
+    const rows = scope && data ? measured().length : 0;
+    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - (wide ? PAD_RIGHT_AXIS : PAD.r) - (spec ? (W < NARROW ? STRIP_W_NARROW : STRIP_W) : 0), b: H - PAD.b - (rows ? rows * MEASURE_ROW + 2 : 0) });
     P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
     Object.assign(S, spec ? { l: P.r + PAD_RIGHT_AXIS + 4, r: W - 6, t: P.t, b: P.b } : { l: 0, r: 0, t: 0, b: 0 });
   }
@@ -102,6 +105,8 @@ export function createDisplay(root, handlers) {
   const inStrip = (x, y) => S.r > S.l && x >= S.l - 6 && y >= S.t - 4 && y <= S.b + 4;
   const region = (x, y) => (inStrip(x, y) ? 'strip' : x < P.l ? 'yaxis' : y > P.b ? 'xaxis' : 'plot');
   const visible = (i) => scope.channels[i].on && !!data?.signals[scope.channels[i].source];
+  // Channels with a Measure line: Measure on, and the channel showing a signal.
+  const measured = () => [0, 1, 2, 3].filter((i) => scope.channels[i].measure && visible(i));
   const sig = (d, i) => channelSignal(d, scope.channels[i]);
   // The left axis shows the selected line or channel, unless that one is on
   // the right axis; then the first other channel that shows a signal.
@@ -210,6 +215,7 @@ export function createDisplay(root, handlers) {
       delete canvas.dataset.levels;
       levelsChanged();
       drawXY({ g: ctx, P, data, past, scope, k: mode !== 'stop' ? indexAt(tScan) : data.t.length - 1, axis: axisChannel(), line, colors: CHANNEL_COLORS, drawGrid, unitLabel, vy, win, runs: RUNS });
+      drawMeasures(ctx);
       renderStatus();
       return;
     }
@@ -222,6 +228,7 @@ export function createDisplay(root, handlers) {
       if (strip) canvas.dataset.levels = `${[strip.floor, strip.ceiling, strip.lo, strip.hi].map((d) => d.toFixed(1)).join(' ')} ${strip.auto ? 'auto' : 'fixed'}`;
       else delete canvas.dataset.levels;
       levelsChanged();
+      drawMeasures(ctx);
       renderStatus();
       return;
     }
@@ -355,7 +362,34 @@ export function createDisplay(root, handlers) {
       ctx.fillStyle = BG;
       ctx.fillText(y0 < P.t + 7 ? '↑' : y0 > P.b - 7 ? '↓' : String(i + 1), x + 7, y + 0.5);
     });
+    drawMeasures(ctx);
     renderStatus();
+  }
+
+  // The Measure lines under the screen, one per measured channel in its
+  // colour, over the samples the screen shows: inside the timebase window, up
+  // to the sweep (as XY draws them), the filtered signal when a filter is set.
+  // For agents and tests, canvas.dataset.measure holds the lines.
+  function drawMeasures(g) {
+    const rows = measured();
+    if (!rows.length) { delete canvas.dataset.measure; return; }
+    const t = data.t, n = t.length - 1, dt = t.length > 1 ? t[1] - t[0] : 1;
+    const [w0, w1] = win();
+    const k = mode !== 'stop' ? indexAt(tScan) : n;
+    const j0 = Math.max(0, Math.ceil(w0 / dt - 1e-9)), j1 = Math.min(k, Math.floor(w1 / dt + 1e-9), n);
+    g.font = `10.5px ${MONO}`;
+    g.textAlign = 'left'; g.textBaseline = 'top';
+    const lines = rows.map((i, row) => {
+      const ch = scope.channels[i], m = measure(t, sig(data, i), j0, j1, ch.scale / 10);
+      const y = P.b + PAD.b - 2 + row * MEASURE_ROW;
+      g.fillStyle = CHANNEL_COLORS[i];
+      if (!m) { g.fillText(`${i + 1} ${ch.source}  nothing on the screen yet`, P.l, y); return `${i + 1} ${ch.source} -`; }
+      const { text, warn } = measureLine(m, i, ch.source, unitLabel(ch.source), ch.scale);
+      g.fillText(text, P.l, y);
+      if (warn) { g.fillStyle = '#ffb21e'; g.fillText(`  ${warn}`, P.l + g.measureText(text).width, y); }
+      return warn ? `${text}  ${warn}` : text;
+    });
+    canvas.dataset.measure = lines.join('\n');
   }
 
   function renderStatus() {
