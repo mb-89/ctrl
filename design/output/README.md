@@ -18,6 +18,7 @@ The person's raw words are in [../input](../input/README.md). This folder is wha
 | [autotune.md](autotune.md) | Tab 5, Auto-tune: the cost, Nelder–Mead, relay feedback and its rules, step response and SIMC, the tab |
 | [analysis.md](analysis.md) | Tab 6, Analysis: key numbers, root locus, Bode, Nyquist, linear step; how the loop is cut and discretised |
 | [designs-in-the-page.md](designs-in-the-page.md) | The design layer (branch feat/designs): the plant a block sees, linearisation and the `LinearModel`, designed variants computed in the page, the design store |
+| [transparent-models.md](transparent-models.md) | No black boxes (planned, not built): the cart–pole, the pendulum chain and the tank as subsystems you can open, built from Mechanics parts joined at frames (World, Rail, Hinge, Mass, Rod), Equations, an Integrator with limits and masks; the equations of motion shown in the parameters' names; the design layer, the planner's speed and the agreement with today's blocks, measured; migration, tests and steps |
 | [hil.md](hil.md) | Live (HIL) mode: an external plant over WebSocket, its protocol, Run/Stop through the plant, watchdogs and E-stop on both sides, the plant's zip; the live record |
 | [project-format.md](project-format.md) | The project file (JSON), version 2 |
 | [decisions.md](decisions.md) | Dated log of decisions, including the interpretations we made |
