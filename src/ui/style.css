@@ -384,3 +384,12 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .filtparams { display: flex; gap: 4px; flex: 2 1 auto; min-width: 0; }
 .filtparams .field { width: 0; flex: 1 1 52px; min-width: 44px; font-family: var(--mono); font-size: 12px; padding: 1px 4px; }
 .filtparams select.field { flex: 0 1 46px; }
+
+/* System library tags: one colour per kind */
+.systags { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 2px; }
+.tag { font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; padding: 1px 7px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+.tag-plant { color: #2ea8a0; border-color: #2ea8a066; background: #2ea8a014; }
+.tag-controller { color: #4e8fe6; border-color: #4e8fe666; background: #4e8fe614; }
+.tag-observer { color: #a77be0; border-color: #a77be066; background: #a77be014; }
+.tag-signal { color: #e0569a; border-color: #e0569a66; background: #e0569a14; }
+.tag-feature { color: #c79a12; border-color: #c79a1266; background: #c79a1214; }

@@ -185,7 +185,7 @@ export function createPlantEditor(root, app) {
       html += group(g, types.map((t) => { const def = diagramBlockDef(t); return item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="lf">${esc(def.formula)}</span>`); }).join(''));
     }
     html += group('My blocks', lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="lempty">Select a subsystem and save it here.</div>');
-    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="litem ex" data-system="${i}" title="${esc(`${e.notes} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="lf">plant</span></button>` : '')).join(''));
+    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="litem ex" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.notes} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="lf">plant</span></button>` : '')).join(''));
     $('#pl-lib').innerHTML = html;
     $('#pl-lib').querySelectorAll('[data-fold]').forEach((b) => b.addEventListener('click', () => {
       const n = b.dataset.fold;
