@@ -82,7 +82,7 @@ const HELP = `
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>designs()</code> (what the designed controllers and observers computed) and <code>whenDesigned()</code> (resolves once no plan is being made, with the same list).</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>designs()</code> (what the designed controllers and observers computed), <code>whenDesigned()</code> (resolves once no plan is being made, with the same list) and <code>loopModel(path, op)</code> (the loop a Controller closes, linearised at <code>'origin'</code>, <code>'initial'</code>, <code>{ y: [levels] }</code> or <code>{ t: seconds }</code>: the plant it sees and its law, as state space).</p>
 <p><button class="key primary" id="help-close">Close</button></p>`;
 
 const SHELL = `<div id="lt-shell" class="app">

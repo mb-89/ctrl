@@ -8,6 +8,16 @@
 // Each runs digitally at the block's sample time Ts. make(params, Ts) returns
 // { step(inputs) -> u }, called once per sample with the inputs at that instant.
 //
+// A law that is linear about an operating point also has linear(params, Ts,
+// at, values) for the Analysis tab: its discrete state space { A, B, C, D }
+// (arrays of rows) from [r, y1 … ym] to u at Ts, valid while u is inside its
+// limits. at.y holds the measurements at the operating point, at.t the time
+// of the run the law is at (a snapshot; a planned law's gains change with
+// it). The prefilter on r lies outside the loop and is left out. It throws
+// when the law is not linear there. A designed type takes the values its
+// design computed, and gives its Copy as numbers twin's model; it may add a
+// `note` for the analysis (a plan's gains frozen at one sample).
+//
 // A designed type computes its numbers from the plant instead of being given
 // them (design/output/designs.md). Its params are inputs only (weights,
 // levels, limits); it adds
@@ -18,7 +28,8 @@
 //                                    plant only through ctx (design.js), throws DesignError
 //   make(p, Ts, values)              the law from plain data; values null → u = 0
 //   manual(p, values)                → { type, params } of the twin: Copy as numbers
-//   compatible?(a, b)                may old values run on a changed plant (later, for the page)
+//   linear(p, Ts, at, values)        the twin's linear model (values null → DesignError 'no-design')
+//   compatible?(a, b)                may old values run on a changed plant (the page's store)
 // A vector parameter's `per` says what its entries stand for, so the
 // Controller tab can name them: 'measurement' (one each) or 'level' (levels
 // of the first measurement). `heavy` marks an input that starts a long
@@ -78,15 +89,46 @@ function pidCore(Ts, u0 = 0) {
   };
 }
 
+// pidCore's linear model with the gains g, for m measurements (only y1 is
+// used). States: the integral I (when Ki ≠ 0); the filtered derivative D and
+// the previous measurement (when Kd ≠ 0).
+function pidLinear(g, Ts, m = 1) {
+  const pad = (row) => [...row, ...new Array(m + 1 - row.length).fill(0)];
+  const A = [], B = [], C = [], D = [pad([g.Kp * g.b, -g.Kp])];
+  if (g.Ki) { A.push([1]); B.push(pad([g.Ki * Ts, -g.Ki * Ts])); C.push(1); }
+  if (g.Kd) {
+    const c = 1 / (g.Tf + Ts), i = A.length;
+    for (const row of A) row.push(0, 0);
+    A.push([...new Array(i).fill(0), g.Tf * c, g.Kd * c], new Array(i + 2).fill(0));
+    B.push(pad([0, -g.Kd * c]), pad([0, 1]));
+    C.push(g.Tf * c, g.Kd * c);
+    D[0][1] -= g.Kd * c;
+  }
+  return { A, B, C: [C], D };
+}
+// A static law u = kr r − K · y.
+const staticLinear = (kr, K) => ({ A: [], B: [], C: [[]], D: [[kr, ...K.map((k) => -k)]] });
+
 // The law of a designed variant without values (pending, or failed): u = 0.
 const OFF = { step: () => 0 };
 // A designed law runs as its Copy as numbers twin would, so the copy runs bit for bit alike.
 const twinLaw = (twin, Ts) => CONTROLLERS[twin.type].make(normalizeVariant(twin).params, Ts);
+// A designed variant with no values has nothing to analyse.
+const noDesign = (type) => new DesignError('no-design', `${CONTROLLERS[type].label} has no design to analyse yet`, 'see its Computed box in the Controller tab: the design is pending, cancelled or refused');
+// A designed law's linear model is its twin's, made from the values.
+function twinLinear(type) {
+  return (p, Ts, at, values) => {
+    if (!values) throw noDesign(type);
+    const twin = CONTROLLERS[type].manual(p, values);
+    return CONTROLLERS[twin.type].linear(normalizeVariant(twin).params, Ts, at);
+  };
+}
 
 export const CONTROLLERS = {
   off: {
     label: 'Off', summary: 'u = 0', params: [],
     make: () => OFF,
+    linear: (p, Ts, at) => staticLinear(0, new Array(at?.y?.length || 1).fill(0)),
   },
   pid: {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
@@ -95,6 +137,7 @@ export const CONTROLLERS = {
       const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
       return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
     },
+    linear: (p, Ts, at) => pidLinear(p, Ts, at?.y?.length || 1),
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
@@ -109,6 +152,7 @@ export const CONTROLLERS = {
         },
       };
     },
+    linear: (p) => staticLinear(p.kr, p.K),
   },
   lqr: {
     // Discrete LQR at the origin of the plant the block sees, which must be an
@@ -125,6 +169,7 @@ export const CONTROLLERS = {
       return CONTROLLERS.stateFeedback.make({ K: values.K, kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax }, Ts);
     },
     manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax } }),
+    linear: twinLinear('lqr'),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -140,6 +185,12 @@ export const CONTROLLERS = {
           return core(pre(x[0]), y, g);
         },
       };
+    },
+    // At rest (r = y) the slope of the schedule multiplies a zero error, so the
+    // loop sees a PI with the gains at y.
+    linear(p, Ts, at) {
+      const y = at?.y?.[0] ?? p.at[0];
+      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1 }, Ts, at?.y?.length || 1);
     },
   },
   scheduledPI: {
@@ -161,6 +212,7 @@ export const CONTROLLERS = {
         ? { type: 'pid', params: { Kp: values.Kp[0], Ki: values.Ki[0], Kd: 0, ...common } }
         : { type: 'gainScheduled', params: { at: [...values.at], Kp: [...values.Kp], Ki: [...values.Ki], ...common } };
     },
+    linear: twinLinear('scheduledPI'),
   },
   swingUp: {
     // For a pendulum on a cart, inputs r, x, θ, v, ω (θ = 0 upright). Far from
@@ -191,6 +243,12 @@ export const CONTROLLERS = {
         },
       };
     },
+    // Linear only where it catches: state feedback on [x, θ, v, ω].
+    linear(p, Ts, at) {
+      const th = wrap(at?.y?.[1] ?? 0);
+      if (Math.abs(th) >= p.thetaS) throw new Error(`the swing-up pumps energy at θ = ${th.toFixed(2)} rad; it is a linear loop only where it catches (|θ| < ${p.thetaS} rad)`);
+      return staticLinear(p.kr, p.K);
+    },
   },
   swingUpLqr: {
     // The swing-up above, its catch designed by LQR at the upright rest (the
@@ -209,6 +267,7 @@ export const CONTROLLERS = {
     },
     make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.swingUpLqr.manual(p, values), Ts) : OFF; },
     manual: (p, values) => ({ type: 'swingUp', params: { kE: p.kE, kx: p.kx, kv: p.kv, l: p.l, g: p.g, thetaS: p.thetaS, K: [...values.K], kr: values.kr, umin: p.umin, umax: p.umax } }),
+    linear: twinLinear('swingUpLqr'),
   },
   trajectory: {
     // A swing-up planned in the page from the plant this block sees
@@ -229,6 +288,17 @@ export const CONTROLLERS = {
     ],
     design: (p, ctx) => trajectoryDesign(p, ctx),
     make(p, Ts, values) { return values ? planLaw(values, Ts, p) : OFF; },
+    // The law at the sample at.t is at (planLaw): before the plan u = 0;
+    // along it u = F_j − K_j (y − Y_j), linear in y with the gains of that
+    // sample (r unused); after it, and at rest (no t), the upright LQR.
+    linear(p, Ts, at, values) {
+      if (!values) throw noDesign('trajectory');
+      const m = values.Kup.length, steps = values.F.length;
+      const j = at?.t === undefined ? Infinity : Math.floor(at.t / Ts + 1e-9) - Math.round(p.start / Ts);
+      if (j < 0) return { ...staticLinear(0, new Array(m).fill(0)), note: `before the plan starts (at ${p.start} s) u = 0: the loop is open` };
+      if (j >= steps) return staticLinear(values.kr, values.Kup);
+      return { ...staticLinear(0, Array.from(values.K.subarray(j * m, (j + 1) * m))), note: `the plan's gains at sample ${j} of ${steps} (t = ${((j + Math.round(p.start / Ts)) * Ts).toFixed(2)} s), frozen: along the plan they change every sample` };
+    },
   },
 };
 

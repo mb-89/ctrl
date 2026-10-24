@@ -224,9 +224,17 @@ function gaussian(seed) {
 // { t, signals: { name: values }, info }; info.designs is the status of each
 // running designed variant, computed through opts.designs (a design store;
 // the shared synchronous one by default).
-export function simulateSystem(diagram, signals, sim, { designs } = {}) {
+// opts.until: run only to the sample nearest that time (within the window)
+// and return the run there as `snapshot` ({ t, X, held, inputs, sources },
+// diagram.js el.snapshot), for a model at a moment of the run; null if the
+// run diverged before it.
+export function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
   const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
-  const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
+  let K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
+  if (until !== undefined) {
+    if (!(Number(until) >= 0)) throw new Error('until: a time of the run, at least 0 s');
+    K = Math.min(K, Math.round(Number(until) / Ts));
+  }
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
   const el = compileDiagram(diagram, 'plant', { sources, standalone: true, designs });
   const warnings = [...el.warnings];
@@ -268,5 +276,7 @@ export function simulateSystem(diagram, signals, sim, { designs } = {}) {
       el.record();
     }
   }
-  return { t, signals: out, info: { h, substeps: m, unstable, warnings, designs: el.designs } };
+  const res = { t, signals: out, info: { h, substeps: m, unstable, warnings, designs: el.designs } };
+  if (until !== undefined) res.snapshot = unstable ? null : el.snapshot(K * Ts, X);
+  return res;
 }

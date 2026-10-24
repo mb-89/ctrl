@@ -97,7 +97,8 @@ export function operatingPoint(model, op, { umin = -Infinity, umax = Infinity } 
   }
   warnings.push(...(model.atLimits?.(x, u) ?? []));
   const base = opLabel(op, model);
-  const label = op.kind === 'initial' || op.kind === 'y' ? `${base}, ${uName} = ${fmt(u)}` : base;
+  // (an input that is 0 but for rounding reads 0)
+  const label = op.kind === 'initial' || op.kind === 'y' ? `${base}, ${uName} = ${fmt(Math.abs(u) < 1e-12 ? 0 : u)}` : base;
   return { kind: op.kind, op, x, u, y, drift, rest, label, warnings };
 }
 

@@ -533,7 +533,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>designs()</code> (what the designed controllers and observers computed) and <code>whenDesigned()</code> (resolves once no plan is being made, with the same list).</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>designs()</code> (what the designed controllers and observers computed), <code>whenDesigned()</code> (resolves once no plan is being made, with the same list) and <code>loopModel(path, op)</code> (the loop a Controller closes, linearised at <code>'origin'</code>, <code>'initial'</code>, <code>{ y: [levels] }</code> or <code>{ t: seconds }</code>: the plant it sees and its law, as state space).</p>
 <p><button class="key primary" id="help-close">Close</button></p></div></div>
 </div>
 <script type="application/json" id="loop-tuner-project"></script>
@@ -2312,7 +2312,8 @@ function operatingPoint(model, op, { umin = -Infinity, umax = Infinity } = {}) {
   }
   warnings.push(...(model.atLimits?.(x, u) ?? []));
   const base = opLabel(op, model);
-  const label = op.kind === 'initial' || op.kind === 'y' ? `${base}, ${uName} = ${fmt(u)}` : base;
+  // (an input that is 0 but for rounding reads 0)
+  const label = op.kind === 'initial' || op.kind === 'y' ? `${base}, ${uName} = ${fmt(Math.abs(u) < 1e-12 ? 0 : u)}` : base;
   return { kind: op.kind, op, x, u, y, drift, rest, label, warnings };
 }
 
@@ -3575,6 +3576,16 @@ __mods['core/controllers.js'] = (() => {
 // Each runs digitally at the block's sample time Ts. make(params, Ts) returns
 // { step(inputs) -> u }, called once per sample with the inputs at that instant.
 //
+// A law that is linear about an operating point also has linear(params, Ts,
+// at, values) for the Analysis tab: its discrete state space { A, B, C, D }
+// (arrays of rows) from [r, y1 … ym] to u at Ts, valid while u is inside its
+// limits. at.y holds the measurements at the operating point, at.t the time
+// of the run the law is at (a snapshot; a planned law's gains change with
+// it). The prefilter on r lies outside the loop and is left out. It throws
+// when the law is not linear there. A designed type takes the values its
+// design computed, and gives its Copy as numbers twin's model; it may add a
+// `note` for the analysis (a plan's gains frozen at one sample).
+//
 // A designed type computes its numbers from the plant instead of being given
 // them (design/output/designs.md). Its params are inputs only (weights,
 // levels, limits); it adds
@@ -3585,7 +3596,8 @@ __mods['core/controllers.js'] = (() => {
 //                                    plant only through ctx (design.js), throws DesignError
 //   make(p, Ts, values)              the law from plain data; values null → u = 0
 //   manual(p, values)                → { type, params } of the twin: Copy as numbers
-//   compatible?(a, b)                may old values run on a changed plant (later, for the page)
+//   linear(p, Ts, at, values)        the twin's linear model (values null → DesignError 'no-design')
+//   compatible?(a, b)                may old values run on a changed plant (the page's store)
 // A vector parameter's `per` says what its entries stand for, so the
 // Controller tab can name them: 'measurement' (one each) or 'level' (levels
 // of the first measurement). `heavy` marks an input that starts a long
@@ -3644,15 +3656,46 @@ function pidCore(Ts, u0 = 0) {
   };
 }
 
+// pidCore's linear model with the gains g, for m measurements (only y1 is
+// used). States: the integral I (when Ki ≠ 0); the filtered derivative D and
+// the previous measurement (when Kd ≠ 0).
+function pidLinear(g, Ts, m = 1) {
+  const pad = (row) => [...row, ...new Array(m + 1 - row.length).fill(0)];
+  const A = [], B = [], C = [], D = [pad([g.Kp * g.b, -g.Kp])];
+  if (g.Ki) { A.push([1]); B.push(pad([g.Ki * Ts, -g.Ki * Ts])); C.push(1); }
+  if (g.Kd) {
+    const c = 1 / (g.Tf + Ts), i = A.length;
+    for (const row of A) row.push(0, 0);
+    A.push([...new Array(i).fill(0), g.Tf * c, g.Kd * c], new Array(i + 2).fill(0));
+    B.push(pad([0, -g.Kd * c]), pad([0, 1]));
+    C.push(g.Tf * c, g.Kd * c);
+    D[0][1] -= g.Kd * c;
+  }
+  return { A, B, C: [C], D };
+}
+// A static law u = kr r − K · y.
+const staticLinear = (kr, K) => ({ A: [], B: [], C: [[]], D: [[kr, ...K.map((k) => -k)]] });
+
 // The law of a designed variant without values (pending, or failed): u = 0.
 const OFF = { step: () => 0 };
 // A designed law runs as its Copy as numbers twin would, so the copy runs bit for bit alike.
 const twinLaw = (twin, Ts) => CONTROLLERS[twin.type].make(normalizeVariant(twin).params, Ts);
+// A designed variant with no values has nothing to analyse.
+const noDesign = (type) => new DesignError('no-design', `${CONTROLLERS[type].label} has no design to analyse yet`, 'see its Computed box in the Controller tab: the design is pending, cancelled or refused');
+// A designed law's linear model is its twin's, made from the values.
+function twinLinear(type) {
+  return (p, Ts, at, values) => {
+    if (!values) throw noDesign(type);
+    const twin = CONTROLLERS[type].manual(p, values);
+    return CONTROLLERS[twin.type].linear(normalizeVariant(twin).params, Ts, at);
+  };
+}
 
 const CONTROLLERS = {
   off: {
     label: 'Off', summary: 'u = 0', params: [],
     make: () => OFF,
+    linear: (p, Ts, at) => staticLinear(0, new Array(at?.y?.length || 1).fill(0)),
   },
   pid: {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
@@ -3661,6 +3704,7 @@ const CONTROLLERS = {
       const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
       return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
     },
+    linear: (p, Ts, at) => pidLinear(p, Ts, at?.y?.length || 1),
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
@@ -3675,6 +3719,7 @@ const CONTROLLERS = {
         },
       };
     },
+    linear: (p) => staticLinear(p.kr, p.K),
   },
   lqr: {
     // Discrete LQR at the origin of the plant the block sees, which must be an
@@ -3691,6 +3736,7 @@ const CONTROLLERS = {
       return CONTROLLERS.stateFeedback.make({ K: values.K, kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax }, Ts);
     },
     manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax } }),
+    linear: twinLinear('lqr'),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -3706,6 +3752,12 @@ const CONTROLLERS = {
           return core(pre(x[0]), y, g);
         },
       };
+    },
+    // At rest (r = y) the slope of the schedule multiplies a zero error, so the
+    // loop sees a PI with the gains at y.
+    linear(p, Ts, at) {
+      const y = at?.y?.[0] ?? p.at[0];
+      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1 }, Ts, at?.y?.length || 1);
     },
   },
   scheduledPI: {
@@ -3727,6 +3779,7 @@ const CONTROLLERS = {
         ? { type: 'pid', params: { Kp: values.Kp[0], Ki: values.Ki[0], Kd: 0, ...common } }
         : { type: 'gainScheduled', params: { at: [...values.at], Kp: [...values.Kp], Ki: [...values.Ki], ...common } };
     },
+    linear: twinLinear('scheduledPI'),
   },
   swingUp: {
     // For a pendulum on a cart, inputs r, x, θ, v, ω (θ = 0 upright). Far from
@@ -3757,6 +3810,12 @@ const CONTROLLERS = {
         },
       };
     },
+    // Linear only where it catches: state feedback on [x, θ, v, ω].
+    linear(p, Ts, at) {
+      const th = wrap(at?.y?.[1] ?? 0);
+      if (Math.abs(th) >= p.thetaS) throw new Error(`the swing-up pumps energy at θ = ${th.toFixed(2)} rad; it is a linear loop only where it catches (|θ| < ${p.thetaS} rad)`);
+      return staticLinear(p.kr, p.K);
+    },
   },
   swingUpLqr: {
     // The swing-up above, its catch designed by LQR at the upright rest (the
@@ -3775,6 +3834,7 @@ const CONTROLLERS = {
     },
     make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.swingUpLqr.manual(p, values), Ts) : OFF; },
     manual: (p, values) => ({ type: 'swingUp', params: { kE: p.kE, kx: p.kx, kv: p.kv, l: p.l, g: p.g, thetaS: p.thetaS, K: [...values.K], kr: values.kr, umin: p.umin, umax: p.umax } }),
+    linear: twinLinear('swingUpLqr'),
   },
   trajectory: {
     // A swing-up planned in the page from the plant this block sees
@@ -3795,6 +3855,17 @@ const CONTROLLERS = {
     ],
     design: (p, ctx) => trajectoryDesign(p, ctx),
     make(p, Ts, values) { return values ? planLaw(values, Ts, p) : OFF; },
+    // The law at the sample at.t is at (planLaw): before the plan u = 0;
+    // along it u = F_j − K_j (y − Y_j), linear in y with the gains of that
+    // sample (r unused); after it, and at rest (no t), the upright LQR.
+    linear(p, Ts, at, values) {
+      if (!values) throw noDesign('trajectory');
+      const m = values.Kup.length, steps = values.F.length;
+      const j = at?.t === undefined ? Infinity : Math.floor(at.t / Ts + 1e-9) - Math.round(p.start / Ts);
+      if (j < 0) return { ...staticLinear(0, new Array(m).fill(0)), note: `before the plan starts (at ${p.start} s) u = 0: the loop is open` };
+      if (j >= steps) return staticLinear(values.kr, values.Kup);
+      return { ...staticLinear(0, Array.from(values.K.subarray(j * m, (j + 1) * m))), note: `the plan's gains at sample ${j} of ${steps} (t = ${((j + Math.round(p.start / Ts)) * Ts).toFixed(2)} s), frozen: along the plan they change every sample` };
+    },
   },
 };
 
@@ -4614,6 +4685,18 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     probes: () => probeList.map(([name, k]) => [name, vals[k]]),
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
+    // The run at t, after its samples there (simulateSystem's { until }), as
+    // a model takes it (el.seen's `at`): the state X, what each Controller
+    // and Observer holds (`held`: an output, or the estimates), what each
+    // read at its last sample (`inputs`: [r, y…] or [u, y…]) and the
+    // Sources' values. Dead times keep their history out of X: a model
+    // passes them straight through.
+    snapshot(t, X, o = 0) {
+      const held = {}, inputs = {}, sources = {};
+      for (const nd of ctrls) { held[nd.idPath] = nd.observer ? Float64Array.from(nd.outv) : nd.u; inputs[nd.idPath] = Float64Array.from(nd.x); }
+      for (const nd of nodes) if (nd.kind === 'src' && nd.signal !== null) sources[nd.signal] = nd.fn(t);
+      return { t, X: Float64Array.from(X.subarray(o, o + n)), held, inputs, sources };
+    },
   };
   if (!model) return self;
 
@@ -4687,10 +4770,12 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     const labels = blockInputNames(diagram, blk.idPath).slice(1);
     const notes = [];
 
-    // What the nodes carry while this Model is evaluated.
-    const held = at.held ?? {}, setU = [], setO = [], setSrc = [], setSee = [];
+    // What the nodes carry while this Model is evaluated; the observers it
+    // looks through (by name, for the Analysis tab's notes).
+    const held = at.held ?? {}, setU = [], setO = [], setSrc = [], setSee = [], through = new Set();
     for (const i of slice) {
       const nd = nodes[i];
+      if (nd.kind === 'tap' && see.has(i)) through.add(nodes[nd.parent].name);
       if (nd.kind === 'ctrl' && !nd.observer) {
         const v = Number(held[nd.idPath] ?? 0);
         setU.push([i, v]);
@@ -4784,7 +4869,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       input: { label: inputLabel },
       states: Array.from(keep, (g) => ({ ...states[g] })),
       outputs: labels.map((label) => ({ label, angle: false, unit: '' })),
-      delay, sensors,
+      delay, sensors, through: [...through],
       bound: Math.max(0, ...kept.map((nd) => nd.bound)),
       warnings: notes,
       // ẋ = f(x, u) over the kept states; allocation-free.
@@ -5073,9 +5158,17 @@ function gaussian(seed) {
 // { t, signals: { name: values }, info }; info.designs is the status of each
 // running designed variant, computed through opts.designs (a design store;
 // the shared synchronous one by default).
-function simulateSystem(diagram, signals, sim, { designs } = {}) {
+// opts.until: run only to the sample nearest that time (within the window)
+// and return the run there as `snapshot` ({ t, X, held, inputs, sources },
+// diagram.js el.snapshot), for a model at a moment of the run; null if the
+// run diverged before it.
+function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
   const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
-  const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
+  let K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
+  if (until !== undefined) {
+    if (!(Number(until) >= 0)) throw new Error('until: a time of the run, at least 0 s');
+    K = Math.min(K, Math.round(Number(until) / Ts));
+  }
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
   const el = compileDiagram(diagram, 'plant', { sources, standalone: true, designs });
   const warnings = [...el.warnings];
@@ -5117,7 +5210,9 @@ function simulateSystem(diagram, signals, sim, { designs } = {}) {
       el.record();
     }
   }
-  return { t, signals: out, info: { h, substeps: m, unstable, warnings, designs: el.designs } };
+  const res = { t, signals: out, info: { h, substeps: m, unstable, warnings, designs: el.designs } };
+  if (until !== undefined) res.snapshot = unstable ? null : el.snapshot(K * Ts, X);
+  return res;
 }
 
 return { simulate, simulateSystem };
@@ -5696,8 +5791,11 @@ const { ceil125 } = __mods['core/scale.js'];
 const { simulate, simulateSystem } = __mods['core/sim.js'];
 const { computeMetrics } = __mods['core/metrics.js'];
 const { normalizeGoal, evaluateGoal, compareEvals } = __mods['core/goal.js'];
-const { normalizeDiagram, diagramNames } = __mods['core/diagram.js'];
+const { normalizeDiagram, diagramNames, compileDiagram } = __mods['core/diagram.js'];
 const { normalizeView } = __mods['core/views.js'];
+const { DesignError, parseOp, operatingPoint, linearize } = __mods['core/linearize.js'];
+const { SYNC_DESIGNS } = __mods['core/design.js'];
+const { CONTROLLERS } = __mods['core/controllers.js'];
 const FORMAT = 'loop-tuner/2';
 const PALETTE_SIZE = 8;
 // Signals of the closed loop, available once a controller exists.
@@ -5957,6 +6055,95 @@ function evaluateSystem(project, { designs } = {}) {
   return simulateSystem(plant.diagram, project.system.signals, sim, { designs });
 }
 
+// ---- Analysis hooks (design/output/designs.md, "For the Analysis tab")
+
+// The plant a Controller or Observer sees (el.seen) at an operating point,
+// with what the run's designs computed: a Controller looks through designed
+// observers as its design did. at: 'origin' | 'initial' | { y: [levels] } |
+// { t: seconds of the run }; a { t } runs the system to t (simulateSystem's
+// until) and takes the model there: the state, what the other blocks hold,
+// the Sources' values. → { model, pt, statuses, block, id, snap }.
+function blockModel(project, idPath, at, { designs, limits } = {}) {
+  const plant = project.system.plant;
+  if (plant?.type !== 'diagram') throw new DesignError('no-diagram', 'the plant is not a block diagram, so no block sees a plant in it', 'build the plant in the Plant tab, or load a system from the System library');
+  const diagram = plant.diagram, id = Array.isArray(idPath) ? idPath.join('/') : String(idPath);
+  const parts = id.split('/');
+  const level = parts.slice(0, -1).reduce((d, x) => d?.blocks.find((b) => b.id === x && b.type === 'subsystem')?.diagram, diagram);
+  const block = level?.blocks.find((b) => b.id === parts.at(-1));
+  if (!block || (block.type !== 'controller' && block.type !== 'observer')) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl');
+  const op = parseOp(at);
+  const store = designs ?? SYNC_DESIGNS;
+  let statuses, snap = null;
+  if (op.kind === 't') {
+    const sim = simOf(project);
+    const run = simulateSystem(diagram, project.system.signals, { ...sim, duration: Math.max(sim.duration, op.t) }, { designs: store, until: op.t });
+    snap = run.snapshot;
+    if (!snap) throw new DesignError('diverged', `the run diverges before t = ${op.t} s: there is no state to linearise at`, 'pick an earlier time, or steady the loop first');
+    statuses = run.info.designs;
+  } else statuses = compileDiagram(diagram, 'plant', { standalone: true, sources: {}, designs: store }).designs;
+  const seeThrough = new Map();
+  for (const s of statuses) if (s.path !== id && s.values?.stateIndex) seeThrough.set(s.path, s.values.stateIndex);
+  const el = compileDiagram(structuredClone(diagram), 'plant', { mode: 'model' });
+  const model = el.seen(id, { ...(seeThrough.size ? { seeThrough } : {}), ...(snap ? { X: snap.X, held: snap.held, sources: snap.sources, t: snap.t } : {}) });
+  // The limits of the running variant, for a trim (u that holds a level).
+  const v = block.variants?.[block.variant ?? 0]?.params ?? {};
+  const lim = limits ?? { umin: v.umin ?? -Infinity, umax: v.umax ?? Infinity };
+  // At a snapshot, u is what the block put out there (an Observer: what it read on its input u).
+  const pt = snap ? operatingPoint(model, { kind: 't', t: snap.t, u: block.type === 'observer' ? snap.inputs[id]?.[0] ?? 0 : snap.held[id] ?? 0 }, lim) : operatingPoint(model, op, lim);
+  return { model, pt, statuses, block, id, snap };
+}
+
+// The plant the block idPath sees, linearised at an operating point
+// (linearize.js: A, B, C, D, states, outputs, op, delay, sensors, warnings),
+// with idPath, the block's Ts, and t, the snapshot's time, for a { t }
+// (on the sample grid; the op's drift says how far from rest it is).
+// opts.designs: the store the run's designs come from (the page's, so a
+// plan is not made twice); opts.limits: { umin, umax } for a trim, by
+// default the running variant's.
+function linearizeBlock(project, idPath, at = 'origin', opts = {}) {
+  const { model, pt, block, id, snap } = blockModel(project, idPath, at, opts);
+  return Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts, ...(snap ? { t: snap.t } : {}) });
+}
+
+// The loop a Controller closes, cut at its output u, for the Analysis tab:
+//   plant  the plant it sees, linearised at `at` (linearizeBlock: continuous;
+//          discretise it at Ts with a zero-order hold, each measurement's
+//          dead time as round(delay / Ts) unit delays)
+//   ctrl   the running variant's own discrete law there, { A, B, C, D } from
+//          [r, y1 … ym] to u (controllers.js linear); a designed variant's
+//          from the values its design computed
+// so that L(z) = −C_y(z) P(z), with C_y the measurement columns of ctrl.
+// Also Ts, opLabel, variantName, type, t (the snapshot's, or 0 for the
+// initial state) and warnings: the model's, and where the linear loop does
+// not hold (u at a limit; estimates read as the states they stand for).
+function loopModel(project, idPath, at = 'origin', { designs } = {}) {
+  const { model, pt, statuses, block, id, snap } = blockModel(project, idPath, at, { designs });
+  if (block.type !== 'controller') throw new DesignError('not-a-controller', `'${block.name ?? block.id}' is an Observer: a loop is cut at a Controller's output`, 'pick the Controller that drives the plant');
+  const plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
+  const variant = block.variants[block.variant ?? 0], def = CONTROLLERS[variant.type], Ts = block.params.Ts;
+  let values = null;
+  if (def.designed) {
+    const st = statuses.find((s) => s.path === id);
+    values = st?.values ?? null;
+    if (!values) {
+      const why = st?.error ? `: ${st.error.message}` : st?.status === 'pending' || st?.status === 'cancelled' ? ': its plan is not made yet' : '';
+      throw new DesignError('no-design', `${variant.name} has no design to analyse${why}`, st?.error?.hint || 'see its Computed box in the Controller tab');
+    }
+  }
+  if (!def.linear) throw new DesignError('no-linear', `${def.label} has no linear model`, 'analyse another variant');
+  const t = snap ? snap.t : parseOp(at).kind === 'initial' ? 0 : undefined;
+  let ctrl;
+  try { ctrl = def.linear(variant.params, Ts, { y: Array.from(plant.op.y), ...(t !== undefined ? { t } : {}) }, values); } catch (err) {
+    throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, 'pick an operating point where the law is linear, such as at rest');
+  }
+  const warnings = [...plant.warnings];
+  if (ctrl.note) warnings.push(ctrl.note);
+  const { umin = -Infinity, umax = Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
+  if (u >= umax - tol || u <= umin + tol) warnings.push(`${plant.input.label} = ${fmt(u)} is at its limit (${fmt(umin)} to ${fmt(umax)}) there: the controller saturates, and the linear loop does not hold`);
+  for (const obs of model.through) warnings.push(`the estimates of '${obs}' are read as the states they stand for: the filter's own dynamics are not in this loop`);
+  return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, warnings: [...new Set(warnings)] };
+}
+
 // The least-used palette slot, earliest first, so a colour follows its
 // candidate and is never reassigned when others are added or removed.
 function nextColor(candidates) {
@@ -6024,7 +6211,7 @@ function fmt(v, digits = 3) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, FILTER_TYPES, VIEW_MODES, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, FILTER_TYPES, VIEW_MODES, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, linearizeBlock, loopModel, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
 })();
 // ---- core/tune.js
 __mods['core/tune.js'] = (() => {
@@ -9553,7 +9740,7 @@ __mods['ui/app.js'] = (() => {
 // shows, and wiring between display, controls and tabs. window.loopTuner is
 // the browser API for agents driving the page.
 
-const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } = __mods['core/project.js'];
+const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS, loopModel } = __mods['core/project.js'];
 const { diagramNames } = __mods['core/diagram.js'];
 const { createDesignStore } = __mods['core/design.js'];
 const { createPlantEditor } = __mods['ui/plant.js'];
@@ -9717,6 +9904,10 @@ function startApp() {
   function designsChanged() { display.setData(acquire()); controllerTab.renderComputed(); renderChrome(); }
   app.cancelDesign = (key) => { if (designs.cancel(key)) { designsChanged(); toast('Planning cancelled'); } };
   app.retryDesign = (key) => { if (designs.retry(key)) designsChanged(); };
+  // The loop a Controller closes, cut at its output, linearised at an
+  // operating point ('origin', 'initial', { y }, { t }): for the Analysis
+  // tab, with the page's designs (a plan is never made twice).
+  app.loopModel = (path, op) => loopModel(app.project, path, op, { designs });
   // What a scope channel can show: only names the diagram gives (its Sources
   // and Sinks, r always), each with its unit.
   app.signalNames = () => channelNames(app.project);
@@ -10120,6 +10311,9 @@ function startApp() {
         await designs.idle();
       }
     },
+    // The loop the Controller at path closes, linearised at op ('origin',
+    // 'initial', { y: [levels] }, { t: seconds }): { plant, ctrl, Ts, … }.
+    loopModel: (path, op) => structuredClone(app.loopModel(path, op)),
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
   };
 

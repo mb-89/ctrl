@@ -61,6 +61,7 @@ Model = {
   f(x, u, dx), y(x, u, out),      // allocation-free; f evaluates only the nodes the kept rates read, y those the measurements read too
   atLimits(x, u),                 // sentences for saturations outside their limits there
   delay: [s], sensors: [{ std, q }], bound, warnings: [],
+  through: [names],               // the observers it looks through (for the Analysis tab's notes)
 }
 at = { held?: { [idPath]: number | number[] }, sources?: { [name]: number }, X?: full state, t?, seeThrough?: Map(observerIdPath → global indices) }
 ```
@@ -71,7 +72,7 @@ at = { held?: { [idPath]: number | number[] }, sources?: { [name]: number }, X?:
 - `'origin'`: x = 0, u = 0. `rest` is false (with a warning naming the fastest state) when max |f(0, 0)| > 1e-6; LQR then refuses (`not-at-rest`). The encoder example is such a plant: its encoder error is not 0 at angle 0.
 - `'initial'`: the model's start state, with the u that comes closest to holding it (scalar Gauss–Newton). For the tank this is its PI's u0, a√(2g·0.15) = 0.1716, computed.
 - `{ y: [...] }` (null leaves a measurement free): `trim`, a damped Gauss–Newton with minimum-norm steps over (kept x, u), so coordinates the levels leave free stay where they start (a cart moved to x = 0.3 keeps its pendulum hanging). It starts at the start state with the input that holds it, not at u = 0: from u = 0 the tank's first step lands on a negative pump flow, where the pump has no slope and the iteration is stuck. If the levels cannot be reached in one go it approaches them in eight stages. Iteration caps only. Refusals: `trim-failed` ("no equilibrium with x = 0.3 m, θ = 0.5 rad: …"), `u-limit` ("holding h = 0.98 m needs q = 0.438, above u max 0.3"). Limit: a saturation with no slope at the start (a valve shut below its lower limit) can hide an equilibrium.
-- `{ t, u }`: a Model built at a snapshot of the run (step 12); drift reported; never in a variant.
+- `{ t, u }`: a Model built at a snapshot of the run (`at.X`, `at.held`, `at.sources` from `simulateSystem(…, { until: t })`), u what the block put out there; not an equilibrium, so the drift is reported ("t = 1.70 s is not an equilibrium: tank.h moves at 1.93 m/s"); never in a variant. `linearizeBlock` builds it (below).
 
 Labels read `origin (all states 0, u = 0)`, `h = 0.45 m, q = 0.297`, `t = 2.10 s of the run`; a measurement that is exactly one state carries its unit (`Model.outputs[k].unit`). `linearize(model, op)` by central differences (step 1e-6·max(1, |v|)) gives `{ A, B, C, D, n, m, states, outputs, input, op, delay, sensors, warnings }`, matrices as arrays of rows (B n×1, D m×1). `firstOrderFit(lin, k)` keeps only the states on the path from u to measurement k and gives K = D − C A⁻¹ B, τ = C A⁻² B / K, θ = delay; refusals `integrating-plant` ("angle integrates V"), `zero-gain`, `no-path`. At a kink exactly on the operating point (the tank's wall ends at h = H = 1) the slope is accurate to about 10⁻⁶ only (the tank's Ki at 1 m is off by 9·10⁻⁷; elsewhere 10⁻¹⁰). Variants take no operating points in v1: LQR and Kalman at the origin, the tank PI at trim points of the level.
 
@@ -142,6 +143,29 @@ The store (`createDesignStore`) caches in memory only (64 designs, 8 model compi
 - **The loopnote** in the header names a block whose design failed ("controller · LQR: no design", "planning 43 %") and opens the Controller tab on it; "plant: see the Plant tab" opens the Plant tab.
 - `node cli.mjs design <project>` prints the statuses (step 9); `window.loopTuner.whenDesigned()` waits for the page's plans (step 10).
 
+## For the Analysis tab (step 12)
+
+The Analysis tab is its own workstream (on main: `core/analysis.js`, `ui/analysis.js` and `design/output/analysis.md`). It forms the open loop cut at a Controller's output u, L(z) = −C_y(z) P(z) (C_y: the law's measurement columns; negative feedback), from two models this layer gives, both from the same compiled diagram that runs.
+
+- **Snapshots.** `simulateSystem(diagram, signals, sim, { designs, until: t })` runs to the sample nearest t (within the window; the run so far comes back as usual) and adds `snapshot: { t, X, held, inputs, sources }` (`el.snapshot`): the full state X in the global order, what each Controller holds (`held[idPath]`: its u) and each Observer (its estimates), what each read at its last sample (`inputs[idPath]`: [r, y…] or [u, y…]), and the Sources' values. `null` when the run diverged before t. Dead times keep their history out of X; a model passes them straight through. It fits a model directly: `el.seen(idPath, { X, held, sources, t })`.
+- **The plant**: `linearizeBlock(project, idPath, at = 'origin', { designs, limits })` in `project.js` → the LinearModel of `linearize` (`{ A, B, C, D, n, m, states, outputs, input, op, delay, sensors, warnings }`, continuous, matrices as arrays of rows; B n×1, C m×n, D m×1) plus `idPath`, `Ts` (the block's) and, for `{ t }`, `t` (on the simulation grid).
+  - `at`: `'origin'`, `'initial'`, `{ y: [levels] }` or `{ t }`. The plant is the one the block sees, looking through designed observers as its design did.
+  - `{ t }` runs the system to t with the given store (the page's, so a plan is never made twice) and builds the Model there; u is what the block put out (an Observer: what its input u read). `op.drift` and a warning say how far from rest it is.
+  - `limits` (for a trim) default to the running variant's u min and u max.
+- **The law**: every controller type has `linear(p, Ts, at, values)` → `{ A, B, C, D }`, the discrete state space at Ts from [r, y1 … ym] to u (B nc×(m+1), C 1×nc, D 1×(m+1)), valid while u is inside its limits. The prefilter Tr lies outside the loop and is left out. `at = { y, t }`: the measurements at the operating point and the time of the run the law is at.
+  - Hand types: `off` (0); `pid` (the integral; with Kd the filtered derivative and the previous y); `stateFeedback` (kr, −K); `gainScheduled` (the PI with the gains at y1: at rest the schedule's slope multiplies a zero error); `swingUp` (state feedback where it catches, |θ| < θs; elsewhere it throws: "pumps energy").
+  - Designed types give their twin's model from their values, since they run as their twin: `lqr` (state feedback), `scheduledPI` (`pid`, or `gainScheduled` at y1), `swingUpLqr` (the catch). `trajectory`: u = 0 before `start`; along the plan the gains of the sample at t, r unused, with a `note` that they are frozen; after the plan, and at rest (no t), the upright LQR. Without values: `DesignError` `no-design`.
+  - Each matches its `step()` for small moves about the operating point to 1e-12 (1e-5 for the scheduled PIs, whose slope term is second order).
+- **The loop**: `loopModel(project, idPath, at, { designs })` → `{ plant, ctrl, Ts, opLabel, variantName, type, t, warnings }`, the shape main's Analysis tab reads through `app.loopModel(path, op)`, which `app.js` provides with the page's store; agents get the same from `window.loopTuner.loopModel(path, op)`.
+  - The law's `at.t` is the snapshot's time, 0 for `'initial'`, none otherwise.
+  - Warnings add to the model's: u at a limit there ("q = 0 is at its limit (0 to 3) there: the controller saturates, and the linear loop does not hold"), estimates looked through ("the estimates of 'estimator' are read as the states they stand for: the filter's own dynamics are not in this loop"), and the law's note.
+  - Refusals (`DesignError`, with a sentence and a hint): `no-diagram`, `no-block`, `not-a-controller`, `no-design` (a plan not made yet, or the design's own refusal), `not-linear` (a swing-up pumping energy), `diverged`.
+- **Discretising is the tab's job** (`discretePlant` on main): a zero-order hold at Ts, and each measurement's `delay[k]` as round(delay / Ts) unit delays, exact when the dead time is a whole number of samples (the tank's 0.1 s pipe at 20 ms).
+- **Checked** (`test/loop.test.mjs`): the linear loop formed this way follows the nonlinear run. The cart–pole on LQR from 0.01 rad matches to 1e-6 m. The tank's scheduled PI with a 1 cm step at 0.45 m, through the pipe's 5 samples of dead time, matches to 0.07 mm. The cart–pole loop's poles equal LQR's own to 1e-9. The snapshot run equals the full run bit for bit up to t.
+- **Not yet**: an Observer's own dynamics in the loop. A Controller on a Kalman filter's estimates sees the states they stand for, and the observer types have no `linear`; L through the filter needs it as part of the controller, with u fed to it from the cut.
+
+Where this differs from the plan (§12): `linear` takes `at` before `values`, `linear(p, Ts, at, values)`, the contract main's Analysis tab already uses for the hand types (`at.y` for the scheduled PI and the swing-up). `loopModel` and `el.snapshot`'s `inputs` and `sources` are additions: the first is what main's tab asks `app.loopModel` for, the second gives an Observer's u and the Sources at t.
+
 ## Steps and status
 
 | Step | What | Status |
@@ -158,5 +182,5 @@ The store (`createDesignStore`) caches in memory only (64 designs, 8 model compi
 | 9 | `trajectory`; the triple pendulum starts hanging; `cli.mjs design` | Built: the triple pendulum hangs at the start and runs "Planned swing-up + TV-LQR", "LQR only (cannot swing up)" and Off, the push moved to 3.5 s, no reference step. Tests 7 (the plan part), 10 (in the behaviour test of `test/core.test.mjs`) and 15 in `test/design.test.mjs`. |
 | 10 | Async store and pump in the page | Built (above): test 11 in `test/async.test.mjs`; browser-checked with Playwright (the triple pendulum loads hanging, shows the progress, swings up; re-planning, Cancel, Plan, undo; typing survives a settle) |
 | 11 | Designed `kalman` with look-through | Built (above): test 14 in `test/kalman.test.mjs`; browser-checked (the Computed box of an Observer, an empty R, Copy as numbers). The observer example itself belongs to the observers workstream |
-| 12 | Analysis hooks (snapshots, `linearizeBlock`) | |
+| 12 | Analysis hooks (snapshots, `linearizeBlock`) | Built (above): `simulateSystem(…, { until })`, `linearizeBlock`, `loopModel`, `linear()` on every controller type, `app.loopModel` and `window.loopTuner.loopModel`; `test/loop.test.mjs` |
 | 13 | Docs sweep | |

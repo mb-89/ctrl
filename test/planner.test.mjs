@@ -36,13 +36,15 @@ function drain(gen) {
 test('the triple pendulum swing-up: a plan in ≤ 300 iterations, in short slices, the same bit for bit', (t) => {
   const model = tripleModel();
   assert.deepEqual(Array.from(model.x0), HANGING);
-  const t0 = performance.now();
+  // The budget is CPU time: the other test files run beside this one, and
+  // on a loaded machine the wall clock counts their work too.
+  const t0 = performance.now(), c0 = process.cpuUsage();
   const { plan, progress } = drain(planTransfer(model, OPTS));
-  const ms = performance.now() - t0;
+  const ms = performance.now() - t0, cpu = process.cpuUsage(c0), cpuMs = (cpu.user + cpu.system) / 1000;
   assert.ok(plan.ok, plan.message);
   assert.deepEqual([plan.code, plan.message, plan.hint], [null, '', '']);
   assert.ok(plan.iterations <= 300, `${plan.iterations} iterations`);
-  assert.ok(ms < 10000, `${ms} ms`);
+  assert.ok(cpuMs < 10000, `${cpuMs} ms of CPU`);
   // One progress object per iteration, counting up; the rest are ticks.
   assert.equal(progress.length, plan.iterations);
   progress.forEach((p, i) => {
@@ -63,7 +65,7 @@ test('the triple pendulum swing-up: a plan in ≤ 300 iterations, in short slice
   // randomness). The code is warm now, so the slices count only the plan's
   // own work (the first run's also count V8 compiling it on other threads).
   const again = drain(planTransfer(tripleModel(), OPTS));
-  t.diagnostic(`planned in ${Math.round(ms)} ms: ${plan.iterations} iterations from start ${plan.start}, peak ${plan.Fpeak.toFixed(1)} N; longest slice ${again.slice.toFixed(1)} ms of CPU`);
+  t.diagnostic(`planned in ${Math.round(ms)} ms (${Math.round(cpuMs)} ms of CPU): ${plan.iterations} iterations from start ${plan.start}, peak ${plan.Fpeak.toFixed(1)} N; longest slice ${again.slice.toFixed(1)} ms of CPU`);
   assert.ok(same(again.plan.F, plan.F) && same(again.plan.z, plan.z), 'the same plan');
   assert.equal(again.plan.iterations, plan.iterations);
   assert.ok(again.slice < 30, `a slice of ${again.slice} ms`);

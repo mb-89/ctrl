@@ -9,8 +9,11 @@ import { ceil125 } from './scale.js';
 import { simulate, simulateSystem } from './sim.js';
 import { computeMetrics } from './metrics.js';
 import { normalizeGoal, evaluateGoal, compareEvals } from './goal.js';
-import { normalizeDiagram, diagramNames } from './diagram.js';
+import { normalizeDiagram, diagramNames, compileDiagram } from './diagram.js';
 import { normalizeView } from './views.js';
+import { DesignError, parseOp, operatingPoint, linearize } from './linearize.js';
+import { SYNC_DESIGNS } from './design.js';
+import { CONTROLLERS } from './controllers.js';
 
 export const FORMAT = 'loop-tuner/2';
 export const PALETTE_SIZE = 8;
@@ -269,6 +272,95 @@ export function evaluateSystem(project, { designs } = {}) {
     return { t: referenceTrace(project).t, signals, info: { warnings: [], designs: [] } };
   }
   return simulateSystem(plant.diagram, project.system.signals, sim, { designs });
+}
+
+// ---- Analysis hooks (design/output/designs.md, "For the Analysis tab")
+
+// The plant a Controller or Observer sees (el.seen) at an operating point,
+// with what the run's designs computed: a Controller looks through designed
+// observers as its design did. at: 'origin' | 'initial' | { y: [levels] } |
+// { t: seconds of the run }; a { t } runs the system to t (simulateSystem's
+// until) and takes the model there: the state, what the other blocks hold,
+// the Sources' values. → { model, pt, statuses, block, id, snap }.
+function blockModel(project, idPath, at, { designs, limits } = {}) {
+  const plant = project.system.plant;
+  if (plant?.type !== 'diagram') throw new DesignError('no-diagram', 'the plant is not a block diagram, so no block sees a plant in it', 'build the plant in the Plant tab, or load a system from the System library');
+  const diagram = plant.diagram, id = Array.isArray(idPath) ? idPath.join('/') : String(idPath);
+  const parts = id.split('/');
+  const level = parts.slice(0, -1).reduce((d, x) => d?.blocks.find((b) => b.id === x && b.type === 'subsystem')?.diagram, diagram);
+  const block = level?.blocks.find((b) => b.id === parts.at(-1));
+  if (!block || (block.type !== 'controller' && block.type !== 'observer')) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl');
+  const op = parseOp(at);
+  const store = designs ?? SYNC_DESIGNS;
+  let statuses, snap = null;
+  if (op.kind === 't') {
+    const sim = simOf(project);
+    const run = simulateSystem(diagram, project.system.signals, { ...sim, duration: Math.max(sim.duration, op.t) }, { designs: store, until: op.t });
+    snap = run.snapshot;
+    if (!snap) throw new DesignError('diverged', `the run diverges before t = ${op.t} s: there is no state to linearise at`, 'pick an earlier time, or steady the loop first');
+    statuses = run.info.designs;
+  } else statuses = compileDiagram(diagram, 'plant', { standalone: true, sources: {}, designs: store }).designs;
+  const seeThrough = new Map();
+  for (const s of statuses) if (s.path !== id && s.values?.stateIndex) seeThrough.set(s.path, s.values.stateIndex);
+  const el = compileDiagram(structuredClone(diagram), 'plant', { mode: 'model' });
+  const model = el.seen(id, { ...(seeThrough.size ? { seeThrough } : {}), ...(snap ? { X: snap.X, held: snap.held, sources: snap.sources, t: snap.t } : {}) });
+  // The limits of the running variant, for a trim (u that holds a level).
+  const v = block.variants?.[block.variant ?? 0]?.params ?? {};
+  const lim = limits ?? { umin: v.umin ?? -Infinity, umax: v.umax ?? Infinity };
+  // At a snapshot, u is what the block put out there (an Observer: what it read on its input u).
+  const pt = snap ? operatingPoint(model, { kind: 't', t: snap.t, u: block.type === 'observer' ? snap.inputs[id]?.[0] ?? 0 : snap.held[id] ?? 0 }, lim) : operatingPoint(model, op, lim);
+  return { model, pt, statuses, block, id, snap };
+}
+
+// The plant the block idPath sees, linearised at an operating point
+// (linearize.js: A, B, C, D, states, outputs, op, delay, sensors, warnings),
+// with idPath, the block's Ts, and t, the snapshot's time, for a { t }
+// (on the sample grid; the op's drift says how far from rest it is).
+// opts.designs: the store the run's designs come from (the page's, so a
+// plan is not made twice); opts.limits: { umin, umax } for a trim, by
+// default the running variant's.
+export function linearizeBlock(project, idPath, at = 'origin', opts = {}) {
+  const { model, pt, block, id, snap } = blockModel(project, idPath, at, opts);
+  return Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts, ...(snap ? { t: snap.t } : {}) });
+}
+
+// The loop a Controller closes, cut at its output u, for the Analysis tab:
+//   plant  the plant it sees, linearised at `at` (linearizeBlock: continuous;
+//          discretise it at Ts with a zero-order hold, each measurement's
+//          dead time as round(delay / Ts) unit delays)
+//   ctrl   the running variant's own discrete law there, { A, B, C, D } from
+//          [r, y1 … ym] to u (controllers.js linear); a designed variant's
+//          from the values its design computed
+// so that L(z) = −C_y(z) P(z), with C_y the measurement columns of ctrl.
+// Also Ts, opLabel, variantName, type, t (the snapshot's, or 0 for the
+// initial state) and warnings: the model's, and where the linear loop does
+// not hold (u at a limit; estimates read as the states they stand for).
+export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
+  const { model, pt, statuses, block, id, snap } = blockModel(project, idPath, at, { designs });
+  if (block.type !== 'controller') throw new DesignError('not-a-controller', `'${block.name ?? block.id}' is an Observer: a loop is cut at a Controller's output`, 'pick the Controller that drives the plant');
+  const plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
+  const variant = block.variants[block.variant ?? 0], def = CONTROLLERS[variant.type], Ts = block.params.Ts;
+  let values = null;
+  if (def.designed) {
+    const st = statuses.find((s) => s.path === id);
+    values = st?.values ?? null;
+    if (!values) {
+      const why = st?.error ? `: ${st.error.message}` : st?.status === 'pending' || st?.status === 'cancelled' ? ': its plan is not made yet' : '';
+      throw new DesignError('no-design', `${variant.name} has no design to analyse${why}`, st?.error?.hint || 'see its Computed box in the Controller tab');
+    }
+  }
+  if (!def.linear) throw new DesignError('no-linear', `${def.label} has no linear model`, 'analyse another variant');
+  const t = snap ? snap.t : parseOp(at).kind === 'initial' ? 0 : undefined;
+  let ctrl;
+  try { ctrl = def.linear(variant.params, Ts, { y: Array.from(plant.op.y), ...(t !== undefined ? { t } : {}) }, values); } catch (err) {
+    throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, 'pick an operating point where the law is linear, such as at rest');
+  }
+  const warnings = [...plant.warnings];
+  if (ctrl.note) warnings.push(ctrl.note);
+  const { umin = -Infinity, umax = Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
+  if (u >= umax - tol || u <= umin + tol) warnings.push(`${plant.input.label} = ${fmt(u)} is at its limit (${fmt(umin)} to ${fmt(umax)}) there: the controller saturates, and the linear loop does not hold`);
+  for (const obs of model.through) warnings.push(`the estimates of '${obs}' are read as the states they stand for: the filter's own dynamics are not in this loop`);
+  return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, warnings: [...new Set(warnings)] };
 }
 
 // The least-used palette slot, earliest first, so a colour follows its

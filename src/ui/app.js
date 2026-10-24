@@ -2,7 +2,7 @@
 // shows, and wiring between display, controls and tabs. window.loopTuner is
 // the browser API for agents driving the page.
 
-import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } from '../core/project.js';
+import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS, loopModel } from '../core/project.js';
 import { diagramNames } from '../core/diagram.js';
 import { createDesignStore } from '../core/design.js';
 import { createPlantEditor } from './plant.js';
@@ -167,6 +167,10 @@ function startApp() {
   function designsChanged() { display.setData(acquire()); controllerTab.renderComputed(); renderChrome(); }
   app.cancelDesign = (key) => { if (designs.cancel(key)) { designsChanged(); toast('Planning cancelled'); } };
   app.retryDesign = (key) => { if (designs.retry(key)) designsChanged(); };
+  // The loop a Controller closes, cut at its output, linearised at an
+  // operating point ('origin', 'initial', { y }, { t }): for the Analysis
+  // tab, with the page's designs (a plan is never made twice).
+  app.loopModel = (path, op) => loopModel(app.project, path, op, { designs });
   // What a scope channel can show: only names the diagram gives (its Sources
   // and Sinks, r always), each with its unit.
   app.signalNames = () => channelNames(app.project);
@@ -570,6 +574,9 @@ function startApp() {
         await designs.idle();
       }
     },
+    // The loop the Controller at path closes, linearised at op ('origin',
+    // 'initial', { y: [levels] }, { t: seconds }): { plant, ctrl, Ts, … }.
+    loopModel: (path, op) => structuredClone(app.loopModel(path, op)),
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
   };
 

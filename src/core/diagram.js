@@ -637,6 +637,18 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     probes: () => probeList.map(([name, k]) => [name, vals[k]]),
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
+    // The run at t, after its samples there (simulateSystem's { until }), as
+    // a model takes it (el.seen's `at`): the state X, what each Controller
+    // and Observer holds (`held`: an output, or the estimates), what each
+    // read at its last sample (`inputs`: [r, y…] or [u, y…]) and the
+    // Sources' values. Dead times keep their history out of X: a model
+    // passes them straight through.
+    snapshot(t, X, o = 0) {
+      const held = {}, inputs = {}, sources = {};
+      for (const nd of ctrls) { held[nd.idPath] = nd.observer ? Float64Array.from(nd.outv) : nd.u; inputs[nd.idPath] = Float64Array.from(nd.x); }
+      for (const nd of nodes) if (nd.kind === 'src' && nd.signal !== null) sources[nd.signal] = nd.fn(t);
+      return { t, X: Float64Array.from(X.subarray(o, o + n)), held, inputs, sources };
+    },
   };
   if (!model) return self;
 
@@ -710,10 +722,12 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     const labels = blockInputNames(diagram, blk.idPath).slice(1);
     const notes = [];
 
-    // What the nodes carry while this Model is evaluated.
-    const held = at.held ?? {}, setU = [], setO = [], setSrc = [], setSee = [];
+    // What the nodes carry while this Model is evaluated; the observers it
+    // looks through (by name, for the Analysis tab's notes).
+    const held = at.held ?? {}, setU = [], setO = [], setSrc = [], setSee = [], through = new Set();
     for (const i of slice) {
       const nd = nodes[i];
+      if (nd.kind === 'tap' && see.has(i)) through.add(nodes[nd.parent].name);
       if (nd.kind === 'ctrl' && !nd.observer) {
         const v = Number(held[nd.idPath] ?? 0);
         setU.push([i, v]);
@@ -807,7 +821,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       input: { label: inputLabel },
       states: Array.from(keep, (g) => ({ ...states[g] })),
       outputs: labels.map((label) => ({ label, angle: false, unit: '' })),
-      delay, sensors,
+      delay, sensors, through: [...through],
       bound: Math.max(0, ...kept.map((nd) => nd.bound)),
       warnings: notes,
       // ẋ = f(x, u) over the kept states; allocation-free.
