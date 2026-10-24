@@ -12,7 +12,7 @@
 // scopeTimeFrom() ('cursor', 'sweep' or 'edge'). It returns render, shown,
 // open and followTime (called while the scope's time moves).
 
-import { analyzeLoop, stepInfo, sPlanePoint, respondAt, phaseAt } from '../core/analysis.js';
+import { analyzeLoop, stepInfo, stepResponse, sPlanePoint, respondAt, phaseAt } from '../core/analysis.js';
 import { createPlot, extent, PLOT_COLORS } from './plots.js';
 import { CHANNEL_COLORS } from './display.js';
 import { num } from './units.js';
@@ -143,6 +143,8 @@ export function createAnalysisTab(host, app) {
       const res = analyzeLoop(m.plant, m.ctrl, m.Ts);
       // The step only for a stable loop; its final value is the DC gain.
       const st = res.stable ? stepInfo(m.plant, m.ctrl, m.Ts, { clPoles: res.clPoles }) : null;
+      // The peak of u in the step, from its first samples (kicks come early).
+      if (st) st.uPeak = Math.max(...stepResponse(m.plant, m.ctrl, m.Ts, Math.min(4000, Math.ceil(st.T / m.Ts))).u.map(Math.abs));
       last = { c, all, m, res, st, spec, from };
     } catch (err) {
       last = { c, all, error: err.message };
@@ -204,7 +206,7 @@ export function createAnalysisTab(host, app) {
       `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
       ...(v.spec?.t !== undefined ? [`Scope time t = ${num(v.spec.t, 4)} s, ${FROM[v.from] ?? 'on the scope'}`] : []),
       ...(dead.some((d) => d > 0) ? [`dead time: ${dead.map((d) => `${num(d, 3)} Ts`).join(', ')}, exact (a part of a sample by the modified z-transform)`] : []),
-      'Linear: u is assumed inside its limits; the prefilter on r is outside the loop.',
+      `Linear: u is assumed inside its limits${Number.isFinite(st?.uPeak) ? ` (in the step u peaks at ${num(st.uPeak, 3)} per unit of r)` : ''}; the step goes through the prefilter on r, which is outside the loop.`,
       ...(m.warnings ?? []),
     ];
     $('#an-notes').innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join('');

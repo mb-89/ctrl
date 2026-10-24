@@ -453,30 +453,44 @@ export function loopMargins(fd, Ts, { L, poles = [], probe = [] } = {}) {
   };
 }
 
-// The closed loop's response to a unit step in r (prefilter left out): the
-// first measurement y and the controller output u at each sample, for K
-// samples. The plant must not pass u straight to a measurement (D = 0), as
-// physical plants do not.
+// The closed loop's response to a unit step in r: the first measurement y
+// and the controller output u at each sample, for K samples. The step goes
+// through the controller's prefilter (ctrl.Tr, outside the loop) as the law
+// does, from rest at 0: rf = 1 − a^(k+1), a = e^(−Ts/Tr). The plant must not
+// pass u straight to a measurement (D = 0), as physical plants do not.
 export function stepResponse(plant, ctrl, Ts, K = 200) {
   const P = discretePlant(plant, Ts), n = P.A.length, m = P.C.length, nc = ctrl.A.length;
   const col = (row, j) => row[j] ?? 0;
-  let xp = new Array(n).fill(0), xc = new Array(nc).fill(0);
+  const a = ctrl.Tr > 0 ? Math.exp(-Ts / ctrl.Tr) : 0;
+  let xp = new Array(n).fill(0), xc = new Array(nc).fill(0), rf = 0;
   const t = [], y = [], u = [];
   for (let k = 0; k <= K; k++) {
+    rf = a * rf + (1 - a);
     const ym = P.C.map((row) => row.reduce((s, c, j) => s + c * xp[j], 0));
-    let uk = col(ctrl.D[0], 0);
+    let uk = col(ctrl.D[0], 0) * rf;
     for (let j = 0; j < m; j++) uk += col(ctrl.D[0], 1 + j) * ym[j];
     for (let j = 0; j < nc; j++) uk += ctrl.C[0][j] * xc[j];
     t.push(k * Ts); y.push(ym[0]); u.push(uk);
     xp = P.A.map((row, i) => row.reduce((s, a, j) => s + a * xp[j], 0) + P.B[i][0] * uk);
-    xc = ctrl.A.map((row, i) => row.reduce((s, a, j) => s + a * xc[j], 0) + col(ctrl.B[i], 0) + ym.reduce((s, v, j) => s + col(ctrl.B[i], 1 + j) * v, 0));
+    xc = ctrl.A.map((row, i) => row.reduce((s, a, j) => s + a * xc[j], 0) + col(ctrl.B[i], 0) * rf + ym.reduce((s, v, j) => s + col(ctrl.B[i], 1 + j) * v, 0));
   }
   return { t, y, u };
 }
 
 // The closed loop from r to the first measurement y as one discrete state
-// space, x⁺ = A x + B r, y = C x + D r (prefilter left out).
+// space, x⁺ = A x + B r, y = C x + D r. A first-order prefilter on r (the
+// law's Tr) is one more state, last: the loop sees rf = a q + (1 − a) r and
+// q⁺ = rf, as stepResponse runs it.
 export function closedLoopModel(plant, ctrl, Ts) {
+  const S = loopModel(plant, ctrl, Ts);
+  if (!(ctrl.Tr > 0)) return S;
+  const a = Math.exp(-Ts / ctrl.Tr), N = S.A.length;
+  const A = S.A.map((row, i) => [...row, S.B[i] * a]);
+  A.push([...new Array(N).fill(0), a]);
+  return { A, B: [...S.B.map((b) => b * (1 - a)), 1 - a], C: [...S.C, S.D * a], D: S.D * (1 - a), Ts };
+}
+
+function loopModel(plant, ctrl, Ts) {
   const m = plant.C.length, at = (row, j) => row[j] ?? 0;
   const dr = at(ctrl.D[0], 0), Dcy = Array.from({ length: m }, (_, k) => at(ctrl.D[0], 1 + k));
   const Bcr = ctrl.B.map((row) => at(row, 0)), Bcy = ctrl.B.map((row) => Array.from({ length: m }, (_, k) => at(row, 1 + k)));
@@ -524,7 +538,7 @@ export function stepInfo(plant, ctrl, Ts, { clPoles, T, steps = 20000, budget = 
     const x = solve(S.A.map((row, i) => row.map((v, j) => (i === j ? 1 : 0) - v)), S.B);
     yf = S.C.reduce((s, c, j) => s + c * x[j], 0) + S.D;
   } catch { /* a pole at z = 1: no final value */ }
-  const modes = (clPoles ? clPoles.map((p) => p.z) : eig(S.A)).filter((z) => cabs(z) >= AT_ORIGIN).map((z) => sOf(z, Ts)).filter((v) => Number.isFinite(v.re));
+  const modes = (clPoles ? [...clPoles.map((p) => p.z), ...(ctrl.Tr > 0 ? [{ re: Math.exp(-Ts / ctrl.Tr), im: 0 }] : [])] : eig(S.A)).filter((z) => cabs(z) >= AT_ORIGIN).map((z) => sOf(z, Ts)).filter((v) => Number.isFinite(v.re));
   if (T === undefined) {
     const rates = modes.map((v) => -v.re).filter((v) => v > 0);
     T = Math.max(20 * Ts, 10 / Math.min(...rates, 1 / (5 * Ts)));

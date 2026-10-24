@@ -54,8 +54,13 @@ test("each linear law's state space reproduces its step() while u is inside its 
   const cases = [
     ['pid', { Kp: 2, Ki: 3, Kd: 0.4, Tf: 0.02, b: 0.7, Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
     ['pid', { Kp: 1.5, Ki: 0, Kd: 0, Tf: 0.01, b: 1, Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    // Reference feedforward: static, velocity and acceleration, alone and together.
+    ['pid', { Kp: 2, Ki: 3, Kd: 0.4, Tf: 0.02, b: 0.7, Tr: 0, Kff: 0.8, Kv: 0.3, Ka: 0.02, u0: 0, umin: -Infinity, umax: Infinity, aw: 'back' }, 1],
+    ['pid', { Kp: 0, Ki: 0, Kd: 0, Tf: 0.01, b: 1, Tr: 0, Kff: 0, Kv: 0.5, Ka: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    ['pid', { Kp: 1, Ki: 0, Kd: 0, Tf: 0.01, b: 1, Tr: 0, Kff: 0, Kv: 0, Ka: 0.01, u0: 0, umin: -Infinity, umax: Infinity }, 1],
     ['stateFeedback', { K: [1, -2, 0.5], kr: 3, Tr: 0, umin: -Infinity, umax: Infinity }, 3],
     ['gainScheduled', { at: [0, 1], Kp: [1, 3], Ki: [0.5, 2], Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    ['gainScheduled', { at: [0, 1], Kp: [1, 3], Ki: [0.5, 2], Tr: 0, Kff: 1.2, Kv: 0.2, Ka: 0.01, u0: 0, umin: -Infinity, umax: Infinity }, 1],
     ['swingUp', { kE: 1, kx: 0, kv: 0, l: 0.5, g: 9.81, thetaS: 0.4, K: [-1, -30, -2, -5], kr: -1, umin: -Infinity, umax: Infinity }, 4],
   ];
   for (const [type, p, m] of cases) {
@@ -74,10 +79,11 @@ test("each linear law's state space reproduces its step() while u is inside its 
       x = lin.A.map((row, i) => row.reduce((s, a, j) => s + a * x[j], 0) + lin.B[i].reduce((s, b, j) => s + b * v[j], 0));
       worst = Math.max(worst, Math.abs(uLaw - u0 - u));
     }
-    // The scheduled PI's slope term is second order in the small moves.
-    assert.ok(worst < (type === 'gainScheduled' ? 1e-5 : 1e-12), `${type}: worst ${worst}`);
+    // The scheduled PI's slope term is second order in the small moves; Ka/Ts² is large, so its rounding is too.
+    assert.ok(worst < (type === 'gainScheduled' ? 1e-5 : 1e-10), `${type}: worst ${worst}`);
   }
-  assert.throws(() => CONTROLLERS.swingUp.linear(cases[4][1], Ts, { y: [0, Math.PI, 0, 0] }), /pumps energy/);
+  const swing = cases.find((c) => c[0] === 'swingUp')[1];
+  assert.throws(() => CONTROLLERS.swingUp.linear(swing, Ts, { y: [0, Math.PI, 0, 0] }), /pumps energy/);
 });
 
 test('dead time is exact in the discrete loop, and the step response reaches the textbook final values', async () => {
@@ -405,4 +411,39 @@ test('the step settles exact to the sample past the first 20000 samples', async 
   }
   assert.ok(st.settled && st.T > 600, `T ${st.T}`);
   assert.ok(Math.abs(st.settle - (last + 1) * Ts) < 1e-9, `settles ${st.settle} vs ${(last + 1) * Ts}`);
+});
+
+test('the step numbers include the prefilter: stepInfo agrees with the law run sample by sample', async () => {
+  const { stepInfo, stepResponse } = await import('../src/core/analysis.js');
+  const { CONTROLLERS, normalizeVariant } = await import('../src/core/controllers.js');
+  const Ts = 0.01, G = { A: [[-1]], B: [[1]], C: [[1]], D: [[0]] };
+  const ctrl = CONTROLLERS.pid.linear(normalizeVariant({ type: 'pid', params: { Kp: 4, Ki: 2, Tr: 0.5 } }).params, Ts);
+  const st = stepInfo(G, ctrl, Ts), sr = stepResponse(G, ctrl, Ts, Math.ceil(st.T / Ts));
+  let last = -1;
+  for (let k = 0; k < sr.y.length; k++) if (Math.abs(sr.y[k] - 1) > 0.02) last = k;
+  assert.ok(Math.abs(st.yf - 1) < 1e-9, `final ${st.yf}`);
+  assert.ok(Math.abs(st.settle - (last + 1) * Ts) < 1e-9, `settles ${st.settle} vs ${(last + 1) * Ts}`);
+});
+
+test('the linear step goes through the prefilter as the law does, so it shows the kick the law puts out', async () => {
+  const { stepResponse, discretePlant } = await import('../src/core/analysis.js');
+  const { CONTROLLERS, normalizeVariant } = await import('../src/core/controllers.js');
+  const Ts = 0.01, G = { A: [[-1]], B: [[1]], C: [[1]], D: [[0]] };
+  for (const params of [{ Kp: 4, Ki: 2, Kd: 0.1, Tf: 0.02, Tr: 0.1, Kv: 0.5 }, { Kp: 4, Ki: 2, Kv: 0.5 }, { Kp: 2, Ki: 1, Tr: 0.3, Kff: 1 }]) {
+    const p = normalizeVariant({ type: 'pid', params }).params;
+    const st = stepResponse(G, CONTROLLERS.pid.linear(p, Ts), Ts, 300);
+    // The law in the same loop, r stepping from rest at 0.
+    const P = discretePlant(G, Ts), law = CONTROLLERS.pid.make(p, Ts);
+    law.step([0, 0]);
+    let x = [0], worst = 0;
+    for (let k = 0; k <= 300; k++) {
+      const y = P.C[0][0] * x[0], u = law.step([1, y]);
+      worst = Math.max(worst, Math.abs(u - st.u[k]), Math.abs(y - st.y[k]));
+      x = [P.A[0][0] * x[0] + P.B[0][0] * u];
+    }
+    assert.ok(worst < 1e-9, `${JSON.stringify(params)}: worst ${worst}`);
+  }
+  // Without a prefilter the velocity feedforward kicks Kv/Ts at the step; with Tr 0.1 about Kv/Tr.
+  const kick = (Tr) => stepResponse(G, CONTROLLERS.pid.linear(normalizeVariant({ type: 'pid', params: { Kp: 0, Kv: 0.5, Tr } }).params, Ts), Ts, 5).u[0];
+  assert.ok(Math.abs(kick(0) - 50) < 1e-9 && kick(0.1) < 5, `${kick(0)} ${kick(0.1)}`);
 });

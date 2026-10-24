@@ -8,11 +8,12 @@ import { CONTROLLERS, normalizeVariant } from '../core/controllers.js';
 import { OBSERVERS } from '../core/observers.js';
 import { diagramBlockDef, normalizeDiagram, parseEnd, outputNames } from '../core/diagram.js';
 import { num, parseSI } from './units.js';
+import { drawStructure } from './ctldiagram.js';
 
 // What each implementation is for, in a sentence or two.
 const ABOUT = {
   off: 'No control: the plant gets u = 0. Shows what the plant does on its own.',
-  pid: 'The workhorse. P reacts to the error, I removes what is left, D damps (on the measurement, filtered by Tf). b weights the reference in P; the prefilter Tr (Vorfilter) smooths reference jumps; u min/max are the actuator limits, with anti-windup.',
+  pid: 'The workhorse. P reacts to the error, I removes what is left, D damps (on the measurement, filtered by Tf). b weights the reference in P; the prefilter Tr (Vorfilter) smooths reference jumps. Feedforward puts out what following r takes, from r alone: Kff·r, Kv·dr/dt, Ka·d²r/dt². u min/max are the actuator limits; anti-windup (clamping, back-calculation with Tt, or off) keeps the integral from winding up at a limit.',
   stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
@@ -38,6 +39,7 @@ export function createControllerTab(host, app) {
         <div class="ghead"><h3 class="glabel">Variants</h3><button class="key small" id="ct-dup" title="Copy the running variant">Duplicate</button><button class="key small" id="ct-del" title="Remove the running variant">Delete</button></div>
         <ul class="plist vlist" id="ct-vars" role="listbox" aria-label="Variants: click one to run it"></ul>
         <p class="phelp">Click a variant to run it; the run before stays faded on the display. Double-click to rename.</p>
+        <figure class="ctdiag" id="ct-diag" hidden></figure>
       </section>
       <section class="gcol" aria-label="Parameters">
         <div class="ghead"><h3 class="glabel" id="ct-ptitle">Parameters</h3></div>
@@ -101,6 +103,8 @@ export function createControllerTab(host, app) {
     return `<label class="pf" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
   }
   const show = (v) => (Array.isArray(v) ? v.map((x) => num(x, 5)).join(', ') : Number.isFinite(v) ? num(v, 6) : '');
+  // A parameter with named options (anti-windup): a select.
+  const choice = (key, p, value) => `<label class="pf" title="${esc(p.help ?? '')}"><span class="pfl">${esc(p.label)}</span><select class="field pfi" data-k="${esc(key)}" data-kind="choice">${Object.entries(p.options).map(([k, l]) => `<option value="${esc(k)}" ${k === value ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><span class="pfh"></span></label>`;
 
   function render() {
     const all = controllers();
@@ -125,12 +129,13 @@ export function createControllerTab(host, app) {
     $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="srow vrow ${i === b.variant ? 'editing' : ''}" data-v="${i}" role="option" aria-selected="${i === b.variant}">
         <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype">${esc(lib[v.type].label)}</span></li>`).join('');
     $('#ct-del').disabled = b.variants.length < 2;
+    drawStructure($('#ct-diag'), b, lib, names);
 
     const v = b.variants[b.variant];
     const def = lib[v.type];
     $('#ct-ptitle').textContent = `${v.name} · ${def.summary}`;
     $('#ct-params').innerHTML = def.params.length
-      ? def.params.map((p) => p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
+      ? def.params.map((p) => p.kind === 'choice' ? choice(`p:${p.key}`, p, v.params[p.key]) : p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
       : '<p class="phelp">No parameters.</p>';
     $('#ct-about').textContent = ABOUT[v.type] ?? '';
     // Planned trajectories are made offline, not added by hand.
@@ -141,7 +146,8 @@ export function createControllerTab(host, app) {
   function commitField(inp) {
     const k = inp.dataset.k, raw = inp.value.trim();
     let value;
-    if (inp.dataset.kind === 'vector') {
+    if (inp.dataset.kind === 'choice') value = inp.value;
+    else if (inp.dataset.kind === 'vector') {
       value = raw.split(/[\s,;]+/).filter(Boolean).map(parseSI);
       if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas.'); render(); return; }
     } else if (raw === '' && /^p:umin|p:umax$/.test(k)) value = null;
@@ -184,6 +190,12 @@ export function createControllerTab(host, app) {
         host.querySelector(`input[data-k="${inp.dataset.k}"]`)?.focus();
       }, { passive: false });
     });
+    // A change re-renders the tab: the new select takes the focus, so the
+    // arrow keys keep stepping through the options.
+    host.querySelectorAll('select[data-k]').forEach((sel) => sel.addEventListener('change', () => {
+      commitField(sel);
+      host.querySelector(`select[data-k="${sel.dataset.k}"]`)?.focus();
+    }));
     host.querySelectorAll('[data-v]').forEach((row) => {
       row.addEventListener('click', () => { const i = Number(row.dataset.v); if (i !== c.block.variant) edit((blk) => { blk.variant = i; }); });
       row.addEventListener('dblclick', () => rename(row, Number(row.dataset.v)));
