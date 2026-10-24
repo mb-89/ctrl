@@ -1573,29 +1573,7 @@ const ELEMENTS = {
       n: (p) => 2 * p.links + 2,
       init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
       out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
-      f: (X, o, u, p, dX) => {
-        const n = p.links, ix = links(p);
-        const m = ix.map((i) => p[`m${i + 1}`]), l = ix.map((i) => p[`l${i + 1}`]);
-        const th = ix.map((i) => X[o + 1 + i]), w = ix.map((i) => X[o + n + 2 + i]), v = X[o + n + 1];
-        const mu = ix.map((i) => m.slice(i).reduce((a, b) => a + b, 0));   // mass at or beyond link i
-        const A = Array.from({ length: n + 1 }, () => new Array(n + 1).fill(0)), rhs = new Array(n + 1).fill(0);
-        A[0][0] = p.M + mu[0];
-        rhs[0] = u - p.b * v;
-        for (const j of ix) {
-          A[0][j + 1] = A[j + 1][0] = mu[j] * l[j] * Math.cos(th[j]);
-          rhs[0] += mu[j] * l[j] * Math.sin(th[j]) * w[j] * w[j];
-          rhs[j + 1] = mu[j] * p.g * l[j] * Math.sin(th[j]);
-          for (const k of ix) {
-            const mk = mu[Math.max(j, k)] * l[j] * l[k];
-            A[j + 1][k + 1] = mk * Math.cos(th[j] - th[k]);
-            rhs[j + 1] -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
-          }
-        }
-        const q = solveLinear(A, rhs);
-        dX[o] = v;
-        for (const j of ix) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
-        dX[o + n + 1] = q[0];
-      },
+      f: (X, o, u, p, dX) => chainRates(X, o, u, p, dX),
       bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
     },
   },
@@ -1631,25 +1609,47 @@ const ELEMENTS = {
 
 const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
-// Solves A x = b (small, dense) by Gaussian elimination with partial pivoting.
-function solveLinear(A, b) {
-  const n = b.length, M = A.map((row, i) => [...row, b[i]]);
-  for (let c = 0; c < n; c++) {
+// The chain's rates, allocation-free (the swing-up planner calls this
+// millions of times): build M(q) q̈ = f in a scratch matrix and solve it.
+const CH = { m: new Float64Array(3), l: new Float64Array(3), mu: new Float64Array(3), th: new Float64Array(3), w: new Float64Array(3), A: new Float64Array(20), q: new Float64Array(4) };
+function chainRates(X, o, u, p, dX) {
+  const n = p.links, N = n + 1, W = N + 1, { m, l, mu, th, w, A, q } = CH;
+  for (let i = 0; i < n; i++) { m[i] = p[`m${i + 1}`]; l[i] = p[`l${i + 1}`]; th[i] = X[o + 1 + i]; w[i] = X[o + n + 2 + i]; }
+  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += m[i]; mu[i] = acc; }   // mass at or beyond link i
+  const v = X[o + n + 1];
+  A.fill(0);
+  A[0] = p.M + mu[0];
+  A[N] = u - p.b * v;   // right-hand side in column N of an N × (N + 1) augmented matrix
+  for (let j = 0; j < n; j++) {
+    const c = mu[j] * l[j] * Math.cos(th[j]), sj = Math.sin(th[j]);
+    A[j + 1] = c; A[(j + 1) * W] = c;
+    A[N] += mu[j] * l[j] * sj * w[j] * w[j];
+    let r = mu[j] * p.g * l[j] * sj;
+    for (let k = 0; k < n; k++) {
+      const mk = mu[Math.max(j, k)] * l[j] * l[k];
+      A[(j + 1) * W + k + 1] = mk * Math.cos(th[j] - th[k]);
+      r -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
+    }
+    A[(j + 1) * W + N] = r;
+  }
+  // Gaussian elimination with partial pivoting on the augmented rows.
+  for (let c = 0; c < N; c++) {
     let piv = c;
-    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
-    [M[c], M[piv]] = [M[piv], M[c]];
-    for (let r = c + 1; r < n; r++) {
-      const f = M[r][c] / M[c][c];
-      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    for (let r = c + 1; r < N; r++) if (Math.abs(A[r * W + c]) > Math.abs(A[piv * W + c])) piv = r;
+    if (piv !== c) for (let k = 0; k < W; k++) { const t = A[c * W + k]; A[c * W + k] = A[piv * W + k]; A[piv * W + k] = t; }
+    for (let r = c + 1; r < N; r++) {
+      const f = A[r * W + c] / A[c * W + c];
+      for (let k = c; k < W; k++) A[r * W + k] -= f * A[c * W + k];
     }
   }
-  const x = new Array(n).fill(0);
-  for (let r = n - 1; r >= 0; r--) {
-    let s = M[r][n];
-    for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k];
-    x[r] = s / M[r][r];
+  for (let r = N - 1; r >= 0; r--) {
+    let s2 = A[r * W + N];
+    for (let k = r + 1; k < N; k++) s2 -= A[r * W + k] * q[k];
+    q[r] = s2 / A[r * W + r];
   }
-  return x;
+  dX[o] = v;
+  for (let j = 0; j < n; j++) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
+  dX[o + n + 1] = q[0];
 }
 
 // Output names of a block (physics blocks may depend on their parameters).
