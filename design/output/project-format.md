@@ -48,7 +48,7 @@ One JSON document. Everything the person sets up is in it, including how the dis
 - `scope.channels[i].source` is a name the diagram defines: a Source signal or a Sink, or a loop signal once a controller exists; `""` is no source. Names that no longer exist are cleared when the file loads.
 - `library`: subsystems the person saved to My blocks.
 - A Controller block carries `variants` and `variant` ([controller-proposal.md](controller-proposal.md)).
-- `ui` (optional): how the page opens: `run` (`run`, `stop`, `single`), `tab` (`input`, `plant`, `controller`), `view` (a view's name; else the diagram), `setup` (the setup area's share of the page height, 0–1). Saving and Export HTML write the page's current state here; opening a file or loading a system applies it once. Unknown values are dropped.
+- `ui` (optional): how the page opens: `run` (`run`, `stop`, `single`), `tab` (`input`, `plant`, `controller`, `tune`), `view` (a view's name; else the diagram), `setup` (the setup area's share of the page height, 0–1). Saving and Export HTML write the page's current state here; opening a file or loading a system applies it once. Unknown values are dropped.
 - Source and Sink blocks carry `unit` (default `"1"`). `system.signals` holds one signal per Source name, nothing else (`r` when the diagram has no Source).
 - A diagram with its own Sources is a whole system: old `candidates` beside it are not run as a closed loop, and loading a whole system from the library replaces them.
 - `scope.channels[i].filter` (optional): a display filter `{ "type": "lowpass" | "highpass" | "bandpass" | "notch", "f0": Hz, "order": 2 | 4 | 6 | 8, "q": … }`.

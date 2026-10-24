@@ -163,6 +163,28 @@ export const CONTROLLERS = {
       return staticLinear(p.kr, p.K);
     },
   },
+  relay: {
+    // On/off control: u0 + d while the error is positive, u0 − d while it is
+    // negative, switching only once e passes ±ε (hysteresis), so a noisy
+    // measurement cannot make it chatter. Auto-tune's relay experiment
+    // (Åström–Hägglund) runs one to find Ku and Pu. A negative d reverses it,
+    // for a plant whose y falls when u rises.
+    label: 'Relay (on/off)', summary: 'u = u0 ± d by the sign of e, hysteresis ε',
+    params: [num('d', 'Amplitude d', 1, { unit: 'u', help: 'negative for a plant whose y falls when u rises' }), num('eps', 'Hysteresis ε', 0, { min: 0, help: 'switches when e = r − y passes +ε or −ε' }), num('u0', 'Bias u0', 0, { unit: 'u' }), ...LIMITS],
+    make(p) {
+      let high = null;
+      return {
+        step(x) {
+          const e = x[0] - (x[1] ?? 0);
+          if (high === null) high = e >= 0;
+          if (e > p.eps) high = true;
+          else if (e < -p.eps) high = false;
+          return clamp(p.u0 + (high ? p.d : -p.d), p.umin, p.umax);
+        },
+      };
+    },
+    linear() { throw new Error('a relay switches between two outputs: it has no linear model'); },
+  },
 };
 
 export const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
@@ -195,8 +217,9 @@ export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
   return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
 }
 
-// The law of a block's active variant.
+// The law of a block's active variant. Normalised first: a project restored
+// from JSON (undo, redo) has its open limits as null, not ±Infinity.
 export function makeLaw(variant, Ts, lib = CONTROLLERS) {
-  return lib[variant.type].make(variant.params, Ts);
+  return lib[variant.type].make(normalizeVariant(variant, 'variant', lib).params, Ts);
 }
 

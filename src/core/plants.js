@@ -364,6 +364,60 @@ export const EXAMPLE_PLANTS = [
       { len: 0.25, angle: '-(theta3 - theta2)' },
     ], 'x {x:5.2} m   θ1 {theta1*180/pi:5.1}°   θ2 {theta2*180/pi:5.1}°   θ3 {theta3*180/pi:5.1}°   F {F:5.1} N', [-1.3, -0.4, 1.3, 1.1])],
   },
+  {
+    // Made for the Auto-tune tab: a classic process (three lags and a dead
+    // time) under a PID that was tuned badly by hand. Time is scaled so the
+    // demo fits 5 s. The gains are hand-picked to be poor; the tab computes
+    // better ones from the plant.
+    name: 'Oven, badly tuned',
+    notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled to fit 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }] },
+      d: { period: PERIOD, components: [pulse(25, 3.6, 0.8)] },
+    },
+    scope: { channels: channels('r', 'T', 'P', 'd') },
+    ui: { ...ui('Oven'), tab: 'tune' },
+    diagram: {
+      blocks: [
+        src('r', 30, 112, '°C'),
+        src('d', 300, 220, '%'),
+        ctrl(130, 90, 2, 0.02, [
+          { name: 'PID, badly tuned', type: 'pid', params: { Kp: 6, Ki: 12, Kd: 0.1, Tf: 0.02, umin: 0, umax: 100 } },
+        ]),
+        { id: 'heater', type: 'firstOrder', name: 'heater', params: { K: 1, tau: 0.1 }, x: 300, y: 96 },
+        { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 420, y: 104 },
+        { id: 'oven', type: 'firstOrder', name: 'chamber', params: { K: 1, tau: 0.5 }, x: 490, y: 96 },
+        { id: 'lag', type: 'delay', name: 'to sensor', params: { L: 0.1, y0: 0 }, x: 620, y: 96 },
+        { id: 'tc', type: 'firstOrder', name: 'thermocouple', params: { K: 1, tau: 0.05 }, x: 740, y: 96 },
+        sink('T', 900, 106, '°C'),
+        sink('P', 300, 20, '%'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'heater' }, { from: 'heater', to: 'sum' }, { from: 'd', to: 'sum:1' }, { from: 'sum', to: 'oven' },
+        { from: 'oven', to: 'lag' }, { from: 'lag', to: 'tc' }, { from: 'tc', to: 'T' }, { from: 'tc', to: 'ctrl:1' }, { from: 'ctrl', to: 'P' },
+      ],
+    },
+    views: [{
+      // The oven with its heating element (lit along its length by the
+      // power P, which the controller keeps within 0–100 %), a thermometer
+      // column for T (0–100 °C; an overshoot past that leaves the tube, as
+      // nothing is clamped) with the setpoint r marked, and the door, which
+      // opens while heat is lost (d).
+      name: 'Oven', kind: '2d', view: [-1.2, -0.75, 1.2, 0.95],
+      shapes: [
+        { type: 'rect', x: -0.75, y: -0.45, w: 1.1, h: 1.1, fill: 'panel', stroke: 'ink', lineWidth: 3 },
+        { type: 'rect', x: -0.65, y: -0.35, w: 0.9, h: 0.9, fill: 'muted' },
+        { type: 'line', x1: -0.6, y1: -0.28, x2: 0.2, y2: -0.28, stroke: 'ink', lineWidth: 6 },
+        { type: 'line', x1: -0.6, y1: -0.28, x2: '-0.6 + 0.008*P', y2: -0.28, stroke: 'ch3', lineWidth: 6 },
+        { type: 'group', x: 0.35, y: -0.45, angle: '-0.012*d', shapes: [{ type: 'rect', x: -0.05, y: 0, w: 0.05, h: 1.1, fill: 'ink' }] },
+        { type: 'rect', x: 0.7, y: -0.45, w: 0.12, h: 1.1, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        { type: 'rect', x: 0.72, y: -0.45, w: 0.08, h: '0.011*T', fill: 'ch2' },
+        { type: 'line', x1: 0.66, y1: '-0.45 + 0.011*r', x2: 0.86, y2: '-0.45 + 0.011*r', stroke: 'ch1', lineWidth: 3 },
+        { type: 'text', x: 0.92, y: '-0.45 + 0.011*r', text: 'r', size: 12, fill: 'ch1', anchor: 'start' },
+        { type: 'text', x: 0, y: 0.82, text: 'T {T:5.1} °C   r {r:4.0} °C   heater {P:5.1} %   door loss {d:4.0} %', size: 13 },
+      ],
+    }],
+  },
 ];
 
 // A new project's plant: the reference alone.

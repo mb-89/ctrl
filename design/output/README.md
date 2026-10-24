@@ -14,6 +14,7 @@ The person's raw words are in [../input](../input/README.md). This folder is wha
 | [plant-views.md](plant-views.md) | 2D views of a plant, configured in its JSON (shapes, or SVG with bindings) |
 | [system-library.md](system-library.md) | Complete example systems, loaded whole or by part |
 | [controller-proposal.md](controller-proposal.md) | Tab 3, the Controller: blocks with variants, the controller library |
+| [autotune.md](autotune.md) | Tab 4, Auto-tune: the cost, Nelder–Mead, relay feedback and its rules, step response and SIMC, the tab |
 | [analysis.md](analysis.md) | Tab 5, Analysis: key numbers, root locus, Bode, Nyquist, linear step; how the loop is cut and discretised |
 | [project-format.md](project-format.md) | The project file (JSON), version 2 |
 | [decisions.md](decisions.md) | Dated log of decisions, including the interpretations we made |
@@ -23,5 +24,5 @@ The person's raw words are in [../input](../input/README.md). This folder is wha
 
 - Repository: [github.com/mb-89/ctrl](https://github.com/mb-89/ctrl).
 - **v1** (commit `b13ff03`): everything on one screen: scope, goal, candidates, a rack of knobs, auto-tune. It works, but the person found it overloaded; it is superseded by v2.
-- **v2, in progress**: the oscilloscope layout with the Input tab (signal generator) and the Plant tab (block diagram) built. The screen is the record; the display can be zoomed and panned directly. Until a controller exists, the diagram is the whole system: Sources play signals, Sinks are what the scope shows. Every signal has a unit. Plants carry 2D views (JSON only); three systems load from the System library and open running on their view. The Controller tab is built: Controller blocks hold variants (PID, state feedback, gain scheduling, Lyapunov swing-up) and the library has four controlled systems up to a triple pendulum. Auto-tune and Analysis come next ([roadmap.md](roadmap.md)).
+- **v2, in progress**: the oscilloscope layout with the Input tab (signal generator) and the Plant tab (block diagram) built. The screen is the record; the display can be zoomed and panned directly. Until a controller exists, the diagram is the whole system: Sources play signals, Sinks are what the scope shows. Every signal has a unit. Plants carry 2D views (JSON only); three systems load from the System library and open running on their view. The Controller tab is built: Controller blocks hold variants (PID, state feedback, gain scheduling, Lyapunov swing-up, relay) and the library has four controlled systems up to a triple pendulum. The Auto-tune tab is built: Nelder–Mead on a simulated cost, relay feedback, step response with SIMC, and a badly tuned oven to try them on; agents run the same with `node cli.mjs autotune` ([autotune.md](autotune.md)). Analysis comes next ([roadmap.md](roadmap.md)).
 - The simulation core (`src/core/`) and the agent CLI (`cli.mjs`, see `AGENTS.md`) carry over from v1.

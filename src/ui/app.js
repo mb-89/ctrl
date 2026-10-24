@@ -7,6 +7,8 @@ import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
 import { isDelta } from './xyview.js';
 import { createControllerTab } from './controller.js';
+import { createAutotuneTab } from './autotune.js';
+import { loopOverlays, autotune, placeVariant, tuneReport } from '../core/autotune.js';
 import { createAnalysisTab } from './analysis.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
@@ -21,7 +23,7 @@ const TABS = [
   { key: 'input', label: 'Input' },
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
-  { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
+  { key: 'tune', label: 'Auto-tune' },
   { key: 'analysis', label: 'Analysis' },
 ];
 
@@ -256,6 +258,13 @@ function startApp() {
       const fit = v && fitChannel(v);
       if (fit) Object.assign(ch, fit);
     });
+    // A Controller block's r and the y it compares with r share one scale and
+    // offset, so they overlay (src/core/autotune.js loopOverlays); not in XY,
+    // where channel 1 is the beam's x.
+    if (sc.view?.mode !== 'xy') for (const g of loopOverlays(sc.channels, data.signals, app.unitOf)) {
+      const fit = fitChannel(g.flatMap((i) => Array.from(data.signals[sc.channels[i].source])));
+      if (fit) for (const i of g) Object.assign(sc.channels[i], fit);
+    }
   }
   app.autoScale = () => {
     app.beginEdit();
@@ -284,6 +293,12 @@ function startApp() {
   // "Scope time" operating point.
   const analysisTab = createAnalysisTab($('tab-analysis'), app);
   app.scopeTime = () => display.time();
+  // Auto-tune changes the project many times in one run but takes one undo
+  // step for all of it (beginEdit at its start, endEdit at its end); each
+  // change goes through tuneEdit. It shows whole runs while it works.
+  app.tuneEdit = (fn) => { fn(app.project); changed(); };
+  app.setRunMode = (m) => { display.setMode(m); controls.render(display.mode); };
+  const tuneTab = createAutotuneTab($('tab-tune'), app, display);
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -294,6 +309,8 @@ function startApp() {
     $('tab-plant').hidden = app.tab !== 'plant';
     $('tab-controller').hidden = app.tab !== 'controller';
     if (app.tab === 'controller') controllerTab.shown();
+    $('tab-tune').hidden = app.tab !== 'tune';
+    if (app.tab === 'tune') tuneTab.shown();
     $('tab-analysis').hidden = app.tab !== 'analysis';
     if (app.tab === 'analysis') analysisTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
@@ -319,6 +336,7 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    if (app.tab === 'tune') tuneTab.render();
     if (app.tab === 'analysis') analysisTab.render();
     renderChrome();
     autosave();
@@ -495,6 +513,17 @@ function startApp() {
     run: () => { display.setMode('run'); controls.render('run'); },
     stop: () => { display.setMode('stop'); controls.render('stop'); },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
+    // Auto-tune a Controller block at once, as the Auto-tune tab does step by
+    // step: opts { block (id path, 'ctrl'), method, goal, rule, amplitude,
+    // maxIter, apply = true }. Applied, the result goes into a variant of its
+    // own, running if it scores better: one undo step.
+    autotune: (opts = {}) => {
+      tuneTab.stop();
+      let res;
+      try { res = autotune(app.project, opts.block ? String(opts.block).split('/') : null, opts); } catch (err) { return { ok: false, why: err.message }; }
+      if (res.ok && opts.apply !== false) { app.beginEdit(); placeVariant(app.project, res.path, res.variant, { run: res.better }); app.endEdit(); changed(); }
+      return tuneReport(res);
+    },
   };
 
   // Boot: the embedded project, unless this browser has newer work on it.
