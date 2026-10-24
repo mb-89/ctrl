@@ -398,7 +398,7 @@ def plant_params(args):
     differs from the nominal one by a random factor within ±15 % (--vary), so
     the page, which is not told, has to identify it as it would a real one.
     --seed gives the same plant again; --set fixes a parameter. Printed at
-    the start, for the person at the plant."""
+    the start, for whoever runs the plant."""
     rng = random.Random(args.seed)
     params = {}
     for name in Motor.PHYSICS:
