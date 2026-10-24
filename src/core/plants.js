@@ -4,8 +4,13 @@
 // (design/output/system-library.md). Each runs 5 s and opens running, on its
 // view in the Plant tab (ui). The controlled ones grow in difficulty: a PID
 // on a motor, a gain-scheduled PI on a tank, an energy (Lyapunov) swing-up of a
-// pendulum, state feedback on a triple pendulum. Each has a reference r and a
+// pendulum, LQR on a triple pendulum. Each has a reference r and a
 // disturbance d, and a Controller block whose variants can be flipped.
+//
+// Only inputs are stored here: physics, hand gains (PID, the energy pump),
+// and the weights, levels and limits of designed variants. Every gain,
+// table and start value those compute comes from the plant, in the page
+// (design/output/designs.md).
 
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
@@ -51,11 +56,10 @@ function cartView(name, track, rods, caption, box) {
   };
 }
 
-// Cart–pole gains: discrete LQR (Ts = 10 ms) at the upright rest, for the
-// outputs in block order (x, θ…, v, ω…); see design/output/system-library.md.
-const K_SINGLE = [-9.177, -63.18, -10.33, -13.34];
-const K_TRIPLE = [-6.9896, -497.8, 1400.5, -1011.7, -12.018, -18.079, 79.602, -102.41];
-const K_TRIPLE_GENTLE = [-2.3, -417, 1050, -686, -4.496, -14.83, 62.84, -67.32];
+// LQR weights for the cart–poles, one per measurement (x, θ…, v, ω…): the
+// cart's position, the angles, the rates.
+const Q_SINGLE = [10, 50, 1, 1];
+const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 
 export const EXAMPLE_PLANTS = [
   {
@@ -229,7 +233,7 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Conical tank, gain scheduling',
-    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The gain-scheduled PI looks its gains up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
+    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The page computes the PI gains from the tank itself at each level (pole cancellation), and the gain-scheduled PI looks them up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
     signals: {
       r: { period: PERIOD, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }] },
       d: { period: PERIOD, components: [pulse(0.15, 2.2, 0.5)] },
@@ -240,12 +244,12 @@ export const EXAMPLE_PLANTS = [
       blocks: [
         src('r', 30, 112, 'm'),
         src('d', 300, 220, 'm³/s'),
-        // PI by pole cancellation for a 0.25 s closed loop at level h:
-        // Kp = A(h) / 0.25, Ki = a √(2g) / (2 √h · 0.25); u0 balances the outlet at 0.15 m.
+        // PIs by pole cancellation for a 0.25 s closed loop, computed from
+        // the tank at these levels; each starts in balance at the start level.
         ctrl(130, 90, 2, 0.02, [
-          { name: 'Gain-scheduled PI', type: 'gainScheduled', params: { at: [0.1, 0.25, 0.5, 0.75, 1], Kp: [0.113, 0.332, 0.95, 1.887, 3.142], Ki: [2.801, 1.772, 1.253, 1.023, 0.886], u0: 0.172, Tr: 0.1, umin: 0, umax: 3 } },
-          { name: 'PI tuned for full', type: 'pid', params: { Kp: 2.112, Ki: 0.99, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
-          { name: 'PI tuned for empty', type: 'pid', params: { Kp: 0.173, Ki: 2.287, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
+          { name: 'Gain-scheduled PI', type: 'scheduledPI', params: { at: [0.1, 0.25, 0.5, 0.75, 1], Tcl: 0.25, Tr: 0.1, umin: 0, umax: 3 } },
+          { name: 'PI tuned for full', type: 'scheduledPI', params: { at: [0.8], Tcl: 0.25, umin: 0, umax: 3 } },
+          { name: 'PI tuned for empty', type: 'scheduledPI', params: { at: [0.15], Tcl: 0.25, umin: 0, umax: 3 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         // The pipe was already flowing: before 0.1 s it delivers what the pump gives at t = 0.
@@ -278,7 +282,7 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Pendulum swing-up',
-    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with state feedback and holds it; at 3.5 s it is pushed (d). Flip to "State feedback only" to see why the swing-up is needed.',
+    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with LQR, its gains computed from the cart and pole, and holds it; at 3.5 s it is pushed (d). Flip to "LQR only" to see why the swing-up is needed.',
     signals: {
       r: { period: PERIOD, components: [] },
       d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
@@ -290,8 +294,8 @@ export const EXAMPLE_PLANTS = [
         src('r', 30, 112, 'm'),
         src('d', 300, 200, 'N'),
         ctrl(130, 80, 5, 0.01, [
-          { name: 'Swing-up + state feedback', type: 'swingUp', params: { kE: 3, kx: 8, kv: 5, l: 0.5, g: 9.81, thetaS: 0.4, K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
-          { name: 'State feedback only', type: 'stateFeedback', params: { K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
+          { name: 'Swing-up + LQR catch', type: 'swingUpLqr', params: { kE: 3, kx: 8, kv: 5, l: 0.5, g: 9.81, thetaS: 0.4, Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
+          { name: 'LQR only', type: 'lqr', params: { Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 104 },
@@ -309,7 +313,7 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Triple pendulum',
-    notes: 'Three rods balanced on top of each other on a cart, held up by state feedback from all eight states (positions, angles and their rates; gains from LQR). It starts with the lowest rod tilted 3°, is pushed at 1 s (d), and the cart is moved 0.5 m at 2.5 s (r). Flip to the gentle LQR to see a softer, slower controller.',
+    notes: 'Three rods balanced on top of each other on a cart, held up by state feedback from all eight states (positions, angles and their rates), its gains computed in the page by LQR from the cart and rods. It starts with the lowest rod tilted 3°, is pushed at 1 s (d), and the cart is moved 0.5 m at 2.5 s (r). Flip to the gentle LQR (a larger effort weight R) to see a softer, slower controller.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 0.5, time: 2.5 } }] },
       d: { period: PERIOD, components: [pulse(4, 1, 0.1)] },
@@ -321,8 +325,8 @@ export const EXAMPLE_PLANTS = [
         src('r', 30, 132, 'm'),
         src('d', 300, 260, 'N'),
         ctrl(130, 70, 9, 0.01, [
-          { name: 'LQR', type: 'stateFeedback', params: { K: K_TRIPLE, kr: K_TRIPLE[0], umin: -40, umax: 40 } },
-          { name: 'LQR, gentle', type: 'stateFeedback', params: { K: K_TRIPLE_GENTLE, kr: K_TRIPLE_GENTLE[0], umin: -40, umax: 40 } },
+          { name: 'LQR', type: 'lqr', params: { Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
+          { name: 'LQR, gentle', type: 'lqr', params: { Q: Q_TRIPLE, R: 1, umin: -40, umax: 40 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },

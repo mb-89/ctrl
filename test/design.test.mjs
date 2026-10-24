@@ -207,3 +207,111 @@ test('designs resolve observers first: a Controller looks through a designed obs
     assert.deepEqual(el.designs[1].values.K, direct.values.K);
   } finally { delete OBSERVERS.truth; }
 });
+
+test('scheduledPI: pole cancellation from the tank at each level reproduces the formulas and the old table', () => {
+  // Test 6. Linearised at level h the tank is (1/A(h)) / (s + 1/τ(h)), so a
+  // PI for a closed loop of time constant Tcl has Kp = A(h) / Tcl and
+  // Ki = a √(2g) / (2 √h Tcl); u0 = a √(2g h0) balances the outlet at the start.
+  const p = project('Conical tank');
+  const tank = p.system.plant.diagram.blocks.find((b) => b.type === 'conicalTank').params;
+  const A = (h) => Math.PI * (tank.r0 + ((tank.R - tank.r0) * Math.min(h, tank.H)) / tank.H) ** 2;
+  const rel = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol * Math.abs(b), `${what}: ${a}, not ${b}`);
+  const at = [0.1, 0.25, 0.5, 0.75, 1];
+  const st = statusOf(p);
+  assert.equal(st.status, 'ok', JSON.stringify(st.error));
+  assert.equal(st.type, 'scheduledPI');
+  const { Kp, Ki, u0 } = st.values;
+  assert.deepEqual(st.values.at, at);
+  at.forEach((h, i) => {
+    rel(Kp[i], A(h) / 0.25, 1e-6, `Kp at ${h}`);
+    rel(Ki[i], (tank.a * Math.sqrt(2 * tank.g)) / (2 * Math.sqrt(h) * 0.25), 1e-6, `Ki at ${h}`);
+  });
+  // The table the library held, to 0.5 %.
+  [0.113, 0.332, 0.95, 1.887, 3.142].forEach((v, i) => rel(Kp[i], v, 5e-3, `old Kp[${i}]`));
+  [2.801, 1.772, 1.253, 1.023, 0.886].forEach((v, i) => rel(Ki[i], v, 5e-3, `old Ki[${i}]`));
+  rel(u0, tank.a * Math.sqrt(2 * tank.g * tank.h0), 1e-9, 'u0');
+  assert.equal(Number(u0.toFixed(4)), 0.1716);
+  assert.equal(st.at, 'h = 0.1 … 1 m (5 levels)');
+  assert.deepEqual(st.rows[0].head, ['h (m)', 'q', 'K', 'τ (s)', 'θ (s)', 'Kp', 'Ki']);
+  assert.equal(st.rows[0].table.length, 5);
+  assert.deepEqual(st.rows[1], { label: 'u0', value: u0, note: 'holds h = 0.15 m, where it starts' });
+  assert.ok(st.warnings.includes('dead time 0.1 s on h is not in this design: pole cancellation leaves it out'));
+  // The fixed PIs, tuned for full (0.8 m) and for empty (0.15 m), to 0.5 %.
+  for (const [name, kp, ki] of [['PI tuned for full', 2.112, 0.99], ['PI tuned for empty', 0.173, 2.287]]) {
+    const q = project('Conical tank');
+    ctrlOf(q).variant = ctrlOf(q).variants.findIndex((v) => v.name === name);
+    const s = statusOf(q);
+    assert.equal(s.values.at.length, 1);
+    rel(s.values.Kp[0], kp, 5e-3, `${name} Kp`);
+    rel(s.values.Ki[0], ki, 5e-3, `${name} Ki`);
+    assert.equal(s.values.u0, u0);
+  }
+  // Refusals, as sentences: a level the pump cannot hold, an integrating plant.
+  const high = statusOf(project('Conical tank', [{ type: 'scheduledPI', params: { at: [0.5, 0.98], umin: 0, umax: 0.4 } }]));
+  assert.equal(high.error.code, 'u-limit');
+  assert.match(high.error.message, /^holding h = 0\.98 m needs q = 0\.438, above u max 0\.4$/);
+  const motor = statusOf(project('DC motor', [{ type: 'scheduledPI', params: { at: [1] } }]));
+  assert.equal(motor.error.code, 'integrating-plant');
+  assert.match(motor.error.message, /angle integrates V/);
+  assert.throws(() => normalizeVariant({ type: 'scheduledPI', params: { at: [0.5, 0.2] } }), /the At values must increase/);
+  assert.throws(() => normalizeVariant({ type: 'scheduledPI', params: { Tcl: 0 } }), /Tcl: above 0/);
+});
+
+test('swingUpLqr: the catch is LQR from the plant; it needs the cart–pole\'s x, θ, v, ω', () => {
+  const st = statusOf(project('Pendulum swing-up'));
+  assert.equal(st.type, 'swingUpLqr');
+  assert.equal(st.status, 'ok', JSON.stringify(st.error));
+  st.values.K.forEach((k, i) => assert.ok(Math.abs(k - K_SINGLE[i]) <= 1e-3 * Math.abs(K_SINGLE[i]), `K[${i}] = ${k}`));
+  assert.ok(Math.abs(st.values.kr - st.values.K[0]) <= 1e-6 * Math.abs(st.values.K[0]));
+  assert.equal(st.at, 'origin (all states 0, u = 0)');
+  // The same weights as "LQR only": the same gains.
+  const only = project('Pendulum swing-up');
+  ctrlOf(only).variant = 1;
+  assert.deepEqual(statusOf(only).values, st.values);
+  // On the triple pendulum the swing-up would read the wrong inputs: refused.
+  const triple = statusOf(project('Triple', [{ type: 'swingUpLqr', params: { Q: Q_TRIPLE, R: 0.1 } }]));
+  assert.equal(triple.error.code, 'swing-inputs');
+  assert.match(triple.error.message, /reads x, θ, v, ω \(θ an angle\) from inputs 2 to 5; this block has x, θ1, θ2, θ3, v, ω1, ω2, ω3/);
+});
+
+test('Copy as numbers: the hand twins of swingUpLqr and scheduledPI run bit for bit like the designed variants', () => {
+  // Test 8, for swingUpLqr and scheduledPI with five levels and with one.
+  for (const [name, variant, twinType] of [['Pendulum swing-up', 0, 'swingUp'], ['Conical tank', 0, 'gainScheduled'], ['Conical tank', 1, 'pid']]) {
+    const p = project(name);
+    const c = ctrlOf(p);
+    c.variant = variant;
+    const json = JSON.stringify(c.variants[variant]);
+    assert.ok(!/"(K|kr|Kp|Ki|u0)"/.test(json), `${json}: inputs only`);
+    const store = createDesignStore();
+    const designed = evaluateSystem(p, { designs: store });
+    const [st] = designed.info.designs;
+    const v = c.variants[variant];
+    const twin = CONTROLLERS[v.type].manual(v.params, st.values);
+    assert.equal(twin.type, twinType);
+    c.variants.splice(variant + 1, 0, normalizeVariant({ name: `${v.name} (numbers)`, ...twin }));
+    c.variant = variant + 1;
+    const copied = evaluateSystem(normalizeProject(JSON.parse(JSON.stringify(p))), { designs: store });
+    assert.deepEqual(copied.info.designs, [], `${name}: the copy is a hand variant`);
+    for (const sig of Object.keys(designed.signals)) assert.deepEqual(copied.signals[sig], designed.signals[sig], `${name} ${v.name}: ${sig}`);
+  }
+  // Computed numbers in a file are refused, naming the twin.
+  assert.throws(() => normalizeVariant({ type: 'scheduledPI', params: { Kp: [1] } }), /scheduledPI computes Kp, Ki and u0 from the plant and at and Tcl; to set them by hand use Copy as numbers \(a PID or Gain-scheduled PI variant\)/);
+  assert.throws(() => normalizeVariant({ type: 'swingUpLqr', params: { kr: 1 } }), /swingUpLqr computes K and kr .* \(a Swing-up \(Lyapunov\) \+ state feedback variant\)/);
+});
+
+test('guard: the library stores inputs only, never numbers computed from a plant', async () => {
+  // Test 12.
+  const { readFileSync } = await import('node:fs');
+  const variants = [], delays = [];
+  const walk = (d) => { for (const b of d.blocks) { if (b.variants) variants.push(...b.variants); if (b.type === 'delay') delays.push(b); if (b.diagram) walk(b.diagram); } };
+  for (const s of SYSTEM_LIBRARY) walk(s.plant.diagram);
+  assert.ok(variants.length >= 10);
+  for (const v of variants) {
+    const lib = CONTROLLERS[v.type] ? CONTROLLERS : OBSERVERS;
+    assert.ok(lib[v.type].designed || ['pid', 'off'].includes(v.type), `${v.name}: ${v.type} holds numbers; use a designed type`);
+    assert.ok(!('u0' in (v.params ?? {})), `${v.name}: a start output is a trim value, computed from the plant`);
+  }
+  for (const b of delays) assert.ok(b.params.y0 === null || b.params.y0 === undefined || b.params.y0 === 0, `${b.name}: y0 ${b.params.y0} is a computed start flow; leave it empty`);
+  const src = readFileSync(new URL('../src/core/plants.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '').replace(/'(?:[^'\\]|\\.)*'/g, "''");
+  assert.deepEqual(src.match(/\bK_\w*/g) ?? [], [], 'no stored gain tables');
+});

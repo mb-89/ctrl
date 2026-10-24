@@ -2695,9 +2695,10 @@ __mods['core/design.js'] = (() => {
 //   canonical(x), hashKey(s), plantKey(diagram)   keys
 //   createDesignStore(), SYNC_DESIGNS              the store compileDiagram resolves designs through
 //   lqrDesign(lin, { Q, R, track, Ts })            discrete LQR on a linear model, in measurement order
+//   piCancel(fit, Tcl), scheduledPIDesign(p, ctx)  PI by pole cancellation, at levels of the first measurement
 
 const { c2d, dlqr, eig, solve, rank, mul, transpose } = __mods['core/linalg.js'];
-const { DesignError, operatingPoint, linearize } = __mods['core/linearize.js'];
+const { DesignError, operatingPoint, linearize, firstOrderFit } = __mods['core/linearize.js'];
 const fmt = (v) => (Number.isFinite(v) ? String(Number(Number(v).toPrecision(4))) : String(v));
 const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
 const now = () => globalThis.performance?.now() ?? Date.now();
@@ -2812,7 +2813,7 @@ function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
       warnings: [...new Set([...(mdl?.warnings ?? []), ...used.warnings, ...(out.warnings ?? [])])],
       quality: out.quality ?? null,
       error: out.error ?? null,
-      at: used.at,
+      at: out.at ?? used.at,
       states: mdl ? mdl.states.map((s) => s.name) : null,
       ms: now() - t0,
     };
@@ -2936,7 +2937,48 @@ function lqrDesign(lin, { Q, R, track = 1, Ts }) {
   return { K, kr, Kx, P, Ad, Bd, poles, rows, warnings };
 }
 
-return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, lqrDesign };
+// A PI that cancels the lag of a first-order fit K e^(−θs) / (τs + 1):
+// Kp = τ / (K Tcl), Ki = 1 / (K Tcl) leave the loop a first-order lag with
+// time constant Tcl. The dead time θ is not in it.
+function piCancel(fit, Tcl) {
+  return { Kp: fit.tau / (fit.K * Tcl), Ki: 1 / (fit.K * Tcl) };
+}
+
+// The PI of a scheduledPI variant: at each level of the first measurement
+// (p.at) the plant is trimmed, linearised and fitted (linearize.js), and
+// piCancel gives the gains there. u0 is the input that holds the first
+// measurement where the plant starts, so the loop starts in balance.
+// p: { at, Tcl, umin, umax }. Returns { values: { at, Kp, Ki, u0 }, rows,
+// warnings, at } (the last: the operating points, for the status).
+function scheduledPIDesign(p, ctx) {
+  const model = ctx.model();
+  if (!model.m) throw new DesignError('no-measurement', 'this block has no measurement to design a PI for', 'wire the measurement to input 2');
+  const out = model.outputs[0], uName = model.input?.label ?? 'u';
+  const unit = out.unit ? ` ${out.unit}` : '';
+  const limits = { umin: p.umin, umax: p.umax };
+  const warnings = [];
+  const pts = p.at.map((level) => {
+    const lin = ctx.linearize({ y: [level] }, limits);
+    const fit = firstOrderFit(lin, 0);
+    warnings.push(...fit.warnings);
+    return { level, u: lin.op.u, fit, ...piCancel(fit, p.Tcl) };
+  });
+  // The start: the level y1 has at the initial state, held by u0.
+  const y = new Float64Array(model.m);
+  model.y(model.x0, 0, y);
+  let u0 = 0;
+  try { u0 = ctx.trim([y[0]], limits).u; } catch (err) { warnings.push(`u0 = 0: ${err.message}`); }
+  const theta = pts[0].fit.theta;
+  if (theta > 0) warnings.push(`dead time ${fmt(theta)} s on ${out.label} is not in this design: pole cancellation leaves it out`);
+  const rows = [
+    { label: 'gains', head: [`${out.label}${unit ? ` (${unit.trim()})` : ''}`, uName, 'K', 'τ (s)', 'θ (s)', 'Kp', 'Ki'], table: pts.map((q) => [q.level, q.u, q.fit.K, q.fit.tau, q.fit.theta, q.Kp, q.Ki]) },
+    { label: 'u0', value: u0, note: `holds ${out.label} = ${fmt(y[0])}${unit}, where it starts` },
+  ];
+  const at = p.at.length === 1 ? `${out.label} = ${fmt(p.at[0])}${unit}, ${uName} = ${fmt(pts[0].u)}` : `${out.label} = ${fmt(p.at[0])} … ${fmt(p.at.at(-1))}${unit} (${p.at.length} levels)`;
+  return { values: { at: [...p.at], Kp: pts.map((q) => q.Kp), Ki: pts.map((q) => q.Ki), u0 }, rows, warnings: [...new Set(warnings)], at };
+}
+
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, lqrDesign, piCancel, scheduledPIDesign };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
@@ -2955,19 +2997,30 @@ __mods['core/controllers.js'] = (() => {
 // levels, limits); it adds
 //   designed: true, version          version enters the cache key; bump it when results change
 //   computes: ['K', 'kr']            refused in params: a file never holds computed numbers
-//   twin: 'stateFeedback'            the hand type "Copy as numbers" turns it into
-//   design(p, ctx)                   → { values, rows, warnings?, quality? }; sees the plant
-//                                    only through ctx (design.js), throws DesignError
+//   twin: 'stateFeedback'            the hand type(s) "Copy as numbers" turns it into
+//   design(p, ctx)                   → { values, rows, warnings?, quality?, at? }; sees the
+//                                    plant only through ctx (design.js), throws DesignError
 //   make(p, Ts, values)              the law from plain data; values null → u = 0
 //   manual(p, values)                → { type, params } of the twin: Copy as numbers
 //   compatible?(a, b)                may old values run on a changed plant (later, for the page)
+// A vector parameter's `per` says what its entries stand for, so the
+// Controller tab can name them: 'measurement' (one each) or 'level' (levels
+// of the first measurement).
 
-const { lqrDesign } = __mods['core/design.js'];
+const { lqrDesign, scheduledPIDesign } = __mods['core/design.js'];
+const { DesignError } = __mods['core/linearize.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
 const LIMITS = [num('umin', 'u min', -Infinity, { unit: 'u' }), num('umax', 'u max', Infinity, { unit: 'u' })];
 const PREFILTER = num('Tr', 'Prefilter Tr', 0, { unit: 's', min: 0, help: 'Vorfilter: a first-order lag on r; 0 is off' });
 const START = num('u0', 'Start output u0', 0, { unit: 'u', help: 'the integral part at t = 0, so a loop can start in balance' });
+// The energy pump of the swing-up: hand gains, shared by its two types.
+const SWING = [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 })];
+// The weights of an LQR design.
+const WEIGHTS = [
+  vec('Q', 'Weights Q', [1], { min: 0, per: 'measurement', help: 'what an error in each measurement costs, one per measurement; one value weighs them all' }),
+  num('R', 'Effort weight R', 1, { positive: true, help: 'how much u costs: larger is gentler' }),
+];
 
 const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -3007,6 +3060,8 @@ function pidCore(Ts, u0 = 0) {
 
 // The law of a designed variant without values (pending, or failed): u = 0.
 const OFF = { step: () => 0 };
+// A designed law runs as its Copy as numbers twin would, so the copy runs bit for bit alike.
+const twinLaw = (twin, Ts) => CONTROLLERS[twin.type].make(normalizeVariant(twin).params, Ts);
 
 const CONTROLLERS = {
   off: {
@@ -3023,7 +3078,7 @@ const CONTROLLERS = {
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
-    params: [vec('K', 'Gains K', [1]), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
+    params: [vec('K', 'Gains K', [1], { per: 'measurement' }), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
     make(p, Ts) {
       const pre = prefilter(p.Tr, Ts);
       return {
@@ -3040,7 +3095,7 @@ const CONTROLLERS = {
     // equilibrium with every state measured (design.js, lqrDesign).
     label: 'LQR', summary: 'u = kr r − K · y, K from the plant (LQR)',
     designed: true, version: 1, computes: ['K', 'kr'], twin: 'stateFeedback',
-    params: [vec('Q', 'Weights Q', [1], { min: 0, help: 'what an error in each measurement costs, one per measurement; one value weighs them all' }), num('R', 'Effort weight R', 1, { positive: true, help: 'how much u costs: larger is gentler' }), num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }), PREFILTER, ...LIMITS],
+    params: [...WEIGHTS, num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }), PREFILTER, ...LIMITS],
     design(p, ctx) {
       const d = lqrDesign(ctx.linearize('origin'), { Q: p.Q, R: p.R, track: p.track, Ts: ctx.Ts });
       return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
@@ -3067,6 +3122,26 @@ const CONTROLLERS = {
       };
     },
   },
+  scheduledPI: {
+    // A PI by pole cancellation, from the plant this block sees: at each
+    // level of the first measurement the plant is trimmed, linearised and
+    // fitted as K e^(−θs) / (τs + 1), and Kp = τ / (K Tcl), Ki = 1 / (K Tcl)
+    // make the loop a first-order lag with time constant Tcl (design.js).
+    // One level gives a fixed PI; several, a gain-scheduled one. u0 holds the
+    // level the plant starts at.
+    label: 'PI from the plant', summary: 'PI by pole cancellation at levels of y',
+    designed: true, version: 1, computes: ['Kp', 'Ki', 'u0'], twin: ['pid', 'gainScheduled'],
+    params: [vec('at', 'At y =', [1], { per: 'level', help: 'the levels of the first measurement to design at; one level gives a fixed PI, several are interpolated' }), num('Tcl', 'Closed loop Tcl', 0.25, { unit: 's', positive: true, help: 'the time constant the loop should have' }), PREFILTER, ...LIMITS],
+    check(p) { return p.at.some((v, i) => i && v <= p.at[i - 1]) ? 'the At values must increase' : ''; },
+    design: (p, ctx) => scheduledPIDesign(p, ctx),
+    make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.scheduledPI.manual(p, values), Ts) : OFF; },
+    manual(p, values) {
+      const common = { Tr: p.Tr, u0: values.u0, umin: p.umin, umax: p.umax };
+      return values.at.length === 1
+        ? { type: 'pid', params: { Kp: values.Kp[0], Ki: values.Ki[0], Kd: 0, ...common } }
+        : { type: 'gainScheduled', params: { at: [...values.at], Kp: [...values.Kp], Ki: [...values.Ki], ...common } };
+    },
+  },
   swingUp: {
     // For a pendulum on a cart, inputs r, x, θ, v, ω (θ = 0 upright). Far from
     // upright it pumps energy: with E = ½ l² ω² + g l (cos θ − 1), zero at the
@@ -3075,7 +3150,7 @@ const CONTROLLERS = {
     // middle. Near the top (|θ| < θs) it
     // catches the pole with state feedback u = kr r − K · [x, θ, v, ω].
     label: 'Swing-up (Lyapunov) + state feedback', summary: 'energy pumping, then u = kr r − K · y',
-    params: [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 }), vec('K', 'Gains K', [-1, -30, -2, -5]), num('kr', 'Prefilter kr', -1), ...LIMITS],
+    params: [...SWING, vec('K', 'Gains K', [-1, -30, -2, -5], { per: 'measurement' }), num('kr', 'Prefilter kr', -1), ...LIMITS],
     make(p) {
       let caught = false;
       return {
@@ -3096,6 +3171,24 @@ const CONTROLLERS = {
         },
       };
     },
+  },
+  swingUpLqr: {
+    // The swing-up above, its catch designed by LQR at the upright rest (the
+    // origin of the plant this block sees, which must be the cart–pole's
+    // x, θ, v, ω on inputs 2 to 5); x follows r. The energy pump keeps its
+    // hand gains.
+    label: 'Swing-up + LQR catch', summary: 'energy pumping, then u = kr r − K · y, K from the plant',
+    designed: true, version: 1, computes: ['K', 'kr'], twin: 'swingUp',
+    params: [...SWING, ...WEIGHTS, ...LIMITS],
+    design(p, ctx) {
+      const lin = ctx.linearize('origin');
+      const labels = lin.outputs.map((o) => o.label);
+      if (lin.m !== 4 || !lin.outputs[1].angle) throw new DesignError('swing-inputs', `the swing-up reads x, θ, v, ω (θ an angle) from inputs 2 to 5; this block has ${labels.length ? labels.join(', ') : 'no measurements'}`, 'wire the cart–pole\'s x, θ, v, ω to inputs 2 to 5, or use LQR');
+      const d = lqrDesign(lin, { Q: p.Q, R: p.R, track: 1, Ts: ctx.Ts });
+      return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
+    },
+    make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.swingUpLqr.manual(p, values), Ts) : OFF; },
+    manual: (p, values) => ({ type: 'swingUp', params: { kE: p.kE, kx: p.kx, kv: p.kv, l: p.l, g: p.g, thetaS: p.thetaS, K: [...values.K], kr: values.kr, umin: p.umin, umax: p.umax } }),
   },
 };
 
@@ -3130,7 +3223,8 @@ function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
   const given = (def.computes ?? []).filter((k) => v.params?.[k] !== undefined);
   if (given.length) {
     const inputs = def.params.map((p) => p.key).filter((k) => !/^(umin|umax|Tr)$/.test(k));
-    throw new Error(`${where}.params.${given[0]}: ${v.type} computes ${and(def.computes)} from the plant and ${and(inputs)}; to set them by hand use Copy as numbers (a ${lib[def.twin]?.label ?? def.twin} variant)`);
+    const twins = [].concat(def.twin).map((t) => lib[t]?.label ?? t).join(' or ');
+    throw new Error(`${where}.params.${given[0]}: ${v.type} computes ${and(def.computes)} from the plant and ${and(inputs)}; to set them by hand use Copy as numbers (a ${twins} variant)`);
   }
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
@@ -4408,8 +4502,13 @@ __mods['core/plants.js'] = (() => {
 // (design/output/system-library.md). Each runs 5 s and opens running, on its
 // view in the Plant tab (ui). The controlled ones grow in difficulty: a PID
 // on a motor, a gain-scheduled PI on a tank, an energy (Lyapunov) swing-up of a
-// pendulum, state feedback on a triple pendulum. Each has a reference r and a
+// pendulum, LQR on a triple pendulum. Each has a reference r and a
 // disturbance d, and a Controller block whose variants can be flipped.
+//
+// Only inputs are stored here: physics, hand gains (PID, the energy pump),
+// and the weights, levels and limits of designed variants. Every gain,
+// table and start value those compute comes from the plant, in the page
+// (design/output/designs.md).
 
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
@@ -4455,11 +4554,10 @@ function cartView(name, track, rods, caption, box) {
   };
 }
 
-// Cart–pole gains: discrete LQR (Ts = 10 ms) at the upright rest, for the
-// outputs in block order (x, θ…, v, ω…); see design/output/system-library.md.
-const K_SINGLE = [-9.177, -63.18, -10.33, -13.34];
-const K_TRIPLE = [-6.9896, -497.8, 1400.5, -1011.7, -12.018, -18.079, 79.602, -102.41];
-const K_TRIPLE_GENTLE = [-2.3, -417, 1050, -686, -4.496, -14.83, 62.84, -67.32];
+// LQR weights for the cart–poles, one per measurement (x, θ…, v, ω…): the
+// cart's position, the angles, the rates.
+const Q_SINGLE = [10, 50, 1, 1];
+const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 
 const EXAMPLE_PLANTS = [
   {
@@ -4633,7 +4731,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Conical tank, gain scheduling',
-    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The gain-scheduled PI looks its gains up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
+    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The page computes the PI gains from the tank itself at each level (pole cancellation), and the gain-scheduled PI looks them up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
     signals: {
       r: { period: PERIOD, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }] },
       d: { period: PERIOD, components: [pulse(0.15, 2.2, 0.5)] },
@@ -4644,12 +4742,12 @@ const EXAMPLE_PLANTS = [
       blocks: [
         src('r', 30, 112, 'm'),
         src('d', 300, 220, 'm³/s'),
-        // PI by pole cancellation for a 0.25 s closed loop at level h:
-        // Kp = A(h) / 0.25, Ki = a √(2g) / (2 √h · 0.25); u0 balances the outlet at 0.15 m.
+        // PIs by pole cancellation for a 0.25 s closed loop, computed from
+        // the tank at these levels; each starts in balance at the start level.
         ctrl(130, 90, 2, 0.02, [
-          { name: 'Gain-scheduled PI', type: 'gainScheduled', params: { at: [0.1, 0.25, 0.5, 0.75, 1], Kp: [0.113, 0.332, 0.95, 1.887, 3.142], Ki: [2.801, 1.772, 1.253, 1.023, 0.886], u0: 0.172, Tr: 0.1, umin: 0, umax: 3 } },
-          { name: 'PI tuned for full', type: 'pid', params: { Kp: 2.112, Ki: 0.99, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
-          { name: 'PI tuned for empty', type: 'pid', params: { Kp: 0.173, Ki: 2.287, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
+          { name: 'Gain-scheduled PI', type: 'scheduledPI', params: { at: [0.1, 0.25, 0.5, 0.75, 1], Tcl: 0.25, Tr: 0.1, umin: 0, umax: 3 } },
+          { name: 'PI tuned for full', type: 'scheduledPI', params: { at: [0.8], Tcl: 0.25, umin: 0, umax: 3 } },
+          { name: 'PI tuned for empty', type: 'scheduledPI', params: { at: [0.15], Tcl: 0.25, umin: 0, umax: 3 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         // The pipe was already flowing: before 0.1 s it delivers what the pump gives at t = 0.
@@ -4682,7 +4780,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Pendulum swing-up',
-    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with state feedback and holds it; at 3.5 s it is pushed (d). Flip to "State feedback only" to see why the swing-up is needed.',
+    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with LQR, its gains computed from the cart and pole, and holds it; at 3.5 s it is pushed (d). Flip to "LQR only" to see why the swing-up is needed.',
     signals: {
       r: { period: PERIOD, components: [] },
       d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
@@ -4694,8 +4792,8 @@ const EXAMPLE_PLANTS = [
         src('r', 30, 112, 'm'),
         src('d', 300, 200, 'N'),
         ctrl(130, 80, 5, 0.01, [
-          { name: 'Swing-up + state feedback', type: 'swingUp', params: { kE: 3, kx: 8, kv: 5, l: 0.5, g: 9.81, thetaS: 0.4, K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
-          { name: 'State feedback only', type: 'stateFeedback', params: { K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
+          { name: 'Swing-up + LQR catch', type: 'swingUpLqr', params: { kE: 3, kx: 8, kv: 5, l: 0.5, g: 9.81, thetaS: 0.4, Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
+          { name: 'LQR only', type: 'lqr', params: { Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 104 },
@@ -4713,7 +4811,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Triple pendulum',
-    notes: 'Three rods balanced on top of each other on a cart, held up by state feedback from all eight states (positions, angles and their rates; gains from LQR). It starts with the lowest rod tilted 3°, is pushed at 1 s (d), and the cart is moved 0.5 m at 2.5 s (r). Flip to the gentle LQR to see a softer, slower controller.',
+    notes: 'Three rods balanced on top of each other on a cart, held up by state feedback from all eight states (positions, angles and their rates), its gains computed in the page by LQR from the cart and rods. It starts with the lowest rod tilted 3°, is pushed at 1 s (d), and the cart is moved 0.5 m at 2.5 s (r). Flip to the gentle LQR (a larger effort weight R) to see a softer, slower controller.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 0.5, time: 2.5 } }] },
       d: { period: PERIOD, components: [pulse(4, 1, 0.1)] },
@@ -4725,8 +4823,8 @@ const EXAMPLE_PLANTS = [
         src('r', 30, 132, 'm'),
         src('d', 300, 260, 'N'),
         ctrl(130, 70, 9, 0.01, [
-          { name: 'LQR', type: 'stateFeedback', params: { K: K_TRIPLE, kr: K_TRIPLE[0], umin: -40, umax: 40 } },
-          { name: 'LQR, gentle', type: 'stateFeedback', params: { K: K_TRIPLE_GENTLE, kr: K_TRIPLE_GENTLE[0], umin: -40, umax: 40 } },
+          { name: 'LQR', type: 'lqr', params: { Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
+          { name: 'LQR, gentle', type: 'lqr', params: { Q: Q_TRIPLE, R: 1, umin: -40, umax: 40 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },
@@ -5576,7 +5674,13 @@ function fromPlant(e) {
 // any the entry adds by hand ({ label, kind }). kind picks the colour:
 // plant, controller, observer, signal, feature.
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
-const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', kalman: 'Kalman filter', luenberger: 'Luenberger observer' };
+// A type's tags; a function reads the variant (a PI from the plant at one
+// level is a plain PI, at several it is scheduled).
+const VARIANT_TAGS = {
+  pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', kalman: 'Kalman filter', luenberger: 'Luenberger observer',
+  scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PI'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
+};
+const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
 function systemTags(e) {
   const blocks = [];
   let nonlinear = false;
@@ -5598,8 +5702,8 @@ function systemTags(e) {
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
   if (!ctrls.length) add('No controller', 'controller');
-  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
-  for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
+  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') for (const t of variantTags(v, CONTROLLERS[v.type]?.label ?? v.type)) add(t, 'controller');
+  for (const b of obs) for (const v of b.variants ?? []) for (const t of variantTags(v, 'Observer')) add(t, 'observer');
   if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd')) add('Disturbance', 'signal');
   if (e.scope?.view?.mode) add(e.scope.view.mode === 'fft' ? 'FFT' : 'Spectrogram', 'feature');
   if (e.ui?.tab === 'tune') add('Auto-tune', 'feature');

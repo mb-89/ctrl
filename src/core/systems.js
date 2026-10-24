@@ -25,7 +25,13 @@ function fromPlant(e) {
 // any the entry adds by hand ({ label, kind }). kind picks the colour:
 // plant, controller, observer, signal, feature.
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
-const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', kalman: 'Kalman filter', luenberger: 'Luenberger observer' };
+// A type's tags; a function reads the variant (a PI from the plant at one
+// level is a plain PI, at several it is scheduled).
+const VARIANT_TAGS = {
+  pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', kalman: 'Kalman filter', luenberger: 'Luenberger observer',
+  scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PI'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
+};
+const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
 export function systemTags(e) {
   const blocks = [];
   let nonlinear = false;
@@ -47,8 +53,8 @@ export function systemTags(e) {
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
   if (!ctrls.length) add('No controller', 'controller');
-  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
-  for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
+  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') for (const t of variantTags(v, CONTROLLERS[v.type]?.label ?? v.type)) add(t, 'controller');
+  for (const b of obs) for (const v of b.variants ?? []) for (const t of variantTags(v, 'Observer')) add(t, 'observer');
   if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd')) add('Disturbance', 'signal');
   if (e.scope?.view?.mode) add(e.scope.view.mode === 'fft' ? 'FFT' : 'Spectrogram', 'feature');
   if (e.ui?.tab === 'tune') add('Auto-tune', 'feature');

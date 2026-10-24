@@ -13,20 +13,31 @@
 // levels, limits); it adds
 //   designed: true, version          version enters the cache key; bump it when results change
 //   computes: ['K', 'kr']            refused in params: a file never holds computed numbers
-//   twin: 'stateFeedback'            the hand type "Copy as numbers" turns it into
-//   design(p, ctx)                   → { values, rows, warnings?, quality? }; sees the plant
-//                                    only through ctx (design.js), throws DesignError
+//   twin: 'stateFeedback'            the hand type(s) "Copy as numbers" turns it into
+//   design(p, ctx)                   → { values, rows, warnings?, quality?, at? }; sees the
+//                                    plant only through ctx (design.js), throws DesignError
 //   make(p, Ts, values)              the law from plain data; values null → u = 0
 //   manual(p, values)                → { type, params } of the twin: Copy as numbers
 //   compatible?(a, b)                may old values run on a changed plant (later, for the page)
+// A vector parameter's `per` says what its entries stand for, so the
+// Controller tab can name them: 'measurement' (one each) or 'level' (levels
+// of the first measurement).
 
-import { lqrDesign } from './design.js';
+import { lqrDesign, scheduledPIDesign } from './design.js';
+import { DesignError } from './linearize.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
 const LIMITS = [num('umin', 'u min', -Infinity, { unit: 'u' }), num('umax', 'u max', Infinity, { unit: 'u' })];
 const PREFILTER = num('Tr', 'Prefilter Tr', 0, { unit: 's', min: 0, help: 'Vorfilter: a first-order lag on r; 0 is off' });
 const START = num('u0', 'Start output u0', 0, { unit: 'u', help: 'the integral part at t = 0, so a loop can start in balance' });
+// The energy pump of the swing-up: hand gains, shared by its two types.
+const SWING = [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 })];
+// The weights of an LQR design.
+const WEIGHTS = [
+  vec('Q', 'Weights Q', [1], { min: 0, per: 'measurement', help: 'what an error in each measurement costs, one per measurement; one value weighs them all' }),
+  num('R', 'Effort weight R', 1, { positive: true, help: 'how much u costs: larger is gentler' }),
+];
 
 const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -66,6 +77,8 @@ function pidCore(Ts, u0 = 0) {
 
 // The law of a designed variant without values (pending, or failed): u = 0.
 const OFF = { step: () => 0 };
+// A designed law runs as its Copy as numbers twin would, so the copy runs bit for bit alike.
+const twinLaw = (twin, Ts) => CONTROLLERS[twin.type].make(normalizeVariant(twin).params, Ts);
 
 export const CONTROLLERS = {
   off: {
@@ -82,7 +95,7 @@ export const CONTROLLERS = {
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
-    params: [vec('K', 'Gains K', [1]), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
+    params: [vec('K', 'Gains K', [1], { per: 'measurement' }), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
     make(p, Ts) {
       const pre = prefilter(p.Tr, Ts);
       return {
@@ -99,7 +112,7 @@ export const CONTROLLERS = {
     // equilibrium with every state measured (design.js, lqrDesign).
     label: 'LQR', summary: 'u = kr r − K · y, K from the plant (LQR)',
     designed: true, version: 1, computes: ['K', 'kr'], twin: 'stateFeedback',
-    params: [vec('Q', 'Weights Q', [1], { min: 0, help: 'what an error in each measurement costs, one per measurement; one value weighs them all' }), num('R', 'Effort weight R', 1, { positive: true, help: 'how much u costs: larger is gentler' }), num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }), PREFILTER, ...LIMITS],
+    params: [...WEIGHTS, num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }), PREFILTER, ...LIMITS],
     design(p, ctx) {
       const d = lqrDesign(ctx.linearize('origin'), { Q: p.Q, R: p.R, track: p.track, Ts: ctx.Ts });
       return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
@@ -126,6 +139,26 @@ export const CONTROLLERS = {
       };
     },
   },
+  scheduledPI: {
+    // A PI by pole cancellation, from the plant this block sees: at each
+    // level of the first measurement the plant is trimmed, linearised and
+    // fitted as K e^(−θs) / (τs + 1), and Kp = τ / (K Tcl), Ki = 1 / (K Tcl)
+    // make the loop a first-order lag with time constant Tcl (design.js).
+    // One level gives a fixed PI; several, a gain-scheduled one. u0 holds the
+    // level the plant starts at.
+    label: 'PI from the plant', summary: 'PI by pole cancellation at levels of y',
+    designed: true, version: 1, computes: ['Kp', 'Ki', 'u0'], twin: ['pid', 'gainScheduled'],
+    params: [vec('at', 'At y =', [1], { per: 'level', help: 'the levels of the first measurement to design at; one level gives a fixed PI, several are interpolated' }), num('Tcl', 'Closed loop Tcl', 0.25, { unit: 's', positive: true, help: 'the time constant the loop should have' }), PREFILTER, ...LIMITS],
+    check(p) { return p.at.some((v, i) => i && v <= p.at[i - 1]) ? 'the At values must increase' : ''; },
+    design: (p, ctx) => scheduledPIDesign(p, ctx),
+    make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.scheduledPI.manual(p, values), Ts) : OFF; },
+    manual(p, values) {
+      const common = { Tr: p.Tr, u0: values.u0, umin: p.umin, umax: p.umax };
+      return values.at.length === 1
+        ? { type: 'pid', params: { Kp: values.Kp[0], Ki: values.Ki[0], Kd: 0, ...common } }
+        : { type: 'gainScheduled', params: { at: [...values.at], Kp: [...values.Kp], Ki: [...values.Ki], ...common } };
+    },
+  },
   swingUp: {
     // For a pendulum on a cart, inputs r, x, θ, v, ω (θ = 0 upright). Far from
     // upright it pumps energy: with E = ½ l² ω² + g l (cos θ − 1), zero at the
@@ -134,7 +167,7 @@ export const CONTROLLERS = {
     // middle. Near the top (|θ| < θs) it
     // catches the pole with state feedback u = kr r − K · [x, θ, v, ω].
     label: 'Swing-up (Lyapunov) + state feedback', summary: 'energy pumping, then u = kr r − K · y',
-    params: [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 }), vec('K', 'Gains K', [-1, -30, -2, -5]), num('kr', 'Prefilter kr', -1), ...LIMITS],
+    params: [...SWING, vec('K', 'Gains K', [-1, -30, -2, -5], { per: 'measurement' }), num('kr', 'Prefilter kr', -1), ...LIMITS],
     make(p) {
       let caught = false;
       return {
@@ -155,6 +188,24 @@ export const CONTROLLERS = {
         },
       };
     },
+  },
+  swingUpLqr: {
+    // The swing-up above, its catch designed by LQR at the upright rest (the
+    // origin of the plant this block sees, which must be the cart–pole's
+    // x, θ, v, ω on inputs 2 to 5); x follows r. The energy pump keeps its
+    // hand gains.
+    label: 'Swing-up + LQR catch', summary: 'energy pumping, then u = kr r − K · y, K from the plant',
+    designed: true, version: 1, computes: ['K', 'kr'], twin: 'swingUp',
+    params: [...SWING, ...WEIGHTS, ...LIMITS],
+    design(p, ctx) {
+      const lin = ctx.linearize('origin');
+      const labels = lin.outputs.map((o) => o.label);
+      if (lin.m !== 4 || !lin.outputs[1].angle) throw new DesignError('swing-inputs', `the swing-up reads x, θ, v, ω (θ an angle) from inputs 2 to 5; this block has ${labels.length ? labels.join(', ') : 'no measurements'}`, 'wire the cart–pole\'s x, θ, v, ω to inputs 2 to 5, or use LQR');
+      const d = lqrDesign(lin, { Q: p.Q, R: p.R, track: 1, Ts: ctx.Ts });
+      return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
+    },
+    make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.swingUpLqr.manual(p, values), Ts) : OFF; },
+    manual: (p, values) => ({ type: 'swingUp', params: { kE: p.kE, kx: p.kx, kv: p.kv, l: p.l, g: p.g, thetaS: p.thetaS, K: [...values.K], kr: values.kr, umin: p.umin, umax: p.umax } }),
   },
 };
 
@@ -189,7 +240,8 @@ export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
   const given = (def.computes ?? []).filter((k) => v.params?.[k] !== undefined);
   if (given.length) {
     const inputs = def.params.map((p) => p.key).filter((k) => !/^(umin|umax|Tr)$/.test(k));
-    throw new Error(`${where}.params.${given[0]}: ${v.type} computes ${and(def.computes)} from the plant and ${and(inputs)}; to set them by hand use Copy as numbers (a ${lib[def.twin]?.label ?? def.twin} variant)`);
+    const twins = [].concat(def.twin).map((t) => lib[t]?.label ?? t).join(' or ');
+    throw new Error(`${where}.params.${given[0]}: ${v.type} computes ${and(def.computes)} from the plant and ${and(inputs)}; to set them by hand use Copy as numbers (a ${twins} variant)`);
   }
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);

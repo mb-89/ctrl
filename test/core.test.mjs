@@ -306,13 +306,18 @@ test('controllers: the variants of every system run; the good ones control, the 
   const peak = (f) => Math.max(...Array.from({ length: 100 }, (_, i) => f('angle', 0.25 + i * 0.0125)));
   assert.ok(peak(pAgg) > 2.3 && peak(pd) < 2.05, `${peak(pAgg)} ${peak(pd)}`);
   assert.ok(Math.abs(pd('angle', 1.4) - 2) < 0.02);
-  // Tank: the scheduled PI holds every level; the PI tuned for full oscillates when nearly empty.
+  // Tank: the scheduled PI holds every level; the PI tuned for full rings
+  // when the level is low. Its computed u0 balances the outlet exactly, so
+  // it rests at 0.15 m until the step to 0.45 m at 1.5 s, then overshoots
+  // and swings back below 0.35 m.
   const sched = run('Conical tank', 'Gain-scheduled PI'), full = run('Conical tank', 'PI tuned for full');
   for (const [t, r] of [[1.4, 0.15], [2.15, 0.45], [4.9, 0.8]]) assert.ok(Math.abs(sched('h', t) - r) < 0.03, `h(${t}) = ${sched('h', t)}`);
-  const swing = (f, a, b) => { const v = Array.from({ length: 50 }, (_, i) => f('h', a + ((b - a) * i) / 50)); return Math.max(...v) - Math.min(...v); };
-  assert.ok(swing(full, 0.5, 1.5) > 0.1 && swing(sched, 0.5, 1.5) < 0.08, `${swing(full, 0.5, 1.5)} ${swing(sched, 0.5, 1.5)}`);
-  // Swing-up: from hanging to upright and held, through the push; state feedback alone cannot.
-  const up = run('Pendulum', 'Swing-up + state feedback'), sf = run('Pendulum', 'State feedback only');
+  const after = (f) => Array.from({ length: 70 }, (_, i) => f('h', 1.5 + i * 0.01));
+  const top = (f) => Math.max(...after(f)), dip = (f) => { const v = after(f); return Math.min(...v.slice(v.indexOf(Math.max(...v)))); };
+  assert.ok(top(full) > 0.55 && dip(full) < 0.35, `full: peak ${top(full)}, then ${dip(full)}`);
+  assert.ok(top(sched) < 0.49, `scheduled: peak ${top(sched)}`);
+  // Swing-up: from hanging to upright and held, through the push; LQR alone cannot.
+  const up = run('Pendulum', 'Swing-up + LQR catch'), sf = run('Pendulum', 'LQR only');
   for (const t of [2.5, 3.4, 4.9]) assert.ok(Math.abs(wrap(up('theta', t))) < 0.05, `θ(${t}) = ${up('theta', t)}`);
   assert.ok(Math.abs(wrap(sf('theta', 4.9))) > 1);
   // Triple pendulum: LQR keeps all three rods within 5° and follows the cart reference.

@@ -8,9 +8,10 @@
 //   canonical(x), hashKey(s), plantKey(diagram)   keys
 //   createDesignStore(), SYNC_DESIGNS              the store compileDiagram resolves designs through
 //   lqrDesign(lin, { Q, R, track, Ts })            discrete LQR on a linear model, in measurement order
+//   piCancel(fit, Tcl), scheduledPIDesign(p, ctx)  PI by pole cancellation, at levels of the first measurement
 
 import { c2d, dlqr, eig, solve, rank, mul, transpose } from './linalg.js';
-import { DesignError, operatingPoint, linearize } from './linearize.js';
+import { DesignError, operatingPoint, linearize, firstOrderFit } from './linearize.js';
 
 const fmt = (v) => (Number.isFinite(v) ? String(Number(Number(v).toPrecision(4))) : String(v));
 const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
@@ -126,7 +127,7 @@ export function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
       warnings: [...new Set([...(mdl?.warnings ?? []), ...used.warnings, ...(out.warnings ?? [])])],
       quality: out.quality ?? null,
       error: out.error ?? null,
-      at: used.at,
+      at: out.at ?? used.at,
       states: mdl ? mdl.states.map((s) => s.name) : null,
       ms: now() - t0,
     };
@@ -248,4 +249,45 @@ export function lqrDesign(lin, { Q, R, track = 1, Ts }) {
     { label: 'slowest pole', value: `${fmt(wn)} rad/s, ζ ${fmt(zeta)}` },
   ];
   return { K, kr, Kx, P, Ad, Bd, poles, rows, warnings };
+}
+
+// A PI that cancels the lag of a first-order fit K e^(−θs) / (τs + 1):
+// Kp = τ / (K Tcl), Ki = 1 / (K Tcl) leave the loop a first-order lag with
+// time constant Tcl. The dead time θ is not in it.
+export function piCancel(fit, Tcl) {
+  return { Kp: fit.tau / (fit.K * Tcl), Ki: 1 / (fit.K * Tcl) };
+}
+
+// The PI of a scheduledPI variant: at each level of the first measurement
+// (p.at) the plant is trimmed, linearised and fitted (linearize.js), and
+// piCancel gives the gains there. u0 is the input that holds the first
+// measurement where the plant starts, so the loop starts in balance.
+// p: { at, Tcl, umin, umax }. Returns { values: { at, Kp, Ki, u0 }, rows,
+// warnings, at } (the last: the operating points, for the status).
+export function scheduledPIDesign(p, ctx) {
+  const model = ctx.model();
+  if (!model.m) throw new DesignError('no-measurement', 'this block has no measurement to design a PI for', 'wire the measurement to input 2');
+  const out = model.outputs[0], uName = model.input?.label ?? 'u';
+  const unit = out.unit ? ` ${out.unit}` : '';
+  const limits = { umin: p.umin, umax: p.umax };
+  const warnings = [];
+  const pts = p.at.map((level) => {
+    const lin = ctx.linearize({ y: [level] }, limits);
+    const fit = firstOrderFit(lin, 0);
+    warnings.push(...fit.warnings);
+    return { level, u: lin.op.u, fit, ...piCancel(fit, p.Tcl) };
+  });
+  // The start: the level y1 has at the initial state, held by u0.
+  const y = new Float64Array(model.m);
+  model.y(model.x0, 0, y);
+  let u0 = 0;
+  try { u0 = ctx.trim([y[0]], limits).u; } catch (err) { warnings.push(`u0 = 0: ${err.message}`); }
+  const theta = pts[0].fit.theta;
+  if (theta > 0) warnings.push(`dead time ${fmt(theta)} s on ${out.label} is not in this design: pole cancellation leaves it out`);
+  const rows = [
+    { label: 'gains', head: [`${out.label}${unit ? ` (${unit.trim()})` : ''}`, uName, 'K', 'τ (s)', 'θ (s)', 'Kp', 'Ki'], table: pts.map((q) => [q.level, q.u, q.fit.K, q.fit.tau, q.fit.theta, q.Kp, q.Ki]) },
+    { label: 'u0', value: u0, note: `holds ${out.label} = ${fmt(y[0])}${unit}, where it starts` },
+  ];
+  const at = p.at.length === 1 ? `${out.label} = ${fmt(p.at[0])}${unit}, ${uName} = ${fmt(pts[0].u)}` : `${out.label} = ${fmt(p.at[0])} … ${fmt(p.at.at(-1))}${unit} (${p.at.length} levels)`;
+  return { values: { at: [...p.at], Kp: pts.map((q) => q.Kp), Ki: pts.map((q) => q.Ki), u0 }, rows, warnings: [...new Set(warnings)], at };
 }
