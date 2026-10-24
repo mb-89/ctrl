@@ -2,6 +2,18 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.2: the Plant tab ([input](../input/2026-10-24-04-plant-tab.md))
+
+- **The plant is a Simulink-like block diagram**: library left, canvas middle, parameters right; blocks nest as subsystems; subsystems can be saved to the library. (Person.)
+- **Until a controller exists, the diagram is the whole system: Source blocks play named signals, Sink blocks (y1, y2, …) are scope channel sources.** (Person.) In and Out are subsystem ports, and later the plant's connection to the controller.
+- **Signals are named and live in `system.signals`**; the Input tab gets an Edit column listing them, in front of the Waveform keys. Del / Cancel / Enter became three small keys under the keypad to make room. (Person.)
+- **Diagrams are simulated as Simulink does**: state blocks first, pass-through blocks after their inputs; an algebraic loop is refused with its block names. Interpretation: the standard, robust choice; reducing the diagram to one transfer function would not survive saturation or dead time.
+- **Actuator, plant and sensor share one compiler**: a single block is a diagram of one block. The existing closed-loop tests pass unchanged through it.
+- **Flip** mirrors a block for feedback paths. Interpretation, after Simulink.
+- **Saved blocks live in the project file** (`library`), so they travel with a shared file. Interpretation: a per-browser library would be lost when the file is sent.
+- **On Simulink**: the interaction (drag, wire, group, nest) is common to every block-diagram tool and is borrowed freely; Simulink's look, icons and file format are not copied. The person: this is never going to be sold.
+- **Example plants are whole systems** (Source r → … → Sink y1), including a mass–spring–damper from integrators and a DC motor with a nested Motor subsystem; each is checked in tests against its analytic or single-block equivalent.
+
 ## 2026-10-24 · v2.1: the screen is the record ([input](../input/2026-10-24-03-record-autoscale-input-layout.md))
 
 - **No record length: the screen is simulated and swept**, from 0 to its right edge, in real time. (Person.)

@@ -170,7 +170,15 @@ button, input, select { font: inherit; color: inherit; }
 .tabpanel { background: var(--panel-2); border: 1px solid var(--line); border-radius: 0 10px 10px 10px; padding: 10px 12px; min-height: 0; overflow: auto; }
 
 /* Generator: Waveform | Parameters | Signal | Entry, one row */
-.gen { display: grid; grid-template-columns: 204px minmax(220px, 300px) minmax(220px, 1fr) auto; gap: 14px; align-items: stretch; }
+.gen { display: grid; grid-template-columns: 128px 204px minmax(220px, 300px) minmax(200px, 1fr) auto; gap: 14px; align-items: stretch; }
+.siglist { display: flex; flex-direction: column; gap: 6px; }
+.sigkey { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-2); font-weight: 600; font-size: 12.5px; cursor: pointer; text-align: left; }
+.sigkey.on { background: var(--lcd); color: var(--lcd-ink); border-color: var(--lcd); }
+.sigkey:disabled { cursor: default; opacity: 0.6; }
+.sigkey .soon { margin-left: auto; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.sigsym { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 4px; background: #f2c718; color: #0a0d10; font-family: var(--mono); font-size: 12px; }
+.sighint { margin: 2px 0 0; font-size: 11.5px; line-height: 1.35; color: var(--muted); }
+.siglist { overflow: auto; min-height: 0; }
 .gcol { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .wkeys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .wkey { flex-direction: column; gap: 2px; min-height: 40px; padding: 4px; font-size: 11.5px; }
@@ -202,9 +210,10 @@ button, input, select { font: inherit; color: inherit; }
 .fnin:focus { outline: none; border-color: var(--lcd-ink); }
 .fnin.err { border-color: var(--lit-red); }
 .key.arrow { width: 38px; min-height: 30px; padding: 0; font-size: 12px; }
-.keypad { display: grid; grid-template-columns: repeat(3, 38px) 54px; gap: 5px; }
+.keypad { display: grid; grid-template-columns: repeat(3, 40px); gap: 5px; }
+.keypad .pk.fn { min-height: 20px; font-size: 10.5px; padding: 0 2px; }
 .keypad .pk { min-height: 25px; padding: 2px; font-family: var(--mono); font-size: 14px; }
-.keypad .pk.fn { font-family: var(--ui); font-size: 12px; }
+.keypad .pk.fn { font-family: var(--ui); }
 .slist { list-style: none; margin: 0; flex: 1; min-height: 0; overflow: auto; }
 .srow { display: grid; grid-template-columns: 18px 26px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 2px 6px; border-radius: 5px; cursor: pointer; }
 .srow:hover { background: rgba(255, 255, 255, 0.04); }
@@ -240,8 +249,8 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .drop { position: fixed; inset: 10px; border: 2px dashed var(--ink); border-radius: 12px; display: grid; place-items: center; background: rgba(0, 0, 0, 0.05); z-index: 40; font-size: 18px; pointer-events: none; }
 
 @media (max-width: 1180px) {
-  .gen { grid-template-columns: 180px minmax(190px, 260px) minmax(170px, 1fr) auto; gap: 10px; }
-  .keypad { grid-template-columns: repeat(3, 32px) 50px; }
+  .gen { grid-template-columns: 112px 180px minmax(180px, 260px) minmax(160px, 1fr) auto; gap: 10px; }
+  .keypad { grid-template-columns: repeat(3, 34px); }
 }
 @media (max-width: 900px) {
   .app { height: auto; display: flex; flex-direction: column; gap: 10px; }
@@ -260,6 +269,69 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   .status { gap: 8px; font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) { .caret { animation: none; } .sw::after { transition: none; } }
+
+/* Plant tab: library | canvas | parameters, filling the setup area */
+.tabpanel > [role="tabpanel"] { height: 100%; }
+.plant { height: 100%; min-height: 0; display: grid; grid-template-columns: 196px minmax(0, 1fr) 248px; gap: 12px; }
+.plib, .pprops { min-height: 0; overflow: auto; }
+.plib .glabel { margin-bottom: 4px; }
+.lgroup { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+.lgname { font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 2px 0; }
+.litem { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; width: 100%; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font-size: 12.5px; font-weight: 600; cursor: grab; text-align: left; }
+.litem:hover { border-color: var(--line-strong); background: var(--key-top); }
+.litem.ex { cursor: pointer; }
+.litem .lf { font-family: var(--mono); font-size: 10.5px; font-weight: 400; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px; }
+.lempty { font-size: 11.5px; color: var(--muted); padding: 2px 2px 4px; }
+.pcan { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; }
+.ptool { display: flex; align-items: center; gap: 6px; }
+.crumbs { display: flex; align-items: center; gap: 4px; margin-right: auto; font-size: 13px; min-width: 0; overflow: hidden; }
+.crumb { border: 0; background: none; padding: 2px 4px; border-radius: 4px; color: var(--ink-2); cursor: pointer; font-weight: 600; white-space: nowrap; }
+.crumb:hover { background: var(--hover, rgba(0,0,0,0.05)); color: var(--ink); }
+.crumb.cur { color: var(--ink); cursor: default; }
+.csep { color: var(--muted); }
+.pview { position: relative; min-height: 0; border-radius: 8px; border: 1px solid var(--line-strong); overflow: hidden;
+  background-color: var(--panel); background-image: radial-gradient(var(--line-strong) 1px, transparent 1.2px); background-size: 20px 20px; }
+.pview:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.pdiag { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; }
+.pdiag .blk { cursor: move; }
+.pdiag .body { fill: var(--key-top); stroke: var(--ink-2); stroke-width: 1.3; }
+.pdiag .stack { fill: var(--key-bot); stroke: var(--ink-2); stroke-width: 1; }
+.pdiag .t-source .body { fill: #f2c718; stroke: #8a6f00; }
+.pdiag .t-sink .body { fill: #33d17a; stroke: #12703c; }
+.pdiag .t-inport .body, .pdiag .t-outport .body { fill: var(--panel-2); }
+.pdiag .blk.sel .body { stroke: var(--ink); stroke-width: 2.6; }
+.pdiag .blk.err .body { stroke: var(--bad); stroke-width: 2.4; }
+.pdiag text { fill: var(--ink); font-family: var(--ui); pointer-events: none; }
+.pdiag .bt { font-size: 13px; font-weight: 600; }
+.pdiag .bt.sig { fill: #0a0d10; font-family: var(--mono); }
+.pdiag .bp { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-2); }
+.pdiag .bn { font-size: 11px; fill: var(--ink-2); }
+.pdiag .sign { font-family: var(--mono); font-size: 11px; font-weight: 600; }
+.pdiag .port { fill: var(--panel); stroke: var(--ink-2); stroke-width: 1.3; cursor: crosshair; }
+.pdiag .port.out { fill: var(--ink-2); }
+.pdiag .port:hover { stroke: var(--ink); stroke-width: 2.4; }
+.pdiag .wire { cursor: pointer; }
+.pdiag .wire .hit { stroke: transparent; stroke-width: 12; fill: none; }
+.pdiag .wire .line { stroke: var(--ink-2); stroke-width: 1.5; fill: none; }
+.pdiag .wire.sel .line { stroke: var(--ink); stroke-width: 2.6; }
+.pdiag .arrowhead { fill: var(--ink-2); }
+#pl-temp { pointer-events: none; }
+.pdiag .wire-temp { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+.pdiag .marquee { fill: rgba(127, 127, 127, 0.12); stroke: var(--ink); stroke-dasharray: 4 3; }
+.pform { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.pf { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 2px 8px; }
+.pfl { font-size: 12.5px; color: var(--ink-2); }
+.pfi { width: 100%; font-family: var(--mono); }
+.pfh { grid-column: 2; font-size: 11px; color: var(--muted); }
+.pfh:empty { display: none; }
+.pbtns { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.phelp { font-size: 12.5px; line-height: 1.45; color: var(--ink-2); margin: 6px 0; }
+.pmsg { font-size: 12.5px; line-height: 1.45; color: var(--bad); margin: 6px 0; }
+@media (max-width: 900px) {
+  .plant { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .pview { height: 360px; }
+  .plib { max-height: 200px; }
+}
 </style>
 <div id="lt-shell" class="app">
 <header class="bar">
@@ -295,6 +367,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   <div class="tabbar" id="tabbar" role="tablist"></div>
   <div class="tabpanel">
     <div id="tab-input" role="tabpanel"></div>
+    <div id="tab-plant" role="tabpanel" hidden></div>
     <div id="tab-later" role="tabpanel" hidden></div>
   </div>
 </section>
@@ -302,7 +375,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <div id="drop" class="drop" hidden>Drop a project file (.json or .html)</div>
 <div id="help-dlg" class="overlay" hidden><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
 <h2 id="help-title">Loop Tuner</h2>
-<p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time. Right now the Input tab is built: a signal generator for the reference r(t).</p>
+<p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time: the Input tab makes the signals, the Plant tab wires the system as a block diagram.</p>
 <h3>Display</h3>
 <div class="keys">
   <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record in real time, over and over.</span>
@@ -327,6 +400,8 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   <span><kbd>Tab</kbd></span><span>Next field</span>
   <span><kbd>Ctrl</kbd> <kbd>Z</kbd></span><span>Undo; <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd> redo</span>
 </div>
+<h3>Plant</h3>
+<p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (y1, y2, …) can be shown on any channel. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Wheel zooms the canvas; dragging the background pans.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
@@ -1202,6 +1277,315 @@ function penalized(ev) {
 
 return { DEFAULT_GOAL, normalizeGoal, evaluateGoal, compareEvals, penalized };
 })();
+// ---- core/diagram.js
+__mods['core/diagram.js'] = (() => {
+// Block diagrams: the plant as blocks wired together, with subsystems that
+// nest. A diagram is plain JSON:
+//   { "blocks": [ { "id": "b1", "type": "firstOrder", "params": { "K": 1, "tau": 1 }, "x": 200, "y": 80 }, ... ],
+//     "wires":  [ { "from": "in", "to": "b1" }, { "from": "b1", "to": "sum:1" } ] }
+// A wire end is a block id, optionally with ":port" (0-based; default 0).
+// A subsystem block carries its own "diagram"; its In and Out blocks become
+// its ports, numbered by their "port" parameter.
+//
+// compileDiagram flattens subsystems and orders the blocks so that every
+// block that passes its input straight through (gain, sum, ...) is evaluated
+// after its inputs; a loop made only of such blocks is an algebraic loop and
+// is refused, as in Simulink. Feedback through a block with state is fine.
+
+const { BLOCKS, blockDef, normalizeBlock } = __mods['core/blocks.js'];
+const { tf2ss, rootBound } = __mods['core/poly.js'];
+const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
+
+// Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
+// are diagram blocks too: their transfer function becomes the block.
+const ELEMENTS = {
+  source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }], ports: () => [0, 1], formula: 'r(t)' },
+  sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }], ports: () => [1, 0], formula: 'y' },
+  inport: { label: 'In', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [0, 1], formula: 'u' },
+  outport: { label: 'Out', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [1, 0], formula: 'y' },
+  gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
+  sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
+  integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
+  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 })], ports: () => [1, 1], formula: 'e^(−Ls)' },
+  saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
+  subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
+};
+
+// Every type a diagram can hold, with its label, group, params and ports.
+function diagramBlockDef(type) {
+  if (ELEMENTS[type]) return ELEMENTS[type];
+  const b = BLOCKS.plant[type];
+  if (!b) throw new Error(`unknown block type "${type}"; types: ${[...Object.keys(ELEMENTS), ...Object.keys(BLOCKS.plant)].join(', ')}`);
+  return { label: b.label, group: 'Models', params: b.params, ports: () => [1, 1], formula: b.formula, tf: (p) => b.tf(p), model: true };
+}
+
+function diagramTypes() {
+  return [...Object.keys(ELEMENTS), ...Object.keys(BLOCKS.plant)];
+}
+
+// [inputs, outputs] of a block.
+function blockPorts(block) {
+  if (block.type === 'subsystem') {
+    const count = (t) => Math.max(0, ...block.diagram.blocks.filter((b) => b.type === t).map((b) => b.params.port));
+    return [count('inport'), count('outport')];
+  }
+  return diagramBlockDef(block.type).ports(block.params);
+}
+
+function parseEnd(end) {
+  const [id, port] = String(end).split(':');
+  return { id, port: port === undefined ? 0 : Number(port) };
+}
+
+function normalizeParams(type, params = {}, where) {
+  if (diagramBlockDef(type).model) return normalizeBlock('plant', { type, params }).params;
+  const out = {};
+  for (const p of ELEMENTS[type].params) {
+    let v = params[p.key] ?? p.default;
+    if (p.kind === 'name') {
+      v = String(v);
+      if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
+    } else if (p.kind === 'signs') {
+      v = String(v);
+      if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
+    } else {
+      v = Number(v);
+      if (!Number.isFinite(v)) throw new Error(`${where}.${p.key}: expected a number`);
+      if (p.int) v = Math.round(v);
+      if (p.min !== undefined && v < p.min) throw new Error(`${where}.${p.key}: at least ${p.min}`);
+    }
+    out[p.key] = v;
+  }
+  return out;
+}
+
+function normalizeDiagram(d, path = 'plant') {
+  if (!d || !Array.isArray(d.blocks)) throw new Error(`${path}: a diagram needs "blocks" and "wires"`);
+  const ids = new Set();
+  const blocks = d.blocks.map((b, i) => {
+    const where = `${path}.blocks[${i}]`;
+    if (!b.id || typeof b.id !== 'string' || /[:/]/.test(b.id)) throw new Error(`${where}: needs an "id" without ":" or "/"`);
+    if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
+    ids.add(b.id);
+    const out = { id: b.id, type: b.type, params: normalizeParams(b.type, b.params, `${where}(${b.id})`), x: Number(b.x) || 0, y: Number(b.y) || 0 };
+    if (b.name) out.name = String(b.name);
+    if (b.flip) out.flip = true;
+    if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
+    return out;
+  });
+  const byId = Object.fromEntries(blocks.map((b) => [b.id, b]));
+  const wires = (d.wires ?? []).map((w, i) => {
+    const f = parseEnd(w.from), t = parseEnd(w.to);
+    for (const [e, side] of [[f, 1], [t, 0]]) {
+      const b = byId[e.id];
+      if (!b) throw new Error(`${path}.wires[${i}]: no block "${e.id}"`);
+      const n = blockPorts(b)[side];
+      if (!(e.port >= 0 && e.port < n)) throw new Error(`${path}.wires[${i}]: ${b.id} has no ${side ? 'output' : 'input'} ${e.port}`);
+    }
+    return { from: f.port ? `${f.id}:${f.port}` : f.id, to: t.port ? `${t.id}:${t.port}` : t.id };
+  });
+  const taken = new Set();
+  for (const w of wires) {
+    if (taken.has(w.to)) throw new Error(`${path}: input ${w.to} has two wires`);
+    taken.add(w.to);
+  }
+  return { blocks, wires };
+}
+
+// A single plant model as a diagram: In -> block -> Out.
+function wrapPlant(block) {
+  return {
+    blocks: [
+      { id: 'in', type: 'inport', params: { port: 1 }, x: 40, y: 80 },
+      { id: 'p1', type: block.type, params: { ...block.params }, x: 180, y: 70 },
+      { id: 'out', type: 'outport', params: { port: 1 }, x: 380, y: 80 },
+    ],
+    wires: [{ from: 'in', to: 'p1' }, { from: 'p1', to: 'out' }],
+  };
+}
+
+// The plant slot holds either a single model block or a diagram.
+function plantDiagram(plant) {
+  return plant.type === 'diagram' ? plant.diagram : wrapPlant(plant);
+}
+
+// Names of the Source signals and the Sinks anywhere in a diagram.
+function diagramNames(diagram) {
+  const sources = new Set(), sinks = [];
+  const walk = (d) => {
+    for (const b of d.blocks) {
+      if (b.type === 'source') sources.add(b.params.signal);
+      if (b.type === 'sink') sinks.push(b.params.name);
+      if (b.type === 'subsystem') walk(b.diagram);
+    }
+  };
+  walk(diagram);
+  return { sources: [...sources], sinks };
+}
+
+// Flattens and compiles a diagram into a simulation element:
+//   { n, bound, eval(t, X, o, u, dX) -> y, record(), probes(), warnings }
+// opts.sources maps Source signal names to t => value. opts.standalone: the
+// diagram is the whole system (no Out needed; an In reads 0).
+function compileDiagram(diagram, path = 'plant', opts = {}) {
+  const nodes = [];
+  const warnings = [];
+  const probeList = [];
+  const add = (node) => { nodes.push({ inputs: [], ...node }); return nodes.length - 1; };
+  let extNode = -1, outNode = -1;
+
+  // Creates nodes for one level; returns, per block id, where its output
+  // ports come from and where its input ports go.
+  function level(d, prefix, root) {
+    const outs = {}, ins = {};
+    for (const b of d.blocks) {
+      const name = `${prefix}${b.name ?? b.id}`;
+      if (b.type === 'subsystem') {
+        const inner = level(b.diagram, `${name}/`, false);
+        const ports = (t) => b.diagram.blocks.filter((x) => x.type === t).sort((a, c) => a.params.port - c.params.port);
+        outs[b.id] = ports('outport').map((x) => inner.outs[x.id][0]);
+        ins[b.id] = ports('inport').map((x) => inner.ins[x.id][0]);
+        continue;
+      }
+      if (b.type === 'source') {
+        const fn = opts.sources?.[b.params.signal];
+        if (!fn) warnings.push(`${path}: no signal "${b.params.signal}" for ${name}`);
+        const k = add({ kind: 'src', name, ft: false, fn: fn ?? (() => 0) });
+        probeList.push([b.params.signal, k]);
+        outs[b.id] = [k]; ins[b.id] = [];
+        continue;
+      }
+      if (b.type === 'sink') {
+        if (probeList.some(([n2]) => n2 === b.params.name)) throw new Error(`${path}: two signals named "${b.params.name}"`);
+        const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+        probeList.push([b.params.name, k]);
+        outs[b.id] = []; ins[b.id] = [[k, 0]];
+        continue;
+      }
+      if (b.type === 'inport') {
+        if (root && opts.standalone) {
+          const k = add({ kind: 'src', name, ft: false, fn: () => 0 });
+          warnings.push(`${path}: ${name} reads 0 until a controller drives the plant`);
+          outs[b.id] = [k]; ins[b.id] = [];
+        } else if (root) {
+          if (extNode >= 0) throw new Error(`${path}: one input (In) only, for now`);
+          extNode = add({ kind: 'ext', name, ft: false });
+          outs[b.id] = [extNode]; ins[b.id] = [];
+        } else {
+          const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+          outs[b.id] = [k]; ins[b.id] = [[k, 0]];
+        }
+        continue;
+      }
+      if (b.type === 'outport') {
+        const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+        if (root && !opts.standalone) { if (outNode >= 0) throw new Error(`${path}: one output (Out) only, for now`); outNode = k; }
+        outs[b.id] = [k]; ins[b.id] = [[k, 0]];
+        continue;
+      }
+      const def = diagramBlockDef(b.type);
+      const nIn = blockPorts(b)[0];
+      const node = { name, inputs: new Array(nIn).fill(-1) };
+      if (def.tf) {
+        const tf = def.tf(b.params);
+        const ss = tf2ss(tf.num, tf.den);
+        Object.assign(node, { kind: 'ss', ss, ft: ss.D !== 0, bound: rootBound(tf.den), delay: Number(tf.delay) || 0 });
+        if (node.delay > 0) node.ft = false;
+      } else if (b.type === 'gain') Object.assign(node, { kind: 'gain', K: b.params.K, ft: true });
+      else if (b.type === 'sum') Object.assign(node, { kind: 'sum', signs: [...b.params.signs].map((c) => (c === '-' ? -1 : 1)), ft: true });
+      else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
+      else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, ft: b.params.L <= 0 });
+      const k = add(node);
+      outs[b.id] = [k];
+      ins[b.id] = node.inputs.map((_, s) => [k, s]);
+    }
+    for (const w of d.wires) {
+      const f = parseEnd(w.from), t = parseEnd(w.to);
+      const src = outs[f.id][f.port], [dst, slot] = ins[t.id][t.port];
+      nodes[dst].inputs[slot] = src;
+    }
+    return { outs, ins };
+  }
+  level(diagram, '', true);
+  if (!opts.standalone) {
+    if (outNode < 0) throw new Error(`${path}: add an Out block for the plant output y`);
+    if (extNode < 0) warnings.push(`${path}: no In block, so the plant ignores u`);
+  }
+  for (const nd of nodes) nd.inputs.forEach((s, i) => { if (s < 0) warnings.push(`${path}: ${nd.name} input ${i + 1} is not connected (reads 0)`); });
+
+  // Evaluation order: blocks whose output does not depend on their input
+  // first, then pass-through blocks after their inputs.
+  const order = nodes.map((nd, i) => i).filter((i) => !nodes[i].ft);
+  const pending = new Set(nodes.map((nd, i) => i).filter((i) => nodes[i].ft));
+  let progress = true;
+  while (pending.size && progress) {
+    progress = false;
+    for (const i of pending) {
+      if (nodes[i].inputs.every((s) => s < 0 || !pending.has(s))) { order.push(i); pending.delete(i); progress = true; }
+    }
+  }
+  if (pending.size) throw new Error(`${path}: algebraic loop through ${[...pending].map((i) => nodes[i].name).join(', ')}; put a block with state (integrator, lag) in the loop`);
+
+  let n = 0, bound = 0;
+  for (const nd of nodes) if (nd.kind === 'ss') { nd.off = n; n += nd.ss.n; bound = Math.max(bound, nd.bound); }
+  const vals = new Float64Array(nodes.length);
+  const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
+  let h = 0;
+  const histAt = (hist, tau) => {
+    if (tau < 0 || !hist.length) return 0;
+    const f = tau / h, i = Math.floor(f);
+    if (i >= hist.length - 1) return hist[hist.length - 1];
+    return hist[i] + (hist[i + 1] - hist[i]) * (f - i);
+  };
+  const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
+
+  return {
+    n, bound, warnings,
+    setStep(step) { h = step; },
+    eval(t, X, o, u, dX) {
+      for (const i of order) {
+        const nd = nodes[i];
+        let y;
+        switch (nd.kind) {
+          case 'ext': y = u; break;
+          case 'src': y = nd.fn(t); break;
+          case 'pass': y = inOf(nd); break;
+          case 'gain': y = nd.K * inOf(nd); break;
+          case 'sum': y = 0; for (let s = 0; s < nd.signs.length; s++) y += nd.signs[s] * inOf(nd, s); break;
+          case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
+          case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L) : inOf(nd); break;
+          default: {
+            const { ss } = nd;
+            const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
+            y = ss.D * inp;
+            for (let j = 0; j < ss.n; j++) y += ss.C[j] * X[o + nd.off + j];
+          }
+        }
+        vals[i] = y;
+      }
+      if (dX) {
+        for (const nd of nodes) {
+          if (nd.kind !== 'ss') continue;
+          const { ss } = nd, base = o + nd.off;
+          const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
+          for (let r = 0; r < ss.n; r++) {
+            let s = ss.B[r] * inp;
+            for (let c = 0; c < ss.n; c++) s += ss.A[r * ss.n + c] * X[base + c];
+            dX[base + r] = s;
+          }
+        }
+      }
+      return outNode >= 0 ? vals[outNode] : 0;
+    },
+    // Values of the Sources and Sinks after the last eval.
+    probes: () => probeList.map(([name, k]) => [name, vals[k]]),
+    // Called after each completed step: dead times remember their input.
+    record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
+  };
+}
+
+return { ELEMENTS, diagramBlockDef, diagramTypes, blockPorts, parseEnd, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, compileDiagram };
+})();
 // ---- core/sim.js
 __mods['core/sim.js'] = (() => {
 // Closed-loop simulation of one SISO loop:
@@ -1217,32 +1601,43 @@ __mods['core/sim.js'] = (() => {
 
 const { blockDef, SLOTS } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
+const { compileDiagram, plantDiagram, wrapPlant } = __mods['core/diagram.js'];
 const { referenceFn } = __mods['core/signals.js'];
 const MAX_SAMPLES = 200000;
 const MAX_STEPS = 400000;
 const BLOWUP = 1e8;
 
-function simulate(loop, sim) {
+// opts.openLoop: the controller is bypassed and the actuator receives r
+// directly, to show the plant's own response before a controller exists.
+function simulate(loop, sim, opts = {}) {
   const duration = Number(sim.duration);
   const Ts = Number(sim.sampleTime);
   if (!(duration > 0)) throw new Error('sim.duration must be > 0');
   if (!(Ts > 0)) throw new Error('sim.sampleTime must be > 0');
-  for (const s of SLOTS) if (!loop[s.key]) throw new Error(`loop is missing slot "${s.key}"`);
+  for (const s of SLOTS) if (!loop[s.key] && !(opts.openLoop && s.key === 'controller')) throw new Error(`loop is missing slot "${s.key}"`);
 
   const warnings = [];
   const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
   if (K < Math.round(duration / Ts)) warnings.push(`sample count capped at ${MAX_SAMPLES}; increase sampleTime`);
 
-  const refFn = referenceFn(loop.reference, { sampleTime: Ts });
+  const refFn = referenceFn(loop.reference ?? { period: 1, components: [] }, { sampleTime: Ts });
   const distFn = blockDef('disturbance', loop.disturbance.type).signal(loop.disturbance.params);
   const actDef = blockDef('actuator', loop.actuator.type);
   const limits = actDef.limits ? actDef.limits(loop.actuator.params) : null;
   const noise = blockDef('noise', loop.noise.type).noise(loop.noise.params);
 
-  // Continuous chain: actuator, plant, sensor.
-  const chainTfs = ['actuator', 'plant', 'sensor'].map((slot) => blockDef(slot, loop[slot].type).tf(loop[slot].params));
+  // Continuous chain: actuator, plant, sensor, each compiled as a diagram (a
+  // single block is a diagram of one block; the plant may be a whole diagram).
+  const asDiagram = (slot) => {
+    const block = loop[slot];
+    if (slot === 'plant') return plantDiagram(block);
+    const tf = blockDef(slot, block.type).tf(block.params);
+    return wrapPlant({ type: 'tf', params: { num: tf.num, den: tf.den, delay: Number(tf.delay) || 0 } });
+  };
+  const elems = ['actuator', 'plant', 'sensor'].map((slot) => compileDiagram(asDiagram(slot), slot));
+  for (const el of elems) warnings.push(...el.warnings);
   let bound = 0;
-  for (const tf of chainTfs) bound = Math.max(bound, rootBound(tf.den));
+  for (const el of elems) bound = Math.max(bound, el.bound);
   const hmax = bound > 0 ? 0.5 / bound : Ts;
   let m = Math.max(1, Math.ceil(Ts / hmax - 1e-9));
   if (K * m > MAX_STEPS) {
@@ -1250,60 +1645,20 @@ function simulate(loop, sim) {
     warnings.push('stiff system: integration step limited for speed; results may be inaccurate');
   }
   const h = Ts / m;
-  const totalSteps = K * m;
-
-  const elems = [];
   let N = 0;
-  for (const tf of chainTfs) {
-    const ss = tf2ss(tf.num, tf.den);
-    const delay = Number(tf.delay) || 0;
-    elems.push({ ss, off: N, delay, hist: delay > 0 ? new Float64Array(totalSteps + 1) : null });
-    N += ss.n;
-  }
-  let histCount = 0;
-  const rawIn = new Float64Array(3);
+  for (const el of elems) { el.off = N; N += el.n; el.setStep(h); }
   const sig = new Float64Array(3);
 
-  function histAt(hist, tau) {
-    if (tau < 0) return 0;
-    const f = tau / h;
-    const i = Math.floor(f);
-    if (i >= histCount - 1) return hist[histCount - 1];
-    const w = f - i;
-    return hist[i] * (1 - w) + hist[i + 1] * w;
-  }
-
-  // Evaluates the chain at time t: fills dX (if given), sig (element outputs)
-  // and rawIn (undelayed element inputs).
+  // Evaluates the chain at time t: fills dX (if given) and sig (the outputs
+  // of actuator, plant and sensor). The disturbance adds at the plant input.
   function chainEval(t, X, u, dX) {
-    let input = u;
-    for (let e = 0; e < 3; e++) {
-      if (e === 1) input += distFn(t);
-      const el = elems[e];
-      rawIn[e] = input;
-      const inp = el.delay > 0 ? histAt(el.hist, t - el.delay) : input;
-      const { n, A, B, C, D } = el.ss;
-      const o = el.off;
-      let out = D * inp;
-      for (let i = 0; i < n; i++) out += C[i] * X[o + i];
-      if (dX) {
-        for (let i = 0; i < n; i++) {
-          let s = B[i] * inp;
-          for (let j = 0; j < n; j++) s += A[i * n + j] * X[o + j];
-          dX[o + i] = s;
-        }
-      }
-      sig[e] = out;
-      input = out;
-    }
+    sig[0] = elems[0].eval(t, X, elems[0].off, u, dX);
+    sig[1] = elems[1].eval(t, X, elems[1].off, sig[0] + distFn(t), dX);
+    sig[2] = elems[2].eval(t, X, elems[2].off, sig[1], dX);
   }
+  function record() { for (const el of elems) el.record(); }
 
-  function record() {
-    for (let e = 0; e < 3; e++) if (elems[e].hist) elems[e].hist[histCount] = rawIn[e];
-    histCount++;
-  }
-
-  const ctrl = makeController(loop.controller, Ts, warnings);
+  const ctrl = opts.openLoop ? null : makeController(loop.controller, Ts, warnings);
   const rand = gaussian(noise.seed);
 
   const X = new Float64Array(N);
@@ -1325,10 +1680,10 @@ function simulate(loop, sim) {
     const y = sig[1];
     const ym = sig[2] + (noise.std > 0 ? noise.std * rand() : 0);
     const r = refFn(t);
-    const v = ctrl.step(r, ym);
+    const v = opts.openLoop ? r : ctrl.step(r, ym);
     let u = v;
     if (limits) u = Math.min(limits.max, Math.max(limits.min, v));
-    ctrl.track(u, v);
+    ctrl?.track(u, v);
 
     out.t[k] = t; out.r[k] = r; out.y[k] = y; out.u[k] = u; out.v[k] = v; out.ym[k] = ym; out.d[k] = distFn(t); out.e[k] = r - y;
     if (!Number.isFinite(y) || Math.abs(y) > BLOWUP || !Number.isFinite(u)) {
@@ -1452,7 +1807,130 @@ function gaussian(seed) {
   };
 }
 
-return { simulate };
+// The diagram as the whole system, before any controller: every Source plays
+// its signal, every Sink is recorded. Returns { t, signals: { name: values } }.
+function simulateSystem(diagram, signals, sim) {
+  const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
+  const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
+  const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
+  const el = compileDiagram(diagram, 'plant', { sources, standalone: true });
+  const warnings = [...el.warnings];
+  const hmax = el.bound > 0 ? 0.5 / el.bound : Ts;
+  let m = Math.max(1, Math.ceil(Ts / hmax - 1e-9));
+  if (K * m > MAX_STEPS) { m = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
+  const h = Ts / m, N = el.n;
+  el.setStep(h);
+  const X = new Float64Array(N), Xt = new Float64Array(N);
+  const k1 = new Float64Array(N), k2 = new Float64Array(N), k3 = new Float64Array(N), k4 = new Float64Array(N);
+  const t = new Float64Array(K + 1);
+  const out = {};
+  el.eval(0, X, 0, 0, null);
+  el.record();
+  let unstable = false;
+  for (let k = 0; k <= K; k++) {
+    t[k] = k * Ts;
+    for (const [name, v] of el.probes()) {
+      (out[name] ??= new Float64Array(K + 1).fill(NaN))[k] = v;
+      if (!Number.isFinite(v) || Math.abs(v) > BLOWUP) unstable = true;
+    }
+    if (unstable) { for (let j = k; j <= K; j++) t[j] = j * Ts; warnings.push('a signal diverged; the rest is not drawn'); break; }
+    if (k === K) break;
+    for (let s = 0; s < m; s++) {
+      const ts = t[k] + s * h;
+      el.eval(ts, X, 0, 0, k1);
+      for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k1[i];
+      el.eval(ts + 0.5 * h, Xt, 0, 0, k2);
+      for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k2[i];
+      el.eval(ts + 0.5 * h, Xt, 0, 0, k3);
+      for (let i = 0; i < N; i++) Xt[i] = X[i] + h * k3[i];
+      el.eval(ts + h, Xt, 0, 0, k4);
+      for (let i = 0; i < N; i++) X[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+      el.eval(ts + h, X, 0, 0, null);
+      el.record();
+    }
+  }
+  return { t, signals: out, info: { h, substeps: m, unstable, warnings } };
+}
+
+return { simulate, simulateSystem };
+})();
+// ---- core/plants.js
+__mods['core/plants.js'] = (() => {
+// Example plants for the Plant tab's library. Each is a whole system: a
+// Source plays r, Sinks record what the scope can show.
+
+const src = (x, y, signal = 'r') => ({ id: signal, type: 'source', params: { signal }, x, y });
+const sink = (id, x, y) => ({ id, type: 'sink', params: { name: id }, x, y });
+const chain = (model, params, name) => ({
+  name,
+  diagram: {
+    blocks: [src(40, 104), { id: 'p', type: model, params, x: 170, y: 96 }, sink('y1', 360, 104)],
+    wires: [{ from: 'r', to: 'p' }, { from: 'p', to: 'y1' }],
+  },
+});
+
+const EXAMPLE_PLANTS = [
+  chain('firstOrder', { K: 1, tau: 0.2 }, 'First order'),
+  chain('lagChain', { K: 1, tau: 0.1, n: 3 }, 'Third-order lag'),
+  chain('fopdt', { K: 2, tau: 0.3, delay: 0.1 }, 'Process with dead time'),
+  chain('inverseResponse', { K: 1, Tz: 0.05, tau1: 0.1, tau2: 0.2 }, 'Inverse response'),
+  {
+    name: 'Mass–spring–damper',
+    notes: 'm ẍ + c ẋ + k x = F, built from integrators: m = 1, c = 2, k = 400 (ωn = 20 rad/s, ζ = 0.05).',
+    diagram: {
+      blocks: [
+        src(30, 112),
+        { id: 'sum', type: 'sum', params: { signs: '+--' }, x: 130, y: 104 },
+        { id: 'm', type: 'gain', name: '1/m', params: { K: 1 }, x: 210, y: 100 },
+        { id: 'v', type: 'integrator', name: 'velocity', params: { K: 1 }, x: 330, y: 100 },
+        { id: 'x', type: 'integrator', name: 'position', params: { K: 1 }, x: 470, y: 100 },
+        sink('y1', 620, 108),
+        { id: 'c', type: 'gain', name: 'damping c', params: { K: 2 }, x: 330, y: 190, flip: true },
+        { id: 'k', type: 'gain', name: 'spring k', params: { K: 400 }, x: 470, y: 260, flip: true },
+      ],
+      wires: [
+        { from: 'r', to: 'sum' }, { from: 'sum', to: 'm' }, { from: 'm', to: 'v' }, { from: 'v', to: 'x' }, { from: 'x', to: 'y1' },
+        { from: 'v', to: 'c' }, { from: 'c', to: 'sum:1' }, { from: 'x', to: 'k' }, { from: 'k', to: 'sum:2' },
+      ],
+    },
+  },
+  {
+    name: 'DC motor',
+    notes: 'Voltage r drives a motor subsystem (armature lag, torque constant, mechanical lag, back-EMF feedback); y1 is the shaft angle, y2 the speed.',
+    diagram: {
+      blocks: [
+        src(30, 112),
+        {
+          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 150, y: 96,
+          diagram: {
+            blocks: [
+              { id: 'V', type: 'inport', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+              { id: 'arm', type: 'firstOrder', name: 'armature 1/(Ls+R)', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
+              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 350, y: 100 },
+              { id: 'mech', type: 'firstOrder', name: 'load 1/(Js+b)', params: { K: 10, tau: 0.2 }, x: 460, y: 96 },
+              { id: 'w', type: 'outport', params: { port: 1 }, x: 620, y: 112 },
+              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 350, y: 200, flip: true },
+            ],
+            wires: [
+              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'mech' },
+              { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+            ],
+          },
+        },
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 340, y: 96 },
+        sink('y1', 540, 106),
+        sink('y2', 540, 200),
+      ],
+      wires: [{ from: 'r', to: 'motor' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'y1' }, { from: 'motor', to: 'y2' }],
+    },
+  },
+];
+
+// A new project's plant: the reference alone.
+const EMPTY_PLANT = { blocks: [src(60, 104)], wires: [] };
+
+return { EXAMPLE_PLANTS, EMPTY_PLANT };
 })();
 // ---- core/project.js
 __mods['core/project.js'] = (() => {
@@ -1464,12 +1942,14 @@ __mods['core/project.js'] = (() => {
 const { SLOTS, normalizeBlock } = __mods['core/blocks.js'];
 const { normalizeReference, migrateReferenceBlock, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { ceil125 } = __mods['core/scale.js'];
-const { simulate } = __mods['core/sim.js'];
+const { simulate, simulateSystem } = __mods['core/sim.js'];
 const { computeMetrics } = __mods['core/metrics.js'];
 const { normalizeGoal, evaluateGoal, compareEvals } = __mods['core/goal.js'];
+const { normalizeDiagram, diagramNames } = __mods['core/diagram.js'];
 const FORMAT = 'loop-tuner/2';
 const PALETTE_SIZE = 8;
-const CHANNEL_SOURCES = ['r', 'y', 'u', 'e', 'ym', 'd'];
+// Signals of the closed loop, available once a controller exists.
+const LOOP_SIGNALS = ['y', 'u', 'e', 'ym', 'd'];
 
 // Slots that default to a transparent block. The plant has no default in a
 // v2 project: it is null until the Plant tab sets one.
@@ -1494,13 +1974,21 @@ function normalizeProject(p) {
   } else if (v1) sim.sampleTime = 0.01;
   const v1Duration = Number(p.sim?.duration ?? 20);
   const v1Period = 10 * ceil125(v1Duration / 10);
-  const system = {
-    reference: v1 ? normalizeReference(migrateReferenceBlock(p.system?.reference ?? { type: 'step' }, v1Duration, v1Period)) : normalizeReference(p.system?.reference),
-  };
-  if (!v1 && p.system?.reference && p.system.reference.period === undefined && p.sim?.duration) system.reference.period = Number(p.sim.duration);
+  // Named signals, each made by the signal generator; a Source block plays one.
+  // Older files had a single "reference": it becomes the signal r.
+  const signals = {};
+  if (v1) signals.r = normalizeReference(migrateReferenceBlock(p.system?.reference ?? { type: 'step' }, v1Duration, v1Period));
+  else if (p.system?.signals) for (const [name, ref] of Object.entries(p.system.signals)) signals[checkName(name)] = normalizeReference(ref);
+  else if (p.system?.reference) {
+    signals.r = normalizeReference(p.system.reference);
+    if (p.system.reference.period === undefined && p.sim?.duration) signals.r.period = Number(p.sim.duration);
+  }
+  const system = { signals };
   for (const [slot, def] of Object.entries(SYSTEM_DEFAULTS)) system[slot] = normalizeBlock(slot, p.system?.[slot] ?? def);
   const plant = p.system?.plant ?? (v1 ? { type: 'firstOrder' } : null);
-  system.plant = plant ? normalizeBlock('plant', plant) : null;
+  system.plant = plant ? normalizePlant(plant) : null;
+  if (system.plant?.type === 'diagram') for (const name of diagramNames(system.plant.diagram).sources) signals[name] ??= normalizeReference({ period: 1, components: [] });
+  if (!Object.keys(signals).length) signals.r = normalizeReference({ period: 1, components: [] });
   const goal = normalizeGoal(p.goal);
   const raw = Array.isArray(p.candidates) ? p.candidates : [];
   const candidates = raw.map((c, i) => {
@@ -1512,7 +2000,7 @@ function normalizeProject(p) {
       controller: normalizeBlock('controller', c.controller ?? { type: 'PID' }),
     };
     if (c.note) out.note = String(c.note);
-    for (const k of BLOCK_SLOTS) if (c[k]) out[k] = normalizeBlock(k, c[k]);
+    for (const k of BLOCK_SLOTS) if (c[k]) out[k] = k === 'plant' ? normalizePlant(c[k]) : normalizeBlock(k, c[k]);
     return out;
   });
   for (const c of candidates) if (c.color === null) c.color = nextColor(candidates);
@@ -1520,9 +2008,32 @@ function normalizeProject(p) {
     format: FORMAT,
     title: String(p.title ?? 'Untitled loop'),
     ...(p.notes ? { notes: String(p.notes) } : {}),
-    sim, system, scope: normalizeScope(p.scope, system.reference.period), goal, candidates,
+    sim, system, scope: normalizeScope(p.scope, longestPeriod(signals)), goal, candidates,
+    ...(Array.isArray(p.library) && p.library.length ? { library: p.library.map(normalizeLibraryEntry) } : {}),
     ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
   };
+}
+
+function checkName(name) {
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(name)) throw new Error(`signal name "${name}": letters, digits and _, starting with a letter`);
+  return name;
+}
+
+const longestPeriod = (signals) => Math.max(...Object.values(signals).map((s) => s.period));
+
+// A plant is a single model block or a diagram ({ "type": "diagram", "diagram": {...} }).
+function normalizePlant(plant) {
+  if (plant.type === 'diagram') return { type: 'diagram', diagram: normalizeDiagram(plant.diagram) };
+  return normalizeBlock('plant', plant);
+}
+
+// The person's own blocks: subsystems saved to the library, kept in the project.
+function normalizeLibraryEntry(e, i) {
+  if (!e?.name) throw new Error(`library[${i}]: needs a name`);
+  const d = normalizeDiagram({ blocks: [{ ...e.block, id: 'x', x: 0, y: 0 }], wires: [] }, `library[${i}]`);
+  const { id, x, y, ...block } = d.blocks[0];
+  void id; void x; void y;
+  return { name: String(e.name), block };
 }
 
 function defaultSampleTime(duration) {
@@ -1542,7 +2053,7 @@ function simOf(project) {
 // Auto Scale's timebase: one period of the input on the screen, at the
 // smallest 1-2-5 step that fits it.
 function autoTimebase(project) {
-  return { scale: ceil125(project.system.reference.period / 10), position: 0 };
+  return { scale: ceil125(longestPeriod(project.system.signals) / 10), position: 0 };
 }
 
 // Auto Scale for one channel: the signal spans about six divisions, centred
@@ -1559,7 +2070,7 @@ function fitChannel(values) {
 
 const DEFAULT_CHANNELS = [
   { source: 'r', on: true, scale: 0.2, offset: 0 },
-  { source: 'y', on: true, scale: 0.2, offset: 0 },
+  { source: 'y1', on: true, scale: 0.2, offset: 0 },
   { source: 'u', on: false, scale: 0.5, offset: 0 },
   { source: 'e', on: false, scale: 0.2, offset: 0 },
 ];
@@ -1573,7 +2084,7 @@ function normalizeScope(scope = {}, period) {
   const channels = DEFAULT_CHANNELS.map((d, i) => {
     const c = scope.channels?.[i] ?? {};
     const ch = { source: c.source ?? d.source, on: c.on ?? d.on, scale: Number(c.scale ?? d.scale), offset: Number(c.offset ?? d.offset) };
-    if (!CHANNEL_SOURCES.includes(ch.source)) throw new Error(`scope.channels[${i}].source: one of ${CHANNEL_SOURCES.join(', ')}`);
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(ch.source)) throw new Error(`scope.channels[${i}].source: a signal name such as r, y1 or u`);
     if (!(ch.scale > 0) || !Number.isFinite(ch.offset)) throw new Error(`scope.channels[${i}]: scale must be > 0 and offset a number`);
     ch.on = !!ch.on;
     return ch;
@@ -1581,16 +2092,35 @@ function normalizeScope(scope = {}, period) {
   return { timebase, channels };
 }
 
+// With a plant but no controller yet, the plant runs open loop: u = r.
+function evaluateOpenLoop(project) {
+  const loop = resolveLoop(project, { controller: null });
+  return simulate(loop, simOf(project), { openLoop: true });
+}
+
 // A loop can run once it has a plant and at least one controller candidate.
 function loopReady(project) {
   return !!project.system.plant && project.candidates.length > 0;
 }
 
-// r(t) on the simulation grid, whether or not a loop exists.
-function referenceTrace(project) {
+// One named signal on the simulation grid (r by default).
+function referenceTrace(project, name = 'r') {
   const sim = simOf(project);
-  const { t, v } = sampleSignal(referenceFn(project.system.reference, sim), sim);
+  const ref = project.system.signals[name] ?? { period: 1, components: [] };
+  const { t, v } = sampleSignal(referenceFn(ref, sim), sim);
   return { t, r: v };
+}
+
+// The diagram as the whole system (no controller yet): every Source and Sink.
+function evaluateSystem(project) {
+  const plant = project.system.plant;
+  const sim = simOf(project);
+  if (plant?.type !== 'diagram') {
+    const signals = {};
+    for (const name of Object.keys(project.system.signals)) signals[name] = referenceTrace(project, name).r;
+    return { t: referenceTrace(project).t, signals, info: { warnings: [] } };
+  }
+  return simulateSystem(plant.diagram, project.system.signals, sim);
 }
 
 // The least-used palette slot, earliest first, so a colour follows its
@@ -1604,8 +2134,8 @@ function nextColor(candidates) {
 }
 
 function resolveLoop(project, cand) {
-  const loop = {};
-  for (const s of SLOTS) loop[s.key] = s.key === 'controller' ? cand.controller : (cand[s.key] ?? project.system[s.key]);
+  const loop = { reference: project.system.signals.r ?? { period: 1, components: [] } };
+  for (const s of SLOTS) if (s.key !== 'reference') loop[s.key] = s.key === 'controller' ? cand.controller : (cand[s.key] ?? project.system[s.key]);
   return loop;
 }
 
@@ -1660,7 +2190,7 @@ function fmt(v, digits = 3) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { FORMAT, PALETTE_SIZE, CHANNEL_SOURCES, normalizeProject, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, normalizeScope, loopReady, referenceTrace, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, normalizeScope, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
 })();
 // ---- core/tune.js
 __mods['core/tune.js'] = (() => {
@@ -1790,12 +2320,15 @@ __mods['core/examples.js'] = (() => {
 const DEFAULT_PROJECT = {
   format: 'loop-tuner/2',
   title: 'New loop',
-  system: { reference: { period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] }, plant: null },
+  system: {
+    signals: { r: { period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
+    plant: { type: 'diagram', diagram: { blocks: [{ id: 'r', type: 'source', params: { signal: 'r' }, x: 60, y: 104 }], wires: [] } },
+  },
   scope: {
     timebase: { scale: 0.1, position: 0 },
     channels: [
       { source: 'r', on: true, scale: 0.2, offset: -0.4 },
-      { source: 'y', on: true, scale: 0.2, offset: -0.4 },
+      { source: 'y1', on: true, scale: 0.2, offset: -0.4 },
       { source: 'u', on: false, scale: 0.5, offset: 0 },
       { source: 'e', on: false, scale: 0.2, offset: 0 },
     ],
@@ -2211,7 +2744,7 @@ function createDisplay(root, handlers) {
         ctx.fillStyle = 'rgba(10, 13, 16, 0.75)'; ctx.fillRect(x - w - 6, y - 13, w + 6, 14);
         ctx.fillStyle = color; ctx.textAlign = 'right'; ctx.fillText(text, x - 3, y);
       };
-      tag(preview.sum, `r + ${preview.label}`, CHANNEL_COLORS[preview.channel]);
+      tag(preview.sum, `${preview.signal ?? 'r'} + ${preview.label}`, CHANNEL_COLORS[preview.channel]);
       tag(preview.alone, preview.label, 'rgba(235, 240, 245, 0.85)');
     }
 
@@ -2285,7 +2818,7 @@ function createDisplay(root, handlers) {
     badges.innerHTML = scope.channels.map((ch, i) => {
       const has = !!data.signals[ch.source];
       const cls = ['badge', ch.on ? 'on' : 'off', i === selected ? 'sel' : '', has ? '' : 'nosig'].join(' ');
-      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${SOURCE_LABEL[ch.source]}">
+      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${SOURCE_LABEL[ch.source] ?? ch.source}">
         <span class="num">${i + 1}</span><span class="src">${ch.source}</span>
         <span class="val">${has ? `${num(ch.scale)}/div` : 'no signal'}</span></button>`;
     }).join('');
@@ -2479,7 +3012,6 @@ const { createDial } = __mods['ui/dial.js'];
 const { CHANNEL_COLORS, SOURCE_LABEL } = __mods['ui/display.js'];
 const { siUnit, num, parseSI } = __mods['ui/units.js'];
 const { step125 } = __mods['core/scale.js'];
-const { CHANNEL_SOURCES } = __mods['core/project.js'];
 function createControls(root, app) {
   root.innerHTML = `
     <section class="group">
@@ -2590,7 +3122,6 @@ function createControls(root, app) {
     keys.append(b);
   });
   const src = $('#ch-src');
-  for (const s of CHANNEL_SOURCES) { const o = document.createElement('option'); o.value = s; o.textContent = SOURCE_LABEL[s]; src.append(o); }
   src.addEventListener('change', () => setScope((sc) => { sc.channels[app.channel].source = src.value; }));
 
   let mode = 'stop';
@@ -2606,6 +3137,11 @@ function createControls(root, app) {
       b.classList.toggle('sel', i === app.channel);
       b.setAttribute('aria-pressed', String(sc.channels[i].on));
     });
+    const names = [...new Set([...app.signalNames(), ch().source])];
+    if (src.dataset.names !== names.join(',')) {
+      src.innerHTML = names.map((n) => `<option value="${n}">${SOURCE_LABEL[n] ?? n}</option>`).join('');
+      src.dataset.names = names.join(',');
+    }
     src.value = ch().source;
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
@@ -2646,6 +3182,10 @@ const PERIOD = { key: 'period', label: 'Period', unit: 's', min: 1e-6 };
 function createGenerator(root, app) {
   root.innerHTML = `
     <div class="gen">
+      <section class="gcol gsig" aria-label="Signal being edited">
+        <h3 class="glabel">Edit</h3>
+        <div class="siglist" id="g-sigs"></div>
+      </section>
       <section class="gcol gwave" aria-label="Waveform">
         <h3 class="glabel">Waveform</h3>
         <div class="wkeys">${ORDER.map((t) => `<button class="key wkey" data-type="${t}" title="${KEY_TITLE[t] ?? SIGNALS[t].label}">${icon(t)}<span>${SIGNALS[t].label}</span></button>`).join('')}</div>
@@ -2659,7 +3199,7 @@ function createGenerator(root, app) {
         <div class="plist" id="g-plist"></div>
       </section>
       <section class="gcol gstack" aria-label="Signal">
-        <h3 class="glabel">Signal <span class="eq">r(t) = Σ</span></h3>
+        <h3 class="glabel">Signal <span class="eq" id="g-eq">r(t) = Σ</span></h3>
         <ol class="slist" id="g-stack"></ol>
       </section>
       <section class="gcol gentry" aria-label="Entry">
@@ -2686,7 +3226,7 @@ function createGenerator(root, app) {
 
   const fields = () => (draft ? SIGNALS[draft.comp.type].params : []).concat([PERIOD]);
   const fieldDef = (key) => fields().find((f) => f.key === key) ?? PERIOD;
-  const getValue = (key) => (key === 'period' ? app.project.system.reference.period : draft.comp.params[key]);
+  const getValue = (key) => (key === 'period' ? app.signalRef().period : draft.comp.params[key]);
   const cursorOf = (key) => {
     if (cursors[key] === undefined) {
       const v = Math.abs(getValue(key));
@@ -2714,7 +3254,7 @@ function createGenerator(root, app) {
     for (const p of def.params) params[p.key] = draft?.comp.params[p.key] ?? p.default;
     const extra = type === 'fn' ? { expr: draft?.comp.expr ?? DEFAULT_EXPR } : {};
     draft = { mode: draft?.mode ?? 'new', index: draft?.index, comp: normalizeComponent({ type, params, ...extra }) };
-    if (type === 'step' && draft.mode === 'new' && !app.project.system.reference.components.length) draft.comp.params.time = Math.min(0.1, app.project.system.reference.period / 2);
+    if (type === 'step' && draft.mode === 'new' && !app.signalRef().components.length) draft.comp.params.time = Math.min(0.1, app.signalRef().period / 2);
     for (const k of Object.keys(cursors)) if (k !== 'period') delete cursors[k];
     active = def.params[0]?.key ?? null;
     buffer = '';
@@ -2723,7 +3263,7 @@ function createGenerator(root, app) {
   }
 
   function editComponent(i) {
-    const comp = structuredClone(app.project.system.reference.components[i]);
+    const comp = structuredClone(app.signalRef().components[i]);
     draft = { mode: 'edit', index: i, comp };
     for (const k of Object.keys(cursors)) if (k !== 'period') delete cursors[k];
     active = SIGNALS[comp.type].params[0]?.key ?? null;
@@ -2759,8 +3299,9 @@ function createGenerator(root, app) {
   $('#g-left').addEventListener('click', () => moveCursor(1));
   $('#g-right').addEventListener('click', () => moveCursor(-1));
 
-  const PAD = [['7', '8', '9', 'Del'], ['4', '5', '6', 'Cancel'], ['1', '2', '3', 'Enter'], ['.', '0', '±', null]];
-  $('#g-keypad').innerHTML = PAD.flat().map((k) => (k === null ? '' : `<button class="key pk ${/^\d$/.test(k) ? '' : 'fn'} ${k === 'Enter' ? 'enter' : ''}" data-k="${k}">${k}</button>`)).join('');
+  // Digits in a 3 × 4 block; Del, Cancel and Enter as a row of small keys under it.
+  const PAD = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '±', 'Del', 'Cancel', 'Enter'];
+  $('#g-keypad').innerHTML = PAD.map((k) => `<button class="key pk ${/^[\d.±]$/.test(k) ? '' : 'fn'}" data-k="${k}">${k}</button>`).join('');
   $('#g-keypad').querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => press(b.dataset.k)));
 
   function press(k) {
@@ -2832,8 +3373,16 @@ function createGenerator(root, app) {
       <span class="pl">${f.label}</span><span class="pv">${valueHtml(f.key)}</span><span class="pu">${f.unit ?? ''}</span></button>`;
   }
 
+  function renderSignals() {
+    const names = Object.keys(app.project.system.signals);
+    $('#g-sigs').innerHTML = names.map((n) => `<button class="sigkey ${n === app.signal ? 'on' : ''}" data-sig="${n}" aria-pressed="${n === app.signal}" title="Edit the signal ${n}, played by the Source blocks named ${n}"><span class="sigsym">${n}</span>${n === 'r' ? 'Reference' : 'Signal'}</button>`).join('')
+      + '<p class="sighint">Add a Source block in the Plant tab for another signal.</p>';
+    $('#g-sigs').querySelectorAll('[data-sig]').forEach((b) => b.addEventListener('click', () => app.selectSignal(b.dataset.sig)));
+  }
+
   function render() {
-    const comps = app.project.system.reference.components;
+    renderSignals();
+    const comps = app.signalRef().components;
     root.querySelectorAll('.wkey').forEach((b) => b.classList.toggle('lit', draft?.comp.type === b.dataset.type));
     $('#g-mode').textContent = !draft ? 'Parameters' : draft.mode === 'edit' ? `Edit ${draft.index + 1} · ${SIGNALS[draft.comp.type].label}` : `New ${SIGNALS[draft.comp.type].label} · preview`;
     $('#g-plist').innerHTML = draft
@@ -2852,6 +3401,7 @@ function createGenerator(root, app) {
           <button class="x" data-del="${i}" aria-label="Remove component ${i + 1}" title="Remove">✕</button></li>`).join('')
       : '<li class="empty">No components yet: r(t) = 0.</li>';
     $('#g-period').innerHTML = fieldRow(PERIOD);
+    $('#g-eq').textContent = `${app.signal}(t) = Σ`;
     const exprIn = $('#g-expr');
     if (exprIn) {
       const check = () => {
@@ -2903,6 +3453,578 @@ function createGenerator(root, app) {
 }
 
 return { createGenerator };
+})();
+// ---- ui/plant.js
+__mods['ui/plant.js'] = (() => {
+// Tab 2, the Plant: a block-diagram editor. Library on the left, canvas in the
+// middle, the selected block's parameters on the right. Blocks are dragged in
+// from the library, wired output to input, grouped into subsystems that nest,
+// and subsystems can be saved to the library. See design/output/plant-editor.md.
+
+const { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram } = __mods['core/diagram.js'];
+const { EXAMPLE_PLANTS } = __mods['core/plants.js'];
+const { num, parseSI } = __mods['ui/units.js'];
+const NS = 'http://www.w3.org/2000/svg';
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const GROUPS = [
+  ['Signals', ['source', 'sink']],
+  ['Math', ['gain', 'sum']],
+  ['Dynamics', ['integrator', 'delay', 'firstOrder', 'secondOrder', 'tf']],
+  ['Models', ['fopdt', 'lagChain', 'integratorLag', 'doubleIntegrator', 'inverseResponse']],
+  ['Nonlinear', ['saturation']],
+  ['Structure', ['subsystem', 'inport', 'outport']],
+];
+
+// Block geometry in canvas units.
+function size(b) {
+  if (b.type === 'sum') return [34, 34];
+  if (b.type === 'gain') return [58, 40];
+  if (['source', 'sink', 'inport', 'outport'].includes(b.type)) return [70, 28];
+  const [ni, no] = blockPorts(b);
+  return [130, Math.max(48, 18 * Math.max(ni, no) + 12)];
+}
+function geom(b) {
+  const [w, h] = size(b);
+  const [ni, no] = blockPorts(b);
+  const L = b.x, R = b.x + w;
+  const at = (n, i) => b.y + (h * (i + 1)) / (n + 1);
+  return {
+    w, h,
+    ins: Array.from({ length: ni }, (_, i) => ({ x: b.flip ? R : L, y: at(ni, i), dir: b.flip ? -1 : 1 })),
+    outs: Array.from({ length: no }, (_, i) => ({ x: b.flip ? L : R, y: at(no, i), dir: b.flip ? -1 : 1 })),
+  };
+}
+
+// Orthogonal route from an output (leaving in dir) to an input (entered in dir).
+function route(p, q, pd, qd) {
+  const p1 = { x: p.x + pd * 14, y: p.y }, q1 = { x: q.x - qd * 14, y: q.y };
+  if (pd === qd && (q1.x - p1.x) * pd >= 0) {
+    const mx = (p1.x + q1.x) / 2;
+    return [p, { x: mx, y: p.y }, { x: mx, y: q.y }, q];
+  }
+  const lane = Math.max(p.y, q.y) + 34;
+  return [p, p1, { x: p1.x, y: lane }, { x: q1.x, y: lane }, q1, q];
+}
+const pathOf = (pts) => pts.map((pt, i) => `${i ? 'L' : 'M'}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(' ');
+
+function createPlantEditor(root, app) {
+  root.innerHTML = `
+    <div class="plant">
+      <section class="plib" aria-label="Block library"><div id="pl-lib"></div></section>
+      <section class="pcan" aria-label="Diagram">
+        <div class="ptool">
+          <nav class="crumbs" id="pl-crumbs"></nav>
+          <button class="key small" id="pl-group" title="Put the selected blocks into a subsystem (Ctrl+G)">Group</button>
+          <button class="key small" id="pl-del" title="Delete the selection (Del)">Delete</button>
+          <button class="key small" id="pl-fit" title="Fit the diagram to the view">Fit</button>
+        </div>
+        <div class="pview" id="pl-view" tabindex="0" aria-label="Diagram canvas: drag blocks in from the library; drag from an output to an input to wire; Shift-drag to select; double-click a subsystem to open it"></div>
+      </section>
+      <section class="pprops" aria-label="Block parameters"><div id="pl-props"></div></section>
+    </div>`;
+  const $ = (s) => root.querySelector(s);
+  const viewEl = $('#pl-view');
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'pdiag');
+  viewEl.append(svg);
+
+  let path = [];                 // ids of the subsystems we are inside
+  let sel = new Set();           // selected block ids at this level
+  let wireSel = -1;              // selected wire index at this level
+  const views = {};              // per level: { x, y, k }
+  let gesture = null;
+  let lastClick = { id: null, t: 0 };
+  let saveName = null;           // library name being typed for a subsystem
+
+  // The diagram being edited (root, or a subsystem's inner diagram).
+  const rootDiagram = () => (app.project.system.plant ? plantDiagram(app.project.system.plant) : { blocks: [], wires: [] });
+  function levelOf(d, p = path) {
+    let cur = d;
+    for (const id of p) cur = cur.blocks.find((b) => b.id === id)?.diagram ?? cur;
+    return cur;
+  }
+  const level = () => levelOf(rootDiagram());
+  const view = () => (views[path.join('/')] ??= { x: 20, y: 10, k: 1 });
+
+  // Edits work on a copy, are validated, then committed with undo history.
+  function edit(fn, { quiet } = {}) {
+    const next = structuredClone(rootDiagram());
+    const lv = levelOf(next);
+    if (fn(lv, next) === false) return false;
+    try { app.setPlant(normalizeDiagram(next)); } catch (err) { app.toast(err.message); return false; }
+    if (!quiet) render();
+    return true;
+  }
+
+  function uniqueId(d, base) {
+    const ids = new Set(d.blocks.map((b) => b.id));
+    if (!ids.has(base)) return base;
+    for (let i = 2; ; i++) if (!ids.has(`${base}${i}`)) return `${base}${i}`;
+  }
+  function freeName(prefix, used, first) {
+    if (first && !used.has(first)) return first;
+    for (let i = 1; ; i++) if (!used.has(`${prefix}${i}`)) return `${prefix}${i}`;
+  }
+
+  function newBlock(d, type, x, y, template) {
+    const all = diagramNames(rootDiagram());
+    const b = template ? structuredClone(template) : { type, params: {} };
+    if (!template) for (const p of diagramBlockDef(type).params) b.params[p.key] = p.default;
+    if (type === 'source') b.params.signal = freeName('r', new Set(all.sources), 'r');
+    if (type === 'sink') b.params.name = freeName('y', new Set([...all.sinks, ...all.sources]));
+    if (type === 'inport' || type === 'outport') b.params.port = d.blocks.filter((x2) => x2.type === type).length + 1;
+    if (type === 'subsystem' && !b.diagram) b.diagram = { blocks: [{ id: 'in', type: 'inport', params: { port: 1 }, x: 30, y: 60 }, { id: 'out', type: 'outport', params: { port: 1 }, x: 260, y: 60 }], wires: [{ from: 'in', to: 'out' }] };
+    const base = type === 'source' ? b.params.signal : type === 'sink' ? b.params.name : { firstOrder: 'lag', secondOrder: 'so', integrator: 'int', subsystem: 'sub', saturation: 'sat' }[type] ?? type;
+    b.id = uniqueId(d, base);
+    const [w, h] = size(b);
+    b.x = Math.round(x - w / 2); b.y = Math.round(y - h / 2);
+    // Step down until the new block does not cover another one.
+    const hits = () => d.blocks.some((o) => { const [ow, oh] = size(o); return b.x < o.x + ow + 10 && o.x < b.x + w + 10 && b.y < o.y + oh + 10 && o.y < b.y + h + 10; });
+    for (let i = 0; i < 20 && hits(); i++) b.y += 60;
+    d.blocks.push(b);
+    return b;
+  }
+
+  // Library
+  function renderLibrary() {
+    const lib = app.project.library ?? [];
+    const item = (data, label, title, extra = '') => `<button class="litem" draggable="true" data-add="${esc(data)}" title="${esc(title)}">${label}${extra}</button>`;
+    let html = '<h3 class="glabel">Library</h3>';
+    for (const [g, types] of GROUPS) {
+      html += `<div class="lgroup"><div class="lgname">${g}</div>`;
+      for (const t of types) {
+        const def = diagramBlockDef(t);
+        html += item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="lf">${esc(def.formula)}</span>`);
+      }
+      html += '</div>';
+    }
+    html += '<div class="lgroup"><div class="lgname">My blocks</div>';
+    html += lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="lempty">Select a subsystem and save it here.</div>';
+    html += '</div><div class="lgroup"><div class="lgname">Example plants</div>';
+    html += EXAMPLE_PLANTS.map((e, i) => `<button class="litem ex" data-example="${i}" title="${esc(e.notes ?? 'Replace the diagram with this example')}">${esc(e.name)}<span class="lf">load</span></button>`).join('');
+    html += '</div>';
+    $('#pl-lib').innerHTML = html;
+    $('#pl-lib').querySelectorAll('[data-add]').forEach((b) => {
+      b.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', b.dataset.add); e.dataTransfer.effectAllowed = 'copy'; });
+      b.addEventListener('click', () => {
+        const r = viewEl.getBoundingClientRect(), v = view();
+        addFrom(b.dataset.add, (r.width / 2 - v.x) / v.k, (r.height / 2 - v.y) / v.k);
+      });
+    });
+    $('#pl-lib').querySelectorAll('[data-example]').forEach((b) => b.addEventListener('click', () => {
+      const ex = EXAMPLE_PLANTS[Number(b.dataset.example)];
+      path = []; sel.clear(); wireSel = -1;
+      app.setPlant(normalizeDiagram(structuredClone(ex.diagram)));
+      app.toast(`Loaded the example plant “${ex.name}”. Ctrl+Z goes back.`);
+      render();
+      fit();
+    }));
+  }
+
+  function addFrom(data, x, y) {
+    let added = null;
+    edit((d) => {
+      if (data.startsWith('type:')) added = newBlock(d, data.slice(5), x, y);
+      else if (data.startsWith('lib:')) {
+        const e = (app.project.library ?? [])[Number(data.slice(4))];
+        if (!e) return false;
+        added = newBlock(d, 'subsystem', x, y, { ...e.block, name: e.block.name ?? e.name });
+      }
+      return added ? undefined : false;
+    });
+    if (added) { sel = new Set([added.id]); wireSel = -1; render(); }
+  }
+
+  viewEl.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  viewEl.addEventListener('drop', (e) => {
+    const data = e.dataTransfer.getData('text/plain');
+    if (!data || !/^(type|lib):/.test(data)) return;
+    e.preventDefault();
+    const p = toWorld(e);
+    addFrom(data, p.x, p.y);
+  });
+
+  // Canvas
+  function toWorld(e) {
+    const r = svg.getBoundingClientRect(), v = view();
+    return { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };
+  }
+
+  function blockSvg(b, errs) {
+    const g = geom(b);
+    const def = diagramBlockDef(b.type);
+    const selected = sel.has(b.id);
+    const cls = `blk t-${b.type}${selected ? ' sel' : ''}${errs.has(b.id) ? ' err' : ''}`;
+    const title = b.name ?? (b.type === 'source' ? b.params.signal : b.type === 'sink' ? b.params.name : b.type === 'inport' ? `In ${b.params.port}` : b.type === 'outport' ? `Out ${b.params.port}` : def.label);
+    let shape, text = '';
+    const cx = b.x + g.w / 2, cy = b.y + g.h / 2;
+    if (b.type === 'sum') {
+      shape = `<circle class="body" cx="${cx}" cy="${cy}" r="${g.w / 2}"/>`;
+      text = `<text class="bt" x="${cx}" y="${cy + 5}" text-anchor="middle">Σ</text>`
+        + g.ins.map((p, i) => `<text class="sign" x="${p.x + (b.flip ? -9 : 9)}" y="${p.y + (p.y < cy ? 9 : -2)}" text-anchor="middle">${b.params.signs[i]}</text>`).join('');
+    } else if (b.type === 'gain') {
+      const pts = b.flip ? `${b.x + g.w},${b.y} ${b.x + g.w},${b.y + g.h} ${b.x},${cy}` : `${b.x},${b.y} ${b.x},${b.y + g.h} ${b.x + g.w},${cy}`;
+      shape = `<polygon class="body" points="${pts}"/>`;
+      text = `<text class="bp" x="${b.x + (b.flip ? g.w * 0.62 : g.w * 0.38)}" y="${cy + 4}" text-anchor="middle">${esc(num(b.params.K, 3))}</text>`
+        + (b.name ? `<text class="bn" x="${cx}" y="${b.y - 5}" text-anchor="middle">${esc(b.name)}</text>` : '');
+    } else {
+      const round = ['source', 'sink', 'inport', 'outport'].includes(b.type) ? 14 : 5;
+      shape = `<rect class="body" x="${b.x}" y="${b.y}" width="${g.w}" height="${g.h}" rx="${round}"/>`;
+      if (b.type === 'source' || b.type === 'sink') {
+        text = `<text class="bt sig" x="${cx}" y="${cy + 4.5}" text-anchor="middle">${esc(b.type === 'source' ? `${b.params.signal} ▸` : `▸ ${b.params.name}`)}</text>`;
+      } else if (b.type === 'inport' || b.type === 'outport') {
+        text = `<text class="bt" x="${cx}" y="${cy + 4.5}" text-anchor="middle">${esc(title)}</text>`;
+      } else {
+        const sub = b.type === 'subsystem' ? `${b.diagram.blocks.length} blocks · open ↵` : summary(b);
+        text = `<text class="bt" x="${b.x + 9}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${b.x + 9}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
+      }
+    }
+    const ports = g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
+      + g.outs.map((p, i) => `<circle class="port out" data-port="out" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('');
+    const stack = b.type === 'subsystem' ? `<rect class="stack" x="${b.x + 4}" y="${b.y + 4}" width="${g.w}" height="${g.h}" rx="5"/>` : '';
+    return `<g class="${cls}" data-block="${b.id}">${stack}${shape}${text}${ports}</g>`;
+  }
+
+  function summary(b) {
+    const def = diagramBlockDef(b.type);
+    return def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+  }
+
+  let compileMsg = '';
+  function render() {
+    const d = level();
+    // Validity of the whole diagram, shown in the parameters panel.
+    compileMsg = '';
+    const errs = new Set();
+    try {
+      const el = compileDiagram(rootDiagram(), 'plant', { standalone: true, sources: Object.fromEntries(Object.keys(app.project.system.signals).map((n) => [n, () => 0])) });
+      compileMsg = el.warnings.join('\n');
+    } catch (err) {
+      compileMsg = err.message;
+      for (const b of d.blocks) if (err.message.includes(b.name ?? b.id)) errs.add(b.id);
+    }
+    const v = view();
+    const byId = Object.fromEntries(d.blocks.map((b) => [b.id, b]));
+    const wires = d.wires.map((w, i) => {
+      const f = parseEnd(w.from), t = parseEnd(w.to);
+      const fb = byId[f.id], tb = byId[t.id];
+      const p = geom(fb).outs[f.port], q = geom(tb).ins[t.port];
+      const pts = route(p, q, p.dir, q.dir);
+      return `<g class="wire${i === wireSel ? ' sel' : ''}" data-wire="${i}"><path class="hit" d="${pathOf(pts)}"/><path class="line" d="${pathOf(pts)}" marker-end="url(#pl-arrow)"/></g>`;
+    }).join('');
+    svg.innerHTML = `<defs><marker id="pl-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="arrowhead"/></marker></defs>
+      <g transform="translate(${v.x},${v.y}) scale(${v.k})">${wires}${d.blocks.map((b) => blockSvg(b, errs)).join('')}<g id="pl-temp"></g></g>`;
+    renderCrumbs();
+    renderProps();
+    $('#pl-group').disabled = sel.size === 0;
+    $('#pl-del').disabled = sel.size === 0 && wireSel < 0;
+  }
+
+  function renderCrumbs() {
+    const parts = [['Plant', 0]];
+    let cur = rootDiagram();
+    path.forEach((id, i) => { const b = cur.blocks.find((x) => x.id === id); parts.push([b?.name ?? id, i + 1]); cur = b?.diagram ?? cur; });
+    $('#pl-crumbs').innerHTML = parts.map(([n, depth], i) => (i < parts.length - 1 ? `<button class="crumb" data-depth="${depth}">${esc(n)}</button><span class="csep">›</span>` : `<span class="crumb cur">${esc(n)}</span>`)).join('');
+    $('#pl-crumbs').querySelectorAll('[data-depth]').forEach((b) => b.addEventListener('click', () => { path = path.slice(0, Number(b.dataset.depth)); sel.clear(); wireSel = -1; render(); }));
+  }
+
+  // Parameters panel
+  function renderProps() {
+    const d = level();
+    const box = $('#pl-props');
+    if (sel.size === 1) {
+      const b = d.blocks.find((x) => x.id === [...sel][0]);
+      if (!b) { sel.clear(); return renderProps(); }
+      const def = diagramBlockDef(b.type);
+      let html = `<h3 class="glabel">${esc(def.label)}</h3><div class="pform">`;
+      if (!['source', 'sink', 'inport', 'outport'].includes(b.type)) html += field('name', 'Label', b.name ?? '', 'text', 'optional');
+      for (const p of def.params) {
+        const v = b.params[p.key];
+        html += field(`p:${p.key}`, p.label, p.kind === 'vector' ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', p.unit ?? (p.kind === 'vector' ? 'highest power first' : ''));
+      }
+      html += '</div><div class="pbtns">';
+      if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="key small" data-act="flip">Flip</button>`;
+      if (b.type === 'subsystem') html += `<button class="key small" data-act="open">Open</button><button class="key small" data-act="save">Save to library</button>`;
+      if (b.type === 'source') html += `<button class="key small" data-act="signal">Edit signal ${esc(b.params.signal)}</button>`;
+      html += '</div>';
+      if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="key small primary" data-act="saveok">Save</button><button class="key small" data-act="savecancel">Cancel</button></div>`;
+      html += `<p class="phelp">${esc(def.formula)}${b.type === 'sink' ? ' · shows on the scope as a channel source' : ''}${b.type === 'source' ? ' · plays the signal made in the Input tab' : ''}</p>`;
+      box.innerHTML = html;
+      bindFields(b);
+      box.querySelectorAll('[data-act]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.act, b)));
+      return;
+    }
+    if (sel.size > 1) {
+      box.innerHTML = `<h3 class="glabel">${sel.size} blocks</h3><div class="pbtns"><button class="key small primary" data-act="group">Group into subsystem</button><button class="key small" data-act="delete">Delete</button></div><p class="phelp">Grouping keeps the wires: those that cross the boundary become the subsystem's In and Out ports.</p>`;
+      box.querySelectorAll('[data-act]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.act)));
+      return;
+    }
+    const names = diagramNames(rootDiagram());
+    box.innerHTML = `<h3 class="glabel">Plant</h3>
+      <p class="phelp"><b>Sources</b> ${names.sources.map(esc).join(', ') || 'none'} · <b>Sinks</b> ${names.sinks.map(esc).join(', ') || 'none'}</p>
+      ${compileMsg ? `<p class="pmsg">${esc(compileMsg).replace(/\n/g, '<br>')}</p>` : '<p class="phelp">The diagram is valid.</p>'}
+      <p class="phelp">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p>`;
+  }
+
+  function field(key, label, value, kind, hint) {
+    return `<label class="pf"><span class="pfl">${esc(label)}</span><input class="field pfi" data-f="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false"><span class="pfh">${esc(hint)}</span></label>`;
+  }
+
+  function bindFields(b) {
+    $('#pl-props').querySelectorAll('[data-f]').forEach((inp) => {
+      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } });
+      inp.addEventListener('blur', () => {
+        if (inp.dataset.cancel) { delete inp.dataset.cancel; renderProps(); return; }
+        const f = inp.dataset.f, kind = inp.dataset.kind, raw = inp.value.trim();
+        if (f === 'libname') { saveName = raw; return; }
+        let value = raw;
+        if (kind === 'number') { value = parseSI(raw); if (!Number.isFinite(value)) { app.toast('Enter a number, e.g. 0.5, 20m, 2k.'); renderProps(); return; } }
+        if (kind === 'vector') { value = raw.split(/[\s,;]+/).filter(Boolean).map(Number); if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas, highest power of s first.'); renderProps(); return; } }
+        edit((d) => {
+          const blk = d.blocks.find((x) => x.id === b.id);
+          if (f === 'name') { if (raw) blk.name = raw; else delete blk.name; return; }
+          const key = f.slice(2);
+          if (blk.type === 'source' && key === 'signal' && value !== blk.params.signal) app.renameSignal(blk.params.signal, value, diagramNames(rootDiagram()).sources.filter((s) => s === blk.params.signal).length);
+          if (blk.type === 'sum' && key === 'signs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value.length; });
+          blk.params[key] = value;
+        });
+      });
+    });
+  }
+
+  function act(what, b) {
+    if (what === 'flip') edit((d) => { const blk = d.blocks.find((x) => x.id === b.id); blk.flip = !blk.flip; if (!blk.flip) delete blk.flip; });
+    if (what === 'open') enter(b.id);
+    if (what === 'signal') app.editSignal(b.params.signal);
+    if (what === 'save') { saveName = b.name ?? 'My block'; renderProps(); $('#pl-props [data-f="libname"]')?.focus(); }
+    if (what === 'savecancel') { saveName = null; renderProps(); }
+    if (what === 'saveok') {
+      const inp = $('#pl-props [data-f="libname"]');
+      const name = (inp?.value ?? saveName ?? '').trim();
+      if (!name) { app.toast('Give the block a name.'); return; }
+      const { id, x, y, ...block } = structuredClone(b);
+      void id; void x; void y;
+      app.saveToLibrary(name, { ...block, name: block.name ?? name });
+      saveName = null;
+      renderLibrary(); renderProps();
+    }
+    if (what === 'group') group();
+    if (what === 'delete') remove();
+  }
+
+  function enter(id) {
+    const b = level().blocks.find((x) => x.id === id);
+    if (b?.type !== 'subsystem') return;
+    path = [...path, id]; sel.clear(); wireSel = -1;
+    render();
+    fit();
+  }
+
+  function remove() {
+    if (!sel.size && wireSel < 0) return;
+    edit((d) => {
+      if (sel.size) {
+        d.blocks = d.blocks.filter((b) => !sel.has(b.id));
+        d.wires = d.wires.filter((w) => !sel.has(parseEnd(w.from).id) && !sel.has(parseEnd(w.to).id));
+      } else d.wires.splice(wireSel, 1);
+    });
+    sel.clear(); wireSel = -1;
+    render();
+  }
+
+  // Group the selection into a subsystem. Wires crossing the boundary become
+  // ports: one In per distinct outside source, one Out per inside source that
+  // feeds the outside.
+  function group() {
+    if (!sel.size) return;
+    let made = null;
+    edit((d) => {
+      const inside = (end) => sel.has(parseEnd(end).id);
+      const chosen = d.blocks.filter((b) => sel.has(b.id));
+      const minX = Math.min(...chosen.map((b) => b.x)), minY = Math.min(...chosen.map((b) => b.y));
+      const maxX = Math.max(...chosen.map((b) => b.x + size(b)[0])), maxY = Math.max(...chosen.map((b) => b.y + size(b)[1]));
+      const inner = { blocks: chosen.map((b) => ({ ...b, x: b.x - minX + 140, y: b.y - minY + 40 })), wires: [] };
+      const outer = [];
+      const inPorts = new Map(), outPorts = new Map();
+      for (const w of d.wires) {
+        const fi = inside(w.from), ti = inside(w.to);
+        if (fi && ti) inner.wires.push(w);
+        else if (!fi && !ti) outer.push(w);
+        else if (ti) {
+          if (!inPorts.has(w.from)) {
+            const k = inPorts.size;
+            const id = uniqueId(inner, `in${k + 1}`);
+            inner.blocks.push({ id, type: 'inport', params: { port: k + 1 }, x: 20, y: 40 + k * 50 });
+            inPorts.set(w.from, { k, id });
+            outer.push({ from: w.from, to: `@sub:${k}` });
+          }
+          inner.wires.push({ from: inPorts.get(w.from).id, to: w.to });
+        } else {
+          if (!outPorts.has(w.from)) {
+            const k = outPorts.size;
+            const id = uniqueId(inner, `out${k + 1}`);
+            inner.blocks.push({ id, type: 'outport', params: { port: k + 1 }, x: maxX - minX + 260, y: 40 + k * 50 });
+            outPorts.set(w.from, { k, id });
+            inner.wires.push({ from: w.from, to: id });
+          }
+          outer.push({ from: `@sub:${outPorts.get(w.from).k}`, to: w.to });
+        }
+      }
+      const id = uniqueId(d, 'sub');
+      made = { id, type: 'subsystem', name: 'Subsystem', params: {}, x: Math.round((minX + maxX) / 2 - 65), y: Math.round((minY + maxY) / 2 - 24), diagram: inner };
+      d.blocks = d.blocks.filter((b) => !sel.has(b.id)).concat([made]);
+      d.wires = outer.map((w) => ({ from: w.from.replace(/^@sub:(\d+)$/, (_, k) => (k === '0' ? id : `${id}:${k}`)), to: w.to.replace(/^@sub:(\d+)$/, (_, k) => (k === '0' ? id : `${id}:${k}`)) }));
+    });
+    if (made) { sel = new Set([made.id]); render(); app.toast('Grouped into a subsystem. Double-click it to open; Save to library keeps it.'); }
+  }
+
+  function fit() {
+    const d = level();
+    const r = viewEl.getBoundingClientRect();
+    if (!d.blocks.length || !r.width) { views[path.join('/')] = { x: 20, y: 10, k: 1 }; render(); return; }
+    const x0 = Math.min(...d.blocks.map((b) => b.x)) - 30, y0 = Math.min(...d.blocks.map((b) => b.y)) - 30;
+    const x1 = Math.max(...d.blocks.map((b) => b.x + size(b)[0])) + 30, y1 = Math.max(...d.blocks.map((b) => b.y + size(b)[1])) + 60;
+    const k = Math.min(1.4, r.width / (x1 - x0), r.height / (y1 - y0));
+    views[path.join('/')] = { k, x: (r.width - (x1 - x0) * k) / 2 - x0 * k, y: (r.height - (y1 - y0) * k) / 2 - y0 * k };
+    render();
+  }
+
+  // Pointer interaction on the canvas
+  svg.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    viewEl.focus({ preventScroll: true });
+    const t = e.target;
+    const p = toWorld(e);
+    const portEl = t.closest?.('[data-port]');
+    if (portEl?.dataset.port === 'out') {
+      gesture = { kind: 'wire', from: portEl.dataset.k === '0' ? portEl.dataset.block : `${portEl.dataset.block}:${portEl.dataset.k}`, start: p };
+      svg.setPointerCapture(e.pointerId);
+      return;
+    }
+    const wireEl = t.closest?.('[data-wire]');
+    if (wireEl) { sel.clear(); wireSel = Number(wireEl.dataset.wire); render(); return; }
+    const blkEl = t.closest?.('[data-block]');
+    if (blkEl) {
+      // A single-model plant becomes a diagram before its blocks can move.
+      if (app.project.system.plant?.type !== 'diagram') app.setPlant(normalizeDiagram(rootDiagram()));
+      const id = blkEl.dataset.block;
+      // Double-click, detected here: the first click re-renders the canvas,
+      // so the browser's dblclick would lose its target.
+      const now = performance.now();
+      if (lastClick.id === id && now - lastClick.t < 400) { lastClick = { id: null, t: 0 }; enter(id); return; }
+      lastClick = { id, t: now };
+      if (e.shiftKey) { if (sel.has(id)) sel.delete(id); else sel.add(id); }
+      else if (!sel.has(id)) sel = new Set([id]);
+      wireSel = -1;
+      gesture = { kind: 'move', last: p, moved: false };
+      svg.setPointerCapture(e.pointerId);
+      render();
+      return;
+    }
+    svg.setPointerCapture(e.pointerId);
+    if (e.shiftKey) gesture = { kind: 'marquee', start: p, end: p };
+    else gesture = { kind: 'pan', x: e.clientX, y: e.clientY, moved: false };
+  });
+
+  svg.addEventListener('pointermove', (e) => {
+    if (!gesture) return;
+    const p = toWorld(e);
+    if (gesture.kind === 'pan') {
+      const v = view();
+      v.x += e.clientX - gesture.x; v.y += e.clientY - gesture.y;
+      gesture.x = e.clientX; gesture.y = e.clientY; gesture.moved = true;
+      svg.firstElementChild.nextElementSibling.setAttribute('transform', `translate(${v.x},${v.y}) scale(${v.k})`);
+      return;
+    }
+    if (gesture.kind === 'move') {
+      const dx = p.x - gesture.last.x, dy = p.y - gesture.last.y;
+      if (!gesture.moved && Math.hypot(dx, dy) < 2) return;
+      if (!gesture.moved) app.beginEdit();
+      gesture.moved = true;
+      gesture.last = p;
+      // Moving changes no dynamics: blocks move in place, committed on release.
+      for (const b of level().blocks) if (sel.has(b.id)) { b.x += dx; b.y += dy; }
+      render();
+      return;
+    }
+    const temp = svg.querySelector('#pl-temp');
+    if (gesture.kind === 'wire') {
+      temp.innerHTML = `<path class="wire-temp" d="M${gesture.start.x},${gesture.start.y} L${p.x},${p.y}"/>`;
+      return;
+    }
+    if (gesture.kind === 'marquee') {
+      gesture.end = p;
+      const x = Math.min(gesture.start.x, p.x), y = Math.min(gesture.start.y, p.y);
+      temp.innerHTML = `<rect class="marquee" x="${x}" y="${y}" width="${Math.abs(p.x - gesture.start.x)}" height="${Math.abs(p.y - gesture.start.y)}"/>`;
+    }
+  });
+
+  svg.addEventListener('pointerup', (e) => {
+    const g = gesture;
+    gesture = null;
+    if (!g) return;
+    if (g.kind === 'move') {
+      if (g.moved) {
+        for (const b of level().blocks) if (sel.has(b.id)) { b.x = Math.round(b.x); b.y = Math.round(b.y); }
+        app.endEdit();
+        app.plantMoved();
+      }
+      return;
+    }
+    if (g.kind === 'pan') { if (!g.moved) { sel.clear(); wireSel = -1; } render(); return; }
+    if (g.kind === 'wire') {
+      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-port="in"]');
+      if (target) {
+        const to = target.dataset.k === '0' ? target.dataset.block : `${target.dataset.block}:${target.dataset.k}`;
+        edit((d) => { d.wires = d.wires.filter((w) => w.to !== to); d.wires.push({ from: g.from, to }); });
+      } else render();
+      return;
+    }
+    if (g.kind === 'marquee') {
+      const x0 = Math.min(g.start.x, g.end.x), x1 = Math.max(g.start.x, g.end.x), y0 = Math.min(g.start.y, g.end.y), y1 = Math.max(g.start.y, g.end.y);
+      sel = new Set(level().blocks.filter((b) => { const [w, h] = size(b); return b.x >= x0 && b.y >= y0 && b.x + w <= x1 && b.y + h <= y1; }).map((b) => b.id));
+      wireSel = -1;
+      render();
+    }
+  });
+
+
+  svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const v = view(), r = svg.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const k = Math.min(3, Math.max(0.25, v.k * Math.exp(-e.deltaY * 0.0015)));
+    v.x = mx - ((mx - v.x) * k) / v.k; v.y = my - ((my - v.y) * k) / v.k; v.k = k;
+    render();
+  }, { passive: false });
+
+  $('#pl-group').addEventListener('click', group);
+  $('#pl-del').addEventListener('click', remove);
+  $('#pl-fit').addEventListener('click', fit);
+
+  // Keys while the Plant tab is open. Returns true when the key was used.
+  function handleKey(e) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && (sel.size || wireSel >= 0)) { remove(); return true; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') { group(); return true; }
+    if (e.key === 'Escape') {
+      if (sel.size || wireSel >= 0) { sel.clear(); wireSel = -1; render(); return true; }
+      if (path.length) { path = path.slice(0, -1); render(); return true; }
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { sel = new Set(level().blocks.map((b) => b.id)); render(); return true; }
+    return false;
+  }
+
+  let first = true;
+  return {
+    render() { renderLibrary(); render(); },
+    shown() { renderLibrary(); render(); if (first) { first = false; fit(); } },
+    handleKey,
+    reset() { path = []; sel.clear(); wireSel = -1; first = true; },
+  };
+}
+
+
+return { createPlantEditor };
 })();
 // ---- ui/layout.js
 __mods['ui/layout.js'] = (() => {
@@ -2984,7 +4106,9 @@ __mods['ui/app.js'] = (() => {
 // shows, and wiring between display, controls and tabs. window.loopTuner is
 // the browser API for agents driving the page.
 
-const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES } = __mods['core/project.js'];
+const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, LOOP_SIGNALS } = __mods['core/project.js'];
+const { diagramNames } = __mods['core/diagram.js'];
+const { createPlantEditor } = __mods['ui/plant.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { EXAMPLES, DEFAULT_PROJECT } = __mods['core/examples.js'];
 const { createDisplay } = __mods['ui/display.js'];
@@ -2994,7 +4118,7 @@ const { createSplitters } = __mods['ui/layout.js'];
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
   { key: 'input', label: 'Input' },
-  { key: 'plant', label: 'Plant', next: 'Pick a plant from the block library and set it with knobs. Channel 2 will show its output y(t). The actuator, sensor and disturbance start as ideal blocks you can swap for richer ones.' },
+  { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller', next: 'Hand-tuned controller candidates, overlaid on the display and stepped through like patches on a synthesizer.' },
   { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
   { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
@@ -3007,7 +4131,8 @@ function startApp() {
   const framed = window.self !== window.top;
   document.querySelectorAll(framed ? '[data-standalone]' : '[data-framed]').forEach((el) => { el.hidden = true; });
 
-  const app = { project: null, channel: 0, tab: 'input' };
+  // signal: the named signal the Input tab is editing.
+  const app = { project: null, channel: 0, tab: 'input', signal: 'r' };
 
   // History: snapshots of the project, taken before each edit.
   const undoStack = [], redoStack = [];
@@ -3034,25 +4159,43 @@ function startApp() {
   // The acquisition: every signal the display can show. Without a plant and a
   // controller there is only r(t).
   let acqKey = '', acq = null, loopNote = '';
+  app.systemError = '';
   function acquire() {
     const p = app.project;
     const key = JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal]);
     if (key === acqKey) return acq;
     acqKey = key;
-    const { t, r } = referenceTrace(p);
-    const signals = { r };
     loopNote = '';
+    app.systemError = '';
     if (loopReady(p)) {
+      const { t, r } = referenceTrace(p);
+      const signals = { r };
       const cand = p.candidates[Math.max(0, p.selected ? p.candidates.findIndex((c) => c.name === p.selected) : 0)] ?? p.candidates[0];
       try {
         const { result } = evaluateCandidate(p, cand);
         Object.assign(signals, { y: result.y, u: result.u, e: result.e, ym: result.ym, d: result.d });
-        loopNote = cand.name;
-      } catch (err) { loopNote = ''; toast(`The loop could not be simulated: ${err.message}`); }
+        loopNote = `loop: ${cand.name}`;
+      } catch (err) { app.systemError = err.message; }
+      acq = { t, signals };
+      return acq;
     }
-    acq = { t, signals };
+    // No controller yet: the diagram is the whole system. If it cannot run,
+    // the signals still show and the Plant tab says why.
+    try {
+      const sys = evaluateSystem(p);
+      acq = { t: sys.t, signals: sys.signals };
+    } catch (err) {
+      app.systemError = err.message;
+      const signals = {};
+      let t = null;
+      for (const name of Object.keys(p.system.signals)) { const tr = referenceTrace(p, name); signals[name] = tr.r; t = tr.t; }
+      acq = { t, signals };
+    }
     return acq;
   }
+  app.signalNames = () => [...new Set([...Object.keys(acquire().signals), ...(loopReady(app.project) ? LOOP_SIGNALS : [])])];
+  const sig = () => app.project.system.signals[app.signal] ?? app.project.system.signals[(app.signal = Object.keys(app.project.system.signals)[0])];
+  app.signalRef = sig;
 
   // Mutations
   // Scope edits. The timebase sets the simulated window, so changing it
@@ -3082,8 +4225,8 @@ function startApp() {
     changed({ data: false });
   };
   app.selectChannel = (i) => { app.channel = i; changed({ data: false }); };
-  const refs = () => app.project.system.reference.components;
-  app.addComponent = (comp) => { app.beginEdit(); refs().push(normalizeComponent(comp)); app.endEdit(); changed(); toast(`Added ${SIGNALS[comp.type].label} to r(t)`); };
+  const refs = () => sig().components;
+  app.addComponent = (comp) => { app.beginEdit(); refs().push(normalizeComponent(comp)); app.endEdit(); changed(); toast(`Added ${SIGNALS[comp.type].label} to ${app.signal}(t)`); };
   app.replaceComponent = (i, comp) => { app.beginEdit(); refs()[i] = normalizeComponent(comp); app.endEdit(); changed(); };
   app.removeComponent = (i) => { app.beginEdit(); refs().splice(i, 1); app.endEdit(); changed(); };
   app.toggleComponent = (i) => {
@@ -3094,9 +4237,37 @@ function startApp() {
   };
   app.setPeriod = (v, live) => {
     if (!(v > 0)) return;
-    app.project.system.reference.period = v;
+    sig().period = v;
     if (!live) app.endEdit();
     changed();
+  };
+
+  // The plant diagram. Every Source needs a signal: new names get an empty one.
+  app.setPlant = (diagram) => {
+    app.beginEdit();
+    app.project.system.plant = { type: 'diagram', diagram };
+    const signals = app.project.system.signals;
+    for (const name of diagramNames(diagram).sources) signals[name] ??= { period: Math.max(...Object.values(signals).map((x) => x.period), 1), components: [] };
+    app.endEdit();
+    changed();
+  };
+  app.plantMoved = () => { changed({ data: false }); };
+  app.renameSignal = (from, to, users) => {
+    const signals = app.project.system.signals;
+    app.beginEdit();
+    if (!signals[to]) signals[to] = users <= 1 ? signals[from] : structuredClone(signals[from]);
+    if (users <= 1 && from !== to) delete signals[from];
+    if (app.signal === from) app.signal = to;
+    for (const ch of app.project.scope.channels) if (ch.source === from && users <= 1) ch.source = to;
+  };
+  app.editSignal = (name) => { app.signal = name; app.tab = 'input'; generator.reset(); renderTabs(); changed({ data: false }); };
+  app.selectSignal = (name) => { app.signal = name; generator.reset(); changed({ data: false }); };
+  app.saveToLibrary = (name, block) => {
+    app.beginEdit();
+    (app.project.library ??= []).push({ name, block });
+    app.endEdit();
+    autosave();
+    toast(`Saved “${name}” to My blocks`);
   };
 
   // Preview of a drafted component: alone, and the signal with it added (or
@@ -3107,17 +4278,17 @@ function startApp() {
     if (!previewReq) { display.setPreview(null); return; }
     const p = app.project;
     const sim = simOf(p);
-    const comps = p.system.reference.components.slice();
+    const comps = sig().components.slice();
     if (previewReq.replace !== null && previewReq.replace !== undefined) comps[previewReq.replace] = previewReq.comp;
     else comps.push(previewReq.comp);
     let alone, sum;
     try {
-      const period = p.system.reference.period;
+      const period = sig().period;
       alone = sampleSignal(referenceFn({ period, components: [normalizeComponent(previewReq.comp)] }, sim), sim).v;
       sum = sampleSignal(referenceFn({ period, components: comps.map((c, i) => normalizeComponent(c, i)) }, sim), sim).v;
     } catch { display.setPreview(null); return; }
-    const channel = Math.max(0, p.scope.channels.findIndex((c) => c.source === 'r'));
-    display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase() });
+    const channel = Math.max(0, p.scope.channels.findIndex((c) => c.source === app.signal));
+    display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase(), signal: app.signal });
   }
 
   // Run control
@@ -3148,6 +4319,7 @@ function startApp() {
   });
   const controls = createControls($('controls'), app);
   const generator = createGenerator($('tab-input'), app);
+  const plantEditor = createPlantEditor($('tab-plant'), app);
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -3155,10 +4327,11 @@ function startApp() {
     $('tabbar').querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { app.tab = b.dataset.tab; renderTabs(); }));
     const t = TABS.find((x) => x.key === app.tab);
     $('tab-input').hidden = app.tab !== 'input';
-    $('tab-later').hidden = app.tab === 'input';
+    $('tab-plant').hidden = app.tab !== 'plant';
+    $('tab-later').hidden = !t.next;
+    if (app.tab === 'plant') plantEditor.shown();
     if (t.next) {
-      const defined = app.tab === 'plant' && app.project.system.plant ? `<p>This project already has a plant (<code>${app.project.system.plant.type}</code>) from its file; channels 2–4 show the loop.</p>` : '';
-      $('tab-later').innerHTML = `<div class="later-box"><h3 class="glabel">${t.label} · comes next</h3><p>${t.next}</p>${defined}<p class="dim">Until then the display shows what is set up so far. The order and plans are in design/output/tabs.md.</p></div>`;
+      $('tab-later').innerHTML = `<div class="later-box"><h3 class="glabel">${t.label} · comes next</h3><p>${t.next}</p><p class="dim">Until then the display shows what is set up so far. The order and plans are in design/output/tabs.md.</p></div>`;
     }
   }
 
@@ -3166,7 +4339,7 @@ function startApp() {
     $('undo').disabled = !undoStack.length;
     $('redo').disabled = !redoStack.length;
     $('title').value = app.project.title;
-    $('loopnote').textContent = loopNote ? `loop: ${loopNote}` : '';
+    $('loopnote').textContent = app.systemError ? 'plant: see the Plant tab' : loopNote;
   }
 
   function changed({ data = true } = {}) {
@@ -3175,6 +4348,7 @@ function startApp() {
     showPreview();
     controls.render(display.mode);
     generator.render();
+    if (app.tab === 'plant') plantEditor.render();
     renderChrome();
     autosave();
   }
@@ -3186,6 +4360,8 @@ function startApp() {
     app.project = p;
     app.endEdit();
     generator.reset();
+    plantEditor.reset();
+    app.signal = Object.keys(p.system.signals).includes('r') ? 'r' : Object.keys(p.system.signals)[0];
     acqKey = '';
     changed();
     if (!quiet) toast(`Loaded “${p.title}”`);
@@ -3260,6 +4436,7 @@ function startApp() {
     if (mod && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
     if (mod && e.key.toLowerCase() === 'y' && !inField) { e.preventDefault(); app.redo(); return; }
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
+    if (!inField && app.tab === 'plant' && $('help-dlg').hidden && plantEditor.handleKey(e)) { e.preventDefault(); return; }
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
     if (e.key === 'Escape' && display.releaseLine()) return;

@@ -10,29 +10,41 @@ One JSON document. Everything the person sets up is in it, including how the dis
   "title": "Step at 0.1 s",
   "sim": {},
   "system": {
-    "reference": { "period": 1, "components": [
-      { "type": "step", "params": { "amplitude": 1, "time": 0.1 } },
-      { "type": "fn", "params": {}, "expr": "0.2*sin(2*pi*5*t)" }
-    ] },
-    "plant": null
+    "signals": {
+      "r": { "period": 1, "components": [
+        { "type": "step", "params": { "amplitude": 1, "time": 0.1 } },
+        { "type": "fn", "params": {}, "expr": "0.2*sin(2*pi*5*t)" }
+      ] }
+    },
+    "plant": { "type": "diagram", "diagram": {
+      "blocks": [
+        { "id": "r", "type": "source", "params": { "signal": "r" }, "x": 40, "y": 104 },
+        { "id": "p", "type": "firstOrder", "params": { "K": 1, "tau": 0.2 }, "x": 170, "y": 96 },
+        { "id": "y1", "type": "sink", "params": { "name": "y1" }, "x": 360, "y": 104 }
+      ],
+      "wires": [ { "from": "r", "to": "p" }, { "from": "p", "to": "y1" } ]
+    } }
   },
   "scope": {
     "timebase": { "scale": 0.1, "position": 0 },
     "channels": [
       { "source": "r", "on": true, "scale": 0.2, "offset": -0.4 },
-      { "source": "y", "on": true, "scale": 0.2, "offset": -0.4 },
+      { "source": "y1", "on": true, "scale": 0.2, "offset": -0.4 },
       { "source": "u", "on": false, "scale": 0.5, "offset": 0 },
       { "source": "e", "on": false, "scale": 0.2, "offset": 0 }
     ]
   },
   "goal": { "minimize": { "itae": 1 }, "subjectTo": {} },
-  "candidates": []
+  "candidates": [],
+  "library": [ { "name": "My motor", "block": { "type": "subsystem", "name": "Motor", "params": {}, "diagram": { "blocks": [], "wires": [] } } } ]
 }
 ```
 
 - **The simulated window is the screen**: t = 0 to `scope.timebase.position + 10 × scope.timebase.scale`. There is no stored duration.
 - `sim.sampleTime` is the controller's sample time, present once a controller defines it; without it the window is sampled at 2000 points.
-- `system.reference`: `period` (the input repeats with it) and the summed `components` (see [signal-generator.md](signal-generator.md)). A component may carry `"enabled": false`; a Function carries `"expr"`; an Arb carries `"points": [[t, v], …]`.
-- `system.plant` is `null` until the Plant tab defines one. Actuator, sensor, disturbance and noise default to ideal / none.
+- `system.signals`: named signals, each a `period` (it repeats with it) and summed `components` (see [signal-generator.md](signal-generator.md)). A component may carry `"enabled": false`; a Function carries `"expr"`; an Arb carries `"points": [[t, v], …]`. Every Source block's signal exists here.
+- `system.plant`: a diagram (`"type": "diagram"`, see [plant-editor.md](plant-editor.md)) or a single model block (`{ "type": "firstOrder", "params": … }`). A diagram block is `id`, `type`, `params`, `x`, `y`, optional `name` and `flip`; a subsystem carries its own `diagram`. A wire end is a block id, with `:k` for port k (0-based). Actuator, sensor, disturbance and noise (used in a closed loop) default to ideal / none.
+- `scope.channels[i].source` is any signal name: a Source signal, a Sink, or a loop signal (y, u, e) once a controller exists.
+- `library`: subsystems the person saved to My blocks.
 - `scope.channels[i].offset` is in the channel's units: the value drawn on the centre line is `−offset`.
-- Older files still load: version 1 (one reference block, `sim.duration`) becomes one component with a period no shorter than the old run; a `pulse` becomes a Square with count 1; a Square's `duty` becomes its high time.
+- Older files still load: `system.reference` becomes `system.signals.r`; version 1 (one reference block, `sim.duration`) becomes one component with a period no shorter than the old run; a `pulse` becomes a Square with count 1; a Square's `duty` becomes its high time.

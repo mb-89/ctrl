@@ -6,7 +6,6 @@ import { createDial } from './dial.js';
 import { CHANNEL_COLORS, SOURCE_LABEL } from './display.js';
 import { siUnit, num, parseSI } from './units.js';
 import { step125 } from '../core/scale.js';
-import { CHANNEL_SOURCES } from '../core/project.js';
 
 export function createControls(root, app) {
   root.innerHTML = `
@@ -118,7 +117,6 @@ export function createControls(root, app) {
     keys.append(b);
   });
   const src = $('#ch-src');
-  for (const s of CHANNEL_SOURCES) { const o = document.createElement('option'); o.value = s; o.textContent = SOURCE_LABEL[s]; src.append(o); }
   src.addEventListener('change', () => setScope((sc) => { sc.channels[app.channel].source = src.value; }));
 
   let mode = 'stop';
@@ -134,6 +132,11 @@ export function createControls(root, app) {
       b.classList.toggle('sel', i === app.channel);
       b.setAttribute('aria-pressed', String(sc.channels[i].on));
     });
+    const names = [...new Set([...app.signalNames(), ch().source])];
+    if (src.dataset.names !== names.join(',')) {
+      src.innerHTML = names.map((n) => `<option value="${n}">${SOURCE_LABEL[n] ?? n}</option>`).join('');
+      src.dataset.names = names.join(',');
+    }
     src.value = ch().source;
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;

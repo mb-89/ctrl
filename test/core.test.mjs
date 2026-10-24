@@ -126,13 +126,13 @@ test('noise is reproducible and an arbitrary waveform interpolates its points', 
 
 test('a new project is the reference alone; a v1 file still loads with its loop', () => {
   const p = normalizeProject(structuredClone(DEFAULT_PROJECT));
-  assert.equal(p.system.plant, null);
-  assert.throws(() => evaluateCandidate(p, { controller: { type: 'P', params: { Kp: 1 } } }), /no plant/);
+  assert.equal(p.system.plant.type, 'diagram');
+  assert.throws(() => evaluateCandidate(p, { controller: { type: 'P', params: { Kp: 1 } } }), /Out block/);
   const { r } = referenceTrace(p);
   assert.equal(r[0], 0);
   assert.equal(r[r.length - 1], 1);
   const v1 = normalizeProject(EXAMPLES[0]);
-  assert.equal(v1.system.reference.components[0].type, 'step');
+  assert.equal(v1.system.signals.r.components[0].type, 'step');
   assert.equal(v1.system.plant.type, 'lagChain');
   assert.equal(v1.scope.channels[0].source, 'r');
 });
@@ -143,7 +143,7 @@ test('the reference repeats with its period; Auto Scale shows one period', () =>
   assert.equal(r(1), 1);
   assert.equal(r(1.05), 0);
   assert.equal(r(1.15), 1);
-  const p = normalizeProject({ system: { reference: { period: 3.2, components: [] } } });
+  const p = normalizeProject({ system: { signals: { r: { period: 3.2, components: [] } } } });
   assert.deepEqual(autoTimebase(p), { scale: 0.5, position: 0 });
   assert.equal(simOf(p).duration, 5);
   assert.deepEqual(fitChannel([0, 1]), { scale: 0.2, offset: -0.6 });
@@ -163,4 +163,33 @@ test('square counts its pulses; a formula is parsed, never evaluated as code', a
   const fn = referenceFn(normalizeReference({ period: 10, components: [{ type: 'fn', params: {}, expr: 'step(t-1)*t' }] }), { sampleTime: 0.01 });
   assert.equal(fn(0.5), 0);
   assert.equal(fn(2), 2);
+});
+
+test('a diagram plant matches its single-block equivalent, nested or not', async () => {
+  const { EXAMPLE_PLANTS } = await import('../src/core/plants.js');
+  const { simulateSystem } = await import('../src/core/sim.js');
+  const { normalizeDiagram } = await import('../src/core/diagram.js');
+  const signals = { r: normalizeReference({ period: 10, components: [{ type: 'step', params: { amplitude: 1, time: 0 } }] }) };
+  const sim = { duration: 2, sampleTime: 0.001 };
+  const msd = simulateSystem(normalizeDiagram(EXAMPLE_PLANTS.find((p) => p.name.startsWith('Mass')).diagram), signals, sim).signals.y1;
+  const so = simulateSystem(normalizeDiagram({ blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 'p', type: 'secondOrder', params: { K: 1 / 400, wn: 20, zeta: 0.05 } }, { id: 'y1', type: 'sink', params: { name: 'y1' } }], wires: [{ from: 'r', to: 'p' }, { from: 'p', to: 'y1' }] }), signals, sim).signals.y1;
+  for (const k of [100, 500, 1000, 2000]) assert.ok(Math.abs(msd[k] - so[k]) < 1e-6, `t = ${k / 1000}: ${msd[k]} vs ${so[k]}`);
+  const motor = simulateSystem(normalizeDiagram(EXAMPLE_PLANTS.find((p) => p.name === 'DC motor').diagram), signals, sim).signals;
+  // Steady speed of the motor: Kt·10 / (1 + Ke·Kt·10) = 5 / 3.5
+  assert.ok(Math.abs(motor.y2[2000] - 5 / 3.5) < 1e-3);
+  assert.ok(motor.y1[2000] > 2);
+});
+
+test('an algebraic loop is refused; an empty diagram shows the reference alone', async () => {
+  const { compileDiagram, normalizeDiagram } = await import('../src/core/diagram.js');
+  const loop = normalizeDiagram({
+    blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 's', type: 'sum', params: { signs: '+-' } }, { id: 'g', type: 'gain', params: { K: 2 } }, { id: 'y1', type: 'sink', params: { name: 'y1' } }],
+    wires: [{ from: 'r', to: 's' }, { from: 's', to: 'g' }, { from: 'g', to: 's:1' }, { from: 'g', to: 'y1' }],
+  });
+  assert.throws(() => compileDiagram(loop, 'plant', { standalone: true, sources: { r: () => 1 } }), /algebraic loop/);
+  const p = normalizeProject(structuredClone(DEFAULT_PROJECT));
+  const { evaluateSystem } = await import('../src/core/project.js');
+  const sys = evaluateSystem(p);
+  assert.deepEqual(Object.keys(sys.signals), ['r']);
+  assert.equal(sys.signals.r[sys.signals.r.length - 1], 1);
 });

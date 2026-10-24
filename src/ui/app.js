@@ -2,7 +2,9 @@
 // shows, and wiring between display, controls and tabs. window.loopTuner is
 // the browser API for agents driving the page.
 
-import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES } from '../core/project.js';
+import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, LOOP_SIGNALS } from '../core/project.js';
+import { diagramNames } from '../core/diagram.js';
+import { createPlantEditor } from './plant.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { EXAMPLES, DEFAULT_PROJECT } from '../core/examples.js';
 import { createDisplay } from './display.js';
@@ -13,7 +15,7 @@ import { createSplitters } from './layout.js';
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
   { key: 'input', label: 'Input' },
-  { key: 'plant', label: 'Plant', next: 'Pick a plant from the block library and set it with knobs. Channel 2 will show its output y(t). The actuator, sensor and disturbance start as ideal blocks you can swap for richer ones.' },
+  { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller', next: 'Hand-tuned controller candidates, overlaid on the display and stepped through like patches on a synthesizer.' },
   { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
   { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
@@ -26,7 +28,8 @@ function startApp() {
   const framed = window.self !== window.top;
   document.querySelectorAll(framed ? '[data-standalone]' : '[data-framed]').forEach((el) => { el.hidden = true; });
 
-  const app = { project: null, channel: 0, tab: 'input' };
+  // signal: the named signal the Input tab is editing.
+  const app = { project: null, channel: 0, tab: 'input', signal: 'r' };
 
   // History: snapshots of the project, taken before each edit.
   const undoStack = [], redoStack = [];
@@ -53,25 +56,43 @@ function startApp() {
   // The acquisition: every signal the display can show. Without a plant and a
   // controller there is only r(t).
   let acqKey = '', acq = null, loopNote = '';
+  app.systemError = '';
   function acquire() {
     const p = app.project;
     const key = JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal]);
     if (key === acqKey) return acq;
     acqKey = key;
-    const { t, r } = referenceTrace(p);
-    const signals = { r };
     loopNote = '';
+    app.systemError = '';
     if (loopReady(p)) {
+      const { t, r } = referenceTrace(p);
+      const signals = { r };
       const cand = p.candidates[Math.max(0, p.selected ? p.candidates.findIndex((c) => c.name === p.selected) : 0)] ?? p.candidates[0];
       try {
         const { result } = evaluateCandidate(p, cand);
         Object.assign(signals, { y: result.y, u: result.u, e: result.e, ym: result.ym, d: result.d });
-        loopNote = cand.name;
-      } catch (err) { loopNote = ''; toast(`The loop could not be simulated: ${err.message}`); }
+        loopNote = `loop: ${cand.name}`;
+      } catch (err) { app.systemError = err.message; }
+      acq = { t, signals };
+      return acq;
     }
-    acq = { t, signals };
+    // No controller yet: the diagram is the whole system. If it cannot run,
+    // the signals still show and the Plant tab says why.
+    try {
+      const sys = evaluateSystem(p);
+      acq = { t: sys.t, signals: sys.signals };
+    } catch (err) {
+      app.systemError = err.message;
+      const signals = {};
+      let t = null;
+      for (const name of Object.keys(p.system.signals)) { const tr = referenceTrace(p, name); signals[name] = tr.r; t = tr.t; }
+      acq = { t, signals };
+    }
     return acq;
   }
+  app.signalNames = () => [...new Set([...Object.keys(acquire().signals), ...(loopReady(app.project) ? LOOP_SIGNALS : [])])];
+  const sig = () => app.project.system.signals[app.signal] ?? app.project.system.signals[(app.signal = Object.keys(app.project.system.signals)[0])];
+  app.signalRef = sig;
 
   // Mutations
   // Scope edits. The timebase sets the simulated window, so changing it
@@ -101,8 +122,8 @@ function startApp() {
     changed({ data: false });
   };
   app.selectChannel = (i) => { app.channel = i; changed({ data: false }); };
-  const refs = () => app.project.system.reference.components;
-  app.addComponent = (comp) => { app.beginEdit(); refs().push(normalizeComponent(comp)); app.endEdit(); changed(); toast(`Added ${SIGNALS[comp.type].label} to r(t)`); };
+  const refs = () => sig().components;
+  app.addComponent = (comp) => { app.beginEdit(); refs().push(normalizeComponent(comp)); app.endEdit(); changed(); toast(`Added ${SIGNALS[comp.type].label} to ${app.signal}(t)`); };
   app.replaceComponent = (i, comp) => { app.beginEdit(); refs()[i] = normalizeComponent(comp); app.endEdit(); changed(); };
   app.removeComponent = (i) => { app.beginEdit(); refs().splice(i, 1); app.endEdit(); changed(); };
   app.toggleComponent = (i) => {
@@ -113,9 +134,37 @@ function startApp() {
   };
   app.setPeriod = (v, live) => {
     if (!(v > 0)) return;
-    app.project.system.reference.period = v;
+    sig().period = v;
     if (!live) app.endEdit();
     changed();
+  };
+
+  // The plant diagram. Every Source needs a signal: new names get an empty one.
+  app.setPlant = (diagram) => {
+    app.beginEdit();
+    app.project.system.plant = { type: 'diagram', diagram };
+    const signals = app.project.system.signals;
+    for (const name of diagramNames(diagram).sources) signals[name] ??= { period: Math.max(...Object.values(signals).map((x) => x.period), 1), components: [] };
+    app.endEdit();
+    changed();
+  };
+  app.plantMoved = () => { changed({ data: false }); };
+  app.renameSignal = (from, to, users) => {
+    const signals = app.project.system.signals;
+    app.beginEdit();
+    if (!signals[to]) signals[to] = users <= 1 ? signals[from] : structuredClone(signals[from]);
+    if (users <= 1 && from !== to) delete signals[from];
+    if (app.signal === from) app.signal = to;
+    for (const ch of app.project.scope.channels) if (ch.source === from && users <= 1) ch.source = to;
+  };
+  app.editSignal = (name) => { app.signal = name; app.tab = 'input'; generator.reset(); renderTabs(); changed({ data: false }); };
+  app.selectSignal = (name) => { app.signal = name; generator.reset(); changed({ data: false }); };
+  app.saveToLibrary = (name, block) => {
+    app.beginEdit();
+    (app.project.library ??= []).push({ name, block });
+    app.endEdit();
+    autosave();
+    toast(`Saved “${name}” to My blocks`);
   };
 
   // Preview of a drafted component: alone, and the signal with it added (or
@@ -126,17 +175,17 @@ function startApp() {
     if (!previewReq) { display.setPreview(null); return; }
     const p = app.project;
     const sim = simOf(p);
-    const comps = p.system.reference.components.slice();
+    const comps = sig().components.slice();
     if (previewReq.replace !== null && previewReq.replace !== undefined) comps[previewReq.replace] = previewReq.comp;
     else comps.push(previewReq.comp);
     let alone, sum;
     try {
-      const period = p.system.reference.period;
+      const period = sig().period;
       alone = sampleSignal(referenceFn({ period, components: [normalizeComponent(previewReq.comp)] }, sim), sim).v;
       sum = sampleSignal(referenceFn({ period, components: comps.map((c, i) => normalizeComponent(c, i)) }, sim), sim).v;
     } catch { display.setPreview(null); return; }
-    const channel = Math.max(0, p.scope.channels.findIndex((c) => c.source === 'r'));
-    display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase() });
+    const channel = Math.max(0, p.scope.channels.findIndex((c) => c.source === app.signal));
+    display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase(), signal: app.signal });
   }
 
   // Run control
@@ -167,6 +216,7 @@ function startApp() {
   });
   const controls = createControls($('controls'), app);
   const generator = createGenerator($('tab-input'), app);
+  const plantEditor = createPlantEditor($('tab-plant'), app);
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -174,10 +224,11 @@ function startApp() {
     $('tabbar').querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { app.tab = b.dataset.tab; renderTabs(); }));
     const t = TABS.find((x) => x.key === app.tab);
     $('tab-input').hidden = app.tab !== 'input';
-    $('tab-later').hidden = app.tab === 'input';
+    $('tab-plant').hidden = app.tab !== 'plant';
+    $('tab-later').hidden = !t.next;
+    if (app.tab === 'plant') plantEditor.shown();
     if (t.next) {
-      const defined = app.tab === 'plant' && app.project.system.plant ? `<p>This project already has a plant (<code>${app.project.system.plant.type}</code>) from its file; channels 2–4 show the loop.</p>` : '';
-      $('tab-later').innerHTML = `<div class="later-box"><h3 class="glabel">${t.label} · comes next</h3><p>${t.next}</p>${defined}<p class="dim">Until then the display shows what is set up so far. The order and plans are in design/output/tabs.md.</p></div>`;
+      $('tab-later').innerHTML = `<div class="later-box"><h3 class="glabel">${t.label} · comes next</h3><p>${t.next}</p><p class="dim">Until then the display shows what is set up so far. The order and plans are in design/output/tabs.md.</p></div>`;
     }
   }
 
@@ -185,7 +236,7 @@ function startApp() {
     $('undo').disabled = !undoStack.length;
     $('redo').disabled = !redoStack.length;
     $('title').value = app.project.title;
-    $('loopnote').textContent = loopNote ? `loop: ${loopNote}` : '';
+    $('loopnote').textContent = app.systemError ? 'plant: see the Plant tab' : loopNote;
   }
 
   function changed({ data = true } = {}) {
@@ -194,6 +245,7 @@ function startApp() {
     showPreview();
     controls.render(display.mode);
     generator.render();
+    if (app.tab === 'plant') plantEditor.render();
     renderChrome();
     autosave();
   }
@@ -205,6 +257,8 @@ function startApp() {
     app.project = p;
     app.endEdit();
     generator.reset();
+    plantEditor.reset();
+    app.signal = Object.keys(p.system.signals).includes('r') ? 'r' : Object.keys(p.system.signals)[0];
     acqKey = '';
     changed();
     if (!quiet) toast(`Loaded “${p.title}”`);
@@ -279,6 +333,7 @@ function startApp() {
     if (mod && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
     if (mod && e.key.toLowerCase() === 'y' && !inField) { e.preventDefault(); app.redo(); return; }
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
+    if (!inField && app.tab === 'plant' && $('help-dlg').hidden && plantEditor.handleKey(e)) { e.preventDefault(); return; }
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
     if (e.key === 'Escape' && display.releaseLine()) return;

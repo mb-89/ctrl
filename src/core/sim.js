@@ -11,33 +11,44 @@
 
 import { blockDef, SLOTS } from './blocks.js';
 import { tf2ss, rootBound } from './poly.js';
+import { compileDiagram, plantDiagram, wrapPlant } from './diagram.js';
 import { referenceFn } from './signals.js';
 
 const MAX_SAMPLES = 200000;
 const MAX_STEPS = 400000;
 const BLOWUP = 1e8;
 
-export function simulate(loop, sim) {
+// opts.openLoop: the controller is bypassed and the actuator receives r
+// directly, to show the plant's own response before a controller exists.
+export function simulate(loop, sim, opts = {}) {
   const duration = Number(sim.duration);
   const Ts = Number(sim.sampleTime);
   if (!(duration > 0)) throw new Error('sim.duration must be > 0');
   if (!(Ts > 0)) throw new Error('sim.sampleTime must be > 0');
-  for (const s of SLOTS) if (!loop[s.key]) throw new Error(`loop is missing slot "${s.key}"`);
+  for (const s of SLOTS) if (!loop[s.key] && !(opts.openLoop && s.key === 'controller')) throw new Error(`loop is missing slot "${s.key}"`);
 
   const warnings = [];
   const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
   if (K < Math.round(duration / Ts)) warnings.push(`sample count capped at ${MAX_SAMPLES}; increase sampleTime`);
 
-  const refFn = referenceFn(loop.reference, { sampleTime: Ts });
+  const refFn = referenceFn(loop.reference ?? { period: 1, components: [] }, { sampleTime: Ts });
   const distFn = blockDef('disturbance', loop.disturbance.type).signal(loop.disturbance.params);
   const actDef = blockDef('actuator', loop.actuator.type);
   const limits = actDef.limits ? actDef.limits(loop.actuator.params) : null;
   const noise = blockDef('noise', loop.noise.type).noise(loop.noise.params);
 
-  // Continuous chain: actuator, plant, sensor.
-  const chainTfs = ['actuator', 'plant', 'sensor'].map((slot) => blockDef(slot, loop[slot].type).tf(loop[slot].params));
+  // Continuous chain: actuator, plant, sensor, each compiled as a diagram (a
+  // single block is a diagram of one block; the plant may be a whole diagram).
+  const asDiagram = (slot) => {
+    const block = loop[slot];
+    if (slot === 'plant') return plantDiagram(block);
+    const tf = blockDef(slot, block.type).tf(block.params);
+    return wrapPlant({ type: 'tf', params: { num: tf.num, den: tf.den, delay: Number(tf.delay) || 0 } });
+  };
+  const elems = ['actuator', 'plant', 'sensor'].map((slot) => compileDiagram(asDiagram(slot), slot));
+  for (const el of elems) warnings.push(...el.warnings);
   let bound = 0;
-  for (const tf of chainTfs) bound = Math.max(bound, rootBound(tf.den));
+  for (const el of elems) bound = Math.max(bound, el.bound);
   const hmax = bound > 0 ? 0.5 / bound : Ts;
   let m = Math.max(1, Math.ceil(Ts / hmax - 1e-9));
   if (K * m > MAX_STEPS) {
@@ -45,60 +56,20 @@ export function simulate(loop, sim) {
     warnings.push('stiff system: integration step limited for speed; results may be inaccurate');
   }
   const h = Ts / m;
-  const totalSteps = K * m;
-
-  const elems = [];
   let N = 0;
-  for (const tf of chainTfs) {
-    const ss = tf2ss(tf.num, tf.den);
-    const delay = Number(tf.delay) || 0;
-    elems.push({ ss, off: N, delay, hist: delay > 0 ? new Float64Array(totalSteps + 1) : null });
-    N += ss.n;
-  }
-  let histCount = 0;
-  const rawIn = new Float64Array(3);
+  for (const el of elems) { el.off = N; N += el.n; el.setStep(h); }
   const sig = new Float64Array(3);
 
-  function histAt(hist, tau) {
-    if (tau < 0) return 0;
-    const f = tau / h;
-    const i = Math.floor(f);
-    if (i >= histCount - 1) return hist[histCount - 1];
-    const w = f - i;
-    return hist[i] * (1 - w) + hist[i + 1] * w;
-  }
-
-  // Evaluates the chain at time t: fills dX (if given), sig (element outputs)
-  // and rawIn (undelayed element inputs).
+  // Evaluates the chain at time t: fills dX (if given) and sig (the outputs
+  // of actuator, plant and sensor). The disturbance adds at the plant input.
   function chainEval(t, X, u, dX) {
-    let input = u;
-    for (let e = 0; e < 3; e++) {
-      if (e === 1) input += distFn(t);
-      const el = elems[e];
-      rawIn[e] = input;
-      const inp = el.delay > 0 ? histAt(el.hist, t - el.delay) : input;
-      const { n, A, B, C, D } = el.ss;
-      const o = el.off;
-      let out = D * inp;
-      for (let i = 0; i < n; i++) out += C[i] * X[o + i];
-      if (dX) {
-        for (let i = 0; i < n; i++) {
-          let s = B[i] * inp;
-          for (let j = 0; j < n; j++) s += A[i * n + j] * X[o + j];
-          dX[o + i] = s;
-        }
-      }
-      sig[e] = out;
-      input = out;
-    }
+    sig[0] = elems[0].eval(t, X, elems[0].off, u, dX);
+    sig[1] = elems[1].eval(t, X, elems[1].off, sig[0] + distFn(t), dX);
+    sig[2] = elems[2].eval(t, X, elems[2].off, sig[1], dX);
   }
+  function record() { for (const el of elems) el.record(); }
 
-  function record() {
-    for (let e = 0; e < 3; e++) if (elems[e].hist) elems[e].hist[histCount] = rawIn[e];
-    histCount++;
-  }
-
-  const ctrl = makeController(loop.controller, Ts, warnings);
+  const ctrl = opts.openLoop ? null : makeController(loop.controller, Ts, warnings);
   const rand = gaussian(noise.seed);
 
   const X = new Float64Array(N);
@@ -120,10 +91,10 @@ export function simulate(loop, sim) {
     const y = sig[1];
     const ym = sig[2] + (noise.std > 0 ? noise.std * rand() : 0);
     const r = refFn(t);
-    const v = ctrl.step(r, ym);
+    const v = opts.openLoop ? r : ctrl.step(r, ym);
     let u = v;
     if (limits) u = Math.min(limits.max, Math.max(limits.min, v));
-    ctrl.track(u, v);
+    ctrl?.track(u, v);
 
     out.t[k] = t; out.r[k] = r; out.y[k] = y; out.u[k] = u; out.v[k] = v; out.ym[k] = ym; out.d[k] = distFn(t); out.e[k] = r - y;
     if (!Number.isFinite(y) || Math.abs(y) > BLOWUP || !Number.isFinite(u)) {
@@ -245,4 +216,49 @@ function gaussian(seed) {
     spare = rr * Math.sin(2 * Math.PI * u2);
     return rr * Math.cos(2 * Math.PI * u2);
   };
+}
+
+// The diagram as the whole system, before any controller: every Source plays
+// its signal, every Sink is recorded. Returns { t, signals: { name: values } }.
+export function simulateSystem(diagram, signals, sim) {
+  const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
+  const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
+  const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
+  const el = compileDiagram(diagram, 'plant', { sources, standalone: true });
+  const warnings = [...el.warnings];
+  const hmax = el.bound > 0 ? 0.5 / el.bound : Ts;
+  let m = Math.max(1, Math.ceil(Ts / hmax - 1e-9));
+  if (K * m > MAX_STEPS) { m = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
+  const h = Ts / m, N = el.n;
+  el.setStep(h);
+  const X = new Float64Array(N), Xt = new Float64Array(N);
+  const k1 = new Float64Array(N), k2 = new Float64Array(N), k3 = new Float64Array(N), k4 = new Float64Array(N);
+  const t = new Float64Array(K + 1);
+  const out = {};
+  el.eval(0, X, 0, 0, null);
+  el.record();
+  let unstable = false;
+  for (let k = 0; k <= K; k++) {
+    t[k] = k * Ts;
+    for (const [name, v] of el.probes()) {
+      (out[name] ??= new Float64Array(K + 1).fill(NaN))[k] = v;
+      if (!Number.isFinite(v) || Math.abs(v) > BLOWUP) unstable = true;
+    }
+    if (unstable) { for (let j = k; j <= K; j++) t[j] = j * Ts; warnings.push('a signal diverged; the rest is not drawn'); break; }
+    if (k === K) break;
+    for (let s = 0; s < m; s++) {
+      const ts = t[k] + s * h;
+      el.eval(ts, X, 0, 0, k1);
+      for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k1[i];
+      el.eval(ts + 0.5 * h, Xt, 0, 0, k2);
+      for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k2[i];
+      el.eval(ts + 0.5 * h, Xt, 0, 0, k3);
+      for (let i = 0; i < N; i++) Xt[i] = X[i] + h * k3[i];
+      el.eval(ts + h, Xt, 0, 0, k4);
+      for (let i = 0; i < N; i++) X[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+      el.eval(ts + h, X, 0, 0, null);
+      el.record();
+    }
+  }
+  return { t, signals: out, info: { h, substeps: m, unstable, warnings } };
 }

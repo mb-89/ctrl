@@ -6,9 +6,9 @@ Reader: whoever adds or changes a tab.
 
 | # | Tab | Owns | State |
 |---|---|---|---|
-| 1 | Input | The reference r(t): a signal generator that sums primitives ([signal-generator.md](signal-generator.md)) | built |
-| 2 | Plant | The plant model; likely also actuator, sensor and disturbance, as swappable blocks that start trivial (gain 1) | next |
-| 3 | Controller | Hand-tuned controller candidates, overlaid on the display and stepped through like patches | planned |
+| 1 | Input | The named signals (r and any other a Source plays): a signal generator that sums primitives ([signal-generator.md](signal-generator.md)) | built |
+| 2 | Plant | The system as a block diagram: Sources play signals, Sinks are what the scope shows ([plant-editor.md](plant-editor.md)) | built |
+| 3 | Controller | Hand-tuned controller candidates, overlaid on the display and stepped through like patches | next |
 | 4 | Auto-tune | The goal (objective and bounds), the score, the optimiser | planned |
 | 5 | Analysis | Computed views: root locus, Bode, Nyquist, pole-zero, step metrics | planned |
 

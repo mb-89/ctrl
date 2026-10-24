@@ -6,7 +6,7 @@ You work on a project file (`.json`, or an exported `.html` page with the projec
 
 ## The loop
 
-0. **Check the loop exists.** A new project is only a reference signal (`node cli.mjs signal p.json` lists it; `--add <type> --set k=v --save` adds a component). Tuning needs a plant and controller candidates in the file (`system.plant`, `candidates`); until the Plant and Controller tabs exist, write them into the JSON, or start from `node cli.mjs new --example 0`.
+0. **Check the loop exists.** A new project is a reference signal and a plant diagram with just a Source (`node cli.mjs signal p.json [--name r]` lists a signal; `--add <type> --set k=v --save` adds a component). The plant is a block diagram in `system.plant` (see [design/output/plant-editor.md](design/output/plant-editor.md)). Tuning needs a plant with In and Out blocks and controller candidates; until the Controller tab exists, write them into the JSON, or start from `node cli.mjs new --example 0`.
 1. **Read the problem.** `node cli.mjs eval <project>` shows the goal and every candidate, best first. `--json` gives all metrics. The goal is the contract: `minimize` is the objective, `subjectTo` the bounds. If the person's request differs from the goal in the file, change the goal in the JSON first, and say so.
 2. **Explore by hand, then refine.** Try variations and read the metrics:
    ```

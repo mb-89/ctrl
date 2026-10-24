@@ -27,6 +27,10 @@ const PERIOD = { key: 'period', label: 'Period', unit: 's', min: 1e-6 };
 export function createGenerator(root, app) {
   root.innerHTML = `
     <div class="gen">
+      <section class="gcol gsig" aria-label="Signal being edited">
+        <h3 class="glabel">Edit</h3>
+        <div class="siglist" id="g-sigs"></div>
+      </section>
       <section class="gcol gwave" aria-label="Waveform">
         <h3 class="glabel">Waveform</h3>
         <div class="wkeys">${ORDER.map((t) => `<button class="key wkey" data-type="${t}" title="${KEY_TITLE[t] ?? SIGNALS[t].label}">${icon(t)}<span>${SIGNALS[t].label}</span></button>`).join('')}</div>
@@ -40,7 +44,7 @@ export function createGenerator(root, app) {
         <div class="plist" id="g-plist"></div>
       </section>
       <section class="gcol gstack" aria-label="Signal">
-        <h3 class="glabel">Signal <span class="eq">r(t) = Σ</span></h3>
+        <h3 class="glabel">Signal <span class="eq" id="g-eq">r(t) = Σ</span></h3>
         <ol class="slist" id="g-stack"></ol>
       </section>
       <section class="gcol gentry" aria-label="Entry">
@@ -67,7 +71,7 @@ export function createGenerator(root, app) {
 
   const fields = () => (draft ? SIGNALS[draft.comp.type].params : []).concat([PERIOD]);
   const fieldDef = (key) => fields().find((f) => f.key === key) ?? PERIOD;
-  const getValue = (key) => (key === 'period' ? app.project.system.reference.period : draft.comp.params[key]);
+  const getValue = (key) => (key === 'period' ? app.signalRef().period : draft.comp.params[key]);
   const cursorOf = (key) => {
     if (cursors[key] === undefined) {
       const v = Math.abs(getValue(key));
@@ -95,7 +99,7 @@ export function createGenerator(root, app) {
     for (const p of def.params) params[p.key] = draft?.comp.params[p.key] ?? p.default;
     const extra = type === 'fn' ? { expr: draft?.comp.expr ?? DEFAULT_EXPR } : {};
     draft = { mode: draft?.mode ?? 'new', index: draft?.index, comp: normalizeComponent({ type, params, ...extra }) };
-    if (type === 'step' && draft.mode === 'new' && !app.project.system.reference.components.length) draft.comp.params.time = Math.min(0.1, app.project.system.reference.period / 2);
+    if (type === 'step' && draft.mode === 'new' && !app.signalRef().components.length) draft.comp.params.time = Math.min(0.1, app.signalRef().period / 2);
     for (const k of Object.keys(cursors)) if (k !== 'period') delete cursors[k];
     active = def.params[0]?.key ?? null;
     buffer = '';
@@ -104,7 +108,7 @@ export function createGenerator(root, app) {
   }
 
   function editComponent(i) {
-    const comp = structuredClone(app.project.system.reference.components[i]);
+    const comp = structuredClone(app.signalRef().components[i]);
     draft = { mode: 'edit', index: i, comp };
     for (const k of Object.keys(cursors)) if (k !== 'period') delete cursors[k];
     active = SIGNALS[comp.type].params[0]?.key ?? null;
@@ -140,8 +144,9 @@ export function createGenerator(root, app) {
   $('#g-left').addEventListener('click', () => moveCursor(1));
   $('#g-right').addEventListener('click', () => moveCursor(-1));
 
-  const PAD = [['7', '8', '9', 'Del'], ['4', '5', '6', 'Cancel'], ['1', '2', '3', 'Enter'], ['.', '0', '±', null]];
-  $('#g-keypad').innerHTML = PAD.flat().map((k) => (k === null ? '' : `<button class="key pk ${/^\d$/.test(k) ? '' : 'fn'} ${k === 'Enter' ? 'enter' : ''}" data-k="${k}">${k}</button>`)).join('');
+  // Digits in a 3 × 4 block; Del, Cancel and Enter as a row of small keys under it.
+  const PAD = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '±', 'Del', 'Cancel', 'Enter'];
+  $('#g-keypad').innerHTML = PAD.map((k) => `<button class="key pk ${/^[\d.±]$/.test(k) ? '' : 'fn'}" data-k="${k}">${k}</button>`).join('');
   $('#g-keypad').querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => press(b.dataset.k)));
 
   function press(k) {
@@ -213,8 +218,16 @@ export function createGenerator(root, app) {
       <span class="pl">${f.label}</span><span class="pv">${valueHtml(f.key)}</span><span class="pu">${f.unit ?? ''}</span></button>`;
   }
 
+  function renderSignals() {
+    const names = Object.keys(app.project.system.signals);
+    $('#g-sigs').innerHTML = names.map((n) => `<button class="sigkey ${n === app.signal ? 'on' : ''}" data-sig="${n}" aria-pressed="${n === app.signal}" title="Edit the signal ${n}, played by the Source blocks named ${n}"><span class="sigsym">${n}</span>${n === 'r' ? 'Reference' : 'Signal'}</button>`).join('')
+      + '<p class="sighint">Add a Source block in the Plant tab for another signal.</p>';
+    $('#g-sigs').querySelectorAll('[data-sig]').forEach((b) => b.addEventListener('click', () => app.selectSignal(b.dataset.sig)));
+  }
+
   function render() {
-    const comps = app.project.system.reference.components;
+    renderSignals();
+    const comps = app.signalRef().components;
     root.querySelectorAll('.wkey').forEach((b) => b.classList.toggle('lit', draft?.comp.type === b.dataset.type));
     $('#g-mode').textContent = !draft ? 'Parameters' : draft.mode === 'edit' ? `Edit ${draft.index + 1} · ${SIGNALS[draft.comp.type].label}` : `New ${SIGNALS[draft.comp.type].label} · preview`;
     $('#g-plist').innerHTML = draft
@@ -233,6 +246,7 @@ export function createGenerator(root, app) {
           <button class="x" data-del="${i}" aria-label="Remove component ${i + 1}" title="Remove">✕</button></li>`).join('')
       : '<li class="empty">No components yet: r(t) = 0.</li>';
     $('#g-period').innerHTML = fieldRow(PERIOD);
+    $('#g-eq').textContent = `${app.signal}(t) = Σ`;
     const exprIn = $('#g-expr');
     if (exprIn) {
       const check = () => {

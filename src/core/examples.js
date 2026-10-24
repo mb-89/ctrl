@@ -5,12 +5,15 @@
 export const DEFAULT_PROJECT = {
   format: 'loop-tuner/2',
   title: 'New loop',
-  system: { reference: { period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] }, plant: null },
+  system: {
+    signals: { r: { period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
+    plant: { type: 'diagram', diagram: { blocks: [{ id: 'r', type: 'source', params: { signal: 'r' }, x: 60, y: 104 }], wires: [] } },
+  },
   scope: {
     timebase: { scale: 0.1, position: 0 },
     channels: [
       { source: 'r', on: true, scale: 0.2, offset: -0.4 },
-      { source: 'y', on: true, scale: 0.2, offset: -0.4 },
+      { source: 'y1', on: true, scale: 0.2, offset: -0.4 },
       { source: 'u', on: false, scale: 0.5, offset: 0 },
       { source: 'e', on: false, scale: 0.2, offset: 0 },
     ],

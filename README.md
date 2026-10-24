@@ -10,7 +10,10 @@ Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control lo
 
 - **Display**: four channels (r, y, u, e) on a 10 × 8 graticule; the screen is the record, swept in real time. Wheel to zoom (over an axis: that axis only), drag to pan, click a trace to work on it alone, Shift-drag to zoom to a box.
 - **Controls** to the right, as on a bench scope: Run/Stop, Single, Auto Scale; Horizontal and Vertical knobs whose readouts you can also type into.
-- **Tabs** below set the loop up one step at a time. **Input** is built: a signal generator that sums primitives (DC, step, ramp, square/pulse train, sine, chirp, noise, a typed formula y(t), or a waveform loaded from a CSV file) into the reference r(t), repeated with its period, with a dashed preview before each one is added. Plant, Controller, Auto-tune and Analysis come next.
+- **Tabs** below set the loop up one step at a time:
+  - **Input**: a signal generator that sums primitives (DC, step, ramp, square/pulse train, sine, chirp, noise, a typed formula y(t), or a waveform loaded from a CSV file) into named signals, repeated with their period, with a dashed preview before each one is added.
+  - **Plant**: the system as a block diagram, Simulink-style: Source blocks play signals, Sink blocks (y1, y2, …) are what the scope shows, blocks nest into subsystems, and example plants load from the library.
+  - Controller, Auto-tune and Analysis come next.
 
 Projects are plain JSON, including how the display is set. Save, open, drop or paste them; **Export HTML** writes a copy of the page with the project inside, to send to someone.
 
@@ -30,7 +33,9 @@ node cli.mjs help
 
 | Where | What |
 |---|---|
-| `src/core/signals.js` | The signal generator's primitives; the reference is their sum. |
+| `src/core/signals.js` | The signal generator's primitives; a signal is their sum. |
+| `src/core/diagram.js` | Block diagrams: blocks, subsystems, and the compiler that simulates them. |
+| `src/core/plants.js` | Example plants. |
 | `src/core/blocks.js` | The block library (plant, controller, actuator, sensor, disturbance, noise): every type registers its slot, parameters and behaviour. |
 | `src/core/sim.js` | The closed loop: a digital controller (sampled, zero-order hold) driving continuous actuator, plant and sensor models integrated with RK4; dead time, saturation and seeded measurement noise. |
 | `src/core/metrics.js` | Step-response and effort metrics (`node cli.mjs metrics` lists them). |

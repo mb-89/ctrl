@@ -6,13 +6,15 @@
 import { SLOTS, normalizeBlock } from './blocks.js';
 import { normalizeReference, migrateReferenceBlock, referenceFn, sampleSignal } from './signals.js';
 import { ceil125 } from './scale.js';
-import { simulate } from './sim.js';
+import { simulate, simulateSystem } from './sim.js';
 import { computeMetrics } from './metrics.js';
 import { normalizeGoal, evaluateGoal, compareEvals } from './goal.js';
+import { normalizeDiagram, diagramNames } from './diagram.js';
 
 export const FORMAT = 'loop-tuner/2';
 export const PALETTE_SIZE = 8;
-export const CHANNEL_SOURCES = ['r', 'y', 'u', 'e', 'ym', 'd'];
+// Signals of the closed loop, available once a controller exists.
+export const LOOP_SIGNALS = ['y', 'u', 'e', 'ym', 'd'];
 
 // Slots that default to a transparent block. The plant has no default in a
 // v2 project: it is null until the Plant tab sets one.
@@ -37,13 +39,21 @@ export function normalizeProject(p) {
   } else if (v1) sim.sampleTime = 0.01;
   const v1Duration = Number(p.sim?.duration ?? 20);
   const v1Period = 10 * ceil125(v1Duration / 10);
-  const system = {
-    reference: v1 ? normalizeReference(migrateReferenceBlock(p.system?.reference ?? { type: 'step' }, v1Duration, v1Period)) : normalizeReference(p.system?.reference),
-  };
-  if (!v1 && p.system?.reference && p.system.reference.period === undefined && p.sim?.duration) system.reference.period = Number(p.sim.duration);
+  // Named signals, each made by the signal generator; a Source block plays one.
+  // Older files had a single "reference": it becomes the signal r.
+  const signals = {};
+  if (v1) signals.r = normalizeReference(migrateReferenceBlock(p.system?.reference ?? { type: 'step' }, v1Duration, v1Period));
+  else if (p.system?.signals) for (const [name, ref] of Object.entries(p.system.signals)) signals[checkName(name)] = normalizeReference(ref);
+  else if (p.system?.reference) {
+    signals.r = normalizeReference(p.system.reference);
+    if (p.system.reference.period === undefined && p.sim?.duration) signals.r.period = Number(p.sim.duration);
+  }
+  const system = { signals };
   for (const [slot, def] of Object.entries(SYSTEM_DEFAULTS)) system[slot] = normalizeBlock(slot, p.system?.[slot] ?? def);
   const plant = p.system?.plant ?? (v1 ? { type: 'firstOrder' } : null);
-  system.plant = plant ? normalizeBlock('plant', plant) : null;
+  system.plant = plant ? normalizePlant(plant) : null;
+  if (system.plant?.type === 'diagram') for (const name of diagramNames(system.plant.diagram).sources) signals[name] ??= normalizeReference({ period: 1, components: [] });
+  if (!Object.keys(signals).length) signals.r = normalizeReference({ period: 1, components: [] });
   const goal = normalizeGoal(p.goal);
   const raw = Array.isArray(p.candidates) ? p.candidates : [];
   const candidates = raw.map((c, i) => {
@@ -55,7 +65,7 @@ export function normalizeProject(p) {
       controller: normalizeBlock('controller', c.controller ?? { type: 'PID' }),
     };
     if (c.note) out.note = String(c.note);
-    for (const k of BLOCK_SLOTS) if (c[k]) out[k] = normalizeBlock(k, c[k]);
+    for (const k of BLOCK_SLOTS) if (c[k]) out[k] = k === 'plant' ? normalizePlant(c[k]) : normalizeBlock(k, c[k]);
     return out;
   });
   for (const c of candidates) if (c.color === null) c.color = nextColor(candidates);
@@ -63,9 +73,32 @@ export function normalizeProject(p) {
     format: FORMAT,
     title: String(p.title ?? 'Untitled loop'),
     ...(p.notes ? { notes: String(p.notes) } : {}),
-    sim, system, scope: normalizeScope(p.scope, system.reference.period), goal, candidates,
+    sim, system, scope: normalizeScope(p.scope, longestPeriod(signals)), goal, candidates,
+    ...(Array.isArray(p.library) && p.library.length ? { library: p.library.map(normalizeLibraryEntry) } : {}),
     ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
   };
+}
+
+export function checkName(name) {
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(name)) throw new Error(`signal name "${name}": letters, digits and _, starting with a letter`);
+  return name;
+}
+
+const longestPeriod = (signals) => Math.max(...Object.values(signals).map((s) => s.period));
+
+// A plant is a single model block or a diagram ({ "type": "diagram", "diagram": {...} }).
+export function normalizePlant(plant) {
+  if (plant.type === 'diagram') return { type: 'diagram', diagram: normalizeDiagram(plant.diagram) };
+  return normalizeBlock('plant', plant);
+}
+
+// The person's own blocks: subsystems saved to the library, kept in the project.
+function normalizeLibraryEntry(e, i) {
+  if (!e?.name) throw new Error(`library[${i}]: needs a name`);
+  const d = normalizeDiagram({ blocks: [{ ...e.block, id: 'x', x: 0, y: 0 }], wires: [] }, `library[${i}]`);
+  const { id, x, y, ...block } = d.blocks[0];
+  void id; void x; void y;
+  return { name: String(e.name), block };
 }
 
 export function defaultSampleTime(duration) {
@@ -85,7 +118,7 @@ export function simOf(project) {
 // Auto Scale's timebase: one period of the input on the screen, at the
 // smallest 1-2-5 step that fits it.
 export function autoTimebase(project) {
-  return { scale: ceil125(project.system.reference.period / 10), position: 0 };
+  return { scale: ceil125(longestPeriod(project.system.signals) / 10), position: 0 };
 }
 
 // Auto Scale for one channel: the signal spans about six divisions, centred
@@ -102,7 +135,7 @@ export function fitChannel(values) {
 
 const DEFAULT_CHANNELS = [
   { source: 'r', on: true, scale: 0.2, offset: 0 },
-  { source: 'y', on: true, scale: 0.2, offset: 0 },
+  { source: 'y1', on: true, scale: 0.2, offset: 0 },
   { source: 'u', on: false, scale: 0.5, offset: 0 },
   { source: 'e', on: false, scale: 0.2, offset: 0 },
 ];
@@ -116,7 +149,7 @@ export function normalizeScope(scope = {}, period) {
   const channels = DEFAULT_CHANNELS.map((d, i) => {
     const c = scope.channels?.[i] ?? {};
     const ch = { source: c.source ?? d.source, on: c.on ?? d.on, scale: Number(c.scale ?? d.scale), offset: Number(c.offset ?? d.offset) };
-    if (!CHANNEL_SOURCES.includes(ch.source)) throw new Error(`scope.channels[${i}].source: one of ${CHANNEL_SOURCES.join(', ')}`);
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(ch.source)) throw new Error(`scope.channels[${i}].source: a signal name such as r, y1 or u`);
     if (!(ch.scale > 0) || !Number.isFinite(ch.offset)) throw new Error(`scope.channels[${i}]: scale must be > 0 and offset a number`);
     ch.on = !!ch.on;
     return ch;
@@ -124,16 +157,35 @@ export function normalizeScope(scope = {}, period) {
   return { timebase, channels };
 }
 
+// With a plant but no controller yet, the plant runs open loop: u = r.
+export function evaluateOpenLoop(project) {
+  const loop = resolveLoop(project, { controller: null });
+  return simulate(loop, simOf(project), { openLoop: true });
+}
+
 // A loop can run once it has a plant and at least one controller candidate.
 export function loopReady(project) {
   return !!project.system.plant && project.candidates.length > 0;
 }
 
-// r(t) on the simulation grid, whether or not a loop exists.
-export function referenceTrace(project) {
+// One named signal on the simulation grid (r by default).
+export function referenceTrace(project, name = 'r') {
   const sim = simOf(project);
-  const { t, v } = sampleSignal(referenceFn(project.system.reference, sim), sim);
+  const ref = project.system.signals[name] ?? { period: 1, components: [] };
+  const { t, v } = sampleSignal(referenceFn(ref, sim), sim);
   return { t, r: v };
+}
+
+// The diagram as the whole system (no controller yet): every Source and Sink.
+export function evaluateSystem(project) {
+  const plant = project.system.plant;
+  const sim = simOf(project);
+  if (plant?.type !== 'diagram') {
+    const signals = {};
+    for (const name of Object.keys(project.system.signals)) signals[name] = referenceTrace(project, name).r;
+    return { t: referenceTrace(project).t, signals, info: { warnings: [] } };
+  }
+  return simulateSystem(plant.diagram, project.system.signals, sim);
 }
 
 // The least-used palette slot, earliest first, so a colour follows its
@@ -147,8 +199,8 @@ export function nextColor(candidates) {
 }
 
 export function resolveLoop(project, cand) {
-  const loop = {};
-  for (const s of SLOTS) loop[s.key] = s.key === 'controller' ? cand.controller : (cand[s.key] ?? project.system[s.key]);
+  const loop = { reference: project.system.signals.r ?? { period: 1, components: [] } };
+  for (const s of SLOTS) if (s.key !== 'reference') loop[s.key] = s.key === 'controller' ? cand.controller : (cand[s.key] ?? project.system[s.key]);
   return loop;
 }
 

@@ -2,14 +2,15 @@
 
 Reader: whoever changes how the reference is made. Reference: [the generator panel the person shared](../input/images/2026-10-24-signal-generator-panel.png).
 
-**The reference r(t) is a sum of primitives, repeated with the signal's period, built on a panel that looks and works like a bench function generator.**
+**Each signal (r, and any other a Source block plays) is a sum of primitives, repeated with its period, built on a panel that looks and works like a bench function generator.**
 
 ## Layout: one compact row, left to right
 
+0. **Edit**: the signal being edited: every signal a Source block in the plant plays (r first).
 1. **Waveform**: the keys (DC, Step, Ramp / Square, Sine, Chirp / Noise, Function, Arb) and, under them, the signal's **Period**.
 2. **Parameters**: the waveform being drafted or edited, with **Add** (or Apply) and **Cancel** in its header. Clicking a field makes it the active one.
 3. **Signal**: the stack of components summed into r(t), each with an on/off switch and delete; click one to edit it.
-4. **Entry**: numeric keypad (0–9, `.`, `±`, Del, Cancel, Enter) beside the big dial and its ◀ ▶ cursor keys. The active value shows a digit cursor: ◀ ▶ move it, the dial changes that digit, the keypad types a value and Enter sets it. The computer keyboard works the same way.
+4. **Entry**: numeric keypad (0–9, `.`, `±`, with Del, Cancel and Enter as three small keys under it) beside the big dial and its ◀ ▶ cursor keys. The active value shows a digit cursor: ◀ ▶ move it, the dial changes that digit, the keypad types a value and Enter sets it. The computer keyboard works the same way.
 
 The whole tab fits without scrolling at common screen sizes.
 

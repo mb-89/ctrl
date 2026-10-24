@@ -16,8 +16,8 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
 
   new [--example <n|title>] [-o file]   write a starter project (default: a step at 0.1 s, no loop yet)
   examples                              list the example loops
-  signal <project> [--add <type> --set k=v ...] [--remove <n>] [--save]
-                                        list or change the reference r(t), a sum of components
+  signal <project> [--name r] [--add <type> --set k=v ...] [--remove <n>] [--save]
+                                        list or change a named signal (default r), a sum of components
   blocks [slot]                         the block library: types, parameters and ranges (JSON);
                                         slot "reference" lists the signal generator's primitives
   metrics                               the metrics a goal can use (JSON)
@@ -181,7 +181,7 @@ switch (cmd) {
   case 'eval': {
     const project = readProject(pos[1]);
     if (!loopReady(project)) {
-      const msg = `${project.title}: no loop yet (${project.system.plant ? 'no controller candidates' : 'no plant'}); the reference has ${project.system.reference.components.length} component(s). See "signal".`;
+      const msg = `${project.title}: no loop yet (${project.system.plant ? 'no controller candidates' : 'no plant'}); signals: ${Object.keys(project.system.signals).join(', ')}. See "signal".`;
       if (opt.json) console.log(JSON.stringify({ title: project.title, loop: false, message: msg }, null, 2)); else console.log(msg);
       break;
     }
@@ -194,7 +194,9 @@ switch (cmd) {
   }
   case 'signal': {
     const project = readProject(pos[1]);
-    const comps = project.system.reference.components;
+    const name = opt.name ?? 'r';
+    project.system.signals[name] ??= { period: 1, components: [] };
+    const comps = project.system.signals[name].components;
     if (opt.add) {
       if (!SIGNALS[opt.add]) fail(`unknown waveform "${opt.add}"; types: ${Object.keys(SIGNALS).join(', ')}`);
       const params = {};
@@ -211,10 +213,10 @@ switch (cmd) {
       comps.splice(i, 1);
     }
     if (opt.save) writeProject(pos[1], project);
-    const { t, r } = referenceTrace(project);
-    if (opt.json) console.log(JSON.stringify({ period: project.system.reference.period, components: comps, min: Math.min(...r), max: Math.max(...r), final: r[r.length - 1] }, null, 2));
+    const { t, r } = referenceTrace(project, name);
+    if (opt.json) console.log(JSON.stringify({ signal: name, period: project.system.signals[name].period, components: comps, min: Math.min(...r), max: Math.max(...r), final: r[r.length - 1] }, null, 2));
     else {
-      console.log(`r(t), period ${fmt(project.system.reference.period)} s, = sum of:`);
+      console.log(`${name}(t), period ${fmt(project.system.signals[name].period)} s, = sum of:`);
       comps.forEach((c, i) => console.log(`  ${i + 1}  ${describeComponent(c)}${c.enabled === false ? '  (off)' : ''}`));
       if (!comps.length) console.log('  nothing (r = 0)');
       console.log(`range ${fmt(Math.min(...r))} … ${fmt(Math.max(...r))}, final ${fmt(r[r.length - 1])} at t = ${fmt(t[t.length - 1])} s`);

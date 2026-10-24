@@ -167,7 +167,15 @@ button, input, select { font: inherit; color: inherit; }
 .tabpanel { background: var(--panel-2); border: 1px solid var(--line); border-radius: 0 10px 10px 10px; padding: 10px 12px; min-height: 0; overflow: auto; }
 
 /* Generator: Waveform | Parameters | Signal | Entry, one row */
-.gen { display: grid; grid-template-columns: 204px minmax(220px, 300px) minmax(220px, 1fr) auto; gap: 14px; align-items: stretch; }
+.gen { display: grid; grid-template-columns: 128px 204px minmax(220px, 300px) minmax(200px, 1fr) auto; gap: 14px; align-items: stretch; }
+.siglist { display: flex; flex-direction: column; gap: 6px; }
+.sigkey { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-2); font-weight: 600; font-size: 12.5px; cursor: pointer; text-align: left; }
+.sigkey.on { background: var(--lcd); color: var(--lcd-ink); border-color: var(--lcd); }
+.sigkey:disabled { cursor: default; opacity: 0.6; }
+.sigkey .soon { margin-left: auto; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.sigsym { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 4px; background: #f2c718; color: #0a0d10; font-family: var(--mono); font-size: 12px; }
+.sighint { margin: 2px 0 0; font-size: 11.5px; line-height: 1.35; color: var(--muted); }
+.siglist { overflow: auto; min-height: 0; }
 .gcol { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .wkeys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .wkey { flex-direction: column; gap: 2px; min-height: 40px; padding: 4px; font-size: 11.5px; }
@@ -199,9 +207,10 @@ button, input, select { font: inherit; color: inherit; }
 .fnin:focus { outline: none; border-color: var(--lcd-ink); }
 .fnin.err { border-color: var(--lit-red); }
 .key.arrow { width: 38px; min-height: 30px; padding: 0; font-size: 12px; }
-.keypad { display: grid; grid-template-columns: repeat(3, 38px) 54px; gap: 5px; }
+.keypad { display: grid; grid-template-columns: repeat(3, 40px); gap: 5px; }
+.keypad .pk.fn { min-height: 20px; font-size: 10.5px; padding: 0 2px; }
 .keypad .pk { min-height: 25px; padding: 2px; font-family: var(--mono); font-size: 14px; }
-.keypad .pk.fn { font-family: var(--ui); font-size: 12px; }
+.keypad .pk.fn { font-family: var(--ui); }
 .slist { list-style: none; margin: 0; flex: 1; min-height: 0; overflow: auto; }
 .srow { display: grid; grid-template-columns: 18px 26px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 2px 6px; border-radius: 5px; cursor: pointer; }
 .srow:hover { background: rgba(255, 255, 255, 0.04); }
@@ -237,8 +246,8 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .drop { position: fixed; inset: 10px; border: 2px dashed var(--ink); border-radius: 12px; display: grid; place-items: center; background: rgba(0, 0, 0, 0.05); z-index: 40; font-size: 18px; pointer-events: none; }
 
 @media (max-width: 1180px) {
-  .gen { grid-template-columns: 180px minmax(190px, 260px) minmax(170px, 1fr) auto; gap: 10px; }
-  .keypad { grid-template-columns: repeat(3, 32px) 50px; }
+  .gen { grid-template-columns: 112px 180px minmax(180px, 260px) minmax(160px, 1fr) auto; gap: 10px; }
+  .keypad { grid-template-columns: repeat(3, 34px); }
 }
 @media (max-width: 900px) {
   .app { height: auto; display: flex; flex-direction: column; gap: 10px; }
@@ -257,3 +266,66 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   .status { gap: 8px; font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) { .caret { animation: none; } .sw::after { transition: none; } }
+
+/* Plant tab: library | canvas | parameters, filling the setup area */
+.tabpanel > [role="tabpanel"] { height: 100%; }
+.plant { height: 100%; min-height: 0; display: grid; grid-template-columns: 196px minmax(0, 1fr) 248px; gap: 12px; }
+.plib, .pprops { min-height: 0; overflow: auto; }
+.plib .glabel { margin-bottom: 4px; }
+.lgroup { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+.lgname { font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 2px 0; }
+.litem { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; width: 100%; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font-size: 12.5px; font-weight: 600; cursor: grab; text-align: left; }
+.litem:hover { border-color: var(--line-strong); background: var(--key-top); }
+.litem.ex { cursor: pointer; }
+.litem .lf { font-family: var(--mono); font-size: 10.5px; font-weight: 400; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px; }
+.lempty { font-size: 11.5px; color: var(--muted); padding: 2px 2px 4px; }
+.pcan { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; }
+.ptool { display: flex; align-items: center; gap: 6px; }
+.crumbs { display: flex; align-items: center; gap: 4px; margin-right: auto; font-size: 13px; min-width: 0; overflow: hidden; }
+.crumb { border: 0; background: none; padding: 2px 4px; border-radius: 4px; color: var(--ink-2); cursor: pointer; font-weight: 600; white-space: nowrap; }
+.crumb:hover { background: var(--hover, rgba(0,0,0,0.05)); color: var(--ink); }
+.crumb.cur { color: var(--ink); cursor: default; }
+.csep { color: var(--muted); }
+.pview { position: relative; min-height: 0; border-radius: 8px; border: 1px solid var(--line-strong); overflow: hidden;
+  background-color: var(--panel); background-image: radial-gradient(var(--line-strong) 1px, transparent 1.2px); background-size: 20px 20px; }
+.pview:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.pdiag { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; }
+.pdiag .blk { cursor: move; }
+.pdiag .body { fill: var(--key-top); stroke: var(--ink-2); stroke-width: 1.3; }
+.pdiag .stack { fill: var(--key-bot); stroke: var(--ink-2); stroke-width: 1; }
+.pdiag .t-source .body { fill: #f2c718; stroke: #8a6f00; }
+.pdiag .t-sink .body { fill: #33d17a; stroke: #12703c; }
+.pdiag .t-inport .body, .pdiag .t-outport .body { fill: var(--panel-2); }
+.pdiag .blk.sel .body { stroke: var(--ink); stroke-width: 2.6; }
+.pdiag .blk.err .body { stroke: var(--bad); stroke-width: 2.4; }
+.pdiag text { fill: var(--ink); font-family: var(--ui); pointer-events: none; }
+.pdiag .bt { font-size: 13px; font-weight: 600; }
+.pdiag .bt.sig { fill: #0a0d10; font-family: var(--mono); }
+.pdiag .bp { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-2); }
+.pdiag .bn { font-size: 11px; fill: var(--ink-2); }
+.pdiag .sign { font-family: var(--mono); font-size: 11px; font-weight: 600; }
+.pdiag .port { fill: var(--panel); stroke: var(--ink-2); stroke-width: 1.3; cursor: crosshair; }
+.pdiag .port.out { fill: var(--ink-2); }
+.pdiag .port:hover { stroke: var(--ink); stroke-width: 2.4; }
+.pdiag .wire { cursor: pointer; }
+.pdiag .wire .hit { stroke: transparent; stroke-width: 12; fill: none; }
+.pdiag .wire .line { stroke: var(--ink-2); stroke-width: 1.5; fill: none; }
+.pdiag .wire.sel .line { stroke: var(--ink); stroke-width: 2.6; }
+.pdiag .arrowhead { fill: var(--ink-2); }
+#pl-temp { pointer-events: none; }
+.pdiag .wire-temp { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+.pdiag .marquee { fill: rgba(127, 127, 127, 0.12); stroke: var(--ink); stroke-dasharray: 4 3; }
+.pform { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.pf { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 2px 8px; }
+.pfl { font-size: 12.5px; color: var(--ink-2); }
+.pfi { width: 100%; font-family: var(--mono); }
+.pfh { grid-column: 2; font-size: 11px; color: var(--muted); }
+.pfh:empty { display: none; }
+.pbtns { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.phelp { font-size: 12.5px; line-height: 1.45; color: var(--ink-2); margin: 6px 0; }
+.pmsg { font-size: 12.5px; line-height: 1.45; color: var(--bad); margin: 6px 0; }
+@media (max-width: 900px) {
+  .plant { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .pview { height: 360px; }
+  .plib { max-height: 200px; }
+}

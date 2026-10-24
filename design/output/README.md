@@ -9,7 +9,8 @@ The person's raw words are in [../input](../input/README.md). This folder is wha
 | [product.md](product.md) | What Loop Tuner is for, and the principles every change is held to |
 | [instrument.md](instrument.md) | The oscilloscope: display, channels, horizontal, run control, Auto |
 | [tabs.md](tabs.md) | The setup tabs below the display, their order, and what each one owns |
-| [signal-generator.md](signal-generator.md) | Tab 1, the reference signal generator |
+| [signal-generator.md](signal-generator.md) | Tab 1, the signal generator |
+| [plant-editor.md](plant-editor.md) | Tab 2, the plant as a block diagram |
 | [project-format.md](project-format.md) | The project file (JSON), version 2 |
 | [decisions.md](decisions.md) | Dated log of decisions, including the interpretations we made |
 | [roadmap.md](roadmap.md) | What is built, what is next, and open questions |
@@ -17,5 +18,5 @@ The person's raw words are in [../input](../input/README.md). This folder is wha
 ## Status (2026-10-24)
 
 - **v1** (git tag `v1`): everything on one screen: scope, goal, candidates, a rack of knobs, auto-tune. It works, but the person found it overloaded; it is superseded by v2.
-- **v2, in progress**: the oscilloscope layout, with the Input tab (signal generator) built. The screen is the record; the display can be zoomed and panned directly. With only the reference defined, the display sweeps the reference alone. Plant, Controller, Auto-tune and Analysis tabs come next, one at a time (see [roadmap.md](roadmap.md)).
+- **v2, in progress**: the oscilloscope layout with the Input tab (signal generator) and the Plant tab (block diagram) built. The screen is the record; the display can be zoomed and panned directly. Until a controller exists, the diagram is the whole system: Sources play signals, Sinks are what the scope shows. Controller, Auto-tune and Analysis come next (see [roadmap.md](roadmap.md)).
 - The simulation core (`src/core/`) and the agent CLI (`cli.mjs`, see `AGENTS.md`) carry over from v1.

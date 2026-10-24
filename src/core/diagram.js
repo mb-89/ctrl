@@ -1,0 +1,305 @@
+// Block diagrams: the plant as blocks wired together, with subsystems that
+// nest. A diagram is plain JSON:
+//   { "blocks": [ { "id": "b1", "type": "firstOrder", "params": { "K": 1, "tau": 1 }, "x": 200, "y": 80 }, ... ],
+//     "wires":  [ { "from": "in", "to": "b1" }, { "from": "b1", "to": "sum:1" } ] }
+// A wire end is a block id, optionally with ":port" (0-based; default 0).
+// A subsystem block carries its own "diagram"; its In and Out blocks become
+// its ports, numbered by their "port" parameter.
+//
+// compileDiagram flattens subsystems and orders the blocks so that every
+// block that passes its input straight through (gain, sum, ...) is evaluated
+// after its inputs; a loop made only of such blocks is an algebraic loop and
+// is refused, as in Simulink. Feedback through a block with state is fine.
+
+import { BLOCKS, blockDef, normalizeBlock } from './blocks.js';
+import { tf2ss, rootBound } from './poly.js';
+
+const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
+
+// Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
+// are diagram blocks too: their transfer function becomes the block.
+export const ELEMENTS = {
+  source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }], ports: () => [0, 1], formula: 'r(t)' },
+  sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }], ports: () => [1, 0], formula: 'y' },
+  inport: { label: 'In', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [0, 1], formula: 'u' },
+  outport: { label: 'Out', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [1, 0], formula: 'y' },
+  gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
+  sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
+  integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
+  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 })], ports: () => [1, 1], formula: 'e^(−Ls)' },
+  saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
+  subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
+};
+
+// Every type a diagram can hold, with its label, group, params and ports.
+export function diagramBlockDef(type) {
+  if (ELEMENTS[type]) return ELEMENTS[type];
+  const b = BLOCKS.plant[type];
+  if (!b) throw new Error(`unknown block type "${type}"; types: ${[...Object.keys(ELEMENTS), ...Object.keys(BLOCKS.plant)].join(', ')}`);
+  return { label: b.label, group: 'Models', params: b.params, ports: () => [1, 1], formula: b.formula, tf: (p) => b.tf(p), model: true };
+}
+
+export function diagramTypes() {
+  return [...Object.keys(ELEMENTS), ...Object.keys(BLOCKS.plant)];
+}
+
+// [inputs, outputs] of a block.
+export function blockPorts(block) {
+  if (block.type === 'subsystem') {
+    const count = (t) => Math.max(0, ...block.diagram.blocks.filter((b) => b.type === t).map((b) => b.params.port));
+    return [count('inport'), count('outport')];
+  }
+  return diagramBlockDef(block.type).ports(block.params);
+}
+
+export function parseEnd(end) {
+  const [id, port] = String(end).split(':');
+  return { id, port: port === undefined ? 0 : Number(port) };
+}
+
+function normalizeParams(type, params = {}, where) {
+  if (diagramBlockDef(type).model) return normalizeBlock('plant', { type, params }).params;
+  const out = {};
+  for (const p of ELEMENTS[type].params) {
+    let v = params[p.key] ?? p.default;
+    if (p.kind === 'name') {
+      v = String(v);
+      if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
+    } else if (p.kind === 'signs') {
+      v = String(v);
+      if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
+    } else {
+      v = Number(v);
+      if (!Number.isFinite(v)) throw new Error(`${where}.${p.key}: expected a number`);
+      if (p.int) v = Math.round(v);
+      if (p.min !== undefined && v < p.min) throw new Error(`${where}.${p.key}: at least ${p.min}`);
+    }
+    out[p.key] = v;
+  }
+  return out;
+}
+
+export function normalizeDiagram(d, path = 'plant') {
+  if (!d || !Array.isArray(d.blocks)) throw new Error(`${path}: a diagram needs "blocks" and "wires"`);
+  const ids = new Set();
+  const blocks = d.blocks.map((b, i) => {
+    const where = `${path}.blocks[${i}]`;
+    if (!b.id || typeof b.id !== 'string' || /[:/]/.test(b.id)) throw new Error(`${where}: needs an "id" without ":" or "/"`);
+    if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
+    ids.add(b.id);
+    const out = { id: b.id, type: b.type, params: normalizeParams(b.type, b.params, `${where}(${b.id})`), x: Number(b.x) || 0, y: Number(b.y) || 0 };
+    if (b.name) out.name = String(b.name);
+    if (b.flip) out.flip = true;
+    if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
+    return out;
+  });
+  const byId = Object.fromEntries(blocks.map((b) => [b.id, b]));
+  const wires = (d.wires ?? []).map((w, i) => {
+    const f = parseEnd(w.from), t = parseEnd(w.to);
+    for (const [e, side] of [[f, 1], [t, 0]]) {
+      const b = byId[e.id];
+      if (!b) throw new Error(`${path}.wires[${i}]: no block "${e.id}"`);
+      const n = blockPorts(b)[side];
+      if (!(e.port >= 0 && e.port < n)) throw new Error(`${path}.wires[${i}]: ${b.id} has no ${side ? 'output' : 'input'} ${e.port}`);
+    }
+    return { from: f.port ? `${f.id}:${f.port}` : f.id, to: t.port ? `${t.id}:${t.port}` : t.id };
+  });
+  const taken = new Set();
+  for (const w of wires) {
+    if (taken.has(w.to)) throw new Error(`${path}: input ${w.to} has two wires`);
+    taken.add(w.to);
+  }
+  return { blocks, wires };
+}
+
+// A single plant model as a diagram: In -> block -> Out.
+export function wrapPlant(block) {
+  return {
+    blocks: [
+      { id: 'in', type: 'inport', params: { port: 1 }, x: 40, y: 80 },
+      { id: 'p1', type: block.type, params: { ...block.params }, x: 180, y: 70 },
+      { id: 'out', type: 'outport', params: { port: 1 }, x: 380, y: 80 },
+    ],
+    wires: [{ from: 'in', to: 'p1' }, { from: 'p1', to: 'out' }],
+  };
+}
+
+// The plant slot holds either a single model block or a diagram.
+export function plantDiagram(plant) {
+  return plant.type === 'diagram' ? plant.diagram : wrapPlant(plant);
+}
+
+// Names of the Source signals and the Sinks anywhere in a diagram.
+export function diagramNames(diagram) {
+  const sources = new Set(), sinks = [];
+  const walk = (d) => {
+    for (const b of d.blocks) {
+      if (b.type === 'source') sources.add(b.params.signal);
+      if (b.type === 'sink') sinks.push(b.params.name);
+      if (b.type === 'subsystem') walk(b.diagram);
+    }
+  };
+  walk(diagram);
+  return { sources: [...sources], sinks };
+}
+
+// Flattens and compiles a diagram into a simulation element:
+//   { n, bound, eval(t, X, o, u, dX) -> y, record(), probes(), warnings }
+// opts.sources maps Source signal names to t => value. opts.standalone: the
+// diagram is the whole system (no Out needed; an In reads 0).
+export function compileDiagram(diagram, path = 'plant', opts = {}) {
+  const nodes = [];
+  const warnings = [];
+  const probeList = [];
+  const add = (node) => { nodes.push({ inputs: [], ...node }); return nodes.length - 1; };
+  let extNode = -1, outNode = -1;
+
+  // Creates nodes for one level; returns, per block id, where its output
+  // ports come from and where its input ports go.
+  function level(d, prefix, root) {
+    const outs = {}, ins = {};
+    for (const b of d.blocks) {
+      const name = `${prefix}${b.name ?? b.id}`;
+      if (b.type === 'subsystem') {
+        const inner = level(b.diagram, `${name}/`, false);
+        const ports = (t) => b.diagram.blocks.filter((x) => x.type === t).sort((a, c) => a.params.port - c.params.port);
+        outs[b.id] = ports('outport').map((x) => inner.outs[x.id][0]);
+        ins[b.id] = ports('inport').map((x) => inner.ins[x.id][0]);
+        continue;
+      }
+      if (b.type === 'source') {
+        const fn = opts.sources?.[b.params.signal];
+        if (!fn) warnings.push(`${path}: no signal "${b.params.signal}" for ${name}`);
+        const k = add({ kind: 'src', name, ft: false, fn: fn ?? (() => 0) });
+        probeList.push([b.params.signal, k]);
+        outs[b.id] = [k]; ins[b.id] = [];
+        continue;
+      }
+      if (b.type === 'sink') {
+        if (probeList.some(([n2]) => n2 === b.params.name)) throw new Error(`${path}: two signals named "${b.params.name}"`);
+        const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+        probeList.push([b.params.name, k]);
+        outs[b.id] = []; ins[b.id] = [[k, 0]];
+        continue;
+      }
+      if (b.type === 'inport') {
+        if (root && opts.standalone) {
+          const k = add({ kind: 'src', name, ft: false, fn: () => 0 });
+          warnings.push(`${path}: ${name} reads 0 until a controller drives the plant`);
+          outs[b.id] = [k]; ins[b.id] = [];
+        } else if (root) {
+          if (extNode >= 0) throw new Error(`${path}: one input (In) only, for now`);
+          extNode = add({ kind: 'ext', name, ft: false });
+          outs[b.id] = [extNode]; ins[b.id] = [];
+        } else {
+          const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+          outs[b.id] = [k]; ins[b.id] = [[k, 0]];
+        }
+        continue;
+      }
+      if (b.type === 'outport') {
+        const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+        if (root && !opts.standalone) { if (outNode >= 0) throw new Error(`${path}: one output (Out) only, for now`); outNode = k; }
+        outs[b.id] = [k]; ins[b.id] = [[k, 0]];
+        continue;
+      }
+      const def = diagramBlockDef(b.type);
+      const nIn = blockPorts(b)[0];
+      const node = { name, inputs: new Array(nIn).fill(-1) };
+      if (def.tf) {
+        const tf = def.tf(b.params);
+        const ss = tf2ss(tf.num, tf.den);
+        Object.assign(node, { kind: 'ss', ss, ft: ss.D !== 0, bound: rootBound(tf.den), delay: Number(tf.delay) || 0 });
+        if (node.delay > 0) node.ft = false;
+      } else if (b.type === 'gain') Object.assign(node, { kind: 'gain', K: b.params.K, ft: true });
+      else if (b.type === 'sum') Object.assign(node, { kind: 'sum', signs: [...b.params.signs].map((c) => (c === '-' ? -1 : 1)), ft: true });
+      else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
+      else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, ft: b.params.L <= 0 });
+      const k = add(node);
+      outs[b.id] = [k];
+      ins[b.id] = node.inputs.map((_, s) => [k, s]);
+    }
+    for (const w of d.wires) {
+      const f = parseEnd(w.from), t = parseEnd(w.to);
+      const src = outs[f.id][f.port], [dst, slot] = ins[t.id][t.port];
+      nodes[dst].inputs[slot] = src;
+    }
+    return { outs, ins };
+  }
+  level(diagram, '', true);
+  if (!opts.standalone) {
+    if (outNode < 0) throw new Error(`${path}: add an Out block for the plant output y`);
+    if (extNode < 0) warnings.push(`${path}: no In block, so the plant ignores u`);
+  }
+  for (const nd of nodes) nd.inputs.forEach((s, i) => { if (s < 0) warnings.push(`${path}: ${nd.name} input ${i + 1} is not connected (reads 0)`); });
+
+  // Evaluation order: blocks whose output does not depend on their input
+  // first, then pass-through blocks after their inputs.
+  const order = nodes.map((nd, i) => i).filter((i) => !nodes[i].ft);
+  const pending = new Set(nodes.map((nd, i) => i).filter((i) => nodes[i].ft));
+  let progress = true;
+  while (pending.size && progress) {
+    progress = false;
+    for (const i of pending) {
+      if (nodes[i].inputs.every((s) => s < 0 || !pending.has(s))) { order.push(i); pending.delete(i); progress = true; }
+    }
+  }
+  if (pending.size) throw new Error(`${path}: algebraic loop through ${[...pending].map((i) => nodes[i].name).join(', ')}; put a block with state (integrator, lag) in the loop`);
+
+  let n = 0, bound = 0;
+  for (const nd of nodes) if (nd.kind === 'ss') { nd.off = n; n += nd.ss.n; bound = Math.max(bound, nd.bound); }
+  const vals = new Float64Array(nodes.length);
+  const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
+  let h = 0;
+  const histAt = (hist, tau) => {
+    if (tau < 0 || !hist.length) return 0;
+    const f = tau / h, i = Math.floor(f);
+    if (i >= hist.length - 1) return hist[hist.length - 1];
+    return hist[i] + (hist[i + 1] - hist[i]) * (f - i);
+  };
+  const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
+
+  return {
+    n, bound, warnings,
+    setStep(step) { h = step; },
+    eval(t, X, o, u, dX) {
+      for (const i of order) {
+        const nd = nodes[i];
+        let y;
+        switch (nd.kind) {
+          case 'ext': y = u; break;
+          case 'src': y = nd.fn(t); break;
+          case 'pass': y = inOf(nd); break;
+          case 'gain': y = nd.K * inOf(nd); break;
+          case 'sum': y = 0; for (let s = 0; s < nd.signs.length; s++) y += nd.signs[s] * inOf(nd, s); break;
+          case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
+          case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L) : inOf(nd); break;
+          default: {
+            const { ss } = nd;
+            const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
+            y = ss.D * inp;
+            for (let j = 0; j < ss.n; j++) y += ss.C[j] * X[o + nd.off + j];
+          }
+        }
+        vals[i] = y;
+      }
+      if (dX) {
+        for (const nd of nodes) {
+          if (nd.kind !== 'ss') continue;
+          const { ss } = nd, base = o + nd.off;
+          const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
+          for (let r = 0; r < ss.n; r++) {
+            let s = ss.B[r] * inp;
+            for (let c = 0; c < ss.n; c++) s += ss.A[r * ss.n + c] * X[base + c];
+            dX[base + r] = s;
+          }
+        }
+      }
+      return outNode >= 0 ? vals[outNode] : 0;
+    },
+    // Values of the Sources and Sinks after the last eval.
+    probes: () => probeList.map(([name, k]) => [name, vals[k]]),
+    // Called after each completed step: dead times remember their input.
+    record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
+  };
+}

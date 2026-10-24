@@ -179,7 +179,7 @@ export function createDisplay(root, handlers) {
         ctx.fillStyle = 'rgba(10, 13, 16, 0.75)'; ctx.fillRect(x - w - 6, y - 13, w + 6, 14);
         ctx.fillStyle = color; ctx.textAlign = 'right'; ctx.fillText(text, x - 3, y);
       };
-      tag(preview.sum, `r + ${preview.label}`, CHANNEL_COLORS[preview.channel]);
+      tag(preview.sum, `${preview.signal ?? 'r'} + ${preview.label}`, CHANNEL_COLORS[preview.channel]);
       tag(preview.alone, preview.label, 'rgba(235, 240, 245, 0.85)');
     }
 
@@ -253,7 +253,7 @@ export function createDisplay(root, handlers) {
     badges.innerHTML = scope.channels.map((ch, i) => {
       const has = !!data.signals[ch.source];
       const cls = ['badge', ch.on ? 'on' : 'off', i === selected ? 'sel' : '', has ? '' : 'nosig'].join(' ');
-      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${SOURCE_LABEL[ch.source]}">
+      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${SOURCE_LABEL[ch.source] ?? ch.source}">
         <span class="num">${i + 1}</span><span class="src">${ch.source}</span>
         <span class="val">${has ? `${num(ch.scale)}/div` : 'no signal'}</span></button>`;
     }).join('');
