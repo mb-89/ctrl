@@ -474,3 +474,57 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
   .tune { grid-template-columns: minmax(0, 1fr); height: auto; }
   .tune > .tuprogress { order: -1; }
 }
+
+/* Live (HIL, ui/live.js) and Save (ui/record.js). Live is a second row of
+   Run Control, two lines under its keys whatever its state; Save sits under
+   the screen beside the channel badges, in the bezel's colours, like a
+   scope's save keys. */
+.st-live { background: transparent; color: var(--lit-green); box-shadow: inset 0 0 0 1px var(--lit-green); }
+.st-estop { background: var(--lit-red); color: #3a0606; }
+.st-wait { background: transparent; color: var(--lit-amber); box-shadow: inset 0 0 0 1px var(--lit-amber); }
+.st-offline { background: transparent; color: #8a97a1; box-shadow: inset 0 0 0 1px #4a555e; }
+.lv { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.lv-line { display: flex; align-items: center; gap: 8px; }
+.lv-url { flex: 1; min-width: 0; height: 20px; padding: 0 4px; margin-left: -4px; border: 1px solid transparent; border-radius: 4px; background: transparent; font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
+.lv-url:hover:not(:disabled) { border-color: var(--line-strong); }
+.lv-url:focus { outline: none; background: var(--lcd); color: var(--lcd-ink); border-color: var(--lcd-ink); }
+.lv-url:disabled { color: var(--ink-2); }
+.lv-link { border: 0; background: none; padding: 0; font-size: 11.5px; color: var(--ink-2); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; white-space: nowrap; }
+.lv-link:hover { color: var(--ink); }
+.lv-stats { font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--ink-2); min-height: 1.45em; }
+.lv-stats > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lv-line[hidden] + .lv-stats { min-height: calc(24px + 1.45em); }  /* the address line's height: the block keeps its size */
+.lv-stats .bad { color: var(--bad); font-weight: 600; }
+.lv-stats .ok { color: var(--lit-green); }
+.key.estop:not(.lit-red):not(:disabled) { color: var(--bad); }
+.lv-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.display { grid-template-columns: minmax(0, 1fr) auto; }
+.display > .status, .display > .screen { grid-column: 1 / -1; }
+.display > .status { grid-row: 1; }
+.display > .screen { grid-row: 2; }
+.display > .badges { grid-row: 3; grid-column: 1; }
+.recbar { grid-row: 3; grid-column: 2; display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; color: #c9d3da; white-space: nowrap; }
+.recbar .rc-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #7f8c96; }
+.recbar .rc-state { color: #9aa7b1; }
+.recbar .rc-len { width: 54px; height: 24px; padding: 0 4px; border-radius: 4px; border: 1px solid #333a40; background: var(--lcd); color: var(--lcd-ink); font: inherit; text-align: center; }
+.recbar .rc-len:focus { outline: none; border-color: var(--lcd-ink); }
+.recbar .rkey { height: 26px; padding: 0 9px; border-radius: 4px; border: 1px solid #333a40; background: #13171b; color: #c9d3da; font: inherit; cursor: pointer; white-space: nowrap; }
+.recbar .rkey:hover { border-color: #5d6973; color: #e7ebee; }
+.recbar .rkey:focus-visible { outline: 2px solid #c9d3da; outline-offset: 1px; }
+.rc-menu { position: relative; }
+.rc-pop { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 5; display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 6px; border: 1px solid #333a40; background: #0f1316; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); }
+.rc-pop .rkey { height: 24px; padding: 0 8px; }
+.rc-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.rc-what { display: flex; flex-direction: column; color: #e7ebee; font-size: 12px; line-height: 1.25; }
+.rc-note { color: #7f8c96; font-size: 11px; }
+.rc-keys { display: flex; gap: 4px; }
+.rc-rec { display: inline-flex; align-items: center; gap: 6px; }
+.recbar .rc-step { padding: 0 7px; }
+.recbar .rkey:disabled { opacity: 0.4; cursor: default; }
+.rc-refs { display: inline-flex; gap: 4px; }
+.recbar .rc-ref { border-style: dashed; color: #9aa7b1; }
+@media (max-width: 900px) {
+  .display { grid-template-rows: 22px minmax(0, 1fr) 30px auto; height: 420px; }
+  .recbar { grid-row: 4; grid-column: 1 / -1; flex-wrap: wrap; }
+}
+@media (max-width: 560px) { .display { height: 340px; } }
