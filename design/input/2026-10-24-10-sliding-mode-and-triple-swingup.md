@@ -15,3 +15,7 @@
 ## Added while this was being built: step-response tuning on the DC motor
 
 > Okay, so the step response tuning on the DC motor doesn't seem to work at all. What's up with that? Also, I feel like yeah, check this out. Like, let's see if this is an issue.
+
+## Added while this was being built: time control in the header
+
+> And then I guess when we are talking about the hill system and timing in general, so we're going to have to add time control, and we can probably add that to the header bar. And then normally it is 1x, but we can also increase it to like 5x or 10x or infinite. Like, I guess make it optional how many x you want, allow infinite, like with a -1 would be infinite. And also show how fast the time is actually running. So we can see when, if I set to infinite, I see, okay, it caps out at 20x. And then the fast toggle of the autotune, that would go away. If I want to autotune fast, then I just set the toggle to higher speeds, right? And then obviously for the hill, in hill we are fixed to 1.0. And when we say we allow arbitrarily fast times, the user could also enter 0.1, right? And then it would go slower if they wanted. If they want to simulate something very, very fast. I don't see a reason, but maybe they want it.
