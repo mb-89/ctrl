@@ -5,6 +5,7 @@
 import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } from '../core/project.js';
 import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
+import { isDelta } from './xyview.js';
 import { createControllerTab } from './controller.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
@@ -246,10 +247,14 @@ function startApp() {
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
     const data = acquire();
-    for (const ch of app.project.scope.channels) {
-      const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
+    const sc = app.project.scope, x = data.signals[sc.channels[0].source];
+    sc.channels.forEach((ch, i) => {
+      let v = data.signals[ch.source];
+      // XY with Δ: the channels draw channel 1 minus themselves; fit that.
+      if (v && x && sc.view?.mode === 'xy' && isDelta(sc, i, app.unitOf)) v = v.map((y, j) => x[j] - y);
+      const fit = v && fitChannel(v);
       if (fit) Object.assign(ch, fit);
-    }
+    });
   }
   app.autoScale = () => {
     app.beginEdit();

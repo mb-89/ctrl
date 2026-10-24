@@ -37,7 +37,7 @@ const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'green',
   PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
   'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
-  Disturbance: 'red', FFT: 'blue', Spectrogram: 'magenta', 'Auto-tune': 'green', HIL: 'orange',
+  Disturbance: 'red', FFT: 'blue', Spectrogram: 'magenta', XY: 'violet', 'Auto-tune': 'green', HIL: 'orange',
 };
 // A value without its own tone gets one from its label, so it stays put.
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
@@ -65,7 +65,7 @@ export function systemTags(e) {
   for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
   for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
   if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd')) add('Disturbance', 'feature');
-  if (e.scope?.view?.mode) add(e.scope.view.mode === 'fft' ? 'FFT' : 'Spectrogram', 'feature');
+  if (e.scope?.view?.mode) add({ fft: 'FFT', spectrogram: 'Spectrogram', xy: 'XY' }[e.scope.view.mode], 'feature');
   if (e.ui?.tab === 'tune') add('Auto-tune', 'feature');
   for (const t of e.tags ?? []) add(t.label, t.kind ?? 'feature');
   return tags;

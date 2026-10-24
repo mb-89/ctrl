@@ -354,3 +354,22 @@ test('library tags: opposite values look different, and a value looks the same o
   const none = lin.find((t) => t.label === 'No controller'), pid = systemTags({ diagram: { blocks: [{ id: 'c', type: 'controller', params: {}, variants: [{ type: 'pid' }] }], wires: [] } }).find((t) => t.label === 'PID');
   assert.notEqual(none.kind, pid.kind, 'No controller must not look like a controller');
 });
+
+test('XY: following a sine, the error figure closes from a wide ellipse (P) to a thin line (PID)', async () => {
+  const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = await import('../src/core/systems.js');
+  const { evaluateSystem, autoTimebase } = await import('../src/core/project.js');
+  const { lineFit, isDelta, ySignal } = await import('../src/ui/xyview.js');
+  const entry = SYSTEM_LIBRARY.find((s) => s.name.startsWith('Following a sine'));
+  const spread = (name) => {
+    const p = normalizeProject(applySystem(DEFAULT_PROJECT, entry, SYSTEM_PARTS));
+    p.scope.timebase = autoTimebase(p);   // one period of the input, as the page loads it
+    const c = p.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+    c.variant = c.variants.findIndex((v) => v.name === name);
+    const res = evaluateSystem(p), unit = (s) => ({ r: 'rad', angle: 'rad', V: 'V' })[s];
+    assert.ok(isDelta(p.scope, 1, unit) && !isDelta({ ...p.scope, channels: [p.scope.channels[0], { source: 'V' }] }, 1, unit), 'Δ only for channels in X\'s unit');
+    const e = ySignal(res, p.scope, 1, unit), n = res.t.length;
+    return lineFit(res.signals.r, e, Math.round(n * 0.3), n - 1).sigma;
+  };
+  const [p, pd, pid] = ['P', 'PD', 'PID'].map(spread);
+  assert.ok(p > 1.5 * pd && pd > 5 * pid && pid < 0.02 && p > 0.1, `σ: P ${p}, PD ${pd}, PID ${pid}`);
+});
