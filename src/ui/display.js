@@ -346,8 +346,9 @@ export function createDisplay(root, handlers) {
     last = now;
     if (mode !== 'stop' && data && scope && feed) {
       // Live: data and scan line come from the plant; a finished sweep becomes
-      // an earlier run, or ends a Single.
+      // an earlier run, or ends a Single; past is a run cut short by a new one.
       const s = feed(), names = Object.keys(data.signals).join();
+      if (s.past) past = [s.past, ...past].slice(0, RUNS - 1);
       if (s.done && mode === 'single') { data = s.done; tScan = win()[1]; mode = 'stop'; handlers.onStopped?.(); }
       else { if (s.done) past = [s.done, ...past].slice(0, RUNS - 1); data = s.data; tScan = s.scan; }
       if (Object.keys(data.signals).join() !== names) renderBadges();
@@ -356,9 +357,8 @@ export function createDisplay(root, handlers) {
       if (tScan < w0 || tScan > w1) tScan = w0;
       tScan += dt;
       if (tScan >= w1) {
-        // A completed sweep goes to the recorder (ui/live.js) as well.
-        if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); handlers.onSweep?.(data, w0, w1); }
-        else { tScan = w0 + ((tScan - w0) % (w1 - w0)); handlers.onSweep?.(data, w0, w1); keepRun(); }
+        if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); }
+        else { tScan = w0 + ((tScan - w0) % (w1 - w0)); keepRun(); }
       }
     }
     draw();

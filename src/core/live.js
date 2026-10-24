@@ -11,26 +11,27 @@
 
 import { compileDiagram } from './diagram.js';
 import { referenceFn } from './signals.js';
-import { CONTROLLER_TYPES } from './controllers.js';
 import { HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, uMessage, parseMessage, checkDescription, pageWatchdog, createLinkStats } from './hil.js';
 
 // What a running loop cannot take over in place: everything but block
-// positions and the parameters of controller variants. A prefilter Tr is
-// fixed when a law is made, so a change of it restarts the controllers.
+// positions and the names and parameters of controller and observer variants
+// (their laws read the parameters at every sample: controllers.js).
+const SAMPLED = ['controller', 'observer'];
 function structureKey(diagram) {
   return JSON.stringify(diagram, function (k, v) {
     if ((k === 'x' || k === 'y') && typeof v === 'number' && this.id !== undefined) return undefined;
-    if (k === 'params' && CONTROLLER_TYPES.includes(this.type) && this.id === undefined) return { Tr: v.Tr };
+    if (k === 'variants' && SAMPLED.includes(this.type) && Array.isArray(v)) return v.map((x) => x.type);
     return v;
   });
 }
 
 // Copies the running variants' parameters into the ones the laws hold, so the
-// next sample uses them and the controllers keep their state (integral, filters).
+// next sample uses them and the blocks keep their state (integral, filters,
+// estimates).
 function copyParams(own, next) {
   own.blocks.forEach((b, i) => {
     const n = next.blocks[i];
-    if (b.type === 'controller') Object.assign(b.variants[b.variant].params, n.variants[n.variant].params);
+    if (SAMPLED.includes(b.type)) Object.assign(b.variants[b.variant].params, n.variants[n.variant].params);
     if (b.type === 'subsystem') copyParams(b.diagram, n.diagram);
   });
 }
@@ -88,7 +89,9 @@ export function createLiveRunner(diagram, signals) {
     // One cycle: the plant's outputs y at its time t. Returns u, clamped to the
     // plant's limits (a value that is not a number becomes the safe one), and
     // the values of every Source and Sink at t, in the order of names().
-    step(t, y) {
+    // held: an E-stop is latched, so the plant applies its safe inputs: u is
+    // the safe values, and so are the Sinks that show the block's inputs.
+    step(t, y, held = false) {
       if (tPrev !== null && t > tPrev) {
         // Between cycles the plant's outputs hold their last value.
         const m = Math.max(1, Math.round((t - tPrev) / h));
@@ -105,8 +108,13 @@ export function createLiveRunner(diagram, signals) {
       el.record();
       tPrev = t;
       const p = ext.params;
+      const values = el.probes().map(([, v]) => v);
+      if (held) {
+        ext.shows.forEach((js, i) => { for (const j of js) values[j] = p.safe[i]; });
+        return { u: [...p.safe], values };
+      }
       const u = ext.u().map((v, i) => (Number.isFinite(v) ? Math.min(p.max[i], Math.max(p.min[i], v)) : p.safe[i]));
-      return { u, values: el.probes().map(([, v]) => v) };
+      return { u, values };
     },
     // A new version of the diagram or the signals while running: parameters
     // of controller variants take effect at the next cycle, keeping the
@@ -125,10 +133,12 @@ export function createLiveRunner(diagram, signals) {
 
 // The connection: one WebSocket to the plant, the runner, both watchdogs'
 // page side, and statistics. It talks to the page through post(msg):
-//   in:  connect { url }, program { diagram, signals }, start, stop, estop,
-//        reset, disconnect
+//   in:  connect { url }, program { diagram, signals }, start (a fresh run,
+//        restarting the plant if it runs), stop, estop, reset { start },
+//        disconnect
 //   out: state { state, detail }, described { desc }, estop { by, reason },
 //        samples { names, t, values }, stats { link, plant }, error { message }
+// States: connecting, open (connected, the plant not running), running, closed.
 // The same object runs in a worker (liveWorker) or on the page.
 export function createLiveLoop(post, env = globalThis) {
   const now = () => env.performance.now();
@@ -189,14 +199,14 @@ export function createLiveLoop(post, env = globalThis) {
     lastY = at;
     if (!runner) return;
     let res;
-    try { res = runner.step(m.t, m.y); } catch (err) { latch('page', `the diagram failed: ${err.message}`); return; }
+    try { res = runner.step(m.t, m.y, !!latched); } catch (err) { latch('page', `the diagram failed: ${err.message}`); return; }
     // The answer goes out first; everything else can wait.
     if (running && !latched && ws?.readyState === 1) ws.send(uMessage(m.seq, res.u));
     stats?.add(at, m.seq, now() - at);
     batch.t.push(m.t);
     batch.values.push(res.values);
     if (at - lastFlush >= 33) { lastFlush = at; flush(); }
-    if (at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
+    if (stats && at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
   }
 
   function onText(text) {
@@ -211,13 +221,18 @@ export function createLiveLoop(post, env = globalThis) {
     else fail(`the plant sent something unexpected: ${m.error}`);
   }
 
+  // A fresh run: the plant restarts its clock (stopped first if it runs) and
+  // the controllers start afresh, as a simulated run starts from t = 0.
   async function start() {
     if (!desc) throw new Error('not connected');
+    if (running) { running = false; stopWatchdog(); flush(); await call('stop'); }
     makeRunner();
-    await call('start');
-    running = true;
+    // y may come before start's answer: they are answered and counted.
     stats = createLinkStats(desc.rate_hz);
+    lastStats = now();
+    running = true;
     startWatchdog();
+    try { await call('start'); } catch (err) { running = false; stopWatchdog(); throw err; }
     say('running', desc.name);
   }
 
@@ -233,6 +248,7 @@ export function createLiveLoop(post, env = globalThis) {
         try {
           desc = checkDescription(await call('describe'));
           latched = desc.estop ? { by: 'plant', reason: desc.estop } : null;
+          if (desc.protocol !== HIL_PROTOCOL) fail(`the plant speaks ${desc.protocol || 'an unnamed protocol'}, this page ${HIL_PROTOCOL}: it may not work`);
           post({ type: 'described', desc });
           if (latched) post({ type: 'estop', by: 'plant', reason: desc.estop });
         } catch (err) { fail(`describe: ${err.message}`); ws?.close(); }
@@ -268,12 +284,13 @@ export function createLiveLoop(post, env = globalThis) {
       latch('page', 'E-STOP pressed');
       try { await call('estop', { reason: 'E-STOP pressed on the page' }); } catch { /* the plant's watchdog trips anyway */ }
     },
-    // Reset clears both latches and starts again, the controllers afresh.
-    async reset() {
+    // Reset clears both latches and goes on, the controllers afresh: a plant
+    // still running keeps its clock; a stopped one starts when asked to.
+    async reset({ start: go = true } = {}) {
       try {
         await call('reset');
         latched = null;
-        if (running) { runner?.restart(); startWatchdog(); say('running', desc.name); } else await start();
+        if (running) { runner?.restart(); startWatchdog(); say('running', desc.name); } else if (go) await start(); else say('open', 'reset');
       } catch (err) { fail(`reset: ${err.message}`); }
     },
     async disconnect() {

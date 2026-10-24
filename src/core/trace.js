@@ -1,51 +1,100 @@
-// Traces: the scope's deep memory. A recorder keeps the last N seconds of every
-// signal the scope acquires (live cycles, or simulated sweeps one after the
-// other), in a ring buffer; a trace is saved as CSV (t and every signal, units
-// in the header) or JSON, and read back to show as a reference on the scope.
-// See design/output/instrument.md (Record) and design/output/hil.md.
+// Traces: what the scope stores. Where live and recorded time lands on the
+// screen (sweepStart, refShift); the live record, the last N seconds of every
+// signal in a ring buffer (createRecorder); a trace saved as CSV (t and every
+// signal, units in the header) or JSON, and read back to be shown as a
+// reference on the scope (parseTrace).
+// See design/output/instrument.md (Save and references) and design/output/hil.md.
 
 export const TRACE_FORMAT = 'loop-tuner-trace/1';
-export const MAX_RECORD_SAMPLES = 2e6;
+// The live record's memory, all columns together: 2^24 numbers, 128 MB.
+export const MAX_RECORD_VALUES = 2 ** 24;
 
-// A ring buffer of samples: t and one column per name. Its capacity follows
-// the record length and the sample rate; a change of the names or of the
-// rate starts a new recording (reset).
+// ---- Time on the screen. The window shows [w0, w0 + W). A live sweep covers
+// one screen width of plant time and starts where the plant's time, counted
+// in screen widths from w0, begins a new one; its samples are drawn at
+// w0 + (t − start). So at position w0 the screen shows plant time w0 … w0 + W
+// the first time round, as a simulated run does, and an input whose period
+// is the screen width lines up sweep after sweep.
+export const sweepStart = (t, w0, W) => w0 + W * Math.floor((t - w0) / W + 1e-9);
+
+// Where a reference trace [t0, t1] is drawn: the shift added to its time. A
+// trace with any part in the window stays at its own time (one saved from the
+// same screen lines up exactly); one outside it is folded in like a live
+// sweep, its first sample in the window. step moves it on by whole screen
+// widths, through a trace longer than the screen; steps gives their range.
+export function refShift(t0, t1, w0, W, step = 0) {
+  const base = t1 >= w0 && t0 < w0 + W ? 0 : w0 - sweepStart(t0, w0, W);
+  return base - step * W;
+}
+export function refSteps(t0, t1, w0, W) {
+  const base = refShift(t0, t1, w0, W);
+  return { min: Math.floor((t0 + base - w0 - W) / W + 1e-9) + 1, max: Math.max(0, Math.ceil((t1 + base - w0) / W - 1e-9) - 1) };
+}
+
+// ---- The live record: the last `seconds` of samples, one column per signal
+// name. Columns are added when a new name comes (earlier samples read NaN), so
+// adding a Sink while live keeps what was recorded. The buffers grow as the
+// samples come, up to MAX_RECORD_VALUES numbers; beyond that the oldest go
+// first, and longest() says how long that holds at the current rate. Times
+// must not decrease.
 export function createRecorder(seconds = 300) {
-  let names = [], units = {}, rate = 0, cap = 0, n = 0, head = 0, t = null, cols = [];
+  let names = [], units = {}, cap = 0, n = 0, head = 0, t = new Float64Array(0), cols = [];
+  let lastIn = null, map = [];
+  const limit = () => Math.floor(MAX_RECORD_VALUES / (names.length + 1));
+  const oldest = () => (head - n + cap) % cap;
+  // New buffers of size c holding the newest samples, in time order from 0.
+  function relayout(c) {
+    const keep = Math.min(n, c), from = (head - keep + cap) % (cap || 1);
+    const move = (src) => { const dst = new Float64Array(c).fill(NaN); for (let i = 0; i < keep; i++) dst[i] = src[(from + i) % cap]; return dst; };
+    t = move(t); cols = cols.map(move);
+    cap = c; n = keep; head = keep % c;
+  }
+  function column(name) {
+    let j = names.indexOf(name);
+    if (j >= 0) return j;
+    names.push(name);
+    cols.push(new Float64Array(cap).fill(NaN));
+    if (cap > limit()) relayout(limit());
+    j = names.length - 1;
+    return j;
+  }
+  // Drops samples older than the record length before `now`.
+  function evict(now) { while (n && t[oldest()] < now - seconds - 1e-9) n--; }
   const self = {
     get seconds() { return seconds; },
     get names() { return names; },
     get length() { return n; },
-    // Seconds held now.
-    span() { return n > 1 ? t[(head - 1 + cap) % cap] - t[(head - n + cap) % cap] : 0; },
-    // Starts afresh for these signals at this sample rate (Hz).
-    reset(nextNames = names, nextUnits = units, nextRate = rate) {
-      names = [...nextNames]; units = { ...nextUnits }; rate = nextRate;
-      cap = rate > 0 ? Math.min(MAX_RECORD_SAMPLES, Math.ceil(seconds * rate) + 1) : 0;
-      t = new Float64Array(cap); cols = names.map(() => new Float64Array(cap));
-      n = 0; head = 0;
+    // Seconds held now, and the newest time.
+    span() { return n > 1 ? t[(head - 1 + cap) % cap] - t[oldest()] : 0; },
+    last() { return n ? t[(head - 1 + cap) % cap] : null; },
+    // How long the memory holds at the rate the record is filling.
+    longest() {
+      const s = self.span();
+      return n > 1 && s > 0 ? (limit() * s) / (n - 1) : Infinity;
     },
-    setLength(s) {
-      const keep = self.snapshot();
-      seconds = s;
-      self.reset(names, units, rate);
-      const from = Math.max(0, keep.t.length - cap);
-      for (let i = from; i < keep.t.length; i++) self.push(keep.t[i], names.map((nm) => keep.signals[nm][i]));
-    },
-    // Whether samples with these names at this rate can follow the ones held.
-    fits(nextNames, nextRate) { return cap > 0 && Math.abs(nextRate - rate) <= 1e-6 * rate && nextNames.length === names.length && nextNames.every((x, i) => x === names[i]); },
-    push(time, values) {
-      if (!cap) return;
+    setUnits(u) { Object.assign(units, u); },
+    setLength(s) { seconds = s; const now = self.last(); if (now !== null) evict(now); },
+    clear() { names = []; units = {}; cap = 0; n = 0; head = 0; t = new Float64Array(0); cols = []; lastIn = null; map = []; },
+    // One sample: its time, the names of its values (the same array object
+    // each time is cheapest), and the values.
+    push(time, nms, values) {
+      if (nms !== lastIn) { map = nms.map(column); lastIn = nms; }
+      evict(time);
+      if (n === cap) {
+        if (cap < limit()) relayout(Math.min(limit(), Math.max(1024, 2 * cap)));
+        else n--;  // full: the oldest goes
+      }
       t[head] = time;
-      for (let j = 0; j < cols.length; j++) cols[j][head] = values[j];
+      for (let j = 0; j < cols.length; j++) cols[j][head] = NaN;
+      for (let i = 0; i < map.length; i++) cols[map[i]][head] = values[i];
       head = (head + 1) % cap;
-      n = Math.min(cap, n + 1);
+      n++;
     },
     // In time order: { t, signals: { name: Float64Array }, units }.
     snapshot() {
-      const out = { t: new Float64Array(n), signals: {}, units: { ...units } };
-      const start = (head - n + cap) % (cap || 1);
-      const copy = (src, dst) => { for (let i = 0; i < n; i++) dst[i] = src[(start + i) % cap]; };
+      const out = { t: new Float64Array(n), signals: {}, units: Object.fromEntries(names.map((nm) => [nm, units[nm] ?? '1'])) };
+      const from = oldest();
+      const copy = (src, dst) => { for (let i = 0; i < n; i++) dst[i] = src[(from + i) % cap]; };
       if (n) copy(t, out.t);
       names.forEach((nm, j) => { out.signals[nm] = new Float64Array(n); if (n) copy(cols[j], out.signals[nm]); });
       return out;
@@ -54,25 +103,45 @@ export function createRecorder(seconds = 300) {
   return self;
 }
 
-const cell = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(9))) : '');
+// The samples of a trace within [a, b], as a trace of their own.
+export function traceWindow(trace, a, b) {
+  let i0 = 0, i1 = trace.t.length;
+  while (i0 < i1 && trace.t[i0] < a - 1e-9) i0++;
+  while (i1 > i0 && trace.t[i1 - 1] > b + 1e-9) i1--;
+  return { t: trace.t.slice(i0, i1), signals: Object.fromEntries(Object.entries(trace.signals).map(([nm, v]) => [nm, v.slice(i0, i1)])), units: { ...trace.units } };
+}
 
-// CSV: comment lines (#) say what it is; the header is "name [unit]".
-export function traceToCsv(trace, { title = '', source = '' } = {}) {
+const cell = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(9))) : '');
+const ROWS = 20000;  // per part: a long record is written piece by piece (Blob parts)
+
+// CSV: comment lines (#) say what it is; the header is "name [unit]". In
+// parts, so a long record never has to be one string.
+export function traceToCsvParts(trace, { title = '', source = '' } = {}) {
   const names = Object.keys(trace.signals);
   const unit = (nm) => trace.units?.[nm] ?? '1';
-  const lines = [`# ${TRACE_FORMAT}${title ? ` · ${title}` : ''}${source ? ` · ${source}` : ''} · ${trace.t.length} samples`];
-  lines.push(['t [s]', ...names.map((nm) => `${nm} [${unit(nm)}]`)].join(','));
-  for (let i = 0; i < trace.t.length; i++) lines.push([cell(trace.t[i]), ...names.map((nm) => cell(trace.signals[nm][i]))].join(','));
-  return `${lines.join('\n')}\n`;
+  const head = `# ${TRACE_FORMAT}${title ? ` · ${title}` : ''}${source ? ` · ${source}` : ''} · ${trace.t.length} samples\n${['t [s]', ...names.map((nm) => `${nm} [${unit(nm)}]`)].join(',')}\n`;
+  const parts = [head], cs = names.map((nm) => trace.signals[nm]);
+  for (let a = 0; a < trace.t.length; a += ROWS) {
+    const lines = [];
+    for (let i = a; i < Math.min(trace.t.length, a + ROWS); i++) lines.push(`${cell(trace.t[i])}${cs.map((v) => `,${cell(v[i])}`).join('')}`);
+    parts.push(`${lines.join('\n')}\n`);
+  }
+  return parts;
 }
+export const traceToCsv = (trace, meta) => traceToCsvParts(trace, meta).join('');
 
-export function traceToJson(trace, { title = '', source = '' } = {}) {
-  const arr = (a) => Array.from(a, (v) => (Number.isFinite(v) ? Number(v.toPrecision(9)) : null));
-  return JSON.stringify({
-    format: TRACE_FORMAT, title, source, units: { t: 's', ...trace.units },
-    t: arr(trace.t), signals: Object.fromEntries(Object.entries(trace.signals).map(([nm, v]) => [nm, arr(v)])),
-  });
+export function traceToJsonParts(trace, { title = '', source = '' } = {}) {
+  const arr = (a) => {
+    const out = [];
+    for (let i = 0; i < a.length; i += ROWS) out.push(Array.from(a.subarray ? a.subarray(i, i + ROWS) : a.slice(i, i + ROWS), (v) => (Number.isFinite(v) ? Number(v.toPrecision(9)) : 'null')).join(','));
+    return `[${out.join(',')}]`;
+  };
+  const parts = [`{"format":${JSON.stringify(TRACE_FORMAT)},"title":${JSON.stringify(title)},"source":${JSON.stringify(source)},"units":${JSON.stringify({ t: 's', ...trace.units })},"t":${arr(trace.t)},"signals":{`];
+  Object.entries(trace.signals).forEach(([nm, v], i) => parts.push(`${i ? ',' : ''}${JSON.stringify(nm)}:${arr(v)}`));
+  parts.push('}}');
+  return parts;
 }
+export const traceToJson = (trace, meta) => traceToJsonParts(trace, meta).join('');
 
 // Reads a trace saved by traceToCsv or traceToJson (or any CSV whose first
 // column is time): { title, t, signals, units }. Empty cells are NaN.

@@ -50,8 +50,9 @@ const checkUnit = (u, where) => {
   return s;
 };
 
-// The plant's answer to describe, checked: { name, rate_hz, inputs: [{ name,
-// unit, min, max, safe }], outputs: [{ name, unit }], watchdog, estop, running }.
+// The plant's answer to describe, checked: { protocol, name, rate_hz, inputs:
+// [{ name, unit, min, max, safe }], outputs: [{ name, unit }], watchdog, estop,
+// running }.
 export function checkDescription(d) {
   if (!d || typeof d !== 'object') throw new Error('describe: expected an object');
   const rate = Number(d.rate_hz);
@@ -71,6 +72,8 @@ export function checkDescription(d) {
     return { ...q, min, max, safe };
   });
   return {
+    // Which protocol the plant speaks; the page warns when it is not this one.
+    protocol: String(d.protocol ?? ''),
     name: String(d.name ?? 'external plant').slice(0, 80),
     rate_hz: rate,
     inputs,
@@ -111,6 +114,7 @@ export const EXTERNAL_BLOCK = {
   ],
   ports: (p) => [p.inputs.length, p.outputs.length],
   outputs: (p) => p.outputs,
+  inputNames: (p) => p.inputs,  // labels on the canvas, as the outputs have
   summary: (p) => `${p.rate} Hz`,
   // Lists may be typed as "a, b" in the Plant tab or given as JSON arrays.
   normalize(params = {}, where = 'external') {
@@ -148,6 +152,20 @@ export function externalParams(desc, url = HIL_URL) {
     outputs: desc.outputs.map((p) => p.name), outUnits: desc.outputs.map((p) => p.unit),
   });
 }
+
+// The External plant block of a diagram, at any depth, and the level it is
+// on: { block, level }, or null.
+export function findExternal(d) {
+  for (const b of d?.blocks ?? []) {
+    if (b.type === 'external') return { block: b, level: d };
+    if (b.type === 'subsystem') { const hit = findExternal(b.diagram); if (hit) return hit; }
+  }
+  return null;
+}
+
+// Whether the block's ports carry the plant's names, in the plant's order:
+// what the loop relies on, since values travel by position.
+export const samePorts = (params, desc) => params.inputs.join() === desc.inputs.map((p) => p.name).join() && params.outputs.join() === desc.outputs.map((p) => p.name).join();
 
 // Whether a block already matches a description (then connecting changes nothing).
 export function sameDescription(params, desc) {

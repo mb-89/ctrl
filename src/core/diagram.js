@@ -527,8 +527,14 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
     // External plants (Live mode): y is written by the caller, u() reads what
-    // the diagram feeds the block after the last eval.
-    externals: externals.map((k) => ({ name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])) })),
+    // the diagram feeds the block after the last eval, and shows[i] lists the
+    // probes (Sinks) on the same signal as input i, which show what the plant
+    // applies during a stop.
+    externals: externals.map((k) => {
+      const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
+      const shows = nodes[k].inputs.map((s) => (s < 0 ? [] : probeList.flatMap(([, pk], j) => (nodes[pk].kind === 'pass' && origin(pk) === origin(s) ? [j] : []))));
+      return { name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])), shows };
+    }),
   };
   return self;
 }
