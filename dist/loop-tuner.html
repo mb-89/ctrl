@@ -381,6 +381,46 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .ctlibitem:hover { border-color: var(--ink-2); }
 .ctlibitem span { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
+/* Display modes and display filters (scope, Run Control and Vertical) */
+.viewkeys { margin-top: 2px; gap: 4px; }
+.viewkeys .key { flex: 1; min-height: 24px; }
+.key.lit-view { background: var(--lcd); color: #f2c718; border-color: #f2c718; }
+.st-view { background: #2a3540; color: #f2c718; }
+.srcrow .axbtn { flex: none; padding: 1px 6px; }
+.filtrow select#ch-filt { flex: 1 1 70px; min-width: 0; }
+.filtparams { display: flex; gap: 4px; flex: 2 1 auto; min-width: 0; }
+.filtparams .field { width: 0; flex: 1 1 52px; min-width: 44px; font-family: var(--mono); font-size: 12px; padding: 1px 4px; }
+.filtparams select.field { flex: 0 1 46px; }
+
+/* System library tags. The style says what a tag is about (plant: filled;
+   controller: a bar; observer: an outline; feature: a dot; none: dashed), the
+   tone which value it is. Tones: a categorical palette validated for colour-
+   vision deficiency on each theme's panel; the dark steps are its own. */
+.tone-blue { --tone: #2a78d6; } .tone-orange { --tone: #eb6834; } .tone-aqua { --tone: #1baf7a; } .tone-yellow { --tone: #eda100; }
+.tone-magenta { --tone: #e87ba4; } .tone-green { --tone: #008300; } .tone-violet { --tone: #6250d6; } .tone-red { --tone: #e34948; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tone-blue { --tone: #3987e5; } :root:not([data-theme="light"]) .tone-orange { --tone: #d95926; }
+  :root:not([data-theme="light"]) .tone-aqua { --tone: #199e70; } :root:not([data-theme="light"]) .tone-yellow { --tone: #c98500; }
+  :root:not([data-theme="light"]) .tone-magenta { --tone: #d55181; } :root:not([data-theme="light"]) .tone-violet { --tone: #9085e9; }
+  :root:not([data-theme="light"]) .tone-red { --tone: #e66767; }
+}
+:root[data-theme="dark"] .tone-blue { --tone: #3987e5; } :root[data-theme="dark"] .tone-orange { --tone: #d95926; }
+:root[data-theme="dark"] .tone-aqua { --tone: #199e70; } :root[data-theme="dark"] .tone-yellow { --tone: #c98500; }
+:root[data-theme="dark"] .tone-magenta { --tone: #d55181; } :root[data-theme="dark"] .tone-violet { --tone: #9085e9; }
+:root[data-theme="dark"] .tone-red { --tone: #e66767; }
+.systags { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 2px; }
+.tag { font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; line-height: 15px; padding: 0 7px; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; color: var(--ink); }
+.tag-plant { background: var(--tone); color: #fff; }
+.tag-controller { border-radius: 3px; border-color: color-mix(in srgb, var(--tone) 45%, transparent); border-left: 4px solid var(--tone); background: color-mix(in srgb, var(--tone) 16%, transparent); padding-left: 5px; }
+.tag-observer { border: 1.5px solid var(--tone); }
+.tag-feature { background: var(--panel-2); color: var(--ink-2); }
+.tag-feature::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); margin-right: 5px; vertical-align: 0; }
+.tag-none { border: 1px dashed var(--muted); color: var(--muted); background: transparent; font-weight: 500; }
+.taglegend { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 2px 6px 6px; color: var(--muted); font-size: 11px; }
+.taglegend .tag { --tone: var(--muted); }
+
+.ctable { grid-column: 2; font-family: var(--mono); }
+
 /* Live (HIL) and Record (ui/live.js). Live is a second row of Run Control;
    Record sits under the screen beside the channel badges, in the bezel's
    colours, like a scope's save keys. */
@@ -586,6 +626,810 @@ function dcGain(num, den) {
 }
 
 return { polyTrim, polyMul, polyPow, tf2ss, rootBound, dcGain };
+})();
+// ---- core/linalg.js
+__mods['core/linalg.js'] = (() => {
+// Linear algebra for analysing and designing loops: matrix basics, the matrix
+// exponential and zero-order-hold discretisation, eigenvalues of a general
+// real matrix, discrete LQR and Kalman gains (Riccati equations), and the
+// frequency response, stability margins, root locus and zeros of SISO models.
+// Pure functions, no DOM: shared by browser and Node.
+//
+// Conventions
+// - A matrix is an array of row arrays of numbers, [[1, 2], [3, 4]]; a vector
+//   is a plain array of numbers. No function modifies its arguments.
+// - A complex number is an object { re, im }.
+// - A SISO state-space model is sys = { A, B, C, D }, for
+//     x' = A x + B u,  y = C x + D u,
+//   with A n×n, B an n×1 matrix or a plain n-vector, C a 1×n matrix or a
+//   plain n-vector, and D a number (missing means 0).
+
+const EPS = Number.EPSILON;
+const DEG = 180 / Math.PI;
+
+// ---- Shapes and small helpers
+
+const isVector = (x) => x.length === 0 || typeof x[0] === 'number';
+
+function square(A, who) {
+  if (!Array.isArray(A) || !A.every((r) => r && r.length === A.length)) throw new Error(`${who}: expected a square matrix (an array of rows)`);
+  return A.length;
+}
+
+// B as an n×m matrix: a plain vector is one column.
+function asCol(B, n, who) {
+  const M = isVector(B) ? Array.from(B, (v) => [v]) : B;
+  if (M.length !== n) throw new Error(`${who}: B must have ${n} rows`);
+  return M;
+}
+
+// C as a p×n matrix: a plain vector is one row.
+function asRow(C, n, who) {
+  const M = isVector(C) ? [Array.from(C)] : C;
+  if (M.some((r) => r.length !== n)) throw new Error(`${who}: C must have ${n} columns`);
+  return M;
+}
+
+const asMat = (R) => (typeof R === 'number' ? [[R]] : R);
+const sym = (P) => P.map((r, i) => r.map((v, j) => (v + P[j][i]) / 2));
+const maxAbs = (A) => A.reduce((m, r) => r.reduce((m2, v) => Math.max(m2, Math.abs(v)), m), 0);
+const finite = (A) => A.every((r) => r.every(Number.isFinite));
+const norm1 = (A) => (A.length ? Math.max(...A[0].map((_, j) => A.reduce((s, r) => s + Math.abs(r[j]), 0))) : 0);
+const cabs = (z) => Math.hypot(z.re, z.im);
+// An angle in degrees wrapped to (−180, 180].
+const wrap180 = (d) => d - 360 * Math.ceil((d - 180) / 360);
+
+// ---- Basics
+
+const zeros = (r, c = r) => Array.from({ length: r }, () => new Array(c).fill(0));
+
+function eye(n) {
+  const I = zeros(n, n);
+  for (let i = 0; i < n; i++) I[i][i] = 1;
+  return I;
+}
+
+// A·B for a matrix B, or A·b (a vector) for a vector b.
+function mul(A, B) {
+  const k = B.length;
+  if (A.some((r) => r.length !== k)) throw new Error(`mul: inner dimensions differ (${A[0].length} and ${k})`);
+  if (isVector(B)) return A.map((row) => row.reduce((s, a, j) => s + a * B[j], 0));
+  const m = B[0].length;
+  return A.map((row) => {
+    const out = new Array(m).fill(0);
+    for (let j = 0; j < k; j++) {
+      const a = row[j], Bj = B[j];
+      for (let c = 0; c < m; c++) out[c] += a * Bj[c];
+    }
+    return out;
+  });
+}
+
+// A + s·B, for matrices or vectors of the same shape.
+function add(A, B, s = 1) {
+  if (A.length !== B.length) throw new Error('add: shapes differ');
+  return A.map((a, i) => (typeof a === 'number' ? a + s * B[i] : a.map((x, j) => x + s * B[i][j])));
+}
+
+const scale = (A, s) => A.map((a) => (typeof a === 'number' ? a * s : a.map((x) => x * s)));
+
+const transpose = (A) => (A.length ? Array.from(A[0], (_, j) => A.map((r) => r[j])) : []);
+
+// LU factorisation with partial pivoting of a copy of A: P·A = L·U, with the
+// unit lower triangle L (below the diagonal) and U (on and above it) in M.
+// Stops at the first exactly zero pivot (singular).
+function lu(A) {
+  const n = A.length;
+  const M = A.map((r) => Array.from(r));
+  const perm = [...Array(n).keys()];
+  let sign = 1;
+  for (let k = 0; k < n; k++) {
+    let p = k;
+    for (let i = k + 1; i < n; i++) if (Math.abs(M[i][k]) > Math.abs(M[p][k])) p = i;
+    if (p !== k) {
+      [M[k], M[p]] = [M[p], M[k]];
+      [perm[k], perm[p]] = [perm[p], perm[k]];
+      sign = -sign;
+    }
+    const piv = M[k][k];
+    if (piv === 0) return { M, perm, sign, singular: true };
+    for (let i = k + 1; i < n; i++) {
+      const f = (M[i][k] /= piv);
+      if (f !== 0) for (let j = k + 1; j < n; j++) M[i][j] -= f * M[k][j];
+    }
+  }
+  return { M, perm, sign, singular: false };
+}
+
+// Solves A·X = B by Gaussian elimination with partial pivoting. B is a vector
+// (the result is a vector) or a matrix with as many rows as A. Throws on an
+// exactly singular A; a nearly singular one gives large, inaccurate results
+// (check with rank).
+function solve(A, b) {
+  const n = square(A, 'solve');
+  if (b.length !== n) throw new Error(`solve: right-hand side must have ${n} rows`);
+  const vec = isVector(b);
+  const { M, perm, singular } = lu(A);
+  if (singular) throw new Error('solve: matrix is singular');
+  const X = perm.map((i) => (vec ? [b[i]] : Array.from(b[i])));
+  const m = n ? X[0].length : 0;
+  for (let i = 1; i < n; i++) {
+    for (let k = 0; k < i; k++) {
+      const f = M[i][k];
+      if (f !== 0) for (let j = 0; j < m; j++) X[i][j] -= f * X[k][j];
+    }
+  }
+  for (let i = n - 1; i >= 0; i--) {
+    for (let k = i + 1; k < n; k++) {
+      const f = M[i][k];
+      if (f !== 0) for (let j = 0; j < m; j++) X[i][j] -= f * X[k][j];
+    }
+    for (let j = 0; j < m; j++) X[i][j] /= M[i][i];
+  }
+  return vec ? X.map((r) => r[0]) : X;
+}
+
+const inv = (A) => solve(A, eye(square(A, 'inv')));
+
+function det(A) {
+  square(A, 'det');
+  const { M, sign, singular } = lu(A);
+  return singular ? 0 : M.reduce((d, r, i) => d * r[i], sign);
+}
+
+// ---- Matrix exponential and discretisation
+
+// Padé(13) coefficients and the norm up to which it is accurate to double
+// precision without scaling (Higham 2005, "The scaling and squaring method
+// for the matrix exponential revisited").
+const PADE13 = [64764752532480000, 32382376266240000, 7771770303897600, 1187353796428800, 129060195264000, 10559470521600, 670442572800, 33522128640, 1323241920, 40840800, 960960, 16380, 182, 1];
+const THETA13 = 5.371920351148152;
+
+// e^A by scaling and squaring: A / 2^s has 1-norm at most THETA13, its
+// exponential is the [13/13] Padé approximant, squared s times.
+function expm(A) {
+  const n = square(A, 'expm');
+  if (n === 0) return [];
+  const nrm = norm1(A);
+  if (!Number.isFinite(nrm)) throw new Error('expm: matrix has non-finite entries');
+  const s = nrm > THETA13 ? Math.ceil(Math.log2(nrm / THETA13)) : 0;
+  const b = PADE13;
+  const X = scale(A, 2 ** -s);
+  const X2 = mul(X, X), X4 = mul(X2, X2), X6 = mul(X4, X2), I = eye(n);
+  const lin = (cs, Ms) => Ms.reduce((acc, M, i) => add(acc, M, cs[i]), zeros(n, n));
+  // e^X ≈ (V − U)⁻¹ (V + U), with U the odd and V the even part of the numerator.
+  const U = mul(X, add(mul(X6, lin([b[13], b[11], b[9]], [X6, X4, X2])), lin([b[7], b[5], b[3], b[1]], [X6, X4, X2, I])));
+  const V = add(mul(X6, lin([b[12], b[10], b[8]], [X6, X4, X2])), lin([b[6], b[4], b[2], b[0]], [X6, X4, X2, I]));
+  let E = solve(add(V, U, -1), add(V, U));
+  for (let i = 0; i < s; i++) E = mul(E, E);
+  return E;
+}
+
+// Zero-order-hold discretisation of x' = A x + B u with sample time Ts:
+// x[k+1] = Ad x[k] + Bd u[k]. Both come from one exponential,
+// exp([[A, B], [0, 0]]·Ts) = [[Ad, Bd], [0, I]], which also covers a singular
+// A (integrators). B is n×m (a plain vector is one input); Bd is n×m.
+function c2d(A, B, Ts) {
+  const n = square(A, 'c2d');
+  const Bm = asCol(B, n, 'c2d');
+  const m = n ? Bm[0].length : 0;
+  const M = zeros(n + m, n + m);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) M[i][j] = A[i][j] * Ts;
+    for (let j = 0; j < m; j++) M[i][n + j] = Bm[i][j] * Ts;
+  }
+  const E = expm(M);
+  return { Ad: E.slice(0, n).map((r) => r.slice(0, n)), Bd: E.slice(0, n).map((r) => r.slice(n)) };
+}
+
+// ---- Eigenvalues
+
+// Balancing (Parlett–Reinsch, EISPACK balanc), in place: a similarity scaling
+// by powers of 2 that evens out row and column norms. The eigenvalues stay
+// exactly the same but become less sensitive to rounding. Returns the
+// scaling d: the result is D⁻¹ A D with D = diag(d).
+function balance(a) {
+  const n = a.length;
+  const d = new Array(n).fill(1);
+  let done = false;
+  while (!done) {
+    done = true;
+    for (let i = 0; i < n; i++) {
+      let r = 0, c = 0;
+      for (let j = 0; j < n; j++) {
+        if (j !== i) {
+          c += Math.abs(a[j][i]);
+          r += Math.abs(a[i][j]);
+        }
+      }
+      if (c === 0 || r === 0 || !Number.isFinite(c + r)) continue;
+      const s = c + r;
+      let f = 1, g = r / 2;
+      while (c < g) { f *= 2; c *= 4; }
+      g = r * 2;
+      while (c > g) { f /= 2; c /= 4; }
+      if ((c + r) / f < 0.95 * s) {
+        done = false;
+        d[i] *= f;
+        for (let j = 0; j < n; j++) a[i][j] /= f;
+        for (let j = 0; j < n; j++) a[j][i] *= f;
+      }
+    }
+  }
+  return d;
+}
+
+// Reduction to upper Hessenberg form by stabilised elementary similarity
+// transformations (EISPACK elmhes), in place; below the subdiagonal is zeroed.
+function hessenberg(a) {
+  const n = a.length;
+  for (let m = 1; m < n - 1; m++) {
+    let x = 0, p = m;
+    for (let j = m; j < n; j++) if (Math.abs(a[j][m - 1]) > Math.abs(x)) { x = a[j][m - 1]; p = j; }
+    if (p !== m) {
+      for (let j = m - 1; j < n; j++) [a[p][j], a[m][j]] = [a[m][j], a[p][j]];
+      for (let j = 0; j < n; j++) [a[j][p], a[j][m]] = [a[j][m], a[j][p]];
+    }
+    if (x === 0) continue;
+    for (let i = m + 1; i < n; i++) {
+      const y = a[i][m - 1] / x;
+      if (y === 0) continue;
+      a[i][m - 1] = 0;
+      for (let j = m; j < n; j++) a[i][j] -= y * a[m][j];
+      for (let j = 0; j < n; j++) a[j][m] += y * a[j][i];
+    }
+  }
+}
+
+const HQR_MAXITS = 100;
+
+// Eigenvalues of an upper Hessenberg matrix by the Francis double-shift QR
+// algorithm (EISPACK hqr, as in Numerical Recipes 3rd ed.), destroying a.
+// Small subdiagonal entries split the problem; each converged 1×1 block is a
+// real eigenvalue, each 2×2 block a real or complex pair. Exceptional shifts
+// every 10 iterations break the cycles the standard shift can fall into.
+function hqr(a) {
+  const n = a.length;
+  const out = new Array(n);
+  let anorm = 0;
+  for (let i = 0; i < n; i++) for (let j = Math.max(i - 1, 0); j < n; j++) anorm += Math.abs(a[i][j]);
+  let nn = n - 1, t = 0;
+  let p = 0, q = 0, r = 0, s, w, x, y, z;
+  while (nn >= 0) {
+    let its = 0, l;
+    do {
+      // Look for a single small subdiagonal element to split at.
+      for (l = nn; l > 0; l--) {
+        s = Math.abs(a[l - 1][l - 1]) + Math.abs(a[l][l]);
+        if (s === 0) s = anorm;
+        if (Math.abs(a[l][l - 1]) <= EPS * s) { a[l][l - 1] = 0; break; }
+      }
+      x = a[nn][nn];
+      if (l === nn) {
+        out[nn--] = { re: x + t, im: 0 };
+      } else {
+        y = a[nn - 1][nn - 1];
+        w = a[nn][nn - 1] * a[nn - 1][nn];
+        if (l === nn - 1) {
+          p = 0.5 * (y - x);
+          q = p * p + w;
+          z = Math.sqrt(Math.abs(q));
+          x += t;
+          if (q >= 0) {
+            z = p + (p >= 0 ? z : -z);
+            out[nn - 1] = { re: x + z, im: 0 };
+            out[nn] = { re: z !== 0 ? x - w / z : x + z, im: 0 };
+          } else {
+            out[nn - 1] = { re: x + p, im: z };
+            out[nn] = { re: x + p, im: -z };
+          }
+          nn -= 2;
+        } else {
+          if (its === HQR_MAXITS) throw new Error('eig: QR iteration did not converge');
+          if (its > 0 && its % 10 === 0) {
+            t += x;
+            for (let i = 0; i <= nn; i++) a[i][i] -= x;
+            s = Math.abs(a[nn][nn - 1]) + Math.abs(a[nn - 1][nn - 2]);
+            y = x = 0.75 * s;
+            w = -0.4375 * s * s;
+          }
+          ++its;
+          // Form the shift and look for two consecutive small subdiagonal elements.
+          let m;
+          for (m = nn - 2; m >= l; m--) {
+            z = a[m][m];
+            r = x - z;
+            s = y - z;
+            p = (r * s - w) / a[m + 1][m] + a[m][m + 1];
+            q = a[m + 1][m + 1] - z - r - s;
+            r = a[m + 2][m + 1];
+            s = Math.abs(p) + Math.abs(q) + Math.abs(r);
+            p /= s; q /= s; r /= s;
+            if (m === l) break;
+            const u = Math.abs(a[m][m - 1]) * (Math.abs(q) + Math.abs(r));
+            const v = Math.abs(p) * (Math.abs(a[m - 1][m - 1]) + Math.abs(z) + Math.abs(a[m + 1][m + 1]));
+            if (u <= EPS * v) break;
+          }
+          for (let i = m; i < nn - 1; i++) {
+            a[i + 2][i] = 0;
+            if (i !== m) a[i + 2][i - 1] = 0;
+          }
+          // Double QR step on rows l..nn and columns m..nn (chase the bulge).
+          for (let k = m; k < nn; k++) {
+            if (k !== m) {
+              p = a[k][k - 1];
+              q = a[k + 1][k - 1];
+              r = k + 1 !== nn ? a[k + 2][k - 1] : 0;
+              if ((x = Math.abs(p) + Math.abs(q) + Math.abs(r)) !== 0) { p /= x; q /= x; r /= x; }
+            }
+            s = Math.sqrt(p * p + q * q + r * r);
+            if (p < 0) s = -s;
+            if (s === 0) continue;
+            if (k === m) {
+              if (l !== m) a[k][k - 1] = -a[k][k - 1];
+            } else a[k][k - 1] = -s * x;
+            p += s;
+            x = p / s; y = q / s; z = r / s;
+            q /= p; r /= p;
+            for (let j = k; j <= nn; j++) {
+              p = a[k][j] + q * a[k + 1][j];
+              if (k + 1 !== nn) { p += r * a[k + 2][j]; a[k + 2][j] -= p * z; }
+              a[k + 1][j] -= p * y;
+              a[k][j] -= p * x;
+            }
+            const mmin = nn < k + 3 ? nn : k + 3;
+            for (let i = l; i <= mmin; i++) {
+              p = x * a[i][k] + y * a[i][k + 1];
+              if (k + 1 !== nn) { p += z * a[i][k + 2]; a[i][k + 2] -= p * r; }
+              a[i][k + 1] -= p * q;
+              a[i][k] -= p;
+            }
+          }
+        }
+      }
+    } while (l + 1 < nn);
+  }
+  return out;
+}
+
+const byRealThenImag = (a, b) => b.re - a.re || b.im - a.im;
+
+// All eigenvalues of a general real square matrix, as complex numbers sorted
+// by real part, then imaginary part, both descending. Complex ones come in
+// conjugate pairs with equal real parts. A repeated eigenvalue of a defective
+// matrix (a Jordan block, e.g. a double integrator after a similarity
+// transformation) is only accurate to about sqrt(machine epsilon), as with any
+// eigenvalue solver.
+function eig(A) {
+  const n = square(A, 'eig');
+  const a = A.map((r) => Array.from(r));
+  if (!finite(a)) throw new Error('eig: matrix has non-finite entries');
+  if (n === 0) return [];
+  balance(a);
+  hessenberg(a);
+  return hqr(a).sort(byRealThenImag);
+}
+
+// ---- Riccati equations, LQR and Kalman gains
+
+// Structure-preserving doubling algorithm (Chu, Fan, Lin 2005) for the DARE.
+// With G = B R⁻¹ Bᵀ and H = Q, each step doubles the horizon of the Riccati
+// recursion, so H converges to P quadratically: a few dozen steps instead of
+// thousands of iterations for slow (fast-sampled) plants. null if R is
+// singular or the steps fail.
+function dareSDA(A, B, Q, R, tol) {
+  const n = A.length, I = eye(n);
+  let G;
+  try { G = sym(mul(B, solve(R, transpose(B)))); } catch { return null; }
+  let Ak = A, H = sym(Q);
+  for (let k = 1; k <= 64; k++) {
+    let X;
+    try { X = solve(add(I, mul(G, H)), Ak.map((row, i) => row.concat(G[i]))); } catch { return null; }
+    const WA = X.map((r) => r.slice(0, n)), WG = X.map((r) => r.slice(n));
+    const Hn = sym(add(H, mul(transpose(Ak), mul(H, WA))));
+    G = sym(add(G, mul(Ak, mul(WG, transpose(Ak)))));
+    Ak = mul(Ak, WA);
+    if (!finite(Hn)) return null;
+    const done = maxAbs(add(Hn, H, -1)) <= tol * maxAbs(Hn);
+    H = Hn;
+    if (done) return { P: H, converged: true, iterations: k };
+  }
+  return null;
+}
+
+// The Riccati difference equation iterated from P = Q. P is symmetrised every
+// step: without it rounding makes P drift asymmetric and the iteration
+// diverges on unstable plants (seen on a cart–pole).
+function dareIteration(A, B, Q, R, tol, maxIter) {
+  const At = transpose(A), Bt = transpose(B);
+  let P = sym(Q);
+  for (let k = 1; k <= maxIter; k++) {
+    const PA = mul(P, A), PB = mul(P, B);
+    const K = solve(add(R, mul(Bt, PB)), mul(Bt, PA));
+    const Pn = sym(add(add(mul(At, PA), mul(mul(At, PB), K), -1), Q));
+    const done = maxAbs(add(Pn, P, -1)) <= tol * maxAbs(Pn);
+    P = Pn;
+    if (done) return { P, converged: true, iterations: k };
+    if (!finite(P)) return { P, converged: false, iterations: k };
+  }
+  return { P, converged: false, iterations: maxIter };
+}
+
+const lqrGain = (A, B, R, P) => {
+  const Bt = transpose(B);
+  return solve(add(R, mul(Bt, mul(P, B))), mul(Bt, mul(P, A)));
+};
+
+const spectralRadius = (A) => eig(A).reduce((m, z) => Math.max(m, cabs(z)), 0);
+
+// Stabilising solution P of the discrete algebraic Riccati equation
+//   P = Aᵀ P A − Aᵀ P B (R + Bᵀ P B)⁻¹ Bᵀ P A + Q,
+// for Q symmetric ≥ 0, R symmetric > 0 (a number for one input), (A, B)
+// stabilisable and (A, Q) detectable. Tries the doubling algorithm first and
+// accepts it when it converged and A − B K is stable; otherwise, or with
+// method: 'iteration', iterates the Riccati difference equation until the
+// largest change is below tol relative to the largest entry of P, or maxIter.
+// Returns { P, converged, iterations, method: 'sda' | 'iteration' }
+// (iterations counts doubling steps for 'sda').
+function dare(A, B, Q, R, { method = 'auto', tol = 1e-12, maxIter = 100000 } = {}) {
+  const n = square(A, 'dare');
+  const Bm = asCol(B, n, 'dare'), Rm = asMat(R);
+  if (method !== 'iteration') {
+    const r = dareSDA(A, Bm, Q, Rm, tol);
+    if (r && spectralRadius(add(A, mul(Bm, lqrGain(A, Bm, Rm, r.P)), -1)) < 1) return { ...r, method: 'sda' };
+  }
+  return { ...dareIteration(A, Bm, Q, Rm, tol, maxIter), method: 'iteration' };
+}
+
+// Discrete LQR: the state feedback u = −K x that minimises
+// Σ xᵀ Q x + uᵀ R u for x[k+1] = Ad x[k] + Bd u[k]. K is m×n, P the Riccati
+// solution; R may be a number for a single input.
+function dlqr(Ad, Bd, Q, R) {
+  const n = square(Ad, 'dlqr');
+  const B = asCol(Bd, n, 'dlqr'), Rm = asMat(R);
+  const { P, converged } = dare(Ad, B, Q, Rm);
+  return { K: lqrGain(Ad, B, Rm, P), P, converged };
+}
+
+// Steady-state Kalman filter for
+//   x[k+1] = Ad x[k] + Bd u[k] + w[k],  y[k] = C x[k] + v[k],
+// with white, uncorrelated noises of covariance E[w wᵀ] = Qw (n×n) and
+// E[v vᵀ] = Rv (p×p, or a number for one output). C is p×n (a plain vector is
+// one output). Each sample the filter runs
+//   measurement update  x̂⁺ = x̂⁻ + L (y − C x̂⁻)
+//   time update         x̂⁻[k+1] = Ad x̂⁺ + Bd u[k]
+// with L = P Cᵀ (C P Cᵀ + Rv)⁻¹ (n×p), where P is the steady-state a-priori
+// error covariance E[(x − x̂⁻)(x − x̂⁻)ᵀ], from the dual Riccati equation
+// (dare with Adᵀ, Cᵀ). The error x − x̂⁻ evolves with Ad (I − L C), which has
+// the same eigenvalues as (I − L C) Ad. The one-step predictor form
+// x̂⁻[k+1] = Ad x̂⁻ + Bd u + Lp (y − C x̂⁻) uses Lp = Ad L.
+function dlqe(Ad, C, Qw, Rv) {
+  const n = square(Ad, 'dlqe');
+  const Cm = asRow(C, n, 'dlqe'), Rm = asMat(Rv);
+  const { P, converged } = dare(transpose(Ad), transpose(Cm), Qw, Rm);
+  const CP = mul(Cm, P);
+  // L = P Cᵀ S⁻¹ = (S⁻¹ C P)ᵀ, since S = C P Cᵀ + Rv and P are symmetric.
+  const L = transpose(solve(add(Rm, mul(CP, transpose(Cm))), CP));
+  return { L, P, converged };
+}
+
+// ---- SISO frequency response
+
+// sys as { A, b, c, d } with plain vectors b and c and a number d.
+function siso(sys, who) {
+  const A = sys.A ?? [];
+  const n = square(A, who);
+  const B = sys.B ?? [], C = sys.C ?? [];
+  const b = isVector(B) ? Array.from(B) : B.map((r) => {
+    if (r.length !== 1) throw new Error(`${who}: B must be n×1 (one input)`);
+    return r[0];
+  });
+  const c = isVector(C) ? Array.from(C) : C.length === 1 ? Array.from(C[0]) : null;
+  if (!c) throw new Error(`${who}: C must be 1×n (one output)`);
+  if (b.length !== n || c.length !== n) throw new Error(`${who}: B and C must have ${n} entries`);
+  const D = sys.D ?? 0;
+  const d = typeof D === 'number' ? D : isVector(D) ? D[0] ?? 0 : D[0]?.[0] ?? 0;
+  return { A, b, c, d };
+}
+
+// Solves (Mr + j·Mi) x = br + j·bi by Gaussian elimination with partial
+// pivoting, in place (the arguments are overwritten). null if the matrix is
+// exactly singular. Returns { xr, xi }.
+function csolve(Mr, Mi, br, bi) {
+  const n = Mr.length;
+  for (let k = 0; k < n; k++) {
+    let p = k, best = -1;
+    for (let i = k; i < n; i++) {
+      const a = Math.abs(Mr[i][k]) + Math.abs(Mi[i][k]);
+      if (a > best) { best = a; p = i; }
+    }
+    if (best === 0) return null;
+    [Mr[k], Mr[p]] = [Mr[p], Mr[k]]; [Mi[k], Mi[p]] = [Mi[p], Mi[k]];
+    [br[k], br[p]] = [br[p], br[k]]; [bi[k], bi[p]] = [bi[p], bi[k]];
+    const pr = Mr[k][k], pi = Mi[k][k], d = pr * pr + pi * pi;
+    for (let i = k + 1; i < n; i++) {
+      const ar = Mr[i][k], ai = Mi[i][k];
+      if (ar === 0 && ai === 0) continue;
+      const fr = (ar * pr + ai * pi) / d, fi = (ai * pr - ar * pi) / d;
+      for (let j = k + 1; j < n; j++) {
+        const ur = Mr[k][j], ui = Mi[k][j];
+        Mr[i][j] -= fr * ur - fi * ui;
+        Mi[i][j] -= fr * ui + fi * ur;
+      }
+      br[i] -= fr * br[k] - fi * bi[k];
+      bi[i] -= fr * bi[k] + fi * br[k];
+    }
+  }
+  const xr = new Array(n), xi = new Array(n);
+  for (let i = n - 1; i >= 0; i--) {
+    let sr = br[i], si = bi[i];
+    for (let j = i + 1; j < n; j++) {
+      sr -= Mr[i][j] * xr[j] - Mi[i][j] * xi[j];
+      si -= Mr[i][j] * xi[j] + Mi[i][j] * xr[j];
+    }
+    const pr = Mr[i][i], pi = Mi[i][i], d = pr * pr + pi * pi;
+    xr[i] = (sr * pr + si * pi) / d;
+    xi[i] = (si * pr - sr * pi) / d;
+  }
+  return { xr, xi };
+}
+
+// G(jw) = c (jwI − A)⁻¹ b + d for a normalised model.
+function respond({ A, b, c, d }, w) {
+  const n = A.length;
+  const x = csolve(A.map((r) => r.map((v) => -v)), A.map((r, i) => r.map((_, j) => (i === j ? w : 0))), b.slice(), new Array(n).fill(0));
+  if (!x) throw new Error(`freqResp: jw = ${w}j is a pole of the system`);
+  let re = d, im = 0;
+  for (let i = 0; i < n; i++) { re += c[i] * x.xr[i]; im += c[i] * x.xi[i]; }
+  return { re, im };
+}
+
+// Complex G(jw) = C (jwI − A)⁻¹ B + D of a SISO model at one frequency w
+// (rad/s). Throws if jw is exactly a pole.
+const freqResp = (sys, w) => respond(siso(sys, 'freqResp'), w);
+
+// Phase in degrees along the grid, unwrapped so that it changes by less than
+// 180° from point to point (the grid must be fine enough for that). The
+// branch at the first point is the one closest to 90° times the local slope
+// of |G| in decades per decade (rounded): an integrator (slope −1) starts
+// near −90°, a double integrator near −180°, rather than wherever atan2 puts
+// them.
+function unwrapPhase(s, ws, G) {
+  const out = [];
+  for (let k = 0; k < G.length; k++) {
+    const ph = Math.atan2(G[k].im, G[k].re) * DEG;
+    if (k > 0) { out.push(out[k - 1] + wrap180(ph - out[k - 1])); continue; }
+    let target = 0;
+    if (ws[0] > 0) {
+      const slope = Math.log10(cabs(respond(s, ws[0] * 1.01)) / cabs(G[0])) / Math.log10(1.01);
+      if (Number.isFinite(slope)) target = 90 * Math.round(slope);
+    }
+    out.push(ph + 360 * Math.round((target - ph) / 360));
+  }
+  return out;
+}
+
+// Bode data of a SISO model on the frequencies ws (rad/s, increasing):
+// { w, mag, magDb, phaseDeg }, the phase unwrapped continuously along w.
+function bode(sys, ws) {
+  const s = siso(sys, 'bode');
+  const G = ws.map((w) => respond(s, w));
+  const mag = G.map(cabs);
+  return { w: ws.slice(), mag, magDb: mag.map((m) => 20 * Math.log10(m)), phaseDeg: unwrapPhase(s, ws, G) };
+}
+
+// n points from 10^a to 10^b, evenly spaced in log w.
+const logspace = (a, b, n = 50) => Array.from({ length: n }, (_, i) => 10 ** (n === 1 ? a : a + ((b - a) * i) / (n - 1)));
+
+// True if the target lies in (lo, hi] of two neighbouring samples: each
+// crossing is counted once, also when it falls exactly on a grid point.
+const crosses = (f1, f2) => Math.min(f1, f2) < 0 && Math.max(f1, f2) >= 0;
+
+// Bisection for a sign change of the continuous f on [a, b] (f(a) = fa,
+// f(b) = fb), halving in log w for positive frequencies.
+function bisect(f, a, b, fa, fb) {
+  if (fa === 0) return a;
+  if (fb === 0) return b;
+  const mid = (u, v) => (u > 0 ? Math.sqrt(u) * Math.sqrt(v) : (u + v) / 2);
+  for (let i = 0; i < 200 && b - a > 4 * EPS * Math.abs(b); i++) {
+    const m = mid(a, b), fm = f(m);
+    if (fm === 0) return m;
+    if (fm < 0 === fa < 0) { a = m; fa = fm; } else b = m;
+  }
+  return mid(a, b);
+}
+
+// Stability margins of an open loop L(s) (SISO model) under negative
+// feedback, found on the grid ws (rad/s, increasing) and refined by bisection
+// on the continuous response:
+// - gain crossovers |L(jwc)| = 1, each with phase margin pm = 180° + ∠L(jwc)
+//   in (−180°, 180°];
+// - phase crossovers ∠L(jw180) = −180° (mod 360°), each with gain margin
+//   gm = 1 / |L(jw180)| (a ratio; gmDb in dB);
+// - the peak sensitivity ms = max 1/|1 + L(jw)| (refined by golden section)
+//   at wMs.
+// wc/pm and w180/gm are the most critical crossings (smallest |pm|, smallest
+// |gmDb|); all are listed in gainCrossings and phaseCrossings. Without a
+// crossing in the grid: wc = NaN, pm = Infinity; w180 = NaN, gm = gmDb =
+// Infinity. Crossings outside ws are not seen.
+function margins(sys, ws) {
+  const s = siso(sys, 'margins');
+  if (!ws.length) throw new Error('margins: empty frequency grid');
+  const L = (w) => respond(s, w);
+  const G = ws.map(L);
+  const phase = unwrapPhase(s, ws, G);
+  const logMag = G.map((g) => Math.log(cabs(g)));
+
+  const gainCrossings = [], phaseCrossings = [];
+  for (let k = 0; k + 1 < ws.length; k++) {
+    if (crosses(logMag[k], logMag[k + 1])) {
+      const w = bisect((v) => Math.log(cabs(L(v))), ws[k], ws[k + 1], logMag[k], logMag[k + 1]);
+      const g = L(w);
+      gainCrossings.push({ w, pm: Math.atan2(-g.im, -g.re) * DEG });
+    }
+    // The odd multiple of 180° in (lo, hi]; neighbouring phases differ by at most 180°.
+    const theta = -180 + 360 * Math.floor((Math.max(phase[k], phase[k + 1]) + 180) / 360);
+    if (crosses(phase[k] - theta, phase[k + 1] - theta)) {
+      const g = (v) => { const z = L(v); return wrap180(Math.atan2(z.im, z.re) * DEG - theta); };
+      const w = bisect(g, ws[k], ws[k + 1], phase[k] - theta, phase[k + 1] - theta);
+      const gm = 1 / cabs(L(w));
+      phaseCrossings.push({ w, gm, gmDb: 20 * Math.log10(gm) });
+    }
+  }
+  const pick = (list, key) => list.reduce((best, c) => (best && Math.abs(best[key]) <= Math.abs(c[key]) ? best : c), null);
+  const gc = pick(gainCrossings, 'pm'), pc = pick(phaseCrossings, 'gmDb');
+
+  // Peak of 1/|1 + L|: best grid point, then golden section between its neighbours.
+  const sens = (w) => { const z = L(w); return 1 / Math.hypot(1 + z.re, z.im); };
+  let kMax = 0;
+  const S = G.map((z) => 1 / Math.hypot(1 + z.re, z.im));
+  S.forEach((v, k) => { if (v > S[kMax]) kMax = k; });
+  let ms = S[kMax], wMs = ws[kMax];
+  if (ws.length > 1 && Number.isFinite(ms)) {
+    const lo = ws[Math.max(kMax - 1, 0)], hi = ws[Math.min(kMax + 1, ws.length - 1)];
+    const logs = lo > 0;
+    const to = (u) => (logs ? Math.log(u) : u), from = (u) => (logs ? Math.exp(u) : u);
+    const gr = (Math.sqrt(5) - 1) / 2;
+    let a = to(lo), b = to(hi);
+    let c = b - gr * (b - a), d = a + gr * (b - a), fc = sens(from(c)), fd = sens(from(d));
+    for (let i = 0; i < 100 && b - a > 1e-12 * Math.max(1, Math.abs(a)); i++) {
+      if (fc > fd) { b = d; d = c; fd = fc; c = b - gr * (b - a); fc = sens(from(c)); }
+      else { a = c; c = d; fc = fd; d = a + gr * (b - a); fd = sens(from(d)); }
+    }
+    const wBest = from((a + b) / 2), sBest = sens(wBest);
+    if (sBest > ms) { ms = sBest; wMs = wBest; }
+  }
+
+  return {
+    wc: gc ? gc.w : NaN, pm: gc ? gc.pm : Infinity,
+    w180: pc ? pc.w : NaN, gm: pc ? pc.gm : Infinity, gmDb: pc ? pc.gmDb : Infinity,
+    ms, wMs, gainCrossings, phaseCrossings,
+  };
+}
+
+// ---- Root locus and zeros
+
+// Closed-loop eigenvalues of the SISO open loop L = (A, B, C, D) under
+// negative feedback u = −k·y, for each gain in ks: eig(A − k B (1 + k D)⁻¹ C),
+// one sorted array of complex numbers per k ([] where 1 + k D = 0, an
+// ill-posed algebraic loop).
+function rootLocus(sys, ks) {
+  const { A, b, c, d } = siso(sys, 'rootLocus');
+  return ks.map((k) => {
+    const den = 1 + k * d;
+    if (den === 0) return [];
+    const g = k / den;
+    return eig(A.map((row, i) => row.map((v, j) => v - g * b[i] * c[j])));
+  });
+}
+
+// Below this, relative to its rounding-error scale, a feedthrough counts as
+// zero in tzeros. Large on purpose: a realisation computed in floating point
+// (a change of basis, residues) carries rounding noise in its higher Markov
+// parameters, which smaller values turn into spurious far zeros.
+const TZ_TOL = 1e-9;
+
+// Transmission zeros of a SISO model: the finite roots of
+// det [[sI − A, −B], [C, D]] = det(sI − A)·G(s), the numerator of G before
+// any pole–zero cancellation. For a minimal realisation these are the zeros
+// of G; for a non-minimal one they also include the modes that cancel
+// (uncontrollable or unobservable). Sorted like eig.
+// With D ≠ 0 they are eig(A − B D⁻¹ C). With D = 0 the system pencil is
+// deflated (the SISO case of Emami-Naeini and Van Dooren 1982): an orthogonal
+// change of state basis V makes C V = (0, …, 0, c), which forces the last
+// state to zero; dropping it leaves a system of order n − 1 with
+// A ← A₁₁, B ← B₁, C ← A₂₁ and D ← B₂, with the same zeros. Each step uses
+// only orthogonally transformed data, so unlike powers C Aᵏ B it stays
+// accurate for non-normal A. Limitations: deciding whether the new D is zero
+// takes a tolerance (TZ_TOL against its rounding-error scale), so a zero
+// about 1e9 times farther out than the plant's dynamics counts as infinite
+// (omitted); a strongly non-normal realisation (‖A‖ far above its
+// eigenvalues) can still show a spurious far zero or lose one. Clustered
+// zeros are as ill-conditioned as clustered eigenvalues. [] if there are no
+// finite zeros, or if G(s) ≡ 0.
+function tzeros(sys) {
+  let { A, b, c, d } = siso(sys, 'tzeros');
+  // Balance first (zeros are invariant under a change of basis): in a
+  // companion form ‖A‖ is far above the dynamics and would make the rounding
+  // scale below much too pessimistic.
+  A = A.map((r) => Array.from(r));
+  const D = balance(A);
+  b = b.map((v, i) => v / D[i]);
+  c = c.map((v, j) => v * D[j]);
+  const norm2 = (v) => Math.hypot(...v);
+  const b0 = norm2(b);
+  let cErr = norm2(c);
+  for (let n = A.length; ; n--) {
+    if (d !== 0) return eig(A.map((row, i) => row.map((v, j) => v - (b[i] * c[j]) / d)));
+    const cn = norm2(c), bn = norm2(b);
+    if (n === 0 || cn <= TZ_TOL * cErr || bn <= TZ_TOL * b0) return [];
+    // Householder reflector H = I − 2 v vᵀ/(vᵀ v), symmetric and orthogonal,
+    // with H cᵀ = alpha·e_n.
+    const alpha = c[n - 1] > 0 ? -cn : cn;
+    const v = c.slice();
+    v[n - 1] -= alpha;
+    const vv = v.reduce((s, x) => s + x * x, 0);
+    const reflect = (x) => { const f = (2 * x.reduce((s, xi, i) => s + xi * v[i], 0)) / vv; return x.map((xi, i) => xi - f * v[i]); };
+    const HA = transpose(transpose(A).map(reflect));
+    const HAH = HA.map(reflect);
+    const Hb = reflect(b);
+    // The new feedthrough Hb[n − 1] = c·b/|c|: zero unless it stands out
+    // from the rounding error, which is relative to the error in c.
+    const b2 = Hb[n - 1];
+    d = Math.abs(b2) > TZ_TOL * bn * (cErr / cn) ? b2 : 0;
+    cErr = Math.sqrt(HAH.reduce((s, r) => s + r.reduce((s2, x) => s2 + x * x, 0), 0));
+    c = HAH[n - 1].slice(0, n - 1);
+    A = HAH.slice(0, n - 1).map((r) => r.slice(0, n - 1));
+    b = Hb.slice(0, n - 1);
+  }
+}
+
+// ---- Controllability and rank
+
+// Controllability matrix [B, A B, A² B, …, Aⁿ⁻¹ B] (n × n·m).
+function ctrb(A, B) {
+  const n = square(A, 'ctrb');
+  const Bm = asCol(B, n, 'ctrb');
+  const blocks = [Bm];
+  for (let i = 1; i < n; i++) blocks.push(mul(A, blocks[i - 1]));
+  return Bm.map((_, i) => blocks.flatMap((M) => M[i]));
+}
+
+// Numerical rank: the number of diagonal entries of R above tol in a
+// Householder QR with column pivoting (each step takes the remaining column
+// of largest norm, so |R₁₁| ≥ |R₂₂| ≥ …). The default tol is
+// max(m, n)·eps·|R₁₁|, |R₁₁| being the largest column norm. Reliable for
+// ordinary matrices, though unlike the SVD not for every contrived one.
+function rank(M, tol) {
+  const m = M.length, n = m ? M[0].length : 0;
+  if (!m || !n) return 0;
+  const R = M.map((r) => Array.from(r));
+  const colNorm2 = (j, k) => { let s = 0; for (let i = k; i < m; i++) s += R[i][j] * R[i][j]; return s; };
+  const diag = [];
+  for (let k = 0; k < Math.min(m, n); k++) {
+    let p = k, best = -1;
+    for (let j = k; j < n; j++) { const s = colNorm2(j, k); if (s > best) { best = s; p = j; } }
+    for (const row of R) [row[k], row[p]] = [row[p], row[k]];
+    const norm = Math.sqrt(best);
+    diag.push(norm);
+    if (norm === 0) break;
+    // Reflect column k onto alpha·e_k, alpha of opposite sign to R[k][k] (no cancellation).
+    const alpha = R[k][k] > 0 ? -norm : norm;
+    const v = R.map((r, i) => (i < k ? 0 : r[k]));
+    v[k] -= alpha;
+    const vv = v.reduce((s, x) => s + x * x, 0);
+    for (let j = k; j < n; j++) {
+      let s = 0;
+      for (let i = k; i < m; i++) s += v[i] * R[i][j];
+      const f = (2 * s) / vv;
+      for (let i = k; i < m; i++) R[i][j] -= f * v[i];
+    }
+  }
+  const t = tol ?? Math.max(m, n) * EPS * diag[0];
+  return diag.filter((x) => x > t).length;
+}
+
+return { zeros, eye, mul, add, scale, transpose, solve, inv, det, expm, c2d, eig, dare, dlqr, dlqe, csolve, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank };
 })();
 // ---- core/scale.js
 __mods['core/scale.js'] = (() => {
@@ -1398,6 +2242,12 @@ __mods['core/controllers.js'] = (() => {
 //
 // Each runs digitally at the block's sample time Ts. make(params, Ts) returns
 // { step(inputs) -> u }, called once per sample with the inputs at that instant.
+//
+// A law that is linear about an operating point also has linear(params, Ts, at)
+// for the Analysis tab: its discrete state space { A, B, C, D } (arrays of
+// rows) from [r, y1 … ym] to u at Ts, valid while u is inside its limits.
+// at.y holds the measurements at the operating point. The prefilter on r lies
+// outside the loop and is left out. It throws when the law is not linear there.
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
@@ -1440,10 +2290,31 @@ function pidCore(Ts, u0 = 0) {
   };
 }
 
+// pidCore's linear model with the gains g, for m measurements (only y1 is
+// used). States: the integral I (when Ki ≠ 0); the filtered derivative D and
+// the previous measurement (when Kd ≠ 0).
+function pidLinear(g, Ts, m = 1) {
+  const pad = (row) => [...row, ...new Array(m + 1 - row.length).fill(0)];
+  const A = [], B = [], C = [], D = [pad([g.Kp * g.b, -g.Kp])];
+  if (g.Ki) { A.push([1]); B.push(pad([g.Ki * Ts, -g.Ki * Ts])); C.push(1); }
+  if (g.Kd) {
+    const c = 1 / (g.Tf + Ts), i = A.length;
+    for (const row of A) row.push(0, 0);
+    A.push([...new Array(i).fill(0), g.Tf * c, g.Kd * c], new Array(i + 2).fill(0));
+    B.push(pad([0, -g.Kd * c]), pad([0, 1]));
+    C.push(g.Tf * c, g.Kd * c);
+    D[0][1] -= g.Kd * c;
+  }
+  return { A, B, C: [C], D };
+}
+// A static law u = kr r − K · y.
+const staticLinear = (kr, K) => ({ A: [], B: [], C: [[]], D: [[kr, ...K.map((k) => -k)]] });
+
 const CONTROLLERS = {
   off: {
     label: 'Off', summary: 'u = 0', params: [],
     make: () => ({ step: () => 0 }),
+    linear: (p, Ts, at) => staticLinear(0, new Array(at?.y?.length || 1).fill(0)),
   },
   pid: {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
@@ -1452,6 +2323,7 @@ const CONTROLLERS = {
       const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
       return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
     },
+    linear: (p, Ts, at) => pidLinear(p, Ts, at?.y?.length || 1),
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
@@ -1466,6 +2338,7 @@ const CONTROLLERS = {
         },
       };
     },
+    linear: (p) => staticLinear(p.kr, p.K),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -1481,6 +2354,12 @@ const CONTROLLERS = {
           return core(pre(x[0]), y, g);
         },
       };
+    },
+    // At rest (r = y) the slope of the schedule multiplies a zero error, so the
+    // loop sees a PI with the gains at y.
+    linear(p, Ts, at) {
+      const y = at?.y?.[0] ?? p.at[0];
+      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1 }, Ts, at?.y?.length || 1);
     },
   },
   swingUp: {
@@ -1512,6 +2391,12 @@ const CONTROLLERS = {
         },
       };
     },
+    // Linear only where it catches: state feedback on [x, θ, v, ω].
+    linear(p, Ts, at) {
+      const th = wrap(at?.y?.[1] ?? 0);
+      if (Math.abs(th) >= p.thetaS) throw new Error(`the swing-up pumps energy at θ = ${th.toFixed(2)} rad; it is a linear loop only where it catches (|θ| < ${p.thetaS} rad)`);
+      return staticLinear(p.kr, p.K);
+    },
   },
 };
 
@@ -1532,9 +2417,11 @@ function normalizeParam(spec, v, where) {
 
 // One variant: { name, type, params }. Unknown types and bad values fail with
 // the valid choices named.
-function normalizeVariant(v, where = 'variant') {
-  const def = CONTROLLERS[v?.type];
-  if (!def) throw new Error(`${where}.type: one of ${CONTROLLER_TYPES.join(', ')}`);
+// lib: the library the variant comes from (CONTROLLERS, or OBSERVERS for an
+// Observer block); both share this format.
+function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
+  const def = lib[v?.type];
+  if (!def) throw new Error(`${where}.type: one of ${Object.keys(lib).join(', ')}`);
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
   if (params.umin > params.umax) [params.umin, params.umax] = [params.umax, params.umin];
@@ -1543,13 +2430,120 @@ function normalizeVariant(v, where = 'variant') {
   return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
 }
 
-// The law of a Controller block's active variant.
-function makeLaw(variant, Ts) {
-  return CONTROLLERS[variant.type].make(variant.params, Ts);
+// The law of a block's active variant.
+function makeLaw(variant, Ts, lib = CONTROLLERS) {
+  return lib[variant.type].make(variant.params, Ts);
 }
 
 
 return { CONTROLLERS, CONTROLLER_TYPES, normalizeVariant, makeLaw };
+})();
+// ---- core/observers.js
+__mods['core/observers.js'] = (() => {
+// The observer library: estimators an Observer block can run. An observer is
+// built like a controller (design/output/controller-proposal.md): variants
+// with one interface, run at the block's sample time, held in between.
+//
+//   inputs  [u, y1, y2, …]   the plant input first, then the measurements
+//   outputs [x̂1, x̂2, …]     the estimated states
+//
+// make(params, Ts) returns { step(inputs) -> Float64Array of estimates }. At a
+// sample, u is still the value applied over the interval that just ended (an
+// Observer samples before the Controllers), so the estimate is predicted with
+// it and then corrected with the new measurements.
+
+const { c2d, dlqe } = __mods['core/linalg.js'];
+const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
+const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
+
+// The model ẋ = A x + B u, y = C x, given row by row as flat lists; n from B.
+function model(p) {
+  const n = p.B.length, m = p.C.length / n;
+  const A = Array.from({ length: n }, (_, i) => p.A.slice(i * n, i * n + n));
+  const B = p.B.map((b) => [b]);
+  const C = Array.from({ length: m }, (_, i) => p.C.slice(i * n, i * n + n));
+  return { n, m, A, B, C };
+}
+const MODEL = [vec('A', 'Model A (rows)', [0, 1, 0, 0]), vec('B', 'Model B', [0, 1]), vec('C', 'Model C (rows)', [1, 0])];
+function checkModel(p) {
+  const n = p.B.length;
+  if (p.A.length !== n * n) return `A needs n·n = ${n * n} values for n = ${n} states (the length of B)`;
+  if (p.C.length % n) return `C needs a multiple of n = ${n} values, one row per measurement`;
+  return '';
+}
+
+// Predict with the model, then correct with gain L (filter form).
+function estimator({ n, m, Ad, Bd, C, L }) {
+  const x = new Float64Array(n), xp = new Float64Array(n), out = new Float64Array(n);
+  let first = true;
+  return {
+    step(inp) {
+      const u = inp[0] ?? 0;
+      if (first) { first = false; } else {
+        for (let i = 0; i < n; i++) { let s = Bd[i][0] * u; for (let j = 0; j < n; j++) s += Ad[i][j] * x[j]; xp[i] = s; }
+        x.set(xp);
+      }
+      for (let k = 0; k < m; k++) {
+        let e = inp[k + 1] ?? 0;
+        for (let j = 0; j < n; j++) e -= C[k][j] * x[j];
+        for (let i = 0; i < n; i++) x[i] += L[i][k] * e;
+      }
+      out.set(x);
+      return out;
+    },
+  };
+}
+
+const OBSERVERS = {
+  kalman: {
+    label: 'Kalman filter', summary: 'x̂ = model prediction + L (y − C x̂)',
+    params: [...MODEL, vec('Q', 'Process noise Q (diag)', [1, 1]), vec('R', 'Measurement noise R (diag)', [1])],
+    check(p) { const bad = checkModel(p); if (bad) return bad; if (p.Q.length !== p.B.length) return 'Q needs one value per state'; if (p.R.length !== p.C.length / p.B.length) return 'R needs one value per measurement'; return ''; },
+    make(p, Ts) {
+      const { n, m, A, B, C } = model(p);
+      const { Ad, Bd } = c2d(A, B, Ts);
+      const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
+      const { L } = dlqe(Ad, C, diag(p.Q), diag(p.R));
+      return estimator({ n, m, Ad, Bd, C, L });
+    },
+  },
+  luenberger: {
+    label: 'Luenberger observer', summary: 'x̂ = model prediction + L (y − C x̂), L given',
+    params: [...MODEL, vec('L', 'Gain L (rows)', [0.5, 10])],
+    check(p) { const bad = checkModel(p); if (bad) return bad; if (p.L.length !== p.C.length) return 'L needs n × m values, row by row'; return ''; },
+    make(p, Ts) {
+      const { n, m, A, B, C } = model(p);
+      const { Ad, Bd } = c2d(A, B, Ts);
+      const L = Array.from({ length: n }, (_, i) => p.L.slice(i * m, i * m + m));
+      return estimator({ n, m, Ad, Bd, C, L });
+    },
+  },
+  difference: {
+    // The naive estimate: each measurement and its rate by a filtered
+    // finite difference. Outputs y1…ym, then ẏ1…ẏm.
+    label: 'Finite difference', summary: 'x̂ = [y, Δy / Ts, filtered]',
+    params: [num('Tf', 'Rate filter Tf', 0, { unit: 's', min: 0 })],
+    make(p, Ts) {
+      let prev = null, rate = null, out = null;
+      const a = p.Tf > 0 ? Ts / (p.Tf + Ts) : 1;
+      return {
+        step(inp) {
+          const y = Array.from(inp).slice(1);
+          out ??= new Float64Array(2 * y.length);
+          prev ??= y; rate ??= y.map(() => 0);
+          rate = rate.map((r, i) => r + a * ((y[i] - prev[i]) / Ts - r));
+          prev = y;
+          out.set([...y, ...rate].slice(0, out.length));
+          return out;
+        },
+      };
+    },
+  },
+};
+
+const OBSERVER_TYPES = Object.keys(OBSERVERS);
+
+return { OBSERVERS, OBSERVER_TYPES };
 })();
 // ---- core/hil.js
 __mods['core/hil.js'] = (() => {
@@ -1765,6 +2759,7 @@ const { tf2ss, rootBound } = __mods['core/poly.js'];
 const { gaussAt } = __mods['core/signals.js'];
 const { compileExpr } = __mods['core/expr.js'];
 const { normalizeVariant, makeLaw } = __mods['core/controllers.js'];
+const { OBSERVERS } = __mods['core/observers.js'];
 const { EXTERNAL_BLOCK } = __mods['core/hil.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -1823,47 +2818,26 @@ const ELEMENTS = {
       n: (p) => 2 * p.links + 2,
       init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
       out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
-      f: (X, o, u, p, dX) => {
-        const n = p.links, ix = links(p);
-        const m = ix.map((i) => p[`m${i + 1}`]), l = ix.map((i) => p[`l${i + 1}`]);
-        const th = ix.map((i) => X[o + 1 + i]), w = ix.map((i) => X[o + n + 2 + i]), v = X[o + n + 1];
-        const mu = ix.map((i) => m.slice(i).reduce((a, b) => a + b, 0));   // mass at or beyond link i
-        const A = Array.from({ length: n + 1 }, () => new Array(n + 1).fill(0)), rhs = new Array(n + 1).fill(0);
-        A[0][0] = p.M + mu[0];
-        rhs[0] = u - p.b * v;
-        for (const j of ix) {
-          A[0][j + 1] = A[j + 1][0] = mu[j] * l[j] * Math.cos(th[j]);
-          rhs[0] += mu[j] * l[j] * Math.sin(th[j]) * w[j] * w[j];
-          rhs[j + 1] = mu[j] * p.g * l[j] * Math.sin(th[j]);
-          for (const k of ix) {
-            const mk = mu[Math.max(j, k)] * l[j] * l[k];
-            A[j + 1][k + 1] = mk * Math.cos(th[j] - th[k]);
-            rhs[j + 1] -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
-          }
-        }
-        const q = solveLinear(A, rhs);
-        dX[o] = v;
-        for (const j of ix) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
-        dX[o + n + 1] = q[0];
-      },
+      f: (X, o, u, p, dX) => chainRates(X, o, u, p, dX),
       bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
     },
   },
   conicalTank: {
     // A tank that widens upwards (radius r0 at the bottom, R at height H),
     // filled at q and draining through an outlet of area a (Torricelli). Its
-    // dynamics are fast when nearly empty and slow when full.
+    // dynamics are fast when nearly empty and slow when full. It cannot run
+    // dry below 0 or hold more than H: what comes in beyond that overflows.
     label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
     params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
     ode: {
       n: 1,
-      init: (p) => [p.h0],
-      out: (X, o, p, y) => { y[0] = X[o]; },
+      init: (p) => [Math.min(p.H, p.h0)],
+      out: (X, o, p, y) => { y[0] = Math.min(p.H, Math.max(0, X[o])); },
       f: (X, o, u, p, dX) => {
-        const h = Math.max(0, X[o]);
-        const r = p.r0 + ((p.R - p.r0) * Math.min(h, p.H)) / p.H;
+        const h = Math.min(p.H, Math.max(0, X[o]));
+        const r = p.r0 + ((p.R - p.r0) * h) / p.H;
         const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
-        dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+        dX[o] = (h <= 0 && flow < 0) || (h >= p.H && flow > 0) ? 0 : flow / (Math.PI * r * r);
       },
       bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
     },
@@ -1876,33 +2850,65 @@ const ELEMENTS = {
     params: [num('inputs', 'Inputs (r, y…)', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.01, { unit: 's', min: 1e-4 })],
     ports: (p) => [p.inputs, 1],
   },
+  // An observer: inputs u, y1, y2, …; outputs the estimated states, held
+  // between samples. Built like a controller, with variants from observers.js.
+  observer: {
+    label: 'Observer', group: 'Control', formula: 'x̂ = O(u, y)',
+    params: [num('inputs', 'Inputs (u, y…)', 2, { min: 2, int: true }), num('outputs', 'Estimates', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.001, { unit: 's', min: 1e-4 })],
+    ports: (p) => [p.inputs, p.outputs],
+    outputs: (p) => Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`),
+  },
   // A plant outside the page (Live mode, hil.js): its outputs come from the
   // plant every cycle, its inputs are sent back; offline the outputs hold 0.
   external: EXTERNAL_BLOCK,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
+const VARIANT_LIBS = { controller: undefined, observer: OBSERVERS };
+
 const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
-// Solves A x = b (small, dense) by Gaussian elimination with partial pivoting.
-function solveLinear(A, b) {
-  const n = b.length, M = A.map((row, i) => [...row, b[i]]);
-  for (let c = 0; c < n; c++) {
+// The chain's rates, allocation-free (the swing-up planner calls this
+// millions of times): build M(q) q̈ = f in a scratch matrix and solve it.
+const CH = { m: new Float64Array(3), l: new Float64Array(3), mu: new Float64Array(3), th: new Float64Array(3), w: new Float64Array(3), A: new Float64Array(20), q: new Float64Array(4) };
+function chainRates(X, o, u, p, dX) {
+  const n = p.links, N = n + 1, W = N + 1, { m, l, mu, th, w, A, q } = CH;
+  for (let i = 0; i < n; i++) { m[i] = p[`m${i + 1}`]; l[i] = p[`l${i + 1}`]; th[i] = X[o + 1 + i]; w[i] = X[o + n + 2 + i]; }
+  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += m[i]; mu[i] = acc; }   // mass at or beyond link i
+  const v = X[o + n + 1];
+  A.fill(0);
+  A[0] = p.M + mu[0];
+  A[N] = u - p.b * v;   // right-hand side in column N of an N × (N + 1) augmented matrix
+  for (let j = 0; j < n; j++) {
+    const c = mu[j] * l[j] * Math.cos(th[j]), sj = Math.sin(th[j]);
+    A[j + 1] = c; A[(j + 1) * W] = c;
+    A[N] += mu[j] * l[j] * sj * w[j] * w[j];
+    let r = mu[j] * p.g * l[j] * sj;
+    for (let k = 0; k < n; k++) {
+      const mk = mu[Math.max(j, k)] * l[j] * l[k];
+      A[(j + 1) * W + k + 1] = mk * Math.cos(th[j] - th[k]);
+      r -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
+    }
+    A[(j + 1) * W + N] = r;
+  }
+  // Gaussian elimination with partial pivoting on the augmented rows.
+  for (let c = 0; c < N; c++) {
     let piv = c;
-    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
-    [M[c], M[piv]] = [M[piv], M[c]];
-    for (let r = c + 1; r < n; r++) {
-      const f = M[r][c] / M[c][c];
-      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    for (let r = c + 1; r < N; r++) if (Math.abs(A[r * W + c]) > Math.abs(A[piv * W + c])) piv = r;
+    if (piv !== c) for (let k = 0; k < W; k++) { const t = A[c * W + k]; A[c * W + k] = A[piv * W + k]; A[piv * W + k] = t; }
+    for (let r = c + 1; r < N; r++) {
+      const f = A[r * W + c] / A[c * W + c];
+      for (let k = c; k < W; k++) A[r * W + k] -= f * A[c * W + k];
     }
   }
-  const x = new Array(n).fill(0);
-  for (let r = n - 1; r >= 0; r--) {
-    let s = M[r][n];
-    for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k];
-    x[r] = s / M[r][r];
+  for (let r = N - 1; r >= 0; r--) {
+    let s2 = A[r * W + N];
+    for (let k = r + 1; k < N; k++) s2 -= A[r * W + k] * q[k];
+    q[r] = s2 / A[r * W + r];
   }
-  return x;
+  dX[o] = v;
+  for (let j = 0; j < n; j++) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
+  dX[o + n + 1] = q[0];
 }
 
 // Output names of a block (physics blocks may depend on their parameters).
@@ -1979,9 +2985,10 @@ function normalizeDiagram(d, path = 'plant') {
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
-    if (b.type === 'controller') {
-      const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: 'pid' }];
-      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`));
+    if (b.type === 'controller' || b.type === 'observer') {
+      const lib = VARIANT_LIBS[b.type];
+      const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
+      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib));
       out.variant = Math.min(Math.max(0, Math.round(Number(b.variant) || 0)), out.variants.length - 1);
     }
     return out;
@@ -2105,10 +3112,12 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       const def = diagramBlockDef(b.type);
       const [nIn, nOut] = blockPorts(b);
-      if (b.type === 'controller') {
-        const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: 'pid' });
-        const k = add({ kind: 'ctrl', name, ft: false, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts), next: 0, u: 0, x: new Float64Array(nIn) });
-        outs[b.id] = [k]; ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+      if (b.type === 'controller' || b.type === 'observer') {
+        const lib = VARIANT_LIBS[b.type];
+        const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
+        const k = add({ kind: 'ctrl', name, ft: false, observer: b.type === 'observer', inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts, lib), next: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
+        outs[b.id] = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j })) : [k];
+        ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
       if (b.type === 'external') {
@@ -2179,7 +3188,9 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     if (nd.kind === 'ode') { nd.off = n; n += typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n; bound = Math.max(bound, nd.bound); }
   }
   const vals = new Float64Array(nodes.length);
-  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl');
+  // Sampled blocks; observers first, so a controller sampling at the same
+  // instant already sees the new estimate.
+  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl').sort((a, b) => b.observer - a.observer);
   const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
@@ -2198,15 +3209,14 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     // sample is due reads its inputs and sets its held output; the outputs are
     // then evaluated again so what is recorded at t already sees it.
     sample(t, X, o, u) {
-      let due = false;
       for (const nd of ctrls) {
         if (t < nd.next - 1e-9) continue;
         for (let s = 0; s < nd.x.length; s++) nd.x[s] = inOf(nd, s);
-        nd.u = nd.law.step(nd.x);
+        const y = nd.law.step(nd.x);
+        if (nd.observer) nd.outv.set(y.subarray ? y.subarray(0, nd.outv.length) : y.slice(0, nd.outv.length)); else nd.u = y;
         while (nd.next <= t + 1e-9) nd.next += nd.Ts;
-        due = true;
+        self.eval(t, X, o, u, null);
       }
-      if (due) self.eval(t, X, o, u, null);
     },
     // Initial state: zero, except for physics blocks with initial conditions.
     init(X, o) { for (const nd of nodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
@@ -2567,7 +3577,7 @@ const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
 // A cart on a track carrying a chain of rods (angles from upright), with the
 // control force F and the disturbance d as arrows on the cart, and the
 // reference r as a mark on the track.
-function cartView(name, track, rods, caption, box) {
+function cartView(name, rods, caption, box) {
   let chain = [];
   for (let i = rods.length - 1; i >= 0; i--) {
     const { len, angle } = rods[i];
@@ -2580,9 +3590,10 @@ function cartView(name, track, rods, caption, box) {
   return {
     name, kind: '2d', view: box,
     shapes: [
-      { type: 'line', x1: -track, y1: -0.065, x2: track, y2: -0.065, stroke: 'muted', lineWidth: 3 },
+      // The rail has no end, as in the model: a cart pushed away leaves the picture.
+      { type: 'line', x1: -1e3, y1: -0.065, x2: 1e3, y2: -0.065, stroke: 'muted', lineWidth: 3 },
       { type: 'line', x1: 'r', y1: -0.16, x2: 'r', y2: -0.08, stroke: 'ch1', lineWidth: 3 },
-      { type: 'group', x: `clamp(x, ${-track + 0.16}, ${track - 0.16})`, y: 0, shapes: [
+      { type: 'group', x: 'x', y: 0, shapes: [
         { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
         { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
         { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
@@ -2719,6 +3730,59 @@ const EXAMPLE_PLANTS = [
     }],
   },
   {
+    name: 'Encoder errors and torque ripple',
+    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing. Try FFT mode, and a notch filter on the channel.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'ramp', params: { amplitude: 300, time: 0.5, rise: 4 } }] },
+    },
+    scope: { channels: channels('speed_m', 'r', 'speed', 'V'), view: { mode: 'spectrogram' } },
+    ui: { run: 'run', tab: 'plant', setup: 0.42 },
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad/s'),
+        ctrl(130, 90, 2, 0.001, [
+          { name: 'PI speed', type: 'pid', params: { Kp: 0.5, Ki: 5, umin: -48, umax: 48 } },
+          { name: 'Off', type: 'off', params: {} },
+        ]),
+        {
+          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
+          diagram: {
+            blocks: [
+              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'load', type: 'inport', name: 'ripple torque', params: { port: 2 }, x: 300, y: 220 },
+              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.002 }, x: 200, y: 96 },
+              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.1 }, x: 360, y: 100 },
+              { id: 'tsum', type: 'sum', params: { signs: '++' }, x: 440, y: 104 },
+              { id: 'mech', type: 'firstOrder', name: 'inertia and friction', params: { K: 200, tau: 0.2 }, x: 510, y: 96 },
+              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
+              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.1 }, x: 360, y: 280, flip: true },
+            ],
+            wires: [
+              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
+              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+            ],
+          },
+        },
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        { id: 'ripple', type: 'fcn', name: 'torque ripple 6×', params: { expr: '0.05*sin(6*u)' }, x: 500, y: 230, flip: true },
+        { id: 'rough', type: 'noise', name: 'torque noise', params: { std: 0.02, seed: 7 }, x: 330, y: 230, flip: true },
+        // The encoder sits on the load, behind a flexible shaft that resonates at 70 Hz.
+        { id: 'shaft', type: 'secondOrder', name: 'shaft resonance 70 Hz', params: { K: 1, wn: 439.8, zeta: 0.02 }, x: 650, y: 96 },
+        { id: 'enc', type: 'fcn', name: 'encoder 1× and 2× errors', params: { expr: 'u + 0.02*sin(u + 0.5) + 0.01*sin(2*u + 1)' }, x: 820, y: 96 },
+        { id: 'deriv', type: 'tf', name: 'speed from angle', params: { num: [1, 0], den: [0.001, 1], delay: 0 }, x: 990, y: 96 },
+        sink('speed_m', 1160, 106, 'rad/s'),
+        sink('speed', 650, 20, 'rad/s'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'ripple', to: 'rough' }, { from: 'rough', to: 'motor:1' }, { from: 'motor', to: 'int' },
+        { from: 'int', to: 'ripple' }, { from: 'int', to: 'shaft' }, { from: 'shaft', to: 'enc' }, { from: 'enc', to: 'deriv' }, { from: 'deriv', to: 'speed_m' }, { from: 'deriv', to: 'ctrl:1' },
+        { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
+      ],
+    },
+  },
+  {
     name: 'Conical tank, gain scheduling',
     notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The gain-scheduled PI looks its gains up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
     signals: {
@@ -2753,7 +3817,7 @@ const EXAMPLE_PLANTS = [
     views: [{
       name: 'Tank', kind: '2d', view: [-1, -0.25, 1, 1.3],
       shapes: [
-        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)'], ['-0.05 - 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)']], fill: 'ch3', stroke: 'none' },
+        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*h', 'h'], ['-0.05 - 0.45*h', 'h']], fill: 'ch3', stroke: 'none' },
         { type: 'line', x1: -0.05, y1: 0, x2: -0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
         { type: 'line', x1: 0.05, y1: 0, x2: 0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
         { type: 'line', x1: '-0.05 - 0.45*r', y1: 'r', x2: '0.05 + 0.45*r', y2: 'r', stroke: 'ch1', lineWidth: 2 },
@@ -2795,7 +3859,7 @@ const EXAMPLE_PLANTS = [
         { from: 'cart', to: 'ctrl:1' }, { from: 'cart:1', to: 'ctrl:2' }, { from: 'cart:2', to: 'ctrl:3' }, { from: 'cart:3', to: 'ctrl:4' },
       ],
     },
-    views: [cartView('Cart and pole', 1.8, [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
+    views: [cartView('Cart and pole', [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
   },
   {
     name: 'Triple pendulum',
@@ -2826,7 +3890,7 @@ const EXAMPLE_PLANTS = [
         ...Array.from({ length: 8 }, (_, i) => ({ from: i ? `cart:${i}` : 'cart', to: `ctrl:${i + 1}` })),
       ],
     },
-    views: [cartView('Cart and triple pendulum', 1.2, [
+    views: [cartView('Cart and triple pendulum', [
       { len: 0.25, angle: '-theta1' },
       { len: 0.25, angle: '-(theta2 - theta1)' },
       { len: 0.25, angle: '-(theta3 - theta2)' },
@@ -3277,9 +4341,39 @@ function normalizeScope(scope = {}, period, loop = false) {
     if (ch.source === '') ch.on = false;
     if (!(ch.scale > 0) || !Number.isFinite(ch.offset)) throw new Error(`scope.channels[${i}]: scale must be > 0 and offset a number`);
     ch.on = !!ch.on;
+    const f = normalizeFilter(c.filter, `scope.channels[${i}].filter`);
+    if (f) ch.filter = f;
     return ch;
   });
-  return { timebase, channels };
+  const view = normalizeScopeView(scope.view);
+  return { timebase, channels, ...(view ? { view } : {}) };
+}
+
+// A display filter on a channel: the scope shows (and analyses) the filtered
+// signal; the system is not changed. Designs are in core/spectrum.js.
+const FILTER_TYPES = ['lowpass', 'highpass', 'bandpass', 'notch'];
+function normalizeFilter(f, where) {
+  if (!f || !FILTER_TYPES.includes(f.type)) return null;
+  const f0 = Number(f.f0), order = [2, 4, 6, 8].includes(Number(f.order)) ? Number(f.order) : 2, q = Number(f.q ?? Math.SQRT1_2);
+  if (!(f0 > 0)) throw new Error(`${where}.f0: a frequency above 0 Hz`);
+  if (!(q > 0)) throw new Error(`${where}.q: above 0`);
+  return { type: f.type, f0, order, q };
+}
+
+// How the screen shows the channels: in time (the default), as amplitude
+// spectra (FFT) or as one channel's spectrogram; and which channel, if any,
+// has its values on a second axis at the right.
+const VIEW_MODES = ['time', 'fft', 'spectrogram'];
+function normalizeScopeView(v) {
+  if (!v || typeof v !== 'object') return null;
+  const out = {};
+  if (VIEW_MODES.includes(v.mode) && v.mode !== 'time') out.mode = v.mode;
+  if (Number.isInteger(v.right) && v.right >= 0 && v.right < 4) out.right = v.right;
+  const fmin = Number(v.fmin), fmax = Number(v.fmax);
+  if (fmin >= 0 && fmax > fmin) { out.fmin = fmin; out.fmax = fmax; }
+  if (v.db === false) out.db = false;
+  if ([64, 128, 256, 512, 1024].includes(Number(v.size))) out.size = Number(v.size);
+  return Object.keys(out).length ? out : null;
 }
 
 // Every name a scope channel can show: the signals (one per Source) and the
@@ -3400,7 +4494,7 @@ function fmt(v, digits = 3) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, FILTER_TYPES, VIEW_MODES, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
 })();
 // ---- core/tune.js
 __mods['core/tune.js'] = (() => {
@@ -3660,6 +4754,7 @@ __mods['core/systems.js'] = (() => {
 // drive the plant of another. The systems are defined in plants.js.
 
 const { EXAMPLE_PLANTS } = __mods['core/plants.js'];
+const { CONTROLLERS } = __mods['core/controllers.js'];
 const SYSTEM_PARTS = ['input', 'plant', 'controller'];
 
 function fromPlant(e) {
@@ -3669,7 +4764,60 @@ function fromPlant(e) {
     plant: { type: 'diagram', diagram: structuredClone(e.diagram), ...(e.views ? { views: structuredClone(e.views) } : {}) },
     ...(e.scope ? { scope: structuredClone(e.scope) } : {}),
     ...(e.ui ? { ui: structuredClone(e.ui) } : {}),
+    tags: systemTags(e),
   };
+}
+
+// What a system shows, as tags for the library overview (the person,
+// 2026-10-24: "is it linear, non-linear, what kind of controllers, has it
+// observers, what are the features"). Derived from the system itself, plus
+// any the entry adds by hand ({ label, kind }).
+//
+// Values that differ look different at a glance (the person, same day): the
+// kind sets the chip's style (plant: filled; controller: a coloured bar;
+// observer: an outline; feature: a dot; none: an empty dashed chip) and each
+// value has its own tone, the same on every card. The opposites Linear and
+// Nonlinear take the warm and cool poles. Tones are the eight slots of a
+// palette validated for colour-vision deficiency; the label is always shown.
+const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
+const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
+const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
+const TONE = {
+  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'green',
+  PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
+  'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  Disturbance: 'red', FFT: 'blue', Spectrogram: 'magenta', 'Auto-tune': 'green', HIL: 'orange',
+};
+// A value without its own tone gets one from its label, so it stays put.
+const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
+function systemTags(e) {
+  const blocks = [];
+  let nonlinear = false;
+  const walk = (d) => {
+    for (const b of d.blocks) {
+      blocks.push(b);
+      if (b.diagram) walk(b.diagram);
+      // A Function block that only feeds Sinks (an energy shown on the
+      // scope, say) leaves the dynamics linear.
+      const onlyDisplays = d.wires.filter((w) => w.from.split(':')[0] === b.id).every((w) => ['sink', 'terminator'].includes(d.blocks.find((x) => x.id === w.to.split(':')[0])?.type));
+      if (NONLINEAR.has(b.type) && !(b.type === 'fcn' && onlyDisplays)) nonlinear = true;
+    }
+  };
+  walk(e.diagram);
+  const tags = [];
+  const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind, tone: toneOf(label) }); };
+  add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
+  if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
+  if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
+  const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
+  if (!ctrls.length) add('No controller', 'none');
+  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
+  for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
+  if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd')) add('Disturbance', 'feature');
+  if (e.scope?.view?.mode) add(e.scope.view.mode === 'fft' ? 'FFT' : 'Spectrogram', 'feature');
+  if (e.ui?.tab === 'tune') add('Auto-tune', 'feature');
+  for (const t of e.tags ?? []) add(t.label, t.kind ?? 'feature');
+  return tags;
 }
 
 const SYSTEM_LIBRARY = EXAMPLE_PLANTS.map(fromPlant);
@@ -3695,14 +4843,428 @@ function applySystem(project, entry, parts) {
     // A whole system brings its controller, or none: candidates an older
     // project carried do not stay behind.
     if (!entry.controller) { p.candidates = []; delete p.selected; delete p.goal; p.sim = {}; }
-    if (entry.scope) p.scope = { ...(p.scope ?? {}), channels: structuredClone(entry.scope.channels) };
+    if (entry.scope) {
+      p.scope = { ...(p.scope ?? {}), channels: structuredClone(entry.scope.channels) };
+      if (entry.scope.view) p.scope.view = structuredClone(entry.scope.view); else delete p.scope.view;
+    }
     if (entry.ui) p.ui = structuredClone(entry.ui);
   }
   delete p.system.reference;
   return p;
 }
 
-return { SYSTEM_PARTS, SYSTEM_LIBRARY, applySystem };
+return { SYSTEM_PARTS, TAG_TONES, systemTags, SYSTEM_LIBRARY, applySystem };
+})();
+// ---- core/spectrum.js
+__mods['core/spectrum.js'] = (() => {
+// Spectra of sampled signals, for the scope's FFT and spectrogram modes, and
+// the display filters applied in those modes. Pure functions, no DOM: shared
+// by browser and Node. Signals are sampled on a uniform grid with step dt (s);
+// frequencies are in Hz.
+//
+// Amplitude convention: every spectrum here is a single-sided amplitude
+// spectrum in the signal's own unit. A sine A·sin(2π f t + φ) at a bin
+// frequency reads A in its bin; the DC bin reads |mean| (the window-weighted
+// mean, equal to the plain mean for a constant). For a window w of length N
+// with coherent gain CG = Σw / N, that sine gives |X[k]| = A·N·CG / 2, so
+//   amp[k] = 2·|X[k]| / (N·CG)   (DC and Nyquist bins: |X[k]| / (N·CG)).
+// N is the number of signal samples, not the zero-padded FFT length. A tone
+// between bins reads low by the window's scalloping loss: up to 36 % (rect),
+// 15 % (hann), 18 % (hamming), 12 % (blackman), 0.1 % (flattop). Flattop reads
+// amplitudes straight from the bins but smears close tones together; peaks()
+// recovers the loss for hann, hamming and blackman. Noise is not scaled to a
+// density: this is an amplitude spectrum, not a PSD.
+
+// Smallest power of two >= n (1 for n <= 1).
+function nextPow2(n) {
+  let p = 1;
+  while (p < n) p *= 2;
+  return p;
+}
+
+// Largest power of two <= n (0 for n < 1).
+function prevPow2(n) {
+  if (!(n >= 1)) return 0;
+  let p = 1;
+  while (p * 2 <= n) p *= 2;
+  return p;
+}
+
+function checkDt(dt) {
+  if (!(dt > 0) || !Number.isFinite(dt)) throw new Error(`dt must be a positive number, got ${dt}`);
+}
+
+// cos/sin of 2πk/n for k < n/2, kept per length: the spectrogram calls the
+// same small FFT once per frame.
+const TWIDDLES = new Map();
+function twiddles(n) {
+  let t = TWIDDLES.get(n);
+  if (!t) {
+    if (TWIDDLES.size >= 8) TWIDDLES.clear();
+    const half = n >> 1;
+    const cos = new Float64Array(half), sin = new Float64Array(half);
+    for (let k = 0; k < half; k++) {
+      cos[k] = Math.cos((2 * Math.PI * k) / n);
+      sin[k] = Math.sin((2 * Math.PI * k) / n);
+    }
+    t = { cos, sin };
+    TWIDDLES.set(n, t);
+  }
+  return t;
+}
+
+// In-place forward complex FFT, X[k] = Σ x[n] e^(−2πi kn/N), unscaled.
+// Iterative radix-2: bit-reversal permutation, then log2 N butterfly stages.
+function fft(re, im) {
+  const n = re.length;
+  if (im.length !== n) throw new Error(`fft: re and im differ in length (${n}, ${im.length})`);
+  if (n & (n - 1)) throw new Error(`fft: length ${n} is not a power of two`);
+  if (n <= 1) return;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      let tmp = re[i]; re[i] = re[j]; re[j] = tmp;
+      tmp = im[i]; im[i] = im[j]; im[j] = tmp;
+    }
+  }
+  const { cos, sin } = twiddles(n);
+  for (let len = 2; len <= n; len <<= 1) {
+    const half = len >> 1, step = n / len;
+    for (let i = 0; i < n; i += len) {
+      for (let k = 0, t = 0; k < half; k++, t += step) {
+        const wr = cos[t], wi = -sin[t];
+        const a = i + k, b = a + half;
+        const xr = re[b] * wr - im[b] * wi;
+        const xi = re[b] * wi + im[b] * wr;
+        re[b] = re[a] - xr; im[b] = im[a] - xi;
+        re[a] += xr; im[a] += xi;
+      }
+    }
+  }
+}
+
+// w[n] = Σ (−1)^k a_k cos(2π k n / N). Periodic (DFT-even) windows, as used
+// for spectral analysis: a bin-centred sine then sits exactly on a bin.
+function cosineSum(N, a) {
+  const w = new Float64Array(N);
+  if (N <= 1) return w.fill(1);
+  for (let n = 0; n < N; n++) {
+    const x = (2 * Math.PI * n) / N;
+    let v = 0;
+    for (let k = 0; k < a.length; k++) v += (k % 2 ? -a[k] : a[k]) * Math.cos(k * x);
+    w[n] = v;
+  }
+  return w;
+}
+
+const WINDOWS = {
+  rect: (N) => new Float64Array(N).fill(1),
+  hann: (N) => cosineSum(N, [0.5, 0.5]),
+  hamming: (N) => cosineSum(N, [0.54, 0.46]),
+  blackman: (N) => cosineSum(N, [0.42, 0.5, 0.08]),
+  // The common five-term flat top (as in SciPy and MATLAB): wide main lobe,
+  // but under 0.02 dB scalloping, so off-bin tones read their amplitude.
+  flattop: (N) => cosineSum(N, [0.21557895, 0.41663158, 0.277263158, 0.083578947, 0.006947368]),
+};
+
+// Mean of the window: what a sine's FFT bin is scaled by, so amplitudes are
+// corrected by 1 / (N · coherentGain(w)), doubled for the single side.
+function coherentGain(w) {
+  let s = 0;
+  for (let k = 0; k < w.length; k++) s += w[k];
+  return w.length ? s / w.length : 0;
+}
+
+// The last few windows built, because turning a knob recomputes the same one.
+const WINDOW_CACHE = new Map();
+function windowOf(name, N) {
+  if (!WINDOWS[name]) throw new Error(`window "${name}": expected one of ${Object.keys(WINDOWS).join(', ')}`);
+  const key = `${name}:${N}`;
+  let w = WINDOW_CACHE.get(key);
+  if (!w) {
+    if (WINDOW_CACHE.size >= 16) WINDOW_CACHE.clear();
+    w = WINDOWS[name](N);
+    WINDOW_CACHE.set(key, w);
+  }
+  return w;
+}
+
+// Removes, in place, the mean ('mean') or the least-squares line ('linear')
+// from seg[0..n), so the DC bin and its leakage do not swamp low frequencies.
+function detrendInPlace(seg, n, mode) {
+  if (mode === 'none' || n === 0) return;
+  let mean = 0;
+  for (let k = 0; k < n; k++) mean += seg[k];
+  mean /= n;
+  if (mode === 'mean') {
+    for (let k = 0; k < n; k++) seg[k] -= mean;
+    return;
+  }
+  if (mode !== 'linear') throw new Error(`detrend "${mode}": expected none, mean or linear`);
+  const kMid = (n - 1) / 2;
+  let sxy = 0, sxx = 0;
+  for (let k = 0; k < n; k++) { sxy += (k - kMid) * (seg[k] - mean); sxx += (k - kMid) * (k - kMid); }
+  const slope = sxx > 0 ? sxy / sxx : 0;
+  for (let k = 0; k < n; k++) seg[k] -= mean + slope * (k - kMid);
+}
+
+// Windowed FFT of re[0..n) (zero beyond n, length re.length), written as
+// single-sided amplitudes into out[0 .. size/2].
+function frameAmplitudes(re, im, n, w, out) {
+  const size = re.length;
+  let sw = 0;
+  for (let k = 0; k < n; k++) { re[k] *= w[k]; sw += w[k]; }
+  re.fill(0, n);
+  im.fill(0);
+  fft(re, im);
+  const half = size >> 1;
+  const scale = sw > 0 ? 1 / sw : 0;
+  for (let k = 0; k <= half; k++) {
+    const m = Math.sqrt(re[k] * re[k] + im[k] * im[k]) * scale;
+    out[k] = k === 0 || k === half ? m : 2 * m;
+  }
+}
+
+// Single-sided amplitude spectrum of x. With pad, the record is zero-padded to
+// the next power of two (the window covers the samples only); without, the
+// FFT uses the most recent power-of-two samples and drops the earliest.
+function amplitudeSpectrum(x, dt, { window = 'hann', detrend = 'mean', pad = true } = {}) {
+  checkDt(dt);
+  const len = x.length;
+  const n = pad ? len : prevPow2(len);
+  const size = n === 0 ? 0 : pad ? nextPow2(n) : n;
+  const bins = size ? (size >> 1) + 1 : 0;
+  const df = size ? 1 / (size * dt) : 1 / dt;
+  const f = new Float64Array(bins), amp = new Float64Array(bins);
+  for (let k = 0; k < bins; k++) f[k] = k * df;
+  if (!size) return { f, amp, df, fNyquist: 0.5 / dt };
+  const re = new Float64Array(size), im = new Float64Array(size);
+  const start = len - n;
+  for (let k = 0; k < n; k++) re[k] = x[start + k];
+  detrendInPlace(re, n, detrend);
+  frameAmplitudes(re, im, n, windowOf(window, n), amp);
+  return { f, amp, df, fNyquist: 0.5 / dt };
+}
+
+// Short-time amplitude spectra of x: frames of `size` samples (a power of
+// two, shrunk for short signals, at least 16), stepped by size·(1 − overlap).
+// amp[i * bins + k] is frame i at frequency f[k], amplitude-correct as above;
+// t[i] is the frame's centre, in seconds from the first sample. Long records
+// get a longer step so there are at most maxFrames frames. A signal shorter
+// than 16 samples has no frames.
+function spectrogram(x, dt, { window = 'hann', size = 256, overlap = 0.75, detrend = 'mean', maxFrames = 2048 } = {}) {
+  checkDt(dt);
+  const n = x.length;
+  let m = Math.max(16, prevPow2(size));
+  while (m > 16 && m > n) m >>= 1;
+  const bins = (m >> 1) + 1;
+  const f = new Float64Array(bins);
+  for (let k = 0; k < bins; k++) f[k] = k / (m * dt);
+  if (n < m) return { t: new Float64Array(0), f, amp: new Float32Array(0), frames: 0, bins, size: m, hop: 0 };
+  const ov = Math.min(Math.max(Number(overlap) || 0, 0), 0.99);
+  let hop = Math.max(1, Math.round(m * (1 - ov)));
+  let frames = Math.floor((n - m) / hop) + 1;
+  const cap = Math.max(2, Math.floor(maxFrames));
+  if (frames > cap) {
+    hop = Math.ceil((n - m) / (cap - 1));
+    frames = Math.floor((n - m) / hop) + 1;
+  }
+  const w = windowOf(window, m);
+  const re = new Float64Array(m), im = new Float64Array(m);
+  const t = new Float64Array(frames);
+  const amp = new Float32Array(frames * bins);
+  for (let i = 0; i < frames; i++) {
+    const s = i * hop;
+    for (let k = 0; k < m; k++) re[k] = x[s + k];
+    detrendInPlace(re, m, detrend);
+    frameAmplitudes(re, im, m, w, amp.subarray(i * bins, (i + 1) * bins));
+    t[i] = (s + (m - 1) / 2) * dt;
+  }
+  return { t, f, amp, frames, bins, size: m, hop };
+}
+
+// ---- Display filters: second-order sections from the RBJ audio-EQ cookbook.
+// Those are the bilinear transform of the analog prototypes, prewarped so the
+// digital filter has its analog gain exactly at f0. A section is
+//   H(z) = (b0 + b1 z⁻¹ + b2 z⁻²) / (1 + a1 z⁻¹ + a2 z⁻²).
+
+const FILTER_TYPES = ['lowpass', 'highpass', 'bandpass', 'notch'];
+const fmt = (v) => String(Number(v.toPrecision(4)));
+
+function biquad(type, w0, q) {
+  const c = Math.cos(w0), alpha = Math.sin(w0) / (2 * q);
+  // 1 ∓ cos w0 as 2 sin² / 2 cos² of w0/2, exact for very low f0.
+  const omc = 2 * Math.sin(w0 / 2) ** 2, opc = 2 * Math.cos(w0 / 2) ** 2;
+  const num = {
+    lowpass: [omc / 2, omc, omc / 2],
+    highpass: [opc / 2, -opc, opc / 2],
+    bandpass: [alpha, 0, -alpha],
+    notch: [1, -2 * c, 1],
+  }[type];
+  const a0 = 1 + alpha;
+  return { b0: num[0] / a0, b1: num[1] / a0, b2: num[2] / a0, a1: (-2 * c) / a0, a2: (1 - alpha) / a0 };
+}
+
+// type 'lowpass' | 'highpass': Butterworth of order 2, 4, 6 or 8, as order/2
+// sections with Q_k = 1 / (2 cos((2k − 1)π / (2·order))); q is not used.
+// type 'bandpass' (0 dB at f0, bandwidth f0/q) | 'notch': one section with q.
+// f0 is clamped into (0, 0.49/dt), at least 1e-5/dt, and describe says so.
+function designFilter({ type = 'lowpass', f0, q = Math.SQRT1_2, order = 2, dt } = {}) {
+  if (!FILTER_TYPES.includes(type)) throw new Error(`filter type "${type}": expected one of ${FILTER_TYPES.join(', ')}`);
+  checkDt(dt);
+  const asked = Number(f0);
+  if (!Number.isFinite(asked)) throw new Error(`filter f0: expected a number, got ${f0}`);
+  const fMin = 1e-5 / dt, fMax = 0.49 / dt;
+  const fc = Math.min(Math.max(asked, fMin), fMax);
+  const clamped = fc !== asked;
+  const w0 = 2 * Math.PI * fc * dt;
+  const notes = [];
+  if (clamped) notes.push(`f0 ${fmt(asked)} Hz clamped to ${fmt(fc)} Hz (${asked > fc ? 'limit 0.49/dt' : 'limit 1e-5/dt'})`);
+  let sections, describe, ord = 2, Q = Number(q);
+  if (type === 'lowpass' || type === 'highpass') {
+    const want = Number(order);
+    ord = Number.isFinite(want) ? Math.min(8, Math.max(2, 2 * Math.round(want / 2))) : 2;
+    if (ord !== want) notes.push(`order ${order} taken as ${ord}`);
+    sections = [];
+    for (let k = 1; k <= ord / 2; k++) sections.push(biquad(type, w0, 1 / (2 * Math.cos(((2 * k - 1) * Math.PI) / (2 * ord)))));
+    describe = `Butterworth ${type} ${fmt(fc)} Hz, order ${ord}`;
+  } else {
+    if (!(Q > 0)) throw new Error(`filter q: expected a number > 0, got ${q}`);
+    sections = [biquad(type, w0, Q)];
+    describe = `${type} ${fmt(fc)} Hz, Q ${fmt(Q)}`;
+  }
+  if (notes.length) describe += `; ${notes.join('; ')}`;
+  return { type, f0: fc, q: Q, order: ord, dt, sections, describe, clamped };
+}
+
+// Direct form II transposed, in place, starting in the steady state of a
+// constant input equal to y[0], so a signal with an offset has no start
+// transient.
+function runSection({ b0, b1, b2, a1, a2 }, y) {
+  const x0 = y[0];
+  const den = 1 + a1 + a2;
+  const ys = den !== 0 ? ((b0 + b1 + b2) / den) * x0 : 0;
+  let z1 = (b1 + b2) * x0 - (a1 + a2) * ys;
+  let z2 = b2 * x0 - a2 * ys;
+  for (let k = 0; k < y.length; k++) {
+    const xk = y[k];
+    const yk = b0 * xk + z1;
+    z1 = b1 * xk - a1 * yk + z2;
+    z2 = b2 * xk - a2 * yk;
+    y[k] = yk;
+  }
+}
+
+// Samples for the slowest pole of the cascade to decay to 0.1 %.
+function settleSamples(filter) {
+  let r = 0;
+  for (const { a1, a2 } of filter.sections) {
+    const d = a1 * a1 - 4 * a2;
+    const rs = d < 0 ? Math.sqrt(a2) : Math.max(Math.abs(-a1 + Math.sqrt(d)), Math.abs(-a1 - Math.sqrt(d))) / 2;
+    r = Math.max(r, rs);
+  }
+  return r > 0 && r < 1 ? Math.ceil(Math.log(1e-3) / Math.log(r)) : Infinity;
+}
+
+// Filters x into a new Float64Array. zeroPhase runs the cascade forward and
+// then backward (no lag, squared magnitude: −6 dB at a Butterworth f0), on the
+// record extended at both ends by its point reflection, so a slope at an end
+// does not leave an edge transient.
+function applyFilter(filter, x, { zeroPhase = false } = {}) {
+  const n = x.length;
+  if (!zeroPhase || n < 2) {
+    const y = Float64Array.from(x);
+    if (n) for (const s of filter.sections) runSection(s, y);
+    if (n && zeroPhase) for (const s of filter.sections) runSection(s, y);
+    return y;
+  }
+  const pad = Math.min(n - 1, settleSamples(filter));
+  const y = new Float64Array(n + 2 * pad);
+  for (let k = 0; k < n; k++) y[pad + k] = x[k];
+  for (let k = 1; k <= pad; k++) {
+    y[pad - k] = 2 * x[0] - x[k];
+    y[pad + n - 1 + k] = 2 * x[n - 1] - x[n - 1 - k];
+  }
+  for (const s of filter.sections) runSection(s, y);
+  y.reverse();
+  for (const s of filter.sections) runSection(s, y);
+  y.reverse();
+  return y.slice(pad, pad + n);
+}
+
+// Frequency response at the frequencies f (Hz): magnitude (linear) and phase
+// in degrees, summed over the sections so it does not wrap at ±180°.
+function filterResponse(filter, f, dt = filter.dt) {
+  checkDt(dt);
+  const n = f.length;
+  const mag = new Float64Array(n), phaseDeg = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const w = 2 * Math.PI * f[i] * dt;
+    const c1 = Math.cos(w), s1 = Math.sin(w), c2 = Math.cos(2 * w), s2 = Math.sin(2 * w);
+    let m = 1, ph = 0;
+    for (const { b0, b1, b2, a1, a2 } of filter.sections) {
+      const nr = b0 + b1 * c1 + b2 * c2, ni = -(b1 * s1 + b2 * s2);
+      const dr = 1 + a1 * c1 + a2 * c2, di = -(a1 * s1 + a2 * s2);
+      m *= Math.sqrt((nr * nr + ni * ni) / (dr * dr + di * di));
+      ph += Math.atan2(ni * dr - nr * di, nr * dr + ni * di);
+    }
+    mag[i] = m;
+    phaseDeg[i] = (ph * 180) / Math.PI;
+  }
+  return { mag, phaseDeg };
+}
+
+// Peaks are refined by a parabola through the bin and its two neighbours,
+// raised to a power that makes the window's main lobe close to a parabola
+// (Werner & Germain 2010; 0.23 for hann). Hann, hamming and blackman peaks
+// then read amplitude within 0.2 % and frequency within 0.01 bin, padded or
+// not. A parabola would overshoot the flat top, and a rect main lobe is not
+// one: those two keep the bin's amplitude (flattop is right already; rect
+// reads low by up to 36 %) and get a plain parabola for frequency, within
+// about a quarter bin.
+const PEAK_EXPONENT = { hann: 0.23, hamming: 0.19, blackman: 0.13 };
+
+// The largest local maxima of a spectrum made with `window`, largest first,
+// DC excluded, each at least minRel of the largest non-DC bin.
+function peaks(f, amp, { count = 8, minRel = 0.01, window = 'hann' } = {}) {
+  if (!WINDOWS[window]) throw new Error(`window "${window}": expected one of ${Object.keys(WINDOWS).join(', ')}`);
+  const e = PEAK_EXPONENT[window];
+  const n = amp.length;
+  let max = 0;
+  for (let k = 1; k < n; k++) if (amp[k] > max) max = amp[k];
+  if (!(max > 0)) return [];
+  const floor = max * minRel;
+  const found = [];
+  for (let k = 1; k < n - 1; k++) {
+    const a = amp[k];
+    if (a > amp[k - 1] && a >= amp[k + 1] && a >= floor) found.push(k);
+  }
+  found.sort((i, j) => amp[j] - amp[i]);
+  return found.slice(0, count).map((k) => {
+    // Neighbours relative to the peak bin, so both are <= 1 and |p| <= 0.5.
+    const b = amp[k];
+    const A = (amp[k - 1] / b) ** (e ?? 1), C = (amp[k + 1] / b) ** (e ?? 1);
+    const d = A - 2 + C;
+    const p = d < 0 ? (0.5 * (A - C)) / d : 0;
+    const gain = e ? Math.max(1 - 0.25 * (A - C) * p, 0) ** (1 / e) : 1;
+    return { f: f[k] + (p * (f[k + 1] - f[k - 1])) / 2, amp: b * gain };
+  });
+}
+
+// 20·log10(|amp|), floored at floorDb: for the heat map and log display.
+function dbScale(amp, floorDb = -100) {
+  const out = new Float32Array(amp.length);
+  const floor = Math.pow(10, floorDb / 20);
+  for (let k = 0; k < amp.length; k++) {
+    const a = Math.abs(amp[k]);
+    out[k] = a > floor ? 20 * Math.log10(a) : floorDb;
+  }
+  return out;
+}
+
+return { nextPow2, fft, WINDOWS, coherentGain, amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale };
 })();
 // ---- core/live.js
 __mods['core/live.js'] = (() => {
@@ -4240,6 +5802,277 @@ function createDial(opts) {
 
 return { createDial };
 })();
+// ---- ui/freqview.js
+__mods['ui/freqview.js'] = (() => {
+// The scope's frequency views and display filters (the person, 2026-10-24:
+// "we should be able to set the main oscilloscope to FFT mode and to
+// spectrogram mode … filter all the signals … see the filter apply in real
+// time … the time value of the channel overlaid, a second y-axis").
+//
+//   FFT          amplitude spectrum of every channel (what has run so far),
+//                10 dB per division, or linear in each channel's units
+//   Spectrogram  one channel's short-time spectrum over the screen's time,
+//                frequency up the left axis, its time trace on the right axis
+//
+// A channel's display filter changes what the scope shows and analyses, in
+// every mode; the system is not changed. See design/output/instrument.md.
+
+const { amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks } = __mods['core/spectrum.js'];
+const { siUnit, num } = __mods['ui/units.js'];
+const DIVX = 10, DIVY = 8, DB_PER_DIV = 10;
+const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+
+// Filtered signals, cached per run and filter, so turning a knob only
+// filters again what changed.
+const filteredCache = new WeakMap();
+function channelSignal(d, ch) {
+  const v = d?.signals[ch.source];
+  if (!v || !ch.filter) return v;
+  let per = filteredCache.get(d);
+  if (!per) { per = new Map(); filteredCache.set(d, per); }
+  const key = `${ch.source}|${ch.filter.type}|${ch.filter.f0}|${ch.filter.order}|${ch.filter.q}`;
+  if (!per.has(key)) {
+    if (per.size > 32) per.clear();
+    per.set(key, applyFilter(designFilter({ ...ch.filter, dt: dtOf(d) }), v));
+  }
+  return per.get(key);
+}
+const dtOf = (d) => (d.t.length > 1 ? d.t[1] - d.t[0] : 1);
+const nyquist = (d) => 0.5 / dtOf(d);
+function freqRange(scope, d) {
+  const fn = nyquist(d), v = scope.view ?? {};
+  const f1 = Math.min(fn, v.fmax ?? fn), f0 = Math.max(0, Math.min(f1 * 0.999, v.fmin ?? 0));
+  return [f0, f1];
+}
+
+// Spectra and spectrograms are recomputed at most ~100 times per sweep.
+const specCache = new WeakMap();
+function cached(d, key, make) {
+  let per = specCache.get(d);
+  if (!per) { per = new Map(); specCache.set(d, per); }
+  if (!per.has(key)) { if (per.size > 64) per.clear(); per.set(key, make()); }
+  return per.get(key);
+}
+const bucket = (k, n) => Math.min(n, Math.ceil(k / Math.max(1, Math.floor(n / 100))) * Math.max(1, Math.floor(n / 100)));
+function spectrumOf(d, ch, k) {
+  const n = d.t.length - 1, kk = bucket(k, n);
+  const key = `fft|${ch.source}|${JSON.stringify(ch.filter ?? null)}|${kk}`;
+  return cached(d, key, () => { const v = channelSignal(d, ch); return kk >= 32 ? amplitudeSpectrum(v.subarray(0, kk + 1), dtOf(d)) : null; });
+}
+
+// A dark-to-bright heat map (after matplotlib's inferno).
+const STOPS = [[0, 0, 4], [40, 11, 84], [101, 21, 110], [159, 42, 99], [212, 72, 66], [245, 125, 21], [250, 193, 39], [252, 255, 164]];
+function heat(x) {
+  const s = Math.max(0, Math.min(1, x)) * (STOPS.length - 1), i = Math.min(STOPS.length - 2, Math.floor(s)), f = s - i;
+  return STOPS[i].map((c, j) => Math.round(c + f * (STOPS[i + 1][j] - c)));
+}
+
+// Draws the FFT or spectrogram view into the plot. v carries the display's
+// geometry and state: { g, P, W, H, data, scope, k, axis, line, hover,
+// sweeping, tScan, tx, xt, vy, colors, drawGrid, unitLabel }.
+function drawFrequency(v) {
+  const mode = v.scope.view?.mode;
+  if (mode === 'fft') drawFft(v); else drawSpectrogram(v);
+}
+
+function axisText(g, P, labels, side, color) {
+  g.font = `10.5px ${MONO}`;
+  g.fillStyle = color;
+  g.textBaseline = 'middle';
+  g.textAlign = side === 'left' ? 'right' : 'left';
+  labels.forEach(([y, s]) => g.fillText(s, side === 'left' ? P.l - 6 : P.r + 6, Math.min(P.b - 5, Math.max(P.t + 5, y))));
+}
+function freqLabels(g, P, f0, f1) {
+  g.font = `10.5px ${MONO}`;
+  g.fillStyle = 'rgba(200, 210, 218, 0.75)';
+  g.textBaseline = 'top';
+  for (let i = 0; i <= DIVX; i++) {
+    const x = P.l + i * P.dx;
+    g.textAlign = i === 0 ? 'left' : i === DIVX ? 'right' : 'center';
+    g.fillText(siUnit(Number((f0 + ((f1 - f0) * i) / DIVX).toPrecision(4)), 'Hz', 3), x, P.b + 5);
+  }
+}
+
+function drawFft(v) {
+  const { g, P, data, scope, k, axis, line, colors, hover } = v;
+  v.drawGrid(g);
+  const [f0, f1] = freqRange(scope, data);
+  const fx = (f) => P.l + ((f - f0) / (f1 - f0)) * P.w;
+  const db = scope.view?.db !== false;
+  const shown = [0, 1, 2, 3].filter((i) => scope.channels[i].on && channelSignal(data, scope.channels[i]));
+  // The reference level: the largest amplitude of the whole run, rounded up
+  // to 10 dB, so the top line does not move while the sweep fills in.
+  const n = data.t.length - 1;
+  let top = -Infinity;
+  for (const i of shown) { const s = spectrumOf(data, scope.channels[i], n); if (s) for (let j = 1; j < s.amp.length; j++) top = Math.max(top, s.amp[j]); }
+  const refDb = Number.isFinite(top) && top > 0 ? Math.ceil((20 * Math.log10(top)) / DB_PER_DIV) * DB_PER_DIV : 0;
+  const yOf = (i, a) => (db ? P.t + ((refDb - 20 * Math.log10(Math.max(a, 1e-12))) / DB_PER_DIV) * P.dy : P.b - (a / scope.channels[i].scale) * P.dy);
+  freqLabels(g, P, f0, f1);
+  const ai = shown.includes(axis) ? axis : shown[0];
+  if (db) axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, `${refDb - j * DB_PER_DIV}${j ? '' : ' dB'}`]), 'left', 'rgba(200, 210, 218, 0.75)');
+  else if (ai !== undefined) axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, num((DIVY - j) * scope.channels[ai].scale, 3)]), 'left', colors[ai]);
+
+  g.save();
+  g.beginPath(); g.rect(P.l, P.t, P.w, P.h); g.clip();
+  const fn = nyquist(data);
+  if (fn >= f0 && fn <= f1) {
+    const x = Math.round(fx(fn)) + 0.5;
+    g.strokeStyle = 'rgba(235, 240, 245, 0.35)'; g.setLineDash([3, 4]);
+    g.beginPath(); g.moveTo(x, P.t); g.lineTo(x, P.b); g.stroke(); g.setLineDash([]);
+    g.font = `10px ${MONO}`; g.fillStyle = 'rgba(235, 240, 245, 0.55)'; g.textAlign = 'right'; g.textBaseline = 'top';
+    g.fillText('Nyquist', x - 4, P.t + 4);
+  }
+  const order = shown.slice().sort((a, b) => (a === line) - (b === line));
+  for (const i of order) {
+    const s = spectrumOf(data, scope.channels[i], k);
+    if (!s) continue;
+    g.strokeStyle = colors[i];
+    g.lineWidth = i === line ? 2.4 : 1.4;
+    g.globalAlpha = line !== null && i !== line ? 0.55 : 1;
+    g.beginPath();
+    let col = null, mn = 0, mx = 0, started = false;
+    for (let j = 0; j < s.f.length; j++) {
+      if (s.f[j] < f0 || s.f[j] > f1) continue;
+      const x = Math.round(fx(s.f[j])), y = yOf(i, s.amp[j]);
+      if (!started) { g.moveTo(x, y); started = true; col = x; mn = mx = y; continue; }
+      if (x === col) { mn = Math.min(mn, y); mx = Math.max(mx, y); continue; }
+      if (mn !== mx) { g.lineTo(col, mn); g.lineTo(col, mx); }
+      g.lineTo(x, y); col = x; mn = mx = y;
+    }
+    g.stroke();
+  }
+  g.globalAlpha = 1;
+  // The selected channel's filter as a dashed response curve (0 dB at the top line).
+  const fc = scope.channels[ai]?.filter;
+  if (db && fc) {
+    const fl = designFilter({ ...fc, dt: dtOf(data) });
+    const fs = Array.from({ length: 200 }, (_, j) => f0 + ((f1 - f0) * j) / 199);
+    const { mag } = filterResponse(fl, fs, dtOf(data));
+    g.strokeStyle = colors[ai]; g.setLineDash([5, 4]); g.lineWidth = 1.2; g.globalAlpha = 0.8;
+    g.beginPath();
+    fs.forEach((f, j) => { const y = P.t + (-20 * Math.log10(Math.max(mag[j], 1e-9)) / DB_PER_DIV) * P.dy; if (j) g.lineTo(fx(f), y); else g.moveTo(fx(f), y); });
+    g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+  }
+  // Peaks of the selected channel, labelled.
+  const sp = ai !== undefined && spectrumOf(data, scope.channels[ai], k);
+  if (sp) {
+    g.font = `10.5px ${MONO}`; g.textAlign = 'center'; g.textBaseline = 'bottom';
+    for (const pk of peaks(sp.f, sp.amp, { count: 6, minRel: 0.02 })) {
+      if (pk.f < f0 || pk.f > f1 || pk.f < 3 * sp.df) continue;
+      const x = fx(pk.f), y = Math.max(P.t + 26, yOf(ai, pk.amp) - 4);
+      g.fillStyle = 'rgba(10, 13, 16, 0.7)';
+      const s = siUnit(Number(pk.f.toPrecision(3)), 'Hz', 3), w = g.measureText(s).width;
+      g.fillRect(x - w / 2 - 3, y - 13, w + 6, 13);
+      g.fillStyle = colors[ai]; g.fillText(s, x, y);
+    }
+  }
+  if (hover && hover.x >= P.l && hover.x <= P.r && hover.y >= P.t && hover.y <= P.b) {
+    const f = f0 + ((hover.x - P.l) / P.w) * (f1 - f0);
+    const x = Math.round(hover.x) + 0.5;
+    g.strokeStyle = 'rgba(235, 240, 245, 0.5)'; g.setLineDash([2, 3]);
+    g.beginPath(); g.moveTo(x, P.t); g.lineTo(x, P.b); g.stroke(); g.setLineDash([]);
+    const rows = [[`f  ${siUnit(f, 'Hz', 4)}`, 'rgba(235, 240, 245, 0.9)']];
+    for (const i of shown) {
+      const s = spectrumOf(data, scope.channels[i], k);
+      if (!s) continue;
+      const j = Math.max(0, Math.min(s.f.length - 1, Math.round(f / s.df)));
+      rows.push([`${i + 1} ${scope.channels[i].source.padEnd(2)} ${num(s.amp[j])} ${v.unitLabel(scope.channels[i].source)}${db ? `  ${(20 * Math.log10(Math.max(s.amp[j], 1e-12))).toFixed(1)} dB` : ''}`, colors[i]]);
+    }
+    readout(g, P, hover.x, rows);
+  }
+  g.restore();
+}
+
+function drawSpectrogram(v) {
+  const { g, P, data, scope, axis, colors, tx, vy, hover } = v;
+  v.drawGrid(g);
+  const i = scope.channels[axis]?.on && channelSignal(data, scope.channels[axis]) ? axis : [0, 1, 2, 3].find((c) => scope.channels[c].on && channelSignal(data, scope.channels[c]));
+  if (i === undefined) return;
+  const ch = scope.channels[i], sig = channelSignal(data, ch), dt = dtOf(data), n = data.t.length - 1;
+  const [f0, f1] = freqRange(scope, data);
+  const size = scope.view?.size ?? Math.max(64, Math.min(512, 2 ** Math.round(Math.log2(n / 16))));
+  const key = `sg|${ch.source}|${JSON.stringify(ch.filter ?? null)}|${size}`;
+  const img = cached(data, key, () => {
+    const sg = spectrogram(sig, dt, { size, overlap: 0.875, detrend: 'linear' });   // a ramp would flood the lowest bins
+    if (!sg.frames) return null;
+    let mx = -Infinity;
+    for (let q = 0; q < sg.amp.length; q++) mx = Math.max(mx, sg.amp[q]);
+    const top = 20 * Math.log10(Math.max(mx, 1e-12)), range = 80;
+    const cv = document.createElement('canvas');
+    cv.width = sg.frames; cv.height = sg.bins;
+    const im = cv.getContext('2d').createImageData(sg.frames, sg.bins);
+    for (let fr = 0; fr < sg.frames; fr++) for (let b = 0; b < sg.bins; b++) {
+      const a = sg.amp[fr * sg.bins + b], c = heat((20 * Math.log10(Math.max(a, 1e-12)) - top + range) / range);
+      const o = ((sg.bins - 1 - b) * sg.frames + fr) * 4;
+      im.data[o] = c[0]; im.data[o + 1] = c[1]; im.data[o + 2] = c[2]; im.data[o + 3] = 255;
+    }
+    cv.getContext('2d').putImageData(im, 0, 0);
+    return { cv, sg, top };
+  });
+  freqLabelsTime(v);
+  axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, siUnit(Number((f1 - ((f1 - f0) * j) / DIVY).toPrecision(4)), 'Hz', 3)]), 'left', 'rgba(200, 210, 218, 0.75)');
+  axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, num((DIVY / 2 - j) * ch.scale - ch.offset, 3)]), 'right', colors[i]);
+  g.save();
+  g.beginPath(); g.rect(P.l, P.t, P.w, P.h); g.clip();
+  if (img) {
+    const { cv, sg } = img, hop = sg.t.length > 1 ? sg.t[1] - sg.t[0] : dt;
+    // Each frame covers [centre − hop/2, centre + hop/2]; rows from f0 to f1.
+    const b0 = Math.max(0, Math.floor(f0 / (sg.f[1] - sg.f[0]))), b1 = Math.min(sg.bins - 1, Math.ceil(f1 / (sg.f[1] - sg.f[0])));
+    const xa = tx(sg.t[0] - hop / 2), xb = tx(sg.t[sg.frames - 1] + hop / 2);
+    const xEnd = v.sweeping ? Math.min(xb, tx(v.tScan)) : xb;
+    g.save();
+    g.beginPath(); g.rect(P.l, P.t, Math.max(0, xEnd - P.l), P.h); g.clip();
+    g.imageSmoothingEnabled = true;
+    g.drawImage(cv, 0, sg.bins - 1 - b1, sg.frames, b1 - b0 + 1, xa, P.t, xb - xa, P.h);
+    g.restore();
+  }
+  // The channel's time trace over it, on the right axis.
+  const k = v.k;
+  g.strokeStyle = colors[i]; g.lineWidth = 1.4; g.globalAlpha = 0.9;
+  g.beginPath();
+  let started = false;
+  for (let j = 0; j <= k; j++) {
+    const x = tx(data.t[j]), y = vy(ch, sig[j]);
+    if (!Number.isFinite(y)) break;
+    if (x < P.l - 2 || x > P.r + 2) continue;
+    if (started) g.lineTo(x, y); else { g.moveTo(x, y); started = true; }
+  }
+  g.stroke(); g.globalAlpha = 1;
+  if (v.sweeping) {
+    const x = Math.round(tx(v.tScan)) + 0.5;
+    g.strokeStyle = 'rgba(235, 240, 245, 0.35)'; g.beginPath(); g.moveTo(x, P.t); g.lineTo(x, P.b); g.stroke();
+  }
+  if (hover && hover.x >= P.l && hover.x <= P.r && hover.y >= P.t && hover.y <= P.b) {
+    const t = v.xt(hover.x), f = f1 - ((hover.y - P.t) / P.h) * (f1 - f0);
+    readout(g, P, hover.x, [[`t  ${siUnit(t, 's', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`f  ${siUnit(f, 'Hz', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`${i + 1} ${ch.source}`, colors[i]]]);
+  }
+  g.restore();
+}
+
+function freqLabelsTime(v) {
+  const { g, P } = v;
+  g.font = `10.5px ${MONO}`;
+  g.fillStyle = 'rgba(200, 210, 218, 0.75)';
+  g.textBaseline = 'top';
+  for (let i = 0; i <= DIVX; i++) {
+    const x = P.l + i * P.dx;
+    g.textAlign = i === 0 ? 'left' : i === DIVX ? 'right' : 'center';
+    g.fillText(siUnit(Number(v.xt(x).toPrecision(6)), 's', 4), x, P.b + 5);
+  }
+}
+
+function readout(g, P, x, rows) {
+  g.font = `11.5px ${MONO}`;
+  g.textAlign = 'left'; g.textBaseline = 'top';
+  const w = Math.max(...rows.map(([s]) => g.measureText(s).width)) + 14;
+  const bx = x + 10 + w > P.r ? x - 10 - w : x + 10;
+  g.fillStyle = 'rgba(10, 13, 16, 0.85)'; g.fillRect(bx, P.t + 6, w, rows.length * 16 + 8);
+  g.strokeStyle = 'rgba(160, 175, 190, 0.4)'; g.strokeRect(bx + 0.5, P.t + 6.5, w - 1, rows.length * 16 + 7);
+  rows.forEach(([s, c], j) => { g.fillStyle = c; g.fillText(s, bx + 7, P.t + 11 + j * 16); });
+}
+
+return { channelSignal, dtOf, nyquist, freqRange, drawFrequency };
+})();
 // ---- ui/display.js
 __mods['ui/display.js'] = (() => {
 // The scope display: a 10 × 8 division graticule with time labels below and
@@ -4256,9 +6089,11 @@ __mods['ui/display.js'] = (() => {
 
 const { siUnit, num } = __mods['ui/units.js'];
 const { step125 } = __mods['core/scale.js'];
+const { channelSignal, drawFrequency, freqRange } = __mods['ui/freqview.js'];
 const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
+const PAD_RIGHT_AXIS = 50;   // room for a second value axis at the right
 const BG = '#0a0d10';
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
@@ -4291,9 +6126,16 @@ function createDisplay(root, handlers) {
     dpr = window.devicePixelRatio || 1;
     W = Math.max(40, r.width); H = Math.max(40, r.height);
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
-    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - PAD.r, b: H - PAD.b });
-    P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
+    layout();
     draw();
+  }
+  // The plot area; wider right margin when a second axis is shown there.
+  const viewMode = () => scope?.view?.mode ?? 'time';
+  const rightAxis = () => (viewMode() === 'time' ? rightSet() : null);
+  function layout() {
+    const wide = scope && (viewMode() === 'spectrogram' || rightAxis() !== null);
+    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - (wide ? PAD_RIGHT_AXIS : PAD.r), b: H - PAD.b });
+    P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
   }
 
   // Coordinates
@@ -4304,7 +6146,15 @@ function createDisplay(root, handlers) {
   const win = () => [Math.max(0, scope.timebase.position), scope.timebase.position + DIVX * scope.timebase.scale];
   const region = (x, y) => (x < P.l ? 'yaxis' : y > P.b ? 'xaxis' : 'plot');
   const visible = (i) => scope.channels[i].on && !!data?.signals[scope.channels[i].source];
-  const axisChannel = () => (line !== null ? line : selected);
+  const sig = (d, i) => channelSignal(d, scope.channels[i]);
+  // The left axis shows the selected line or channel, unless that one is on
+  // the right axis; then the first other channel that shows a signal.
+  const rightSet = () => (Number.isInteger(scope?.view?.right) && visible(scope.view.right) ? scope.view.right : null);
+  const axisChannel = () => {
+    const a = line !== null ? line : selected, r = viewMode() === 'time' ? rightSet() : null;
+    if (a !== r) return a;
+    return [0, 1, 2, 3].find((i) => i !== r && visible(i)) ?? a;
+  };
   const unitLabel = (name) => handlers.unitOf?.(name) ?? '1';
 
   function drawGrid(g) {
@@ -4344,6 +6194,16 @@ function createDisplay(root, handlers) {
       const y = P.t + j * P.dy;
       const v = (DIVY / 2 - j) * ch.scale - ch.offset;
       g.fillText(num(Math.abs(v) < ch.scale * 1e-9 ? 0 : v, 3), P.l - 22, Math.min(P.b - 5, Math.max(P.t + 5, y)));
+    }
+    // A second channel's values at the right (the person, 2026-10-24).
+    const ri = rightAxis();
+    if (ri === null) return;
+    const rc = scope.channels[ri];
+    g.fillStyle = CHANNEL_COLORS[ri];
+    g.textAlign = 'left';
+    for (let j = 0; j <= DIVY; j++) {
+      const v = (DIVY / 2 - j) * rc.scale - rc.offset;
+      g.fillText(num(Math.abs(v) < rc.scale * 1e-9 ? 0 : v, 3), P.r + 6, Math.min(P.b - 5, Math.max(P.t + 5, P.t + j * P.dy)));
     }
   }
 
@@ -4387,6 +6247,14 @@ function createDisplay(root, handlers) {
     if (!W) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
+    layout();
+    if (viewMode() !== 'time') {
+      const n = data.t.length - 1;
+      drawFrequency({ g: ctx, P, W, H, data, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
+        sweeping: mode !== 'stop', tScan, tx, xt, vy, colors: CHANNEL_COLORS, drawGrid, unitLabel });
+      renderStatus();
+      return;
+    }
     drawGrid(ctx);
     drawAxes(ctx);
     ctx.save();
@@ -4405,7 +6273,7 @@ function createDisplay(root, handlers) {
       ctx.globalAlpha = 0.5 * (1 - (age + 1) / RUNS);
       ctx.lineWidth = 1.2;
       for (const i of order) {
-        const ch = scope.channels[i], v = d.signals[ch.source];
+        const ch = scope.channels[i], v = sig(d, i);
         if (!ch.on || !v) continue;
         ctx.strokeStyle = CHANNEL_COLORS[i];
         trace(ctx, d.t, v, ch, 0, d.t.length - 1);
@@ -4428,7 +6296,7 @@ function createDisplay(root, handlers) {
     }
     for (const i of order) {
       const ch = scope.channels[i];
-      const v = data.signals[ch.source];
+      const v = sig(data, i);
       if (!ch.on || !v) continue;
       const sel = i === line;
       ctx.strokeStyle = CHANNEL_COLORS[i];
@@ -4487,7 +6355,7 @@ function createDisplay(root, handlers) {
       const rows = [[`t  ${siUnit(t, 's', 4)}`, 'rgba(235, 240, 245, 0.9)']];
       if (t >= 0 && t <= data.t[n]) {
         const j = indexAt(t);
-        scope.channels.forEach((ch, i) => { const v = data.signals[ch.source]; if (ch.on && v) rows.push([`${i + 1} ${ch.source.padEnd(2)} ${num(v[j])}`, CHANNEL_COLORS[i]]); });
+        scope.channels.forEach((ch, i) => { const v = sig(data, i); if (ch.on && v) rows.push([`${i + 1} ${ch.source.padEnd(2)} ${num(v[j])}`, CHANNEL_COLORS[i]]); });
       }
       ctx.font = `11.5px ${MONO}`;
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
@@ -4524,8 +6392,10 @@ function createDisplay(root, handlers) {
     // Live mode's state (Live, E-STOP, Offline) and what goes with it.
     const live = handlers.liveTag?.();
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const vm = viewMode(), fr = vm !== 'time' ? freqRange(scope, data) : null;
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
       ${live ? `<span class="st ${live.cls}">${esc(live.text)}</span>${live.note ? `<span class="dim">${esc(live.note)}</span>` : ''}` : ''}
+      ${vm !== 'time' ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
       ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
@@ -4585,7 +6455,7 @@ function createDisplay(root, handlers) {
   // The line under the pointer: a ground marker in the margin, or a trace
   // within a few pixels in the plot.
   function hitLine(x, y) {
-    if (!data || !scope) return null;
+    if (!data || !scope || viewMode() !== 'time') return null;
     if (x < P.l && x > P.l - 22) {
       for (const i of [3, 2, 1, 0]) if (visible(i) && Math.abs(markerY(i)[0] - y) <= 8) return i;
       return null;
@@ -4597,7 +6467,7 @@ function createDisplay(root, handlers) {
     let best = null, bd = 7;
     for (const i of [line, 0, 1, 2, 3]) {
       if (i === null || !visible(i)) continue;
-      const ch = scope.channels[i], v = data.signals[ch.source];
+      const ch = scope.channels[i], v = sig(data, i);
       for (let q = j0; q <= j1; q++) {
         const d = Math.abs(vy(ch, v[q]) - y);
         if (d < bd) { bd = d; best = i; }
@@ -4620,6 +6490,17 @@ function createDisplay(root, handlers) {
     wheelAcc -= steps * 60;
     const { x, y } = pos(e);
     const where = region(x, y);
+    if (viewMode() === 'fft' || (viewMode() === 'spectrogram' && where !== 'xaxis')) {
+      // Frequency axis: around the cursor (x in FFT, y in the spectrogram).
+      const [f0, f1] = freqRange(scope, data), fn = 0.5 / (data.t[1] - data.t[0]);
+      const a = viewMode() === 'fft' ? (x - P.l) / P.w : (P.b - y) / P.h;
+      const fc = f0 + Math.max(0, Math.min(1, a)) * (f1 - f0), span = Math.min(fn, (f1 - f0) * 1.25 ** steps);
+      const nf0 = Math.max(0, Math.min(fn - span, fc - a * span));
+      handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(nf0.toPrecision(5)), fmax: Number((nf0 + span).toPrecision(5)) }; });
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => handlers.endEdit(), 400);
+      return;
+    }
     const zoomTime = where === 'xaxis' || (where === 'plot' && line === null);
     const zoomValues = where === 'yaxis' || where === 'plot';
     const dir = Math.sign(steps);
@@ -4666,6 +6547,12 @@ function createDisplay(root, handlers) {
       gesture.moved = true;
       gesture.x = p.x; gesture.y = p.y;
       canvas.style.cursor = 'grabbing';
+      if (viewMode() === 'fft') {
+        const [f0, f1] = freqRange(scope, data), fn = 0.5 / (data.t[1] - data.t[0]), df = (-dx / P.w) * (f1 - f0);
+        const nf0 = Math.max(0, Math.min(fn - (f1 - f0), f0 + df));
+        if (dx) handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(nf0.toPrecision(5)), fmax: Number((nf0 + f1 - f0).toPrecision(5)) }; });
+        return;
+      }
       handlers.edit((sc) => {
         if (gesture.time && dx) sc.timebase.position = Number((sc.timebase.position - (dx / P.dx) * sc.timebase.scale).toPrecision(6));
         if (gesture.values && dy) for (const i of targets()) { const ch = sc.channels[i]; ch.offset = Number((ch.offset - (dy / P.dy) * ch.scale).toPrecision(6)); }
@@ -4696,6 +6583,13 @@ function createDisplay(root, handlers) {
     const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
     const time = x1 - x0 >= 8, values = y1 - y0 >= 8;
     if (!time && !values) { draw(); return; }
+    if (viewMode() === 'fft') {
+      if (!time) { draw(); return; }
+      const [f0, f1] = freqRange(scope, data), fa = f0 + ((x0 - P.l) / P.w) * (f1 - f0), fb = f0 + ((x1 - P.l) / P.w) * (f1 - f0);
+      handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(Math.max(0, fa).toPrecision(5)), fmax: Number(fb.toPrecision(5)) }; });
+      handlers.endEdit();
+      return;
+    }
     const t0 = xt(x0), t1 = xt(x1), k0 = divsAt(y0), k1 = divsAt(y1);
     handlers.edit((sc) => {
       if (time) sc.timebase = { scale: Number(((t1 - t0) / DIVX).toPrecision(4)), position: Number(t0.toPrecision(6)) };
@@ -4762,6 +6656,11 @@ function createControls(root, app) {
         <button class="key single" id="k-single" title="One sweep, then stop (S)">Single</button>
         <button class="key auto" id="k-auto" title="Fit the display to one period of the input (A)">Auto<br>Scale</button>
       </div>
+      <div class="row viewkeys" id="view-keys" role="group" aria-label="Display mode">
+        <button class="key small" data-view="time" title="Signals over time">Time</button>
+        <button class="key small" data-view="fft" title="Amplitude spectrum of every channel (what has run so far)">FFT</button>
+        <button class="key small" data-view="spectrogram" title="The selected channel's spectrum over time, its trace on the right axis">Spectrogram</button>
+      </div>
     </section>
     <section class="group">
       <h3 class="glabel">Horizontal</h3>
@@ -4770,7 +6669,10 @@ function createControls(root, app) {
     <section class="group">
       <h3 class="glabel">Vertical</h3>
       <div class="row chkeys" id="ch-keys"></div>
-      <label class="srcrow"><span>Source</span><select id="ch-src" class="field"></select></label>
+      <div class="srcrow"><span>Source</span><select id="ch-src" class="field"></select><button class="key small axbtn" id="ch-right" title="Show this channel's values on a second axis at the right of the screen">R axis</button></div>
+      <div class="srcrow filtrow"><span>Filter</span><select id="ch-filt" class="field" title="A display filter: changes what the scope shows and analyses, not the system">
+          <option value="">none</option><option value="lowpass">Low-pass</option><option value="highpass">High-pass</option><option value="bandpass">Band-pass</option><option value="notch">Notch</option></select>
+        <span class="filtparams" id="filt-params"></span></div>
       <div class="row dials" id="v-dials"></div>
     </section>`;
   const $ = (s) => root.querySelector(s);
@@ -4862,6 +6764,42 @@ function createControls(root, app) {
     b.addEventListener('click', () => app.channelKey(i));
     keys.append(b);
   });
+  // Display mode: time, FFT or spectrogram (the scope's view setting).
+  root.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => setScope((sc) => {
+    const view = { ...(sc.view ?? {}) };
+    if (b.dataset.view === 'time') delete view.mode; else view.mode = b.dataset.view;
+    sc.view = view;
+  })));
+  // The selected channel's display filter.
+  const filt = $('#ch-filt');
+  filt.addEventListener('change', () => setScope((sc) => {
+    const c = sc.channels[app.channel];
+    if (!filt.value) { delete c.filter; return; }
+    const fn = app.nyquist?.() ?? 100;
+    c.filter = { type: filt.value, f0: c.filter?.f0 ?? Number((fn / 10).toPrecision(2)), order: c.filter?.order ?? 4, q: c.filter?.q ?? (filt.value === 'notch' ? 5 : filt.value === 'bandpass' ? 2 : Math.SQRT1_2) };
+  }));
+  const fparams = $('#filt-params');
+  fparams.addEventListener('change', (e) => {
+    const el = e.target, key = el.dataset.f;
+    const v = key === 'order' ? Number(el.value) : parseSI(el.value, key === 'f0' ? 'Hz' : '');
+    if (!(v > 0)) { app.toast(key === 'f0' ? 'Type a frequency, e.g. 50, 1.2k, 50 Hz.' : 'Q must be above 0.'); render(); return; }
+    setScope((sc) => { sc.channels[app.channel].filter[key] = v; });
+  });
+  fparams.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); });
+  // The wheel over the frequency nudges it, so the filter can be swept live.
+  fparams.addEventListener('wheel', (e) => {
+    if (e.target.dataset.f !== 'f0') return;
+    e.preventDefault();
+    const f = ch().filter;
+    app.editScope((sc) => { sc.channels[app.channel].filter.f0 = Number((f.f0 * (e.shiftKey ? 1.01 : 1.06) ** (e.deltaY < 0 ? 1 : -1)).toPrecision(4)); });
+    clearTimeout(fparams.wheelTimer);
+    fparams.wheelTimer = setTimeout(() => app.endEdit(), 400);
+  }, { passive: false });
+  $('#ch-right').addEventListener('click', () => setScope((sc) => {
+    const view = { ...(sc.view ?? {}) };
+    if (view.right === app.channel) delete view.right; else view.right = app.channel;
+    sc.view = view;
+  }));
   const src = $('#ch-src');
   // Picking a source switches the channel on; "none" switches it off.
   src.addEventListener('change', () => setScope((sc) => { const c = sc.channels[app.channel]; c.source = src.value; c.on = src.value !== ''; }));
@@ -4886,6 +6824,19 @@ function createControls(root, app) {
     }
     src.value = ch().source;
     src.dataset.names = names.join(',') + '|' + names.map(app.unitOf).join(',');
+    const vm = sc.view?.mode ?? 'time';
+    root.querySelectorAll('[data-view]').forEach((b) => { b.classList.toggle('lit-view', b.dataset.view === vm); b.setAttribute('aria-pressed', String(b.dataset.view === vm)); });
+    const f = ch().filter;
+    filt.value = f?.type ?? '';
+    const fsig = f ? `${f.type}|${f.f0}|${f.order}|${f.q}` : '';
+    if (fparams.dataset.sig !== fsig && !fparams.contains(document.activeElement)) {
+      fparams.innerHTML = !f ? '' : `<input class="field" data-f="f0" value="${siUnit(f.f0, 'Hz', 3)}" aria-label="Filter frequency" title="Corner or centre frequency; the wheel sweeps it">`
+        + (f.type === 'lowpass' || f.type === 'highpass'
+          ? `<select class="field" data-f="order" aria-label="Filter order" title="Order">${[2, 4, 6, 8].map((o) => `<option value="${o}" ${o === f.order ? 'selected' : ''}>${o}.</option>`).join('')}</select>`
+          : `<input class="field" data-f="q" value="${num(f.q, 3)}" aria-label="Filter Q" title="Q">`);
+      fparams.dataset.sig = fsig;
+    }
+    $('#ch-right').classList.toggle('lit-view', sc.view?.right === app.channel);
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
   }
@@ -5492,7 +7443,7 @@ function createPlantEditor(root, app) {
       html += group(g, types.map((t) => { const def = diagramBlockDef(t); return item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="lf">${esc(def.formula)}</span>`); }).join(''));
     }
     html += group('My blocks', lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="lempty">Select a subsystem and save it here.</div>');
-    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="litem ex" data-system="${i}" title="${esc(`${e.notes} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="lf">plant</span></button>` : '')).join(''));
+    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="litem ex" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.notes} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="lf">plant</span></button>` : '')).join(''));
     $('#pl-lib').innerHTML = html;
     $('#pl-lib').querySelectorAll('[data-fold]').forEach((b) => b.addEventListener('click', () => {
       const n = b.dataset.fold;
@@ -6033,7 +7984,8 @@ __mods['ui/controller.js'] = (() => {
 // faded on the display for comparison. The active variant's parameters are
 // edited here; the library adds new variants. See design/output/controller-proposal.md.
 
-const { CONTROLLERS, CONTROLLER_TYPES, normalizeVariant } = __mods['core/controllers.js'];
+const { CONTROLLERS, normalizeVariant } = __mods['core/controllers.js'];
+const { OBSERVERS } = __mods['core/observers.js'];
 const { diagramBlockDef, normalizeDiagram, parseEnd, outputNames } = __mods['core/diagram.js'];
 const { num, parseSI } = __mods['ui/units.js'];
 // What each implementation is for, in a sentence or two.
@@ -6043,7 +7995,11 @@ const ABOUT = {
   stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
+  kalman: 'Predicts the states with the model, then corrects with the measurements, weighing them by the noise you expect: a large R trusts the model, a large Q trusts the measurements. The gain is the steady-state Kalman gain.',
+  luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
+  difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
 };
+const LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
 
 function createControllerTab(host, app) {
   let target = null;   // path of subsystem ids and the Controller block id
@@ -6080,7 +8036,7 @@ function createControllerTab(host, app) {
     const out = [];
     const walk = (d, path, where) => {
       for (const b of d.blocks) {
-        if (b.type === 'controller') out.push({ path: [...path, b.id], block: b, where: [...where, b.name ?? b.id].join(' / ') });
+        if (b.type === 'controller' || b.type === 'observer') out.push({ path: [...path, b.id], block: b, where: [...where, b.name ?? b.id].join(' / ') });
         if (b.type === 'subsystem') walk(b.diagram, [...path, b.id], [...where, b.name ?? b.id]);
       }
     };
@@ -6137,22 +8093,26 @@ function createControllerTab(host, app) {
     const b = c.block;
     $('#ct-blocks').innerHTML = all.length > 1 ? all.map((x) => `<button class="sigkey ${x === c ? 'on' : ''}" data-path="${esc(x.path.join('/'))}">${esc(x.where)}</button>`).join('') : `<div class="ctname">${esc(c.where)}</div>`;
     $('#ct-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
-    $('#ct-block').innerHTML = field('b:inputs', 'Inputs', b.params.inputs, 'r, then the measurements') + field('b:Ts', 'Sample time', num(b.params.Ts, 4), 'Ts, s; every variant runs at it');
+    const obs = b.type === 'observer', lib = LIBS[b.type];
+    $('#ct-block').innerHTML = field('b:inputs', 'Inputs', b.params.inputs, obs ? 'u, then the measurements' : 'r, then the measurements')
+      + (obs ? field('b:outputs', 'Estimates', b.params.outputs, 'states it puts out') : '')
+      + field('b:Ts', 'Sample time', num(b.params.Ts, 4), 'Ts, s; every variant runs at it');
     const names = inputNames(c);
     $('#ct-ports').innerHTML = `<b>In</b> ${names.map((n, k) => `<span class="ctport">${k + 1} ${esc(n)}</span>`).join(' ')}`;
 
     $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="srow vrow ${i === b.variant ? 'editing' : ''}" data-v="${i}" role="option" aria-selected="${i === b.variant}">
-        <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype">${esc(CONTROLLERS[v.type].label)}</span></li>`).join('');
+        <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype">${esc(lib[v.type].label)}</span></li>`).join('');
     $('#ct-del').disabled = b.variants.length < 2;
 
     const v = b.variants[b.variant];
-    const def = CONTROLLERS[v.type];
+    const def = lib[v.type];
     $('#ct-ptitle').textContent = `${v.name} · ${def.summary}`;
     $('#ct-params').innerHTML = def.params.length
-      ? def.params.map((p) => field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
+      ? def.params.map((p) => p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
       : '<p class="phelp">No parameters.</p>';
     $('#ct-about').textContent = ABOUT[v.type] ?? '';
-    $('#ct-lib').innerHTML = CONTROLLER_TYPES.map((t) => `<button class="ctlibitem" data-add="${t}" title="${esc(ABOUT[t] ?? '')}"><b>${esc(CONTROLLERS[t].label)}</b><span>${esc(CONTROLLERS[t].summary)}</span></button>`).join('');
+    // Planned trajectories are made offline, not added by hand.
+    $('#ct-lib').innerHTML = Object.keys(lib).filter((t) => t !== 'trajectory').map((t) => `<button class="ctlibitem" data-add="${t}" title="${esc(ABOUT[t] ?? '')}"><b>${esc(lib[t].label)}</b><span>${esc(lib[t].summary)}</span></button>`).join('');
     bind(c);
   }
 
@@ -6219,6 +8179,7 @@ function createControllerTab(host, app) {
     });
     host.querySelectorAll('[data-add]').forEach((btn) => btn.addEventListener('click', () => edit((blk) => {
       const type = btn.dataset.add, prev = blk.variants[blk.variant].params;
+      if (blk.type === 'observer') { blk.variants.push(normalizeVariant({ type }, 'variant', OBSERVERS)); blk.variant = blk.variants.length - 1; return; }
       const v = normalizeVariant({ type });
       // A new variant drives the same actuator: it keeps the limits, and a
       // gain vector gets one entry per measurement.
@@ -6898,6 +8859,8 @@ function startApp() {
   // and Sinks, r always), each with its unit.
   app.signalNames = () => channelNames(app.project);
   app.sourceNames = () => { const n = app.signalNames().filter((x) => app.project.system.signals[x]); return n.length ? n : ['r']; };
+  // The scope's Nyquist frequency: half its sampling rate.
+  app.nyquist = () => 0.5 / simOf(app.project).sampleTime;
   app.unitOf = (name) => {
     const plant = app.project.system.plant;
     return (plant?.type === 'diagram' ? diagramNames(plant.diagram).units[name] : null) ?? '1';
@@ -7203,7 +9166,8 @@ function startApp() {
   const pop = $('syslib-pop');
   const PART_LABEL = { input: 'Input', plant: 'Plant', controller: 'Controller' };
   pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
-    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="sysnote">${esc(e.notes)}</div></div>
+    + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
+    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => `<span class="tag tag-${t.kind} tone-${t.tone}">${esc(t.label)}</span>`).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
       <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>`).join('');
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
   $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });

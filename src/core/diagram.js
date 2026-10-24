@@ -16,6 +16,7 @@ import { tf2ss, rootBound } from './poly.js';
 import { gaussAt } from './signals.js';
 import { compileExpr } from './expr.js';
 import { normalizeVariant, makeLaw } from './controllers.js';
+import { OBSERVERS } from './observers.js';
 import { EXTERNAL_BLOCK } from './hil.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
@@ -75,47 +76,26 @@ export const ELEMENTS = {
       n: (p) => 2 * p.links + 2,
       init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
       out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
-      f: (X, o, u, p, dX) => {
-        const n = p.links, ix = links(p);
-        const m = ix.map((i) => p[`m${i + 1}`]), l = ix.map((i) => p[`l${i + 1}`]);
-        const th = ix.map((i) => X[o + 1 + i]), w = ix.map((i) => X[o + n + 2 + i]), v = X[o + n + 1];
-        const mu = ix.map((i) => m.slice(i).reduce((a, b) => a + b, 0));   // mass at or beyond link i
-        const A = Array.from({ length: n + 1 }, () => new Array(n + 1).fill(0)), rhs = new Array(n + 1).fill(0);
-        A[0][0] = p.M + mu[0];
-        rhs[0] = u - p.b * v;
-        for (const j of ix) {
-          A[0][j + 1] = A[j + 1][0] = mu[j] * l[j] * Math.cos(th[j]);
-          rhs[0] += mu[j] * l[j] * Math.sin(th[j]) * w[j] * w[j];
-          rhs[j + 1] = mu[j] * p.g * l[j] * Math.sin(th[j]);
-          for (const k of ix) {
-            const mk = mu[Math.max(j, k)] * l[j] * l[k];
-            A[j + 1][k + 1] = mk * Math.cos(th[j] - th[k]);
-            rhs[j + 1] -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
-          }
-        }
-        const q = solveLinear(A, rhs);
-        dX[o] = v;
-        for (const j of ix) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
-        dX[o + n + 1] = q[0];
-      },
+      f: (X, o, u, p, dX) => chainRates(X, o, u, p, dX),
       bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
     },
   },
   conicalTank: {
     // A tank that widens upwards (radius r0 at the bottom, R at height H),
     // filled at q and draining through an outlet of area a (Torricelli). Its
-    // dynamics are fast when nearly empty and slow when full.
+    // dynamics are fast when nearly empty and slow when full. It cannot run
+    // dry below 0 or hold more than H: what comes in beyond that overflows.
     label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
     params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
     ode: {
       n: 1,
-      init: (p) => [p.h0],
-      out: (X, o, p, y) => { y[0] = X[o]; },
+      init: (p) => [Math.min(p.H, p.h0)],
+      out: (X, o, p, y) => { y[0] = Math.min(p.H, Math.max(0, X[o])); },
       f: (X, o, u, p, dX) => {
-        const h = Math.max(0, X[o]);
-        const r = p.r0 + ((p.R - p.r0) * Math.min(h, p.H)) / p.H;
+        const h = Math.min(p.H, Math.max(0, X[o]));
+        const r = p.r0 + ((p.R - p.r0) * h) / p.H;
         const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
-        dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+        dX[o] = (h <= 0 && flow < 0) || (h >= p.H && flow > 0) ? 0 : flow / (Math.PI * r * r);
       },
       bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
     },
@@ -128,33 +108,65 @@ export const ELEMENTS = {
     params: [num('inputs', 'Inputs (r, y…)', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.01, { unit: 's', min: 1e-4 })],
     ports: (p) => [p.inputs, 1],
   },
+  // An observer: inputs u, y1, y2, …; outputs the estimated states, held
+  // between samples. Built like a controller, with variants from observers.js.
+  observer: {
+    label: 'Observer', group: 'Control', formula: 'x̂ = O(u, y)',
+    params: [num('inputs', 'Inputs (u, y…)', 2, { min: 2, int: true }), num('outputs', 'Estimates', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.001, { unit: 's', min: 1e-4 })],
+    ports: (p) => [p.inputs, p.outputs],
+    outputs: (p) => Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`),
+  },
   // A plant outside the page (Live mode, hil.js): its outputs come from the
   // plant every cycle, its inputs are sent back; offline the outputs hold 0.
   external: EXTERNAL_BLOCK,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
+const VARIANT_LIBS = { controller: undefined, observer: OBSERVERS };
+
 const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
-// Solves A x = b (small, dense) by Gaussian elimination with partial pivoting.
-function solveLinear(A, b) {
-  const n = b.length, M = A.map((row, i) => [...row, b[i]]);
-  for (let c = 0; c < n; c++) {
+// The chain's rates, allocation-free (the swing-up planner calls this
+// millions of times): build M(q) q̈ = f in a scratch matrix and solve it.
+const CH = { m: new Float64Array(3), l: new Float64Array(3), mu: new Float64Array(3), th: new Float64Array(3), w: new Float64Array(3), A: new Float64Array(20), q: new Float64Array(4) };
+function chainRates(X, o, u, p, dX) {
+  const n = p.links, N = n + 1, W = N + 1, { m, l, mu, th, w, A, q } = CH;
+  for (let i = 0; i < n; i++) { m[i] = p[`m${i + 1}`]; l[i] = p[`l${i + 1}`]; th[i] = X[o + 1 + i]; w[i] = X[o + n + 2 + i]; }
+  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += m[i]; mu[i] = acc; }   // mass at or beyond link i
+  const v = X[o + n + 1];
+  A.fill(0);
+  A[0] = p.M + mu[0];
+  A[N] = u - p.b * v;   // right-hand side in column N of an N × (N + 1) augmented matrix
+  for (let j = 0; j < n; j++) {
+    const c = mu[j] * l[j] * Math.cos(th[j]), sj = Math.sin(th[j]);
+    A[j + 1] = c; A[(j + 1) * W] = c;
+    A[N] += mu[j] * l[j] * sj * w[j] * w[j];
+    let r = mu[j] * p.g * l[j] * sj;
+    for (let k = 0; k < n; k++) {
+      const mk = mu[Math.max(j, k)] * l[j] * l[k];
+      A[(j + 1) * W + k + 1] = mk * Math.cos(th[j] - th[k]);
+      r -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
+    }
+    A[(j + 1) * W + N] = r;
+  }
+  // Gaussian elimination with partial pivoting on the augmented rows.
+  for (let c = 0; c < N; c++) {
     let piv = c;
-    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
-    [M[c], M[piv]] = [M[piv], M[c]];
-    for (let r = c + 1; r < n; r++) {
-      const f = M[r][c] / M[c][c];
-      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    for (let r = c + 1; r < N; r++) if (Math.abs(A[r * W + c]) > Math.abs(A[piv * W + c])) piv = r;
+    if (piv !== c) for (let k = 0; k < W; k++) { const t = A[c * W + k]; A[c * W + k] = A[piv * W + k]; A[piv * W + k] = t; }
+    for (let r = c + 1; r < N; r++) {
+      const f = A[r * W + c] / A[c * W + c];
+      for (let k = c; k < W; k++) A[r * W + k] -= f * A[c * W + k];
     }
   }
-  const x = new Array(n).fill(0);
-  for (let r = n - 1; r >= 0; r--) {
-    let s = M[r][n];
-    for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k];
-    x[r] = s / M[r][r];
+  for (let r = N - 1; r >= 0; r--) {
+    let s2 = A[r * W + N];
+    for (let k = r + 1; k < N; k++) s2 -= A[r * W + k] * q[k];
+    q[r] = s2 / A[r * W + r];
   }
-  return x;
+  dX[o] = v;
+  for (let j = 0; j < n; j++) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
+  dX[o + n + 1] = q[0];
 }
 
 // Output names of a block (physics blocks may depend on their parameters).
@@ -231,9 +243,10 @@ export function normalizeDiagram(d, path = 'plant') {
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
-    if (b.type === 'controller') {
-      const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: 'pid' }];
-      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`));
+    if (b.type === 'controller' || b.type === 'observer') {
+      const lib = VARIANT_LIBS[b.type];
+      const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
+      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib));
       out.variant = Math.min(Math.max(0, Math.round(Number(b.variant) || 0)), out.variants.length - 1);
     }
     return out;
@@ -357,10 +370,12 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       const def = diagramBlockDef(b.type);
       const [nIn, nOut] = blockPorts(b);
-      if (b.type === 'controller') {
-        const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: 'pid' });
-        const k = add({ kind: 'ctrl', name, ft: false, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts), next: 0, u: 0, x: new Float64Array(nIn) });
-        outs[b.id] = [k]; ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+      if (b.type === 'controller' || b.type === 'observer') {
+        const lib = VARIANT_LIBS[b.type];
+        const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
+        const k = add({ kind: 'ctrl', name, ft: false, observer: b.type === 'observer', inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts, lib), next: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
+        outs[b.id] = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j })) : [k];
+        ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
       if (b.type === 'external') {
@@ -431,7 +446,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     if (nd.kind === 'ode') { nd.off = n; n += typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n; bound = Math.max(bound, nd.bound); }
   }
   const vals = new Float64Array(nodes.length);
-  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl');
+  // Sampled blocks; observers first, so a controller sampling at the same
+  // instant already sees the new estimate.
+  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl').sort((a, b) => b.observer - a.observer);
   const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
@@ -450,15 +467,14 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // sample is due reads its inputs and sets its held output; the outputs are
     // then evaluated again so what is recorded at t already sees it.
     sample(t, X, o, u) {
-      let due = false;
       for (const nd of ctrls) {
         if (t < nd.next - 1e-9) continue;
         for (let s = 0; s < nd.x.length; s++) nd.x[s] = inOf(nd, s);
-        nd.u = nd.law.step(nd.x);
+        const y = nd.law.step(nd.x);
+        if (nd.observer) nd.outv.set(y.subarray ? y.subarray(0, nd.outv.length) : y.slice(0, nd.outv.length)); else nd.u = y;
         while (nd.next <= t + 1e-9) nd.next += nd.Ts;
-        due = true;
+        self.eval(t, X, o, u, null);
       }
-      if (due) self.eval(t, X, o, u, null);
     },
     // Initial state: zero, except for physics blocks with initial conditions.
     init(X, o) { for (const nd of nodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },

@@ -53,5 +53,7 @@ One JSON document. Everything the person sets up is in it, including how the dis
 - `ui` (optional): how the page opens: `run` (`run`, `stop`, `single`), `tab` (`input`, `plant`, `controller`), `view` (a view's name; else the diagram), `setup` (the setup area's share of the page height, 0–1). Saving and Export HTML write the page's current state here; opening a file or loading a system applies it once. Unknown values are dropped.
 - Source and Sink blocks carry `unit` (default `"1"`). `system.signals` holds one signal per Source name, nothing else (`r` when the diagram has no Source).
 - A diagram with its own Sources is a whole system: old `candidates` beside it are not run as a closed loop, and loading a whole system from the library replaces them.
+- `scope.channels[i].filter` (optional): a display filter `{ "type": "lowpass" | "highpass" | "bandpass" | "notch", "f0": Hz, "order": 2 | 4 | 6 | 8, "q": … }`.
+- `scope.view` (optional): `{ "mode": "fft" | "spectrogram", "fmin", "fmax" (Hz), "db": false for a linear FFT, "size": spectrogram frame length, "right": channel index on the right axis }`; absent means the time view.
 - `scope.channels[i].offset` is in the channel's units: the value drawn on the centre line is `−offset`.
 - Older files still load: `system.reference` becomes `system.signals.r`; version 1 (one reference block, `sim.duration`) becomes one component with a period no shorter than the old run; a `pulse` becomes a Square with count 1; a Square's `duty` becomes its high time.

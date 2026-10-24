@@ -102,6 +102,8 @@ function startApp() {
   // and Sinks, r always), each with its unit.
   app.signalNames = () => channelNames(app.project);
   app.sourceNames = () => { const n = app.signalNames().filter((x) => app.project.system.signals[x]); return n.length ? n : ['r']; };
+  // The scope's Nyquist frequency: half its sampling rate.
+  app.nyquist = () => 0.5 / simOf(app.project).sampleTime;
   app.unitOf = (name) => {
     const plant = app.project.system.plant;
     return (plant?.type === 'diagram' ? diagramNames(plant.diagram).units[name] : null) ?? '1';
@@ -407,7 +409,8 @@ function startApp() {
   const pop = $('syslib-pop');
   const PART_LABEL = { input: 'Input', plant: 'Plant', controller: 'Controller' };
   pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
-    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="sysnote">${esc(e.notes)}</div></div>
+    + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
+    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => `<span class="tag tag-${t.kind} tone-${t.tone}">${esc(t.label)}</span>`).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
       <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>`).join('');
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
   $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });

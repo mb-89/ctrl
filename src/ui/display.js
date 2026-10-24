@@ -12,10 +12,12 @@
 
 import { siUnit, num } from './units.js';
 import { step125 } from '../core/scale.js';
+import { channelSignal, drawFrequency, freqRange } from './freqview.js';
 
 export const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
+const PAD_RIGHT_AXIS = 50;   // room for a second value axis at the right
 const BG = '#0a0d10';
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
@@ -48,9 +50,16 @@ export function createDisplay(root, handlers) {
     dpr = window.devicePixelRatio || 1;
     W = Math.max(40, r.width); H = Math.max(40, r.height);
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
-    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - PAD.r, b: H - PAD.b });
-    P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
+    layout();
     draw();
+  }
+  // The plot area; wider right margin when a second axis is shown there.
+  const viewMode = () => scope?.view?.mode ?? 'time';
+  const rightAxis = () => (viewMode() === 'time' ? rightSet() : null);
+  function layout() {
+    const wide = scope && (viewMode() === 'spectrogram' || rightAxis() !== null);
+    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - (wide ? PAD_RIGHT_AXIS : PAD.r), b: H - PAD.b });
+    P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
   }
 
   // Coordinates
@@ -61,7 +70,15 @@ export function createDisplay(root, handlers) {
   const win = () => [Math.max(0, scope.timebase.position), scope.timebase.position + DIVX * scope.timebase.scale];
   const region = (x, y) => (x < P.l ? 'yaxis' : y > P.b ? 'xaxis' : 'plot');
   const visible = (i) => scope.channels[i].on && !!data?.signals[scope.channels[i].source];
-  const axisChannel = () => (line !== null ? line : selected);
+  const sig = (d, i) => channelSignal(d, scope.channels[i]);
+  // The left axis shows the selected line or channel, unless that one is on
+  // the right axis; then the first other channel that shows a signal.
+  const rightSet = () => (Number.isInteger(scope?.view?.right) && visible(scope.view.right) ? scope.view.right : null);
+  const axisChannel = () => {
+    const a = line !== null ? line : selected, r = viewMode() === 'time' ? rightSet() : null;
+    if (a !== r) return a;
+    return [0, 1, 2, 3].find((i) => i !== r && visible(i)) ?? a;
+  };
   const unitLabel = (name) => handlers.unitOf?.(name) ?? '1';
 
   function drawGrid(g) {
@@ -101,6 +118,16 @@ export function createDisplay(root, handlers) {
       const y = P.t + j * P.dy;
       const v = (DIVY / 2 - j) * ch.scale - ch.offset;
       g.fillText(num(Math.abs(v) < ch.scale * 1e-9 ? 0 : v, 3), P.l - 22, Math.min(P.b - 5, Math.max(P.t + 5, y)));
+    }
+    // A second channel's values at the right (the person, 2026-10-24).
+    const ri = rightAxis();
+    if (ri === null) return;
+    const rc = scope.channels[ri];
+    g.fillStyle = CHANNEL_COLORS[ri];
+    g.textAlign = 'left';
+    for (let j = 0; j <= DIVY; j++) {
+      const v = (DIVY / 2 - j) * rc.scale - rc.offset;
+      g.fillText(num(Math.abs(v) < rc.scale * 1e-9 ? 0 : v, 3), P.r + 6, Math.min(P.b - 5, Math.max(P.t + 5, P.t + j * P.dy)));
     }
   }
 
@@ -144,6 +171,14 @@ export function createDisplay(root, handlers) {
     if (!W) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
+    layout();
+    if (viewMode() !== 'time') {
+      const n = data.t.length - 1;
+      drawFrequency({ g: ctx, P, W, H, data, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
+        sweeping: mode !== 'stop', tScan, tx, xt, vy, colors: CHANNEL_COLORS, drawGrid, unitLabel });
+      renderStatus();
+      return;
+    }
     drawGrid(ctx);
     drawAxes(ctx);
     ctx.save();
@@ -162,7 +197,7 @@ export function createDisplay(root, handlers) {
       ctx.globalAlpha = 0.5 * (1 - (age + 1) / RUNS);
       ctx.lineWidth = 1.2;
       for (const i of order) {
-        const ch = scope.channels[i], v = d.signals[ch.source];
+        const ch = scope.channels[i], v = sig(d, i);
         if (!ch.on || !v) continue;
         ctx.strokeStyle = CHANNEL_COLORS[i];
         trace(ctx, d.t, v, ch, 0, d.t.length - 1);
@@ -185,7 +220,7 @@ export function createDisplay(root, handlers) {
     }
     for (const i of order) {
       const ch = scope.channels[i];
-      const v = data.signals[ch.source];
+      const v = sig(data, i);
       if (!ch.on || !v) continue;
       const sel = i === line;
       ctx.strokeStyle = CHANNEL_COLORS[i];
@@ -244,7 +279,7 @@ export function createDisplay(root, handlers) {
       const rows = [[`t  ${siUnit(t, 's', 4)}`, 'rgba(235, 240, 245, 0.9)']];
       if (t >= 0 && t <= data.t[n]) {
         const j = indexAt(t);
-        scope.channels.forEach((ch, i) => { const v = data.signals[ch.source]; if (ch.on && v) rows.push([`${i + 1} ${ch.source.padEnd(2)} ${num(v[j])}`, CHANNEL_COLORS[i]]); });
+        scope.channels.forEach((ch, i) => { const v = sig(data, i); if (ch.on && v) rows.push([`${i + 1} ${ch.source.padEnd(2)} ${num(v[j])}`, CHANNEL_COLORS[i]]); });
       }
       ctx.font = `11.5px ${MONO}`;
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
@@ -281,8 +316,10 @@ export function createDisplay(root, handlers) {
     // Live mode's state (Live, E-STOP, Offline) and what goes with it.
     const live = handlers.liveTag?.();
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const vm = viewMode(), fr = vm !== 'time' ? freqRange(scope, data) : null;
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
       ${live ? `<span class="st ${live.cls}">${esc(live.text)}</span>${live.note ? `<span class="dim">${esc(live.note)}</span>` : ''}` : ''}
+      ${vm !== 'time' ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
       ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
@@ -342,7 +379,7 @@ export function createDisplay(root, handlers) {
   // The line under the pointer: a ground marker in the margin, or a trace
   // within a few pixels in the plot.
   function hitLine(x, y) {
-    if (!data || !scope) return null;
+    if (!data || !scope || viewMode() !== 'time') return null;
     if (x < P.l && x > P.l - 22) {
       for (const i of [3, 2, 1, 0]) if (visible(i) && Math.abs(markerY(i)[0] - y) <= 8) return i;
       return null;
@@ -354,7 +391,7 @@ export function createDisplay(root, handlers) {
     let best = null, bd = 7;
     for (const i of [line, 0, 1, 2, 3]) {
       if (i === null || !visible(i)) continue;
-      const ch = scope.channels[i], v = data.signals[ch.source];
+      const ch = scope.channels[i], v = sig(data, i);
       for (let q = j0; q <= j1; q++) {
         const d = Math.abs(vy(ch, v[q]) - y);
         if (d < bd) { bd = d; best = i; }
@@ -377,6 +414,17 @@ export function createDisplay(root, handlers) {
     wheelAcc -= steps * 60;
     const { x, y } = pos(e);
     const where = region(x, y);
+    if (viewMode() === 'fft' || (viewMode() === 'spectrogram' && where !== 'xaxis')) {
+      // Frequency axis: around the cursor (x in FFT, y in the spectrogram).
+      const [f0, f1] = freqRange(scope, data), fn = 0.5 / (data.t[1] - data.t[0]);
+      const a = viewMode() === 'fft' ? (x - P.l) / P.w : (P.b - y) / P.h;
+      const fc = f0 + Math.max(0, Math.min(1, a)) * (f1 - f0), span = Math.min(fn, (f1 - f0) * 1.25 ** steps);
+      const nf0 = Math.max(0, Math.min(fn - span, fc - a * span));
+      handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(nf0.toPrecision(5)), fmax: Number((nf0 + span).toPrecision(5)) }; });
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => handlers.endEdit(), 400);
+      return;
+    }
     const zoomTime = where === 'xaxis' || (where === 'plot' && line === null);
     const zoomValues = where === 'yaxis' || where === 'plot';
     const dir = Math.sign(steps);
@@ -423,6 +471,12 @@ export function createDisplay(root, handlers) {
       gesture.moved = true;
       gesture.x = p.x; gesture.y = p.y;
       canvas.style.cursor = 'grabbing';
+      if (viewMode() === 'fft') {
+        const [f0, f1] = freqRange(scope, data), fn = 0.5 / (data.t[1] - data.t[0]), df = (-dx / P.w) * (f1 - f0);
+        const nf0 = Math.max(0, Math.min(fn - (f1 - f0), f0 + df));
+        if (dx) handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(nf0.toPrecision(5)), fmax: Number((nf0 + f1 - f0).toPrecision(5)) }; });
+        return;
+      }
       handlers.edit((sc) => {
         if (gesture.time && dx) sc.timebase.position = Number((sc.timebase.position - (dx / P.dx) * sc.timebase.scale).toPrecision(6));
         if (gesture.values && dy) for (const i of targets()) { const ch = sc.channels[i]; ch.offset = Number((ch.offset - (dy / P.dy) * ch.scale).toPrecision(6)); }
@@ -453,6 +507,13 @@ export function createDisplay(root, handlers) {
     const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
     const time = x1 - x0 >= 8, values = y1 - y0 >= 8;
     if (!time && !values) { draw(); return; }
+    if (viewMode() === 'fft') {
+      if (!time) { draw(); return; }
+      const [f0, f1] = freqRange(scope, data), fa = f0 + ((x0 - P.l) / P.w) * (f1 - f0), fb = f0 + ((x1 - P.l) / P.w) * (f1 - f0);
+      handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(Math.max(0, fa).toPrecision(5)), fmax: Number(fb.toPrecision(5)) }; });
+      handlers.endEdit();
+      return;
+    }
     const t0 = xt(x0), t1 = xt(x1), k0 = divsAt(y0), k1 = divsAt(y1);
     handlers.edit((sc) => {
       if (time) sc.timebase = { scale: Number(((t1 - t0) / DIVX).toPrecision(4)), position: Number(t0.toPrecision(6)) };

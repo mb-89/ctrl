@@ -242,12 +242,12 @@ test('2D views compile and move with the signals; library parts combine', async 
   assert.equal(mixed.system.signals.r.components[0].type, 'square', 'the input stays from the motor');
   assert.equal(mixed.system.plant.views[0].name, 'Cart and triple pendulum');
   assert.deepEqual(mixed.scope.channels.map((c) => c.source), ['r', '', '', 'd'], 'a whole load brings the system scope; a plant load keeps what still exists');
-  assert.ok(SYSTEM_LIBRARY.every((s) => s.plant.views?.length), 'every system has a view');
+  assert.ok(SYSTEM_LIBRARY.every((s) => s.plant.views?.length || s.scope?.view?.mode), 'every system has a view, or opens the scope in a frequency view');
   const { loopReady } = await import('../src/core/project.js');
   const fromLoop = normalizeProject(applySystem(EXAMPLES[0], msd, ['input', 'plant']));
   assert.equal(fromLoop.candidates.length, 0, 'a whole load leaves no controller of an older project behind');
   assert.equal(loopReady({ ...fromLoop, candidates: EXAMPLES[0].candidates }), false, 'a diagram with its own Sources is never run as a loop plant');
-  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && s.ui.tab === 'plant' && s.plant.views.some((v) => v.name === s.ui.view)), 'every system opens running on its view');
+  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && (!s.ui.view || s.plant.views.some((v) => v.name === s.ui.view))), 'every system opens running, on a view it has');
   assert.deepEqual(p.ui, { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' }, 'a whole load brings how the system opens');
   assert.deepEqual(normalizeProject({ ui: { run: 'fast', tab: 'plant', extra: 1 } }).ui, { tab: 'plant' }, 'unknown ui values are dropped');
   assert.throws(() => normalizeProject({ system: { plant: { type: 'diagram', diagram: { blocks: [], wires: [] }, views: [{ kind: '2d', shapes: [{ type: 'line', x1: 'sin(' }] }] } } }), /views\[0\]/);
@@ -334,4 +334,23 @@ test('controller variants are validated; view captions keep their width', async 
   assert.equal(a[0].text.length, b[0].text.length);
   assert.equal(b[0].text, 'x = -12.25 m');
   assert.deepEqual(a[1].pts[2], [1.5, 1]);
+});
+
+test('library tags: opposite values look different, and a value looks the same on every card', async () => {
+  const { SYSTEM_LIBRARY, TAG_TONES, systemTags } = await import('../src/core/systems.js');
+  const seen = new Map();
+  for (const e of SYSTEM_LIBRARY) {
+    for (const t of e.tags) {
+      assert.ok(TAG_TONES.includes(t.tone), `${e.name}: ${t.label} has no palette tone`);
+      const look = `${t.kind}/${t.tone}`;
+      assert.equal(seen.get(t.label) ?? look, look, `${t.label} looks different on ${e.name}`);
+      seen.set(t.label, look);
+    }
+  }
+  const lin = systemTags({ diagram: { blocks: [{ id: 'g', type: 'gain', params: {} }], wires: [] } });
+  const non = systemTags({ diagram: { blocks: [{ id: 's', type: 'saturation', params: {} }], wires: [] } });
+  assert.equal(lin[0].label, 'Linear'); assert.equal(non[0].label, 'Nonlinear');
+  assert.notEqual(lin[0].tone, non[0].tone);
+  const none = lin.find((t) => t.label === 'No controller'), pid = systemTags({ diagram: { blocks: [{ id: 'c', type: 'controller', params: {}, variants: [{ type: 'pid' }] }], wires: [] } }).find((t) => t.label === 'PID');
+  assert.notEqual(none.kind, pid.kind, 'No controller must not look like a controller');
 });

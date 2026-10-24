@@ -23,7 +23,7 @@ const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
 // A cart on a track carrying a chain of rods (angles from upright), with the
 // control force F and the disturbance d as arrows on the cart, and the
 // reference r as a mark on the track.
-function cartView(name, track, rods, caption, box) {
+function cartView(name, rods, caption, box) {
   let chain = [];
   for (let i = rods.length - 1; i >= 0; i--) {
     const { len, angle } = rods[i];
@@ -36,9 +36,10 @@ function cartView(name, track, rods, caption, box) {
   return {
     name, kind: '2d', view: box,
     shapes: [
-      { type: 'line', x1: -track, y1: -0.065, x2: track, y2: -0.065, stroke: 'muted', lineWidth: 3 },
+      // The rail has no end, as in the model: a cart pushed away leaves the picture.
+      { type: 'line', x1: -1e3, y1: -0.065, x2: 1e3, y2: -0.065, stroke: 'muted', lineWidth: 3 },
       { type: 'line', x1: 'r', y1: -0.16, x2: 'r', y2: -0.08, stroke: 'ch1', lineWidth: 3 },
-      { type: 'group', x: `clamp(x, ${-track + 0.16}, ${track - 0.16})`, y: 0, shapes: [
+      { type: 'group', x: 'x', y: 0, shapes: [
         { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
         { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
         { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
@@ -175,6 +176,59 @@ export const EXAMPLE_PLANTS = [
     }],
   },
   {
+    name: 'Encoder errors and torque ripple',
+    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing. Try FFT mode, and a notch filter on the channel.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'ramp', params: { amplitude: 300, time: 0.5, rise: 4 } }] },
+    },
+    scope: { channels: channels('speed_m', 'r', 'speed', 'V'), view: { mode: 'spectrogram' } },
+    ui: { run: 'run', tab: 'plant', setup: 0.42 },
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad/s'),
+        ctrl(130, 90, 2, 0.001, [
+          { name: 'PI speed', type: 'pid', params: { Kp: 0.5, Ki: 5, umin: -48, umax: 48 } },
+          { name: 'Off', type: 'off', params: {} },
+        ]),
+        {
+          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
+          diagram: {
+            blocks: [
+              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'load', type: 'inport', name: 'ripple torque', params: { port: 2 }, x: 300, y: 220 },
+              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.002 }, x: 200, y: 96 },
+              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.1 }, x: 360, y: 100 },
+              { id: 'tsum', type: 'sum', params: { signs: '++' }, x: 440, y: 104 },
+              { id: 'mech', type: 'firstOrder', name: 'inertia and friction', params: { K: 200, tau: 0.2 }, x: 510, y: 96 },
+              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
+              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.1 }, x: 360, y: 280, flip: true },
+            ],
+            wires: [
+              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
+              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+            ],
+          },
+        },
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        { id: 'ripple', type: 'fcn', name: 'torque ripple 6×', params: { expr: '0.05*sin(6*u)' }, x: 500, y: 230, flip: true },
+        { id: 'rough', type: 'noise', name: 'torque noise', params: { std: 0.02, seed: 7 }, x: 330, y: 230, flip: true },
+        // The encoder sits on the load, behind a flexible shaft that resonates at 70 Hz.
+        { id: 'shaft', type: 'secondOrder', name: 'shaft resonance 70 Hz', params: { K: 1, wn: 439.8, zeta: 0.02 }, x: 650, y: 96 },
+        { id: 'enc', type: 'fcn', name: 'encoder 1× and 2× errors', params: { expr: 'u + 0.02*sin(u + 0.5) + 0.01*sin(2*u + 1)' }, x: 820, y: 96 },
+        { id: 'deriv', type: 'tf', name: 'speed from angle', params: { num: [1, 0], den: [0.001, 1], delay: 0 }, x: 990, y: 96 },
+        sink('speed_m', 1160, 106, 'rad/s'),
+        sink('speed', 650, 20, 'rad/s'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'ripple', to: 'rough' }, { from: 'rough', to: 'motor:1' }, { from: 'motor', to: 'int' },
+        { from: 'int', to: 'ripple' }, { from: 'int', to: 'shaft' }, { from: 'shaft', to: 'enc' }, { from: 'enc', to: 'deriv' }, { from: 'deriv', to: 'speed_m' }, { from: 'deriv', to: 'ctrl:1' },
+        { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
+      ],
+    },
+  },
+  {
     name: 'Conical tank, gain scheduling',
     notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The gain-scheduled PI looks its gains up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
     signals: {
@@ -209,7 +263,7 @@ export const EXAMPLE_PLANTS = [
     views: [{
       name: 'Tank', kind: '2d', view: [-1, -0.25, 1, 1.3],
       shapes: [
-        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)'], ['-0.05 - 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)']], fill: 'ch3', stroke: 'none' },
+        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*h', 'h'], ['-0.05 - 0.45*h', 'h']], fill: 'ch3', stroke: 'none' },
         { type: 'line', x1: -0.05, y1: 0, x2: -0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
         { type: 'line', x1: 0.05, y1: 0, x2: 0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
         { type: 'line', x1: '-0.05 - 0.45*r', y1: 'r', x2: '0.05 + 0.45*r', y2: 'r', stroke: 'ch1', lineWidth: 2 },
@@ -251,7 +305,7 @@ export const EXAMPLE_PLANTS = [
         { from: 'cart', to: 'ctrl:1' }, { from: 'cart:1', to: 'ctrl:2' }, { from: 'cart:2', to: 'ctrl:3' }, { from: 'cart:3', to: 'ctrl:4' },
       ],
     },
-    views: [cartView('Cart and pole', 1.8, [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
+    views: [cartView('Cart and pole', [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
   },
   {
     name: 'Triple pendulum',
@@ -282,7 +336,7 @@ export const EXAMPLE_PLANTS = [
         ...Array.from({ length: 8 }, (_, i) => ({ from: i ? `cart:${i}` : 'cart', to: `ctrl:${i + 1}` })),
       ],
     },
-    views: [cartView('Cart and triple pendulum', 1.2, [
+    views: [cartView('Cart and triple pendulum', [
       { len: 0.25, angle: '-theta1' },
       { len: 0.25, angle: '-(theta2 - theta1)' },
       { len: 0.25, angle: '-(theta3 - theta2)' },
