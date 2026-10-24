@@ -248,7 +248,8 @@ export const EXAMPLE_PLANTS = [
           { name: 'PI tuned for empty', type: 'pid', params: { Kp: 0.173, Ki: 2.287, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
-        { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: 0.172 }, x: 320, y: 96 },
+        // The pipe was already flowing: before 0.1 s it delivers what the pump gives at t = 0.
+        { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: null }, x: 320, y: 96 },
         { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
         { id: 'tank', type: 'conicalTank', name: 'tank', params: { r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }, x: 510, y: 90 },
         sink('h', 720, 106, 'm'),

@@ -30,12 +30,14 @@ The map from a **cut** signal u to the block's **measurements**, evaluated by th
 
 | Block | In model mode |
 |---|---|
-| Dead time, transfer function with delay | Pass straight through; each measurement reports its series dead time in `delay[k]`. Paths with different dead times give a warning |
-| Quantizer | Identity; its step goes into `sensors[k].q`, with a note |
-| Noise | Adds 0; its σ goes into `sensors[k].std`, with a note |
+| Dead time, transfer function with delay | Pass straight through; each measurement reports the dead time on its way from u in `delay[k]`. If paths differ (a dead time in a loop or a parallel branch), only what every path has is reported, with a warning |
+| Quantizer | Identity, with a note; its step goes into `sensors[k].q` when it sits between the plant and measurement k (several add as root-sum-square) |
+| Noise | Adds 0, with a note; its σ goes into `sensors[k].std` likewise. Noise elsewhere (on a torque, say) is process noise: the note only |
 | Saturation, Function, Switch | As in the simulation, so finite differences see their slope; `atLimits(x, u)` names a saturation outside its limits |
 | Controller, Observer | No laws are built; outputs come from the cut, `held`, or the look-through |
 | Source | `at.sources[name] ?? 0` |
+
+When u reaches none of the measurements the Model says so, naming a held Controller in between. Errors (`no-block`, `no-cut` for an Observer with nothing on its u input, `bad-state`) carry `code` and `hint`, for `DesignError` to take over.
 
 `opts.laws === false` is separate: the normal compile with every sampled block at u = 0 and no designs. The Plant tab's structure check uses it, so editing the canvas never designs.
 
@@ -47,7 +49,7 @@ The map from a **cut** signal u to the block's **measurements**, evaluated by th
 - **Labels**: `subsystem/block.state` for states; measurements by what feeds the input.
 - **Structural reduction**: the Model keeps the states that the cut reaches **and** that reach a measurement (a walk over the compiled nodes). The rest stay at the base state X0. Motor position: armature, load, angle; tank: h; carts: all.
 
-`el.seen(idPath, at)` (idPath: subsystem ids and the block id, `'motor/ctrl'`) returns, memoised per `at`:
+`el.seen(idPath, at)` (idPath: subsystem ids and the block id, `'motor/ctrl'`) returns, memoised per `at` (up to 16 per compile):
 
 ```js
 Model = {
@@ -56,7 +58,7 @@ Model = {
   input: { label },               // what u is called ('F' when a Sink records it)
   states:  [{ label, name, unit, angle, index }],   // index into the global state
   outputs: [{ label, angle }],    // angle when the measurement is exactly one angle state
-  f(x, u, dx), y(x, u, out),      // allocation-free; only the slice of nodes between cut, states and measurements
+  f(x, u, dx), y(x, u, out),      // allocation-free; f evaluates only the nodes the kept rates read, y those the measurements read too
   atLimits(x, u),                 // sentences for saturations outside their limits there
   delay: [s], sensors: [{ std, q }], bound, warnings: [],
 }
@@ -89,8 +91,8 @@ The Controller tab gets a read-only **Computed** box under the parameters (metho
 |---|---|---|
 | 0 | This page, decisions v2.7 | Built |
 | 1 | `ode.states`, `ode.make` for the physics blocks; `planner.js` in the bundle | Built |
-| 2 | Model mode in `diagram.js`, `el.seen`, `laws: false`, n = 1 realisation, `blockInputNames` in core, nullable Dead time `y0` (the tank's pipe has none baked in) | Next |
-| 3 | `linearize.js` | |
+| 2 | Model mode in `diagram.js`, `el.seen`, `laws: false`, n = 1 realisation, `blockInputNames` in core, nullable Dead time `y0` (the tank's pipe has none baked in) | Built |
+| 3 | `linearize.js` | Next |
 | 4 | `design.js`, the store, the `lqr` type, designs resolved while compiling | |
 | 5 | `swingUpLqr`, `scheduledPI` and their manual twins | |
 | 6 | `plants.js` migrated; K constants deleted; guard test | |

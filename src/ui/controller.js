@@ -6,7 +6,7 @@
 
 import { CONTROLLERS, normalizeVariant } from '../core/controllers.js';
 import { OBSERVERS } from '../core/observers.js';
-import { diagramBlockDef, normalizeDiagram, parseEnd, outputNames } from '../core/diagram.js';
+import { normalizeDiagram, parseEnd, blockInputNames } from '../core/diagram.js';
 import { num, parseSI } from './units.js';
 
 // What each implementation is for, in a sentence or two.
@@ -83,19 +83,6 @@ export function createControllerTab(host, app) {
     return true;
   }
 
-  // What feeds each input: "r", "x (cart and pole)", …
-  function inputNames(c) {
-    const lv = levelOf(root(), c.path);
-    return Array.from({ length: c.block.params.inputs }, (_, k) => {
-      const w = lv.wires.find((x) => { const t = parseEnd(x.to); return t.id === c.block.id && t.port === k; });
-      if (!w) return 'not connected';
-      const f = parseEnd(w.from), src = lv.blocks.find((b) => b.id === f.id);
-      if (src.type === 'source') return src.params.signal;
-      const port = outputNames(diagramBlockDef(src.type), src.params)[f.port];
-      return port || (src.name ?? src.id);
-    });
-  }
-
   function field(key, label, value, hint, kind = 'number', title = '') {
     return `<label class="pf" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
   }
@@ -118,7 +105,7 @@ export function createControllerTab(host, app) {
     $('#ct-block').innerHTML = field('b:inputs', 'Inputs', b.params.inputs, obs ? 'u, then the measurements' : 'r, then the measurements')
       + (obs ? field('b:outputs', 'Estimates', b.params.outputs, 'states it puts out') : '')
       + field('b:Ts', 'Sample time', num(b.params.Ts, 4), 'Ts, s; every variant runs at it');
-    const names = inputNames(c);
+    const names = blockInputNames(root(), c.path);
     $('#ct-ports').innerHTML = `<b>In</b> ${names.map((n, k) => `<span class="ctport">${k + 1} ${esc(n)}</span>`).join(' ')}`;
 
     $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="srow vrow ${i === b.variant ? 'editing' : ''}" data-v="${i}" role="option" aria-selected="${i === b.variant}">

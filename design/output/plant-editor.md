@@ -16,7 +16,7 @@ Reader: whoever changes how the plant is built or simulated.
 - **In** and **Out** blocks are the ports of a subsystem.
 - **Controller** (group Control): a digital controller, inputs r then the measurements, output u held between samples at its own Ts. It holds variants; double-click it (or "Open in the Controller tab") to choose and tune them ([controller-proposal.md](controller-proposal.md)). Its canvas label shows the variant that runs.
 - **Physics**: Cart–pole (`F → x, θ, v, ω`), Pendulum chain on cart (1–3 rods, `F → x, θ…, v, ω…`, Lagrange's equations solved each step), Conical tank (`q → h`, Torricelli outlet). Physics blocks give their state rates as outputs, so state feedback can use them.
-- **Dead time** has an output before L (default 0): a pipe that was already flowing starts at its flow.
+- **Dead time** has an output before L (default 0). Left empty (`null` in the JSON) it puts out its input at t = 0, as a pipe that was already flowing, so no start flow has to be computed and typed in ([designs.md](designs.md)).
 
 ## Canvas
 
