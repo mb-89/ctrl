@@ -122,6 +122,42 @@ export const CONTROLLERS = {
       };
     },
   },
+  trajectory: {
+    // A swing-up planned offline (tools/triple-swingup.mjs): until T it adds
+    // a time-varying LQR around the planned path to the planned force,
+    // u = F(t) − K(t) · (y − y*(t)); after T it holds the top with state
+    // feedback u = kr r − Kup · y. The tables are sampled every dt; angle
+    // errors (the states flagged in wrap) are taken modulo 2π.
+    label: 'Trajectory + time-varying LQR', summary: 'u = F(t) − K(t)(y − y*(t)), then state feedback',
+    params: [num('T', 'Swing-up time T', 2, { unit: 's', min: 0 }), num('dt', 'Table step dt', 0.02, { unit: 's', min: 1e-4 }),
+      vec('F', 'Planned force F(t)', [0], { table: true }), vec('Y', 'Planned states y*(t)', [0], { table: true }), vec('K', 'Gains K(t)', [0], { table: true }),
+      vec('wrap', 'Angle states (1 = wrap)', [0]), vec('Kup', 'Upright gains Kup', [0]), num('kr', 'Prefilter kr', 0), ...LIMITS],
+    check(p) { const n = p.Kup.length, rows = p.F.length; if (p.Y.length !== rows * n || p.K.length !== rows * n) return `Y and K need ${rows} rows of ${n} values (one row per F value, one value per gain in Kup)`; return ''; },
+    make(p, Ts) {
+      const n = p.Kup.length, rows = p.F.length;
+      let k = 0;
+      const at = (tab, row, i) => tab[row * n + i];
+      return {
+        step(x) {
+          const t = k++ * Ts;
+          let u;
+          if (t < p.T) {
+            const s = Math.min(rows - 1, t / p.dt), i0 = Math.floor(s), i1 = Math.min(rows - 1, i0 + 1), f = s - i0;
+            u = p.F[i0] + f * (p.F[i1] - p.F[i0]);
+            for (let i = 0; i < n; i++) {
+              let e = (x[i + 1] ?? 0) - (at(p.Y, i0, i) + f * (at(p.Y, i1, i) - at(p.Y, i0, i)));
+              if (p.wrap[i]) e = wrap(e);
+              u -= (at(p.K, i0, i) + f * (at(p.K, i1, i) - at(p.K, i0, i))) * e;
+            }
+          } else {
+            u = p.kr * x[0];
+            for (let i = 0; i < n; i++) u -= p.Kup[i] * (p.wrap[i] ? wrap(x[i + 1] ?? 0) : (x[i + 1] ?? 0));
+          }
+          return clamp(u, p.umin, p.umax);
+        },
+      };
+    },
+  },
 };
 
 export const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
@@ -141,9 +177,11 @@ function normalizeParam(spec, v, where) {
 
 // One variant: { name, type, params }. Unknown types and bad values fail with
 // the valid choices named.
-export function normalizeVariant(v, where = 'variant') {
-  const def = CONTROLLERS[v?.type];
-  if (!def) throw new Error(`${where}.type: one of ${CONTROLLER_TYPES.join(', ')}`);
+// lib: the library the variant comes from (CONTROLLERS, or OBSERVERS for an
+// Observer block); both share this format.
+export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
+  const def = lib[v?.type];
+  if (!def) throw new Error(`${where}.type: one of ${Object.keys(lib).join(', ')}`);
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
   if (params.umin > params.umax) [params.umin, params.umax] = [params.umax, params.umin];
@@ -152,8 +190,8 @@ export function normalizeVariant(v, where = 'variant') {
   return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
 }
 
-// The law of a Controller block's active variant.
-export function makeLaw(variant, Ts) {
-  return CONTROLLERS[variant.type].make(variant.params, Ts);
+// The law of a block's active variant.
+export function makeLaw(variant, Ts, lib = CONTROLLERS) {
+  return lib[variant.type].make(variant.params, Ts);
 }
 
