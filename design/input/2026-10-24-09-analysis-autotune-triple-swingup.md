@@ -41,3 +41,7 @@
 ## Added while this was being built: the page may send the reference; agents through the browser tool
 
 > And I guess we computer control output, but we could also be sending the reference value. That could also happen from us, right? The limiting needs to happen on the plant side and the monitoring, but we could also send the reference value. I guess that would make sense if we want to tune the controller. And the browser tool, it needs to work via the browser tool. Like, we can't assume that the external program will have will be accessible to an agent. Our program is just an example. In the real world, it will look different. So think about how you can improve that so the browser tool is very well usable for an agent. He needs to find all the documentation that he needs to find and needs to understand how to set everything up. And then we describe all of that in our hill example.
+
+## Added while this was being built: stop in both directions
+
+> I mean, I feel like we should also provide a stop signal, right? So we can also monitor the watchdog. If we see that we are dropping messages on our side, we can also send a stop signal, and we can also have a red stop button in the hill plant, right? Or I guess if we click the stop button, then it stops the hill plant. We can have all of that, but the other side is also needs to have it.
