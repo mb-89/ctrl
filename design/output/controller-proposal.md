@@ -20,9 +20,22 @@ Reader: whoever changes controllers, their library or the Controller tab. **Stat
 | `gainScheduled` | PI with Kp, Ki interpolated from a table over the measurement | Plants whose dynamics change with the operating point |
 | `swingUp` | Far from upright, u = kE·E·ω·cos θ (V = ½E² falls: a Lyapunov design) with cart centring; near upright, state feedback | Swinging a pendulum up and catching it |
 
-Designed types hold inputs only and compute their numbers from the plant in the page ([designs.md](designs.md)): `lqr` (state feedback by LQR), `scheduledPI` (PI from the plant, one level or scheduled), `swingUpLqr` (the swing-up with its catch by LQR). Each has a hand twin that **Copy as numbers** makes.
+### Designed types: computed from the plant
 
-To add one: an entry in `CONTROLLERS` with `label`, `summary`, `params` and `make(params, Ts)` returning `{ step(inputs) → u }` (a designed type adds the fields in designs.md); a sentence in `ABOUT` in `src/ui/controller.js`; a test.
+Designed types hold inputs only (weights, levels, times, limits) and compute their numbers in the page from the plant the block sees, every time the diagram changes; nothing plant-specific is stored ([designs.md](designs.md); the person, [input 09](../input/2026-10-24-09-analysis-autotune-triple-swingup.md)). The plant a block sees is the map from its output u to its measurements, from the same compiled diagram that runs, with other Controllers holding their output.
+
+| Type | Inputs | Design method | Copy as numbers |
+|---|---|---|---|
+| `lqr` | Q (per measurement), R, track, Tr, limits | Discrete LQR (zero-order hold at Ts) on the plant linearised at the origin, which must be at rest with every state measured: K = Kx C⁻¹ in measurement order; kr gives the tracked measurement a static gain of 1 from r | `stateFeedback` |
+| `scheduledPI` | levels `at` of the first measurement, Tcl, Tr, limits | At each level: trim (the u that holds it), linearise, fit a first-order lag K e^(−θs)/(τs + 1) on the path from u; pole cancellation Kp = τ/(K·Tcl), Ki = 1/(K·Tcl). u0 holds the level the plant starts at. The dead time θ is reported and left out | `pid` (one level) or `gainScheduled` |
+| `swingUpLqr` | the energy pump's hand gains, Q, R, limits | The catch by `lqr` at the upright rest; the pump stays by hand | `swingUp` |
+| `trajectory` | T, segments, planShare (the Plan fold), start, Q, R, limits | A force per sample that takes the plant from its start state to rest at the origin (multiple shooting, Levenberg–Marquardt, angles modulo 2π), time-varying LQR along it, the upright LQR after it, checked on the nonlinear plant. Made in the background in the page (a few seconds, with progress and Cancel) | none: a plan is always computed |
+
+The **Observer block** (inputs u, y1, y2, …; outputs the estimates x̂1, x̂2, …; its own Ts) holds variants from `src/core/observers.js` the same way: `kalman` (designed: the model of the states the Observer sees and the steady-state gain L by `dlqe`; R from the noise and quantizer blocks on each measurement when left empty; Copy as numbers gives `luenberger`), `luenberger` (A, B, C and L by hand) and `difference` (finite differences). A Controller designed on a Kalman filter's estimates looks through them to the states they stand for, so LQR on x̂ gives the K it gives on the states.
+
+Every controller type also has `linear(p, Ts, at, values)`: its discrete state space from [r, y…] to u about an operating point, for the Analysis tab (designs.md, "For the Analysis tab").
+
+To add one: an entry in `CONTROLLERS` with `label`, `summary`, `params`, `make(params, Ts)` returning `{ step(inputs) → u }` and, when the law is linear about an operating point, `linear` (a designed type adds the fields in designs.md); a sentence in `ABOUT` in `src/ui/controller.js`; a test.
 
 ## The tab
 

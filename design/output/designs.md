@@ -183,4 +183,4 @@ Where this differs from the plan (§12): `linear` takes `at` before `values`, `l
 | 10 | Async store and pump in the page | Built (above): test 11 in `test/async.test.mjs`; browser-checked with Playwright (the triple pendulum loads hanging, shows the progress, swings up; re-planning, Cancel, Plan, undo; typing survives a settle) |
 | 11 | Designed `kalman` with look-through | Built (above): test 14 in `test/kalman.test.mjs`; browser-checked (the Computed box of an Observer, an empty R, Copy as numbers). The observer example itself belongs to the observers workstream |
 | 12 | Analysis hooks (snapshots, `linearizeBlock`) | Built (above): `simulateSystem(…, { until })`, `linearizeBlock`, `loopModel`, `linear()` on every controller type, `app.loopModel` and `window.loopTuner.loopModel`; `test/loop.test.mjs` |
-| 13 | Docs sweep | |
+| 13 | Docs sweep | Built: controller-proposal.md (the design methods, Observer blocks, `linear`), project-format.md (variants hold inputs only, empty fields, Observer blocks), system-library.md (the encoder's resonance), AGENTS.md (designed variants, `loopModel`), roadmap.md, the output README's status, the page's Help |
