@@ -13,39 +13,69 @@
 // [r, y1 … ym] and one output u. L is SISO with negative feedback: the loop is
 // stable when 1 + L(z) has no zero on or outside the unit circle.
 
-import { c2d, eig, csolve, solve } from './linalg.js';
+import { c2d, eig, eigPerturbed, csolve, solve } from './linalg.js';
 
 const zerosM = (r, c) => Array.from({ length: r }, () => new Array(c).fill(0));
 const col = (M, j) => M.map((row) => row[j]);
 const cabs = (z) => Math.hypot(z.re, z.im);
 const byRealThenImag = (a, b) => b.re - a.re || b.im - a.im;
+const angleDeg = (g) => (Math.atan2(g.im, g.re) * 180) / Math.PI;
+const rotate = (g, a) => { const c = Math.cos(a), s = Math.sin(a); return { re: g.re * c - g.im * s, im: g.re * s + g.im * c }; };
 
 // Where a pole sits. A pole within ON_CIRCLE of |z| = 1 is on the unit circle
 // (an integrator, an undamped mode): neither inside nor outside, so it is in
-// neither P nor Z. eig returns a repeated pole split by about eps^(1/m)
-// (1e-8 for a double integrator, 6e-6 for a triple pole); the mean of such a
-// cluster is accurate to rounding, so poles closer than CLUSTER to each other
-// are graded together by their mean.
+// neither P nor Z. A repeated pole of a defective matrix (a double or triple
+// integrator in a rotated basis, say) comes out of eig split into a small
+// ring around its true place, a few 1e-7 wide at most here, and the ring's
+// mean is accurate to rounding. Which close poles are such a ring is checked
+// on the matrix itself (see poleSides), not guessed from how close they are:
+// two real poles 3e-5 either side of z = 1 (s = ±0.03 at 1 ms) are two poles.
 export const ON_CIRCLE = 1e-7;
-const CLUSTER = 1e-4;
+// Poles closer than NEAR to the circle and to each other are checked.
+const NEAR = 1e-3;
 // A pole with |z| below AT_ORIGIN is z = 0 for the s-plane: a dead-time chain
 // or a previous-measurement state, which eig splits to about eps^(1/k) for k
 // such states. s = ln z / Ts would put it thousands of rad/s out.
 export const AT_ORIGIN = 1e-3;
 
-// 'in', 'on' or 'out' of the unit circle, for each pole.
-export function poleSides(poles) {
-  const n = poles.length, root = poles.map((_, i) => i);
-  const find = (i) => (root[i] === i ? i : (root[i] = find(root[i])));
-  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-    if (Math.hypot(poles[i].re - poles[j].re, poles[i].im - poles[j].im) < CLUSTER) root[find(i)] = find(j);
+const sideOf = (r) => (r > 1 + ON_CIRCLE ? 'out' : r < 1 - ON_CIRCLE ? 'in' : 'on');
+
+// Connected groups of the indices idx, linked when link(i, j).
+function groups(idx, link) {
+  const root = new Map(idx.map((i) => [i, i]));
+  const find = (i) => (root.get(i) === i ? i : find(root.get(i)));
+  for (let a = 0; a < idx.length; a++) for (let b = a + 1; b < idx.length; b++) if (link(idx[a], idx[b])) root.set(find(idx[a]), find(idx[b]));
+  const out = new Map();
+  for (const i of idx) { const r = find(i); if (!out.has(r)) out.set(r, []); out.get(r).push(i); }
+  return [...out.values()];
+}
+
+// 'in', 'on' or 'out' of the unit circle, for each pole (eigenvalue) of the
+// matrix M. Where close poles near the circle fall on different sides, M is
+// changed a little (eigPerturbed) to see which of them rounding can move: a
+// pole split by rounding moves by about as much as its pieces lie apart,
+// a pole eig resolves hardly moves. The pieces of a split pole are graded
+// together by their mean; resolved poles each on their own. Without M every
+// pole is graded on its own.
+export function poleSides(poles, M) {
+  const sides = poles.map((p) => sideOf(cabs(p)));
+  if (!M) return sides;
+  const dist = (p, q) => Math.hypot(p.re - q.re, p.im - q.im);
+  const near = poles.map((p, i) => i).filter((i) => Math.abs(cabs(poles[i]) - 1) < NEAR);
+  const mixed = groups(near, (i, j) => dist(poles[i], poles[j]) < NEAR).filter((g) => g.length > 1 && new Set(g.map((i) => sides[i])).size > 1);
+  if (!mixed.length) return sides;
+  const moved = eigPerturbed(M);
+  for (const g of mixed) {
+    // How far each pole moves, against how far it is from its nearest neighbour.
+    const move = new Map(g.map((i) => [i, Math.min(...moved.map((q) => dist(poles[i], q)))]));
+    const loose = g.filter((i) => move.get(i) > 0.25 * Math.min(...poles.map((q, j) => (j === i ? Infinity : dist(poles[i], q)))));
+    for (const ring of groups(loose, (i, j) => dist(poles[i], poles[j]) <= 4 * Math.max(move.get(i), move.get(j)))) {
+      if (ring.length < 2) continue;
+      const re = ring.reduce((s, i) => s + poles[i].re, 0) / ring.length, im = ring.reduce((s, i) => s + poles[i].im, 0) / ring.length;
+      for (const i of ring) sides[i] = sideOf(Math.hypot(re, im));
+    }
   }
-  const mean = new Map();
-  poles.forEach((p, i) => { const k = find(i), m = mean.get(k) ?? { re: 0, im: 0, n: 0 }; m.re += p.re; m.im += p.im; m.n++; mean.set(k, m); });
-  return poles.map((_, i) => {
-    const m = mean.get(find(i)), r = Math.hypot(m.re / m.n, m.im / m.n);
-    return r > 1 + ON_CIRCLE ? 'out' : r < 1 - ON_CIRCLE ? 'in' : 'on';
-  });
+  return sides;
 }
 
 // The plant as the controller samples it: discretised with a zero-order hold
@@ -82,7 +112,7 @@ export function discretePlant(plant, Ts, { use, drop = 0 } = {}) {
     C[k][o + len[k] - 1] = 1;
     o += len[k];
   }
-  return { A, B, C, D, delaySamples, delayStates: len, Ad, plantStates: n };
+  return { A, B, C, D, delaySamples, delayStates: len, Ad, Bd, plantStates: n, taps: taps.map((t, k) => ({ c: t.c, d: t.d, len: len[k] })) };
 }
 
 // The loop from the plant and controller models (see openLoop).
@@ -106,8 +136,12 @@ function assemble(P, ctrl, Bcy, Dcy) {
 // applied): L(z) = −u_c / v with r = 0. Plant discretised with a ZOH at Ts.
 // Every path round the loop passes a measurement, so the shortest chain of
 // unit delays among the measurements the controller reads is a factor z^−d
-// of the whole loop: L.core is the loop without it (L = z^−d · L.core), from
-// which the frequency response and its phase come exactly.
+// of the whole loop: L.core is the loop without it (L = z^−d · L.core).
+// L.freq keeps the loop's parts for the frequency response: the plant, each
+// measurement's reading of it and its chain of len unit delays, and the
+// controller from each measurement, so that
+//   L(z) = −Σ_k K_k(z) · z^−len_k · (c_k (zI − Ad)⁻¹ Bd + d_k),
+// solved at each frequency without the delay states, every z^−len exact.
 export function openLoop(plant, ctrl, Ts) {
   const m = plant.C.length;
   // Controller columns that act on the measurements (inputs 1 … m); a law
@@ -120,29 +154,57 @@ export function openLoop(plant, ctrl, Ts) {
   const read = P.delayStates.filter((_, k) => use[k]);
   const d = read.length ? Math.min(...read) : 0;
   const core = d ? { ...assemble(discretePlant(plant, Ts, { use, drop: d }), ctrl, Bcy, Dcy), Ts } : null;
+  const freq = { Ad: P.Ad, Bd: P.Bd, taps: P.taps, use, ctrl: { A: ctrl.A, B: Bcy, C: ctrl.C[0] ?? [], D: Dcy } };
   return {
-    ...L, Ts, n: L.A.length, delaySamples: P.delaySamples, pureDelay: d, core,
+    ...L, Ts, n: L.A.length, delaySamples: P.delaySamples, pureDelay: d, core, freq,
+    // The longest chain the core keeps (measurements read with different dead times).
+    spread: read.length ? Math.max(...read) - d : 0,
     // The state matrix is block triangular: plant, delay chains, controller.
     parts: { plant: P.Ad, chains: P.A.length - P.plantStates, ctrl: ctrl.A },
   };
 }
 
-// The open loop's poles. Its state matrix is block triangular, so they are
-// the plant's, z = 0 for every delay state, and the controller's, each found
-// on its own: a plant integrator and a controller integrator stay two simple
-// poles at z = 1 instead of one split double root, and the delay chains stay
-// exactly at 0.
-export function openLoopPoles(L) {
-  if (!L.parts) return eig(L.A);
-  return [...eig(L.parts.plant), ...Array.from({ length: L.parts.chains }, () => ({ re: 0, im: 0 })), ...eig(L.parts.ctrl)].sort(byRealThenImag);
+// The open loop's poles and their sides. Its state matrix is block
+// triangular, so they are the plant's, z = 0 for every delay state, and the
+// controller's, each found on its own: a plant integrator and a controller
+// integrator stay two simple poles at z = 1 instead of one split double root,
+// and the delay chains stay exactly at 0.
+function openLoopSides(L) {
+  if (!L.parts) { const poles = eig(L.A); return { poles, sides: poleSides(poles, L.A) }; }
+  const pl = eig(L.parts.plant), ct = eig(L.parts.ctrl), sp = poleSides(pl, L.parts.plant), sc = poleSides(ct, L.parts.ctrl);
+  const all = [
+    ...pl.map((z, i) => [z, sp[i]]),
+    ...Array.from({ length: L.parts.chains }, () => [{ re: 0, im: 0 }, 'in']),
+    ...ct.map((z, i) => [z, sc[i]]),
+  ].sort((a, b) => byRealThenImag(a[0], b[0]));
+  return { poles: all.map((x) => x[0]), sides: all.map((x) => x[1]) };
+}
+export const openLoopPoles = (L) => openLoopSides(L).poles;
+
+// The closed loop's state matrix for the loop gain multiplied by k (k = 1:
+// as tuned); null where 1 + k·D = 0 (no proper closed loop).
+function closedLoopMatrix(L, k) {
+  const den = 1 + k * L.D;
+  if (Math.abs(den) < 1e-12) return null;
+  return L.A.map((row, i) => row.map((v, j) => v - (k * L.B[i][0] * L.C[0][j]) / den));
 }
 
-// Closed-loop poles in z for the loop gain multiplied by k (k = 1: as tuned).
+// Closed-loop poles in z for the loop gain multiplied by k.
 export function closedLoop(L, k = 1) {
-  const den = 1 + k * L.D;
-  if (Math.abs(den) < 1e-12) return [];
-  return eig(L.A.map((row, i) => row.map((v, j) => v - (k * L.B[i][0] * L.C[0][j]) / den)));
+  const M = closedLoopMatrix(L, k);
+  return M ? eig(M) : [];
 }
+
+// The closed-loop poles for the gain k and their sides of the unit circle.
+export function closedLoopSides(L, k = 1) {
+  const M = closedLoopMatrix(L, k);
+  if (!M) return { poles: [], sides: [] };
+  const poles = eig(M);
+  return { poles, sides: poleSides(poles, M) };
+}
+
+// Stable: every pole inside; marginal: none outside, some on the circle.
+const classOf = (sides) => (sides.includes('out') ? 'unstable' : sides.includes('on') ? 'marginal' : 'stable');
 
 // A z-plane pole as its continuous equivalent s = ln(z)/Ts, with ωn and ζ.
 export function sOf(z, Ts) {
@@ -160,12 +222,11 @@ export function sPlanePoint(z, Ts) {
   return Number.isFinite(s.re) ? [s.re, s.im] : null;
 }
 
-// L(e^{jωTs}) at one angular frequency ω (rad/s).
+// L(e^{jωTs}) at one angular frequency ω (rad/s), from the loop's parts
+// (L.freq) where it has them, else from its state space.
 export function respondAt(L, w) {
-  if (L.core) {
-    const g = respondAt(L.core, w), a = -w * L.Ts * L.pureDelay, c = Math.cos(a), s = Math.sin(a);
-    return { re: g.re * c - g.im * s, im: g.re * s + g.im * c };
-  }
+  if (L.freq) return respondParts(L.freq, L.Ts, w, 0);
+  if (L.core) return rotate(respondAt(L.core, w), -w * L.Ts * L.pureDelay);
   const N = L.A.length, zr = Math.cos(w * L.Ts), zi = Math.sin(w * L.Ts);
   if (!N) return { re: L.D, im: 0 };
   const Mr = L.A.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v));
@@ -177,8 +238,38 @@ export function respondAt(L, w) {
   return { re, im };
 }
 
-const angleDeg = (g) => (Math.atan2(g.im, g.re) * 180) / Math.PI;
-const rotate = (g, a) => { const c = Math.cos(a), s = Math.sin(a); return { re: g.re * c - g.im * s, im: g.re * s + g.im * c }; };
+// The core, L · z^d: the loop without the dead time common to it.
+function coreAt(L, w) {
+  if (L.freq) return respondParts(L.freq, L.Ts, w, L.pureDelay);
+  return respondAt(L.core ?? L, w);
+}
+
+// The loop from its parts (see openLoop), times z^shift.
+function respondParts(F, Ts, w, shift) {
+  const zr = Math.cos(w * Ts), zi = Math.sin(w * Ts);
+  // The plant's state for a unit input, X = (zI − Ad)⁻¹ Bd ...
+  const n = F.Ad.length;
+  let X = { xr: [], xi: [] };
+  if (n) X = csolve(F.Ad.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v)), F.Ad.map((row, i) => row.map((_, j) => (i === j ? zi : 0))), col(F.Bd, 0), new Array(n).fill(0));
+  // ... and the controller's row Y = Cc (zI − Ac)⁻¹, from (zI − Ac)ᵀ Yᵀ = Ccᵀ.
+  const c = F.ctrl, nc = c.A.length;
+  let Y = { xr: [], xi: [] };
+  if (nc) Y = csolve(c.A.map((row, i) => row.map((_, j) => (i === j ? zr : 0) - c.A[j][i])), c.A.map((row, i) => row.map((_, j) => (i === j ? zi : 0))), c.C.slice(), new Array(nc).fill(0));
+  if (!X || !Y) return { re: NaN, im: NaN };
+  let re = 0, im = 0;
+  F.taps.forEach((t, k) => {
+    if (!F.use[k]) return;
+    // The reading c·X + d, delayed by len − shift samples.
+    let gr = t.d, gi = 0;
+    for (let j = 0; j < n; j++) { gr += t.c[j] * X.xr[j]; gi += t.c[j] * X.xi[j]; }
+    // The controller from measurement k: Y·Bc[:, k] + Dc[k].
+    let kr = c.D[k], ki = 0;
+    for (let j = 0; j < nc; j++) { kr += Y.xr[j] * c.B[j][k]; ki += Y.xi[j] * c.B[j][k]; }
+    const g = rotate({ re: gr * kr - gi * ki, im: gr * ki + gi * kr }, -w * Ts * (t.len - shift));
+    re -= g.re; im -= g.im;
+  });
+  return { re, im };
+}
 
 // Frequency response on a log grid from wmin up to just below Nyquist (π/Ts).
 // The phase: the loop's common dead time is factored out (L = z^−d · core)
@@ -186,16 +277,24 @@ const rotate = (g, a) => { const c = Math.cos(a), s = Math.sin(a); return { re: 
 // the grid, which is refined where it moves more than 45° between points.
 export function frequencyData(L, { points = 400, wmin } = {}) {
   const wN = Math.PI / L.Ts, hi = 0.999 * wN, lo = Math.min(wmin ?? wN * 1e-4, wN * 1e-2);
-  const core = L.core ?? L, delay = L.core ? L.pureDelay * L.Ts : 0;
+  const delay = L.core || L.freq ? L.pureDelay * L.Ts : 0;
   let w = Array.from({ length: points }, (_, i) => lo * (hi / lo) ** (i / (points - 1)));
-  let G = w.map((x) => respondAt(core, x));
+  // Measurements read with different dead times leave a chain of `spread`
+  // samples in the core, whose phase turns once every 2π/(spread·Ts) rad/s:
+  // a linear grid 24 points to each turn follows it.
+  if (L.spread > 0) {
+    const dw = (2 * Math.PI) / (L.spread * L.Ts) / 24;
+    w = [...new Set([...w, ...Array.from({ length: Math.floor((hi - lo) / dw) }, (_, i) => lo + (i + 1) * dw)])].sort((a, b) => a - b);
+  }
+  const cap = 4 * w.length;
+  let G = w.map((x) => coreAt(L, x));
   for (let pass = 0; pass < 8; pass++) {
     const nw = [w[0]], nG = [G[0]];
     let added = 0;
     for (let i = 1; i < w.length; i++) {
       let step = Math.abs(angleDeg(G[i]) - angleDeg(G[i - 1]));
       step = Math.min(step, 360 - step);
-      if (step > 45 && w.length + added < 4 * points) { const wm = Math.sqrt(w[i - 1] * w[i]); nw.push(wm); nG.push(respondAt(core, wm)); added++; }
+      if (step > 45 && w.length + added < cap) { const wm = Math.sqrt(w[i - 1] * w[i]); nw.push(wm); nG.push(coreAt(L, wm)); added++; }
       nw.push(w[i]); nG.push(G[i]);
     }
     w = nw; G = nG;
@@ -219,12 +318,12 @@ export function frequencyData(L, { points = 400, wmin } = {}) {
 // is on: the core's angle taken nearest the grid's core phase there, minus
 // the factored dead time.
 export function phaseAt(fd, L, w) {
-  const core = L.core ?? L, ws = fd.w;
+  const ws = fd.w;
   let i = 1, j = ws.length - 1;
   while (i < j) { const m = (i + j) >> 1; if (ws[m] < w) i = m + 1; else j = m; }
   const f = Math.min(1, Math.max(0, (Math.log(w) - Math.log(ws[i - 1])) / (Math.log(ws[i]) - Math.log(ws[i - 1]))));
   const ref = fd.phase0[i - 1] + f * (fd.phase0[i] - fd.phase0[i - 1]);
-  let ph = angleDeg(respondAt(core, w));
+  let ph = angleDeg(coreAt(L, w));
   ph += 360 * Math.round((ref - ph) / 360);
   return ph - (w * fd.delay * 180) / Math.PI;
 }
@@ -238,42 +337,45 @@ function bisect(fn, a, b, fa = fn(a)) {
   return (a + b) / 2;
 }
 
-// The closed loop is stable for the loop gain scaled by k: no pole outside.
-const noneOutside = (poles) => !poleSides(poles).includes('out');
-
 // The gain interval: the factors k by which the loop gain may be scaled
 // before a closed-loop pole crosses the unit circle. Stability can change
 // only at the gains where k·L passes −1 (gains), or where 1 + k·D = 0; probes
-// ({ k, poles } of the root locus) catch a change those missed, which is
-// then found by bisection. The stretches between changes are checked on
-// their poles, outwards from the tuned gain (k = 1) until stability changes,
-// so a crossing where a pole only touches the circle is passed over. Returns
-// the stretch k = 1 is in and, if the loop is not stable there, the stable
-// stretch nearest to it (null if there is none).
+// ({ k, poles, sides } of the root locus) catch a change those missed, which
+// is then found by bisection. The stretches between changes are judged on
+// their poles, outwards from the tuned gain (k = 1). With no pole outside at
+// k = 1 the interval is where none goes outside (a pole that only touches
+// the circle is passed over). An unstable loop gets instead the stretch
+// nearest to k = 1 where every pole is strictly inside (null if there is
+// none): a stretch where poles sit on the circle is not stable.
 export function gainRange(L, gains, probe = []) {
   const memo = new Map();
-  const ok = (k) => { if (!memo.has(k)) memo.set(k, noneOutside(closedLoop(L, k))); return memo.get(k); };
+  const cls = (k) => {
+    if (!memo.has(k)) { const { poles, sides } = closedLoopSides(L, k); memo.set(k, poles.length ? classOf(sides) : 'unstable'); }
+    return memo.get(k);
+  };
   const ks = [...new Set(gains.filter((k) => k > 0 && Number.isFinite(k)))].sort((a, b) => a - b);
   for (let i = 1; i < probe.length; i++) {
-    const a = probe[i - 1], b = probe[i], sa = noneOutside(a.poles), sb = noneOutside(b.poles);
-    if (sa === sb || ks.some((k) => k > a.k && k <= b.k)) continue;
+    const a = probe[i - 1], b = probe[i], ca = a.sides ? classOf(a.sides) : cls(a.k), cb = b.sides ? classOf(b.sides) : cls(b.k);
+    if (ca === cb || ks.some((k) => k > a.k && k <= b.k)) continue;
     let lo = a.k, hi = b.k;
-    for (let it = 0; it < 50; it++) { const m = Math.sqrt(lo * hi); if (ok(m) === sa) lo = m; else hi = m; }
+    for (let it = 0; it < 50; it++) { const m = Math.sqrt(lo * hi); if (cls(m) === ca) lo = m; else hi = m; }
     ks.push(Math.sqrt(lo * hi));
   }
   ks.sort((a, b) => a - b);
-  // Stretch i runs from edges[i] to edges[i + 1].
+  // Stretch i runs from edges[i] to edges[i + 1]. The stretch k = 1 is in
+  // is judged at k = 1, every other one in its middle.
   const edges = [0, ...ks, Infinity], n = edges.length - 1;
-  const okAt = (i) => { const a = edges[i], b = edges[i + 1]; return ok(a === 0 ? (b === Infinity ? 1 : b / 2) : b === Infinity ? 2 * a : Math.sqrt(a * b)); };
-  const grow = (i) => { let lo = i, hi = i; const s = okAt(i); while (lo > 0 && okAt(lo - 1) === s) lo--; while (hi < n - 1 && okAt(hi + 1) === s) hi++; return { lo, hi, ok: s }; };
   let h = 0;
   while (h < n - 1 && edges[h + 1] <= 1) h++;
-  const here = grow(h), down = edges[here.lo], up = edges[here.hi + 1];
-  if (here.ok) return { down, up, ok: true, stable: { lo: down, hi: up } };
+  const at = (i) => { const a = edges[i], b = edges[i + 1]; return cls(i === h ? 1 : a === 0 ? b / 2 : b === Infinity ? 2 * a : Math.sqrt(a * b)); };
+  const grow = (i, ok) => { let lo = i, hi = i; while (lo > 0 && ok(at(lo - 1))) lo--; while (hi < n - 1 && ok(at(hi + 1))) hi++; return { lo, hi }; };
+  const tuned = at(h), kept = (c) => c !== 'unstable', isStable = (c) => c === 'stable';
+  const here = grow(h, kept(tuned) ? kept : (c) => c === 'unstable'), down = edges[here.lo], up = edges[here.hi + 1];
+  if (kept(tuned)) return { down, up, ok: true, stable: { lo: down, hi: up } };
   for (let a = here.lo - 1, b = here.hi + 1; a >= 0 || b < n;) {
     const da = a >= 0 ? -Math.log(edges[a + 1]) : Infinity, db = b < n ? Math.log(edges[b]) : Infinity;
     const i = da <= db ? a-- : b++;
-    if (okAt(i)) { const s = grow(i); return { down, up, ok: false, stable: { lo: edges[s.lo], hi: edges[s.hi + 1] } }; }
+    if (isStable(at(i))) { const s = grow(i, isStable); return { down, up, ok: false, stable: { lo: edges[s.lo], hi: edges[s.hi + 1] } }; }
   }
   return { down, up, ok: false, stable: null };
 }
@@ -404,50 +506,95 @@ export function closedLoopModel(plant, ctrl, Ts) {
 // The linear step r → y and its numbers. The final value is the closed loop's
 // DC gain, solved from (I − A) x = B, not the last sample. The window is ten
 // time constants of the slowest closed-loop pole, so the response settles
-// inside it; a long window is stepped exactly in strides of several samples
-// (A^M and its input sum), so it costs the same at any length. Overshoot and
-// the 2 % settling band are measured against the final value; a response
-// still outside the band at the end of the window has not settled.
-export function stepInfo(plant, ctrl, Ts, { clPoles, T, steps = 20000 } = {}) {
+// inside it. It is stepped sample by sample while any mode is alive that a
+// stride would not follow, then in strides of M samples (A^M and its input
+// sum), so a long window costs about the same as a short one. A mode is
+// followed by the strides when it changes little over one (decays by under
+// 5 %, turns by under 0.2 rad); one that does not is run out sample by sample
+// first (e^−20 of it left), within a budget of work. Overshoot and the 2 %
+// settling band are measured against the final value on every sample run;
+// the stride in which the response last leaves the band is run again sample
+// by sample, so the settling time is exact to the sample. A response still
+// outside the band at the end of the window has not settled. The samples
+// kept for the plot are thinned to the extremes of each bucket.
+export function stepInfo(plant, ctrl, Ts, { clPoles, T, steps = 20000, budget = 3e8 } = {}) {
   const S = closedLoopModel(plant, ctrl, Ts), N = S.A.length;
   let yf = NaN;
   try {
     const x = solve(S.A.map((row, i) => row.map((v, j) => (i === j ? 1 : 0) - v)), S.B);
     yf = S.C.reduce((s, c, j) => s + c * x[j], 0) + S.D;
   } catch { /* a pole at z = 1: no final value */ }
+  const modes = (clPoles ? clPoles.map((p) => p.z) : eig(S.A)).filter((z) => cabs(z) >= AT_ORIGIN).map((z) => sOf(z, Ts)).filter((v) => Number.isFinite(v.re));
   if (T === undefined) {
-    const rates = (clPoles ? clPoles.map((p) => p.z) : eig(S.A)).filter((z) => cabs(z) >= AT_ORIGIN)
-      .map((z) => -sOf(z, Ts).re).filter((v) => Number.isFinite(v) && v > 0);
+    const rates = modes.map((v) => -v.re).filter((v) => v > 0);
     T = Math.max(20 * Ts, 10 / Math.min(...rates, 1 / (5 * Ts)));
   }
   const K = Math.max(1, Math.ceil(T / Ts - 1e-9));
-  const mulV = (M, v) => M.map((row) => row.reduce((s, a, j) => s + a * v[j], 0));
-  const out = (x) => S.C.reduce((s, c, j) => s + c * x[j], 0) + S.D;
-  const t = [0], y = [out(new Array(N).fill(0))];
-  let x = new Array(N).fill(0), k = 0;
-  // Sample by sample for the first `steps` samples, where the fast part is.
-  const K1 = Math.min(K, steps);
-  for (; k < K1; k++) { x = mulV(S.A, x).map((v, i) => v + S.B[i]); t.push((k + 1) * Ts); y.push(out(x)); }
+  const strideFor = (k1) => { let M = 1; while (M * steps < K - k1) M *= 2; return M; };
+  let K1 = Math.min(K, steps);
+  const cap = Math.max(steps, Math.floor(budget / Math.max(1, N * N)));
+  for (let it = 0; it < 8 && K1 < K; it++) {
+    const h = strideFor(K1) * Ts;
+    const alive = modes.filter((v) => -v.re * h > 0.05 || Math.abs(v.im) * h > 0.2).map((v) => (v.re < 0 ? 20 / -v.re : Infinity));
+    const need = Math.min(K, cap, Math.ceil(Math.max(0, ...alive) / Ts));
+    if (need <= K1) break;
+    K1 = need;
+  }
+  const A = S.A.map((row) => Float64Array.from(row)), B = Float64Array.from(S.B), C = Float64Array.from(S.C);
+  const next = (x, AM, BM) => {
+    const nx = new Float64Array(N);
+    for (let i = 0; i < N; i++) { let v = BM[i]; const row = AM[i]; for (let j = 0; j < N; j++) v += row[j] * x[j]; nx[i] = v; }
+    return nx;
+  };
+  const out = (x) => { let v = S.D; for (let j = 0; j < N; j++) v += C[j] * x[j]; return v; };
+  const graded = Number.isFinite(yf) && Math.abs(yf) >= 1e-12;
+  const outside = (v) => graded && Math.abs(v / yf - 1) > 0.02;
+  let peak = -Infinity, last = -1;
+  const see = (k, v) => { if (graded) { peak = Math.max(peak, v / yf); if (outside(v)) last = k; } };
+  // The plot keeps, per bucket of q samples, its lowest and highest sample.
+  const t = [], y = [], q = Math.max(1, Math.ceil(K1 / steps));
+  let bucket = [];
+  const flush = () => { if (!bucket.length) return; const lo = bucket.reduce((a, b) => (b[1] < a[1] ? b : a)), hi = bucket.reduce((a, b) => (b[1] > a[1] ? b : a)); for (const p of lo[0] <= hi[0] ? [lo, hi] : [hi, lo]) if (t.at(-1) !== p[0] * Ts) { t.push(p[0] * Ts); y.push(p[1]); } bucket = []; };
+  let x = new Float64Array(N), k = 0;
+  const y0 = out(x);
+  see(0, y0); t.push(0); y.push(y0);
+  for (; k < K1; k++) {
+    x = next(x, A, B);
+    const v = out(x);
+    see(k + 1, v);
+    bucket.push([k + 1, v]);
+    if (bucket.length >= q || k + 1 === K1) flush();
+  }
   if (k < K) {
     // Then in strides of M = 2^p samples: x ← A^M x + (Σ A^i) B.
-    let M = 1, AM = S.A, BM = S.B.slice();
-    while (M * steps < K - k) {
-      BM = BM.map((v, i) => v + AM[i].reduce((s, a, j) => s + a * BM[j], 0));
-      AM = AM.map((row) => AM[0].map((_, j) => row.reduce((s, a, l) => s + a * AM[l][j], 0)));
-      M *= 2;
+    const M = strideFor(k);
+    let AM = A, BM = B;
+    for (let m = 1; m < M; m *= 2) {
+      BM = next(BM, AM, BM);
+      AM = AM.map((row) => { const r = new Float64Array(N); for (let j = 0; j < N; j++) { let v = 0; for (let l = 0; l < N; l++) v += row[l] * AM[l][j]; r[j] = v; } return r; });
     }
-    for (; k < K; k += M) { x = mulV(AM, x).map((v, i) => v + BM[i]); t.push((k + M) * Ts); y.push(out(x)); }
+    let lastX = null, lastK = -1;
+    for (; k < K; k += M) {
+      x = next(x, AM, BM);
+      const v = out(x);
+      see(k + M, v);
+      if (last === k + M) { lastX = x; lastK = k + M; }
+      t.push((k + M) * Ts); y.push(v);
+    }
+    // The stride after the last point outside the band, sample by sample.
+    if (lastX && lastK < k) {
+      let xs = lastX;
+      for (let j = lastK + 1; j < lastK + M; j++) { xs = next(xs, A, B); if (outside(out(xs))) last = j; }
+    }
   }
-  const res = { t, y, yf, T: t.at(-1) };
-  if (!Number.isFinite(yf) || Math.abs(yf) < 1e-12) return res;
-  let peak = -Infinity, last = -1;
-  for (let i = 0; i < y.length; i++) { const r = y[i] / yf; if (r > peak) peak = r; if (Math.abs(r - 1) > 0.02) last = i; }
-  const settled = last < y.length - 1;
-  return { ...res, overshoot: Math.max(0, (peak - 1) * 100), settled, settle: settled ? t[last + 1] : NaN };
+  const res = { t, y, yf, T: k * Ts };
+  if (!graded) return res;
+  const settled = last < k;
+  return { ...res, overshoot: Math.max(0, (peak - 1) * 100), settled, settle: settled ? (last + 1) * Ts : NaN };
 }
 
 // Root locus: closed-loop poles for the loop gain scaled by each k.
-export function locus(L, ks) { return ks.map((k) => ({ k, poles: closedLoop(L, k) })); }
+export function locus(L, ks) { return ks.map((k) => ({ k, ...closedLoopSides(L, k) })); }
 
 // The low end of the frequency grid: a decade below the slowest pole of the
 // open or the closed loop (s = ln z / Ts, leaving out integrators at z = 1
@@ -476,12 +623,14 @@ function lowFrequency(L, sets) {
 // Everything the tab shows, from the plant and controller models.
 export function analyzeLoop(plant, ctrl, Ts, { points = 400 } = {}) {
   const L = openLoop(plant, ctrl, Ts);
-  const olPoles = openLoopPoles(L), clZ = closedLoop(L, 1);
-  const olSides = poleSides(olPoles), clSides = poleSides(clZ);
+  const { poles: olPoles, sides: olSides } = openLoopSides(L), { poles: clZ, sides: clSides } = closedLoopSides(L, 1);
   const count = (sides, s) => sides.filter((x) => x === s).length;
   const P = count(olSides, 'out'), Z = count(clSides, 'out'), onClosed = count(clSides, 'on');
   const fd = frequencyData(L, { points, wmin: lowFrequency(L, [[olPoles, olSides], [clZ, clSides]]) });
-  const ks = Array.from({ length: 121 }, (_, i) => 10 ** (-2 + (4 * i) / 120));
+  // The root locus at gains ×0.01 … ×100: 121 of them, fewer for a big loop
+  // (a long dead time), where each costs an eigenvalue problem of its size.
+  const nk = L.n <= 40 ? 121 : Math.max(41, Math.round((121 * 40) / L.n));
+  const ks = Array.from({ length: nk }, (_, i) => 10 ** (-2 + (4 * i) / (nk - 1)));
   const loc = locus(L, ks);
   const margins = loopMargins(fd, Ts, { L, poles: olPoles, probe: loc });
   // A pole on the unit circle is undamped: Re s = 0 exactly, not ± rounding.

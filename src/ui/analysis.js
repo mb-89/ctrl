@@ -112,11 +112,20 @@ export function createAnalysisTab(host, app) {
 
   // The operating point as the provider takes it.
   const opSpec = () => (op === 't' ? { t: app.scopeTime?.() ?? 0 } : op);
-  // "Scope time" follows the scope's time (cursor, sweep), at most four times a second.
-  let followTimer = 0, followed = 0;
+  // "Scope time" follows the scope's time (cursor, sweep): at most four times
+  // a second, and counted from the end of the last analysis, which waits
+  // twice as long as that one took, so a slow loop (a long dead time) takes
+  // at most a third of the page's time instead of all of it.
+  let followTimer = 0, followed = 0, cost = 0;
   function followTime() {
     if (op !== 't' || host.hidden || !app.loopModel || followTimer) return;
-    followTimer = setTimeout(() => { followTimer = 0; followed = performance.now(); if (op === 't' && !host.hidden) render(); }, Math.max(0, 250 - (performance.now() - followed)));
+    followTimer = setTimeout(() => {
+      followTimer = 0;
+      if (op !== 't' || host.hidden) return;
+      const t0 = performance.now();
+      render();
+      followed = performance.now(); cost = followed - t0;
+    }, Math.max(0, Math.max(250, 2 * cost) - (performance.now() - followed)));
   }
 
   function compute() {
@@ -170,9 +179,11 @@ export function createAnalysisTab(host, app) {
       row('Gain margin', g.gmDown > 0 ? `${factor(g.gmDown)} … ${up}` : up, ok && Number.isFinite(g.gmUp) ? grade(gradeGm(g.gmUp)) : '', 'The loop gain may change by these factors before a closed-loop pole crosses the unit circle');
     } else {
       const sg = g.stableGains;
-      row('Stable for', sg ? `gain ${sg.lo > 0 ? factor(sg.lo) : '×0'} … ${Number.isFinite(sg.hi) ? factor(sg.hi) : '∞'}` : 'no gain', '', 'The loop is unstable as tuned; with its gain scaled by these factors it would be stable');
+      row('Stable for', sg ? `gain ${sg.lo > 0 ? factor(sg.lo) : '×0'} … ${Number.isFinite(sg.hi) ? factor(sg.hi) : '∞'}` : 'no gain', '', 'The loop is unstable as tuned; with its gain scaled by these factors every closed-loop pole would be inside the unit circle');
     }
-    row('Phase margin', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° at ${num(g.wc, 3)} rad/s` : '—', ok && Number.isFinite(g.pm) ? grade(gradePm(g.pm)) : '', 'At the crossover |L| = 1, the phase left before −180°');
+    // An unstable loop has no margin: the same number is only where the phase is.
+    if (res.Z === 0) row('Phase margin', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° at ${num(g.wc, 3)} rad/s` : '—', ok && Number.isFinite(g.pm) ? grade(gradePm(g.pm)) : '', 'At the crossover |L| = 1, the phase left before −180°');
+    else row('Phase at |L| = 1', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° from −180° at ${num(g.wc, 3)} rad/s` : '—', '', 'At the crossover |L| = 1, how far the phase is from −180°; an unstable loop has no margin to read from it');
     row('Delay margin', res.Z === 0 && Number.isFinite(g.dm) ? `${num(g.dm * 1000, 3)} ms (${num(g.dmSamples, 3)} Ts)` : '—', '', res.Z === 0 ? 'The extra dead time the loop tolerates' : 'An unstable loop has no dead time to spare');
     row('Ms = max |S|', `${num(g.ms, 3)} at ${num(g.wMs, 3)} rad/s`, ok ? grade(gradeMs(g.ms)) : '', 'Peak sensitivity; 1/Ms is the closest approach to −1');
     row('Mt = max |T|', `${num(g.mt, 3)}`, '', 'Peak complementary sensitivity');
@@ -253,10 +264,18 @@ export function createAnalysisTab(host, app) {
       plots.mag.line([a.x0, a.x1], [0, 0], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
       plots.mag.line(fd.w, dB, { color: C_L, width: 1.8 });
       for (const c of g.gainCrossings) plots.mag.mark(c.w, 0, { shape: 'o', color: C_CL, size: 4 });
+      const P = plots.mag.P, sg = g.stableGains, unstable = res.Z > 0;
       for (const c of g.phaseCrossings) {
         plots.mag.line([at(c.w), at(c.w)], [20 * Math.log10(c.mag), 0], { color: C_U, width: 1.5 });
-        // Only the crossings that bound the gain interval get a label.
-        if (c.gm === g.gmUp || c.gm === g.gmDown) plots.mag.text(at(c.w), 20 * Math.log10(c.mag) / 2, `GM ×${num(c.gm, 3)}`, { color: C_U, dx: c.at === 'nyquist' ? -5 : 5, align: c.at === 'nyquist' ? 'right' : 'left' });
+        // Only the crossings that bound the gain interval get a label; an
+        // unstable loop's, the ones that bound the gains it would be stable for.
+        const label = !unstable ? (c.gm === g.gmUp || c.gm === g.gmDown) && `GM ×${num(c.gm, 3)}`
+          : sg && (c.gm === sg.hi ? `stable below ×${num(c.gm, 3)}` : c.gm === sg.lo ? `stable above ×${num(c.gm, 3)}` : '');
+        if (!label) continue;
+        // Inside the plot, and at the ω = 0 end below the axis title in the corner.
+        const y = 20 * Math.log10(c.mag) / 2, py = plots.mag.Y(y), top = P.t + (c.at === 'dc' ? 24 : 8);
+        const dy = py < top ? top - py : py > P.b - 8 ? P.b - 8 - py : 0;
+        plots.mag.text(at(c.w), y, label, { color: C_U, dx: c.at === 'nyquist' ? -5 : 5, dy, align: c.at === 'nyquist' ? 'right' : 'left' });
       }
       if (cursorW) plots.mag.line([cursorW, cursorW], [a.y0, a.y1], { color: PLOT_COLORS.ink, width: 1, alpha: 0.6 });
     });
@@ -268,7 +287,7 @@ export function createAnalysisTab(host, app) {
       for (const c of g.gainCrossings) {
         const ph = phaseAt(fd, res.L, c.w);
         plots.phase.line([c.w, c.w], [ph, ph - c.pm], { color: C_CL, width: 1.5 });
-        plots.phase.text(c.w, ph - c.pm / 2, `PM ${num(c.pm, 3)}°`, { color: C_CL, dx: -5, align: 'right' });
+        plots.phase.text(c.w, ph - c.pm / 2, res.Z === 0 ? `PM ${num(c.pm, 3)}°` : `${num(c.pm, 3)}° from −180°`, { color: C_CL, dx: -5, align: 'right' });
       }
       if (cursorW) plots.phase.line([cursorW, cursorW], [b.y0, b.y1], { color: PLOT_COLORS.ink, width: 1, alpha: 0.6 });
     });

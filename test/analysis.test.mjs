@@ -208,9 +208,64 @@ test('poles on the unit circle are on the circle, in neither P nor Z', async () 
   const motor = { A: [[-100, -50, 0], [25, -5, 0], [0, 1, 0]], B: [[100], [0], [0]], C: [[0, 0, 1]], D: [[0]] };
   const m = analyzeLoop(motor, CONTROLLERS.pid.linear({ Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, b: 1 }, 0.01), 0.01);
   assert.ok(m.P === 0 && m.N === 0 && m.onCircle.open === 2, `P ${m.P} N ${m.N}`);
-  // A split repeated pole is graded by its mean; a real pole off the circle is not hidden.
-  assert.deepEqual(poleSides([{ re: 1 + 1.5e-9, im: 0 }, { re: 1 - 1.5e-9, im: 0 }, { re: 1 + 3e-6, im: 5e-6 }, { re: 1 + 3e-6, im: -5e-6 }, { re: 1 - 6e-6, im: 0 }]), ['on', 'on', 'on', 'on', 'on']);
+  // A split repeated pole is graded by its mean: a triple integrator in a
+  // rotated basis comes out of eig as a ring up to 9e-7 across, partly
+  // outside, partly inside the circle; the matrix shows it is one pole.
+  const { eig, c2d } = await import('../src/core/linalg.js');
+  const T3 = [[1.3, 0.7, 0.2], [-0.4, 2.1, 0.5], [0.3, -0.2, 1.1]];
+  const A3 = mul(mul(inv(T3), [[0, 1, 0], [0, 0, 1], [0, 0, 0]]), T3);
+  for (const Ts of [0.001, 0.01, 0.1]) {
+    const M = c2d(A3, [[0], [0], [1]], Ts).Ad, poles = eig(M);
+    assert.deepEqual(poleSides(poles, M), ['on', 'on', 'on'], `Ts ${Ts}`);
+  }
+  // Poles near each other are not merged for being near: s = ±0.03 at 1 ms
+  // are z = 1 ± 3e-5, one outside and one inside.
+  const M2 = c2d([[0, 1], [0.0009, 0]], [[0], [1]], 0.001).Ad;
+  assert.deepEqual(poleSides(eig(M2), M2), ['out', 'in']);
   assert.deepEqual(poleSides([{ re: 1.001, im: 0 }, { re: 0.999, im: 0 }, { re: -1 - 1e-12, im: 0 }]), ['out', 'in', 'on']);
+});
+
+test('slow poles near z = 1 keep their sides: two poles 3e-5 apart are two poles', async () => {
+  const { CONTROLLERS } = await import('../src/core/controllers.js');
+  const pi = (Kp, Ki, Ts) => CONTROLLERS.pid.linear({ Kp, Ki, Kd: 0, Tf: 0.01, b: 1 }, Ts, { y: [0] });
+  // Plant poles s = ±0.03 under a weak P at 1 ms: unstable (grows ×e in 33 s), P 1, Z 1.
+  const pm = { A: [[0, 1], [0.0009, 0]], B: [[0], [1]], C: [[1, 0]], D: [[0]] };
+  const a = analyzeLoop(pm, CONTROLLERS.pid.linear({ Kp: 1e-5, Ki: 0, Kd: 0, Tf: 0.01, b: 1 }, 0.001, { y: [0] }), 0.001);
+  assert.ok(!a.stable && !a.marginal && a.P === 1 && a.Z === 1, `P ${a.P} Z ${a.Z} marginal ${a.marginal}`);
+  assert.ok(Math.abs(a.slowest.s.re - 0.03) < 1e-3, `slowest ${a.slowest.s.re}`);
+  for (const Ts of [0.001, 0.01]) {
+    // 1/(s − 0.05) with PI: the plant pole outside, the integrator on the circle.
+    const u = analyzeLoop({ A: [[0.05]], B: [[1]], C: [[1]], D: [[0]] }, pi(1, 0.1, Ts), Ts);
+    assert.ok(u.P === 1 && u.N === -1 && u.Z === 0 && u.onCircle.open === 1, `Ts ${Ts}: P ${u.P} N ${u.N} on ${u.onCircle.open}`);
+    // 1/(s(s − 0.02)) with PD: the same.
+    const pd = analyzeLoop({ A: [[0, 1], [0, 0.02]], B: [[0], [1]], C: [[1, 0]], D: [[0]] }, CONTROLLERS.pid.linear({ Kp: 1, Ki: 0, Kd: 2, Tf: 0.05, b: 1 }, Ts, { y: [0] }), Ts);
+    assert.ok(pd.P === 1 && pd.N === -1 && pd.onCircle.open === 1, `Ts ${Ts}: P ${pd.P} N ${pd.N} on ${pd.onCircle.open}`);
+    // 1/(100 s + 1) with PI: the integrator is on the circle, the plant pole 1e-5 inside.
+    const th = analyzeLoop({ A: [[-0.01]], B: [[0.01]], C: [[1]], D: [[0]] }, pi(2, 0.05, Ts), Ts);
+    assert.ok(th.stable && th.onCircle.open === 1, `Ts ${Ts}: on ${th.onCircle.open}`);
+  }
+});
+
+test('"stable for" needs every pole inside: no gain where poles only sit on the circle', async () => {
+  const { CONTROLLERS } = await import('../src/core/controllers.js');
+  const P = (Kp, Ts) => CONTROLLERS.pid.linear({ Kp, Ki: 0, Kd: 0, Tf: 0.01, b: 1 }, Ts, { y: [0] });
+  // A double integrator under P: some pole is outside at every gain (at small
+  // gains by less than the on-circle tolerance). Before: "×0 … ×0.126".
+  const di = analyzeLoop({ A: [[0, 1], [0, 0]], B: [[0], [1]], C: [[1, 0]], D: [[0]] }, P(10, 0.001), 0.001);
+  assert.ok(!di.stable && di.margins.stableGains === null, JSON.stringify(di.margins.stableGains));
+  // G = 2s/(s² − 0.04) under P: one pole outside at every gain; at huge gains it
+  // reads as on the circle. Before: "×0 … ×1e7".
+  const g2 = analyzeLoop({ A: [[0.2, 0], [0, -0.2]], B: [[1], [1]], C: [[1, 1]], D: [[0]] }, P(1e-4, 0.001), 0.001);
+  assert.ok(!g2.stable && g2.margins.stableGains === null, JSON.stringify(g2.margins.stableGains));
+  // 1/(s²(s/38.7 + 1)) with PI and 2 ms dead time: no s² term, unstable at
+  // every gain; its poles are outside already at ×0.001. Before: "×0 … ×0.086".
+  const tri = analyzeLoop({ A: [[0, 1, 0], [0, 0, 1], [0, 0, -38.74958118002654]], B: [[0], [0], [1]], C: [[1.6547730118337345, 0, 0]], D: [[0]], delay: [0.002] },
+    CONTROLLERS.pid.linear({ Kp: 2.1349749965170908, Ki: 0.06246976662226434, Kd: 0, Tf: 0.05, b: 1 }, 0.001, { y: [0] }), 0.001);
+  assert.ok(!tri.stable && tri.margins.stableGains === null, JSON.stringify(tri.margins.stableGains));
+  // A loop that is stable at lower gains still says so (the motor at Kp = 300).
+  const motor = { A: [[-100, -50, 0], [25, -5, 0], [0, 1, 0]], B: [[100], [0], [0]], C: [[0, 0, 1]], D: [[0]] };
+  const m = analyzeLoop(motor, CONTROLLERS.pid.linear({ Kp: 300, Ki: 0, Kd: 1.5, Tf: 0.01, b: 1 }, 0.01), 0.01);
+  assert.ok(m.margins.stableGains && Math.abs(m.margins.stableGains.hi - 0.1932) < 0.002, JSON.stringify(m.margins.stableGains));
 });
 
 test('a marginally stable loop is marginal, not stable, and its slowest pole does not decay', () => {
@@ -240,8 +295,8 @@ test('a dead time that is not a whole number of samples is exact (modified z-tra
       g = { re: g.re + 1 - Math.exp(-sig), im: g.im };
       for (let k = 0; k <= d; k++) g = cdiv(g, z);
       g = cmul(g, { re: 5, im: 0 });
-      // Both the full state space and the factored form L = z^−d · core.
-      for (const r of [respondAt(L, w), respondAt({ ...L, core: null }, w)]) assert.ok(Math.hypot(r.re - g.re, r.im - g.im) < 1e-12, `τ ${tau}, ω ${w}`);
+      // From the loop's parts, the factored state space L = z^−d · core, and the full one.
+      for (const r of [respondAt(L, w), respondAt({ ...L, freq: null }, w), respondAt({ ...L, freq: null, core: null }, w)]) assert.ok(Math.hypot(r.re - g.re, r.im - g.im) < 1e-12, `τ ${tau}, ω ${w}`);
     }
   }
   // The phase margin falls with every bit of dead time; before, 0.004 and 0.04 s read the same as none.
@@ -294,4 +349,60 @@ test('an unstable loop has no margin: the gain interval becomes the gains that w
   assert.ok(a.Z > 0);
   const sg = a.margins.stableGains;
   assert.ok(sg && sg.hi < 1 && stableAt(L, Math.sqrt(Math.max(sg.lo, 1e-3) * sg.hi)) && !stableAt(L, sg.hi * 1.01), JSON.stringify(sg));
+});
+
+test('measurements with different dead times: every crossing of −180° is found', async () => {
+  // 1/(s + 1) read twice, at once and 100 samples late (Ts = 10 ms): the core
+  // keeps a 100-sample chain, whose phase turns 50 times across the band.
+  const Ts = 0.01, plant = { A: [[-1]], B: [[1]], C: [[1], [1]], D: [[0], [0]], delay: [0, 1] };
+  const a = analyzeLoop(plant, { A: [], B: [], C: [[]], D: [[0, -0.3, -0.2]] }, Ts), L = a.L;
+  assert.equal(L.spread, 100);
+  // Dense evaluation: the −180° (mod 360°) lines the phase passes.
+  const lo = a.fd.w[0], hi = a.fd.w.at(-1), N = 200000;
+  let prev = null, ph = 0, count = 0;
+  for (let i = 0; i <= N; i++) {
+    const g = respondAt(L, lo * (hi / lo) ** (i / N)), x = Math.atan2(g.im, g.re);
+    if (prev !== null) {
+      let d = x - prev; d -= 2 * Math.PI * Math.round(d / (2 * Math.PI));
+      const k0 = Math.floor((ph + Math.PI) / (2 * Math.PI)), k1 = Math.floor((ph + d + Math.PI) / (2 * Math.PI));
+      count += Math.abs(k1 - k0); ph += d;
+    } else ph = x > 0 ? x - 2 * Math.PI : x;
+    prev = x;
+  }
+  assert.equal(a.margins.phaseCrossings.filter((c) => !c.at).length, count);
+  assert.ok(count > 40, `${count}`);
+  assert.ok(Math.abs(a.margins.gmUp / edge(L, 1, 1000) - 1) < 1e-6, `gmUp ${a.margins.gmUp}`);
+  // The response from the loop's parts is the state space's, with a PID and fractional delays.
+  const { CONTROLLERS } = await import('../src/core/controllers.js');
+  const motor = { A: [[-100, -50, 0], [25, -5, 0], [0, 1, 0]], B: [[100], [0], [0]], C: [[0, 0, 1], [0, 1, 0]], D: [[0], [0]], delay: [0.023, 0.0071] };
+  const pid = CONTROLLERS.pid.linear({ Kp: 20, Ki: 10, Kd: 1.5, Tf: 0.01, b: 1 }, 0.005);
+  const two = { ...pid, B: pid.B.map((r) => [...r, 0.01]), D: [[...pid.D[0], -0.3]] };
+  const Lm = openLoop(motor, two, 0.005);
+  for (const w of [0.3, 3, 30, 300]) {
+    const x = respondAt(Lm, w), y = respondAt({ ...Lm, freq: null, core: null }, w);
+    assert.ok(Math.hypot(x.re - y.re, x.im - y.im) < 1e-10 * Math.hypot(y.re, y.im), `ω ${w}`);
+  }
+});
+
+test('the step settles exact to the sample past the first 20000 samples', async () => {
+  const { stepInfo, closedLoopModel } = await import('../src/core/analysis.js');
+  const { CONTROLLERS } = await import('../src/core/controllers.js');
+  // A slow pole (100 s) and a lightly damped 50 rad/s resonance, P = 0.5 at 1 ms:
+  // a 668 s window, run in strides after 20 s. Before: 260.256 s (a stride late).
+  const w = 50, z = 0.003, Ts = 0.001;
+  const plant = { A: [[-0.01, 0, 0], [0, 0, 1], [0, -w * w, -2 * z * w]], B: [[0.01], [0], [w * w]], C: [[1, 0.004, 0]], D: [[0]] };
+  const ctrl = CONTROLLERS.pid.linear({ Kp: 0.5, Ki: 0, Kd: 0, Tf: 0.01, b: 1 }, Ts, { y: [0] });
+  const a = analyzeLoop(plant, ctrl, Ts), st = stepInfo(plant, ctrl, Ts, { clPoles: a.clPoles });
+  // The same model, sample by sample over the whole window.
+  const S = closedLoopModel(plant, ctrl, Ts), n = S.A.length;
+  let x = new Float64Array(n), last = -1;
+  for (let k = 1; k <= Math.ceil(st.T / Ts); k++) {
+    const nx = new Float64Array(n);
+    for (let i = 0; i < n; i++) { let v = S.B[i]; for (let j = 0; j < n; j++) v += S.A[i][j] * x[j]; nx[i] = v; }
+    x = nx;
+    let y = S.D; for (let j = 0; j < n; j++) y += S.C[j] * x[j];
+    if (Math.abs(y / st.yf - 1) > 0.02) last = k;
+  }
+  assert.ok(st.settled && st.T > 600, `T ${st.T}`);
+  assert.ok(Math.abs(st.settle - (last + 1) * Ts) < 1e-9, `settles ${st.settle} vs ${(last + 1) * Ts}`);
 });

@@ -37,7 +37,7 @@ const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturatio
 const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
 export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
 const TONE = {
-  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'green',
+  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta',
   PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
   'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
   Disturbance: 'violet', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',

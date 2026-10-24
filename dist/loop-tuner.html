@@ -978,6 +978,20 @@ function eig(A) {
   return hqr(a).sort(byRealThenImag);
 }
 
+function eigPerturbed(A, rel = 1024 * EPS) {
+  const n = square(A, 'eigPerturbed');
+  const a = A.map((r) => Array.from(r));
+  if (!finite(a)) throw new Error('eigPerturbed: matrix has non-finite entries');
+  if (n === 0) return [];
+  balance(a);
+  const s = rel * maxAbs(a);
+  let seed = 0x2545f491;
+  const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed / 2147483648 - 1; };
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) a[i][j] += s * rnd();
+  hessenberg(a);
+  return hqr(a).sort(byRealThenImag);
+}
+
 
 function dareSDA(A, B, Q, R, tol) {
   const n = A.length, I = eye(n);
@@ -1285,7 +1299,7 @@ function rank(M, tol) {
   return diag.filter((x) => x > t).length;
 }
 
-return { zeros, eye, mul, add, scale, transpose, solve, inv, det, expm, c2d, eig, dare, dlqr, dlqe, csolve, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank };
+return { zeros, eye, mul, add, scale, transpose, solve, inv, det, expm, c2d, eig, eigPerturbed, dare, dlqr, dlqe, csolve, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank };
 })();
 // ---- core/scale.js
 __mods['core/scale.js'] = (() => {
@@ -4412,7 +4426,7 @@ const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturatio
 const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
 const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
 const TONE = {
-  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'green',
+  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta',
   PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
   'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
   Disturbance: 'violet', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
@@ -4893,28 +4907,47 @@ return { nextPow2, fft, WINDOWS, coherentGain, amplitudeSpectrum, spectrogram, d
 // ---- core/analysis.js
 __mods['core/analysis.js'] = (() => {
 
-const { c2d, eig, csolve, solve } = __mods['core/linalg.js'];
+const { c2d, eig, eigPerturbed, csolve, solve } = __mods['core/linalg.js'];
 const zerosM = (r, c) => Array.from({ length: r }, () => new Array(c).fill(0));
 const col = (M, j) => M.map((row) => row[j]);
 const cabs = (z) => Math.hypot(z.re, z.im);
 const byRealThenImag = (a, b) => b.re - a.re || b.im - a.im;
+const angleDeg = (g) => (Math.atan2(g.im, g.re) * 180) / Math.PI;
+const rotate = (g, a) => { const c = Math.cos(a), s = Math.sin(a); return { re: g.re * c - g.im * s, im: g.re * s + g.im * c }; };
 
 const ON_CIRCLE = 1e-7;
-const CLUSTER = 1e-4;
+const NEAR = 1e-3;
 const AT_ORIGIN = 1e-3;
 
-function poleSides(poles) {
-  const n = poles.length, root = poles.map((_, i) => i);
-  const find = (i) => (root[i] === i ? i : (root[i] = find(root[i])));
-  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-    if (Math.hypot(poles[i].re - poles[j].re, poles[i].im - poles[j].im) < CLUSTER) root[find(i)] = find(j);
+const sideOf = (r) => (r > 1 + ON_CIRCLE ? 'out' : r < 1 - ON_CIRCLE ? 'in' : 'on');
+
+function groups(idx, link) {
+  const root = new Map(idx.map((i) => [i, i]));
+  const find = (i) => (root.get(i) === i ? i : find(root.get(i)));
+  for (let a = 0; a < idx.length; a++) for (let b = a + 1; b < idx.length; b++) if (link(idx[a], idx[b])) root.set(find(idx[a]), find(idx[b]));
+  const out = new Map();
+  for (const i of idx) { const r = find(i); if (!out.has(r)) out.set(r, []); out.get(r).push(i); }
+  return [...out.values()];
+}
+
+function poleSides(poles, M) {
+  const sides = poles.map((p) => sideOf(cabs(p)));
+  if (!M) return sides;
+  const dist = (p, q) => Math.hypot(p.re - q.re, p.im - q.im);
+  const near = poles.map((p, i) => i).filter((i) => Math.abs(cabs(poles[i]) - 1) < NEAR);
+  const mixed = groups(near, (i, j) => dist(poles[i], poles[j]) < NEAR).filter((g) => g.length > 1 && new Set(g.map((i) => sides[i])).size > 1);
+  if (!mixed.length) return sides;
+  const moved = eigPerturbed(M);
+  for (const g of mixed) {
+    const move = new Map(g.map((i) => [i, Math.min(...moved.map((q) => dist(poles[i], q)))]));
+    const loose = g.filter((i) => move.get(i) > 0.25 * Math.min(...poles.map((q, j) => (j === i ? Infinity : dist(poles[i], q)))));
+    for (const ring of groups(loose, (i, j) => dist(poles[i], poles[j]) <= 4 * Math.max(move.get(i), move.get(j)))) {
+      if (ring.length < 2) continue;
+      const re = ring.reduce((s, i) => s + poles[i].re, 0) / ring.length, im = ring.reduce((s, i) => s + poles[i].im, 0) / ring.length;
+      for (const i of ring) sides[i] = sideOf(Math.hypot(re, im));
+    }
   }
-  const mean = new Map();
-  poles.forEach((p, i) => { const k = find(i), m = mean.get(k) ?? { re: 0, im: 0, n: 0 }; m.re += p.re; m.im += p.im; m.n++; mean.set(k, m); });
-  return poles.map((_, i) => {
-    const m = mean.get(find(i)), r = Math.hypot(m.re / m.n, m.im / m.n);
-    return r > 1 + ON_CIRCLE ? 'out' : r < 1 - ON_CIRCLE ? 'in' : 'on';
-  });
+  return sides;
 }
 
 function discretePlant(plant, Ts, { use, drop = 0 } = {}) {
@@ -4942,7 +4975,7 @@ function discretePlant(plant, Ts, { use, drop = 0 } = {}) {
     C[k][o + len[k] - 1] = 1;
     o += len[k];
   }
-  return { A, B, C, D, delaySamples, delayStates: len, Ad, plantStates: n };
+  return { A, B, C, D, delaySamples, delayStates: len, Ad, Bd, plantStates: n, taps: taps.map((t, k) => ({ c: t.c, d: t.d, len: len[k] })) };
 }
 
 function assemble(P, ctrl, Bcy, Dcy) {
@@ -4971,22 +5004,45 @@ function openLoop(plant, ctrl, Ts) {
   const read = P.delayStates.filter((_, k) => use[k]);
   const d = read.length ? Math.min(...read) : 0;
   const core = d ? { ...assemble(discretePlant(plant, Ts, { use, drop: d }), ctrl, Bcy, Dcy), Ts } : null;
+  const freq = { Ad: P.Ad, Bd: P.Bd, taps: P.taps, use, ctrl: { A: ctrl.A, B: Bcy, C: ctrl.C[0] ?? [], D: Dcy } };
   return {
-    ...L, Ts, n: L.A.length, delaySamples: P.delaySamples, pureDelay: d, core,
+    ...L, Ts, n: L.A.length, delaySamples: P.delaySamples, pureDelay: d, core, freq,
+    spread: read.length ? Math.max(...read) - d : 0,
     parts: { plant: P.Ad, chains: P.A.length - P.plantStates, ctrl: ctrl.A },
   };
 }
 
-function openLoopPoles(L) {
-  if (!L.parts) return eig(L.A);
-  return [...eig(L.parts.plant), ...Array.from({ length: L.parts.chains }, () => ({ re: 0, im: 0 })), ...eig(L.parts.ctrl)].sort(byRealThenImag);
+function openLoopSides(L) {
+  if (!L.parts) { const poles = eig(L.A); return { poles, sides: poleSides(poles, L.A) }; }
+  const pl = eig(L.parts.plant), ct = eig(L.parts.ctrl), sp = poleSides(pl, L.parts.plant), sc = poleSides(ct, L.parts.ctrl);
+  const all = [
+    ...pl.map((z, i) => [z, sp[i]]),
+    ...Array.from({ length: L.parts.chains }, () => [{ re: 0, im: 0 }, 'in']),
+    ...ct.map((z, i) => [z, sc[i]]),
+  ].sort((a, b) => byRealThenImag(a[0], b[0]));
+  return { poles: all.map((x) => x[0]), sides: all.map((x) => x[1]) };
+}
+const openLoopPoles = (L) => openLoopSides(L).poles;
+
+function closedLoopMatrix(L, k) {
+  const den = 1 + k * L.D;
+  if (Math.abs(den) < 1e-12) return null;
+  return L.A.map((row, i) => row.map((v, j) => v - (k * L.B[i][0] * L.C[0][j]) / den));
 }
 
 function closedLoop(L, k = 1) {
-  const den = 1 + k * L.D;
-  if (Math.abs(den) < 1e-12) return [];
-  return eig(L.A.map((row, i) => row.map((v, j) => v - (k * L.B[i][0] * L.C[0][j]) / den)));
+  const M = closedLoopMatrix(L, k);
+  return M ? eig(M) : [];
 }
+
+function closedLoopSides(L, k = 1) {
+  const M = closedLoopMatrix(L, k);
+  if (!M) return { poles: [], sides: [] };
+  const poles = eig(M);
+  return { poles, sides: poleSides(poles, M) };
+}
+
+const classOf = (sides) => (sides.includes('out') ? 'unstable' : sides.includes('on') ? 'marginal' : 'stable');
 
 function sOf(z, Ts) {
   const r = Math.hypot(z.re, z.im);
@@ -5002,10 +5058,8 @@ function sPlanePoint(z, Ts) {
 }
 
 function respondAt(L, w) {
-  if (L.core) {
-    const g = respondAt(L.core, w), a = -w * L.Ts * L.pureDelay, c = Math.cos(a), s = Math.sin(a);
-    return { re: g.re * c - g.im * s, im: g.re * s + g.im * c };
-  }
+  if (L.freq) return respondParts(L.freq, L.Ts, w, 0);
+  if (L.core) return rotate(respondAt(L.core, w), -w * L.Ts * L.pureDelay);
   const N = L.A.length, zr = Math.cos(w * L.Ts), zi = Math.sin(w * L.Ts);
   if (!N) return { re: L.D, im: 0 };
   const Mr = L.A.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v));
@@ -5017,21 +5071,50 @@ function respondAt(L, w) {
   return { re, im };
 }
 
-const angleDeg = (g) => (Math.atan2(g.im, g.re) * 180) / Math.PI;
-const rotate = (g, a) => { const c = Math.cos(a), s = Math.sin(a); return { re: g.re * c - g.im * s, im: g.re * s + g.im * c }; };
+function coreAt(L, w) {
+  if (L.freq) return respondParts(L.freq, L.Ts, w, L.pureDelay);
+  return respondAt(L.core ?? L, w);
+}
+
+function respondParts(F, Ts, w, shift) {
+  const zr = Math.cos(w * Ts), zi = Math.sin(w * Ts);
+  const n = F.Ad.length;
+  let X = { xr: [], xi: [] };
+  if (n) X = csolve(F.Ad.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v)), F.Ad.map((row, i) => row.map((_, j) => (i === j ? zi : 0))), col(F.Bd, 0), new Array(n).fill(0));
+  const c = F.ctrl, nc = c.A.length;
+  let Y = { xr: [], xi: [] };
+  if (nc) Y = csolve(c.A.map((row, i) => row.map((_, j) => (i === j ? zr : 0) - c.A[j][i])), c.A.map((row, i) => row.map((_, j) => (i === j ? zi : 0))), c.C.slice(), new Array(nc).fill(0));
+  if (!X || !Y) return { re: NaN, im: NaN };
+  let re = 0, im = 0;
+  F.taps.forEach((t, k) => {
+    if (!F.use[k]) return;
+    let gr = t.d, gi = 0;
+    for (let j = 0; j < n; j++) { gr += t.c[j] * X.xr[j]; gi += t.c[j] * X.xi[j]; }
+    let kr = c.D[k], ki = 0;
+    for (let j = 0; j < nc; j++) { kr += Y.xr[j] * c.B[j][k]; ki += Y.xi[j] * c.B[j][k]; }
+    const g = rotate({ re: gr * kr - gi * ki, im: gr * ki + gi * kr }, -w * Ts * (t.len - shift));
+    re -= g.re; im -= g.im;
+  });
+  return { re, im };
+}
 
 function frequencyData(L, { points = 400, wmin } = {}) {
   const wN = Math.PI / L.Ts, hi = 0.999 * wN, lo = Math.min(wmin ?? wN * 1e-4, wN * 1e-2);
-  const core = L.core ?? L, delay = L.core ? L.pureDelay * L.Ts : 0;
+  const delay = L.core || L.freq ? L.pureDelay * L.Ts : 0;
   let w = Array.from({ length: points }, (_, i) => lo * (hi / lo) ** (i / (points - 1)));
-  let G = w.map((x) => respondAt(core, x));
+  if (L.spread > 0) {
+    const dw = (2 * Math.PI) / (L.spread * L.Ts) / 24;
+    w = [...new Set([...w, ...Array.from({ length: Math.floor((hi - lo) / dw) }, (_, i) => lo + (i + 1) * dw)])].sort((a, b) => a - b);
+  }
+  const cap = 4 * w.length;
+  let G = w.map((x) => coreAt(L, x));
   for (let pass = 0; pass < 8; pass++) {
     const nw = [w[0]], nG = [G[0]];
     let added = 0;
     for (let i = 1; i < w.length; i++) {
       let step = Math.abs(angleDeg(G[i]) - angleDeg(G[i - 1]));
       step = Math.min(step, 360 - step);
-      if (step > 45 && w.length + added < 4 * points) { const wm = Math.sqrt(w[i - 1] * w[i]); nw.push(wm); nG.push(respondAt(core, wm)); added++; }
+      if (step > 45 && w.length + added < cap) { const wm = Math.sqrt(w[i - 1] * w[i]); nw.push(wm); nG.push(coreAt(L, wm)); added++; }
       nw.push(w[i]); nG.push(G[i]);
     }
     w = nw; G = nG;
@@ -5052,12 +5135,12 @@ function frequencyData(L, { points = 400, wmin } = {}) {
 }
 
 function phaseAt(fd, L, w) {
-  const core = L.core ?? L, ws = fd.w;
+  const ws = fd.w;
   let i = 1, j = ws.length - 1;
   while (i < j) { const m = (i + j) >> 1; if (ws[m] < w) i = m + 1; else j = m; }
   const f = Math.min(1, Math.max(0, (Math.log(w) - Math.log(ws[i - 1])) / (Math.log(ws[i]) - Math.log(ws[i - 1]))));
   const ref = fd.phase0[i - 1] + f * (fd.phase0[i] - fd.phase0[i - 1]);
-  let ph = angleDeg(respondAt(core, w));
+  let ph = angleDeg(coreAt(L, w));
   ph += 360 * Math.round((ref - ph) / 360);
   return ph - (w * fd.delay * 180) / Math.PI;
 }
@@ -5070,31 +5153,33 @@ function bisect(fn, a, b, fa = fn(a)) {
   return (a + b) / 2;
 }
 
-const noneOutside = (poles) => !poleSides(poles).includes('out');
-
 function gainRange(L, gains, probe = []) {
   const memo = new Map();
-  const ok = (k) => { if (!memo.has(k)) memo.set(k, noneOutside(closedLoop(L, k))); return memo.get(k); };
+  const cls = (k) => {
+    if (!memo.has(k)) { const { poles, sides } = closedLoopSides(L, k); memo.set(k, poles.length ? classOf(sides) : 'unstable'); }
+    return memo.get(k);
+  };
   const ks = [...new Set(gains.filter((k) => k > 0 && Number.isFinite(k)))].sort((a, b) => a - b);
   for (let i = 1; i < probe.length; i++) {
-    const a = probe[i - 1], b = probe[i], sa = noneOutside(a.poles), sb = noneOutside(b.poles);
-    if (sa === sb || ks.some((k) => k > a.k && k <= b.k)) continue;
+    const a = probe[i - 1], b = probe[i], ca = a.sides ? classOf(a.sides) : cls(a.k), cb = b.sides ? classOf(b.sides) : cls(b.k);
+    if (ca === cb || ks.some((k) => k > a.k && k <= b.k)) continue;
     let lo = a.k, hi = b.k;
-    for (let it = 0; it < 50; it++) { const m = Math.sqrt(lo * hi); if (ok(m) === sa) lo = m; else hi = m; }
+    for (let it = 0; it < 50; it++) { const m = Math.sqrt(lo * hi); if (cls(m) === ca) lo = m; else hi = m; }
     ks.push(Math.sqrt(lo * hi));
   }
   ks.sort((a, b) => a - b);
   const edges = [0, ...ks, Infinity], n = edges.length - 1;
-  const okAt = (i) => { const a = edges[i], b = edges[i + 1]; return ok(a === 0 ? (b === Infinity ? 1 : b / 2) : b === Infinity ? 2 * a : Math.sqrt(a * b)); };
-  const grow = (i) => { let lo = i, hi = i; const s = okAt(i); while (lo > 0 && okAt(lo - 1) === s) lo--; while (hi < n - 1 && okAt(hi + 1) === s) hi++; return { lo, hi, ok: s }; };
   let h = 0;
   while (h < n - 1 && edges[h + 1] <= 1) h++;
-  const here = grow(h), down = edges[here.lo], up = edges[here.hi + 1];
-  if (here.ok) return { down, up, ok: true, stable: { lo: down, hi: up } };
+  const at = (i) => { const a = edges[i], b = edges[i + 1]; return cls(i === h ? 1 : a === 0 ? b / 2 : b === Infinity ? 2 * a : Math.sqrt(a * b)); };
+  const grow = (i, ok) => { let lo = i, hi = i; while (lo > 0 && ok(at(lo - 1))) lo--; while (hi < n - 1 && ok(at(hi + 1))) hi++; return { lo, hi }; };
+  const tuned = at(h), kept = (c) => c !== 'unstable', isStable = (c) => c === 'stable';
+  const here = grow(h, kept(tuned) ? kept : (c) => c === 'unstable'), down = edges[here.lo], up = edges[here.hi + 1];
+  if (kept(tuned)) return { down, up, ok: true, stable: { lo: down, hi: up } };
   for (let a = here.lo - 1, b = here.hi + 1; a >= 0 || b < n;) {
     const da = a >= 0 ? -Math.log(edges[a + 1]) : Infinity, db = b < n ? Math.log(edges[b]) : Infinity;
     const i = da <= db ? a-- : b++;
-    if (okAt(i)) { const s = grow(i); return { down, up, ok: false, stable: { lo: edges[s.lo], hi: edges[s.hi + 1] } }; }
+    if (isStable(at(i))) { const s = grow(i, isStable); return { down, up, ok: false, stable: { lo: edges[s.lo], hi: edges[s.hi + 1] } }; }
   }
   return { down, up, ok: false, stable: null };
 }
@@ -5201,43 +5286,80 @@ function closedLoopModel(plant, ctrl, Ts) {
   return { A, B, C: yRow[0], D: yr[0], Ts };
 }
 
-function stepInfo(plant, ctrl, Ts, { clPoles, T, steps = 20000 } = {}) {
+function stepInfo(plant, ctrl, Ts, { clPoles, T, steps = 20000, budget = 3e8 } = {}) {
   const S = closedLoopModel(plant, ctrl, Ts), N = S.A.length;
   let yf = NaN;
   try {
     const x = solve(S.A.map((row, i) => row.map((v, j) => (i === j ? 1 : 0) - v)), S.B);
     yf = S.C.reduce((s, c, j) => s + c * x[j], 0) + S.D;
   } catch {   }
+  const modes = (clPoles ? clPoles.map((p) => p.z) : eig(S.A)).filter((z) => cabs(z) >= AT_ORIGIN).map((z) => sOf(z, Ts)).filter((v) => Number.isFinite(v.re));
   if (T === undefined) {
-    const rates = (clPoles ? clPoles.map((p) => p.z) : eig(S.A)).filter((z) => cabs(z) >= AT_ORIGIN)
-      .map((z) => -sOf(z, Ts).re).filter((v) => Number.isFinite(v) && v > 0);
+    const rates = modes.map((v) => -v.re).filter((v) => v > 0);
     T = Math.max(20 * Ts, 10 / Math.min(...rates, 1 / (5 * Ts)));
   }
   const K = Math.max(1, Math.ceil(T / Ts - 1e-9));
-  const mulV = (M, v) => M.map((row) => row.reduce((s, a, j) => s + a * v[j], 0));
-  const out = (x) => S.C.reduce((s, c, j) => s + c * x[j], 0) + S.D;
-  const t = [0], y = [out(new Array(N).fill(0))];
-  let x = new Array(N).fill(0), k = 0;
-  const K1 = Math.min(K, steps);
-  for (; k < K1; k++) { x = mulV(S.A, x).map((v, i) => v + S.B[i]); t.push((k + 1) * Ts); y.push(out(x)); }
-  if (k < K) {
-    let M = 1, AM = S.A, BM = S.B.slice();
-    while (M * steps < K - k) {
-      BM = BM.map((v, i) => v + AM[i].reduce((s, a, j) => s + a * BM[j], 0));
-      AM = AM.map((row) => AM[0].map((_, j) => row.reduce((s, a, l) => s + a * AM[l][j], 0)));
-      M *= 2;
-    }
-    for (; k < K; k += M) { x = mulV(AM, x).map((v, i) => v + BM[i]); t.push((k + M) * Ts); y.push(out(x)); }
+  const strideFor = (k1) => { let M = 1; while (M * steps < K - k1) M *= 2; return M; };
+  let K1 = Math.min(K, steps);
+  const cap = Math.max(steps, Math.floor(budget / Math.max(1, N * N)));
+  for (let it = 0; it < 8 && K1 < K; it++) {
+    const h = strideFor(K1) * Ts;
+    const alive = modes.filter((v) => -v.re * h > 0.05 || Math.abs(v.im) * h > 0.2).map((v) => (v.re < 0 ? 20 / -v.re : Infinity));
+    const need = Math.min(K, cap, Math.ceil(Math.max(0, ...alive) / Ts));
+    if (need <= K1) break;
+    K1 = need;
   }
-  const res = { t, y, yf, T: t.at(-1) };
-  if (!Number.isFinite(yf) || Math.abs(yf) < 1e-12) return res;
+  const A = S.A.map((row) => Float64Array.from(row)), B = Float64Array.from(S.B), C = Float64Array.from(S.C);
+  const next = (x, AM, BM) => {
+    const nx = new Float64Array(N);
+    for (let i = 0; i < N; i++) { let v = BM[i]; const row = AM[i]; for (let j = 0; j < N; j++) v += row[j] * x[j]; nx[i] = v; }
+    return nx;
+  };
+  const out = (x) => { let v = S.D; for (let j = 0; j < N; j++) v += C[j] * x[j]; return v; };
+  const graded = Number.isFinite(yf) && Math.abs(yf) >= 1e-12;
+  const outside = (v) => graded && Math.abs(v / yf - 1) > 0.02;
   let peak = -Infinity, last = -1;
-  for (let i = 0; i < y.length; i++) { const r = y[i] / yf; if (r > peak) peak = r; if (Math.abs(r - 1) > 0.02) last = i; }
-  const settled = last < y.length - 1;
-  return { ...res, overshoot: Math.max(0, (peak - 1) * 100), settled, settle: settled ? t[last + 1] : NaN };
+  const see = (k, v) => { if (graded) { peak = Math.max(peak, v / yf); if (outside(v)) last = k; } };
+  const t = [], y = [], q = Math.max(1, Math.ceil(K1 / steps));
+  let bucket = [];
+  const flush = () => { if (!bucket.length) return; const lo = bucket.reduce((a, b) => (b[1] < a[1] ? b : a)), hi = bucket.reduce((a, b) => (b[1] > a[1] ? b : a)); for (const p of lo[0] <= hi[0] ? [lo, hi] : [hi, lo]) if (t.at(-1) !== p[0] * Ts) { t.push(p[0] * Ts); y.push(p[1]); } bucket = []; };
+  let x = new Float64Array(N), k = 0;
+  const y0 = out(x);
+  see(0, y0); t.push(0); y.push(y0);
+  for (; k < K1; k++) {
+    x = next(x, A, B);
+    const v = out(x);
+    see(k + 1, v);
+    bucket.push([k + 1, v]);
+    if (bucket.length >= q || k + 1 === K1) flush();
+  }
+  if (k < K) {
+    const M = strideFor(k);
+    let AM = A, BM = B;
+    for (let m = 1; m < M; m *= 2) {
+      BM = next(BM, AM, BM);
+      AM = AM.map((row) => { const r = new Float64Array(N); for (let j = 0; j < N; j++) { let v = 0; for (let l = 0; l < N; l++) v += row[l] * AM[l][j]; r[j] = v; } return r; });
+    }
+    let lastX = null, lastK = -1;
+    for (; k < K; k += M) {
+      x = next(x, AM, BM);
+      const v = out(x);
+      see(k + M, v);
+      if (last === k + M) { lastX = x; lastK = k + M; }
+      t.push((k + M) * Ts); y.push(v);
+    }
+    if (lastX && lastK < k) {
+      let xs = lastX;
+      for (let j = lastK + 1; j < lastK + M; j++) { xs = next(xs, A, B); if (outside(out(xs))) last = j; }
+    }
+  }
+  const res = { t, y, yf, T: k * Ts };
+  if (!graded) return res;
+  const settled = last < k;
+  return { ...res, overshoot: Math.max(0, (peak - 1) * 100), settled, settle: settled ? (last + 1) * Ts : NaN };
 }
 
-function locus(L, ks) { return ks.map((k) => ({ k, poles: closedLoop(L, k) })); }
+function locus(L, ks) { return ks.map((k) => ({ k, ...closedLoopSides(L, k) })); }
 
 function lowFrequency(L, sets) {
   const wN = Math.PI / L.Ts;
@@ -5260,12 +5382,12 @@ function lowFrequency(L, sets) {
 
 function analyzeLoop(plant, ctrl, Ts, { points = 400 } = {}) {
   const L = openLoop(plant, ctrl, Ts);
-  const olPoles = openLoopPoles(L), clZ = closedLoop(L, 1);
-  const olSides = poleSides(olPoles), clSides = poleSides(clZ);
+  const { poles: olPoles, sides: olSides } = openLoopSides(L), { poles: clZ, sides: clSides } = closedLoopSides(L, 1);
   const count = (sides, s) => sides.filter((x) => x === s).length;
   const P = count(olSides, 'out'), Z = count(clSides, 'out'), onClosed = count(clSides, 'on');
   const fd = frequencyData(L, { points, wmin: lowFrequency(L, [[olPoles, olSides], [clZ, clSides]]) });
-  const ks = Array.from({ length: 121 }, (_, i) => 10 ** (-2 + (4 * i) / 120));
+  const nk = L.n <= 40 ? 121 : Math.max(41, Math.round((121 * 40) / L.n));
+  const ks = Array.from({ length: nk }, (_, i) => 10 ** (-2 + (4 * i) / (nk - 1)));
   const loc = locus(L, ks);
   const margins = loopMargins(fd, Ts, { L, poles: olPoles, probe: loc });
   const cl = clZ.map((z, i) => {
@@ -5284,7 +5406,7 @@ function analyzeLoop(plant, ctrl, Ts, { points = 400 } = {}) {
   };
 }
 
-return { ON_CIRCLE, AT_ORIGIN, poleSides, discretePlant, openLoop, openLoopPoles, closedLoop, sOf, sPlanePoint, respondAt, frequencyData, phaseAt, gainRange, loopMargins, stepResponse, closedLoopModel, stepInfo, locus, analyzeLoop };
+return { ON_CIRCLE, AT_ORIGIN, poleSides, discretePlant, openLoop, openLoopPoles, closedLoop, closedLoopSides, sOf, sPlanePoint, respondAt, frequencyData, phaseAt, gainRange, loopMargins, stepResponse, closedLoopModel, stepInfo, locus, analyzeLoop };
 })();
 // ---- core/autotune.js
 __mods['core/autotune.js'] = (() => {
@@ -6935,7 +7057,7 @@ function xyStatus(scope, unitOf, shown = (i) => scope.channels[i].on) {
 function xyEmpty(scope) {
   const cx = scope.channels[0];
   if (!cx.source) return 'XY: channel 1 drives the beam across. Give it a source (the reference r, say).';
-  if (!cx.on) return `XY: channel 1 (${cx.source}) is off. Press 1 to turn it on.`;
+  if (!cx.on) return `XY: channel 1 (${cx.source}) is off. Turn it on with the channel key 1 under Vertical.`;
   return `XY: channel 1's source ${cx.source} has no signal.`;
 }
 
@@ -7949,10 +8071,16 @@ function createAnalysisTab(host, app) {
   }
 
   const opSpec = () => (op === 't' ? { t: app.scopeTime?.() ?? 0 } : op);
-  let followTimer = 0, followed = 0;
+  let followTimer = 0, followed = 0, cost = 0;
   function followTime() {
     if (op !== 't' || host.hidden || !app.loopModel || followTimer) return;
-    followTimer = setTimeout(() => { followTimer = 0; followed = performance.now(); if (op === 't' && !host.hidden) render(); }, Math.max(0, 250 - (performance.now() - followed)));
+    followTimer = setTimeout(() => {
+      followTimer = 0;
+      if (op !== 't' || host.hidden) return;
+      const t0 = performance.now();
+      render();
+      followed = performance.now(); cost = followed - t0;
+    }, Math.max(0, Math.max(250, 2 * cost) - (performance.now() - followed)));
   }
 
   function compute() {
@@ -8003,9 +8131,10 @@ function createAnalysisTab(host, app) {
       row('Gain margin', g.gmDown > 0 ? `${factor(g.gmDown)} … ${up}` : up, ok && Number.isFinite(g.gmUp) ? grade(gradeGm(g.gmUp)) : '', 'The loop gain may change by these factors before a closed-loop pole crosses the unit circle');
     } else {
       const sg = g.stableGains;
-      row('Stable for', sg ? `gain ${sg.lo > 0 ? factor(sg.lo) : '×0'} … ${Number.isFinite(sg.hi) ? factor(sg.hi) : '∞'}` : 'no gain', '', 'The loop is unstable as tuned; with its gain scaled by these factors it would be stable');
+      row('Stable for', sg ? `gain ${sg.lo > 0 ? factor(sg.lo) : '×0'} … ${Number.isFinite(sg.hi) ? factor(sg.hi) : '∞'}` : 'no gain', '', 'The loop is unstable as tuned; with its gain scaled by these factors every closed-loop pole would be inside the unit circle');
     }
-    row('Phase margin', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° at ${num(g.wc, 3)} rad/s` : '—', ok && Number.isFinite(g.pm) ? grade(gradePm(g.pm)) : '', 'At the crossover |L| = 1, the phase left before −180°');
+    if (res.Z === 0) row('Phase margin', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° at ${num(g.wc, 3)} rad/s` : '—', ok && Number.isFinite(g.pm) ? grade(gradePm(g.pm)) : '', 'At the crossover |L| = 1, the phase left before −180°');
+    else row('Phase at |L| = 1', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° from −180° at ${num(g.wc, 3)} rad/s` : '—', '', 'At the crossover |L| = 1, how far the phase is from −180°; an unstable loop has no margin to read from it');
     row('Delay margin', res.Z === 0 && Number.isFinite(g.dm) ? `${num(g.dm * 1000, 3)} ms (${num(g.dmSamples, 3)} Ts)` : '—', '', res.Z === 0 ? 'The extra dead time the loop tolerates' : 'An unstable loop has no dead time to spare');
     row('Ms = max |S|', `${num(g.ms, 3)} at ${num(g.wMs, 3)} rad/s`, ok ? grade(gradeMs(g.ms)) : '', 'Peak sensitivity; 1/Ms is the closest approach to −1');
     row('Mt = max |T|', `${num(g.mt, 3)}`, '', 'Peak complementary sensitivity');
@@ -8077,9 +8206,15 @@ function createAnalysisTab(host, app) {
       plots.mag.line([a.x0, a.x1], [0, 0], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
       plots.mag.line(fd.w, dB, { color: C_L, width: 1.8 });
       for (const c of g.gainCrossings) plots.mag.mark(c.w, 0, { shape: 'o', color: C_CL, size: 4 });
+      const P = plots.mag.P, sg = g.stableGains, unstable = res.Z > 0;
       for (const c of g.phaseCrossings) {
         plots.mag.line([at(c.w), at(c.w)], [20 * Math.log10(c.mag), 0], { color: C_U, width: 1.5 });
-        if (c.gm === g.gmUp || c.gm === g.gmDown) plots.mag.text(at(c.w), 20 * Math.log10(c.mag) / 2, `GM ×${num(c.gm, 3)}`, { color: C_U, dx: c.at === 'nyquist' ? -5 : 5, align: c.at === 'nyquist' ? 'right' : 'left' });
+        const label = !unstable ? (c.gm === g.gmUp || c.gm === g.gmDown) && `GM ×${num(c.gm, 3)}`
+          : sg && (c.gm === sg.hi ? `stable below ×${num(c.gm, 3)}` : c.gm === sg.lo ? `stable above ×${num(c.gm, 3)}` : '');
+        if (!label) continue;
+        const y = 20 * Math.log10(c.mag) / 2, py = plots.mag.Y(y), top = P.t + (c.at === 'dc' ? 24 : 8);
+        const dy = py < top ? top - py : py > P.b - 8 ? P.b - 8 - py : 0;
+        plots.mag.text(at(c.w), y, label, { color: C_U, dx: c.at === 'nyquist' ? -5 : 5, dy, align: c.at === 'nyquist' ? 'right' : 'left' });
       }
       if (cursorW) plots.mag.line([cursorW, cursorW], [a.y0, a.y1], { color: PLOT_COLORS.ink, width: 1, alpha: 0.6 });
     });
@@ -8091,7 +8226,7 @@ function createAnalysisTab(host, app) {
       for (const c of g.gainCrossings) {
         const ph = phaseAt(fd, res.L, c.w);
         plots.phase.line([c.w, c.w], [ph, ph - c.pm], { color: C_CL, width: 1.5 });
-        plots.phase.text(c.w, ph - c.pm / 2, `PM ${num(c.pm, 3)}°`, { color: C_CL, dx: -5, align: 'right' });
+        plots.phase.text(c.w, ph - c.pm / 2, res.Z === 0 ? `PM ${num(c.pm, 3)}°` : `${num(c.pm, 3)}° from −180°`, { color: C_CL, dx: -5, align: 'right' });
       }
       if (cursorW) plots.phase.line([cursorW, cursorW], [b.y0, b.y1], { color: PLOT_COLORS.ink, width: 1, alpha: 0.6 });
     });

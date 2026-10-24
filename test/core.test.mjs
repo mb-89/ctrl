@@ -354,12 +354,13 @@ test('library tags: opposite values look different, and a value looks the same o
   assert.notEqual(lin[0].tone, non[0].tone);
   const none = lin.find((t) => t.label === 'No controller'), pid = systemTags({ diagram: { blocks: [{ id: 'c', type: 'controller', params: {}, variants: [{ type: 'pid' }] }], wires: [] } }).find((t) => t.label === 'PID');
   assert.notEqual(none.kind, pid.kind, 'No controller must not look like a controller');
-  // Values that differ look different at a glance: Disturbance shares its tone
-  // with no tag beside it on any card (it was Nonlinear's red on three), and
-  // in the filter row no two values of one kind share a tone.
+  // Values that differ look different at a glance: no tag shares its tone
+  // with a tag beside it on any card (Disturbance was Nonlinear's red on
+  // three, Dead time Auto-tune's green on the oven), and in the filter row no
+  // two values of one kind share a tone.
   for (const e of SYSTEM_LIBRARY) {
-    const d = e.tags.find((t) => t.label === 'Disturbance');
-    if (d) for (const t of e.tags) if (t !== d) assert.notEqual(t.tone, d.tone, `${e.name}: Disturbance and ${t.label}`);
+    const tones = e.tags.map((t) => t.tone);
+    assert.equal(new Set(tones).size, tones.length, `${e.name}: ${e.tags.map((t) => `${t.label} ${t.tone}`).join(', ')}`);
   }
   const { libraryTags } = await import('../src/core/systems.js');
   const looks = libraryTags().map((t) => `${t.kind}/${t.tone}`);
@@ -394,7 +395,7 @@ test('XY: the status names Δ only when it changes a channel; the empty screen s
   const sine = { channels: [ch('r'), ch('angle'), ch('', false), ch('', false)], view: { mode: 'xy', delta: true } };
   assert.equal(xyStatus(sine, unit), 'XY · Δ X − Y');
   assert.equal(xyStatus({ ...sine, view: { mode: 'xy' } }, unit), 'XY');
-  assert.match(xyEmpty({ channels: [ch('r', false)] }), /channel 1 \(r\) is off\. Press 1/);
+  assert.match(xyEmpty({ channels: [ch('r', false)] }), /channel 1 \(r\) is off\. Turn it on with the channel key 1 under Vertical/);
   assert.match(xyEmpty({ channels: [ch('')] }), /Give it a source/);
   // Rounding noise in a fit's intercept reads 0, not 5.46e-17.
   assert.equal(fitLabel('x', 'F', { a: 0.04, b: 5.46e-17, sigma: 0 }, 0.02, 1, 'm'), 'x  ≈ 0.04·F + 0   σ 0 m');

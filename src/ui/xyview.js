@@ -81,7 +81,7 @@ export function xyStatus(scope, unitOf, shown = (i) => scope.channels[i].on) {
 export function xyEmpty(scope) {
   const cx = scope.channels[0];
   if (!cx.source) return 'XY: channel 1 drives the beam across. Give it a source (the reference r, say).';
-  if (!cx.on) return `XY: channel 1 (${cx.source}) is off. Press 1 to turn it on.`;
+  if (!cx.on) return `XY: channel 1 (${cx.source}) is off. Turn it on with the channel key 1 under Vertical.`;
   return `XY: channel 1's source ${cx.source} has no signal.`;
 }
 
