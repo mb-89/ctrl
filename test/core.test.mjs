@@ -335,3 +335,22 @@ test('controller variants are validated; view captions keep their width', async 
   assert.equal(b[0].text, 'x = -12.25 m');
   assert.deepEqual(a[1].pts[2], [1.5, 1]);
 });
+
+test('library tags: opposite values look different, and a value looks the same on every card', async () => {
+  const { SYSTEM_LIBRARY, TAG_TONES, systemTags } = await import('../src/core/systems.js');
+  const seen = new Map();
+  for (const e of SYSTEM_LIBRARY) {
+    for (const t of e.tags) {
+      assert.ok(TAG_TONES.includes(t.tone), `${e.name}: ${t.label} has no palette tone`);
+      const look = `${t.kind}/${t.tone}`;
+      assert.equal(seen.get(t.label) ?? look, look, `${t.label} looks different on ${e.name}`);
+      seen.set(t.label, look);
+    }
+  }
+  const lin = systemTags({ diagram: { blocks: [{ id: 'g', type: 'gain', params: {} }], wires: [] } });
+  const non = systemTags({ diagram: { blocks: [{ id: 's', type: 'saturation', params: {} }], wires: [] } });
+  assert.equal(lin[0].label, 'Linear'); assert.equal(non[0].label, 'Nonlinear');
+  assert.notEqual(lin[0].tone, non[0].tone);
+  const none = lin.find((t) => t.label === 'No controller'), pid = systemTags({ diagram: { blocks: [{ id: 'c', type: 'controller', params: {}, variants: [{ type: 'pid' }] }], wires: [] } }).find((t) => t.label === 'PID');
+  assert.notEqual(none.kind, pid.kind, 'No controller must not look like a controller');
+});

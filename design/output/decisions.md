@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.7 ([input](../input/2026-10-24-09-analysis-autotune-triple-swingup.md))
+
+- **The physics is never wrong; a controller may be.** (Person: "The control loops can be stupid, but the physics can't be wrong.") Each physics block is held by tests to conservation laws and textbook results (`test/physics.test.mjs`). A picture draws the state as it is: no clamped positions, so it never shows what the model does not do. Found by the person: the pendulum on "State feedback only" (designed for upright, started hanging) saturates and accelerates the cart at 20 m/s², and the picture pinned the cart at the rail's end while the pole trailed at 64°, which looked impossible. The model was right; the picture lied.
+- **A runaway cart leaves the picture.** (Person: "having the car just shooting into the distance is kind of funny… we can leave it in.") The rail is drawn without end, as the model has none. Interpretation: no end stops in the model.
+- **The conical tank overflows at its height H** and reports a level inside the tank. Interpretation: before, the model kept filling above H while the picture showed a full tank.
+- **Tags: style by what a tag is about, tone by value.** (Person: "values that are different should show up different at first glance".) Linear and Nonlinear take opposite poles (blue, red, filled); *No controller* is an empty dashed chip; controllers a coloured bar, observers an outline, features a dot. Interpretation: an eight-slot validated palette cannot give eighteen values eighteen hues, so the chip's style carries the dimension.
+
 ## 2026-10-24 · v2.6: controllers ([input](../input/2026-10-24-08-controllers-and-5-seconds.md))
 
 - **Demos run 5 s**, and the mass–spring–damper moves slower (k 25 N/m, 0.8 Hz). (Person.)

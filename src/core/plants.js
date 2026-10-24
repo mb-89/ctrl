@@ -23,7 +23,7 @@ const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
 // A cart on a track carrying a chain of rods (angles from upright), with the
 // control force F and the disturbance d as arrows on the cart, and the
 // reference r as a mark on the track.
-function cartView(name, track, rods, caption, box) {
+function cartView(name, rods, caption, box) {
   let chain = [];
   for (let i = rods.length - 1; i >= 0; i--) {
     const { len, angle } = rods[i];
@@ -36,9 +36,10 @@ function cartView(name, track, rods, caption, box) {
   return {
     name, kind: '2d', view: box,
     shapes: [
-      { type: 'line', x1: -track, y1: -0.065, x2: track, y2: -0.065, stroke: 'muted', lineWidth: 3 },
+      // The rail has no end, as in the model: a cart pushed away leaves the picture.
+      { type: 'line', x1: -1e3, y1: -0.065, x2: 1e3, y2: -0.065, stroke: 'muted', lineWidth: 3 },
       { type: 'line', x1: 'r', y1: -0.16, x2: 'r', y2: -0.08, stroke: 'ch1', lineWidth: 3 },
-      { type: 'group', x: `clamp(x, ${-track + 0.16}, ${track - 0.16})`, y: 0, shapes: [
+      { type: 'group', x: 'x', y: 0, shapes: [
         { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
         { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
         { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
@@ -262,7 +263,7 @@ export const EXAMPLE_PLANTS = [
     views: [{
       name: 'Tank', kind: '2d', view: [-1, -0.25, 1, 1.3],
       shapes: [
-        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)'], ['-0.05 - 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)']], fill: 'ch3', stroke: 'none' },
+        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*h', 'h'], ['-0.05 - 0.45*h', 'h']], fill: 'ch3', stroke: 'none' },
         { type: 'line', x1: -0.05, y1: 0, x2: -0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
         { type: 'line', x1: 0.05, y1: 0, x2: 0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
         { type: 'line', x1: '-0.05 - 0.45*r', y1: 'r', x2: '0.05 + 0.45*r', y2: 'r', stroke: 'ch1', lineWidth: 2 },
@@ -304,7 +305,7 @@ export const EXAMPLE_PLANTS = [
         { from: 'cart', to: 'ctrl:1' }, { from: 'cart:1', to: 'ctrl:2' }, { from: 'cart:2', to: 'ctrl:3' }, { from: 'cart:3', to: 'ctrl:4' },
       ],
     },
-    views: [cartView('Cart and pole', 1.8, [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
+    views: [cartView('Cart and pole', [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
   },
   {
     name: 'Triple pendulum',
@@ -335,7 +336,7 @@ export const EXAMPLE_PLANTS = [
         ...Array.from({ length: 8 }, (_, i) => ({ from: i ? `cart:${i}` : 'cart', to: `ctrl:${i + 1}` })),
       ],
     },
-    views: [cartView('Cart and triple pendulum', 1.2, [
+    views: [cartView('Cart and triple pendulum', [
       { len: 0.25, angle: '-theta1' },
       { len: 0.25, angle: '-(theta2 - theta1)' },
       { len: 0.25, angle: '-(theta3 - theta2)' },
