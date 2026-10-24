@@ -18,12 +18,35 @@ import { c2d, eig, csolve } from './linalg.js';
 const zerosM = (r, c) => Array.from({ length: r }, () => new Array(c).fill(0));
 const col = (M, j) => M.map((row) => row[j]);
 
+// The plant as the controller samples it: discretised with a zero-order hold
+// at Ts, with each measurement's dead time (plant.delay[k], seconds) as a
+// chain of round(delay / Ts) unit delays, exact in discrete time.
+export function discretePlant(plant, Ts) {
+  const { Ad, Bd } = c2d(plant.A, plant.B, Ts);
+  const n = Ad.length, m = plant.C.length, D0 = plant.D ?? zerosM(m, 1);
+  const d = Array.from({ length: m }, (_, k) => Math.max(0, Math.round((plant.delay?.[k] ?? 0) / Ts)));
+  const N = n + d.reduce((a, b) => a + b, 0);
+  const A = zerosM(N, N), B = zerosM(N, 1), C = zerosM(m, N), D = zerosM(m, 1);
+  for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) A[i][j] = Ad[i][j]; B[i][0] = Bd[i][0]; }
+  let o = n;
+  for (let k = 0; k < m; k++) {
+    if (!d[k]) { for (let j = 0; j < n; j++) C[k][j] = plant.C[k][j]; D[k][0] = D0[k][0]; continue; }
+    // The first delay state takes this sample's measurement, each next one the one before.
+    for (let j = 0; j < n; j++) A[o][j] = plant.C[k][j];
+    B[o][0] = D0[k][0];
+    for (let i = 1; i < d[k]; i++) A[o + i][o + i - 1] = 1;
+    C[k][o + d[k] - 1] = 1;
+    o += d[k];
+  }
+  return { A, B, C, D, delaySamples: d };
+}
+
 // The open loop cut at u (u_p = v, the controller output u_c read but not
 // applied): L(z) = −u_c / v with r = 0. Plant discretised with a ZOH at Ts.
 export function openLoop(plant, ctrl, Ts) {
-  const { Ad, Bd } = c2d(plant.A, plant.B, Ts);
-  const n = Ad.length, m = plant.C.length, nc = ctrl.A.length;
-  const Cp = plant.C, Dp = plant.D ?? zerosM(m, 1);
+  const P = discretePlant(plant, Ts);
+  const Ad = P.A, Bd = P.B, Cp = P.C, Dp = P.D;
+  const n = Ad.length, m = Cp.length, nc = ctrl.A.length;
   // Controller columns that act on the measurements (inputs 1 … m); a law
   // with fewer gains than measurements ignores the rest.
   const cols = (row) => Array.from({ length: m }, (_, k) => row[1 + k] ?? 0);
@@ -39,7 +62,7 @@ export function openLoop(plant, ctrl, Ts) {
   for (let j = 0; j < n; j++) { let s = 0; for (let k = 0; k < m; k++) s += Dcy[k] * Cp[k][j]; C[0][j] = -s; }
   for (let j = 0; j < nc; j++) C[0][n + j] = -ctrl.C[0][j];
   let D = 0; for (let k = 0; k < m; k++) D -= Dcy[k] * Dp[k][0];
-  return { A, B, C, D, Ts, n: N };
+  return { A, B, C, D, Ts, n: N, delaySamples: P.delaySamples };
 }
 
 // Closed-loop poles in z for the loop gain multiplied by k (k = 1: as tuned).
@@ -131,6 +154,27 @@ export function loopMargins(fd, Ts) {
     gmUp: up.length ? Math.min(...up) : Infinity, gmDown: down.length ? Math.max(...down) : 0,
     ms, wMs, mt, wMt,
   };
+}
+
+// The closed loop's response to a unit step in r (prefilter left out): the
+// first measurement y and the controller output u at each sample, for K
+// samples. The plant must not pass u straight to a measurement (D = 0), as
+// physical plants do not.
+export function stepResponse(plant, ctrl, Ts, K = 200) {
+  const P = discretePlant(plant, Ts), n = P.A.length, m = P.C.length, nc = ctrl.A.length;
+  const col = (row, j) => row[j] ?? 0;
+  let xp = new Array(n).fill(0), xc = new Array(nc).fill(0);
+  const t = [], y = [], u = [];
+  for (let k = 0; k <= K; k++) {
+    const ym = P.C.map((row) => row.reduce((s, c, j) => s + c * xp[j], 0));
+    let uk = col(ctrl.D[0], 0);
+    for (let j = 0; j < m; j++) uk += col(ctrl.D[0], 1 + j) * ym[j];
+    for (let j = 0; j < nc; j++) uk += ctrl.C[0][j] * xc[j];
+    t.push(k * Ts); y.push(ym[0]); u.push(uk);
+    xp = P.A.map((row, i) => row.reduce((s, a, j) => s + a * xp[j], 0) + P.B[i][0] * uk);
+    xc = ctrl.A.map((row, i) => row.reduce((s, a, j) => s + a * xc[j], 0) + col(ctrl.B[i], 0) + ym.reduce((s, v, j) => s + col(ctrl.B[i], 1 + j) * v, 0));
+  }
+  return { t, y, u };
 }
 
 // Root locus: closed-loop poles for the loop gain scaled by each k.

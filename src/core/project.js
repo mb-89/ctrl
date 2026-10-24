@@ -91,7 +91,7 @@ export function normalizeProject(p) {
 // representation shown, and the setup area's share of the page height.
 // Unknown values are dropped.
 export const UI_RUN = ['run', 'stop', 'single'];
-export const UI_TABS = ['input', 'plant', 'controller', 'tune'];
+export const UI_TABS = ['input', 'plant', 'controller', 'tune', 'analysis'];
 export function normalizeUi(ui) {
   if (!ui || typeof ui !== 'object') return null;
   const out = {};

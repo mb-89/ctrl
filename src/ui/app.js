@@ -9,6 +9,7 @@ import { isDelta } from './xyview.js';
 import { createControllerTab } from './controller.js';
 import { createAutotuneTab } from './autotune.js';
 import { loopOverlays, autotune, placeVariant, tuneReport } from '../core/autotune.js';
+import { createAnalysisTab } from './analysis.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
 import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../core/systems.js';
@@ -23,7 +24,7 @@ const TABS = [
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
   { key: 'tune', label: 'Auto-tune' },
-  { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
+  { key: 'analysis', label: 'Analysis' },
 ];
 
 function startApp() {
@@ -288,6 +289,10 @@ function startApp() {
   const controllerTab = createControllerTab($('tab-controller'), app);
   // Opens the Controller tab on one Controller block (path of block ids).
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
+  // The Analysis tab; the scope's time (cursor, sweep or right edge) is its
+  // "Scope time" operating point.
+  const analysisTab = createAnalysisTab($('tab-analysis'), app);
+  app.scopeTime = () => display.time();
   // Auto-tune changes the project many times in one run but takes one undo
   // step for all of it (beginEdit at its start, endEdit at its end); each
   // change goes through tuneEdit. It shows whole runs while it works.
@@ -306,6 +311,8 @@ function startApp() {
     if (app.tab === 'controller') controllerTab.shown();
     $('tab-tune').hidden = app.tab !== 'tune';
     if (app.tab === 'tune') tuneTab.shown();
+    $('tab-analysis').hidden = app.tab !== 'analysis';
+    if (app.tab === 'analysis') analysisTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
@@ -330,6 +337,7 @@ function startApp() {
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
     if (app.tab === 'tune') tuneTab.render();
+    if (app.tab === 'analysis') analysisTab.render();
     renderChrome();
     autosave();
   }

@@ -415,6 +415,27 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 
 .ctable { grid-column: 2; font-family: var(--mono); }
 
+/* Analysis tab: key numbers at the left, four plots in the scope's style. */
+.an { display: grid; grid-template-columns: minmax(230px, 290px) 1fr; gap: 12px; height: 100%; min-height: 0; }
+.an-side { overflow: auto; min-height: 0; }
+.an-op { display: flex; gap: 4px; flex-wrap: wrap; }
+.an-op .key, .an-tg .key { min-height: 22px; padding: 0 7px; }
+.an-tg { display: flex; gap: 3px; }
+.an-verdict { font-size: 12.5px; line-height: 1.4; }
+.kw { border-collapse: collapse; font-size: 12px; width: 100%; }
+.kw th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 2px 8px 2px 0; white-space: nowrap; vertical-align: top; }
+.kw td { font-family: var(--mono); font-size: 11.5px; padding: 2px 6px 2px 0; color: var(--ink); vertical-align: top; }
+.grade { font-weight: 700; font-size: 11px; white-space: nowrap; }
+.grade-good { color: #0b8a0b; } .grade-fair { color: #a66f00; } .grade-poor { color: #c62f2f; }
+:root[data-theme="dark"] .grade-good { color: #2fd36f; } :root[data-theme="dark"] .grade-fair { color: #fab219; } :root[data-theme="dark"] .grade-poor { color: #ff6b6b; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .grade-good { color: #2fd36f; } :root:not([data-theme="light"]) .grade-fair { color: #fab219; } :root:not([data-theme="light"]) .grade-poor { color: #ff6b6b; } }
+.an-grid { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(190px, 1fr); gap: 8px; min-height: 0; overflow: auto; }
+.an-fig { margin: 0; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bezel); border-radius: 6px; padding: 4px; }
+.an-fig figcaption { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; color: var(--lcd-ink); padding: 0 4px 3px; font-family: var(--mono); white-space: nowrap; overflow: hidden; }
+.an-fig figcaption .dim { color: var(--lcd-dim); overflow: hidden; text-overflow: ellipsis; }
+.an-fig canvas { flex: 1 1 0; min-height: 0; width: 100%; display: block; }
+@media (max-width: 900px) { .an { grid-template-columns: 1fr; } .an-grid { grid-template-columns: 1fr; } }
+
 /* Auto-tune tab: controller | method | goal | progress */
 .tune { display: grid; grid-template-columns: minmax(180px, 230px) minmax(220px, 290px) minmax(200px, 260px) minmax(280px, 1fr); gap: 14px; align-items: stretch; height: 100%; min-height: 0; }
 .tune > .gcol { min-height: 0; overflow: auto; }

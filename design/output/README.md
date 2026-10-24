@@ -15,6 +15,7 @@ The person's raw words are in [../input](../input/README.md). This folder is wha
 | [system-library.md](system-library.md) | Complete example systems, loaded whole or by part |
 | [controller-proposal.md](controller-proposal.md) | Tab 3, the Controller: blocks with variants, the controller library |
 | [autotune.md](autotune.md) | Tab 4, Auto-tune: the cost, Nelder–Mead, relay feedback and its rules, step response and SIMC, the tab |
+| [analysis.md](analysis.md) | Tab 5, Analysis: key numbers, root locus, Bode, Nyquist, linear step; how the loop is cut and discretised |
 | [project-format.md](project-format.md) | The project file (JSON), version 2 |
 | [decisions.md](decisions.md) | Dated log of decisions, including the interpretations we made |
 | [roadmap.md](roadmap.md) | What is built, what is next, and open questions |

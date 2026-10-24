@@ -79,3 +79,21 @@ test("each linear law's state space reproduces its step() while u is inside its 
   }
   assert.throws(() => CONTROLLERS.swingUp.linear(cases[4][1], Ts, { y: [0, Math.PI, 0, 0] }), /pumps energy/);
 });
+
+test('dead time is exact in the discrete loop, and the step response reaches the textbook final values', async () => {
+  const { openLoop, respondAt, stepResponse } = await import('../src/core/analysis.js');
+  const { CONTROLLERS } = await import('../src/core/controllers.js');
+  const Ts = 0.01, G = { A: [[-1]], B: [[1]], C: [[1]], D: [[0]] };
+  const P = (K) => CONTROLLERS.pid.linear({ Kp: K, Ki: 0, Kd: 0, Tf: 0.01, b: 1 }, Ts);
+  const L0 = openLoop(G, P(2), Ts), L5 = openLoop({ ...G, delay: [0.05] }, P(2), Ts);
+  assert.equal(L5.n - L0.n, 5);
+  for (const w of [0.3, 3, 30]) {
+    const a = respondAt(L0, w), b = respondAt(L5, w), c = Math.cos(-5 * w * Ts), s = Math.sin(-5 * w * Ts);
+    assert.ok(Math.hypot(b.re - (a.re * c - a.im * s), b.im - (a.re * s + a.im * c)) < 1e-9, `ω ${w}`);
+  }
+  const p = stepResponse(G, P(4), Ts, 1000);
+  assert.ok(Math.abs(p.y.at(-1) - 0.8) < 1e-6 && Math.abs(p.u.at(-1) - 0.8) < 1e-6, `${p.y.at(-1)} ${p.u.at(-1)}`);
+  const pi = stepResponse({ ...G, delay: [0.05] }, CONTROLLERS.pid.linear({ Kp: 1, Ki: 2, Kd: 0, Tf: 0.01, b: 1 }, Ts), Ts, 2000);
+  assert.ok(Math.abs(pi.y.at(-1) - 1) < 1e-4, `${pi.y.at(-1)}`);
+  assert.equal(pi.y[5], 0, 'nothing arrives before the dead time');
+});
