@@ -77,3 +77,5 @@
 (Transcription: "PUC matrix" is a Pugh matrix; "automatic flow" is the automatic floor of the spectrogram levels.)
 
 > And maybe make the tooltip show up on the other side. The tooltip is useful, I think, but it blocks the view on the diagram. So that's annoying.
+
+> What I'm talking about is when you have a spectrogram open and you change the values in the histogram, then the pop-up over the histogram shows up to the left, and that's where the plot is. So you can't really slide and see what changes about which part of the histogram you see, because the hover is in the way. So please put the hover to the right. So I can actually see if I change something in the histogram, if I change the limits, I can see how it affects the plot.

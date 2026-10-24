@@ -494,6 +494,7 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
   .recbar { grid-row: 4; grid-column: 1 / -1; flex-wrap: wrap; }
 }
 @media (max-width: 560px) { .display { height: 340px; } }
+.striptip { position: fixed; z-index: 30; pointer-events: none; background: rgba(10, 13, 16, 0.92); border: 1px solid rgba(160, 175, 190, 0.4); border-radius: 4px; padding: 5px 8px; font: 11.5px/16px var(--mono); white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
 </style>
 </head>
 <body>
@@ -6612,14 +6613,14 @@ function drawStrip(v, st, shown) {
     const y = Math.round(hover.y) + 0.5;
     g.strokeStyle = 'rgba(235, 240, 245, 0.5)'; g.setLineDash([2, 3]); g.lineWidth = 1;
     g.beginPath(); g.moveTo(hL, y); g.lineTo(S.r, y); g.stroke(); g.setLineDash([]);
-    readout(g, v.P, S.l - 4, [
+    st.tip = { y: hover.y, rows: [
       [`${fmtDb(d, 1)} dB = ${num(10 ** (d / 20))} ${st.unit}`, grey],
       [`${Math.round(100 * shareAbove(st.sorted, d))} % of the shown bins above`, grey],
       [`floor ${fmtDb(floor, 1)} dB · ceiling ${fmtDb(ceiling, 1)} dB`, grey],
       [st.auto ? autoText(st) : `set by hand for ${st.source} · double-click: auto`, dim],
       ['drag a handle or the band', dim],
       ['wheel: floor · Shift+wheel: ceiling', dim],
-    ], Math.max(S.t + 2, Math.min(S.b - 104, hover.y - 40)));
+    ] };
   }
 }
 
@@ -6794,6 +6795,19 @@ const r1 = (d) => Math.round(d * 10) / 10;
 function createDisplay(root, handlers) {
   const status = root.querySelector('.status');
   const screen = root.querySelector('.screen');
+  const stripTip = document.createElement('div');
+  stripTip.className = 'striptip';
+  stripTip.hidden = true;
+  document.body.append(stripTip);
+  function showStripTip(tip) {
+    if (!tip || !S) { stripTip.hidden = true; return; }
+    const r = canvas.getBoundingClientRect();
+    stripTip.innerHTML = tip.rows.map(([t, c]) => `<div style="color:${c}">${t.replace(/[&<>]/g, (x) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[x])}</div>`).join('');
+    stripTip.hidden = false;
+    const w = stripTip.offsetWidth, h = stripTip.offsetHeight;
+    stripTip.style.left = `${Math.min(window.innerWidth - w - 4, r.left + S.r + 10)}px`;
+    stripTip.style.top = `${Math.max(4, Math.min(window.innerHeight - h - 4, r.top + tip.y - h / 2))}px`;
+  }
   const badges = root.querySelector('.badges');
   const canvas = document.createElement('canvas');
   canvas.setAttribute('role', 'img');
@@ -6935,6 +6949,7 @@ function createDisplay(root, handlers) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
     layout();
+    if (viewMode() !== 'spectrogram') showStripTip(null);
     if (viewMode() === 'xy') {
       strip = null;
       delete canvas.dataset.levels;
@@ -6947,6 +6962,7 @@ function createDisplay(root, handlers) {
       const n = data.t.length - 1;
       strip = drawFrequency({ g: ctx, P, S, W, H, data, past, live: !!feed, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
         sweeping: mode !== 'stop', tScan, tx, xt, vy, colors: CHANNEL_COLORS, drawGrid, unitLabel, levelScale });
+      showStripTip(strip?.tip);
       if (strip) canvas.dataset.levels = `${[strip.floor, strip.ceiling, strip.lo, strip.hi].map((d) => d.toFixed(1)).join(' ')} ${strip.auto ? 'auto' : 'fixed'}`;
       else delete canvas.dataset.levels;
       levelsChanged();
