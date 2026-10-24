@@ -8,9 +8,13 @@ Reader: whoever adds an example system or changes how systems load.
 
 | System | Input | What you see |
 |---|---|---|
-| Mass–spring–damper | 1 N step at 0.1 s | The hanging mass drops about 10 mm and rings at 1.6 Hz (views: shapes and SVG) |
-| Inverted pendulum | 2 N push for 0.1 s | The Cart–pole starts tilted 1° and the pole falls over |
-| DC motor | 1 V step | The shaft turns; speed settles at 1.43 rad/s (Motor is a subsystem) |
+| Mass–spring–damper | F: 1 N step at 0.1 s | x, v, Ekin, Epot: the hanging mass drops about 10 mm and rings at 1.6 Hz; bars show its energy swapping between motion and spring |
+| Inverted pendulum | F: 2 N push for 0.1 s | x, theta: the Cart–pole starts tilted 1° and the pole falls over |
+| DC motor | V: 6 V step at 0.1 s | angle, speed: the rotor turns against a fixed dial; speed settles at 8.6 rad/s (Motor is a subsystem) |
+
+- **Signals are named for what they are** (F in N, x in m, Ekin in J, …), not r and y1: in a system without a controller there is no reference, only an input. (The person asked "what is the reference signal here?", 2026-10-24.)
+- **A page without a project inside opens the Mass–spring–damper**, running, on its view. (The person.)
+- **One view per system** (the person: "one of them is enough"). SVG views stay supported for plants that want them.
 
 - **Loading a system shows it running**: a whole load takes the system's title, scope channels and `ui` (run, Plant tab, its first view, setup area at 42 % of the page), so the trace is drawn as time passes and the view moves with it. (The person, 2026-10-24.)
 - **Header, "System library ▾"**: every system, with Load (all its parts) and one button per part it has (Input, Plant, Controller). Loading is one undo step; any load of input or plant runs Auto Scale.

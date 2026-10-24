@@ -424,7 +424,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 </div>
 <p>The screen is the record: what you see is simulated and swept, in real time.</p>
 <h3>Signal generator</h3>
-<p>Press a waveform key to draft a component: the display shows it dashed on its own and added to r(t). Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
+<p>Press a waveform key to draft a component: the display shows it dashed on its own and added to the signal. Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
 <div class="keys">
   <span><kbd>0</kbd>–<kbd>9</kbd> <kbd>.</kbd> <kbd>-</kbd></span><span>Type a value for the active field; <kbd>Enter</kbd> sets it</span>
   <span><kbd>Enter</kbd></span><span>With nothing typed: add (or apply) the draft</span>
@@ -1337,6 +1337,7 @@ __mods['core/diagram.js'] = (() => {
 const { BLOCKS, blockDef, normalizeBlock } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
 const { gaussAt } = __mods['core/signals.js'];
+const { compileExpr } = __mods['core/expr.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
 // Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
@@ -1356,6 +1357,7 @@ const ELEMENTS = {
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
   integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
   delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 })], ports: () => [1, 1], formula: 'e^(−Ls)' },
+  fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
   noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
@@ -1417,6 +1419,9 @@ function normalizeParams(type, params = {}, where) {
     } else if (p.kind === 'name') {
       v = String(v);
       if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
+    } else if (p.kind === 'expr') {
+      v = String(v).trim();
+      try { compileExpr(v, { vars: true }); } catch (e) { throw new Error(`${where}.${p.key}: ${e.message}`); }
     } else if (p.kind === 'signs') {
       v = String(v);
       if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
@@ -1583,6 +1588,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
       else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, ft: b.params.L <= 0 });
       else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
+      else if (b.type === 'fcn') Object.assign(node, { kind: 'fcn', f: compileExpr(b.params.expr, { vars: true }), env: { u: 0, t: 0 }, ft: true });
       else if (b.type === 'quantizer') Object.assign(node, { kind: 'quant', q: b.params.q, ft: true });
       else if (b.type === 'noise') Object.assign(node, { kind: 'noise', std: b.params.std, seed: b.params.seed, ft: true });
       const k = add(node);
@@ -1650,6 +1656,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
           case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
           case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L) : inOf(nd); break;
           case 'switch': y = inOf(nd, nd.pick); break;
+          case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
           case 'quant': y = nd.q * Math.round(inOf(nd) / nd.q); break;
           case 'noise': y = inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
           case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
@@ -1960,109 +1967,113 @@ return { simulate, simulateSystem };
 // ---- core/plants.js
 __mods['core/plants.js'] = (() => {
 // The System library's systems. Few, and each one does something visible:
-// its input moves the plant, its Sinks are on the scope, and its view shows
-// the motion (design/output/system-library.md). Each opens running, on its
-// view in the Plant tab (ui). Closed-loop systems join once
-// the Controller tab exists.
+// its input moves the plant, its signals are named for what they are (force F,
+// position x, …) and on the scope, and its view shows the motion
+// (design/output/system-library.md). Each opens running, on its view in the
+// Plant tab (ui). Closed-loop systems join once the Controller tab exists.
 
-const src = (x, y, unit, signal = 'r') => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
+const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
 const channels = (...sources) => [0, 1, 2, 3].map((i) => ({ source: sources[i] ?? '', on: !!sources[i], scale: 1, offset: 0 }));
+const ui = (view) => ({ run: 'run', tab: 'plant', setup: 0.42, view });
+
+// A fixed dial: twelve ticks every 30°, the quarter ones longer.
+const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
+  type: 'group', angle: (i * Math.PI) / 6, shapes: [{ type: 'line', x1: 0, y1: r, x2: 0, y2: r + (i % 3 ? 0.06 : 0.12), stroke: 'muted', lineWidth: i % 3 ? 1.5 : 3 }],
+}));
 
 const EXAMPLE_PLANTS = [
   {
     name: 'Mass–spring–damper',
-    notes: 'A 1 kg mass hangs on a spring (100 N/m) and a damper (1 N·s/m). At 0.1 s a 1 N force pulls it down: it drops about 10 mm and rings at 1.6 Hz while it settles.',
-    signals: { r: { period: 2, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
-    scope: { channels: channels('r', 'y1') },
-    ui: { run: 'run', tab: 'plant', setup: 0.42, view: 'Hanging mass' },
+    notes: 'A 1 kg mass hangs on a spring (100 N/m) and a damper (1 N·s/m). At 0.1 s a force F = 1 N pulls it down: it drops about 10 mm and rings at 1.6 Hz while it settles, its energy swapping between motion (Ekin) and spring (Epot).',
+    signals: { F: { period: 2, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
+    scope: { channels: channels('F', 'x', 'Ekin', 'Epot') },
+    ui: ui('Hanging mass'),
     diagram: {
       blocks: [
-        src(30, 112, 'N'),
+        src('F', 30, 112, 'N'),
         { id: 'sum', type: 'sum', params: { signs: '+--' }, x: 130, y: 104 },
         { id: 'm', type: 'gain', name: '1/m', params: { K: 1 }, x: 210, y: 100 },
-        { id: 'v', type: 'integrator', name: 'velocity', params: { K: 1 }, x: 330, y: 100 },
-        { id: 'x', type: 'integrator', name: 'position', params: { K: 1 }, x: 470, y: 100 },
-        sink('y1', 640, 108, 'm'),
-        { id: 'c', type: 'gain', name: 'damping c', params: { K: 1 }, x: 330, y: 190, flip: true },
-        { id: 'k', type: 'gain', name: 'spring k', params: { K: 100 }, x: 470, y: 260, flip: true },
+        { id: 'vel', type: 'integrator', name: 'velocity', params: { K: 1 }, x: 330, y: 100 },
+        { id: 'pos', type: 'integrator', name: 'position', params: { K: 1 }, x: 490, y: 100 },
+        sink('x', 680, 108, 'm'),
+        sink('v', 680, 20, 'm/s'),
+        { id: 'c', type: 'gain', name: 'damping c', params: { K: 1 }, x: 330, y: 200, flip: true },
+        { id: 'k', type: 'gain', name: 'spring k', params: { K: 100 }, x: 490, y: 270, flip: true },
+        { id: 'ek', type: 'fcn', name: 'kinetic ½mv²', params: { expr: '0.5*1*u^2' }, x: 490, y: 360 },
+        sink('Ekin', 680, 368, 'J'),
+        { id: 'ep', type: 'fcn', name: 'spring ½kx²', params: { expr: '0.5*100*u^2' }, x: 490, y: 440 },
+        sink('Epot', 680, 448, 'J'),
       ],
       wires: [
-        { from: 'r', to: 'sum' }, { from: 'sum', to: 'm' }, { from: 'm', to: 'v' }, { from: 'v', to: 'x' }, { from: 'x', to: 'y1' },
-        { from: 'v', to: 'c' }, { from: 'c', to: 'sum:1' }, { from: 'x', to: 'k' }, { from: 'k', to: 'sum:2' },
+        { from: 'F', to: 'sum' }, { from: 'sum', to: 'm' }, { from: 'm', to: 'vel' }, { from: 'vel', to: 'pos' }, { from: 'pos', to: 'x' },
+        { from: 'vel', to: 'c' }, { from: 'c', to: 'sum:1' }, { from: 'pos', to: 'k' }, { from: 'k', to: 'sum:2' },
+        { from: 'vel', to: 'v' }, { from: 'vel', to: 'ek' }, { from: 'ek', to: 'Ekin' }, { from: 'pos', to: 'ep' }, { from: 'ep', to: 'Epot' },
       ],
     },
     views: [{
-      // y1 is the displacement downwards, drawn ×20.
-      name: 'Hanging mass', kind: '2d', view: [-0.8, -0.95, 0.8, 0.62],
+      // x is the displacement downwards, drawn ×20; the energies are bars, 20 per J.
+      name: 'Hanging mass', kind: '2d', view: [-0.9, -0.95, 1.1, 0.62],
       shapes: [
         { type: 'ground', x1: -0.35, x2: 0.35, y: 0.5, side: 'above' },
-        { type: 'spring', x1: -0.08, y1: 0.5, x2: -0.08, y2: '0 - 20*y1', width: 0.09, coils: 8 },
-        { type: 'damper', x1: 0.09, y1: 0.5, x2: 0.09, y2: '0 - 20*y1', width: 0.08 },
-        { type: 'rect', x: -0.18, y: '-0.26 - 20*y1', w: 0.36, h: 0.26, fill: 'ch2' },
-        { type: 'text', x: 0, y: '-0.13 - 20*y1', text: 'm', size: 18, fill: 'panel' },
-        { type: 'arrow', x1: 0, y1: '-0.28 - 20*y1', x2: 0, y2: '-0.28 - 20*y1 - 0.25*r', stroke: 'ch1', lineWidth: 3 },
-        { type: 'line', x1: -0.5, y1: -0.26, x2: -0.3, y2: -0.26, stroke: 'muted', lineWidth: 1 },
-        { type: 'text', x: -0.6, y: -0.26, text: 'rest', size: 11, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.88, text: 'x = {1000*y1} mm down (drawn ×20)   F = {r} N', size: 13 },
-      ],
-    }, {
-      // The same picture as a standard SVG drawing with bindings.
-      name: 'Hanging mass (SVG)', kind: 'svg',
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-160 -130 320 300">'
-        + '<rect x="-80" y="-118" width="160" height="10" fill="#8a929a"/>'
-        + '<line id="spring" x1="-22" y1="-108" x2="-22" y2="0" stroke="#7c858d" stroke-width="3" stroke-dasharray="7 4"/>'
-        + '<line id="damper" x1="22" y1="-108" x2="22" y2="0" stroke="#7c858d" stroke-width="6"/>'
-        + '<rect id="mass" x="-45" y="0" width="90" height="56" rx="4" fill="#33d17a" stroke="#12703c" stroke-width="2"/>'
-        + '<text id="label" x="0" y="150" text-anchor="middle" font-family="monospace" font-size="13" fill="#7c858d">x</text></svg>',
-      bind: [
-        { select: '#mass', attr: 'y', value: '{2000*y1}' },
-        { select: '#spring, #damper', attr: 'y2', value: '{2000*y1}' },
-        { select: '#label', attr: 'text', value: 'x = {1000*y1} mm (drawn ×2)' },
+        { type: 'spring', x1: -0.08, y1: 0.5, x2: -0.08, y2: '0 - 20*x', width: 0.09, coils: 8 },
+        { type: 'damper', x1: 0.09, y1: 0.5, x2: 0.09, y2: '0 - 20*x', width: 0.08 },
+        { type: 'rect', x: -0.18, y: '-0.26 - 20*x', w: 0.36, h: 0.26, fill: 'ch2' },
+        { type: 'text', x: 0, y: '-0.13 - 20*x', text: 'm', size: 18, fill: 'panel' },
+        { type: 'arrow', x1: 0, y1: '-0.28 - 20*x', x2: 0, y2: '-0.28 - 20*x - 0.25*F', stroke: 'ch1', lineWidth: 3 },
+        { type: 'line', x1: -0.55, y1: -0.26, x2: -0.22, y2: -0.26, stroke: 'muted', lineWidth: 1 },
+        { type: 'text', x: -0.68, y: -0.26, text: 'rest', size: 11, fill: 'muted' },
+        { type: 'line', x1: 0.55, y1: -0.7, x2: 1.0, y2: -0.7, stroke: 'muted', lineWidth: 1 },
+        { type: 'rect', x: 0.6, y: -0.7, w: 0.14, h: '20*Ekin', fill: 'ch3' },
+        { type: 'rect', x: 0.82, y: -0.7, w: 0.14, h: '20*Epot', fill: 'ch4' },
+        { type: 'text', x: 0.67, y: -0.78, text: 'Ekin', size: 11, fill: 'muted' },
+        { type: 'text', x: 0.89, y: -0.78, text: 'Epot', size: 11, fill: 'muted' },
+        { type: 'text', x: 0.1, y: -0.9, text: 'x = {1000*x} mm down (drawn ×20)   F = {F} N', size: 13 },
       ],
     }],
   },
   {
     name: 'Inverted pendulum',
-    notes: 'A pole balanced on a cart (nonlinear, the Cart–pole block). It starts tilted 1°; at 0.1 s a short push (2 N for 0.1 s) moves the cart. With no controller yet the pole falls over in about half a second.',
-    signals: { r: { period: 1.5, components: [{ type: 'square', params: { amplitude: 2, time: 0.1, width: 0.1, period: 1, count: 1 } }] } },
-    scope: { channels: channels('r', 'y1', 'y2') },
-    ui: { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' },
+    notes: 'A pole balanced on a cart (nonlinear, the Cart–pole block). It starts tilted 1°; at 0.1 s a short push (F = 2 N for 0.1 s) moves the cart. With no controller yet the pole falls over in about half a second.',
+    signals: { F: { period: 1.5, components: [{ type: 'square', params: { amplitude: 2, time: 0.1, width: 0.1, period: 1, count: 1 } }] } },
+    scope: { channels: channels('F', 'x', 'theta') },
+    ui: ui('Cart and pole'),
     diagram: {
       blocks: [
-        src(30, 124, 'N'),
+        src('F', 30, 124, 'N'),
         { id: 'cart', type: 'cartPole', name: 'cart and pole', params: { M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: 0.0175 }, x: 160, y: 104 },
-        sink('y1', 380, 100, 'm'), sink('y2', 380, 160, 'rad'),
+        sink('x', 380, 100, 'm'), sink('theta', 380, 160, 'rad'),
       ],
-      wires: [{ from: 'r', to: 'cart' }, { from: 'cart', to: 'y1' }, { from: 'cart:1', to: 'y2' }],
+      wires: [{ from: 'F', to: 'cart' }, { from: 'cart', to: 'x' }, { from: 'cart:1', to: 'theta' }],
     },
     views: [{
       name: 'Cart and pole', kind: '2d', view: [-1.2, -0.62, 1.2, 0.85],
       shapes: [
         { type: 'line', x1: -1.2, y1: -0.065, x2: 1.2, y2: -0.065, stroke: 'muted', lineWidth: 3 },
-        { type: 'group', x: 'clamp(y1, -1.05, 1.05)', y: 0, shapes: [
+        { type: 'line', x1: 0, y1: -0.12, x2: 0, y2: -0.065, stroke: 'muted', lineWidth: 1 },
+        { type: 'group', x: 'clamp(x, -1.05, 1.05)', y: 0, shapes: [
           { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
           { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
           { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
-          { type: 'group', y: 0.1, angle: '-y2', shapes: [
+          { type: 'group', y: 0.1, angle: '-theta', shapes: [
             { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.5, lineWidth: 4 },
             { type: 'circle', cx: 0, cy: 0.5, r: 0.045, fill: 'ch3' },
           ] },
-          { type: 'arrow', x1: '-0.17 - 0.15*r', y1: 0.04, x2: -0.17, y2: 0.04, stroke: 'ch1', lineWidth: 3 },
+          { type: 'arrow', x1: '-0.17 - 0.15*F', y1: 0.04, x2: -0.17, y2: 0.04, stroke: 'ch1', lineWidth: 3 },
         ] },
-        { type: 'text', x: 0, y: 0.76, text: 'x = {y1} m   θ = {y2*180/pi}°   F = {r} N', size: 13 },
+        { type: 'text', x: 0, y: 0.76, text: 'x = {x} m   θ = {theta*180/pi}°   F = {F} N', size: 13 },
       ],
     }],
   },
   {
     name: 'DC motor',
-    notes: 'A 1 V step drives a motor (armature lag, torque constant, load inertia, back-EMF feedback inside a Motor subsystem). The speed y2 settles at 1.43 rad/s; the shaft angle y1 keeps turning.',
-    signals: { r: { period: 2, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
-    scope: { channels: channels('r', 'y1', 'y2') },
-    ui: { run: 'run', tab: 'plant', setup: 0.42, view: 'Motor shaft' },
+    notes: 'A 6 V step drives a motor (armature lag, torque constant, load inertia, back-EMF feedback inside a Motor subsystem). The speed settles at 8.6 rad/s, about 1.4 turns a second; the angle keeps growing.',
+    signals: { V: { period: 2, components: [{ type: 'step', params: { amplitude: 6, time: 0.1 } }] } },
+    scope: { channels: channels('V', 'angle', 'speed') },
+    ui: ui('Motor shaft'),
     diagram: {
       blocks: [
-        src(30, 112, 'V'),
+        src('V', 30, 112, 'V'),
         {
           id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 150, y: 96,
           diagram: {
@@ -2082,28 +2093,32 @@ const EXAMPLE_PLANTS = [
           },
         },
         { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 340, y: 96 },
-        sink('y1', 540, 106, 'rad'),
-        sink('y2', 540, 200, 'rad/s'),
+        sink('angle', 540, 106, 'rad'),
+        sink('speed', 540, 200, 'rad/s'),
       ],
-      wires: [{ from: 'r', to: 'motor' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'y1' }, { from: 'motor', to: 'y2' }],
+      wires: [{ from: 'V', to: 'motor' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' }, { from: 'motor', to: 'speed' }],
     },
     views: [{
-      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.8, 1.1, 0.8],
+      // The rotor turns with angle (counter-clockwise positive) inside a fixed
+      // dial; an off-centre lobe and a pointer show where it is.
+      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
       shapes: [
-        { type: 'circle', cx: 0, cy: 0, r: 0.6, fill: 'panel', stroke: 'muted', lineWidth: 2 },
-        { type: 'group', angle: '-y1', shapes: [
-          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.55, stroke: 'ch2', lineWidth: 6 },
-          { type: 'circle', cx: 0, cy: 0.42, r: 0.06, fill: 'ch2' },
+        { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        ...ticks(0.62),
+        { type: 'group', angle: 'angle', shapes: [
+          { type: 'circle', cx: 0, cy: 0, r: 0.5, fill: 'ink' },
+          { type: 'circle', cx: 0, cy: 0.27, r: 0.15, fill: 'ch2' },
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch1', lineWidth: 6 },
         ] },
-        { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'ink' },
-        { type: 'text', x: 0, y: -0.72, text: 'angle {y1} rad   speed {y2} rad/s   {r} V', size: 13 },
+        { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.82, text: '{angle/(2*pi)} turns   {speed} rad/s   V = {V} V', size: 13 },
       ],
     }],
   },
 ];
 
 // A new project's plant: the reference alone.
-const EMPTY_PLANT = { blocks: [src(60, 104, '1')], wires: [] };
+const EMPTY_PLANT = { blocks: [src('r', 60, 104, '1')], wires: [] };
 
 return { EXAMPLE_PLANTS, EMPTY_PLANT };
 })();
@@ -2345,12 +2360,13 @@ function normalizeProject(p) {
   const plant = p.system?.plant ?? (v1 ? { type: 'firstOrder' } : null);
   system.plant = plant ? normalizePlant(plant) : null;
   if (system.plant?.type === 'diagram') {
-    // Only what the diagram names exists: a signal per Source; r always.
+    // Only what the diagram names exists: a signal per Source (r when there
+    // is no Source yet).
     const { sources } = diagramNames(system.plant.diagram);
     for (const name of sources) signals[name] ??= normalizeReference({ period: 1, components: [] });
-    for (const name of Object.keys(signals)) if (name !== 'r' && !sources.includes(name)) delete signals[name];
+    for (const name of Object.keys(signals)) if (!sources.includes(name) && (sources.length || name !== 'r')) delete signals[name];
   }
-  if (!signals.r) signals.r = normalizeReference({ period: 1, components: [] });
+  if (!Object.keys(signals).length) signals.r = normalizeReference({ period: 1, components: [] });
   const goal = normalizeGoal(p.goal);
   const raw = Array.isArray(p.candidates) ? p.candidates : [];
   const candidates = raw.map((c, i) => {
@@ -2478,12 +2494,12 @@ function normalizeScope(scope = {}, period, loop = false) {
   return { timebase, channels };
 }
 
-// Every name a scope channel can show: the diagram's Sources and Sinks (and
-// r); with a closed loop from an older file, also its y, u, e, ym, d.
+// Every name a scope channel can show: the signals (one per Source) and the
+// diagram's Sinks; with a closed loop from an older file, also its y, u, e, ym, d.
 function channelNames(project) {
   const plant = project.system.plant;
   const n = plant?.type === 'diagram' ? diagramNames(plant.diagram) : { sources: [], sinks: [] };
-  return [...new Set(['r', ...n.sources, ...n.sinks, ...(loopReady(project) ? LOOP_SIGNALS : [])])];
+  return [...new Set([...Object.keys(project.system.signals), ...n.sinks, ...(loopReady(project) ? LOOP_SIGNALS : [])])];
 }
 
 // A channel showing a name that no longer exists goes back to no source.
@@ -2500,8 +2516,13 @@ function evaluateOpenLoop(project) {
 }
 
 // A loop can run once it has a plant and at least one controller candidate.
+// A v1 closed loop: a plant and controller candidates. A diagram that plays
+// its own Sources is a whole system, not a loop's plant, whatever candidates
+// an older file carries.
 function loopReady(project) {
-  return !!project.system.plant && project.candidates.length > 0;
+  const plant = project.system.plant;
+  if (plant?.type === 'diagram' && diagramNames(plant.diagram).sources.length) return false;
+  return !!plant && project.candidates.length > 0;
 }
 
 // One named signal on the simulation grid (r by default).
@@ -2883,6 +2904,9 @@ function applySystem(project, entry, parts) {
   const whole = SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k));
   if (whole) {
     p.title = entry.name;
+    // A whole system brings its controller, or none: candidates an older
+    // project carried do not stay behind.
+    if (!entry.controller) { p.candidates = []; delete p.selected; delete p.goal; p.sim = {}; }
     if (entry.scope) p.scope = { ...(p.scope ?? {}), channels: structuredClone(entry.scope.channels) };
     if (entry.ui) p.ui = structuredClone(entry.ui);
   }
@@ -3047,6 +3071,11 @@ function createDisplay(root, handlers) {
   let W = 0, H = 0, dpr = 1;
   let data = null, scope = null, preview = null, selected = 0, line = null;
   let mode = 'stop', tScan = 0, last = 0, raf = 0, hover = null, box = null;
+  // Earlier runs, newest first; each fades a step per run and is gone after
+  // five (the person, 2026-10-24), so an edit can be compared with before.
+  const RUNS = 5;
+  let past = [];
+  const keepRun = () => { if (data) past = [data, ...past].slice(0, RUNS - 1); };
   const P = { l: 0, t: 0, r: 0, b: 0, w: 0, h: 0, dx: 0, dy: 0 };
 
   function resize() {
@@ -3160,6 +3189,20 @@ function createDisplay(root, handlers) {
     const k = sweeping ? indexAt(tScan) : n;
 
     const order = [0, 1, 2, 3].sort((a, b) => (a === line) - (b === line));
+    // Earlier runs first, whole and faded: they may show what lies ahead.
+    const seen = new Set();
+    past.forEach((d, age) => {
+      if (seen.has(d)) return;
+      seen.add(d);
+      ctx.globalAlpha = 0.5 * (1 - (age + 1) / RUNS);
+      ctx.lineWidth = 1.2;
+      for (const i of order) {
+        const ch = scope.channels[i], v = d.signals[ch.source];
+        if (!ch.on || !v) continue;
+        ctx.strokeStyle = CHANNEL_COLORS[i];
+        trace(ctx, d.t, v, ch, 0, d.t.length - 1);
+      }
+    });
     for (const i of order) {
       const ch = scope.channels[i];
       const v = data.signals[ch.source];
@@ -3286,7 +3329,7 @@ function createDisplay(root, handlers) {
       tScan += dt;
       if (tScan >= w1) {
         if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); }
-        else tScan = w0 + ((tScan - w0) % (w1 - w0));
+        else { tScan = w0 + ((tScan - w0) % (w1 - w0)); keepRun(); }
       }
     }
     draw();
@@ -3439,12 +3482,13 @@ function createDisplay(root, handlers) {
     setScope(s, sel) { scope = s; selected = sel; if (line !== null && line !== sel) line = null; renderBadges(); draw(); },
     setPreview(p) { preview = p; draw(); },
     setMode(m, { restart = false } = {}) {
-      if ((m === 'single' || restart) && scope) tScan = win()[0];
+      if ((m === 'single' || restart) && scope) { if (m === 'single' && mode !== 'single') keepRun(); tScan = win()[0]; }
       mode = m;
       last = 0;
       kick();
       draw();
     },
+    clearRuns() { past = []; draw(); },
     releaseLine() { if (line === null) return false; selectLine(null); return true; },
     // The instant other views follow: the hover cursor, else the scan line
     // while sweeping, else the right edge of the screen.
@@ -3848,7 +3892,7 @@ function createGenerator(root, app) {
       ? SIGNALS[draft.comp.type].params.map(fieldRow).join('')
         + (draft.comp.type === 'arb' ? `<div class="hint">${(draft.comp.points ?? []).length} points${draft.comp.name ? ` from ${draft.comp.name}` : ''}</div>` : '')
         + (draft.comp.type === 'fn' ? `<label class="fnrow"><span class="pl">y(t) =</span><input class="fnin" id="g-expr" spellcheck="false" autocomplete="off" value="${draft.comp.expr.replace(/"/g, '&quot;')}"></label><div class="hint" id="g-expr-msg">${EXPR_HELP}</div>` : '')
-      : `<div class="hint">Press a waveform key to draft a component. The display previews it dashed, alone and added to r(t); <b>Add</b> puts it into the signal.</div>`;
+      : `<div class="hint">Press a waveform key to draft a component. The display previews it dashed, alone and added to ${app.signal}(t); <b>Add</b> puts it into the signal.</div>`;
     $('#g-mode').title = draft ? '' : 'Parameters of the component being drafted or edited';
     $('#g-add').textContent = draft?.mode === 'edit' ? 'Apply' : 'Add';
     $('#g-add').disabled = !draft;
@@ -3858,7 +3902,7 @@ function createGenerator(root, app) {
           <span class="sn">${i + 1}</span>${icon(c.type)}<span class="sd" title="Edit">${describeComponent(c)}</span>
           <button class="sw ${c.enabled === false ? '' : 'on'}" data-tog="${i}" role="switch" aria-checked="${c.enabled !== false}" aria-label="Component ${i + 1} on"></button>
           <button class="x" data-del="${i}" aria-label="Remove component ${i + 1}" title="Remove">✕</button></li>`).join('')
-      : '<li class="empty">No components yet: r(t) = 0.</li>';
+      : `<li class="empty">No components yet: ${app.signal}(t) = 0.</li>`;
     $('#g-period').innerHTML = fieldRow(PERIOD);
     $('#g-eq').textContent = `${app.signal}(t) = Σ`;
     const exprIn = $('#g-expr');
@@ -3982,6 +4026,7 @@ function createScene(host, app) {
         const st = `stroke="${colour(o.stroke)}" stroke-width="${o.width}" fill="${colour(o.fill)}" stroke-linejoin="round" stroke-linecap="round"`;
         if (o.op === 'line' || o.op === 'arrow') {
           const [p, q] = o.pts;
+          if (o.op === 'arrow' && Math.hypot(X(q) - X(p), Y(q) - Y(p)) < 0.5) continue;  // no length, no arrow (a force of 0)
           html += `<line x1="${X(p)}" y1="${Y(p)}" x2="${X(q)}" y2="${Y(q)}" ${st}${o.op === 'arrow' ? ' marker-end="url(#sc-arrow)"' : ''}/>`;
         } else if (o.op === 'poly') {
           html += `<${o.closed ? 'polygon' : 'polyline'} points="${o.pts.map((p) => `${X(p)},${Y(p)}`).join(' ')}" ${st}/>`;
@@ -4307,7 +4352,7 @@ function createPlantEditor(root, app) {
   // parameters are on the right), else its first parameters, cut to fit.
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = def.ode ? def.formula : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const text = def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
     const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
@@ -4392,7 +4437,7 @@ function createPlantEditor(root, app) {
       if (!['source', 'sink', 'inport', 'outport'].includes(b.type)) html += field('name', 'Label', b.name ?? '', 'text', 'optional');
       for (const p of def.params) {
         const v = b.params[p.key];
-        const hint = p.kind === 'vector' ? 'highest power first' : p.kind ? '' : `unit: ${p.unit ?? '1'}`;
+        const hint = p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}`;
         html += field(`p:${p.key}`, p.label, p.kind === 'vector' ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', hint);
       }
       html += '</div><div class="pbtns">';
@@ -4479,7 +4524,6 @@ function createPlantEditor(root, app) {
     const names = diagramNames(rootDiagram());
     if (b.type === 'sink' && (names.sinks.includes(to) || names.sources.includes(to))) { app.toast(`“${to}” is already used.`); return false; }
     if (b.type === 'source' && names.sinks.includes(to)) { app.toast(`“${to}” is already a Sink.`); return false; }
-    if (b.type === 'source' && from === 'r' && names.sources.filter((n) => n === 'r').length <= 1) { app.toast('r, the reference, always stays; add another Source for a new signal.'); return false; }
     if (b.type === 'source') app.renameSignal(from, to, names.sources.filter((n) => n === from).length);
     else app.renameSink(from, to);
     return edit((d) => { const x = d.blocks.find((q) => q.id === b.id); if (x.type === 'source') x.params.signal = to; else x.params.name = to; });
@@ -4510,11 +4554,11 @@ function createPlantEditor(root, app) {
 
   function remove() {
     if (!sel.size && wireSel < 0) return;
-    // The reference r always stays: its last Source cannot be deleted.
-    const rSources = (d) => d.blocks.filter((b) => b.type === 'source' && b.params.signal === 'r');
-    if (!path.length && rSources(level()).length && rSources(level()).every((b) => sel.has(b.id)) && diagramNames(rootDiagram()).sources.filter((n) => n === 'r').length <= rSources(level()).length) {
-      for (const b of rSources(level())) sel.delete(b.id);
-      app.toast('r, the reference, always stays.');
+    // A system keeps at least one Source: the last one cannot be deleted.
+    const doomed = level().blocks.filter((b) => b.type === 'source' && sel.has(b.id));
+    if (doomed.length && doomed.length >= diagramNames(rootDiagram()).sources.length) {
+      sel.delete(doomed[0].id);
+      app.toast(`A system keeps at least one Source; “${doomed[0].params.signal}” stays.`);
       if (!sel.size) { render(); return; }
     }
     edit((d) => {
@@ -4869,7 +4913,11 @@ function startApp() {
   app.redo = () => { if (!redoStack.length) return; undoStack.push(JSON.stringify(app.project)); restore(redoStack.pop()); toast('Redone'); };
 
   let saveTimer = null;
-  const base = `${embeddedText.length}:${hash(embeddedText)}`;
+  // A page without a project inside opens the first system of the library.
+  // Autosaved work belongs to the project the page opened with: when that
+  // changes (a new version of the page), the old work is not restored over it.
+  const startText = embeddedText || JSON.stringify(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY[0], SYSTEM_PARTS.filter((k) => SYSTEM_LIBRARY[0][k])));
+  const base = `${startText.length}:${hash(startText)}`;
   function autosave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch { /* storage unavailable */ } }, 300);
@@ -4975,13 +5023,14 @@ function startApp() {
     const keep = views ?? app.project.system.plant?.views;
     app.project.system.plant = { type: 'diagram', diagram, ...(keep?.length ? { views: keep } : {}) };
     // Only what the diagram names exists: new Sources get a signal, removed
-    // ones lose theirs (r always stays), channels on vanished names clear.
+    // ones lose theirs, channels on vanished names clear.
     const signals = app.project.system.signals;
     const { sources } = diagramNames(diagram);
     for (const name of sources) signals[name] ??= { period: Math.max(...Object.values(signals).map((x) => x.period), 1), components: [] };
-    for (const name of Object.keys(signals)) if (name !== 'r' && !sources.includes(name)) delete signals[name];
+    for (const name of Object.keys(signals)) if (!sources.includes(name) && (sources.length || name !== 'r')) delete signals[name];
+    if (!Object.keys(signals).length) signals.r = { period: 1, components: [] };
     pruneChannels(app.project.scope, app.project);
-    if (!signals[app.signal]) app.signal = 'r';
+    if (!signals[app.signal]) app.signal = Object.keys(signals)[0];
     app.endEdit();
     changed();
   };
@@ -5055,14 +5104,17 @@ function startApp() {
   app.single = () => { display.setMode('single'); controls.render(display.mode); };
   // Auto Scale: one period of the input across the screen, then every
   // channel with a signal fitted to about six divisions.
-  app.autoScale = () => {
-    app.beginEdit();
+  function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
     const data = acquire();
     for (const ch of app.project.scope.channels) {
       const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
       if (fit) Object.assign(ch, fit);
     }
+  }
+  app.autoScale = () => {
+    app.beginEdit();
+    fitScope();
     app.endEdit();
     changed();
     toast('Auto Scale: one period of the input, every channel fitted');
@@ -5143,6 +5195,7 @@ function startApp() {
     plantEditor.reset();
     app.signal = Object.keys(p.system.signals).includes('r') ? 'r' : Object.keys(p.system.signals)[0];
     acqKey = '';
+    display.clearRuns();
     changed();
     if (ui) applyUi(ui);
     if (!quiet) toast(`Loaded “${p.title}”`);
@@ -5272,7 +5325,10 @@ function startApp() {
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch { /* storage unavailable */ }
   try {
     if (saved && saved.base === base) app.project = normalizeProject(saved.project);
-    else app.project = normalizeProject(embeddedText ? JSON.parse(embeddedText) : structuredClone(DEFAULT_PROJECT));
+    else {
+      app.project = normalizeProject(JSON.parse(startText));
+      if (!embeddedText) fitScope();  // the library's system, scaled as when it is loaded
+    }
   } catch (err) {
     app.project = normalizeProject(structuredClone(DEFAULT_PROJECT));
     setTimeout(() => toast(`The embedded project could not be read (${err.message}); opened a new one instead.`));

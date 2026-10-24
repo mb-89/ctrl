@@ -60,7 +60,7 @@ const HELP = `
 </div>
 <p>The screen is the record: what you see is simulated and swept, in real time.</p>
 <h3>Signal generator</h3>
-<p>Press a waveform key to draft a component: the display shows it dashed on its own and added to r(t). Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
+<p>Press a waveform key to draft a component: the display shows it dashed on its own and added to the signal. Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
 <div class="keys">
   <span><kbd>0</kbd>–<kbd>9</kbd> <kbd>.</kbd> <kbd>-</kbd></span><span>Type a value for the active field; <kbd>Enter</kbd> sets it</span>
   <span><kbd>Enter</kbd></span><span>With nothing typed: add (or apply) the draft</span>

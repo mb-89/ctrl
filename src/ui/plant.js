@@ -286,7 +286,7 @@ export function createPlantEditor(root, app) {
   // parameters are on the right), else its first parameters, cut to fit.
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = def.ode ? def.formula : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const text = def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
     const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
@@ -371,7 +371,7 @@ export function createPlantEditor(root, app) {
       if (!['source', 'sink', 'inport', 'outport'].includes(b.type)) html += field('name', 'Label', b.name ?? '', 'text', 'optional');
       for (const p of def.params) {
         const v = b.params[p.key];
-        const hint = p.kind === 'vector' ? 'highest power first' : p.kind ? '' : `unit: ${p.unit ?? '1'}`;
+        const hint = p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}`;
         html += field(`p:${p.key}`, p.label, p.kind === 'vector' ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', hint);
       }
       html += '</div><div class="pbtns">';
@@ -458,7 +458,6 @@ export function createPlantEditor(root, app) {
     const names = diagramNames(rootDiagram());
     if (b.type === 'sink' && (names.sinks.includes(to) || names.sources.includes(to))) { app.toast(`“${to}” is already used.`); return false; }
     if (b.type === 'source' && names.sinks.includes(to)) { app.toast(`“${to}” is already a Sink.`); return false; }
-    if (b.type === 'source' && from === 'r' && names.sources.filter((n) => n === 'r').length <= 1) { app.toast('r, the reference, always stays; add another Source for a new signal.'); return false; }
     if (b.type === 'source') app.renameSignal(from, to, names.sources.filter((n) => n === from).length);
     else app.renameSink(from, to);
     return edit((d) => { const x = d.blocks.find((q) => q.id === b.id); if (x.type === 'source') x.params.signal = to; else x.params.name = to; });
@@ -489,11 +488,11 @@ export function createPlantEditor(root, app) {
 
   function remove() {
     if (!sel.size && wireSel < 0) return;
-    // The reference r always stays: its last Source cannot be deleted.
-    const rSources = (d) => d.blocks.filter((b) => b.type === 'source' && b.params.signal === 'r');
-    if (!path.length && rSources(level()).length && rSources(level()).every((b) => sel.has(b.id)) && diagramNames(rootDiagram()).sources.filter((n) => n === 'r').length <= rSources(level()).length) {
-      for (const b of rSources(level())) sel.delete(b.id);
-      app.toast('r, the reference, always stays.');
+    // A system keeps at least one Source: the last one cannot be deleted.
+    const doomed = level().blocks.filter((b) => b.type === 'source' && sel.has(b.id));
+    if (doomed.length && doomed.length >= diagramNames(rootDiagram()).sources.length) {
+      sel.delete(doomed[0].id);
+      app.toast(`A system keeps at least one Source; “${doomed[0].params.signal}” stays.`);
       if (!sel.size) { render(); return; }
     }
     edit((d) => {

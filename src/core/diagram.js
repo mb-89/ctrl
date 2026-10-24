@@ -14,6 +14,7 @@
 import { BLOCKS, blockDef, normalizeBlock } from './blocks.js';
 import { tf2ss, rootBound } from './poly.js';
 import { gaussAt } from './signals.js';
+import { compileExpr } from './expr.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -34,6 +35,7 @@ export const ELEMENTS = {
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
   integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
   delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 })], ports: () => [1, 1], formula: 'e^(−Ls)' },
+  fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
   noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
@@ -95,6 +97,9 @@ function normalizeParams(type, params = {}, where) {
     } else if (p.kind === 'name') {
       v = String(v);
       if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
+    } else if (p.kind === 'expr') {
+      v = String(v).trim();
+      try { compileExpr(v, { vars: true }); } catch (e) { throw new Error(`${where}.${p.key}: ${e.message}`); }
     } else if (p.kind === 'signs') {
       v = String(v);
       if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
@@ -261,6 +266,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
       else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, ft: b.params.L <= 0 });
       else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
+      else if (b.type === 'fcn') Object.assign(node, { kind: 'fcn', f: compileExpr(b.params.expr, { vars: true }), env: { u: 0, t: 0 }, ft: true });
       else if (b.type === 'quantizer') Object.assign(node, { kind: 'quant', q: b.params.q, ft: true });
       else if (b.type === 'noise') Object.assign(node, { kind: 'noise', std: b.params.std, seed: b.params.seed, ft: true });
       const k = add(node);
@@ -328,6 +334,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
           case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
           case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L) : inOf(nd); break;
           case 'switch': y = inOf(nd, nd.pick); break;
+          case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
           case 'quant': y = nd.q * Math.round(inOf(nd) / nd.q); break;
           case 'noise': y = inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
           case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;

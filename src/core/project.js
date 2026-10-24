@@ -54,12 +54,13 @@ export function normalizeProject(p) {
   const plant = p.system?.plant ?? (v1 ? { type: 'firstOrder' } : null);
   system.plant = plant ? normalizePlant(plant) : null;
   if (system.plant?.type === 'diagram') {
-    // Only what the diagram names exists: a signal per Source; r always.
+    // Only what the diagram names exists: a signal per Source (r when there
+    // is no Source yet).
     const { sources } = diagramNames(system.plant.diagram);
     for (const name of sources) signals[name] ??= normalizeReference({ period: 1, components: [] });
-    for (const name of Object.keys(signals)) if (name !== 'r' && !sources.includes(name)) delete signals[name];
+    for (const name of Object.keys(signals)) if (!sources.includes(name) && (sources.length || name !== 'r')) delete signals[name];
   }
-  if (!signals.r) signals.r = normalizeReference({ period: 1, components: [] });
+  if (!Object.keys(signals).length) signals.r = normalizeReference({ period: 1, components: [] });
   const goal = normalizeGoal(p.goal);
   const raw = Array.isArray(p.candidates) ? p.candidates : [];
   const candidates = raw.map((c, i) => {
@@ -187,12 +188,12 @@ export function normalizeScope(scope = {}, period, loop = false) {
   return { timebase, channels };
 }
 
-// Every name a scope channel can show: the diagram's Sources and Sinks (and
-// r); with a closed loop from an older file, also its y, u, e, ym, d.
+// Every name a scope channel can show: the signals (one per Source) and the
+// diagram's Sinks; with a closed loop from an older file, also its y, u, e, ym, d.
 export function channelNames(project) {
   const plant = project.system.plant;
   const n = plant?.type === 'diagram' ? diagramNames(plant.diagram) : { sources: [], sinks: [] };
-  return [...new Set(['r', ...n.sources, ...n.sinks, ...(loopReady(project) ? LOOP_SIGNALS : [])])];
+  return [...new Set([...Object.keys(project.system.signals), ...n.sinks, ...(loopReady(project) ? LOOP_SIGNALS : [])])];
 }
 
 // A channel showing a name that no longer exists goes back to no source.
@@ -209,8 +210,13 @@ export function evaluateOpenLoop(project) {
 }
 
 // A loop can run once it has a plant and at least one controller candidate.
+// A v1 closed loop: a plant and controller candidates. A diagram that plays
+// its own Sources is a whole system, not a loop's plant, whatever candidates
+// an older file carries.
 export function loopReady(project) {
-  return !!project.system.plant && project.candidates.length > 0;
+  const plant = project.system.plant;
+  if (plant?.type === 'diagram' && diagramNames(plant.diagram).sources.length) return false;
+  return !!plant && project.candidates.length > 0;
 }
 
 // One named signal on the simulation grid (r by default).

@@ -49,7 +49,11 @@ function startApp() {
   app.redo = () => { if (!redoStack.length) return; undoStack.push(JSON.stringify(app.project)); restore(redoStack.pop()); toast('Redone'); };
 
   let saveTimer = null;
-  const base = `${embeddedText.length}:${hash(embeddedText)}`;
+  // A page without a project inside opens the first system of the library.
+  // Autosaved work belongs to the project the page opened with: when that
+  // changes (a new version of the page), the old work is not restored over it.
+  const startText = embeddedText || JSON.stringify(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY[0], SYSTEM_PARTS.filter((k) => SYSTEM_LIBRARY[0][k])));
+  const base = `${startText.length}:${hash(startText)}`;
   function autosave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch { /* storage unavailable */ } }, 300);
@@ -155,13 +159,14 @@ function startApp() {
     const keep = views ?? app.project.system.plant?.views;
     app.project.system.plant = { type: 'diagram', diagram, ...(keep?.length ? { views: keep } : {}) };
     // Only what the diagram names exists: new Sources get a signal, removed
-    // ones lose theirs (r always stays), channels on vanished names clear.
+    // ones lose theirs, channels on vanished names clear.
     const signals = app.project.system.signals;
     const { sources } = diagramNames(diagram);
     for (const name of sources) signals[name] ??= { period: Math.max(...Object.values(signals).map((x) => x.period), 1), components: [] };
-    for (const name of Object.keys(signals)) if (name !== 'r' && !sources.includes(name)) delete signals[name];
+    for (const name of Object.keys(signals)) if (!sources.includes(name) && (sources.length || name !== 'r')) delete signals[name];
+    if (!Object.keys(signals).length) signals.r = { period: 1, components: [] };
     pruneChannels(app.project.scope, app.project);
-    if (!signals[app.signal]) app.signal = 'r';
+    if (!signals[app.signal]) app.signal = Object.keys(signals)[0];
     app.endEdit();
     changed();
   };
@@ -235,14 +240,17 @@ function startApp() {
   app.single = () => { display.setMode('single'); controls.render(display.mode); };
   // Auto Scale: one period of the input across the screen, then every
   // channel with a signal fitted to about six divisions.
-  app.autoScale = () => {
-    app.beginEdit();
+  function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
     const data = acquire();
     for (const ch of app.project.scope.channels) {
       const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
       if (fit) Object.assign(ch, fit);
     }
+  }
+  app.autoScale = () => {
+    app.beginEdit();
+    fitScope();
     app.endEdit();
     changed();
     toast('Auto Scale: one period of the input, every channel fitted');
@@ -323,6 +331,7 @@ function startApp() {
     plantEditor.reset();
     app.signal = Object.keys(p.system.signals).includes('r') ? 'r' : Object.keys(p.system.signals)[0];
     acqKey = '';
+    display.clearRuns();
     changed();
     if (ui) applyUi(ui);
     if (!quiet) toast(`Loaded “${p.title}”`);
@@ -452,7 +461,10 @@ function startApp() {
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch { /* storage unavailable */ }
   try {
     if (saved && saved.base === base) app.project = normalizeProject(saved.project);
-    else app.project = normalizeProject(embeddedText ? JSON.parse(embeddedText) : structuredClone(DEFAULT_PROJECT));
+    else {
+      app.project = normalizeProject(JSON.parse(startText));
+      if (!embeddedText) fitScope();  // the library's system, scaled as when it is loaded
+    }
   } catch (err) {
     app.project = normalizeProject(structuredClone(DEFAULT_PROJECT));
     setTimeout(() => toast(`The embedded project could not be read (${err.message}); opened a new one instead.`));

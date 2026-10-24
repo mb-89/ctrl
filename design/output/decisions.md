@@ -2,6 +2,15 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.5: old runs fade; the examples move ([input](../input/2026-10-24-07-old-runs-and-views-that-move.md))
+
+- **Earlier runs stay on the screen, whole and fading, gone after five** (all channels). (Person.) This revises v2.4's "nothing ahead of the scan line": the current run still stops at the scan line, the old ones show what lies ahead.
+- **Why nothing moved for the person**: their browser restored work saved by an older page, with v1 controller candidates in it; loading the Mass–spring–damper kept them, so the diagram was run as a closed-loop plant, failed, and every Sink had "no signal". Fixed three ways: a whole system load replaces the controller part; a diagram with its own Sources is never run as a loop plant; saved work is only restored onto the project the page opened with (a new page version starts fresh).
+- **The page opens the Mass–spring–damper** when it has no project inside, auto-scaled, running, on its view. (Person.)
+- **Signals are named for what they are**: F, x, v, Ekin, Epot; F, x, theta; V, angle, speed. r is no longer required: it is a new plant's Source, renamable, and a system keeps at least one Source. (Person: "what is the reference signal here?") Revises v2.3's "r always stays"; interpretation of how far to take it.
+- **Function block** (`y = f(u)`), so the mass–spring–damper can show kinetic and potential energy. (Person suggested the energies.)
+- **One view per system**; the motor's view gets a fixed dial and a marked rotor. (Person.)
+
 ## 2026-10-24 · v2.4: examples that work ([input](../input/2026-10-24-06-make-examples-work.md))
 
 - **Scope channel sources are only the names the diagram defines** (r always), no implicit y, u, e or "effort". (Person.) Names that disappear are cleared from the channels.

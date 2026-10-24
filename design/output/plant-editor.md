@@ -9,7 +9,7 @@ Reader: whoever changes how the plant is built or simulated.
 - A **Source** plays a named signal (r, r1, d, …) made in the Input tab. The Input tab's Edit column lists every signal the Sources use; adding a Source with a new name adds a signal.
 - A **Sink** records its input under a name (y1, y2, …); every Sink anywhere in the diagram, also inside subsystems (and later controllers), is a channel source on the scope, as is every Source.
 - Three ways for a signal to end (the person): **Out** passes it up to the enclosing block, **Sink** records it for the scope, **Terminator** just ends it.
-- A diagram with only a Source shows only that signal. **A new plant is exactly Source r**, and r always stays: its last Source cannot be deleted or renamed away.
+- A diagram with only a Source shows only that signal. **A new plant is exactly Source r.** Any Source can be renamed (an input force is F, not r); the last Source cannot be deleted.
 - **Every Source and Sink has a unit** (parameter `unit`, default `1`); so does every physical block parameter. The scope shows the units.
 - **Block labels stay short**; a physics block shows its formula (the Cart–pole: `F → x, θ`). Subsystem parameters that set inner blocks (a mask) are on the roadmap.
 - **Double-click a Source or Sink on the canvas to rename it.** Renaming a Source renames its signal (the Input tab follows); renaming a Sink carries into the scope channels that showed it.
@@ -36,7 +36,7 @@ Reader: whoever changes how the plant is built or simulated.
 
 The column can be resized by its separator, and each group folds open or closed (both remembered in the browser).
 
-Signals (Source, Sink, Terminator) · Math (Gain, Sum with signs such as `+--`, Switch) · Dynamics (Integrator, Dead time, First order, Second order, Transfer function) · Models (first order with dead time, n equal lags, integrator with lag, double integrator, inverse response) · Sensors (Quantizer, Noise; lags and dead time are in Dynamics) · Physics (Cart–pole: nonlinear, force in, cart position and pole angle out) · Nonlinear (Saturation) · Structure (Subsystem, In, Out) · **My blocks**: subsystems the person saved, kept in the project file · **System library**: complete systems; a click here loads the plant ([system-library.md](system-library.md)).
+Signals (Source, Sink, Terminator) · Math (Gain, Sum with signs such as `+--`, Switch, Function `y = f(u)` with the formula language of the Input tab, e.g. `0.5*100*u^2`) · Dynamics (Integrator, Dead time, First order, Second order, Transfer function) · Models (first order with dead time, n equal lags, integrator with lag, double integrator, inverse response) · Sensors (Quantizer, Noise; lags and dead time are in Dynamics) · Physics (Cart–pole: nonlinear, force in, cart position and pole angle out) · Nonlinear (Saturation) · Structure (Subsystem, In, Out) · **My blocks**: subsystems the person saved, kept in the project file · **System library**: complete systems; a click here loads the plant ([system-library.md](system-library.md)).
 
 ## Simulation
 

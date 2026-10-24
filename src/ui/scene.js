@@ -66,6 +66,7 @@ export function createScene(host, app) {
         const st = `stroke="${colour(o.stroke)}" stroke-width="${o.width}" fill="${colour(o.fill)}" stroke-linejoin="round" stroke-linecap="round"`;
         if (o.op === 'line' || o.op === 'arrow') {
           const [p, q] = o.pts;
+          if (o.op === 'arrow' && Math.hypot(X(q) - X(p), Y(q) - Y(p)) < 0.5) continue;  // no length, no arrow (a force of 0)
           html += `<line x1="${X(p)}" y1="${Y(p)}" x2="${X(q)}" y2="${Y(q)}" ${st}${o.op === 'arrow' ? ' marker-end="url(#sc-arrow)"' : ''}/>`;
         } else if (o.op === 'poly') {
           html += `<${o.closed ? 'polygon' : 'polyline'} points="${o.pts.map((p) => `${X(p)},${Y(p)}`).join(' ')}" ${st}/>`;

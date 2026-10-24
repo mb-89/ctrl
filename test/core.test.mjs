@@ -171,13 +171,19 @@ test('a diagram plant matches its single-block equivalent, nested or not', async
   const { normalizeDiagram } = await import('../src/core/diagram.js');
   const signals = { r: normalizeReference({ period: 10, components: [{ type: 'step', params: { amplitude: 1, time: 0 } }] }) };
   const sim = { duration: 2, sampleTime: 0.001 };
-  const msd = simulateSystem(normalizeDiagram(EXAMPLE_PLANTS.find((p) => p.name.startsWith('Mass')).diagram), signals, sim).signals.y1;
+  const msdOut = simulateSystem(normalizeDiagram(EXAMPLE_PLANTS.find((p) => p.name.startsWith('Mass')).diagram), { F: signals.r }, sim).signals;
+  const msd = msdOut.x;
   const so = simulateSystem(normalizeDiagram({ blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 'p', type: 'secondOrder', params: { K: 1 / 100, wn: 10, zeta: 0.05 } }, { id: 'y1', type: 'sink', params: { name: 'y1' } }], wires: [{ from: 'r', to: 'p' }, { from: 'p', to: 'y1' }] }), signals, sim).signals.y1;
   for (const k of [100, 500, 1000, 2000]) assert.ok(Math.abs(msd[k] - so[k]) < 1e-6, `t = ${k / 1000}: ${msd[k]} vs ${so[k]}`);
-  const motor = simulateSystem(normalizeDiagram(EXAMPLE_PLANTS.find((p) => p.name === 'DC motor').diagram), signals, sim).signals;
-  // Steady speed of the motor: Kt·10 / (1 + Ke·Kt·10) = 5 / 3.5
-  assert.ok(Math.abs(motor.y2[2000] - 5 / 3.5) < 1e-3);
-  assert.ok(motor.y1[2000] > 2);
+  // The Function blocks: energies ½mv² and ½kx² from the same run.
+  for (const k of [300, 1200]) {
+    assert.ok(Math.abs(msdOut.Ekin[k] - 0.5 * msdOut.v[k] ** 2) < 1e-12);
+    assert.ok(Math.abs(msdOut.Epot[k] - 50 * msd[k] ** 2) < 1e-12);
+  }
+  const motor = simulateSystem(normalizeDiagram(EXAMPLE_PLANTS.find((p) => p.name === 'DC motor').diagram), { V: signals.r }, sim).signals;
+  // Steady speed of the motor per volt: Kt·10 / (1 + Ke·Kt·10) = 5 / 3.5
+  assert.ok(Math.abs(motor.speed[2000] - 5 / 3.5) < 1e-3);
+  assert.ok(motor.angle[2000] > 2);
 });
 
 test('an algebraic loop is refused; an empty diagram shows the reference alone', async () => {
@@ -222,15 +228,19 @@ test('2D views compile and move with the signals; library parts combine', async 
   const p = normalizeProject(applySystem(structuredClone(DEFAULT_PROJECT), pend, ['input', 'plant', 'controller']));
   assert.equal(p.title, 'Inverted pendulum');
   const scene = compileScene(p.system.plant.views[0]);
-  const bob = (th) => scene({ t: 0, r: 0, y1: 0, y2: th }).find((o) => o.op === 'circle' && o.fill === 'ch3').c;
+  const bob = (th) => scene({ t: 0, F: 0, x: 0, theta: th }).find((o) => o.op === 'circle' && o.fill === 'ch3').c;
   assert.ok(Math.abs(bob(0)[0]) < 1e-12 && Math.abs(bob(0)[1] - 0.6) < 1e-12);
   assert.ok(bob(0.3)[0] > 0.1, 'positive θ leans towards +x');
   const msd = SYSTEM_LIBRARY.find((s) => s.name === 'Mass–spring–damper');
   const mixed = normalizeProject(applySystem(p, msd, ['plant']));
-  assert.equal(mixed.system.signals.r.components[0].type, 'square', 'the input stays from the pendulum');
+  assert.equal(mixed.system.signals.F.components[0].type, 'square', 'the input stays from the pendulum');
   assert.equal(mixed.system.plant.views[0].name, 'Hanging mass');
-  assert.deepEqual(mixed.scope.channels.map((c) => c.source), ['r', 'y1', '', ''], 'a whole load brings the system scope; a plant load keeps what still exists');
+  assert.deepEqual(mixed.scope.channels.map((c) => c.source), ['F', 'x', '', ''], 'a whole load brings the system scope; a plant load keeps what still exists');
   assert.ok(SYSTEM_LIBRARY.every((s) => s.plant.views?.length), 'every system has a view');
+  const { loopReady } = await import('../src/core/project.js');
+  const fromLoop = normalizeProject(applySystem(EXAMPLES[0], msd, ['input', 'plant']));
+  assert.equal(fromLoop.candidates.length, 0, 'a whole load leaves no controller of an older project behind');
+  assert.equal(loopReady({ ...fromLoop, candidates: EXAMPLES[0].candidates }), false, 'a diagram with its own Sources is never run as a loop plant');
   assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && s.ui.tab === 'plant' && s.plant.views.some((v) => v.name === s.ui.view)), 'every system opens running on its view');
   assert.deepEqual(p.ui, { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' }, 'a whole load brings how the system opens');
   assert.deepEqual(normalizeProject({ ui: { run: 'fast', tab: 'plant', extra: 1 } }).ui, { tab: 'plant' }, 'unknown ui values are dropped');

@@ -11,12 +11,12 @@ Where a standard exists, we use it (the person, 2026-10-24): SVG for 2D drawings
 Draw the scene in any vector editor, give the moving elements ids, then bind their attributes to formulas in t and the signal names (Sources and Sinks):
 
 ```json
-{ "name": "Hanging mass (SVG)", "kind": "svg",
+{ "name": "Hanging mass", "kind": "svg",
   "svg": "<svg viewBox=\"-160 -130 320 280\">…<rect id=\"mass\" …/>…</svg>",
   "bind": [
-    { "select": "#mass", "attr": "y", "value": "{4000*y1}" },
-    { "select": "#spring, #damper", "attr": "y2", "value": "{4000*y1}" },
-    { "select": "#label", "attr": "text", "value": "x = {1000*y1} mm" } ] }
+    { "select": "#mass", "attr": "y", "value": "{4000*x}" },
+    { "select": "#spring, #damper", "attr": "y2", "value": "{4000*x}" },
+    { "select": "#label", "attr": "text", "value": "x = {1000*x} mm" } ] }
 ```
 
 `select` is a CSS selector; `value` is text with `{formula}` parts; `attr` is any attribute, or `text` for an element's text. Before display the drawing loses scripts, event handlers and outside links, and bindings cannot target events or links: a shared file cannot run code.
@@ -40,8 +40,10 @@ Style: `stroke`, `fill` (ink, muted, panel, ch1–ch4, or a CSS colour), `lineWi
 
 ## Examples in the System library
 
-- Mass–spring–damper: "Hanging mass" (shapes; the mass hangs from a ceiling, as the person asked) and "Hanging mass (SVG)" (the same picture as SVG with bindings).
+- Mass–spring–damper: "Hanging mass" (shapes; the mass hangs from a ceiling, as the person asked; bars for kinetic and spring energy).
 - Inverted pendulum: "Cart and pole" (shapes; nested groups move the cart and rotate the pole).
+- DC motor: "Motor shaft" (a rotor with a lobe and a pointer turning inside a fixed twelve-tick dial, so where it is and how fast it goes can be read; the person: "you need to have a mark on it").
+- One view per system: the person found a shapes view and an SVG view of the same thing confusing. An arrow of zero length (a force of 0) is not drawn.
 
 ## Later
 

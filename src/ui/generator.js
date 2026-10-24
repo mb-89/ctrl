@@ -234,7 +234,7 @@ export function createGenerator(root, app) {
       ? SIGNALS[draft.comp.type].params.map(fieldRow).join('')
         + (draft.comp.type === 'arb' ? `<div class="hint">${(draft.comp.points ?? []).length} points${draft.comp.name ? ` from ${draft.comp.name}` : ''}</div>` : '')
         + (draft.comp.type === 'fn' ? `<label class="fnrow"><span class="pl">y(t) =</span><input class="fnin" id="g-expr" spellcheck="false" autocomplete="off" value="${draft.comp.expr.replace(/"/g, '&quot;')}"></label><div class="hint" id="g-expr-msg">${EXPR_HELP}</div>` : '')
-      : `<div class="hint">Press a waveform key to draft a component. The display previews it dashed, alone and added to r(t); <b>Add</b> puts it into the signal.</div>`;
+      : `<div class="hint">Press a waveform key to draft a component. The display previews it dashed, alone and added to ${app.signal}(t); <b>Add</b> puts it into the signal.</div>`;
     $('#g-mode').title = draft ? '' : 'Parameters of the component being drafted or edited';
     $('#g-add').textContent = draft?.mode === 'edit' ? 'Apply' : 'Add';
     $('#g-add').disabled = !draft;
@@ -244,7 +244,7 @@ export function createGenerator(root, app) {
           <span class="sn">${i + 1}</span>${icon(c.type)}<span class="sd" title="Edit">${describeComponent(c)}</span>
           <button class="sw ${c.enabled === false ? '' : 'on'}" data-tog="${i}" role="switch" aria-checked="${c.enabled !== false}" aria-label="Component ${i + 1} on"></button>
           <button class="x" data-del="${i}" aria-label="Remove component ${i + 1}" title="Remove">✕</button></li>`).join('')
-      : '<li class="empty">No components yet: r(t) = 0.</li>';
+      : `<li class="empty">No components yet: ${app.signal}(t) = 0.</li>`;
     $('#g-period').innerHTML = fieldRow(PERIOD);
     $('#g-eq').textContent = `${app.signal}(t) = Σ`;
     const exprIn = $('#g-expr');

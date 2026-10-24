@@ -32,6 +32,11 @@ export function createDisplay(root, handlers) {
   let W = 0, H = 0, dpr = 1;
   let data = null, scope = null, preview = null, selected = 0, line = null;
   let mode = 'stop', tScan = 0, last = 0, raf = 0, hover = null, box = null;
+  // Earlier runs, newest first; each fades a step per run and is gone after
+  // five (the person, 2026-10-24), so an edit can be compared with before.
+  const RUNS = 5;
+  let past = [];
+  const keepRun = () => { if (data) past = [data, ...past].slice(0, RUNS - 1); };
   const P = { l: 0, t: 0, r: 0, b: 0, w: 0, h: 0, dx: 0, dy: 0 };
 
   function resize() {
@@ -145,6 +150,20 @@ export function createDisplay(root, handlers) {
     const k = sweeping ? indexAt(tScan) : n;
 
     const order = [0, 1, 2, 3].sort((a, b) => (a === line) - (b === line));
+    // Earlier runs first, whole and faded: they may show what lies ahead.
+    const seen = new Set();
+    past.forEach((d, age) => {
+      if (seen.has(d)) return;
+      seen.add(d);
+      ctx.globalAlpha = 0.5 * (1 - (age + 1) / RUNS);
+      ctx.lineWidth = 1.2;
+      for (const i of order) {
+        const ch = scope.channels[i], v = d.signals[ch.source];
+        if (!ch.on || !v) continue;
+        ctx.strokeStyle = CHANNEL_COLORS[i];
+        trace(ctx, d.t, v, ch, 0, d.t.length - 1);
+      }
+    });
     for (const i of order) {
       const ch = scope.channels[i];
       const v = data.signals[ch.source];
@@ -271,7 +290,7 @@ export function createDisplay(root, handlers) {
       tScan += dt;
       if (tScan >= w1) {
         if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); }
-        else tScan = w0 + ((tScan - w0) % (w1 - w0));
+        else { tScan = w0 + ((tScan - w0) % (w1 - w0)); keepRun(); }
       }
     }
     draw();
@@ -424,12 +443,13 @@ export function createDisplay(root, handlers) {
     setScope(s, sel) { scope = s; selected = sel; if (line !== null && line !== sel) line = null; renderBadges(); draw(); },
     setPreview(p) { preview = p; draw(); },
     setMode(m, { restart = false } = {}) {
-      if ((m === 'single' || restart) && scope) tScan = win()[0];
+      if ((m === 'single' || restart) && scope) { if (m === 'single' && mode !== 'single') keepRun(); tScan = win()[0]; }
       mode = m;
       last = 0;
       kick();
       draw();
     },
+    clearRuns() { past = []; draw(); },
     releaseLine() { if (line === null) return false; selectLine(null); return true; },
     // The instant other views follow: the hover cursor, else the scan line
     // while sweeping, else the right edge of the screen.

@@ -12,7 +12,7 @@ Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control lo
 - **Controls** to the right, as on a bench scope: Run/Stop, Single, Auto Scale; Horizontal and Vertical knobs whose readouts you can also type into.
 - **Tabs** below set the loop up one step at a time:
   - **Input**: a signal generator that sums primitives (DC, step, ramp, square/pulse train, sine, chirp, noise, a typed formula y(t), or a waveform loaded from a CSV file) into named signals, repeated with their period, with a dashed preview before each one is added.
-  - **Plant**: the system as a block diagram, Simulink-style: Source blocks play signals, Sink blocks (y1, y2, …) are what the scope shows, blocks nest into subsystems. A plant can carry 2D views (simple shapes, or standard SVG bound to signals) that move with the simulation.
+  - **Plant**: the system as a block diagram, Simulink-style: Source blocks play signals, Sink blocks (x, speed, …) are what the scope shows, blocks nest into subsystems. A plant can carry 2D views (simple shapes, or standard SVG bound to signals) that move with the simulation.
   - The **System library** in the header holds complete systems; load one whole, or only its input, plant or controller.
   - Controller, Auto-tune and Analysis come next.
 
