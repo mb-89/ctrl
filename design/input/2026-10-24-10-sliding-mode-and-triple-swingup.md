@@ -67,3 +67,5 @@
 > It's okay if e-stop stays visible from anywhere, but then put it into the header bar. Make it red, put it into the header bar, right in the middle, next to system library, that's fine.
 
 > And I guess the two sentences on what it is, they can go into the help, right?
+
+> And really, when the hill is offline, I also don't want the traces to run. So even when you have connected, you still need to press the run button so that we actually start.
