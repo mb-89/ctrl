@@ -287,8 +287,11 @@ function startApp() {
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
     liveTag: () => live?.tag(),
+    onLevels: () => app.renderLevels?.(),  // the typed spectrogram levels follow the strip
   });
+  app.display = display;
   const controls = createControls($('controls'), app);
+  app.renderLevels = controls.renderLevels;
   // Save and references under the screen (ui/record.js); Live in Run Control.
   const record = createRecord(app, display);
   live = createLive(app, display, $('controls'), record);

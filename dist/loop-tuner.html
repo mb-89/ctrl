@@ -364,6 +364,9 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .filtparams { display: flex; gap: 4px; flex: 2 1 auto; min-width: 0; }
 .filtparams .field { width: 0; flex: 1 1 52px; min-width: 44px; font-family: var(--mono); font-size: 12px; padding: 1px 4px; }
 .filtparams select.field { flex: 0 1 46px; }
+.lvrow { margin-top: 2px; gap: 4px; }
+.lvrow .field { width: 0; flex: 1 1 52px; min-width: 40px; font-family: var(--mono); font-size: 12px; padding: 1px 4px; text-align: right; }
+.lvrow .field:disabled { opacity: 0.55; }
 .tone-blue { --tone: #2a78d6; } .tone-orange { --tone: #eb6834; } .tone-aqua { --tone: #1baf7a; } .tone-yellow { --tone: #eda100; }
 .tone-magenta { --tone: #e87ba4; } .tone-green { --tone: #008300; } .tone-violet { --tone: #6250d6; } .tone-red { --tone: #e34948; }
 @media (prefers-color-scheme: dark) {
@@ -551,7 +554,7 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
   <span>Drag</span><span>Pan. Click a trace or its marker first to move and zoom that line alone; <kbd>Esc</kbd> releases it.</span>
   <span><kbd>Shift</kbd> + drag</span><span>Zoom to the marked box; a flat band zooms time only, a narrow band values only</span>
   <span>Separators</span><span>Drag the gaps between display, controls and tabs to resize; double-click to reset</span>
-  <span>Spectrogram levels</span><span>The strip at the right edge: a histogram of the amplitudes shown (dB) beside the colour bar. Below the floor is black, above the ceiling the brightest colour. Drag a handle or the band between them; the wheel moves the floor, <kbd>Shift</kbd> + wheel the ceiling; double-click for automatic levels (the floor 10 dB above the median, the noise).</span>
+  <span>Spectrogram levels</span><span>The strip at the right edge: a histogram of the amplitudes shown (dB) beside the colour bar. Below the floor is black, above the ceiling the brightest colour. Drag a handle or the band between them; the wheel moves the floor, <kbd>Shift</kbd> + wheel the ceiling; double-click for automatic levels (the floor 10 dB above the median, the noise). Levels belong to the signal shown; Run Control › Levels types them (↑ ↓: 1 dB, Shift: 10 dB).</span>
 </div>
 <p>The screen is the record: what you see is simulated and swept, in real time. <b>Save ▾</b>, under the screen, stores it: every signal as CSV or JSON, or a picture (PNG). <b>Open…</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>); <b>◀ ▶</b> step through one longer than the screen.</p>
 <h3>Signal generator</h3>
@@ -3398,7 +3401,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Encoder errors and torque ripple',
-    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing. Up there it is weaker than the noise at low frequencies, so the automatic levels leave it black: drag the floor of the levels strip at the right edge down to about −60 dB to see it, with the 3× and 4× orders. Try FFT mode, and a notch filter on the channel.',
+    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing. Up there it is weaker than the noise at low frequencies, so the automatic levels leave it black. Zoom the frequency axis to 100–200 Hz (the levels follow what is shown) to see 6× reach the Nyquist frequency and turn, with the 3× and 4× orders; drag the floor of the levels strip at the right edge down to about −60 dB to see the whole fold-back. Try FFT mode, and a notch filter on the channel.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'ramp', params: { amplitude: 300, time: 0.5, rise: 4 } }] },
     },
@@ -4016,11 +4019,29 @@ function normalizeScopeView(v) {
 }
 
 function normalizeLevels(l) {
+  if (!l || typeof l !== 'object' || Array.isArray(l)) return null;
+  const out = {};
+  for (const [name, pair] of Object.entries(l)) {
+    const lv = normalizeLevelPair(pair);
+    if (name && name !== '__proto__' && lv) out[name] = lv;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function normalizeLevelPair(l) {
   if (!Array.isArray(l) || l.length !== 2 || l.some((x) => typeof x !== 'number')) return null;
   const [a, b] = l.map((x) => Math.round(x * 10) / 10).sort((x, y) => x - y);
   if (!Number.isFinite(a) || !Number.isFinite(b) || b - a < 1 || a < -300 || b > 300) return null;
   return [a, b];
 }
+
+function withLevels(view, source, pair) {
+  const levels = { ...(view?.levels ?? {}) };
+  if (pair) levels[source] = pair; else delete levels[source];
+  const out = { ...(view ?? {}), levels };
+  if (!Object.keys(levels).length) delete out.levels;
+  return out;
+}
+const levelsOf = (view, source) => (view?.levels && Object.hasOwn(view.levels, source) ? view.levels[source] : null);
 
 function channelNames(project) {
   const plant = project.system.plant;
@@ -4126,7 +4147,7 @@ function fmt(v, digits = 3) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, FILTER_TYPES, VIEW_MODES, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, FILTER_TYPES, VIEW_MODES, withLevels, levelsOf, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
 })();
 // ---- core/tune.js
 __mods['core/tune.js'] = (() => {
@@ -4837,20 +4858,29 @@ function quantileSorted(sorted, q) {
   return i + 1 < n ? sorted[i] + f * (sorted[i + 1] - sorted[i]) : sorted[i];
 }
 
-const AUTO_LEVELS = { margin: 10, depth: 80, span: 20 };
-function autoLevels(values, { margin = AUTO_LEVELS.margin, depth = AUTO_LEVELS.depth, span = AUTO_LEVELS.span } = {}) {
-  const sorted = Float32Array.from(values).filter((v) => !Number.isNaN(v)).sort();
-  if (!sorted.length) return null;
-  const ceiling = sorted[sorted.length - 1], median = quantileSorted(sorted, 0.5);
-  const floor = Math.min(ceiling - span, Math.max(ceiling - depth, median + margin));
-  return { floor, ceiling, median, sorted };
+function firstAbove(sorted, zero) {
+  let a = 0, b = sorted.length;
+  while (a < b) { const m = (a + b) >> 1; if (sorted[m] <= zero) a = m + 1; else b = m; }
+  return a;
 }
 
-function levelRange(sorted, levels) {
+const AUTO_LEVELS = { margin: 10, depth: 80, span: 20 };
+function autoLevels(values, { margin = AUTO_LEVELS.margin, depth = AUTO_LEVELS.depth, span = AUTO_LEVELS.span, zero = DB_FLOOR } = {}) {
+  const sorted = Float32Array.from(values).filter((v) => !Number.isNaN(v)).sort();
+  const zeros = firstAbove(sorted, zero), real = sorted.subarray(zeros);
+  if (!real.length) return null;
+  const ceiling = real[real.length - 1], median = quantileSorted(real, 0.5), raw = median + margin;
+  const rule = raw > ceiling - span ? 'span' : raw < ceiling - depth ? 'depth' : 'median';
+  const floor = rule === 'span' ? ceiling - span : rule === 'depth' ? ceiling - depth : raw;
+  return { floor, ceiling, median, rule, zeros, sorted };
+}
+
+function levelRange(sorted, levels, zero = DB_FLOOR) {
   let lo = -100, hi = 0;
-  if (sorted.length) {
-    hi = 10 * Math.ceil((sorted[sorted.length - 1] + 5) / 10);
-    lo = Math.max(hi - 200, 10 * Math.floor((quantileSorted(sorted, 0.01) - 5) / 10));
+  const real = sorted.subarray ? sorted.subarray(firstAbove(sorted, zero)) : sorted.slice(firstAbove(sorted, zero));
+  if (real.length) {
+    hi = 10 * Math.ceil((real[real.length - 1] + 5) / 10) + 0;   
+    lo = Math.max(hi - 200, 10 * Math.floor((quantileSorted(real, 0.01) - 5) / 10));
   }
   if (levels) { lo = Math.min(lo, 10 * Math.floor(levels[0] / 10)); hi = Math.max(hi, 10 * Math.ceil(levels[1] / 10)); }
   if (hi - lo < 20) lo = hi - 20;
@@ -6245,6 +6275,7 @@ return { createDial };
 __mods['ui/freqview.js'] = (() => {
 
 const { amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, AUTO_LEVELS, spectrogramWindow, levelHistogram, autoLevels, levelRange } = __mods['core/spectrum.js'];
+const { levelsOf } = __mods['core/project.js'];
 const { siUnit, num } = __mods['ui/units.js'];
 const DIVX = 10, DIVY = 8, DB_PER_DIV = 10;
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
@@ -6436,16 +6467,23 @@ function imageOf(data, key, { sg, db }, floor, ceiling) {
 }
 
 function drawSpectrogram(v) {
-  const { g, P, data, scope, axis, colors, tx, vy, hover } = v;
+  const { g, P, scope, axis, colors, tx, vy, hover } = v;
   v.drawGrid(g);
-  const i = scope.channels[axis]?.on && channelSignal(data, scope.channels[axis]) ? axis : [0, 1, 2, 3].find((c) => scope.channels[c].on && channelSignal(data, scope.channels[c]));
+  const prev = v.live && v.sweeping && v.past?.[0]?.t.length > 1 ? v.past[0] : null;
+  const data = prev && v.data.t.length < 2 ? null : v.data, base = data ?? prev;
+  const has = (d, c) => scope.channels[c]?.on && channelSignal(d, scope.channels[c]);
+  const i = has(base, axis) ? axis : [0, 1, 2, 3].find((c) => has(base, c));
   if (i === undefined) return null;
-  const ch = scope.channels[i], sig = channelSignal(data, ch), dt = dtOf(data), n = data.t.length - 1;
-  const [f0, f1] = freqRange(scope, data);
+  const ch = scope.channels[i], sig = data && channelSignal(data, ch), dt = dtOf(base);
+  const [f0, f1] = freqRange(scope, base);
+  const ref = prev && channelSignal(prev, ch) && Math.abs(dtOf(prev) - dt) <= 1e-3 * dt ? prev : data;
+  const n = (ref ?? base).t.length - 1;
   const size = scope.view?.size ?? Math.max(64, Math.min(512, 2 ** Math.round(Math.log2(n / 16))));
-  const { key, s } = spectrogramOf(data, ch, size);
-  const shown = s && shownOf(data, key, s, [v.xt(P.l), v.xt(P.r), f0, f1]);
-  const fixed = scope.view?.levels;
+  const { key, s } = sig ? spectrogramOf(data, ch, size) : { key: null, s: null };
+  const r = ref === data ? { key, s } : spectrogramOf(ref, ch, size);
+  const t0 = data?.t[0] ?? 0, tr = ref?.t[0] ?? 0;
+  const shown = r.s && shownOf(ref, r.key, r.s, [v.xt(P.l) - tr, v.xt(P.r) - tr, f0, f1]);
+  const fixed = levelsOf(scope.view, ch.source);
   const levels = fixed ?? (shown?.auto ? [shown.auto.floor, shown.auto.ceiling] : null);
   freqLabelsTime(v);
   axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, siUnit(Number((f1 - ((f1 - f0) * j) / DIVY).toPrecision(4)), 'Hz', 3)]), 'left', 'rgba(200, 210, 218, 0.75)');
@@ -6457,7 +6495,7 @@ function drawSpectrogram(v) {
     const cv = imageOf(data, key, s, levels[0], levels[1]);
     const df = sg.f[1] - sg.f[0], fy = (f) => P.b - ((f - f0) / (f1 - f0)) * P.h;
     const b0 = Math.max(0, Math.ceil(f0 / df - 0.5)), b1 = Math.min(sg.bins - 1, Math.floor(f1 / df + 0.5));
-    const xa = tx(sg.t[0] - hop / 2), xb = tx(sg.t[sg.frames - 1] + hop / 2);
+    const xa = tx(t0 + sg.t[0] - hop / 2), xb = tx(t0 + sg.t[sg.frames - 1] + hop / 2);
     const xEnd = v.sweeping ? Math.min(xb, tx(v.tScan)) : xb;
     if (b1 >= b0) {
       g.save();
@@ -6468,7 +6506,7 @@ function drawSpectrogram(v) {
       g.restore();
     }
   }
-  const k = v.k;
+  const k = sig ? v.k : -1;
   g.strokeStyle = colors[i]; g.lineWidth = 1.4; g.globalAlpha = 0.9;
   g.beginPath();
   let started = false;
@@ -6488,7 +6526,7 @@ function drawSpectrogram(v) {
     const t = v.xt(hover.x), f = f1 - ((hover.y - P.t) / P.h) * (f1 - f0);
     const rows = [[`t  ${siUnit(t, 's', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`f  ${siUnit(f, 'Hz', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`${i + 1} ${ch.source}`, colors[i]]];
     if (sg && (!v.sweeping || t <= v.tScan)) {
-      const fr = Math.round((t - sg.t[0]) / hop), b = Math.round(f / (sg.f[1] - sg.f[0]));
+      const fr = Math.round((t - t0 - sg.t[0]) / hop), b = Math.round(f / (sg.f[1] - sg.f[0]));
       if (fr >= 0 && fr < sg.frames && b >= 0 && b < sg.bins) rows.push([`A  ${num(sg.amp[fr * sg.bins + b])} ${unit}  ${fmtDb(s.db[fr * sg.bins + b], 1)} dB`, colors[i]]);
     }
     readout(g, P, hover.x, rows);
@@ -6496,12 +6534,17 @@ function drawSpectrogram(v) {
   g.restore();
   if (!shown || !levels) return null;
   const [lo, hi] = v.levelScale ?? levelRange(shown.sorted, levels);
-  const st = { channel: i, floor: levels[0], ceiling: levels[1], auto: !fixed, lo, hi, sorted: shown.sorted, unit, median: shown.auto?.median };
+  const st = { channel: i, source: ch.source, floor: levels[0], ceiling: levels[1], auto: !fixed, rule: shown.auto?.rule, lo, hi, sorted: shown.sorted, unit, median: shown.auto?.median };
   drawStrip(v, st, shown);
   return st;
 }
 
 const fmtDb = (d, digits = 0) => `${d < 0 ? '−' : ''}${Math.abs(d).toFixed(Math.abs(d) < 10 && digits === 0 ? 1 : digits).replace(/\.0$/, '')}`;
+function autoText(st) {
+  if (st.rule === 'depth') return `auto: ${AUTO_LEVELS.depth} dB below the ceiling (at most)`;
+  if (st.rule === 'span') return `auto: ${AUTO_LEVELS.span} dB below the ceiling (at least)`;
+  return `auto: median ${fmtDb(st.median ?? 0, 1)} dB + ${AUTO_LEVELS.margin} dB`;
+}
 function shareAbove(sorted, d) {
   let a = 0, b = sorted.length;
   while (a < b) { const m = (a + b) >> 1; if (sorted[m] <= d) a = m + 1; else b = m; }
@@ -6520,6 +6563,10 @@ function drawStrip(v, st, shown) {
   const yc = yOf(ceiling), yf = yOf(floor);
   g.fillStyle = 'rgba(235, 240, 245, 0.07)';
   g.fillRect(hL, yc, hR - hL, yf - yc);
+  const ticks = [];
+  for (let d = 20 * Math.ceil(lo / 20); d <= hi; d += 20) ticks.push(d);
+  g.strokeStyle = 'rgba(200, 210, 218, 0.16)'; g.lineWidth = 1;
+  for (const d of ticks) { const y = Math.round(yOf(d)) + 0.5; g.beginPath(); g.moveTo(hL, y); g.lineTo(hR, y); g.stroke(); }
   let mx = 0;
   for (const c of counts) mx = Math.max(mx, c);
   const L = mx || 1;
@@ -6538,15 +6585,22 @@ function drawStrip(v, st, shown) {
   }
   g.strokeStyle = 'rgba(160, 175, 190, 0.5)'; g.lineWidth = 1;
   g.strokeRect(barL - 0.5, S.t + 0.5, BAR_W + 1, H - 1);
+  const yC = Math.round(yOf(ceiling)) + 0.5, yF = Math.round(yOf(floor)) + 0.5;
+  const tops = [Math.max(S.t + 1, yC - 15), Math.min(S.b - 14, yF + 3)];
+  g.font = `9px ${MONO}`; g.textAlign = 'left'; g.textBaseline = 'middle';
+  if (hR - hL >= 26) for (const d of ticks) {
+    const y = Math.round(yOf(d)), t = fmtDb(d);
+    if (y < S.t + 11 || y > S.b - 3 || tops.some((ty) => y > ty - 4 && y < ty + 24)) continue;
+    g.lineWidth = 3; g.strokeStyle = 'rgba(10, 13, 16, 0.9)'; g.strokeText(t, hL + 2, y - 5);
+    g.fillStyle = 'rgba(200, 210, 218, 0.6)'; g.fillText(t, hL + 2, y - 5);
+  }
   g.font = `10px ${MONO}`; g.textAlign = 'left';
-  for (const [d, top] of [[ceiling, true], [floor, false]]) {
-    const y = Math.round(yOf(d)) + 0.5;
+  for (const [d, y, ty] of [[ceiling, yC, tops[0]], [floor, yF, tops[1]]]) {
     g.strokeStyle = '#e8edf2'; g.lineWidth = 1.5;
     g.beginPath(); g.moveTo(hL, y); g.lineTo(S.r, y); g.stroke();
     g.fillStyle = '#e8edf2';
     g.beginPath(); g.moveTo(hL - 1, y - 5); g.lineTo(hL + 5, y); g.lineTo(hL - 1, y + 5); g.closePath(); g.fill();
     const s = fmtDb(d), w = g.measureText(s).width;
-    const ty = top ? Math.max(S.t + 1, y - 15) : Math.min(S.b - 14, y + 3);
     g.fillStyle = 'rgba(10, 13, 16, 0.8)'; g.fillRect(hL + 6, ty, w + 4, 12);
     g.fillStyle = '#e8edf2'; g.textBaseline = 'top'; g.fillText(s, hL + 8, ty + 1);
   }
@@ -6562,7 +6616,7 @@ function drawStrip(v, st, shown) {
       [`${fmtDb(d, 1)} dB = ${num(10 ** (d / 20))} ${st.unit}`, grey],
       [`${Math.round(100 * shareAbove(st.sorted, d))} % of the shown bins above`, grey],
       [`floor ${fmtDb(floor, 1)} dB · ceiling ${fmtDb(ceiling, 1)} dB`, grey],
-      [st.auto ? `auto: median ${fmtDb(st.median ?? 0, 1)} dB + ${AUTO_LEVELS.margin} dB` : 'set by hand · double-click: auto', dim],
+      [st.auto ? autoText(st) : `set by hand for ${st.source} · double-click: auto`, dim],
       ['drag a handle or the band', dim],
       ['wheel: floor · Shift+wheel: ceiling', dim],
     ], Math.max(S.t + 2, Math.min(S.b - 104, hover.y - 40)));
@@ -6722,12 +6776,15 @@ __mods['ui/display.js'] = (() => {
 const { siUnit, num } = __mods['ui/units.js'];
 const { step125 } = __mods['core/scale.js'];
 const { channelSignal, drawFrequency, freqRange } = __mods['ui/freqview.js'];
+const { withLevels, levelsOf } = __mods['core/project.js'];
 const { drawXY, vOfX } = __mods['ui/xyview.js'];
 const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
 const PAD_RIGHT_AXIS = 50;   
 const STRIP_W = 60;          
+const STRIP_W_NARROW = 40;   
+const NARROW = 600;
 const LEVEL_STEP = 2;        
 const BG = '#0a0d10';
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
@@ -6753,7 +6810,7 @@ function createDisplay(root, handlers) {
   let feed = null, simData = null, refs = [];
   const P = { l: 0, t: 0, r: 0, b: 0, w: 0, h: 0, dx: 0, dy: 0 };
   const S = { l: 0, r: 0, t: 0, b: 0 };
-  let strip = null, levelScale = null;
+  let strip = null, levelScale = null, levelsSig = '';
 
   function resize() {
     const r = screen.getBoundingClientRect();
@@ -6768,7 +6825,7 @@ function createDisplay(root, handlers) {
   function layout() {
     const spec = !!scope && viewMode() === 'spectrogram';
     const wide = scope && (spec || rightAxis() !== null);
-    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - (wide ? PAD_RIGHT_AXIS : PAD.r) - (spec ? STRIP_W : 0), b: H - PAD.b });
+    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - (wide ? PAD_RIGHT_AXIS : PAD.r) - (spec ? (W < NARROW ? STRIP_W_NARROW : STRIP_W) : 0), b: H - PAD.b });
     P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
     Object.assign(S, spec ? { l: P.r + PAD_RIGHT_AXIS + 4, r: W - 6, t: P.t, b: P.b } : { l: 0, r: 0, t: 0, b: 0 });
   }
@@ -6881,20 +6938,24 @@ function createDisplay(root, handlers) {
     if (viewMode() === 'xy') {
       strip = null;
       delete canvas.dataset.levels;
+      levelsChanged();
       drawXY({ g: ctx, P, data, past, scope, k: mode !== 'stop' ? indexAt(tScan) : data.t.length - 1, axis: axisChannel(), line, colors: CHANNEL_COLORS, drawGrid, unitLabel, vy, win, runs: RUNS });
       renderStatus();
       return;
     }
     if (viewMode() !== 'time') {
       const n = data.t.length - 1;
-      strip = drawFrequency({ g: ctx, P, S, W, H, data, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
+      strip = drawFrequency({ g: ctx, P, S, W, H, data, past, live: !!feed, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
         sweeping: mode !== 'stop', tScan, tx, xt, vy, colors: CHANNEL_COLORS, drawGrid, unitLabel, levelScale });
-      canvas.dataset.levels = strip ? `${[strip.floor, strip.ceiling, strip.lo, strip.hi].map((d) => d.toFixed(1)).join(' ')} ${strip.auto ? 'auto' : 'fixed'}` : '';
+      if (strip) canvas.dataset.levels = `${[strip.floor, strip.ceiling, strip.lo, strip.hi].map((d) => d.toFixed(1)).join(' ')} ${strip.auto ? 'auto' : 'fixed'}`;
+      else delete canvas.dataset.levels;
+      levelsChanged();
       renderStatus();
       return;
     }
     strip = null;
     delete canvas.dataset.levels;
+    levelsChanged();
     drawGrid(ctx);
     drawAxes(ctx);
     ctx.save();
@@ -7031,7 +7092,7 @@ function createDisplay(root, handlers) {
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
       ${live ? `<span class="st ${live.cls}">${esc(live.text)}</span>${live.note ? `<span class="dim">${esc(live.note)}</span>` : ''}` : ''}
       ${fr ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
-      ${vm === 'spectrogram' && strip ? `<span title="Spectrogram levels: below the floor black, above the ceiling the brightest colour; the ceiling also in the channel's unit">${dbText(strip.floor)} … ${dbText(strip.ceiling)} dB (${num(10 ** (strip.ceiling / 20))} ${unitLabel(scope.channels[strip.channel].source)})</span><span class="dim">${strip.auto ? 'auto' : 'levels set'}</span>` : ''}
+      ${vm === 'spectrogram' && strip ? `<span title="Spectrogram levels of ${strip.source}: below the floor black, above the ceiling the brightest colour">${dbText(strip.floor)} … ${dbText(strip.ceiling)} dB · ceiling ${num(10 ** (strip.ceiling / 20), 3)} ${unitLabel(strip.source)}</span><span class="dim">${strip.auto ? 'auto' : 'levels set'}</span>` : ''}
       ${vm === 'xy' ? `<span class="st st-view">XY${scope.view?.delta ? ' · Δ X − Y' : ''}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
@@ -7114,10 +7175,14 @@ function createDisplay(root, handlers) {
     ch.offset = Number((kx * ch.scale - vc).toPrecision(6));
   }
 
-  function setLevels(f, c) {
+  function setLevels(source, f, c) {
     const lv = [r1(f), r1(Math.max(c, f + 1))];
     if (lv[1] - lv[0] < 1) lv[1] = r1(lv[0] + 1);
-    handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), levels: lv }; });
+    handlers.edit((sc) => { sc.view = withLevels(sc.view, source, lv); });
+  }
+  function levelsChanged() {
+    const sig = strip ? `${strip.source}|${strip.floor.toFixed(1)}|${strip.ceiling.toFixed(1)}|${strip.auto}` : '';
+    if (sig !== levelsSig) { levelsSig = sig; handlers.onLevels?.(); }
   }
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const stripDb = (y, lo, hi) => lo + ((S.b - y) / (S.b - S.t)) * (hi - lo);
@@ -7143,7 +7208,7 @@ function createDisplay(root, handlers) {
     if (where === 'strip') {
       if (!strip) return;
       const d = -steps * LEVEL_STEP, { floor: f, ceiling: c, lo, hi } = strip;
-      if (e.shiftKey) setLevels(f, clamp(c + d, f + 1, hi)); else setLevels(clamp(f + d, lo, c - 1), c);
+      if (e.shiftKey) setLevels(strip.source, f, clamp(c + d, f + 1, hi)); else setLevels(strip.source, clamp(f + d, lo, c - 1), c);
       clearTimeout(wheelTimer);
       wheelTimer = setTimeout(() => handlers.endEdit(), 400);
       return;
@@ -7205,7 +7270,7 @@ function createDisplay(root, handlers) {
       if (!strip) return;
       const [part, grab] = stripPart(y), at = stripDb(y, strip.lo, strip.hi);
       levelScale = [strip.lo, strip.hi];
-      gesture = { kind: 'levels', part, y, moved: false, lv: [strip.floor, strip.ceiling], at, off: grab && part !== 'both' ? at - (part === 'floor' ? strip.floor : strip.ceiling) : 0 };
+      gesture = { kind: 'levels', part, y, moved: false, source: strip.source, lv: [strip.floor, strip.ceiling], at, off: grab && part !== 'both' ? at - (part === 'floor' ? strip.floor : strip.ceiling) : 0 };
       return;
     }
     if (e.shiftKey && region(x, y) === 'plot') { box = { x0: x, y0: y, x1: x, y1: y }; gesture = { kind: 'box' }; return; }
@@ -7227,7 +7292,7 @@ function createDisplay(root, handlers) {
       else if (gesture.part === 'floor') f = clamp(at - gesture.off, lo, c - 1);
       else c = clamp(at - gesture.off, f + 1, hi);
       canvas.style.cursor = gesture.part === 'both' ? 'grabbing' : 'ns-resize';
-      setLevels(f, c);
+      setLevels(gesture.source, f, c);
       return;
     }
     if (gesture?.kind === 'pan') {
@@ -7274,8 +7339,9 @@ function createDisplay(root, handlers) {
   canvas.addEventListener('pointercancel', () => { box = null; gesture = null; levelScale = null; draw(); });
   canvas.addEventListener('dblclick', (e) => {
     const { x, y } = pos(e);
-    if (region(x, y) !== 'strip' || !scope?.view?.levels) return;
-    handlers.edit((sc) => { const view = { ...sc.view }; delete view.levels; sc.view = view; });
+    if (region(x, y) !== 'strip' || !strip || !levelsOf(scope.view, strip.source)) return;
+    const source = strip.source;
+    handlers.edit((sc) => { sc.view = withLevels(sc.view, source, null); });
     handlers.endEdit();
   });
   canvas.addEventListener('pointerleave', () => { if (!gesture) { hover = null; redraw(); } });
@@ -7338,6 +7404,8 @@ function createDisplay(root, handlers) {
       return mode !== 'stop' ? tScan : win()[1];
     },
     get mode() { return mode; },
+    get levels() { return strip && { source: strip.source, unit: strip.unit, floor: strip.floor, ceiling: strip.ceiling, auto: strip.auto }; },
+    setLevels(source, pair) { if (pair) setLevels(source, pair[0], pair[1]); else handlers.edit((sc) => { sc.view = withLevels(sc.view, source, null); }); handlers.endEdit(); },
   };
 }
 
@@ -7767,6 +7835,12 @@ function createControls(root, app) {
         <button class="key small" data-view="xy" title="XY: channel 1 across, the other channels against it (a Lissajous figure)">XY</button>
         <button class="key small" id="k-delta" title="XY: draw channel 1 minus each channel (r on 1 and y on 2: the error e = r − y over r)">Δ</button>
       </div>
+      <div class="srcrow lvrow" id="lv-row" hidden><span>Levels</span>
+        <input class="field" data-lv="0" aria-label="Spectrogram floor, dB" title="Floor: below it black. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
+        <span class="dim">…</span>
+        <input class="field" data-lv="1" aria-label="Spectrogram ceiling, dB" title="Ceiling: above it the brightest colour. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
+        <span class="dim">dB</span>
+        <button class="key small axbtn" id="lv-auto" title="Automatic levels: the ceiling at the largest amplitude shown, the floor 10 dB above the median (the noise)">Auto</button></div>
     </section>
     <section class="group">
       <h3 class="glabel">Horizontal</h3>
@@ -7907,6 +7981,49 @@ function createControls(root, app) {
     if (view.right === app.channel) delete view.right; else view.right = app.channel;
     sc.view = view;
   }));
+  const lvRow = $('#lv-row'), lvIn = [...lvRow.querySelectorAll('[data-lv]')];
+  const shownLevels = () => app.display?.levels;
+  function typeLevel(j, v) {
+    const lv = shownLevels();
+    if (!lv) return;
+    const pair = [lv.floor, lv.ceiling];
+    pair[j] = v;
+    if (!(pair[1] - pair[0] >= 1)) { app.toast('The floor must be at least 1 dB below the ceiling.'); renderLevels(true); return; }
+    if (pair[0] < -300 || pair[1] > 300) { app.toast('Levels between −300 and 300 dB.'); renderLevels(true); return; }
+    app.display.setLevels(lv.source, pair);
+  }
+  lvIn.forEach((el, j) => {
+    el.addEventListener('change', () => {
+      const v = parseSI(el.value, 'dB');
+      if (!Number.isFinite(v)) { app.toast('Type a level in dB, e.g. −60.'); renderLevels(true); return; }
+      typeLevel(j, v);
+    });
+    el.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') el.blur();
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      const lv = shownLevels();
+      if (!lv) return;
+      typeLevel(j, Math.round(((j ? lv.ceiling : lv.floor) + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1)) * 10) / 10);
+      renderLevels(true);
+    });
+  });
+  $('#lv-auto').addEventListener('click', () => { const lv = shownLevels(); if (lv && !lv.auto) app.display.setLevels(lv.source, null); });
+  function renderLevels(force = false) {
+    const lv = shownLevels(), vm = app.project.scope.view?.mode;
+    lvRow.hidden = vm !== 'spectrogram';
+    const fmt = (d) => `${d < 0 ? '−' : ''}${Math.abs(Math.round(d * 10) / 10)}`;
+    lvIn.forEach((el, j) => {
+      el.disabled = !lv;
+      if (force || document.activeElement !== el) el.value = lv ? fmt(j ? lv.ceiling : lv.floor) : '';
+    });
+    const auto = $('#lv-auto');
+    auto.disabled = !lv;
+    auto.classList.toggle('lit-view', !!lv?.auto);
+    auto.setAttribute('aria-pressed', String(!!lv?.auto));
+    lvRow.title = lv ? `The spectrogram's levels of ${lv.source} (dB of ${lv.unit}: 0 dB is 1 ${lv.unit})${lv.auto ? ', automatic' : ''}` : '';
+  }
   const src = $('#ch-src');
   src.addEventListener('change', () => setScope((sc) => { const c = sc.channels[app.channel]; c.source = src.value; c.on = src.value !== ''; }));
 
@@ -7948,9 +8065,10 @@ function createControls(root, app) {
     $('#ch-right').classList.toggle('lit-view', sc.view?.right === app.channel);
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
+    renderLevels();
   }
 
-  return { render };
+  return { render, renderLevels };
 }
 
 return { createControls };
@@ -10568,8 +10686,11 @@ function startApp() {
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
     liveTag: () => live?.tag(),
+    onLevels: () => app.renderLevels?.(),  
   });
+  app.display = display;
   const controls = createControls($('controls'), app);
+  app.renderLevels = controls.renderLevels;
   const record = createRecord(app, display);
   live = createLive(app, display, $('controls'), record);
   const generator = createGenerator($('tab-input'), app);

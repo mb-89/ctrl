@@ -314,12 +314,33 @@ test('auto levels: the floor stays 20 to 80 dB below the ceiling', () => {
   const only = dbScale(spectrogram(noise(4096, 0.01, 3), dt, { size: 128 }).amp, DB_FLOOR);
   const a = autoLevels(only);
   near(a.ceiling - a.floor, AUTO_LEVELS.span, 1e-9, 'noise alone');
-  // A clean sine: its window leakage would reach far down; the range is at most 80 dB.
-  const clean = dbScale(spectrogram(sine(4096, dt, 62.5), dt, { size: 128 }).amp, DB_FLOOR);
-  const b = autoLevels(clean);
-  near(b.ceiling - b.floor, AUTO_LEVELS.depth, 1e-9, 'clean sine');
+  assert.equal(a.rule, 'span');
+  // A sine 120 dB above its noise: the range is at most 80 dB.
+  const quiet = noise(4096, 1e-6, 5);
+  for (let k = 0; k < quiet.length; k++) quiet[k] += Math.sin(2 * Math.PI * 62.5 * k * dt);
+  const b = autoLevels(dbScale(spectrogram(quiet, dt, { size: 128 }).amp, DB_FLOOR));
+  near(b.ceiling - b.floor, AUTO_LEVELS.depth, 1e-9, 'sine far above its noise');
+  assert.equal(b.rule, 'depth');
   assert.equal(autoLevels([]), null);
   assert.equal(autoLevels([NaN, NaN]), null);
+});
+
+test('auto levels leave exact zeros out: a noise-free signal, a sweep just begun', () => {
+  // A sine on a bin centre and nothing else: outside its main lobe every bin
+  // is exactly zero (DB_FLOOR). Counted, they would make the median −240 dB.
+  const dt = 1e-3, clean = dbScale(spectrogram(sine(4096, dt, 62.5), dt, { size: 128 }).amp, DB_FLOOR);
+  const zeros = clean.filter((v) => v <= DB_FLOOR).length;
+  assert.ok(zeros > clean.length / 2, `${zeros} of ${clean.length} bins zero`);
+  const a = autoLevels(clean);
+  assert.equal(a.zeros, zeros);
+  assert.ok(a.median > DB_FLOOR + 100, `median ${a.median} dB of the bins that are not zero`);
+  assert.equal(a.rule, 'span', 'the main lobe alone: 20 dB of it shows');
+  assert.equal(a.sorted.length, clean.length, 'the histogram still counts every bin shown');
+  // Nothing but zeros: nothing to set levels by.
+  assert.equal(autoLevels(new Float32Array(50).fill(DB_FLOOR)), null);
+  // The strip's range starts at the 1st percentile of the bins that are not zero.
+  assert.deepEqual(levelRange(a.sorted), levelRange(a.sorted.filter((v) => v > DB_FLOOR)));
+  assert.ok(levelRange(a.sorted)[0] > -100, `${levelRange(a.sorted)}`);
 });
 
 test('levelRange: whole 10 dB from the 1st percentile to above the largest, levels inside', () => {
@@ -327,8 +348,11 @@ test('levelRange: whole 10 dB from the 1st percentile to above the largest, leve
   assert.deepEqual(levelRange(s), [-90, 20]);
   assert.deepEqual(levelRange(s, [-120, 35]), [-120, 40]);
   assert.deepEqual(levelRange(new Float32Array(0)), [-100, 0]);
-  const deep = Float32Array.from([...Array(100).fill(-240), ...Array(400).fill(0)]).sort();
+  const deep = Float32Array.from([...Array(100).fill(-230), ...Array(400).fill(0)]).sort();
   assert.deepEqual(levelRange(deep), [-190, 10], 'at most 200 dB deep');
+  const zeros = Float32Array.from([...Array(100).fill(DB_FLOOR), ...Array(400).fill(0)]).sort();
+  assert.deepEqual(levelRange(zeros), [-10, 10], 'exact zeros left out');
+  assert.deepEqual(levelRange(new Float32Array(10).fill(DB_FLOOR)), [-100, 0], 'nothing but zeros');
 });
 
 test('the encoder example: automatic levels show the orders and the resonance, not the noise', async () => {
@@ -355,14 +379,27 @@ test('the encoder example: automatic levels show the orders and the resonance, n
   assert.ok(above(lv.floor) < 0.4 && above(lv.ceiling - 80) > 0.6, `${above(lv.floor)} of the bins above the floor; ${above(lv.ceiling - 80)} before`);
 });
 
-test('scope.view.levels: [floor, ceiling] in dB, normalised; absent means automatic', async () => {
-  const { normalizeScope, normalizeProject } = await import('../src/core/project.js');
-  const lv = (levels) => normalizeScope({ view: { mode: 'spectrogram', levels } }, 1).view.levels;
+test('scope.view.levels: per signal, [floor, ceiling] in dB, normalised; absent means automatic', async () => {
+  const { normalizeScope, normalizeProject, withLevels, levelsOf } = await import('../src/core/project.js');
+  const lv = (pair) => normalizeScope({ view: { mode: 'spectrogram', levels: { speed_m: pair } } }, 1).view.levels?.speed_m;
   assert.deepEqual(lv([-30, 10]), [-30, 10]);
   assert.deepEqual(lv([10, -30]), [-30, 10], 'a reversed pair is swapped');
   assert.deepEqual(lv([-30.04, 9.96]), [-30, 10], 'rounded to 0.1 dB');
   for (const bad of [[0, 0.5], ['-30', 10], [NaN, 0], [-Infinity, 0], [-400, 0], [0], [-30, 0, 10], 'auto', null]) assert.equal(lv(bad), undefined, JSON.stringify(bad));
-  assert.deepEqual(normalizeScope({ view: { levels: [-60, 0] } }, 1).view, { levels: [-60, 0] }, 'kept in the time view too: they belong to the view');
-  const p = normalizeProject({ scope: { view: { mode: 'spectrogram', levels: [-48.5, 12] } } });
-  assert.deepEqual(normalizeProject(JSON.parse(JSON.stringify(p))).scope.view, { mode: 'spectrogram', levels: [-48.5, 12] }, 'survives saving and opening');
+  // One pair per signal: dB of rad/s are not dB of V.
+  const two = normalizeScope({ view: { levels: { speed_m: [-60, 20], u: [-40, 0], bad: [0, 0], '': [-1, 9] } } }, 1).view;
+  assert.deepEqual(two, { levels: { speed_m: [-60, 20], u: [-40, 0] } }, 'kept in the time view too: they belong to the view');
+  for (const bad of [[-60, 20], 'x', null, {}]) assert.equal(normalizeScope({ view: { levels: bad } }, 1).view, undefined, `${JSON.stringify(bad)}: no signal named`);
+  assert.equal(normalizeScope({ view: JSON.parse('{"levels":{"__proto__":[-10,0]}}') }, 1).view, undefined);
+  const p = normalizeProject({ scope: { view: { mode: 'spectrogram', levels: { speed_m: [-48.5, 12] } } } });
+  assert.deepEqual(normalizeProject(JSON.parse(JSON.stringify(p))).scope.view, { mode: 'spectrogram', levels: { speed_m: [-48.5, 12] } }, 'survives saving and opening');
+  // Setting one signal's levels keeps the others'; null returns it to automatic.
+  let v = withLevels({ mode: 'spectrogram' }, 'speed_m', [-60, 20]);
+  v = withLevels(v, 'u', [-40, 0]);
+  assert.deepEqual(v, { mode: 'spectrogram', levels: { speed_m: [-60, 20], u: [-40, 0] } });
+  assert.deepEqual(levelsOf(v, 'u'), [-40, 0]);
+  assert.equal(levelsOf(v, 'y'), null, 'a signal without levels: automatic');
+  assert.equal(levelsOf(v, 'constructor'), null, 'only the view\'s own names');
+  v = withLevels(withLevels(v, 'u', null), 'speed_m', null);
+  assert.deepEqual(v, { mode: 'spectrogram' }, 'no pair left: absent');
 });

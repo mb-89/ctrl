@@ -206,7 +206,7 @@ function normalizeFilter(f, where) {
 // spectra (FFT), as one channel's spectrogram, or XY (channel 1 across, the
 // others against it; delta: they draw channel 1 minus themselves); and which
 // channel, if any, has its values on a second axis at the right; the
-// spectrogram's levels (absent: automatic).
+// spectrogram's levels per signal (absent: automatic).
 export const VIEW_MODES = ['time', 'fft', 'spectrogram', 'xy'];
 function normalizeScopeView(v) {
   if (!v || typeof v !== 'object') return null;
@@ -223,15 +223,38 @@ function normalizeScopeView(v) {
   return Object.keys(out).length ? out : null;
 }
 
-// The spectrogram's levels: [floor, ceiling] in dB of the channel's unit,
+// The spectrogram's levels, per signal (dB of one unit are not dB of
+// another): { name: [floor, ceiling] } in dB of that signal's unit, each pair
 // rounded to 0.1 dB, floor first (a reversed pair is swapped), at least 1 dB
-// apart and within ±300 dB. Anything else means automatic levels (absent).
+// apart and within ±300 dB. A signal without a pair has automatic levels;
+// no pair at all is absent.
 function normalizeLevels(l) {
+  if (!l || typeof l !== 'object' || Array.isArray(l)) return null;
+  const out = {};
+  for (const [name, pair] of Object.entries(l)) {
+    const lv = normalizeLevelPair(pair);
+    if (name && name !== '__proto__' && lv) out[name] = lv;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function normalizeLevelPair(l) {
   if (!Array.isArray(l) || l.length !== 2 || l.some((x) => typeof x !== 'number')) return null;
   const [a, b] = l.map((x) => Math.round(x * 10) / 10).sort((x, y) => x - y);
   if (!Number.isFinite(a) || !Number.isFinite(b) || b - a < 1 || a < -300 || b > 300) return null;
   return [a, b];
 }
+
+// The scope view with one signal's levels set ([floor, ceiling] in dB) or,
+// with null, back to automatic; the other signals' levels are kept.
+export function withLevels(view, source, pair) {
+  const levels = { ...(view?.levels ?? {}) };
+  if (pair) levels[source] = pair; else delete levels[source];
+  const out = { ...(view ?? {}), levels };
+  if (!Object.keys(levels).length) delete out.levels;
+  return out;
+}
+// A signal's levels in the scope view, or null (automatic).
+export const levelsOf = (view, source) => (view?.levels && Object.hasOwn(view.levels, source) ? view.levels[source] : null);
 
 // Every name a scope channel can show: the signals (one per Source) and the
 // diagram's Sinks; with a closed loop from an older file, also its y, u, e, ym, d.

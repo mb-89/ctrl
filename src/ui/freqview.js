@@ -15,6 +15,7 @@
 // every mode; the system is not changed. See design/output/instrument.md.
 
 import { amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, AUTO_LEVELS, spectrogramWindow, levelHistogram, autoLevels, levelRange } from '../core/spectrum.js';
+import { levelsOf } from '../core/project.js';
 import { siUnit, num } from './units.js';
 
 const DIVX = 10, DIVY = 8, DB_PER_DIV = 10;
@@ -70,11 +71,11 @@ for (let k = 0; k < 256; k++) LUT.set(heat(k / 255), 3 * k);
 const lutIndex = (db, floor, span) => { const x = (db - floor) / span; return x <= 0 ? 0 : x >= 1 ? 255 : Math.round(x * 255); };
 
 // Draws the FFT or spectrogram view into the plot. v carries the display's
-// geometry and state: { g, P, S, W, H, data, scope, k, axis, line, hover,
-// sweeping, tScan, tx, xt, vy, colors, drawGrid, unitLabel, levelScale }.
-// The spectrogram returns its levels strip (null without one), so the
-// display can hit-test and drag it: { channel, floor, ceiling, auto, lo, hi,
-// sorted, unit }.
+// geometry and state: { g, P, S, W, H, data, past, live, scope, k, axis,
+// line, hover, sweeping, tScan, tx, xt, vy, colors, drawGrid, unitLabel,
+// levelScale }. The spectrogram returns its levels strip (null without one),
+// so the display can hit-test and drag it: { channel, source, floor, ceiling,
+// auto, rule, lo, hi, sorted, unit, median }.
 export function drawFrequency(v) {
   const mode = v.scope.view?.mode;
   if (mode === 'fft') { drawFft(v); return null; }
@@ -200,7 +201,9 @@ function spectrogramOf(data, ch, size) {
 }
 // The bins the screen shows (time and frequency window), sorted, and the
 // automatic levels they give. The whole run counts, not only what the sweep
-// has reached, so the levels do not move while it fills in.
+// has reached, so the levels do not move while it fills in (in Live, where
+// the sweep is built from nothing, the last whole sweep counts: see
+// drawSpectrogram).
 function shownOf(data, key, s, win) {
   return cached(data, `${key}|win|${win.join('|')}`, () => {
     const auto = autoLevels(spectrogramWindow(s.sg, s.db, { t0: win[0], t1: win[1], f0: win[2], f1: win[3] }));
@@ -228,17 +231,31 @@ function imageOf(data, key, { sg, db }, floor, ceiling) {
 }
 
 function drawSpectrogram(v) {
-  const { g, P, data, scope, axis, colors, tx, vy, hover } = v;
+  const { g, P, scope, axis, colors, tx, vy, hover } = v;
   v.drawGrid(g);
-  const i = scope.channels[axis]?.on && channelSignal(data, scope.channels[axis]) ? axis : [0, 1, 2, 3].find((c) => scope.channels[c].on && channelSignal(data, scope.channels[c]));
+  // In Live each sweep is built from nothing, so while one fills in, the
+  // automatic levels, the histogram and the frame length come from the last
+  // whole sweep (prev): the colours and the strip hold still from sweep to
+  // sweep. A sweep just begun has no samples yet (data null).
+  const prev = v.live && v.sweeping && v.past?.[0]?.t.length > 1 ? v.past[0] : null;
+  const data = prev && v.data.t.length < 2 ? null : v.data, base = data ?? prev;
+  const has = (d, c) => scope.channels[c]?.on && channelSignal(d, scope.channels[c]);
+  const i = has(base, axis) ? axis : [0, 1, 2, 3].find((c) => has(base, c));
   if (i === undefined) return null;
-  const ch = scope.channels[i], sig = channelSignal(data, ch), dt = dtOf(data), n = data.t.length - 1;
-  const [f0, f1] = freqRange(scope, data);
+  const ch = scope.channels[i], sig = data && channelSignal(data, ch), dt = dtOf(base);
+  const [f0, f1] = freqRange(scope, base);
+  const ref = prev && channelSignal(prev, ch) && Math.abs(dtOf(prev) - dt) <= 1e-3 * dt ? prev : data;
+  const n = (ref ?? base).t.length - 1;
   const size = scope.view?.size ?? Math.max(64, Math.min(512, 2 ** Math.round(Math.log2(n / 16))));
-  const { key, s } = spectrogramOf(data, ch, size);
-  // The levels: the view's, or automatic from the bins on the screen.
-  const shown = s && shownOf(data, key, s, [v.xt(P.l), v.xt(P.r), f0, f1]);
-  const fixed = scope.view?.levels;
+  const { key, s } = sig ? spectrogramOf(data, ch, size) : { key: null, s: null };
+  const r = ref === data ? { key, s } : spectrogramOf(ref, ch, size);
+  // Spectrogram times count from a record's first sample, which in Live is
+  // the window's left edge, not 0.
+  const t0 = data?.t[0] ?? 0, tr = ref?.t[0] ?? 0;
+  // The levels: those set for this signal (dB of one unit are not dB of
+  // another), or automatic from the bins on the screen.
+  const shown = r.s && shownOf(ref, r.key, r.s, [v.xt(P.l) - tr, v.xt(P.r) - tr, f0, f1]);
+  const fixed = levelsOf(scope.view, ch.source);
   const levels = fixed ?? (shown?.auto ? [shown.auto.floor, shown.auto.ceiling] : null);
   freqLabelsTime(v);
   axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, siUnit(Number((f1 - ((f1 - f0) * j) / DIVY).toPrecision(4)), 'Hz', 3)]), 'left', 'rgba(200, 210, 218, 0.75)');
@@ -253,7 +270,7 @@ function drawSpectrogram(v) {
     // where the frequency axis has them (the bins the levels strip counts).
     const df = sg.f[1] - sg.f[0], fy = (f) => P.b - ((f - f0) / (f1 - f0)) * P.h;
     const b0 = Math.max(0, Math.ceil(f0 / df - 0.5)), b1 = Math.min(sg.bins - 1, Math.floor(f1 / df + 0.5));
-    const xa = tx(sg.t[0] - hop / 2), xb = tx(sg.t[sg.frames - 1] + hop / 2);
+    const xa = tx(t0 + sg.t[0] - hop / 2), xb = tx(t0 + sg.t[sg.frames - 1] + hop / 2);
     const xEnd = v.sweeping ? Math.min(xb, tx(v.tScan)) : xb;
     if (b1 >= b0) {
       g.save();
@@ -265,7 +282,7 @@ function drawSpectrogram(v) {
     }
   }
   // The channel's time trace over it, on the right axis.
-  const k = v.k;
+  const k = sig ? v.k : -1;
   g.strokeStyle = colors[i]; g.lineWidth = 1.4; g.globalAlpha = 0.9;
   g.beginPath();
   let started = false;
@@ -286,7 +303,7 @@ function drawSpectrogram(v) {
     const rows = [[`t  ${siUnit(t, 's', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`f  ${siUnit(f, 'Hz', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`${i + 1} ${ch.source}`, colors[i]]];
     // The amplitude under the cursor, to pick a level by.
     if (sg && (!v.sweeping || t <= v.tScan)) {
-      const fr = Math.round((t - sg.t[0]) / hop), b = Math.round(f / (sg.f[1] - sg.f[0]));
+      const fr = Math.round((t - t0 - sg.t[0]) / hop), b = Math.round(f / (sg.f[1] - sg.f[0]));
       if (fr >= 0 && fr < sg.frames && b >= 0 && b < sg.bins) rows.push([`A  ${num(sg.amp[fr * sg.bins + b])} ${unit}  ${fmtDb(s.db[fr * sg.bins + b], 1)} dB`, colors[i]]);
     }
     readout(g, P, hover.x, rows);
@@ -294,13 +311,19 @@ function drawSpectrogram(v) {
   g.restore();
   if (!shown || !levels) return null;
   const [lo, hi] = v.levelScale ?? levelRange(shown.sorted, levels);
-  const st = { channel: i, floor: levels[0], ceiling: levels[1], auto: !fixed, lo, hi, sorted: shown.sorted, unit, median: shown.auto?.median };
+  const st = { channel: i, source: ch.source, floor: levels[0], ceiling: levels[1], auto: !fixed, rule: shown.auto?.rule, lo, hi, sorted: shown.sorted, unit, median: shown.auto?.median };
   drawStrip(v, st, shown);
   return st;
 }
 
 // −36, 20, −4.5: dB with a real minus sign.
 const fmtDb = (d, digits = 0) => `${d < 0 ? '−' : ''}${Math.abs(d).toFixed(Math.abs(d) < 10 && digits === 0 ? 1 : digits).replace(/\.0$/, '')}`;
+// Which rule of the automatic levels set the floor (core/spectrum.js autoLevels).
+function autoText(st) {
+  if (st.rule === 'depth') return `auto: ${AUTO_LEVELS.depth} dB below the ceiling (at most)`;
+  if (st.rule === 'span') return `auto: ${AUTO_LEVELS.span} dB below the ceiling (at least)`;
+  return `auto: median ${fmtDb(st.median ?? 0, 1)} dB + ${AUTO_LEVELS.margin} dB`;
+}
 // Share of the shown bins above a level (sorted ascending).
 function shareAbove(sorted, d) {
   let a = 0, b = sorted.length;
@@ -326,6 +349,12 @@ function drawStrip(v, st, shown) {
   const yc = yOf(ceiling), yf = yOf(floor);
   g.fillStyle = 'rgba(235, 240, 245, 0.07)';
   g.fillRect(hL, yc, hR - hL, yf - yc);
+  // A faint line every 20 dB across the histogram, so where the noise's hump
+  // sits can be read without hovering; the labels go on top (below).
+  const ticks = [];
+  for (let d = 20 * Math.ceil(lo / 20); d <= hi; d += 20) ticks.push(d);
+  g.strokeStyle = 'rgba(200, 210, 218, 0.16)'; g.lineWidth = 1;
+  for (const d of ticks) { const y = Math.round(yOf(d)) + 0.5; g.beginPath(); g.moveTo(hL, y); g.lineTo(hR, y); g.stroke(); }
   let mx = 0;
   for (const c of counts) mx = Math.max(mx, c);
   const L = mx || 1;
@@ -345,16 +374,26 @@ function drawStrip(v, st, shown) {
   }
   g.strokeStyle = 'rgba(160, 175, 190, 0.5)'; g.lineWidth = 1;
   g.strokeRect(barL - 0.5, S.t + 0.5, BAR_W + 1, H - 1);
+  // Where the handles' labels go (top of each box, 12 px high).
+  const yC = Math.round(yOf(ceiling)) + 0.5, yF = Math.round(yOf(floor)) + 0.5;
+  const tops = [Math.max(S.t + 1, yC - 15), Math.min(S.b - 14, yF + 3)];
+  // The scale's labels, outlined so they read over the bars; not where a
+  // handle's label is, and only if they fit beside the colour bar.
+  g.font = `9px ${MONO}`; g.textAlign = 'left'; g.textBaseline = 'middle';
+  if (hR - hL >= 26) for (const d of ticks) {
+    const y = Math.round(yOf(d)), t = fmtDb(d);
+    if (y < S.t + 11 || y > S.b - 3 || tops.some((ty) => y > ty - 4 && y < ty + 24)) continue;
+    g.lineWidth = 3; g.strokeStyle = 'rgba(10, 13, 16, 0.9)'; g.strokeText(t, hL + 2, y - 5);
+    g.fillStyle = 'rgba(200, 210, 218, 0.6)'; g.fillText(t, hL + 2, y - 5);
+  }
   // The handles: a line across, a grip at the left, the level in dB.
   g.font = `10px ${MONO}`; g.textAlign = 'left';
-  for (const [d, top] of [[ceiling, true], [floor, false]]) {
-    const y = Math.round(yOf(d)) + 0.5;
+  for (const [d, y, ty] of [[ceiling, yC, tops[0]], [floor, yF, tops[1]]]) {
     g.strokeStyle = '#e8edf2'; g.lineWidth = 1.5;
     g.beginPath(); g.moveTo(hL, y); g.lineTo(S.r, y); g.stroke();
     g.fillStyle = '#e8edf2';
     g.beginPath(); g.moveTo(hL - 1, y - 5); g.lineTo(hL + 5, y); g.lineTo(hL - 1, y + 5); g.closePath(); g.fill();
     const s = fmtDb(d), w = g.measureText(s).width;
-    const ty = top ? Math.max(S.t + 1, y - 15) : Math.min(S.b - 14, y + 3);
     g.fillStyle = 'rgba(10, 13, 16, 0.8)'; g.fillRect(hL + 6, ty, w + 4, 12);
     g.fillStyle = '#e8edf2'; g.textBaseline = 'top'; g.fillText(s, hL + 8, ty + 1);
   }
@@ -372,7 +411,7 @@ function drawStrip(v, st, shown) {
       [`${fmtDb(d, 1)} dB = ${num(10 ** (d / 20))} ${st.unit}`, grey],
       [`${Math.round(100 * shareAbove(st.sorted, d))} % of the shown bins above`, grey],
       [`floor ${fmtDb(floor, 1)} dB · ceiling ${fmtDb(ceiling, 1)} dB`, grey],
-      [st.auto ? `auto: median ${fmtDb(st.median ?? 0, 1)} dB + ${AUTO_LEVELS.margin} dB` : 'set by hand · double-click: auto', dim],
+      [st.auto ? autoText(st) : `set by hand for ${st.source} · double-click: auto`, dim],
       ['drag a handle or the band', dim],
       ['wheel: floor · Shift+wheel: ceiling', dim],
     ], Math.max(S.t + 2, Math.min(S.b - 104, hover.y - 40)));

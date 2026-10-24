@@ -458,30 +458,45 @@ export function quantileSorted(sorted, q) {
   return i + 1 < n ? sorted[i] + f * (sorted[i + 1] - sorted[i]) : sorted[i];
 }
 
+// Bins at DB_FLOOR or below are exact zeros (a noise-free signal has many,
+// and a sweep's first samples): they say nothing about the noise, so the
+// automatic levels and the strip's range leave them out. The index of the
+// first value above `zero` in an ascending array.
+function firstAbove(sorted, zero) {
+  let a = 0, b = sorted.length;
+  while (a < b) { const m = (a + b) >> 1; if (sorted[m] <= zero) a = m + 1; else b = m; }
+  return a;
+}
+
 // Automatic levels. Most bins of a spectrogram are noise, so their median is
 // the noise's level: the floor sits `margin` dB above it, the ceiling at the
 // largest value. The floor stays within `depth` dB of the ceiling (the fixed
 // range the scope had before) and at least `span` dB below it, so a picture of
-// noise alone shows its noise rather than a few specks.
+// noise alone shows its noise rather than a few specks. `rule` says which of
+// the three set the floor ('median', 'depth', 'span'); exact zeros (`zeros`
+// of them) are left out. Null when there is nothing but zeros.
 // For white noise a bin's amplitude is Rayleigh distributed: its 95th
 // percentile lies 6.3 dB above its median, its 99th 8.2 dB, its 99.9th 10 dB.
 export const AUTO_LEVELS = { margin: 10, depth: 80, span: 20 };
-export function autoLevels(values, { margin = AUTO_LEVELS.margin, depth = AUTO_LEVELS.depth, span = AUTO_LEVELS.span } = {}) {
+export function autoLevels(values, { margin = AUTO_LEVELS.margin, depth = AUTO_LEVELS.depth, span = AUTO_LEVELS.span, zero = DB_FLOOR } = {}) {
   const sorted = Float32Array.from(values).filter((v) => !Number.isNaN(v)).sort();
-  if (!sorted.length) return null;
-  const ceiling = sorted[sorted.length - 1], median = quantileSorted(sorted, 0.5);
-  const floor = Math.min(ceiling - span, Math.max(ceiling - depth, median + margin));
-  return { floor, ceiling, median, sorted };
+  const zeros = firstAbove(sorted, zero), real = sorted.subarray(zeros);
+  if (!real.length) return null;
+  const ceiling = real[real.length - 1], median = quantileSorted(real, 0.5), raw = median + margin;
+  const rule = raw > ceiling - span ? 'span' : raw < ceiling - depth ? 'depth' : 'median';
+  const floor = rule === 'span' ? ceiling - span : rule === 'depth' ? ceiling - depth : raw;
+  return { floor, ceiling, median, rule, zeros, sorted };
 }
 
-// The dB range of the levels strip: the shown values from their 1st
-// percentile to their largest, with room around, in whole 10 dB, at most
-// 200 dB deep; the levels always inside.
-export function levelRange(sorted, levels) {
+// The dB range of the levels strip: the shown values (exact zeros left out)
+// from their 1st percentile to their largest, with room around, in whole
+// 10 dB, at most 200 dB deep; the levels always inside.
+export function levelRange(sorted, levels, zero = DB_FLOOR) {
   let lo = -100, hi = 0;
-  if (sorted.length) {
-    hi = 10 * Math.ceil((sorted[sorted.length - 1] + 5) / 10);
-    lo = Math.max(hi - 200, 10 * Math.floor((quantileSorted(sorted, 0.01) - 5) / 10));
+  const real = sorted.subarray ? sorted.subarray(firstAbove(sorted, zero)) : sorted.slice(firstAbove(sorted, zero));
+  if (real.length) {
+    hi = 10 * Math.ceil((real[real.length - 1] + 5) / 10) + 0;   // + 0: never −0
+    lo = Math.max(hi - 200, 10 * Math.floor((quantileSorted(real, 0.01) - 5) / 10));
   }
   if (levels) { lo = Math.min(lo, 10 * Math.floor(levels[0] / 10)); hi = Math.max(hi, 10 * Math.ceil(levels[1] / 10)); }
   if (hi - lo < 20) lo = hi - 20;
