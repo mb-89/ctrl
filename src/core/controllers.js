@@ -311,9 +311,12 @@ export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS, ctx = 
 // The law of a block's active variant. Normalised first: a project restored
 // from JSON (undo, redo) has its open limits as null, not ±Infinity. Params
 // already in normal form are used as they are, so an edit of them while the
-// law runs (Live mode) reaches it.
+// law runs (Live mode) reaches it. An experiment Auto-tune runs
+// (src/core/autotune.js: hold r, then step u) brings its own law as a
+// function, so it can never come from a file.
 const same = (a, b) => (Array.isArray(b) ? Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]) : a === b);
 export function makeLaw(variant, Ts, lib = CONTROLLERS) {
+  if (typeof variant.law === 'function') return variant.law(Ts);
   const { params } = normalizeVariant(variant, 'variant', lib);
   const keep = variant.params && Object.keys(params).every((k) => same(variant.params[k], params[k]));
   return lib[variant.type].make(keep ? variant.params : params, Ts);
