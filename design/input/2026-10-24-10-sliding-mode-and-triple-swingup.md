@@ -53,3 +53,7 @@
 ## Added while this was being built: the page always sends the effort; the reference goes along for the plant's log
 
 > About reference mode, I feel like what is you? Is you the effort? We should never say, like, we are. Normally, we would send the reference value and we would send. Wait. No, I guess maybe I was wrong about the reference mode. We know the reference in our system. We should send it to the other system so they can log it on their side. But yeah, obviously, we are always sending the control effort. Yeah, I was tripping there. Sorry.
+
+## Added while this was being built: both HIL modes, settled
+
+> Okay, maybe I have to revise myself again about the reference mode. If we want to be tuning the controllers, then obviously we are always going to be sending the control effort, but that's not all we want to do. We may just want to use that thing to log data, and then we would send reference values. So we need both modes. It's just like the reference mode, obviously, I feel like we should then display something in the controllers, that the controllers are not in the loop. And also the auto-tuning is not in the loop. And yeah, I guess we can identify to some extent with a reference mode. So yeah, it should be in. The hill mode should support it. Write that down so we find it later, so we don't make that same mistake again of going back and forward on this.
