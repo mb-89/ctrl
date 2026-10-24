@@ -10,8 +10,9 @@
 //   lqrDesign(lin, { Q, R, track, Ts })            discrete LQR on a linear model, in measurement order
 //   piCancel(fit, Tcl), scheduledPIDesign(p, ctx)  PI by pole cancellation, at levels of the first measurement
 //   trajectoryDesign(p, ctx)                       a swing-up plan with TV-LQR along it (planner.js)
+//   kalmanDesign(lin, { Q, R, Ts, outputs })       the steady-state Kalman filter of an Observer
 
-import { c2d, dlqr, eig, solve, rank, mul, transpose } from './linalg.js';
+import { c2d, dlqr, dlqe, eig, solve, rank, mul, transpose } from './linalg.js';
 import { DesignError, operatingPoint, linearize, firstOrderFit } from './linearize.js';
 import { PLAN_VERSION, planTransfer, alongPlanSteps, tvlqrGains, planValues, planLaw, verifyLoop, runPlan } from './planner.js';
 
@@ -113,7 +114,7 @@ export function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 
     const used = { model: null, at: '', warnings: [], heavy: null };
     const lins = new Map();
     const ctx = {
-      Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs,
+      Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs, outputs: block.outputs,
       // The plant this block sees (a Model), looking through designed observers.
       model() {
         if (!used.model) used.model = compiled().seen(block.idPath, seeThrough.size ? { seeThrough } : {});
@@ -392,16 +393,88 @@ export function lqrDesign(lin, { Q, R, track = 1, Ts }) {
   const sensed = labels.filter((_, k) => lin.sensors?.[k] && (lin.sensors[k].std > 0 || lin.sensors[k].q > 0));
   if (sensed.length) warnings.push(`quantisers and noise on ${sensed.join(', ')} are not in this design`);
   lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this design`); });
-  // The slowest closed-loop pole, as a continuous one: s = ln(z) / Ts.
-  const slow = poles.reduce((a, z) => (Math.hypot(z.re, z.im) > Math.hypot(a.re, a.im) ? z : a));
-  const s = { re: Math.log(Math.hypot(slow.re, slow.im)) / Ts, im: Math.atan2(slow.im, slow.re) / Ts };
-  const wn = Math.hypot(s.re, s.im), zeta = wn > 0 ? -s.re / wn : 1;
   const rows = [
     { label: 'K', value: K, labels },
     { label: 'kr', value: kr, note: track ? `${labels[track - 1]} follows r` : 'r is not used' },
-    { label: 'slowest pole', value: `${fmt(wn)} rad/s, ζ ${fmt(zeta)}` },
+    { label: 'slowest pole', value: slowest(poles, Ts) },
   ];
   return { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings };
+}
+
+// The slowest of discrete poles, as a continuous one (s = ln(z) / Ts): '1.9 rad/s, ζ 0.71'.
+function slowest(poles, Ts) {
+  const slow = poles.reduce((a, z) => (Math.hypot(z.re, z.im) > Math.hypot(a.re, a.im) ? z : a));
+  const s = { re: Math.log(Math.hypot(slow.re, slow.im)) / Ts, im: Math.atan2(slow.im, slow.re) / Ts };
+  const wn = Math.hypot(s.re, s.im), zeta = wn > 0 ? -s.re / wn : 1;
+  return `${fmt(wn)} rad/s, ζ ${fmt(zeta)}`;
+}
+
+// The steady-state Kalman filter of an Observer (designs-in-the-page.md
+// §6.3) on the plant it sees, linearised at the origin, which must be an
+// equilibrium with u = 0. Its estimates are the states the Observer can see
+// (the kept states of its Model, in their global order); values.stateIndex
+// says which, so a Controller designed on the estimates looks through them
+// to the states they stand for.
+//   Q  process noise: one value is the variance of a random push on u, held
+//      over each sample (Qw = Q·Bd·Bdᵀ); n values, one per state (diagonal).
+//   R  measurement noise, one per measurement (one value: all); null takes
+//      it from the sensor blocks on each measurement's way, σ² + q²/12 (a
+//      noise σ, a quantizer step q), and 1 where there are none (a warning).
+//   outputs  the block's estimate count: more are zeros, fewer drop the last states.
+// The filter predicts with (Ad, Bd) and corrects with L = dlqe(Ad, C, Qw, R)
+// (observers.js); its error runs with (I − L C) Ad. values = { A, B, C, L }
+// (continuous A, B; flat, row by row), the Luenberger observer that runs
+// the same, plus stateIndex. Returns { values, rows, warnings, quality }.
+export function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
+  const { n, m, states, outputs: meas } = lin;
+  const labels = meas.map((o) => o.label), names = states.map((s) => s.name);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; the filter here handles up to 40`);
+  if (!m) throw new DesignError('no-measurement', 'this observer has no measurement to correct its estimate with', 'wire the measurements to inputs 2, 3, …');
+  if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')}), so there is nothing to estimate`, lin.warnings.join('; ') || 'wire input 1 (u) to what drives the plant, and the plant to the measurements');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'the filter is designed at the origin, which must be an equilibrium with u = 0');
+  const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
+  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; the filter needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  const q = Array.isArray(Q) ? Q : [Q];
+  if (q.length !== 1 && q.length !== n) throw new DesignError('q-length', `Q has ${q.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, `give one value (a push on ${lin.input.label}) or one per state`);
+  const given = R !== null && R !== undefined;
+  const rv = given ? (Array.isArray(R) ? R : [R]) : null;
+  if (given && rv.length !== 1 && rv.length !== m) throw new DesignError('r-length', `R has ${rv.length} values; this observer has ${m} measurement${m === 1 ? '' : 's'} (${labels.join(', ')})`, 'give one per measurement, or one for all; empty takes them from the sensor blocks');
+  if (!q.every((v) => v >= 0) || (given && !rv.every((v) => v > 0))) throw new DesignError('bad-weights', 'Q must be at least 0 and R above 0');
+
+  const warnings = [];
+  // R: given, or what the noise and quantizer blocks on each measurement's way add.
+  const r = given ? (rv.length === 1 ? new Array(m).fill(rv[0]) : rv) : lin.sensors.map((s, k) => {
+    const v = s.std ** 2 + s.q ** 2 / 12;
+    if (v > 0) return v;
+    warnings.push(`no sensor block on ${labels[k]}: R = 1`);
+    return 1;
+  });
+  const { Ad, Bd } = c2d(lin.A, lin.B, Ts);
+  const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
+  const Qw = q.length === 1 ? Bd.map((a) => Bd.map((b) => q[0] * a[0] * b[0])) : diag(q);
+  const { L, converged } = dlqe(Ad, lin.C, Qw, diag(r));
+  // The estimate's error: e⁺ = (I − L C) Ad e.
+  const ILC = L.map((row, i) => lin.C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * lin.C[k][j], 0)));
+  const poles = eig(mul(ILC, Ad));
+  const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
+  if (!converged || !(radius < 1)) throw new DesignError('not-detectable', `the estimate's error would not die out: a pole of the filter stays at |z| = ${fmt(radius)}`, `the measurements may not show every state (${names.join(', ')}); measure more, or raise Q`);
+
+  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
+  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: the filter does not know that offset`); });
+  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this filter`); });
+  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const rows = [
+    { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
+    { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+    { label: 'R', value: r, labels, note: given ? '' : 'from the sensor blocks' },
+    q.length === 1 ? { label: 'Q', value: q[0], note: `a push on ${lin.input.label}, per sample` } : { label: 'Q', value: q, labels: names },
+    { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
+  ];
+  const values = {
+    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
+    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
+  };
+  return { values, rows, warnings, quality: { ok: outputs === n } };
 }
 
 // A PI that cancels the lag of a first-order fit K e^(−θs) / (τs + 1):

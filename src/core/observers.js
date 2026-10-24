@@ -9,8 +9,15 @@
 // sample, u is still the value applied over the interval that just ended (an
 // Observer samples before the Controllers), so the estimate is predicted with
 // it and then corrected with the new measurements.
+//
+// The Kalman filter is designed (design/output/designs.md, as the designed
+// controllers): its model and gain are computed from the plant the Observer
+// sees, and a file holds only Q and R. Copy as numbers turns it into a
+// Luenberger observer with the same A, B, C and L, which runs the same.
 
-import { c2d, dlqe } from './linalg.js';
+import { c2d } from './linalg.js';
+import { kalmanDesign } from './design.js';
+import { normalizeVariant } from './controllers.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
@@ -53,18 +60,28 @@ function estimator({ n, m, Ad, Bd, C, L }) {
   };
 }
 
+// The law of a designed observer without values (pending, or failed): zero estimates.
+const NONE = new Float64Array(0);
+const ZERO = { step: () => NONE };
+
 export const OBSERVERS = {
   kalman: {
-    label: 'Kalman filter', summary: 'x̂ = model prediction + L (y − C x̂)',
-    params: [...MODEL, vec('Q', 'Process noise Q (diag)', [1, 1]), vec('R', 'Measurement noise R (diag)', [1])],
-    check(p) { const bad = checkModel(p); if (bad) return bad; if (p.Q.length !== p.B.length) return 'Q needs one value per state'; if (p.R.length !== p.C.length / p.B.length) return 'R needs one value per measurement'; return ''; },
-    make(p, Ts) {
-      const { n, m, A, B, C } = model(p);
-      const { Ad, Bd } = c2d(A, B, Ts);
-      const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
-      const { L } = dlqe(Ad, C, diag(p.Q), diag(p.R));
-      return estimator({ n, m, Ad, Bd, C, L });
+    // The steady-state Kalman filter on the plant this Observer sees, at its
+    // origin (design.js, kalmanDesign): the estimates are the states it can
+    // see, so a Controller designed on them looks through to the states.
+    label: 'Kalman filter', summary: 'x̂ = prediction + L (y − C x̂), model and L from the plant',
+    designed: true, version: 1, computes: ['A', 'B', 'C', 'L'], twin: 'luenberger',
+    params: [
+      vec('Q', 'Process noise Q', [1], { min: 0, help: 'one value: the variance of a random push on u, per sample; or one per state' }),
+      vec('R', 'Measurement noise R', null, { nullable: true, per: 'measurement', empty: 'empty: from the sensor blocks', help: 'the variance of the noise on each measurement (one value: all); empty takes it from the noise and quantizer blocks on its way' }),
+    ],
+    check(p) { return p.R && !p.R.every((v) => v > 0) ? 'R: each above 0' : ''; },
+    design(p, ctx) {
+      const d = kalmanDesign(ctx.linearize('origin'), { Q: p.Q, R: p.R, Ts: ctx.Ts, outputs: ctx.outputs });
+      return { values: d.values, rows: d.rows, warnings: d.warnings, quality: d.quality };
     },
+    make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.kalman.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
+    manual: (p, values) => ({ type: 'luenberger', params: { A: [...values.A], B: [...values.B], C: [...values.C], L: [...values.L] } }),
   },
   luenberger: {
     label: 'Luenberger observer', summary: 'x̂ = model prediction + L (y − C x̂), L given',

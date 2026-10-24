@@ -520,14 +520,14 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %; in a list such as Q, click into a value first), or add a variant from the library.</p>
-<p>Variants <b>from the plant</b> (LQR, PI from the plant, swing-up with an LQR catch, the planned swing-up) hold only weights, levels and limits: their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
+<p>Variants <b>from the plant</b> (LQR, PI from the plant, swing-up with an LQR catch, the planned swing-up, and an Observer's Kalman filter) hold only weights, levels and limits: their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up; for an Observer, a Luenberger observer and finite differences.</p>
 <h3>System library</h3>
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>designs()</code> (what the designed controllers computed) and <code>whenDesigned()</code> (resolves once no plan is being made, with the same list).</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>designs()</code> (what the designed controllers and observers computed) and <code>whenDesigned()</code> (resolves once no plan is being made, with the same list).</p>
 <p><button class="key primary" id="help-close">Close</button></p></div></div>
 </div>
 <script type="application/json" id="loop-tuner-project"></script>
@@ -2980,8 +2980,9 @@ __mods['core/design.js'] = (() => {
 //   lqrDesign(lin, { Q, R, track, Ts })            discrete LQR on a linear model, in measurement order
 //   piCancel(fit, Tcl), scheduledPIDesign(p, ctx)  PI by pole cancellation, at levels of the first measurement
 //   trajectoryDesign(p, ctx)                       a swing-up plan with TV-LQR along it (planner.js)
+//   kalmanDesign(lin, { Q, R, Ts, outputs })       the steady-state Kalman filter of an Observer
 
-const { c2d, dlqr, eig, solve, rank, mul, transpose } = __mods['core/linalg.js'];
+const { c2d, dlqr, dlqe, eig, solve, rank, mul, transpose } = __mods['core/linalg.js'];
 const { DesignError, operatingPoint, linearize, firstOrderFit } = __mods['core/linearize.js'];
 const { PLAN_VERSION, planTransfer, alongPlanSteps, tvlqrGains, planValues, planLaw, verifyLoop, runPlan } = __mods['core/planner.js'];
 const fmt = (v) => (Number.isFinite(v) ? String(Number(Number(v).toPrecision(4))) : String(v));
@@ -3082,7 +3083,7 @@ function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 } = {})
     const used = { model: null, at: '', warnings: [], heavy: null };
     const lins = new Map();
     const ctx = {
-      Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs,
+      Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs, outputs: block.outputs,
       // The plant this block sees (a Model), looking through designed observers.
       model() {
         if (!used.model) used.model = compiled().seen(block.idPath, seeThrough.size ? { seeThrough } : {});
@@ -3361,16 +3362,88 @@ function lqrDesign(lin, { Q, R, track = 1, Ts }) {
   const sensed = labels.filter((_, k) => lin.sensors?.[k] && (lin.sensors[k].std > 0 || lin.sensors[k].q > 0));
   if (sensed.length) warnings.push(`quantisers and noise on ${sensed.join(', ')} are not in this design`);
   lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this design`); });
-  // The slowest closed-loop pole, as a continuous one: s = ln(z) / Ts.
-  const slow = poles.reduce((a, z) => (Math.hypot(z.re, z.im) > Math.hypot(a.re, a.im) ? z : a));
-  const s = { re: Math.log(Math.hypot(slow.re, slow.im)) / Ts, im: Math.atan2(slow.im, slow.re) / Ts };
-  const wn = Math.hypot(s.re, s.im), zeta = wn > 0 ? -s.re / wn : 1;
   const rows = [
     { label: 'K', value: K, labels },
     { label: 'kr', value: kr, note: track ? `${labels[track - 1]} follows r` : 'r is not used' },
-    { label: 'slowest pole', value: `${fmt(wn)} rad/s, ζ ${fmt(zeta)}` },
+    { label: 'slowest pole', value: slowest(poles, Ts) },
   ];
   return { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings };
+}
+
+// The slowest of discrete poles, as a continuous one (s = ln(z) / Ts): '1.9 rad/s, ζ 0.71'.
+function slowest(poles, Ts) {
+  const slow = poles.reduce((a, z) => (Math.hypot(z.re, z.im) > Math.hypot(a.re, a.im) ? z : a));
+  const s = { re: Math.log(Math.hypot(slow.re, slow.im)) / Ts, im: Math.atan2(slow.im, slow.re) / Ts };
+  const wn = Math.hypot(s.re, s.im), zeta = wn > 0 ? -s.re / wn : 1;
+  return `${fmt(wn)} rad/s, ζ ${fmt(zeta)}`;
+}
+
+// The steady-state Kalman filter of an Observer (designs-in-the-page.md
+// §6.3) on the plant it sees, linearised at the origin, which must be an
+// equilibrium with u = 0. Its estimates are the states the Observer can see
+// (the kept states of its Model, in their global order); values.stateIndex
+// says which, so a Controller designed on the estimates looks through them
+// to the states they stand for.
+//   Q  process noise: one value is the variance of a random push on u, held
+//      over each sample (Qw = Q·Bd·Bdᵀ); n values, one per state (diagonal).
+//   R  measurement noise, one per measurement (one value: all); null takes
+//      it from the sensor blocks on each measurement's way, σ² + q²/12 (a
+//      noise σ, a quantizer step q), and 1 where there are none (a warning).
+//   outputs  the block's estimate count: more are zeros, fewer drop the last states.
+// The filter predicts with (Ad, Bd) and corrects with L = dlqe(Ad, C, Qw, R)
+// (observers.js); its error runs with (I − L C) Ad. values = { A, B, C, L }
+// (continuous A, B; flat, row by row), the Luenberger observer that runs
+// the same, plus stateIndex. Returns { values, rows, warnings, quality }.
+function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
+  const { n, m, states, outputs: meas } = lin;
+  const labels = meas.map((o) => o.label), names = states.map((s) => s.name);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; the filter here handles up to 40`);
+  if (!m) throw new DesignError('no-measurement', 'this observer has no measurement to correct its estimate with', 'wire the measurements to inputs 2, 3, …');
+  if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')}), so there is nothing to estimate`, lin.warnings.join('; ') || 'wire input 1 (u) to what drives the plant, and the plant to the measurements');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'the filter is designed at the origin, which must be an equilibrium with u = 0');
+  const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
+  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; the filter needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  const q = Array.isArray(Q) ? Q : [Q];
+  if (q.length !== 1 && q.length !== n) throw new DesignError('q-length', `Q has ${q.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, `give one value (a push on ${lin.input.label}) or one per state`);
+  const given = R !== null && R !== undefined;
+  const rv = given ? (Array.isArray(R) ? R : [R]) : null;
+  if (given && rv.length !== 1 && rv.length !== m) throw new DesignError('r-length', `R has ${rv.length} values; this observer has ${m} measurement${m === 1 ? '' : 's'} (${labels.join(', ')})`, 'give one per measurement, or one for all; empty takes them from the sensor blocks');
+  if (!q.every((v) => v >= 0) || (given && !rv.every((v) => v > 0))) throw new DesignError('bad-weights', 'Q must be at least 0 and R above 0');
+
+  const warnings = [];
+  // R: given, or what the noise and quantizer blocks on each measurement's way add.
+  const r = given ? (rv.length === 1 ? new Array(m).fill(rv[0]) : rv) : lin.sensors.map((s, k) => {
+    const v = s.std ** 2 + s.q ** 2 / 12;
+    if (v > 0) return v;
+    warnings.push(`no sensor block on ${labels[k]}: R = 1`);
+    return 1;
+  });
+  const { Ad, Bd } = c2d(lin.A, lin.B, Ts);
+  const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
+  const Qw = q.length === 1 ? Bd.map((a) => Bd.map((b) => q[0] * a[0] * b[0])) : diag(q);
+  const { L, converged } = dlqe(Ad, lin.C, Qw, diag(r));
+  // The estimate's error: e⁺ = (I − L C) Ad e.
+  const ILC = L.map((row, i) => lin.C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * lin.C[k][j], 0)));
+  const poles = eig(mul(ILC, Ad));
+  const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
+  if (!converged || !(radius < 1)) throw new DesignError('not-detectable', `the estimate's error would not die out: a pole of the filter stays at |z| = ${fmt(radius)}`, `the measurements may not show every state (${names.join(', ')}); measure more, or raise Q`);
+
+  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
+  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: the filter does not know that offset`); });
+  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this filter`); });
+  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const rows = [
+    { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
+    { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+    { label: 'R', value: r, labels, note: given ? '' : 'from the sensor blocks' },
+    q.length === 1 ? { label: 'Q', value: q[0], note: `a push on ${lin.input.label}, per sample` } : { label: 'Q', value: q, labels: names },
+    { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
+  ];
+  const values = {
+    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
+    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
+  };
+  return { values, rows, warnings, quality: { ok: outputs === n } };
 }
 
 // A PI that cancels the lag of a first-order fit K e^(−θs) / (τs + 1):
@@ -3482,7 +3555,7 @@ function trajectoryDesign(p, ctx) {
   return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }
 
-return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, lqrDesign, piCancel, scheduledPIDesign, trajectoryDesign };
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, lqrDesign, kalmanDesign, piCancel, scheduledPIDesign, trajectoryDesign };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
@@ -3784,8 +3857,15 @@ __mods['core/observers.js'] = (() => {
 // sample, u is still the value applied over the interval that just ended (an
 // Observer samples before the Controllers), so the estimate is predicted with
 // it and then corrected with the new measurements.
+//
+// The Kalman filter is designed (design/output/designs.md, as the designed
+// controllers): its model and gain are computed from the plant the Observer
+// sees, and a file holds only Q and R. Copy as numbers turns it into a
+// Luenberger observer with the same A, B, C and L, which runs the same.
 
-const { c2d, dlqe } = __mods['core/linalg.js'];
+const { c2d } = __mods['core/linalg.js'];
+const { kalmanDesign } = __mods['core/design.js'];
+const { normalizeVariant } = __mods['core/controllers.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
 
@@ -3827,18 +3907,28 @@ function estimator({ n, m, Ad, Bd, C, L }) {
   };
 }
 
+// The law of a designed observer without values (pending, or failed): zero estimates.
+const NONE = new Float64Array(0);
+const ZERO = { step: () => NONE };
+
 const OBSERVERS = {
   kalman: {
-    label: 'Kalman filter', summary: 'x̂ = model prediction + L (y − C x̂)',
-    params: [...MODEL, vec('Q', 'Process noise Q (diag)', [1, 1]), vec('R', 'Measurement noise R (diag)', [1])],
-    check(p) { const bad = checkModel(p); if (bad) return bad; if (p.Q.length !== p.B.length) return 'Q needs one value per state'; if (p.R.length !== p.C.length / p.B.length) return 'R needs one value per measurement'; return ''; },
-    make(p, Ts) {
-      const { n, m, A, B, C } = model(p);
-      const { Ad, Bd } = c2d(A, B, Ts);
-      const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
-      const { L } = dlqe(Ad, C, diag(p.Q), diag(p.R));
-      return estimator({ n, m, Ad, Bd, C, L });
+    // The steady-state Kalman filter on the plant this Observer sees, at its
+    // origin (design.js, kalmanDesign): the estimates are the states it can
+    // see, so a Controller designed on them looks through to the states.
+    label: 'Kalman filter', summary: 'x̂ = prediction + L (y − C x̂), model and L from the plant',
+    designed: true, version: 1, computes: ['A', 'B', 'C', 'L'], twin: 'luenberger',
+    params: [
+      vec('Q', 'Process noise Q', [1], { min: 0, help: 'one value: the variance of a random push on u, per sample; or one per state' }),
+      vec('R', 'Measurement noise R', null, { nullable: true, per: 'measurement', empty: 'empty: from the sensor blocks', help: 'the variance of the noise on each measurement (one value: all); empty takes it from the noise and quantizer blocks on its way' }),
+    ],
+    check(p) { return p.R && !p.R.every((v) => v > 0) ? 'R: each above 0' : ''; },
+    design(p, ctx) {
+      const d = kalmanDesign(ctx.linearize('origin'), { Q: p.Q, R: p.R, Ts: ctx.Ts, outputs: ctx.outputs });
+      return { values: d.values, rows: d.rows, warnings: d.warnings, quality: d.quality };
     },
+    make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.kalman.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
+    manual: (p, values) => ({ type: 'luenberger', params: { A: [...values.A], B: [...values.B], C: [...values.C], L: [...values.L] } }),
   },
   luenberger: {
     label: 'Luenberger observer', summary: 'x̂ = model prediction + L (y − C x̂), L given',
@@ -8992,7 +9082,7 @@ const ABOUT = {
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
   swingUpLqr: 'The energy swing-up (the pump gains are yours), with the catch near the top designed by LQR from the cart and pole as they are wired: Q weighs x, θ, v, ω, R the force. Change the pole and the catch follows.',
   trajectory: 'A swing-up planned in the page from the plant as it is wired: a force F(t) that takes it from where it starts to rest at the top in T seconds, followed with time-varying LQR that corrects small errors along the way, then LQR holds it. The plan uses a share of the force limit and leaves the rest to the feedback. Changing T, the segments or that share plans again (a few seconds); Q, R and the start only recompute the gains.',
-  kalman: 'Predicts the states with the model, then corrects with the measurements, weighing them by the noise you expect: a large R trusts the model, a large Q trusts the measurements. The gain is the steady-state Kalman gain.',
+  kalman: 'Predicts the states with a model of the plant as it is wired (linearised at its origin), then corrects with the measurements, weighing them by the noise: Q is a random push on u (or one value per state), R the noise on each measurement, taken from the noise and quantizer blocks on its way when left empty. A large R trusts the model, a large Q the measurements. The gain is the steady-state Kalman gain; its estimates are the states the observer can see, and a controller designed on them looks through to those states.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
 };
