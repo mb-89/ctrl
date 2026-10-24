@@ -45,3 +45,7 @@
 ## Added while this was being built: stop in both directions
 
 > I mean, I feel like we should also provide a stop signal, right? So we can also monitor the watchdog. If we see that we are dropping messages on our side, we can also send a stop signal, and we can also have a red stop button in the hill plant, right? Or I guess if we click the stop button, then it stops the hill plant. We can have all of that, but the other side is also needs to have it.
+
+## Added while this was being built: Run and Stop go through the plant
+
+> So I feel like our stop and run signal that would also have to go through the plant, and yeah, the plant would have to wire that in some way.
