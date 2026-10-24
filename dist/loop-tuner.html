@@ -477,14 +477,14 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (x, speed, …) can be shown on any channel. Double-click a <b>Controller</b> block to open it in the Controller tab. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Double-click a Switch to move it to its next input. Wheel zooms the canvas; dragging the background pans.</p>
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>Controller</h3>
-<p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
+<p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, LQR (its gains computed from the plant), gain-scheduled PI, energy swing-up.</p>
 <h3>System library</h3>
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code> and <code>stop()</code>.</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code> and <code>designs()</code> (what the designed controllers computed).</p>
 <p><button class="key primary" id="help-close">Close</button></p></div></div>
 </div>
 <script type="application/json" id="loop-tuner-project"></script>
@@ -2689,6 +2689,261 @@ function solveGauss(A, b) {
 
 return { planTrajectory, runPlan, tvlqr, uprightLqr };
 })();
+// ---- core/design.js
+__mods['core/design.js'] = (() => {
+// Designs computed in the page from the plant (design/output/designs.md): the
+// cache keys, the memory-only design store, and the design helpers. A
+// designed variant holds only its inputs (Q, R, levels, …); every number it
+// runs on is computed here, from the plant as it is wired, whenever it is
+// compiled. Same inputs, same numbers: no clocks, no randomness, no state
+// carried over between edits; a cache only saves time.
+//
+//   canonical(x), hashKey(s), plantKey(diagram)   keys
+//   createDesignStore(), SYNC_DESIGNS              the store compileDiagram resolves designs through
+//   lqrDesign(lin, { Q, R, track, Ts })            discrete LQR on a linear model, in measurement order
+
+const { c2d, dlqr, eig, solve, rank, mul, transpose } = __mods['core/linalg.js'];
+const { DesignError, operatingPoint, linearize } = __mods['core/linearize.js'];
+const fmt = (v) => (Number.isFinite(v) ? String(Number(Number(v).toPrecision(4))) : String(v));
+const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
+const now = () => globalThis.performance?.now() ?? Date.now();
+
+// ---- Keys
+
+// JSON with sorted keys, the same for equal values: -0 is 0, ±Infinity
+// "inf" / "-inf", typed arrays as arrays, undefined fields left out.
+function canonical(x) {
+  if (x === null || x === undefined) return 'null';
+  if (typeof x === 'number') return Number.isFinite(x) ? JSON.stringify(x === 0 ? 0 : x) : Number.isNaN(x) ? '"nan"' : x > 0 ? '"inf"' : '"-inf"';
+  if (typeof x === 'string' || typeof x === 'boolean') return JSON.stringify(x);
+  if (Array.isArray(x) || ArrayBuffer.isView(x)) return `[${Array.from(x, canonical).join(',')}]`;
+  if (x instanceof Map) return canonical([...x].sort((a, b) => (String(a[0]) < String(b[0]) ? -1 : 1)));
+  if (typeof x === 'object') return `{${Object.keys(x).filter((k) => x[k] !== undefined && typeof x[k] !== 'function').sort().map((k) => `${JSON.stringify(k)}:${canonical(x[k])}`).join(',')}}`;
+  return 'null';
+}
+
+// A short hash of a string (cyrb53), as 12 hex digits: shown as #a3f9c1.
+function hashKey(s) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, '0').slice(-4) + (h1 >>> 0).toString(16).padStart(8, '0');
+}
+
+// What a design depends on in a diagram: everything but where blocks sit and
+// which way they face, what Sinks are called (they only record), and the
+// variants of Controller blocks (each design holds the other Controllers at
+// their output). Observers are kept whole: their variant changes the plant
+// a Controller sees through them.
+function plantKey(diagram) {
+  const strip = (d) => ({
+    blocks: d.blocks.map(({ x, y, flip, ...b }) => {
+      if (b.type === 'sink') return { id: b.id, type: b.type };
+      if (b.type === 'controller') { const { variants, variant, ...rest } = b; return rest; }
+      if (b.type === 'subsystem') return { ...b, diagram: strip(b.diagram) };
+      return b;
+    }),
+    wires: d.wires,
+  });
+  return canonical(strip(diagram));
+}
+
+// ---- The store
+
+// The design store: designs by key, in memory only (an LRU of `limit`
+// designs and 8 model compiles). compileDiagram asks it for the values of
+// each running designed variant:
+//   const job = store.begin(diagram, () => compileDiagram(diagram, 'plant', { mode: 'model' }));
+//   const status = job.resolve(block, variant, lib);   // status.values: what make() takes, or null
+//   job.end();
+// block: { idPath, name, kind: 'controller' | 'observer', Ts, inputs (labels), input (u's label) }.
+// A status is what the Controller tab, the CLI and agents see; its values
+// are not enumerable, so a status prints and serialises without them.
+// The 'sync' mode runs every design at once (Node, the CLI, tests, and the
+// page until heavy designs exist).
+function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
+  if (mode !== 'sync') throw new Error(`design store mode "${mode}": only 'sync' exists so far`);
+  const designs = new Map(), models = new Map();
+  const counts = { runs: 0, hits: 0, heavyRuns: 0 };
+  const remember = (map, key, value, size) => { map.delete(key); map.set(key, value); if (map.size > size) map.delete(map.keys().next().value); };
+
+  // Runs one design; never throws. A DesignError becomes the status's error;
+  // anything else is a bug, reported with code 'internal'.
+  function run(def, p, block, compiled, seeThrough) {
+    const used = { model: null, at: '', warnings: [] };
+    const lins = new Map();
+    const ctx = {
+      Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs,
+      // The plant this block sees (a Model), looking through designed observers.
+      model() {
+        if (!used.model) used.model = compiled().seen(block.idPath, seeThrough.size ? { seeThrough } : {});
+        return used.model;
+      },
+      // The linear model at an operating point ('origin' unless named).
+      linearize(op = 'origin', limits = {}) {
+        const key = canonical([op, limits]);
+        if (!lins.has(key)) {
+          const lin = linearize(ctx.model(), operatingPoint(ctx.model(), op, limits));
+          used.at ||= lin.op.label;
+          used.warnings.push(...lin.op.warnings);
+          lins.set(key, lin);
+        }
+        return lins.get(key);
+      },
+      // An equilibrium with the measurements at targets (null: free).
+      trim(targets, limits = {}) {
+        const pt = operatingPoint(ctx.model(), { y: targets }, limits);
+        used.warnings.push(...pt.warnings);
+        return pt;
+      },
+    };
+    const t0 = now();
+    let out;
+    try {
+      out = def.design(p, ctx);
+      if (!out || out.pending) throw new DesignError('pending', 'this design runs in the background, which this store cannot do yet');
+    } catch (err) {
+      out = { error: { code: err.code ?? 'internal', message: err.message, hint: err.hint ?? '' } };
+    }
+    const mdl = used.model;
+    return {
+      status: out.error ? 'error' : out.quality && out.quality.ok === false ? 'warn' : 'ok',
+      values: out.error ? null : out.values ?? null,
+      rows: out.rows ?? [],
+      warnings: [...new Set([...(mdl?.warnings ?? []), ...used.warnings, ...(out.warnings ?? [])])],
+      quality: out.quality ?? null,
+      error: out.error ?? null,
+      at: used.at,
+      states: mdl ? mdl.states.map((s) => s.name) : null,
+      ms: now() - t0,
+    };
+  }
+
+  return {
+    mode,
+    generation: 0,
+    begin(diagram, compileModel) {
+      let pk = null, el = null;
+      const plant = () => (pk ??= plantKey(diagram));
+      // The model-mode compile, shared by every design of this diagram.
+      const compiled = () => {
+        if (el) return el;
+        const key = hashKey(plant());
+        el = models.get(key) ?? compileModel();
+        remember(models, key, el, 8);
+        return el;
+      };
+      // Designed observers whose estimates a Controller looks through:
+      // observer idPath → the global state index of each estimate.
+      const seeThrough = new Map();
+      return {
+        resolve(block, variant, lib) {
+          const def = lib[variant.type];
+          const key = hashKey(canonical([variant.type, def.version ?? 1, variant.params, block.Ts, plant(), block.idPath]));
+          let entry = designs.get(key), cached = !!entry;
+          if (cached) counts.hits++;
+          else { counts.runs++; entry = run(def, variant.params, block, compiled, seeThrough); }
+          remember(designs, key, entry, limit);
+          if (block.kind === 'observer' && entry.values?.stateIndex) seeThrough.set(block.idPath, entry.values.stateIndex);
+          const seen = entry.states ? `${block.input} → ${block.inputs.slice(1).join(', ')} · ${entry.states.length} state${entry.states.length === 1 ? '' : 's'} (${entry.states.join(', ')})` : '';
+          const status = {
+            path: block.idPath, block: block.name, variant: variant.name, type: variant.type, key,
+            status: entry.status, ms: Number(entry.ms.toFixed(2)), cached,
+            at: entry.at, seen, rows: entry.rows, warnings: entry.warnings, error: entry.error, progress: null,
+          };
+          Object.defineProperty(status, 'values', { value: entry.values, enumerable: false });
+          return status;
+        },
+        end() {},
+      };
+    },
+    // How often designs ran and were found in the cache.
+    stats: () => ({ ...counts }),
+    idle: () => Promise.resolve(),
+  };
+}
+
+// The store compileDiagram uses when it is given none.
+const SYNC_DESIGNS = createDesignStore();
+
+// ---- Design helpers
+
+// A state for sentences: 'ω (cart and pole)', or its label.
+function stateText(s) {
+  return s.label.endsWith(`.${s.name}`) ? `${s.name} (${s.label.slice(0, -s.name.length - 1)})` : s.label;
+}
+
+// Discrete LQR at the operating point of lin, for a law u = kr·r − K·y that
+// feeds back the measurements. Needs every state measured (C square and
+// invertible, D = 0): then K = Kx C⁻¹, in measurement order. Q weighs the
+// measurements (one value weighs them all), R the effort; Qx = Cᵀ diag(Q) C.
+// track: the measurement (1-based) that follows r, 0 for none; kr sets its
+// static gain from r to 1. Returns { K, kr, Kx, P, Ad, Bd, poles, rows, warnings }.
+function lqrDesign(lin, { Q, R, track = 1, Ts }) {
+  const { n, m, states, outputs } = lin;
+  const labels = outputs.map((o) => o.label);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this block sees has ${n} states; LQR here handles up to 40`);
+  if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')})`, lin.warnings.join('; ') || 'wire the controller output to the plant, and the plant to the measurements');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'LQR is designed at the origin, which must be an equilibrium with u = 0');
+  // Every state measured, and only states.
+  const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
+  if (direct.length) throw new DesignError('states-not-measured', `LQR needs measurements of states; ${direct.join(', ')} depends on ${lin.input.label} directly`, 'feed back states only (a Sink of u is fine, an input of the controller is not)');
+  if (m !== n || rank(lin.C) < n) {
+    const sole = lin.C.map((row) => { const nz = row.flatMap((v, j) => (Math.abs(v) > 1e-9 ? [j] : [])); return nz.length === 1 ? nz[0] : -1; });
+    const seen = [...new Set(sole.filter((j) => j >= 0))].map((j) => states[j]), missing = states.filter((_, j) => !sole.includes(j));
+    if (missing.length && m <= n) {
+      throw new DesignError('states-not-measured', `LQR needs every state measured. This block sees ${seen.length ? seen.map((s) => s.name).join(', ') : 'none of them'} but not ${and(missing.map(stateText))}.`, `wire ${and(missing.map((s) => s.name))} to ${missing.length > 1 ? 'inputs' : 'an input'}, or add a Kalman Observer`);
+    }
+    throw new DesignError('states-not-measured', `LQR needs exactly one measurement per state: this block has ${m} measurement${m === 1 ? '' : 's'} (${labels.join(', ')}) for ${n} state${n === 1 ? '' : 's'} (${states.map((s) => s.name).join(', ')})`, 'measure each state once');
+  }
+  const q = Array.isArray(Q) ? Q : [Q];
+  if (q.length !== 1 && q.length !== m) throw new DesignError('q-length', `Q has ${q.length} values; this block has ${m} measurements (${labels.join(', ')})`, 'give one weight per measurement, or one for all');
+  const w = q.length === 1 ? new Array(m).fill(q[0]) : q;
+  if (!w.every((v) => v >= 0) || !(R > 0)) throw new DesignError('bad-weights', 'Q must be at least 0 and R above 0');
+  if (!(Number.isInteger(track) && track >= 0 && track <= m)) throw new DesignError('bad-track', `r applies to measurement ${track}; this block has ${m} (${labels.join(', ')}); 0 for none`);
+
+  const { Ad, Bd } = c2d(lin.A, lin.B, Ts);
+  const Ct = transpose(lin.C);
+  const Qx = mul(Ct, lin.C.map((row, k) => row.map((v) => v * w[k])));
+  const { K: Kr, P, converged } = dlqr(Ad, Bd, Qx, R);
+  const Kx = Kr[0];
+  const Acl = Ad.map((row, i) => row.map((v, j) => v - Bd[i][0] * Kx[j]));
+  const poles = eig(Acl);
+  const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
+  if (!converged || !(radius < 1)) throw new DesignError('not-stabilisable', `LQR finds no gain that holds this plant (a closed-loop pole stays at |z| = ${fmt(radius)})`, `${lin.input.label} may not reach every state; check the wiring`);
+  // K = Kx C⁻¹: Kᵀ solves Cᵀ Kᵀ = Kxᵀ.
+  const K = solve(Ct, Kx);
+  // kr: the static gain from r to the tracked measurement is 1.
+  let kr = 0;
+  const warnings = [];
+  if (track) {
+    const xs = solve(Acl.map((row, i) => row.map((v, j) => (i === j ? 1 : 0) - v)), Bd.map((b) => b[0]));
+    const g = lin.C[track - 1].reduce((s, c, j) => s + c * xs[j], 0);
+    if (Math.abs(g) > 1e-12) kr = 1 / g;
+    else warnings.push(`${labels[track - 1]} has no static gain from r in this loop: kr = 0`);
+  }
+  const sensed = labels.filter((_, k) => lin.sensors?.[k] && (lin.sensors[k].std > 0 || lin.sensors[k].q > 0));
+  if (sensed.length) warnings.push(`quantisers and noise on ${sensed.join(', ')} are not in this design`);
+  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this design`); });
+  // The slowest closed-loop pole, as a continuous one: s = ln(z) / Ts.
+  const slow = poles.reduce((a, z) => (Math.hypot(z.re, z.im) > Math.hypot(a.re, a.im) ? z : a));
+  const s = { re: Math.log(Math.hypot(slow.re, slow.im)) / Ts, im: Math.atan2(slow.im, slow.re) / Ts };
+  const wn = Math.hypot(s.re, s.im), zeta = wn > 0 ? -s.re / wn : 1;
+  const rows = [
+    { label: 'K', value: K, labels },
+    { label: 'kr', value: kr, note: track ? `${labels[track - 1]} follows r` : 'r is not used' },
+    { label: 'slowest pole', value: `${fmt(wn)} rad/s, ζ ${fmt(zeta)}` },
+  ];
+  return { K, kr, Kx, P, Ad, Bd, poles, rows, warnings };
+}
+
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, lqrDesign };
+})();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
 // The controller library: implementations a Controller block can run. Every
@@ -2700,13 +2955,27 @@ __mods['core/controllers.js'] = (() => {
 //
 // Each runs digitally at the block's sample time Ts. make(params, Ts) returns
 // { step(inputs) -> u }, called once per sample with the inputs at that instant.
+//
+// A designed type computes its numbers from the plant instead of being given
+// them (design/output/designs.md). Its params are inputs only (weights,
+// levels, limits); it adds
+//   designed: true, version          version enters the cache key; bump it when results change
+//   computes: ['K', 'kr']            refused in params: a file never holds computed numbers
+//   twin: 'stateFeedback'            the hand type "Copy as numbers" turns it into
+//   design(p, ctx)                   → { values, rows, warnings?, quality? }; sees the plant
+//                                    only through ctx (design.js), throws DesignError
+//   make(p, Ts, values)              the law from plain data; values null → u = 0
+//   manual(p, values)                → { type, params } of the twin: Copy as numbers
+//   compatible?(a, b)                may old values run on a changed plant (later, for the page)
 
+const { lqrDesign } = __mods['core/design.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
 const LIMITS = [num('umin', 'u min', -Infinity, { unit: 'u' }), num('umax', 'u max', Infinity, { unit: 'u' })];
 const PREFILTER = num('Tr', 'Prefilter Tr', 0, { unit: 's', min: 0, help: 'Vorfilter: a first-order lag on r; 0 is off' });
 const START = num('u0', 'Start output u0', 0, { unit: 'u', help: 'the integral part at t = 0, so a loop can start in balance' });
 
+const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
 
@@ -2742,10 +3011,13 @@ function pidCore(Ts, u0 = 0) {
   };
 }
 
+// The law of a designed variant without values (pending, or failed): u = 0.
+const OFF = { step: () => 0 };
+
 const CONTROLLERS = {
   off: {
     label: 'Off', summary: 'u = 0', params: [],
-    make: () => ({ step: () => 0 }),
+    make: () => OFF,
   },
   pid: {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
@@ -2768,6 +3040,22 @@ const CONTROLLERS = {
         },
       };
     },
+  },
+  lqr: {
+    // Discrete LQR at the origin of the plant the block sees, which must be an
+    // equilibrium with every state measured (design.js, lqrDesign).
+    label: 'LQR', summary: 'u = kr r − K · y, K from the plant (LQR)',
+    designed: true, version: 1, computes: ['K', 'kr'], twin: 'stateFeedback',
+    params: [vec('Q', 'Weights Q', [1], { min: 0, help: 'what an error in each measurement costs, one per measurement; one value weighs them all' }), num('R', 'Effort weight R', 1, { positive: true, help: 'how much u costs: larger is gentler' }), num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }), PREFILTER, ...LIMITS],
+    design(p, ctx) {
+      const d = lqrDesign(ctx.linearize('origin'), { Q: p.Q, R: p.R, track: p.track, Ts: ctx.Ts });
+      return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
+    },
+    make(p, Ts, values) {
+      if (!values) return OFF;
+      return CONTROLLERS.stateFeedback.make({ K: values.K, kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax }, Ts);
+    },
+    manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax } }),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -2820,25 +3108,36 @@ const CONTROLLERS = {
 const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
 
 function normalizeParam(spec, v, where) {
+  if (spec.nullable && (v === null || v === '')) return null;
   v ??= spec.default;
   if (spec.kind === 'vector') {
+    if (v === null && spec.nullable) return null;   // e.g. "from the plant"
     if (!Array.isArray(v) || !v.length || !v.every((x) => Number.isFinite(Number(x)))) throw new Error(`${where}.${spec.key}: a list of numbers`);
+    if (spec.min !== undefined && v.some((x) => Number(x) < spec.min)) throw new Error(`${where}.${spec.key}: each at least ${spec.min}`);
     return v.map(Number);
   }
   if (v === null || v === '' || v === 'inf' || v === 'Infinity' || v === '-inf' || v === '-Infinity') return v && String(v).startsWith('-') ? -Infinity : spec.default;
-  const n = Number(v);
+  let n = Number(v);
   if (Number.isNaN(n)) throw new Error(`${where}.${spec.key}: expected a number`);
+  if (spec.int) n = Math.round(n);
   if (spec.min !== undefined && n < spec.min) throw new Error(`${where}.${spec.key}: at least ${spec.min}`);
+  if (spec.positive && !(n > 0)) throw new Error(`${where}.${spec.key}: above 0`);
   return n;
 }
 
 // One variant: { name, type, params }. Unknown types and bad values fail with
-// the valid choices named.
+// the valid choices named. A designed type's computed numbers are refused:
+// a file holds inputs only.
 // lib: the library the variant comes from (CONTROLLERS, or OBSERVERS for an
 // Observer block); both share this format.
 function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
   const def = lib[v?.type];
   if (!def) throw new Error(`${where}.type: one of ${Object.keys(lib).join(', ')}`);
+  const given = (def.computes ?? []).filter((k) => v.params?.[k] !== undefined);
+  if (given.length) {
+    const inputs = def.params.map((p) => p.key).filter((k) => !/^(umin|umax|Tr)$/.test(k));
+    throw new Error(`${where}.params.${given[0]}: ${v.type} computes ${and(def.computes)} from the plant and ${and(inputs)}; to set them by hand use Copy as numbers (a ${lib[def.twin]?.label ?? def.twin} variant)`);
+  }
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
   if (params.umin > params.umax) [params.umin, params.umax] = [params.umax, params.umin];
@@ -2847,9 +3146,10 @@ function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
   return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
 }
 
-// The law of a block's active variant.
-function makeLaw(variant, Ts, lib = CONTROLLERS) {
-  return lib[variant.type].make(variant.params, Ts);
+// The law of a block's active variant; a designed one runs on the values its
+// design computed (null: u = 0).
+function makeLaw(variant, Ts, lib = CONTROLLERS, values = null) {
+  return lib[variant.type].make(variant.params, Ts, values);
 }
 
 
@@ -2981,8 +3281,9 @@ const { BLOCKS, blockDef, normalizeBlock } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
 const { gaussAt } = __mods['core/signals.js'];
 const { compileExpr } = __mods['core/expr.js'];
-const { normalizeVariant, makeLaw } = __mods['core/controllers.js'];
+const { CONTROLLERS, normalizeVariant, makeLaw } = __mods['core/controllers.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
+const { SYNC_DESIGNS } = __mods['core/design.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
 // Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
@@ -3093,7 +3394,7 @@ const ELEMENTS = {
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
-const VARIANT_LIBS = { controller: undefined, observer: OBSERVERS };
+const VARIANT_LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
 
 const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
@@ -3324,6 +3625,9 @@ const NONE = [];
 // diagram is the whole system (no Out needed; an In reads 0).
 // opts.laws === false: Controllers and Observers make no laws and put out 0
 // (the Plant tab's structure check: editing the canvas never designs).
+// opts.designs: the design store a designed variant gets its values from
+// (design.js; SYNC_DESIGNS when none is given). el.designs lists the status
+// of each running designed variant.
 // opts.mode === 'model': the plant as a block sees it, for designs
 // (design/output/designs.md). The diagram is the whole system and no laws
 // are made; dead times pass straight through, a quantizer is the identity,
@@ -3400,7 +3704,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (b.type === 'controller' || b.type === 'observer') {
         const lib = VARIANT_LIBS[b.type];
         const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
-        const k = add({ kind: 'ctrl', name, idPath, ft: false, observer: b.type === 'observer', variant: v, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: laws ? makeLaw(v, b.params.Ts, lib) : null, next: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
+        const k = add({ kind: 'ctrl', name, idPath, ft: false, observer: b.type === 'observer', variant: v, lib, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: null, next: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
         nodes[k].taps = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j, see: -1 })) : [];
         outs[b.id] = b.type === 'observer' ? nodes[k].taps : [k];
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
@@ -3487,6 +3791,29 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   // instant already sees the new estimate.
   const ctrls = nodes.filter((nd) => nd.kind === 'ctrl').sort((a, b) => b.observer - a.observer);
   const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
+
+  // Laws, made once every node exists. A hand variant is made from its
+  // parameters; a designed one from the values its design computes from the
+  // plant this block sees (a model-mode compile of this same diagram, so a
+  // design never sees a different plant from the one that runs). Observers
+  // come first, so a Controller's design can look through a designed one.
+  const designs = [];
+  if (laws) {
+    let job = null;
+    for (const nd of ctrls) {
+      if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
+      // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
+      job ??= (opts.designs ?? SYNC_DESIGNS).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }));
+      const inputs = blockInputNames(diagram, nd.idPath);
+      // What u is called: the Sink that records a Controller's output, or what feeds an Observer's u.
+      const sink = nd.observer ? null : probeList.find(([, k]) => nodes[k].kind === 'pass' && nodes[k].inputs[0] === nd.i);
+      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: nd.observer ? inputs[0] : sink?.[0] ?? 'u' };
+      const status = job.resolve(block, nd.variant, nd.lib);
+      nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
+      designs.push(status);
+    }
+    job?.end();
+  }
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
   const histAt = (hist, tau, y0 = 0) => {
@@ -3547,7 +3874,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   }
 
   const self = {
-    n, bound, warnings, minTs, states,
+    n, bound, warnings, minTs, states, designs,
     setStep(step) { h = step; },
     // Called at each completed step with the state there: a controller whose
     // sample is due reads its inputs and sets its held output; the outputs are
@@ -4025,13 +4352,16 @@ function gaussian(seed) {
   };
 }
 
-// The diagram as the whole system, before any controller: every Source plays
-// its signal, every Sink is recorded. Returns { t, signals: { name: values } }.
-function simulateSystem(diagram, signals, sim) {
+// The diagram as the whole system: every Source plays its signal, every Sink
+// is recorded, Controllers and Observers run their variants. Returns
+// { t, signals: { name: values }, info }; info.designs is the status of each
+// running designed variant, computed through opts.designs (a design store;
+// the shared synchronous one by default).
+function simulateSystem(diagram, signals, sim, { designs } = {}) {
   const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
   const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
-  const el = compileDiagram(diagram, 'plant', { sources, standalone: true });
+  const el = compileDiagram(diagram, 'plant', { sources, standalone: true, designs });
   const warnings = [...el.warnings];
   // Steps no longer than a controller's sample time, so it samples on time.
   const hmax = Math.min(el.bound > 0 ? 0.5 / el.bound : Ts, el.minTs);
@@ -4071,7 +4401,7 @@ function simulateSystem(diagram, signals, sim) {
       el.record();
     }
   }
-  return { t, signals: out, info: { h, substeps: m, unstable, warnings } };
+  return { t, signals: out, info: { h, substeps: m, unstable, warnings, designs: el.designs } };
 }
 
 return { simulate, simulateSystem };
@@ -4891,16 +5221,18 @@ function referenceTrace(project, name = 'r') {
   return { t, r: v };
 }
 
-// The diagram as the whole system (no controller yet): every Source and Sink.
-function evaluateSystem(project) {
+// The diagram as the whole system: every Source and Sink, with its
+// Controllers running. opts.designs: the design store (simulateSystem);
+// info.designs lists what the designed variants computed.
+function evaluateSystem(project, { designs } = {}) {
   const plant = project.system.plant;
   const sim = simOf(project);
   if (plant?.type !== 'diagram') {
     const signals = {};
     for (const name of Object.keys(project.system.signals)) signals[name] = referenceTrace(project, name).r;
-    return { t: referenceTrace(project).t, signals, info: { warnings: [] } };
+    return { t: referenceTrace(project).t, signals, info: { warnings: [], designs: [] } };
   }
-  return simulateSystem(plant.diagram, project.system.signals, sim);
+  return simulateSystem(plant.diagram, project.system.signals, sim, { designs });
 }
 
 // The least-used palette slot, earliest first, so a colour follows its
@@ -8003,6 +8335,7 @@ const ABOUT = {
   off: 'No control: the plant gets u = 0. Shows what the plant does on its own.',
   pid: 'The workhorse. P reacts to the error, I removes what is left, D damps (on the measurement, filtered by Tf). b weights the reference in P; the prefilter Tr (Vorfilter) smooths reference jumps; u min/max are the actuator limits, with anti-windup.',
   stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
+  lqr: 'State feedback whose gains are computed from the plant as it is wired: the page linearises it at its origin and solves the discrete LQR problem. Q weighs the error of each measurement, R the effort; every state must be measured. Change the plant and the gains follow.',
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
   kalman: 'Predicts the states with the model, then corrects with the measurements, weighing them by the noise you expect: a large R trusts the model, a large Q trusts the measurements. The gain is the steady-state Kalman gain.',
@@ -8368,6 +8701,7 @@ function startApp() {
     acqKey = key;
     loopNote = '';
     app.systemError = '';
+    app.designStatuses = [];
     if (loopReady(p)) {
       const { t, r } = referenceTrace(p);
       const signals = { r };
@@ -8385,6 +8719,7 @@ function startApp() {
     try {
       const sys = evaluateSystem(p);
       acq = { t: sys.t, signals: sys.signals };
+      app.designStatuses = sys.info.designs ?? [];
     } catch (err) {
       app.systemError = err.message;
       const signals = {};
@@ -8759,6 +9094,8 @@ function startApp() {
     autoScale: () => app.autoScale(),
     run: () => { display.setMode('run'); controls.render('run'); },
     stop: () => { display.setMode('stop'); controls.render('stop'); },
+    // What each running designed variant computed from the plant (status, rows, errors).
+    designs: () => { acquire(); return structuredClone(app.designStatuses ?? []); },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
   };
 

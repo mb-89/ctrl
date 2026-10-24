@@ -15,8 +15,9 @@ import { BLOCKS, blockDef, normalizeBlock } from './blocks.js';
 import { tf2ss, rootBound } from './poly.js';
 import { gaussAt } from './signals.js';
 import { compileExpr } from './expr.js';
-import { normalizeVariant, makeLaw } from './controllers.js';
+import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
 import { OBSERVERS } from './observers.js';
+import { SYNC_DESIGNS } from './design.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -128,7 +129,7 @@ export const ELEMENTS = {
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
-const VARIANT_LIBS = { controller: undefined, observer: OBSERVERS };
+const VARIANT_LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
 
 const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
@@ -359,6 +360,9 @@ const NONE = [];
 // diagram is the whole system (no Out needed; an In reads 0).
 // opts.laws === false: Controllers and Observers make no laws and put out 0
 // (the Plant tab's structure check: editing the canvas never designs).
+// opts.designs: the design store a designed variant gets its values from
+// (design.js; SYNC_DESIGNS when none is given). el.designs lists the status
+// of each running designed variant.
 // opts.mode === 'model': the plant as a block sees it, for designs
 // (design/output/designs.md). The diagram is the whole system and no laws
 // are made; dead times pass straight through, a quantizer is the identity,
@@ -435,7 +439,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (b.type === 'controller' || b.type === 'observer') {
         const lib = VARIANT_LIBS[b.type];
         const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
-        const k = add({ kind: 'ctrl', name, idPath, ft: false, observer: b.type === 'observer', variant: v, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: laws ? makeLaw(v, b.params.Ts, lib) : null, next: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
+        const k = add({ kind: 'ctrl', name, idPath, ft: false, observer: b.type === 'observer', variant: v, lib, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: null, next: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
         nodes[k].taps = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j, see: -1 })) : [];
         outs[b.id] = b.type === 'observer' ? nodes[k].taps : [k];
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
@@ -522,6 +526,29 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   // instant already sees the new estimate.
   const ctrls = nodes.filter((nd) => nd.kind === 'ctrl').sort((a, b) => b.observer - a.observer);
   const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
+
+  // Laws, made once every node exists. A hand variant is made from its
+  // parameters; a designed one from the values its design computes from the
+  // plant this block sees (a model-mode compile of this same diagram, so a
+  // design never sees a different plant from the one that runs). Observers
+  // come first, so a Controller's design can look through a designed one.
+  const designs = [];
+  if (laws) {
+    let job = null;
+    for (const nd of ctrls) {
+      if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
+      // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
+      job ??= (opts.designs ?? SYNC_DESIGNS).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }));
+      const inputs = blockInputNames(diagram, nd.idPath);
+      // What u is called: the Sink that records a Controller's output, or what feeds an Observer's u.
+      const sink = nd.observer ? null : probeList.find(([, k]) => nodes[k].kind === 'pass' && nodes[k].inputs[0] === nd.i);
+      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: nd.observer ? inputs[0] : sink?.[0] ?? 'u' };
+      const status = job.resolve(block, nd.variant, nd.lib);
+      nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
+      designs.push(status);
+    }
+    job?.end();
+  }
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
   const histAt = (hist, tau, y0 = 0) => {
@@ -582,7 +609,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   }
 
   const self = {
-    n, bound, warnings, minTs, states,
+    n, bound, warnings, minTs, states, designs,
     setStep(step) { h = step; },
     // Called at each completed step with the state there: a controller whose
     // sample is due reads its inputs and sets its held output; the outputs are

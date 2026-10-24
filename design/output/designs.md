@@ -8,13 +8,13 @@ Reader: whoever builds or changes a designed controller or observer, the plant m
 
 | Module | Role |
 |---|---|
-| `core/diagram.js` | The compiler. In `model` mode it gives the plant a block sees (`el.seen`); later it resolves designs while it compiles |
+| `core/diagram.js` | The compiler. In `model` mode it gives the plant a block sees (`el.seen`); in a normal compile it makes the laws once every node exists, observers first, and asks the design store for the values of each running designed variant (`el.designs`: their statuses) |
 | `core/linearize.js` | `DesignError` (code, sentence, hint); operating points (`parseOp`, `opLabel`, `operatingPoint`), `trim`, `linearize`, `firstOrderFit`, on a Model. Pure numerics |
 | `core/planner.js` | Swing-up plan, along-plan linearisation, TV-LQR gains, verify run. In the bundle; reworked in step 8 |
-| `core/design.js` (to come) | `DesignError`, keys, the memory-only design store, LQR / PI / Kalman / trajectory design helpers |
+| `core/design.js` | Keys (`canonical`, `hashKey`, `plantKey`), the memory-only design store (`createDesignStore`, `SYNC_DESIGNS`), `lqrDesign`; the PI, Kalman and trajectory helpers come with their types |
 | `core/controllers.js`, `core/observers.js` | Hand types unchanged; designed types `lqr`, `swingUpLqr`, `scheduledPI`, `trajectory`, `kalman` |
 
-`design.js` never imports `diagram.js`: the diagram hands the store a closure that compiles the model.
+`design.js` never imports `diagram.js`: the diagram hands the store a closure that compiles the model (from a copy of the diagram, since the store keeps it). `DesignError` lives in `linearize.js`, the lowest module that raises one, because the bundle cannot re-export a name; `design.js`, the types and tests import it from there. Bundle order: `… goal, linearize, planner, design, controllers, observers, diagram …`.
 
 ## The plant a block sees
 
@@ -77,17 +77,17 @@ Labels read `origin (all states 0, u = 0)`, `h = 0.45 m, q = 0.297`, `t = 2.10 s
 
 ## Designed variants
 
-A designed type adds `designed: true`, `version`, `computes` (keys refused in a file: "lqr computes K and kr from Q and R; to set them by hand use Copy as numbers"), `design(p, ctx)` (pure, synchronous; may return pending), `make(p, Ts, values)` (values null → u = 0), `manual(p, values)` (Copy as numbers) and `compatible(a, b)`.
+A designed type adds `designed: true`, `version`, `computes` (keys refused in a file: "lqr computes K and kr from the plant and Q, R and track; to set them by hand use Copy as numbers (a State feedback variant)"), `twin` (the hand type Copy as numbers makes), `design(p, ctx)` (pure, synchronous; throws `DesignError`; may return pending once the page store is async), `make(p, Ts, values)` (values null → u = 0), `manual(p, values)` (Copy as numbers) and, for the page, `compatible(a, b)`. `makeLaw(variant, Ts, lib, values)`. Parameters may be `nullable` (vectors too: null means "from the plant"), `int`, `positive`, and vectors take a `min`. `ctx` = `{ Ts, idPath, name, kind, inputs, model(), linearize(op, limits), trim(targets, limits) }`; `heavy` comes with the plan (step 9).
 
 | Type | Inputs | Computes |
 |---|---|---|
-| `lqr` | Q (one per measurement), R, track, Tr, limits | Discrete LQR at the origin: K in measurement order, kr, poles. Needs every state measured |
+| `lqr` (built) | Q (one per measurement, or one for all), R, track (the measurement r applies to; 0 none), Tr, limits | Discrete LQR at the origin: K = Kx C⁻¹ in measurement order, kr (static gain 1 from r to the tracked measurement; equals K[0] for the carts), the slowest pole. Refuses `states-not-measured` (naming what is missing: "sees x, θ, v but not ω (cart and pole)"), `q-length`, `not-at-rest`, `not-stabilisable`, `no-states`, `too-many-states`. Reproduces the gains the library held (K_SINGLE, K_TRIPLE, K_TRIPLE_GENTLE) to the digits they were stored with (within 0.02 %) |
 | `swingUpLqr` | the hand energy-pump gains, Q, R, limits | The catch gains of the swing-up by LQR |
 | `scheduledPI` | levels `at`, Tcl, Tr, limits | Kp, Ki by pole cancellation at each trimmed level, and u0 at the start level |
 | `trajectory` | T, segments, planShare, start, Q, R, limits | The swing-up plan (force held per Ts), TV-LQR along it, the upright LQR, a verify run |
 | `kalman` (observer) | Q, R (empty: from the sensor blocks) | L by the discrete Riccati equation; the states each estimate stands for |
 
-The store (`createDesignStore`) caches in memory only, keyed by the type, its version, the variant's inputs, Ts, the plant (without positions, Sinks' places or other variants) and the block's id path. The plan's key leaves out Q and R, so tuning Q re-runs only TV-LQR. In Node the store runs synchronously; in the page the plan runs in short slices pumped by a MessageChannel, newest job wins, and the display shows u = 0 (or the previous plan, labelled) until it is ready.
+The store (`createDesignStore`) caches in memory only (64 designs, 8 model compiles, LRU), keyed by the type, its version, the variant's inputs, Ts, the plant (`plantKey`: without places, flips, Sinks' names or the variants of Controller blocks; Observers whole) and the block's id path. Failed designs are cached too: the same inputs fail the same way. compileDiagram calls `store.begin(diagram, compileModel)` once per compile with a designed variant running, then `job.resolve(block, variant, lib)` per block, observers first: a designed observer's `values.stateIndex` lets a later Controller look through it. Each resolve gives a status `{ path, block, variant, type, key, status, ms, cached, at, seen, rows, warnings, error, progress }` whose `values` are not enumerable (a status prints and serialises without numbers). `seen` ("F → x, θ, v, ω · 4 states (x, v, θ, ω)") is built from the live labels, so renaming a Sink renames u without a re-design. `simulateSystem(…, { designs })` and `evaluateSystem(p, { designs })` take a store (default `SYNC_DESIGNS`) and return the statuses as `info.designs`; the page lists them with `window.loopTuner.designs()`. A cache hit costs about 0.2 ms per compile (the triple pendulum's key). The plan's key leaves out Q and R, so tuning Q re-runs only TV-LQR. In Node the store runs synchronously; in the page the plan runs in short slices pumped by a MessageChannel, newest job wins, and the display shows u = 0 (or the previous plan, labelled) until it is ready.
 
 The Controller tab gets a read-only **Computed** box under the parameters (method, operating point, status, time or "cached", the plant seen, the values, errors with a hint, Copy as numbers, Cancel / Plan). `node cli.mjs design <project>` prints the same; `window.loopTuner.whenDesigned()` resolves when nothing is pending.
 
@@ -99,8 +99,8 @@ The Controller tab gets a read-only **Computed** box under the parameters (metho
 | 1 | `ode.states`, `ode.make` for the physics blocks; `planner.js` in the bundle | Built |
 | 2 | Model mode in `diagram.js`, `el.seen`, `laws: false`, n = 1 realisation, `blockInputNames` in core, nullable Dead time `y0` (the tank's pipe has none baked in) | Built |
 | 3 | `linearize.js` | Built (tests 3, 4 in `test/linearize.test.mjs`) |
-| 4 | `design.js`, the store, the `lqr` type, designs resolved while compiling | Next |
-| 5 | `swingUpLqr`, `scheduledPI` and their manual twins | |
+| 4 | `design.js`, the store (sync), the `lqr` type, designs resolved while compiling, `info.designs`, `loopTuner.designs()` | Built (tests 5, 7 without the plan, 8 for lqr, and the observer look-through, in `test/design.test.mjs`). The Controller tab lists LQR; its Computed box is step 7 |
+| 5 | `swingUpLqr`, `scheduledPI` and their manual twins | Next |
 | 6 | `plants.js` migrated; K constants deleted; guard test | |
 | 7 | Controller tab: Computed box, glyphs, Copy as numbers, library groups | |
 | 8 | Planner rework | |

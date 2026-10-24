@@ -7,6 +7,20 @@
 //
 // Each runs digitally at the block's sample time Ts. make(params, Ts) returns
 // { step(inputs) -> u }, called once per sample with the inputs at that instant.
+//
+// A designed type computes its numbers from the plant instead of being given
+// them (design/output/designs.md). Its params are inputs only (weights,
+// levels, limits); it adds
+//   designed: true, version          version enters the cache key; bump it when results change
+//   computes: ['K', 'kr']            refused in params: a file never holds computed numbers
+//   twin: 'stateFeedback'            the hand type "Copy as numbers" turns it into
+//   design(p, ctx)                   → { values, rows, warnings?, quality? }; sees the plant
+//                                    only through ctx (design.js), throws DesignError
+//   make(p, Ts, values)              the law from plain data; values null → u = 0
+//   manual(p, values)                → { type, params } of the twin: Copy as numbers
+//   compatible?(a, b)                may old values run on a changed plant (later, for the page)
+
+import { lqrDesign } from './design.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
@@ -14,6 +28,7 @@ const LIMITS = [num('umin', 'u min', -Infinity, { unit: 'u' }), num('umax', 'u m
 const PREFILTER = num('Tr', 'Prefilter Tr', 0, { unit: 's', min: 0, help: 'Vorfilter: a first-order lag on r; 0 is off' });
 const START = num('u0', 'Start output u0', 0, { unit: 'u', help: 'the integral part at t = 0, so a loop can start in balance' });
 
+const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
 
@@ -49,10 +64,13 @@ function pidCore(Ts, u0 = 0) {
   };
 }
 
+// The law of a designed variant without values (pending, or failed): u = 0.
+const OFF = { step: () => 0 };
+
 export const CONTROLLERS = {
   off: {
     label: 'Off', summary: 'u = 0', params: [],
-    make: () => ({ step: () => 0 }),
+    make: () => OFF,
   },
   pid: {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
@@ -75,6 +93,22 @@ export const CONTROLLERS = {
         },
       };
     },
+  },
+  lqr: {
+    // Discrete LQR at the origin of the plant the block sees, which must be an
+    // equilibrium with every state measured (design.js, lqrDesign).
+    label: 'LQR', summary: 'u = kr r − K · y, K from the plant (LQR)',
+    designed: true, version: 1, computes: ['K', 'kr'], twin: 'stateFeedback',
+    params: [vec('Q', 'Weights Q', [1], { min: 0, help: 'what an error in each measurement costs, one per measurement; one value weighs them all' }), num('R', 'Effort weight R', 1, { positive: true, help: 'how much u costs: larger is gentler' }), num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }), PREFILTER, ...LIMITS],
+    design(p, ctx) {
+      const d = lqrDesign(ctx.linearize('origin'), { Q: p.Q, R: p.R, track: p.track, Ts: ctx.Ts });
+      return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
+    },
+    make(p, Ts, values) {
+      if (!values) return OFF;
+      return CONTROLLERS.stateFeedback.make({ K: values.K, kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax }, Ts);
+    },
+    manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax } }),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -127,25 +161,36 @@ export const CONTROLLERS = {
 export const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
 
 function normalizeParam(spec, v, where) {
+  if (spec.nullable && (v === null || v === '')) return null;
   v ??= spec.default;
   if (spec.kind === 'vector') {
+    if (v === null && spec.nullable) return null;   // e.g. "from the plant"
     if (!Array.isArray(v) || !v.length || !v.every((x) => Number.isFinite(Number(x)))) throw new Error(`${where}.${spec.key}: a list of numbers`);
+    if (spec.min !== undefined && v.some((x) => Number(x) < spec.min)) throw new Error(`${where}.${spec.key}: each at least ${spec.min}`);
     return v.map(Number);
   }
   if (v === null || v === '' || v === 'inf' || v === 'Infinity' || v === '-inf' || v === '-Infinity') return v && String(v).startsWith('-') ? -Infinity : spec.default;
-  const n = Number(v);
+  let n = Number(v);
   if (Number.isNaN(n)) throw new Error(`${where}.${spec.key}: expected a number`);
+  if (spec.int) n = Math.round(n);
   if (spec.min !== undefined && n < spec.min) throw new Error(`${where}.${spec.key}: at least ${spec.min}`);
+  if (spec.positive && !(n > 0)) throw new Error(`${where}.${spec.key}: above 0`);
   return n;
 }
 
 // One variant: { name, type, params }. Unknown types and bad values fail with
-// the valid choices named.
+// the valid choices named. A designed type's computed numbers are refused:
+// a file holds inputs only.
 // lib: the library the variant comes from (CONTROLLERS, or OBSERVERS for an
 // Observer block); both share this format.
 export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
   const def = lib[v?.type];
   if (!def) throw new Error(`${where}.type: one of ${Object.keys(lib).join(', ')}`);
+  const given = (def.computes ?? []).filter((k) => v.params?.[k] !== undefined);
+  if (given.length) {
+    const inputs = def.params.map((p) => p.key).filter((k) => !/^(umin|umax|Tr)$/.test(k));
+    throw new Error(`${where}.params.${given[0]}: ${v.type} computes ${and(def.computes)} from the plant and ${and(inputs)}; to set them by hand use Copy as numbers (a ${lib[def.twin]?.label ?? def.twin} variant)`);
+  }
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
   if (params.umin > params.umax) [params.umin, params.umax] = [params.umax, params.umin];
@@ -154,8 +199,9 @@ export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
   return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
 }
 
-// The law of a block's active variant.
-export function makeLaw(variant, Ts, lib = CONTROLLERS) {
-  return lib[variant.type].make(variant.params, Ts);
+// The law of a block's active variant; a designed one runs on the values its
+// design computed (null: u = 0).
+export function makeLaw(variant, Ts, lib = CONTROLLERS, values = null) {
+  return lib[variant.type].make(variant.params, Ts, values);
 }
 

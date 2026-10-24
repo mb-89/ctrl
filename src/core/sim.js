@@ -219,13 +219,16 @@ function gaussian(seed) {
   };
 }
 
-// The diagram as the whole system, before any controller: every Source plays
-// its signal, every Sink is recorded. Returns { t, signals: { name: values } }.
-export function simulateSystem(diagram, signals, sim) {
+// The diagram as the whole system: every Source plays its signal, every Sink
+// is recorded, Controllers and Observers run their variants. Returns
+// { t, signals: { name: values }, info }; info.designs is the status of each
+// running designed variant, computed through opts.designs (a design store;
+// the shared synchronous one by default).
+export function simulateSystem(diagram, signals, sim, { designs } = {}) {
   const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
   const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
-  const el = compileDiagram(diagram, 'plant', { sources, standalone: true });
+  const el = compileDiagram(diagram, 'plant', { sources, standalone: true, designs });
   const warnings = [...el.warnings];
   // Steps no longer than a controller's sample time, so it samples on time.
   const hmax = Math.min(el.bound > 0 ? 0.5 / el.bound : Ts, el.minTs);
@@ -265,5 +268,5 @@ export function simulateSystem(diagram, signals, sim) {
       el.record();
     }
   }
-  return { t, signals: out, info: { h, substeps: m, unstable, warnings } };
+  return { t, signals: out, info: { h, substeps: m, unstable, warnings, designs: el.designs } };
 }

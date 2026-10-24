@@ -257,16 +257,18 @@ export function referenceTrace(project, name = 'r') {
   return { t, r: v };
 }
 
-// The diagram as the whole system (no controller yet): every Source and Sink.
-export function evaluateSystem(project) {
+// The diagram as the whole system: every Source and Sink, with its
+// Controllers running. opts.designs: the design store (simulateSystem);
+// info.designs lists what the designed variants computed.
+export function evaluateSystem(project, { designs } = {}) {
   const plant = project.system.plant;
   const sim = simOf(project);
   if (plant?.type !== 'diagram') {
     const signals = {};
     for (const name of Object.keys(project.system.signals)) signals[name] = referenceTrace(project, name).r;
-    return { t: referenceTrace(project).t, signals, info: { warnings: [] } };
+    return { t: referenceTrace(project).t, signals, info: { warnings: [], designs: [] } };
   }
-  return simulateSystem(plant.diagram, project.system.signals, sim);
+  return simulateSystem(plant.diagram, project.system.signals, sim, { designs });
 }
 
 // The least-used palette slot, earliest first, so a colour follows its

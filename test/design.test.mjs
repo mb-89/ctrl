@@ -1,0 +1,209 @@
+// The design store and the first designed type (lqr): design/output/designs.md,
+// tests 5, 7 and 8 of designs-in-the-page.md §11.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { normalizeDiagram, compileDiagram } from '../src/core/diagram.js';
+import { CONTROLLERS, normalizeVariant } from '../src/core/controllers.js';
+import { OBSERVERS } from '../src/core/observers.js';
+import { canonical, hashKey, plantKey, createDesignStore } from '../src/core/design.js';
+import { normalizeProject, evaluateSystem, autoTimebase } from '../src/core/project.js';
+import { SYSTEM_LIBRARY, applySystem } from '../src/core/systems.js';
+import { DEFAULT_PROJECT } from '../src/core/examples.js';
+
+// The gains the library held before they were computed in the page: discrete
+// LQR at Ts = 10 ms at the upright rest, in measurement order (x, θ…, v, ω…).
+const K_SINGLE = [-9.177, -63.18, -10.33, -13.34];
+const K_TRIPLE = [-6.9896, -497.8, 1400.5, -1011.7, -12.018, -18.079, 79.602, -102.41];
+const K_TRIPLE_GENTLE = [-2.3, -417, 1050, -686, -4.496, -14.83, 62.84, -67.32];
+const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
+
+// A library system as a project; variants, if given, replace its Controller's.
+function project(name, variants, variant = 0) {
+  const p = normalizeProject(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY.find((s) => s.name.startsWith(name)), ['input', 'plant']));
+  p.scope.timebase = autoTimebase(p);
+  if (variants) {
+    const c = ctrlOf(p);
+    c.variants = variants.map((v, i) => normalizeVariant(v, `variants[${i}]`));
+    c.variant = variant;
+  }
+  return p;
+}
+const ctrlOf = (p) => p.system.plant.diagram.blocks.find((b) => b.id === 'ctrl');
+const lqr = (Q, R, extra = {}) => ({ name: 'LQR', type: 'lqr', params: { Q, R, ...extra } });
+// The status of the one designed variant of a project, in a fresh store.
+const statusOf = (p, store = createDesignStore()) => compileDiagram(p.system.plant.diagram, 'plant', { standalone: true, designs: store }).designs[0];
+
+test('design keys: canonical JSON, a short hash, and what a design depends on in a diagram', () => {
+  assert.equal(canonical({ b: 1, a: [-0, Infinity, -Infinity, null], c: undefined }), '{"a":[0,"inf","-inf",null],"b":1}');
+  assert.equal(canonical(new Float64Array([1.5, -0])), '[1.5,0]');
+  assert.equal(canonical({ x: { z: 1, y: 2 } }), canonical({ x: { y: 2, z: 1 } }));
+  assert.match(hashKey('a'), /^[0-9a-f]{12}$/);
+  assert.equal(hashKey('the same'), hashKey('the same'));
+  assert.notEqual(hashKey('a'), hashKey('b'));
+  const d = project('Pendulum swing-up').system.plant.diagram;
+  const key = plantKey(d);
+  const changed = (fn) => { const e = structuredClone(d); fn(e); return plantKey(e) !== key; };
+  const blk = (e, id) => e.blocks.find((b) => b.id === id);
+  assert.ok(!changed((e) => { blk(e, 'cart').x += 40; blk(e, 'cart').flip = true; }), 'place and flip');
+  assert.ok(!changed((e) => { blk(e, 'F').params.name = 'force'; }), 'a Sink\'s name');
+  assert.ok(!changed((e) => { blk(e, 'ctrl').variant = 2; blk(e, 'ctrl').variants[0].params.kE = 5; }), 'Controller variants');
+  assert.ok(changed((e) => { blk(e, 'cart').params.m = 0.3; }), 'a physics parameter');
+  assert.ok(changed((e) => { blk(e, 'ctrl').params.Ts = 0.02; }), 'the Controller\'s sample time');
+  assert.ok(changed((e) => { e.wires.pop(); }), 'wiring');
+});
+
+test('LQR from the plant reproduces the gains the library held, to 0.1 %; it refuses what it cannot do', () => {
+  // Test 5.
+  for (const [name, Q, R, Kref] of [['Pendulum swing-up', [10, 50, 1, 1], 0.1, K_SINGLE], ['Triple', Q_TRIPLE, 0.1, K_TRIPLE], ['Triple', Q_TRIPLE, 1, K_TRIPLE_GENTLE]]) {
+    const st = statusOf(project(name, [lqr(Q, R, { umin: -40, umax: 40 })]));
+    assert.equal(st.status, 'ok', JSON.stringify(st.error));
+    const { K, kr } = st.values;
+    assert.equal(K.length, Kref.length);
+    K.forEach((k, i) => assert.ok(Math.abs(k - Kref[i]) <= 1e-3 * Math.abs(Kref[i]), `${name} R ${R}: K[${i}] = ${k}, not ${Kref[i]}`));
+    assert.ok(Math.abs(kr - K[0]) <= 1e-6 * Math.abs(K[0]), `kr ${kr}, K[0] ${K[0]}: x follows r`);
+  }
+  // What the status says, and that it carries no numbers into JSON.
+  const st = statusOf(project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1)]));
+  assert.equal(st.seen, 'F → x, θ, v, ω · 4 states (x, v, θ, ω)');
+  assert.equal(st.at, 'origin (all states 0, u = 0)');
+  assert.deepEqual(st.rows[0].labels, ['x', 'θ', 'v', 'ω']);
+  assert.equal(st.rows[1].note, 'x follows r');
+  assert.match(st.rows[2].value, /rad\/s, ζ 0\.\d+/);
+  assert.match(st.key, /^[0-9a-f]{12}$/);
+  assert.deepEqual([st.path, st.block, st.variant, st.type, st.cached, st.error], ['ctrl', 'controller', 'LQR', 'lqr', false, null]);
+  assert.ok(!('values' in JSON.parse(JSON.stringify(st))));
+  // One Q for all measurements.
+  assert.deepEqual(statusOf(project('Pendulum swing-up', [lqr([1], 1)])).values.K, statusOf(project('Pendulum swing-up', [lqr([1, 1, 1, 1], 1)])).values.K);
+
+  // ω not wired: refused, naming ω; the controller then puts out 0 and the run goes on.
+  const p = project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1)]);
+  p.system.plant.diagram.wires = p.system.plant.diagram.wires.filter((w) => w.to !== 'ctrl:4');
+  const res = evaluateSystem(p, { designs: createDesignStore() });
+  const [bad] = res.info.designs;
+  assert.equal(bad.status, 'error');
+  assert.equal(bad.error.code, 'states-not-measured');
+  assert.match(bad.error.message, /^LQR needs every state measured\. This block sees x, θ, v but not ω \(cart and pole\)\.$/);
+  assert.match(bad.error.hint, /wire ω to an input, or add a Kalman Observer/);
+  assert.equal(bad.values, null);
+  assert.ok(res.signals.F.every((v) => v === 0), 'u = 0');
+  assert.ok(res.signals.theta.every(Number.isFinite));
+  // Q of the wrong length.
+  const q3 = statusOf(project('Pendulum swing-up', [lqr([1, 2, 3], 1)]));
+  assert.equal(q3.error.code, 'q-length');
+  assert.match(q3.error.message, /Q has 3 values; this block has 4 measurements \(x, θ, v, ω\)/);
+  // The motor measures its angle only.
+  const motor = statusOf(project('DC motor', [lqr([1], 1)]));
+  assert.equal(motor.error.code, 'states-not-measured');
+  assert.match(motor.error.message, /sees angle but not Motor\/armature and Motor\/load\./);
+  assert.match(motor.error.hint, /^wire armature and load to inputs, or add a Kalman Observer$/);
+});
+
+test('the design store: a design runs again only when what it depends on changes', () => {
+  // Test 7, without the trajectory part. A second, unrelated Controller
+  // shows that switching another block's variant does not re-design.
+  const p = project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1, { umin: -25, umax: 25 }), { type: 'pid', params: { Kp: 2 } }]);
+  const d = p.system.plant.diagram;
+  d.blocks.push({ id: 'c2', type: 'controller', name: 'other', params: { inputs: 2, Ts: 0.01 }, variants: [{ type: 'pid', params: { Kp: 1 } }, { type: 'off' }], x: 0, y: 400 },
+    { id: 'i2', type: 'integrator', params: { K: 1 }, x: 120, y: 400 });
+  d.wires.push({ from: 'r', to: 'c2' }, { from: 'c2', to: 'i2' }, { from: 'i2', to: 'c2:1' });
+  p.system.plant.diagram = normalizeDiagram(d);
+  const blk = (id) => p.system.plant.diagram.blocks.find((b) => b.id === id);
+  const store = createDesignStore();
+  const run = () => evaluateSystem(p, { designs: store }).info.designs;
+  const runs = () => store.stats().runs;
+
+  const [first] = run();
+  assert.equal(first.status, 'ok');
+  assert.equal(runs(), 1);
+  const [again] = run();
+  assert.equal(runs(), 1);
+  assert.equal(store.stats().hits, 1, 'a second compile is a hit');
+  assert.ok(again.cached && !first.cached);
+  assert.equal(again.key, first.key);
+  assert.deepEqual(again.values, first.values);
+
+  // None of these re-design.
+  blk('cart').x += 60; run();
+  blk('F').params.name = 'force';
+  assert.match(run()[0].seen, /^force → /, 'a renamed Sink names u at once');
+  p.system.signals.r.components.push({ type: 'step', params: { amplitude: 0.2, time: 1 } }); run();
+  p.scope.timebase.scale *= 2; run();
+  blk('ctrl').variants[1].params.Kp = 3; run();
+  blk('c2').variant = 1; run();
+  assert.equal(runs(), 1, 'moving, renaming a Sink, the signal r, the timebase, another variant, another Controller');
+
+  // These do.
+  const rerun = (what, fn) => { const before = runs(); fn(); const [st] = run(); assert.equal(runs(), before + 1, what); assert.ok(!st.cached, what); return st; };
+  const heavier = rerun('the bob\'s mass', () => { blk('cart').params.m = 0.3; });
+  assert.notDeepEqual(heavier.values.K, first.values.K);
+  rerun('the start angle', () => { blk('cart').params.theta0 = 3; });
+  rerun('Ts', () => { blk('ctrl').params.Ts = 0.02; });
+  rerun('the variant\'s own Q', () => { blk('ctrl').variants[0].params.Q = [10, 60, 1, 1]; });
+  // Back to an earlier design: from the cache.
+  blk('ctrl').variants[0].params.Q = [10, 50, 1, 1];
+  blk('ctrl').params.Ts = 0.01;
+  blk('cart').params.theta0 = Math.PI;
+  blk('cart').params.m = 0.2;
+  const before = runs();
+  assert.deepEqual(run()[0].values, first.values);
+  assert.equal(runs(), before);
+});
+
+test('lqr in a file holds inputs only; computed numbers are refused; Copy as numbers runs bit for bit', () => {
+  // Test 8, for lqr.
+  const p = project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1, { umin: -25, umax: 25 }), { name: 'Off', type: 'off' }]);
+  const json = JSON.stringify(p);
+  assert.ok(!/"K"|"kr"/.test(json), 'no computed gains in the file');
+  assert.deepEqual(normalizeProject(JSON.parse(json)), p, 'round trip');
+  assert.deepEqual(ctrlOf(p).variants[0].params, { Q: [10, 50, 1, 1], R: 0.1, track: 1, Tr: 0, umin: -25, umax: 25 });
+  const withK = JSON.parse(json);
+  ctrlOf(withK).variants[0].params.K = [1, 2, 3, 4];
+  assert.throws(() => normalizeProject(withK), /variants\[0\]\.params\.K: lqr computes K and kr from the plant and Q, R and track; to set them by hand use Copy as numbers \(a State feedback variant\)/);
+  assert.throws(() => normalizeVariant({ type: 'lqr', params: { kr: 1 } }), /Copy as numbers/);
+  assert.throws(() => normalizeVariant({ type: 'lqr', params: { R: 0 } }), /R: above 0/);
+  assert.throws(() => normalizeVariant({ type: 'lqr', params: { Q: [1, -1] } }), /Q: each at least 0/);
+  assert.equal(normalizeVariant({ type: 'lqr', params: { track: 1.6 } }).params.track, 2);
+
+  // Copy as numbers: the twin is a State feedback variant with the computed
+  // numbers, and runs exactly as the designed one.
+  const store = createDesignStore();
+  const designed = evaluateSystem(p, { designs: store });
+  const [st] = designed.info.designs;
+  const twin = CONTROLLERS.lqr.manual(ctrlOf(p).variants[0].params, st.values);
+  assert.equal(twin.type, 'stateFeedback');
+  const c = ctrlOf(p);
+  c.variants.splice(1, 0, normalizeVariant({ name: 'LQR (numbers)', ...twin }));
+  c.variant = 1;
+  const copied = evaluateSystem(normalizeProject(JSON.parse(JSON.stringify(p))), { designs: store });
+  assert.deepEqual(copied.info.designs, []);
+  for (const name of Object.keys(designed.signals)) assert.deepEqual(copied.signals[name], designed.signals[name], name);
+  assert.ok(Math.abs(designed.signals.F[100]) > 0.1, 'and it does something');
+});
+
+test('designs resolve observers first: a Controller looks through a designed observer', () => {
+  // A stand-in for the designed Kalman filter (step 11): its design says
+  // which true state each estimate stands for. An LQR on the estimates then
+  // designs the same K as on the states themselves.
+  OBSERVERS.truth = {
+    label: 'Truth', summary: 'x̂ = x (test)', params: [], designed: true, version: 1, computes: [],
+    design(p, ctx) {
+      const states = ctx.model().states;
+      return { values: { stateIndex: ['x', 'θ', 'v', 'ω'].map((n) => states.find((s) => s.name === n).index) }, rows: [] };
+    },
+    make: () => ({ step: () => new Float64Array(4) }),
+  };
+  try {
+    const p = project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1)]);
+    const d = p.system.plant.diagram;
+    d.blocks.push({ id: 'obs', type: 'observer', name: 'estimator', params: { inputs: 3, outputs: 4, Ts: 0.01 }, variants: [{ type: 'truth' }], x: 200, y: 300 });
+    d.wires = d.wires.filter((w) => !w.to.startsWith('ctrl:'));
+    d.wires.push({ from: 'ctrl', to: 'obs' }, { from: 'cart', to: 'obs:1' }, { from: 'cart:1', to: 'obs:2' },
+      ...[0, 1, 2, 3].map((j) => ({ from: j ? `obs:${j}` : 'obs', to: `ctrl:${j + 1}` })));
+    const el = compileDiagram(normalizeDiagram(d), 'plant', { standalone: true, designs: createDesignStore() });
+    assert.deepEqual(el.designs.map((s) => [s.path, s.status]), [['obs', 'ok'], ['ctrl', 'ok']]);
+    assert.equal(el.designs[0].seen, 'controller → x, θ · 4 states (x, v, θ, ω)');
+    const direct = statusOf(project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1)]));
+    assert.deepEqual(el.designs[1].values.K, direct.values.K);
+  } finally { delete OBSERVERS.truth; }
+});

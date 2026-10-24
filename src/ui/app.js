@@ -71,6 +71,7 @@ function startApp() {
     acqKey = key;
     loopNote = '';
     app.systemError = '';
+    app.designStatuses = [];
     if (loopReady(p)) {
       const { t, r } = referenceTrace(p);
       const signals = { r };
@@ -88,6 +89,7 @@ function startApp() {
     try {
       const sys = evaluateSystem(p);
       acq = { t: sys.t, signals: sys.signals };
+      app.designStatuses = sys.info.designs ?? [];
     } catch (err) {
       app.systemError = err.message;
       const signals = {};
@@ -462,6 +464,8 @@ function startApp() {
     autoScale: () => app.autoScale(),
     run: () => { display.setMode('run'); controls.render('run'); },
     stop: () => { display.setMode('stop'); controls.render('stop'); },
+    // What each running designed variant computed from the plant (status, rows, errors).
+    designs: () => { acquire(); return structuredClone(app.designStatuses ?? []); },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
   };
 
