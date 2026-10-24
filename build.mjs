@@ -67,6 +67,7 @@ const HELP = `
   <span>Drag</span><span>Pan. Click a trace or its marker first to move and zoom that line alone; <kbd>Esc</kbd> releases it.</span>
   <span><kbd>Shift</kbd> + drag</span><span>Zoom to the marked box; a flat band zooms time only, a narrow band values only</span>
   <span>Separators</span><span>Drag the gaps between display, controls and tabs to resize; double-click to reset</span>
+  <span>Spectrogram levels</span><span>The strip at the right edge: a histogram of the amplitudes shown (dB) beside the colour bar. Below the floor is black, above the ceiling the brightest colour. Drag a handle or the band between them; the wheel moves the floor, <kbd>Shift</kbd> + wheel the ceiling; double-click for automatic levels (the floor 10 dB above the median, the noise). Levels belong to the signal shown; Run Control › Levels types them (↑ ↓: 1 dB, Shift: 10 dB).</span>
 </div>
 <p>The screen is the record: what you see is simulated and swept, in real time. <b>Save ▾</b>, under the screen, stores it: every signal as CSV or JSON, or a picture (PNG). <b>Open…</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>); <b>◀ ▶</b> step through one longer than the screen.</p>
 <h3>Signal generator</h3>
