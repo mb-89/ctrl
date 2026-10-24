@@ -316,3 +316,85 @@ test('guard: the library stores inputs only, never numbers computed from a plant
   const src = readFileSync(new URL('../src/core/plants.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '').replace(/'(?:[^'\\]|\\.)*'/g, "''");
   assert.deepEqual(src.match(/\bK_\w*/g) ?? [], [], 'no stored gain tables');
 });
+
+test('trajectory: Q, R, start and the limits re-run the gains, never the plan; T plans again', () => {
+  // Test 7, the trajectory part. The library's triple pendulum runs it.
+  const p = project('Triple');
+  const v = ctrlOf(p).variants[0];
+  assert.equal(v.type, 'trajectory');
+  const store = createDesignStore();
+  const st = () => statusOf(p, store);
+  const counts = () => { const s = store.stats(); return [s.runs, s.heavyRuns]; };
+  const same = (a, b) => a.length === b.length && a.every((x, i) => Object.is(x, b[i]));
+
+  const first = st();
+  assert.equal(first.status, 'ok', JSON.stringify(first.warnings));
+  assert.deepEqual(counts(), [1, 1]);
+  assert.match(first.rows[0].value, /^Planned in [\d.]+ s \(\d+ iterations, start 1 of 3\)\. Verified: upright 1 s after T, peak F [\d.]+ of 40\.$/);
+  assert.equal(first.at, 'θ1, θ2, θ3 = 3.142 rad → origin');
+  assert.deepEqual(first.rows.map((r) => r.label), ['plan', 'T', 'F(t)', 'end error', 'defect', 'K upright', 'kr', 'slowest pole']);
+  assert.ok(first.rows[2].spark.length <= 120);
+  assert.deepEqual(first.rows[3].labels, ['x', 'θ1', 'θ2', 'θ3', 'v', 'ω1', 'ω2', 'ω3']);
+  const { F, Y, K, Kup, angle } = first.values;
+  assert.deepEqual([F.length, Y.length, K.length, Kup.length], [240, 240 * 8, 240 * 8, 8]);
+  assert.deepEqual(angle, [false, true, true, true, false, false, false, false]);
+  const json = JSON.parse(JSON.stringify(first));
+  assert.ok(!('values' in json), 'a status carries no values into JSON');
+  assert.ok(JSON.stringify(json).length < 8000, 'only the rows: a sparkline of F, the end error, the upright gains');
+
+  // The light inputs: the gains again (a few ms), the same plan.
+  v.params.Q = [20, 100, 100, 100, 1, 1, 1, 1];
+  const q = st();
+  assert.deepEqual(counts(), [2, 1], 'Q re-runs the gains only');
+  assert.ok(same(q.values.F, F) && !same(q.values.K, K) && !same(q.values.Kup, Kup));
+  assert.ok(q.ms < 500, `${q.ms} ms for the gains`);
+  v.params.R = 0.2; st();
+  v.params.start = 0.5; st();
+  v.params.umax = 50; st();   // the plan may still use 75 % of the smaller limit, 40
+  assert.deepEqual(counts(), [5, 1], 'R, start and a limit that leaves the plan\'s force alone');
+  // The plan's own inputs: a new plan.
+  v.params.T = 2.5;
+  const longer = st();
+  assert.deepEqual(counts(), [6, 2], 'T plans again');
+  assert.equal(longer.values.F.length, 252, 'T snapped to whole samples: 12 segments of 21');
+  assert.ok(Math.abs(longer.rows[1].value - 2.52) < 1e-12);
+  // Back: both from the cache.
+  v.params.T = 2.4; v.params.Q = Q_TRIPLE; v.params.R = 0.1; v.params.start = 0; v.params.umax = 40;
+  const back = st();
+  assert.ok(back.cached && same(back.values.K, K));
+  assert.deepEqual(counts(), [6, 2]);
+});
+
+test('trajectory: a plan that cannot be is a warning, and the attempt still runs; plans are never kept in a file', () => {
+  const p = project('Triple', [{ name: 'Too short', type: 'trajectory', params: { T: 0.5, Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } }]);
+  const res = evaluateSystem(p, { designs: createDesignStore() });
+  const [st] = res.info.designs;
+  assert.equal(st.status, 'warn');
+  assert.match(st.rows[0].value, /^Not converged in/);
+  assert.ok(st.warnings.some((w) => /^no plan found: .* \(300 iterations, \d starts?\): needs more force or a longer T \(now 0\.48 s\)$/.test(w)), st.warnings.join(' | '));
+  assert.ok(st.values && res.signals.F.some((f) => Math.abs(f) > 1), 'the attempt runs');
+  // Inputs only: what a plan computes is refused, and there is no hand twin.
+  assert.throws(() => normalizeVariant({ type: 'trajectory', params: { F: [1, 2] } }), /variant\.params\.F: trajectory computes F, Y, K, Kup and kr from the plant and T, segments, planShare, start, Q and R; they are never kept in a file/);
+  assert.throws(() => normalizeVariant({ type: 'trajectory', params: { planShare: 1.5 } }), /planShare: at most 1/);
+  assert.equal(CONTROLLERS.trajectory.manual, undefined, 'no Copy as numbers for a plan');
+  const bad = statusOf(project('Triple', [{ type: 'trajectory', params: { Q: Q_TRIPLE, R: 0.1, umin: 0, umax: 40 } }]));
+  assert.equal(bad.error.code, 'bad-limits');
+});
+
+test('cli: node cli.mjs design prints what the running designed variants computed', async () => {
+  // Test 15.
+  const { execFileSync } = await import('node:child_process');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const file = join(mkdtempSync(join(tmpdir(), 'lt-')), 'triple.json');
+  execFileSync('node', ['cli.mjs', 'new', '--system', 'Triple pendulum', '-o', file]);
+  const text = execFileSync('node', ['cli.mjs', 'design', file]).toString();
+  assert.match(text, /^Triple pendulum: 1 designed variant running/);
+  assert.match(text, /ctrl · controller · Planned swing-up \+ TV-LQR \(trajectory\): ok · /);
+  assert.match(text, /K upright +x -6\.99 +θ1 -497\.8/);
+  const json = JSON.parse(execFileSync('node', ['cli.mjs', 'design', file, '--json', '--block', 'ctrl']).toString());
+  assert.equal(json.title, 'Triple pendulum');
+  assert.deepEqual(json.designs.map((d) => [d.path, d.type, d.status]), [['ctrl', 'trajectory', 'ok']]);
+  assert.ok(json.designs[0].rows.some((r) => r.label === 'K upright' && r.value.length === 8));
+});

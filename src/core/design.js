@@ -9,9 +9,11 @@
 //   createDesignStore(), SYNC_DESIGNS              the store compileDiagram resolves designs through
 //   lqrDesign(lin, { Q, R, track, Ts })            discrete LQR on a linear model, in measurement order
 //   piCancel(fit, Tcl), scheduledPIDesign(p, ctx)  PI by pole cancellation, at levels of the first measurement
+//   trajectoryDesign(p, ctx)                       a swing-up plan with TV-LQR along it (planner.js)
 
 import { c2d, dlqr, eig, solve, rank, mul, transpose } from './linalg.js';
 import { DesignError, operatingPoint, linearize, firstOrderFit } from './linearize.js';
+import { PLAN_VERSION, planTransfer, alongPlanSteps, tvlqrGains, planValues, planLaw, verifyLoop, runPlan } from './planner.js';
 
 const fmt = (v) => (Number.isFinite(v) ? String(Number(Number(v).toPrecision(4))) : String(v));
 const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
@@ -74,16 +76,19 @@ export function plantKey(diagram) {
 // A status is what the Controller tab, the CLI and agents see; its values
 // are not enumerable, so a status prints and serialises without them.
 // The 'sync' mode runs every design at once (Node, the CLI, tests, and the
-// page until heavy designs exist).
+// page until the background store of step 10), heavy ones (a plan) too.
+// A heavy computation is kept apart (an LRU of 8), keyed by what it reads
+// only: a plan by the plant, the block, Ts and the plan's own inputs, never
+// Q or R, so tuning those re-runs the light part of a design, not the plan.
 export function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
   if (mode !== 'sync') throw new Error(`design store mode "${mode}": only 'sync' exists so far`);
-  const designs = new Map(), models = new Map();
+  const designs = new Map(), models = new Map(), heavies = new Map();
   const counts = { runs: 0, hits: 0, heavyRuns: 0 };
   const remember = (map, key, value, size) => { map.delete(key); map.set(key, value); if (map.size > size) map.delete(map.keys().next().value); };
 
   // Runs one design; never throws. A DesignError becomes the status's error;
   // anything else is a bug, reported with code 'internal'.
-  function run(def, p, block, compiled, seeThrough) {
+  function run(def, p, block, compiled, seeThrough, plant) {
     const used = { model: null, at: '', warnings: [] };
     const lins = new Map();
     const ctx = {
@@ -109,6 +114,22 @@ export function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
         const pt = operatingPoint(ctx.model(), { y: targets }, limits);
         used.warnings.push(...pt.warnings);
         return pt;
+      },
+      // A long computation: start() returns a generator (planner.js) whose
+      // value is kept under kind and inputs, for this plant, block and Ts.
+      // → { status: 'ready', value, ms } (the async store of step 10 may
+      // also answer { status: 'pending', progress }).
+      heavy(kind, inputs, start) {
+        const key = hashKey(canonical([kind, inputs, plant(), block.idPath, block.Ts]));
+        let h = heavies.get(key);
+        if (!h) {
+          counts.heavyRuns++;
+          const t0 = now();
+          const value = runPlan(start());
+          h = { value, ms: now() - t0 };
+        }
+        remember(heavies, key, h, 8);
+        return { status: 'ready', value: h.value, ms: h.ms, key };
       },
     };
     const t0 = now();
@@ -156,7 +177,7 @@ export function createDesignStore({ mode = 'sync', limit = 64 } = {}) {
           const key = hashKey(canonical([variant.type, def.version ?? 1, variant.params, block.Ts, plant(), block.idPath]));
           let entry = designs.get(key), cached = !!entry;
           if (cached) counts.hits++;
-          else { counts.runs++; entry = run(def, variant.params, block, compiled, seeThrough); }
+          else { counts.runs++; entry = run(def, variant.params, block, compiled, seeThrough, plant); }
           remember(designs, key, entry, limit);
           if (block.kind === 'observer' && entry.values?.stateIndex) seeThrough.set(block.idPath, entry.values.stateIndex);
           const seen = entry.states ? `${block.input} → ${block.inputs.slice(1).join(', ')} · ${entry.states.length} state${entry.states.length === 1 ? '' : 's'} (${entry.states.join(', ')})` : '';
@@ -192,7 +213,7 @@ function stateText(s) {
 // invertible, D = 0): then K = Kx C⁻¹, in measurement order. Q weighs the
 // measurements (one value weighs them all), R the effort; Qx = Cᵀ diag(Q) C.
 // track: the measurement (1-based) that follows r, 0 for none; kr sets its
-// static gain from r to 1. Returns { K, kr, Kx, P, Ad, Bd, poles, rows, warnings }.
+// static gain from r to 1. Returns { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings }.
 export function lqrDesign(lin, { Q, R, track = 1, Ts }) {
   const { n, m, states, outputs } = lin;
   const labels = outputs.map((o) => o.label);
@@ -248,7 +269,7 @@ export function lqrDesign(lin, { Q, R, track = 1, Ts }) {
     { label: 'kr', value: kr, note: track ? `${labels[track - 1]} follows r` : 'r is not used' },
     { label: 'slowest pole', value: `${fmt(wn)} rad/s, ζ ${fmt(zeta)}` },
   ];
-  return { K, kr, Kx, P, Ad, Bd, poles, rows, warnings };
+  return { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings };
 }
 
 // A PI that cancels the lag of a first-order fit K e^(−θs) / (τs + 1):
@@ -292,4 +313,69 @@ export function scheduledPIDesign(p, ctx) {
   ];
   const at = p.at.length === 1 ? `${out.label} = ${fmt(p.at[0])}${unit}, ${uName} = ${fmt(pts[0].u)}` : `${out.label} = ${fmt(p.at[0])} … ${fmt(p.at.at(-1))}${unit} (${p.at.length} levels)`;
   return { values: { at: [...p.at], Kp: pts.map((q) => q.Kp), Ki: pts.map((q) => q.Ki), u0 }, rows, warnings: [...new Set(warnings)], at };
+}
+
+// The swing-up of a trajectory variant (designs-in-the-page.md §8.4): from
+// where the plant starts to rest at the origin (the upright rest of a
+// pendulum chain), planned on the plant this block sees (planner.js), with
+// time-varying LQR along the plan and the upright LQR after it.
+//   1. The upright LQR at the origin (lqrDesign: every state measured), x following r.
+//   2. The plan, a heavy entry keyed by T, segments and the force it may use
+//      (planShare of the smaller limit), not by Q, R, start or the limits:
+//      tuning those re-runs steps 3 to 5 (a few ms), never the plan.
+//   3. TV-LQR along the plan, ending in the upright P; in measurement order.
+//   4. The closed loop on the nonlinear plant until 1 s after the plan.
+//   5. Rows: what was planned and checked, the end error, F(t), the upright gains.
+// A plan that did not converge, or a loop that does not hold, still runs
+// (status 'warn'), so the attempt can be seen.
+// p: { T, segments, planShare, start, Q, R, umin, umax }.
+export function trajectoryDesign(p, ctx) {
+  const lin = ctx.linearize('origin');
+  const Ts = ctx.Ts;
+  if (!(p.umin < 0 && p.umax > 0)) throw new DesignError('bad-limits', `the swing-up pushes both ways: u min must be below 0 and u max above 0 (now ${fmt(p.umin)} to ${fmt(p.umax)})`, 'set the actuator\'s limits; an open limit (empty) is fine');
+  const up = lqrDesign(lin, { Q: p.Q, R: p.R, track: 1, Ts });
+  const model = ctx.model();
+  const labels = lin.outputs.map((o) => o.label), uName = lin.input.label;
+  const Fmax = p.planShare * Math.min(-p.umin, p.umax);
+  const h = ctx.heavy('plan', { version: PLAN_VERSION, T: p.T, segments: p.segments, Fmax }, function* plan() {
+    const pl = yield* planTransfer(model, { T: p.T, Ts, segments: p.segments, Fmax });
+    const along = yield* alongPlanSteps(model, pl);
+    return { plan: pl, along };
+  });
+  if (h.status !== 'ready') return { pending: h.progress ?? null };
+  const { plan, along } = h.value;
+  const Kx = tvlqrGains(along, { Q: up.Qx, R: p.R, Pend: up.P });
+  const values = planValues(model, along, Kx, { C: lin.C, K: up.K, kr: up.kr });
+  // The loop on the nonlinear plant, with the limits; the law unclamped, so the peak it asks for shows.
+  const check = verifyLoop(model, planLaw(values, Ts), { Ts, sub: plan.sub, duration: plan.T + 1, umin: p.umin, umax: p.umax });
+  const lim = Math.min(-p.umin, p.umax), limText = Number.isFinite(lim) ? ` of ${fmt(lim)}` : '';
+  const end = check.endError, endText = `${end.label} is ${fmt(Math.abs(end.value))}${end.unit ? ` ${end.unit}` : ''} off`;
+  const warnings = [...up.warnings];
+  if (!plan.ok) warnings.push(`${plan.message}: ${plan.hint}`);
+  if (!check.ok) warnings.push(`the loop does not hold: ${endText} 1 s after the plan; peak ${uName} ${fmt(check.Fpeak)}${Number.isFinite(lim) ? ` with a ${fmt(lim)} limit` : ''}: ${check.Fpeak > lim ? 'lengthen T or raise the limit' : 'lengthen T, or weigh the states more (Q)'}`);
+  const planned = `${plan.ok ? 'Planned' : 'Not converged'} in ${(h.ms / 1000).toFixed(1)} s (${plan.iterations} iterations, start ${plan.start} of ${plan.starts}).`;
+  const held = check.ok ? `Verified: upright 1 s after T, peak ${uName} ${fmt(check.Fpeak)}${limText}.` : `The loop does not hold: ${endText} 1 s after T.`;
+  // F(t) for a sparkline, at most 120 points.
+  const every = Math.max(1, Math.ceil(plan.F.length / 120));
+  const spark = Array.from(plan.F).filter((_, i) => i % every === 0);
+  const ends = model.states.map((s, i) => [s.name, plan.terminal[i]]);
+  const rows = [
+    { label: 'plan', value: `${planned} ${held}`, sentence: true },
+    { label: 'T', value: plan.T, note: `s, ${plan.segments} segments of ${plan.perSegment} samples` },
+    { label: `${uName}(t)`, spark, note: `peak ${fmt(plan.Fpeak)}${Number.isFinite(Fmax) ? ` of the ${fmt(Fmax)} it may use` : ''}` },
+    { label: 'end error', value: ends.map(([, v]) => v), labels: ends.map(([n]) => n) },
+    { label: 'defect', value: plan.defect, note: 'between segments' },
+    { label: 'K upright', value: up.K, labels },
+    ...up.rows.slice(1),
+  ];
+  // Where it starts, states with the same value grouped: 'θ1, θ2, θ3 = 3.142 rad → origin'.
+  const groups = [];
+  model.states.forEach((s, i) => {
+    const v = model.x0[i], text = `${fmt(v)}${s.unit ? ` ${s.unit}` : ''}`;
+    if (Math.abs(v) < 1e-12) return;
+    const g = groups.at(-1);
+    if (g && g.text === text) g.names.push(s.name); else groups.push({ names: [s.name], text });
+  });
+  const at = `${groups.length ? groups.map((g) => `${g.names.join(', ')} = ${g.text}`).join(', ') : 'rest'} → origin`;
+  return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }

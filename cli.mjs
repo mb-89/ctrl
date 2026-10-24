@@ -7,15 +7,20 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { buildHtml } from './build.mjs';
 import { SLOTS, BLOCKS, blockDef, normalizeBlock } from './src/core/blocks.js';
 import { METRICS, METRIC } from './src/core/metrics.js';
-import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, uniqueName, nextColor, describeController, fmt, loopReady, referenceTrace } from './src/core/project.js';
+import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, uniqueName, nextColor, describeController, fmt, loopReady, referenceTrace, autoTimebase } from './src/core/project.js';
 import { SIGNALS, normalizeComponent, describeComponent } from './src/core/signals.js';
 import { runTune, tunableParams } from './src/core/tune.js';
 import { EXAMPLES, DEFAULT_PROJECT } from './src/core/examples.js';
+import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from './src/core/systems.js';
+import { compileDiagram } from './src/core/diagram.js';
 
 const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command> [options]
 
-  new [--example <n|title>] [-o file]   write a starter project (default: a step at 0.1 s, no loop yet)
+  new [--example <n|title>] [--system <name>] [-o file]
+                                        write a starter project (default: a step at 0.1 s, no loop yet),
+                                        an example loop, or a whole system from the System library
   examples                              list the example loops
+  systems                               list the System library
   signal <project> [--name r] [--add <type> --set k=v ...] [--remove <n>] [--save]
                                         list or change a named signal (default r), a sum of components
   blocks [slot]                         the block library: types, parameters and ranges (JSON);
@@ -28,10 +33,13 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
                                         auto-tune a candidate's gains; --save adds the result
   trace <project> [--candidate <name>] [--every 10] [--json]
                                         time series t, r, y, u, ym, d as CSV
+  design <project> [--block <path>] [--json]
+                                        what each running designed variant computed from the plant
+                                        (gains, plans, warnings), as the page's Computed box shows it
   html <project> [-o out.html]          a standalone page with the project inside, to share
   extract <page.html>                   print the project inside an exported page
 
-  --json prints machine-readable output for eval, try and tune.
+  --json prints machine-readable output for eval, try, tune and design.
   --set takes controller parameters (Kp=2) or slot.param for a what-if on another
   slot of this candidate only (plant.tau=2, sensor.type=lag). Lists: num=[1,2].
 `;
@@ -145,6 +153,32 @@ function addCandidate(project, cand, name) {
   return c;
 }
 
+// One design status as text: what the page's Computed box shows.
+function printDesign(st) {
+  const time = st.cached ? 'cached' : st.ms >= 1000 ? `${(st.ms / 1000).toFixed(1)} s` : `${st.ms} ms`;
+  console.log(`${st.path} · ${st.block} · ${st.variant} (${st.type}): ${st.status} · ${time} · #${st.key.slice(0, 6)}`);
+  if (st.at) console.log(`  at ${st.at}`);
+  if (st.seen) console.log(`  plant seen: ${st.seen}`);
+  if (st.error) console.log(`  error: ${st.error.message}${st.error.hint ? `\n  hint: ${st.error.hint}` : ''}\n  until then the block puts out 0`);
+  const w = Math.max(0, ...st.rows.map((r) => r.label.length));
+  const num = (v) => (typeof v === 'number' ? fmt(v, 4) : String(v));
+  for (const r of st.rows) {
+    let text;
+    if (r.table) {
+      const cells = [r.head, ...r.table.map((row) => row.map(num))], cw = r.head.map((_, j) => Math.max(...cells.map((row) => String(row[j]).length)));
+      text = cells.map((row) => row.map((c, j) => String(c).padStart(cw[j])).join('  ')).join(`\n  ${''.padEnd(w)}  `);
+    }
+    else if (r.spark) {
+      const lo = Math.min(...r.spark), hi = Math.max(...r.spark), bars = '▁▂▃▄▅▆▇█';
+      text = r.spark.filter((_, i) => i % 2 === 0).map((v) => bars[Math.round(((v - lo) / (hi - lo || 1)) * 7)]).join('');
+    } else if (Array.isArray(r.value)) text = r.value.map((v, i) => `${r.labels ? `${r.labels[i]} ` : ''}${num(v)}`).join('  ');
+    else text = num(r.value);
+    console.log(`  ${r.label.padEnd(w)}  ${text}${r.note ? `  (${r.note})` : ''}`);
+  }
+  for (const x of st.warnings) console.log(`  ! ${x}`);
+  console.log('');
+}
+
 const { pos, opt } = parseArgs(process.argv.slice(2));
 const cmd = pos[0];
 if (!cmd || opt.help || cmd === 'help') { console.log(HELP); process.exit(0); }
@@ -153,11 +187,23 @@ switch (cmd) {
   case 'examples':
     EXAMPLES.forEach((e, i) => console.log(`${i}  ${e.title}: ${e.notes}`));
     break;
+  case 'systems':
+    SYSTEM_LIBRARY.forEach((e) => console.log(`${e.name}  [${e.tags.map((t) => t.label).join(', ')}]\n  ${e.notes}`));
+    break;
   case 'new': {
-    const ref = opt.example;
-    const ex = ref === undefined ? DEFAULT_PROJECT : EXAMPLES[Number(ref)] ?? EXAMPLES.find((e) => e.title.toLowerCase() === String(ref).toLowerCase());
-    if (!ex) fail(`no example "${ref}"; see "examples"`);
-    const p = normalizeProject(ex);
+    let p;
+    if (opt.system !== undefined) {
+      const q = String(opt.system).toLowerCase();
+      const entry = SYSTEM_LIBRARY.find((e) => e.name.toLowerCase() === q) ?? SYSTEM_LIBRARY.find((e) => e.name.toLowerCase().startsWith(q));
+      if (!entry) fail(`no system "${opt.system}"; systems: ${SYSTEM_LIBRARY.map((e) => e.name).join(', ')}`);
+      p = normalizeProject(applySystem(DEFAULT_PROJECT, entry, SYSTEM_PARTS.filter((k) => entry[k])));
+      p.scope.timebase = autoTimebase(p);
+    } else {
+      const ref = opt.example;
+      const ex = ref === undefined ? DEFAULT_PROJECT : EXAMPLES[Number(ref)] ?? EXAMPLES.find((e) => e.title.toLowerCase() === String(ref).toLowerCase());
+      if (!ex) fail(`no example "${ref}"; see "examples"`);
+      p = normalizeProject(ex);
+    }
     if (opt.o) { writeProject(opt.o, p); console.log(`wrote ${opt.o}`); } else console.log(JSON.stringify(p, null, 2));
     break;
   }
@@ -270,6 +316,24 @@ switch (cmd) {
       for (let i = 0; i < result.t.length; i += every) lines.push(keys.map((k) => +result[k][i].toPrecision(6)).join(','));
       console.log(lines.join('\n'));
     }
+    break;
+  }
+  case 'design': {
+    // The designs of the running variants, computed now, synchronously (a
+    // plan takes a few seconds), as the page computes them.
+    const project = readProject(pos[1]);
+    const plant = project.system.plant;
+    if (plant?.type !== 'diagram') fail(`${project.title}: the plant is not a diagram, so nothing is designed from it`);
+    let statuses;
+    try { statuses = compileDiagram(plant.diagram, 'plant', { standalone: true, sources: {} }).designs; } catch (e) { fail(`${project.title}: ${e.message}`); }
+    if (opt.block) {
+      statuses = statuses.filter((s) => s.path === opt.block);
+      if (!statuses.length) fail(`no designed variant runs in "${opt.block}"`);
+    }
+    if (opt.json) { console.log(JSON.stringify({ title: project.title, designs: statuses }, null, 2)); break; }
+    if (!statuses.length) { console.log(`${project.title}: no designed variant runs (a design is computed for the running variant of each Controller and Observer)`); break; }
+    console.log(`${project.title}: ${statuses.length} designed variant${statuses.length > 1 ? 's' : ''} running\n`);
+    for (const st of statuses) printDesign(st);
     break;
   }
   case 'html': {

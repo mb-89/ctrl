@@ -3,9 +3,10 @@
 // position x, …) and on the scope, and its view shows the motion
 // (design/output/system-library.md). Each runs 5 s and opens running, on its
 // view in the Plant tab (ui). The controlled ones grow in difficulty: a PID
-// on a motor, a gain-scheduled PI on a tank, an energy (Lyapunov) swing-up of a
-// pendulum, LQR on a triple pendulum. Each has a reference r and a
-// disturbance d, and a Controller block whose variants can be flipped.
+// on a motor, a gain-scheduled PI on a tank, an energy (Lyapunov) swing-up of
+// a pendulum, a swing-up of a triple pendulum planned in the page. Each has a
+// reference r and a disturbance d, and a Controller block whose variants can
+// be flipped.
 //
 // Only inputs are stored here: physics, hand gains (PID, the energy pump),
 // and the weights, levels and limits of designed variants. Every gain,
@@ -313,24 +314,25 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Triple pendulum',
-    notes: 'Three rods balanced on top of each other on a cart, held up by state feedback from all eight states (positions, angles and their rates), its gains computed in the page by LQR from the cart and rods. It starts with the lowest rod tilted 3°, is pushed at 1 s (d), and the cart is moved 0.5 m at 2.5 s (r). Flip to the gentle LQR (a larger effort weight R) to see a softer, slower controller.',
+    notes: 'Three rods hang below a cart. When the system loads, the page plans a swing-up from the cart and rods themselves (this takes a few seconds): a force that brings all three up in 2.4 s, followed with time-varying LQR, then LQR holds them. At 3.5 s the cart is pushed (d). Flip to "LQR only" to see that a controller for the top alone cannot get there.',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 0.5, time: 2.5 } }] },
-      d: { period: PERIOD, components: [pulse(4, 1, 0.1)] },
+      r: { period: PERIOD, components: [] },
+      d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
     },
-    scope: { channels: channels('r', 'x', 'theta1', 'F') },
+    scope: { channels: channels('x', 'theta1', 'F', 'd') },
     ui: ui('Cart and triple pendulum'),
     diagram: {
       blocks: [
         src('r', 30, 132, 'm'),
         src('d', 300, 260, 'N'),
+        // The plan may use 75 % of the ±40 N, leaving the rest to the feedback.
         ctrl(130, 70, 9, 0.01, [
-          { name: 'LQR', type: 'lqr', params: { Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
-          { name: 'LQR, gentle', type: 'lqr', params: { Q: Q_TRIPLE, R: 1, umin: -40, umax: 40 } },
+          { name: 'Planned swing-up + TV-LQR', type: 'trajectory', params: { T: 2.4, segments: 12, planShare: 0.75, Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
+          { name: 'LQR only (cannot swing up)', type: 'lqr', params: { Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },
-        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: 0.05, theta20: 0, theta30: 0 }, x: 400, y: 60 },
+        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }, x: 400, y: 60 },
         sink('x', 640, 64, 'm'), sink('theta1', 640, 100, 'rad'), sink('theta2', 640, 136, 'rad'), sink('theta3', 640, 172, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
@@ -344,7 +346,7 @@ export const EXAMPLE_PLANTS = [
       { len: 0.25, angle: '-theta1' },
       { len: 0.25, angle: '-(theta2 - theta1)' },
       { len: 0.25, angle: '-(theta3 - theta2)' },
-    ], 'x {x:5.2} m   θ1 {theta1*180/pi:5.1}°   θ2 {theta2*180/pi:5.1}°   θ3 {theta3*180/pi:5.1}°   F {F:5.1} N', [-1.3, -0.4, 1.3, 1.1])],
+    ], 'x {x:5.2} m   θ1 {theta1*180/pi:6.1}°   θ2 {theta2*180/pi:6.1}°   θ3 {theta3*180/pi:6.1}°   F {F:5.1} N', [-1.3, -0.8, 1.3, 1.1])],
   },
 ];
 

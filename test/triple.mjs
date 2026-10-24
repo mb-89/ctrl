@@ -11,11 +11,11 @@ import { lqrDesign } from '../src/core/design.js';
 export const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 export const HANGING = [0, Math.PI, Math.PI, Math.PI, 0, 0, 0, 0];
 
-// The Model the triple pendulum's Controller sees; params change the cart
-// and rods (masses, lengths), hanging unless they say otherwise.
+// The Model the triple pendulum's Controller sees (it starts hanging);
+// params change the cart and rods (masses, lengths).
 export function tripleModel(params = {}) {
   const d = structuredClone(SYSTEM_LIBRARY.find((s) => s.name.startsWith('Triple')).plant.diagram);
-  Object.assign(d.blocks.find((b) => b.type === 'pendulumCart').params, { theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }, params);
+  Object.assign(d.blocks.find((b) => b.type === 'pendulumCart').params, params);
   return compileDiagram(normalizeDiagram(d), 'plant', { mode: 'model' }).seen('ctrl');
 }
 

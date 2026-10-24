@@ -25,6 +25,7 @@ const ABOUT = {
   scheduledPI: 'A PI computed from the plant: at each level of the measurement the page finds the input that holds it, linearises the plant there and fits a first-order lag; Kp and Ki then cancel that lag so the loop answers with the time constant Tcl. One level gives a fixed PI, several a gain-scheduled one. It starts with the input that holds the level the plant starts at.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
   swingUpLqr: 'The energy swing-up (the pump gains are yours), with the catch near the top designed by LQR from the cart and pole as they are wired: Q weighs x, θ, v, ω, R the force. Change the pole and the catch follows.',
+  trajectory: 'A swing-up planned in the page from the plant as it is wired: a force F(t) that takes it from where it starts to rest at the top in T seconds, followed with time-varying LQR that corrects small errors along the way, then LQR holds it. The plan uses a share of the force limit and leaves the rest to the feedback. Changing T, the segments or that share plans again (a few seconds); Q, R and the start only recompute the gains.',
   kalman: 'Predicts the states with the model, then corrects with the measurements, weighing them by the noise you expect: a large R trusts the model, a large Q trusts the measurements. The gain is the steady-state Kalman gain.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
@@ -186,7 +187,7 @@ export function createControllerTab(host, app) {
       return;
     }
     const canCopy = st.values && def.manual;
-    const time = st.cached ? 'cached' : `${st.ms < 10 ? st.ms.toFixed(1) : Math.round(st.ms)} ms`;
+    const time = st.cached ? 'cached' : st.ms >= 1000 ? `${(st.ms / 1000).toFixed(1)} s` : `${st.ms < 10 ? st.ms.toFixed(1) : Math.round(st.ms)} ms`;
     let body = `<p class="cline"><b>${esc(def.label)}</b>${st.at ? ` at ${esc(st.at)}` : ''}</p>`;
     if (st.seen) body += `<p class="cline"><span class="ck">plant seen</span> ${esc(st.seen)}</p>`;
     if (st.error) body += `<p class="cerr">${esc(st.error.message)}</p>${st.error.hint ? `<p class="cmsg">${esc(st.error.hint)}</p>` : ''}<p class="cmsg">Until then the block puts out ${off}.</p>`;
@@ -323,8 +324,10 @@ export function createControllerTab(host, app) {
 }
 
 // One row of a design's status: labelled values (K for x, θ, …), a number
-// with a note, a sentence, or a table.
+// with a note, a sentence, a table, or a sparkline (a plan's F(t)).
 function rowHtml(r) {
+  if (r.spark) return `<div class="crow"><span class="ck">${esc(r.label)}</span><span class="cv">${sparkSvg(r.spark)}${r.note ? ` <span class="cnote">${esc(r.note)}</span>` : ''}</span></div>`;
+  if (r.sentence) return `<div class="crow"><span class="ck">${esc(r.label)}</span><span class="csent">${esc(r.value)}</span></div>`;
   if (r.table) {
     // Three digits in a table, so it fits beside the parameters; Copy as numbers keeps them all.
     return `<div class="ctabwrap"><table class="ctab"><thead><tr>${r.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${r.table.map((row) => `<tr>${row.map((x) => `<td>${val(x, 3)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
@@ -333,6 +336,13 @@ function rowHtml(r) {
     ? (r.labels ? r.value.map((x, i) => `<span class="cpair"><i>${esc(r.labels[i] ?? '')}</i>${val(x)}</span>`).join('') : r.value.map(val).join(', '))
     : val(r.value);
   return `<div class="crow"><span class="ck">${esc(r.label)}</span><span class="cv">${value}${r.note ? ` <span class="cnote">${esc(r.note)}</span>` : ''}</span></div>`;
+}
+// A sparkline with its zero line, scaled to fit.
+function sparkSvg(v) {
+  const W = 180, H = 28, lo = Math.min(0, ...v), hi = Math.max(0, ...v);
+  const y = (x) => (H - 1 - ((x - lo) / (hi - lo || 1)) * (H - 2)).toFixed(1);
+  const pts = v.map((x, i) => `${((i / Math.max(1, v.length - 1)) * W).toFixed(1)},${y(x)}`).join(' ');
+  return `<svg class="cspark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}"/><polyline points="${pts}"/></svg>`;
 }
 const val = (x, digits = 4) => (typeof x === 'number' ? num(x, digits).replace(/^-/, '−') : esc(x ?? ''));
 

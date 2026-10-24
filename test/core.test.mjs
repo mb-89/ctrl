@@ -298,7 +298,10 @@ test('controllers: the variants of every system run; the good ones control, the 
     c.variant = c.variants.findIndex((v) => v.name === variant);
     assert.ok(c.variant >= 0, variant);
     const res = evaluateSystem(p);
-    return (sig, t) => res.signals[sig][Math.round((t / 5) * (res.signals[sig].length - 1))];
+    const at = (sig, t) => res.signals[sig][Math.round((t / 5) * (res.signals[sig].length - 1))];
+    at.all = (sig) => res.signals[sig];
+    at.designs = res.info.designs;
+    return at;
   };
   const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
   // Motor: the aggressive P overshoots 2 rad by more than 15 %; PD does not.
@@ -320,10 +323,17 @@ test('controllers: the variants of every system run; the good ones control, the 
   const up = run('Pendulum', 'Swing-up + LQR catch'), sf = run('Pendulum', 'LQR only');
   for (const t of [2.5, 3.4, 4.9]) assert.ok(Math.abs(wrap(up('theta', t))) < 0.05, `θ(${t}) = ${up('theta', t)}`);
   assert.ok(Math.abs(wrap(sf('theta', 4.9))) > 1);
-  // Triple pendulum: LQR keeps all three rods within 5° and follows the cart reference.
-  const lqr = run('Triple', 'LQR');
-  for (const t of [0.5, 1.5, 3, 4.9]) for (const k of ['theta1', 'theta2', 'theta3']) assert.ok(Math.abs(lqr(k, t)) < 0.09, `${k}(${t}) = ${lqr(k, t)}`);
-  assert.ok(lqr('x', 4.9) > 0.35);
+  // Triple pendulum (test 10): from hanging, the swing-up planned in the
+  // page brings all three rods up and holds them through the push at 3.5 s,
+  // the cart within 1 m; LQR alone never gets them up.
+  const rods = ['theta1', 'theta2', 'theta3'];
+  const planned = run('Triple', 'Planned swing-up + TV-LQR'), only = run('Triple', 'LQR only (cannot swing up)');
+  assert.equal(planned.designs[0].status, 'ok', JSON.stringify(planned.designs[0].warnings));
+  for (const k of rods) assert.ok(Math.abs(Math.abs(wrap(planned(k, 0))) - Math.PI) < 1e-9, `${k} starts hanging`);
+  for (const t of [3.4, 4.9]) for (const k of rods) assert.ok(Math.abs(wrap(planned(k, t))) < 0.05, `${k}(${t}) = ${planned(k, t)}`);
+  assert.ok(planned.all('x').every((x) => Math.abs(x) < 1), 'the cart stays within 1 m');
+  const last = (f) => Math.max(...rods.flatMap((k) => Array.from(f.all(k)).slice(-Math.round(f.all(k).length / 5)).map((v) => Math.abs(wrap(v)))));
+  assert.ok(last(only) > 1, `LQR only: the rods within ${last(only)} rad of upright in the last second`);
 });
 
 test('controller variants are validated; view captions keep their width', async () => {

@@ -24,7 +24,8 @@
 // sample instant. Unknowns: the nodes and the states at the starts of
 // segments 1 … M−1 (multiple shooting). Residuals: the jumps between a
 // segment's end and the next start (defects), the end's distance to the
-// origin, a small penalty on F, and a hinge on |F| beyond Fmax. Each
+// origin, small penalties on F and on its change from node to node, and a
+// hinge on |F| beyond Fmax. Each
 // segment's end depends only on its start and its own nodes, so the
 // Jacobian is built a segment at a time and JᵀJ accumulated from the blocks.
 // Levenberg–Marquardt, three continuation stages, iteration caps, three
@@ -100,7 +101,7 @@ export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4
   const ia = new Int32Array(P), iw = new Float64Array(P);
   for (let i = 0; i < P; i++) { const q = i * nps; ia[i] = Math.floor(q / P); iw[i] = (q - ia[i] * P) / P; }
 
-  const nz = N + 1 + n * (M - 1), nr = n * M + 2 * (N + 1);
+  const nz = N + 1 + n * (M - 1), nr = n * M + 2 * (N + 1) + N;
   const z = new Float64Array(nz), zt = new Float64Array(nz);
   const sOff = (j) => N + 1 + n * (j - 1);   // where S_j sits in z (j ≥ 1)
   const startsOf = (v) => Array.from({ length: M }, (_, j) => (j === 0 ? x0 : v.subarray(sOff(j), sOff(j) + n)));
@@ -120,14 +121,17 @@ export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4
     out.set(xs);
   }
   // Residuals: defects n·(M−1) and the end n (wrapped), weighted alike;
-  // effort N+1; hinge N+1. The hinge keeps one weight: one that grows with
-  // the stages makes the plans worse.
+  // effort N+1; hinge N+1; the change between neighbouring nodes N, weighted
+  // as the effort (without it the last stages settle on a spiky force, often
+  // at the limit; with it the default plan needs half the peak force). The
+  // hinge keeps one weight: one that grows with the stages makes plans worse.
   function fill(v, en, res) {
     let q = 0;
     for (let j = 0; j < M - 1; j++) { const s = v.subarray(sOff(j + 1), sOff(j + 1) + n); for (let i = 0; i < n; i++) res[q++] = w.wd * (en[j * n + i] - s[i]); }
     for (let i = 0; i < n; i++) { const d = en[(M - 1) * n + i]; res[q++] = w.wd * (angle[i] ? wrapAngle(d) : d); }
     for (let k = 0; k <= N; k++) res[q++] = w.lam * v[k];
     for (let k = 0; k <= N; k++) res[q++] = Fmax < Infinity ? HINGE * Math.max(0, Math.abs(v[k]) - Fmax) : 0;
+    for (let k = 0; k < N; k++) res[q++] = w.lam * (v[k + 1] - v[k]);
   }
   const sumsq = (v) => { let s = 0; for (let i = 0; i < v.length; i++) s += v[i] * v[i]; return s; };
   const norm = (v, a, b) => { let s = 0; for (let i = a; i < b; i++) s += v[i] * v[i]; return Math.sqrt(s); };
@@ -249,11 +253,17 @@ export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4
       for (let it = 0; it < cap && total < CAP; it++) {
         H.fill(0); g.fill(0);
         for (let j = 0; j < M; j++) { accumulate(j, columns(j)); yield null; }
+        // The node rows, written analytically: effort, hinge, smoothness.
         for (let k = 0; k <= N; k++) {
           H[k * nz + k] += w.lam * w.lam;
           g[k] += w.lam * r[n * M + k];
           const hr = r[n * M + N + 1 + k];
           if (hr > 0) { const sg = Math.sign(z[k]) * HINGE; H[k * nz + k] += sg * sg; g[k] += sg * hr; }
+        }
+        for (let k = 0; k < N; k++) {
+          const e = w.lam, rs = r[n * M + 2 * (N + 1) + k];
+          H[k * nz + k] += e * e; H[(k + 1) * nz + k + 1] += e * e; H[k * nz + k + 1] -= e * e; H[(k + 1) * nz + k] -= e * e;
+          g[k] -= e * rs; g[k + 1] += e * rs;
         }
         let accepted = false;
         for (let tries = 0; tries < TRIES && !accepted; tries++) {

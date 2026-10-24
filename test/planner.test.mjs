@@ -18,29 +18,31 @@ const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
 let nominal = null;
 const planned = () => (nominal ??= runPlan(planTransfer(tripleModel(), OPTS)));
 
-test('the triple pendulum swing-up: a plan in ≤ 300 iterations, in short slices, the same bit for bit', (t) => {
-  const model = tripleModel();
-  assert.deepEqual(Array.from(model.x0), HANGING);
-  // Drain it as the page would, measuring the CPU time of each slice between
-  // yields (CPU, not wall-clock: other processes do not count).
-  const gen = planTransfer(model, OPTS), progress = [];
-  let slice = 0, cpu = process.cpuUsage(), plan;
-  const t0 = performance.now();
+// Drains a plan as the page would, measuring the CPU time of each slice
+// between yields (CPU, not wall-clock: other processes do not count).
+function drain(gen) {
+  const progress = [];
+  let slice = 0, cpu = process.cpuUsage();
   for (;;) {
     const s = gen.next();
     const c = process.cpuUsage(cpu);
     slice = Math.max(slice, (c.user + c.system) / 1000);
     cpu = process.cpuUsage();
-    if (s.done) { plan = s.value; break; }
+    if (s.done) return { plan: s.value, progress, slice };
     if (s.value) progress.push(s.value);
   }
+}
+
+test('the triple pendulum swing-up: a plan in ≤ 300 iterations, in short slices, the same bit for bit', (t) => {
+  const model = tripleModel();
+  assert.deepEqual(Array.from(model.x0), HANGING);
+  const t0 = performance.now();
+  const { plan, progress } = drain(planTransfer(model, OPTS));
   const ms = performance.now() - t0;
-  t.diagnostic(`planned in ${Math.round(ms)} ms: ${plan.iterations} iterations from start ${plan.start}, longest slice ${slice.toFixed(1)} ms of CPU, peak ${plan.Fpeak.toFixed(1)} N`);
   assert.ok(plan.ok, plan.message);
   assert.deepEqual([plan.code, plan.message, plan.hint], [null, '', '']);
   assert.ok(plan.iterations <= 300, `${plan.iterations} iterations`);
   assert.ok(ms < 10000, `${ms} ms`);
-  assert.ok(slice < 30, `a slice of ${slice} ms`);
   // One progress object per iteration, counting up; the rest are ticks.
   assert.equal(progress.length, plan.iterations);
   progress.forEach((p, i) => {
@@ -57,10 +59,14 @@ test('the triple pendulum swing-up: a plan in ≤ 300 iterations, in short slice
   assert.ok(plan.Fpeak <= 1.05 * 30 && Math.max(...plan.F.map(Math.abs)) === plan.Fpeak);
   nominal = plan;
 
-  // Again, cold: the same plan, bit for bit (no clock, no randomness).
-  const again = runPlan(planTransfer(tripleModel(), OPTS));
-  assert.ok(same(again.F, plan.F) && same(again.z, plan.z), 'the same plan');
-  assert.equal(again.iterations, plan.iterations);
+  // Again, from a fresh model: the same plan, bit for bit (no clock, no
+  // randomness). The code is warm now, so the slices count only the plan's
+  // own work (the first run's also count V8 compiling it on other threads).
+  const again = drain(planTransfer(tripleModel(), OPTS));
+  t.diagnostic(`planned in ${Math.round(ms)} ms: ${plan.iterations} iterations from start ${plan.start}, peak ${plan.Fpeak.toFixed(1)} N; longest slice ${again.slice.toFixed(1)} ms of CPU`);
+  assert.ok(same(again.plan.F, plan.F) && same(again.plan.z, plan.z), 'the same plan');
+  assert.equal(again.plan.iterations, plan.iterations);
+  assert.ok(again.slice < 30, `a slice of ${again.slice} ms`);
 });
 
 test('along the plan: the step map\'s Jacobians; TV-LQR meets dlqr at rest; the loop swings up and holds', () => {

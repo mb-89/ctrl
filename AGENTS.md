@@ -39,5 +39,6 @@ You work on a project file (`.json`, or an exported `.html` page with the projec
 
 - `node cli.mjs help`: every command.
 - `node cli.mjs blocks [slot]`: block types and their parameters with ranges; `node cli.mjs metrics`: what a goal can use.
+- `node cli.mjs design <project> [--block <path>] [--json]`: what each running designed variant (LQR, PI from the plant, a planned swing-up) computed from the plant, its warnings, or why it was refused; `node cli.mjs new --system "Triple pendulum" -o p.json` writes a System library entry as a project.
 - Project file: [design/output/project-format.md](design/output/project-format.md).
 - In a browser (for example through Playwright), the page exposes `window.loopTuner`: `getProject()`, `setProject(p)`, `addComponent(c)`, `reference()`, `autoScale()`, `run()`, `stop()`, `selectCandidate(name)`.

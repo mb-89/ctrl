@@ -21,10 +21,13 @@
 //   compatible?(a, b)                may old values run on a changed plant (later, for the page)
 // A vector parameter's `per` says what its entries stand for, so the
 // Controller tab can name them: 'measurement' (one each) or 'level' (levels
-// of the first measurement).
+// of the first measurement). `heavy` marks an input that starts a long
+// computation (a plan; the tab folds it away), `tune: false` one auto-tune
+// leaves alone.
 
-import { lqrDesign, scheduledPIDesign } from './design.js';
+import { lqrDesign, scheduledPIDesign, trajectoryDesign } from './design.js';
 import { DesignError } from './linearize.js';
+import { planLaw } from './planner.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
@@ -207,6 +210,26 @@ export const CONTROLLERS = {
     make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.swingUpLqr.manual(p, values), Ts) : OFF; },
     manual: (p, values) => ({ type: 'swingUp', params: { kE: p.kE, kx: p.kx, kv: p.kv, l: p.l, g: p.g, thetaS: p.thetaS, K: [...values.K], kr: values.kr, umin: p.umin, umax: p.umax } }),
   },
+  trajectory: {
+    // A swing-up planned in the page from the plant this block sees
+    // (planner.js, design.js): the force per sample that takes it from where
+    // it starts to rest at the origin, followed with time-varying LQR along
+    // the plan; then the upright LQR holds it, x following r. T, segments and
+    // planShare shape the plan (changing them plans again, a few seconds);
+    // Q, R, start and the limits only re-run the gains. There is no Copy as
+    // numbers: a plan is always computed.
+    label: 'Planned swing-up + TV-LQR', summary: 'u = F(t) − K(t)·(y − y*(t)), then u = kr r − K·y',
+    designed: true, version: 1, computes: ['F', 'Y', 'K', 'Kup', 'kr'],
+    params: [
+      num('T', 'Swing-up time T', 2.4, { unit: 's', positive: true, heavy: true, tune: false, help: 'how long the swing-up takes; rounded to whole samples' }),
+      num('segments', 'Segments', 12, { int: true, min: 2, max: 40, heavy: true, tune: false, help: 'pieces the plan is solved in (multiple shooting)' }),
+      num('planShare', 'Plan may use', 0.75, { min: 0.05, max: 1, heavy: true, tune: false, help: 'the share of the force limit the plan may use; the rest is left for the feedback' }),
+      num('start', 'Starts at', 0, { unit: 's', min: 0, help: 'until then u = 0' }),
+      ...WEIGHTS, ...LIMITS,
+    ],
+    design: (p, ctx) => trajectoryDesign(p, ctx),
+    make(p, Ts, values) { return values ? planLaw(values, Ts, p) : OFF; },
+  },
 };
 
 export const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
@@ -225,6 +248,7 @@ function normalizeParam(spec, v, where) {
   if (Number.isNaN(n)) throw new Error(`${where}.${spec.key}: expected a number`);
   if (spec.int) n = Math.round(n);
   if (spec.min !== undefined && n < spec.min) throw new Error(`${where}.${spec.key}: at least ${spec.min}`);
+  if (spec.max !== undefined && n > spec.max) throw new Error(`${where}.${spec.key}: at most ${spec.max}`);
   if (spec.positive && !(n > 0)) throw new Error(`${where}.${spec.key}: above 0`);
   return n;
 }
@@ -240,8 +264,8 @@ export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
   const given = (def.computes ?? []).filter((k) => v.params?.[k] !== undefined);
   if (given.length) {
     const inputs = def.params.map((p) => p.key).filter((k) => !/^(umin|umax|Tr)$/.test(k));
-    const twins = [].concat(def.twin).map((t) => lib[t]?.label ?? t).join(' or ');
-    throw new Error(`${where}.params.${given[0]}: ${v.type} computes ${and(def.computes)} from the plant and ${and(inputs)}; to set them by hand use Copy as numbers (a ${twins} variant)`);
+    const twins = [].concat(def.twin ?? []).map((t) => lib[t]?.label ?? t).join(' or ');
+    throw new Error(`${where}.params.${given[0]}: ${v.type} computes ${and(def.computes)} from the plant and ${and(inputs)}; ${twins ? `to set them by hand use Copy as numbers (a ${twins} variant)` : 'they are never kept in a file'}`);
   }
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
