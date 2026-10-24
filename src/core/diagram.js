@@ -775,7 +775,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       n: nk, m, X0, x0: Float64Array.from(keep, (g) => X0[g]),
       input: { label: inputLabel },
       states: Array.from(keep, (g) => ({ ...states[g] })),
-      outputs: labels.map((label) => ({ label, angle: false })),
+      outputs: labels.map((label) => ({ label, angle: false, unit: '' })),
       delay, sensors,
       bound: Math.max(0, ...kept.map((nd) => nd.bound)),
       warnings: notes,
@@ -802,6 +802,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       },
     };
     // A measurement is an angle when it is exactly one angle state (slope 1).
+    // Such a measurement also has the state's unit ('h = 0.45 m').
     const xs = Float64Array.from(mdl.x0), yp = new Float64Array(m), ym = new Float64Array(m);
     const slopes = Array.from({ length: m }, () => []);
     for (let i = 0; i < nk; i++) {
@@ -811,7 +812,11 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       xs[i] = x;
       for (let k = 0; k < m; k++) { const d = (yp[k] - ym[k]) / (2 * dx); if (Math.abs(d) > 1e-9) slopes[k].push([i, d]); }
     }
-    slopes.forEach((row, k) => { mdl.outputs[k].angle = row.length === 1 && Math.abs(row[0][1] - 1) < 1e-6 && mdl.states[row[0][0]].angle; });
+    slopes.forEach((row, k) => {
+      const one = row.length === 1 && Math.abs(row[0][1] - 1) < 1e-6;
+      mdl.outputs[k].angle = one && mdl.states[row[0][0]].angle;
+      mdl.outputs[k].unit = one ? mdl.states[row[0][0]].unit : '';
+    });
     return mdl;
   }
 

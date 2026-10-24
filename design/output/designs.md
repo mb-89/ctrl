@@ -9,7 +9,7 @@ Reader: whoever builds or changes a designed controller or observer, the plant m
 | Module | Role |
 |---|---|
 | `core/diagram.js` | The compiler. In `model` mode it gives the plant a block sees (`el.seen`); later it resolves designs while it compiles |
-| `core/linearize.js` (next) | Operating points, trim, linearisation, first-order fit, on a Model. Pure numerics |
+| `core/linearize.js` | `DesignError` (code, sentence, hint); operating points (`parseOp`, `opLabel`, `operatingPoint`), `trim`, `linearize`, `firstOrderFit`, on a Model. Pure numerics |
 | `core/planner.js` | Swing-up plan, along-plan linearisation, TV-LQR gains, verify run. In the bundle; reworked in step 8 |
 | `core/design.js` (to come) | `DesignError`, keys, the memory-only design store, LQR / PI / Kalman / trajectory design helpers |
 | `core/controllers.js`, `core/observers.js` | Hand types unchanged; designed types `lqr`, `swingUpLqr`, `scheduledPI`, `trajectory`, `kalman` |
@@ -67,7 +67,13 @@ at = { held?: { [idPath]: number | number[] }, sources?: { [name]: number }, X?:
 
 ## Operating points (`linearize.js`)
 
-`'origin'` (x = 0, u = 0; refused when the origin is not at rest), `'initial'` (x0, u from |f| minimal), `{ y: [...] }` (trim by damped minimum-norm Gauss–Newton, ≤ 50 iterations), `{ t }` (a snapshot of the run; drift reported; never in a variant). `linearize(model, op)` by central differences gives `{ A, B, C, D, states, outputs, delay, sensors, warnings }`; `firstOrderFit` gives K = D − C A⁻¹ B, τ = C A⁻² B / K, θ = delay. Variants take no operating points in v1: LQR and Kalman at the origin, the tank PI at trim points of the level.
+`operatingPoint(model, op, { umin, umax })` → `{ kind, x, u, y, drift, rest, label, warnings }` for:
+- `'origin'`: x = 0, u = 0. `rest` is false (with a warning naming the fastest state) when max |f(0, 0)| > 1e-6; LQR then refuses (`not-at-rest`). The encoder example is such a plant: its encoder error is not 0 at angle 0.
+- `'initial'`: the model's start state, with the u that comes closest to holding it (scalar Gauss–Newton). For the tank this is its PI's u0, a√(2g·0.15) = 0.1716, computed.
+- `{ y: [...] }` (null leaves a measurement free): `trim`, a damped Gauss–Newton with minimum-norm steps over (kept x, u), so coordinates the levels leave free stay where they start (a cart moved to x = 0.3 keeps its pendulum hanging). It starts at the start state with the input that holds it, not at u = 0: from u = 0 the tank's first step lands on a negative pump flow, where the pump has no slope and the iteration is stuck. If the levels cannot be reached in one go it approaches them in eight stages. Iteration caps only. Refusals: `trim-failed` ("no equilibrium with x = 0.3 m, θ = 0.5 rad: …"), `u-limit` ("holding h = 0.98 m needs q = 0.438, above u max 0.3"). Limit: a saturation with no slope at the start (a valve shut below its lower limit) can hide an equilibrium.
+- `{ t, u }`: a Model built at a snapshot of the run (step 12); drift reported; never in a variant.
+
+Labels read `origin (all states 0, u = 0)`, `h = 0.45 m, q = 0.297`, `t = 2.10 s of the run`; a measurement that is exactly one state carries its unit (`Model.outputs[k].unit`). `linearize(model, op)` by central differences (step 1e-6·max(1, |v|)) gives `{ A, B, C, D, n, m, states, outputs, input, op, delay, sensors, warnings }`, matrices as arrays of rows (B n×1, D m×1). `firstOrderFit(lin, k)` keeps only the states on the path from u to measurement k and gives K = D − C A⁻¹ B, τ = C A⁻² B / K, θ = delay; refusals `integrating-plant` ("angle integrates V"), `zero-gain`, `no-path`. At a kink exactly on the operating point (the tank's wall ends at h = H = 1) the slope is accurate to about 10⁻⁶ only (the tank's Ki at 1 m is off by 9·10⁻⁷; elsewhere 10⁻¹⁰). Variants take no operating points in v1: LQR and Kalman at the origin, the tank PI at trim points of the level.
 
 ## Designed variants
 
@@ -92,8 +98,8 @@ The Controller tab gets a read-only **Computed** box under the parameters (metho
 | 0 | This page, decisions v2.7 | Built |
 | 1 | `ode.states`, `ode.make` for the physics blocks; `planner.js` in the bundle | Built |
 | 2 | Model mode in `diagram.js`, `el.seen`, `laws: false`, n = 1 realisation, `blockInputNames` in core, nullable Dead time `y0` (the tank's pipe has none baked in) | Built |
-| 3 | `linearize.js` | Next |
-| 4 | `design.js`, the store, the `lqr` type, designs resolved while compiling | |
+| 3 | `linearize.js` | Built (tests 3, 4 in `test/linearize.test.mjs`) |
+| 4 | `design.js`, the store, the `lqr` type, designs resolved while compiling | Next |
 | 5 | `swingUpLqr`, `scheduledPI` and their manual twins | |
 | 6 | `plants.js` migrated; K constants deleted; guard test | |
 | 7 | Controller tab: Computed box, glyphs, Copy as numbers, library groups | |
