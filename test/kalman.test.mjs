@@ -58,12 +58,14 @@ test('kalman: a scalar plant gives the closed-form steady-state gain; R comes fr
   const res = evaluateSystem(p, { designs: createDesignStore() });
   const [st] = res.info.designs;
   assert.deepEqual([st.path, st.type, st.status, st.error], ['obs', 'kalman', 'ok', null]);
-  assert.equal(st.seen, 'controller → encoder · 1 state (lag)');
+  assert.equal(st.seen, 'u → encoder · 1 state (lag)');
   // R = σ² + q²/12 from the noise and the quantizer on the measurement's way.
   const r = 0.05 ** 2 + 0.01 ** 2 / 12;
   const R = st.rows.find((row) => row.label === 'R');
   rel(R.value[0], r, 1e-12, 'R');
-  assert.equal(R.note, 'from the sensor blocks');
+  assert.equal(R.note, "from noise 'noise' σ 0.05 and quantizer 'encoder' step 0.01");
+  // They are where R comes from, not faults: no note about them.
+  assert.ok(!st.warnings.some((w) => /noise|quantizer/.test(w)), st.warnings.join(' | '));
   // ẋ = −x/τ + (K/τ) u, y = x; held over Ts: Ad = e^(−Ts/τ), Bd = K (1 − Ad).
   const Ad = Math.exp(-0.01 / 0.5), Bd = 2 * (1 - Ad), Qw = 0.5 * Bd * Bd;
   // The a-priori covariance solves P = Ad² P r / (P + r) + Qw; L = P / (P + r).
@@ -162,4 +164,54 @@ test('kalman look-through: LQR on the estimates designs the same K as on the sta
   // From 0.1 rad off upright, the loop on the estimates holds the pole.
   const n = res.t.length - 1;
   assert.ok(Math.abs(res.signals.theta[n]) < 0.05 && Math.abs(res.signals.x[n]) < 0.2, `θ ${res.signals.theta[n]}, x ${res.signals.x[n]}`);
+});
+
+test('kalman with two sensors on one state: the filter that runs is the one designed, x̂ = x̂⁻ + L (y − C x̂⁻)', () => {
+  // A lag measured twice (R = 1e-4 each). The gain is designed for both
+  // measurements at once, so every innovation is taken from the prediction
+  // before any correction; one at a time the error ran nine times slower.
+  const p = lagProject({ bare: true, R: [1e-4, 1e-4], Q: [0.5] });
+  const d = p.system.plant.diagram;
+  obsOf(p).params.inputs = 3;
+  d.wires.push({ from: 'lag', to: 'obs:2' });
+  p.system.plant.diagram = normalizeDiagram(d);
+  const [st] = evaluateSystem(p, { designs: createDesignStore() }).info.designs;
+  assert.equal(st.status, 'ok', JSON.stringify(st.error));
+  const { A, B, C, L } = st.values;
+  assert.deepEqual(C, [1, 1]);
+  const Ts = 0.01, Ad = Math.exp(A[0] * Ts), Bd = (B[0] / A[0]) * (Ad - 1);
+  const law = OBSERVERS.kalman.make(obsOf(p).variants[0].params, Ts, st.values);
+  // The first sample corrects the zero estimate with both measurements at once.
+  const x0 = law.step([0, 1, 1])[0];
+  assert.equal(x0, 0 + (L[0] * (1 - 0) + L[1] * (1 - 0)));
+  assert.ok(x0 > 0.9, `one step: ${x0}`);   // one measurement at a time: L1 + L2 − L1 L2, about 0.72
+  // Then predict and correct: the error shrinks by (1 − L C) Ad per sample, exactly as designed.
+  let x = 1, xh = x0, e = x - xh;
+  const factor = (1 - L[0] - L[1]) * Ad;
+  for (let k = 0; k < 20; k++) {
+    const u = 0.3 * Math.sin(k);
+    x = Ad * x + Bd * u;
+    const before = law.step([u, x, x])[0];
+    xh = Ad * xh + Bd * u;
+    xh += L[0] * (x - xh) + L[1] * (x - xh);
+    assert.ok(Math.abs(before - xh) <= 1e-12, `sample ${k}: ${before}, designed ${xh}`);
+    const en = x - before;
+    if (Math.abs(e) > 1e-9) assert.ok(Math.abs(en / e - factor) < 1e-6, `sample ${k}: the error shrinks by ${en / e}, designed ${factor}`);
+    e = en;
+  }
+  assert.ok(factor < 0.1, `the designed factor ${factor}`);
+});
+
+test('kalman: Q = 0 on a plant that does not decay by itself is refused, saying why', () => {
+  // The cart–pole upright: its falling mode gets no process noise, so the
+  // filter would trust its model there for ever.
+  const p = normalizeProject(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY.find((s) => s.name.startsWith('Pendulum')), ['input', 'plant']));
+  const d = p.system.plant.diagram;
+  d.blocks.push({ id: 'obs', type: 'observer', name: 'estimator', params: { inputs: 3, outputs: 4, Ts: 0.01 }, variants: [{ type: 'kalman', params: { Q: [0], R: [1e-4] } }], x: 200, y: 300 });
+  d.wires.push({ from: 'ctrl', to: 'obs' }, { from: 'cart', to: 'obs:1' }, { from: 'cart:1', to: 'obs:2' });
+  p.system.plant.diagram = normalizeDiagram(d);
+  const st = compileDiagram(p.system.plant.diagram, 'plant', { standalone: true, designs: createDesignStore() }).designs.find((s) => s.path === 'obs');
+  assert.equal(st.error.code, 'not-detectable');
+  assert.match(st.error.message, /^the estimate's error would not die out: Q gives no process noise to a mode that does not decay by itself \(\|z\| = 1\.0\d+\), so the filter would trust its model there for ever$/);
+  assert.equal(st.error.hint, 'give Q a value above 0');
 });

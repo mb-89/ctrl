@@ -71,6 +71,34 @@ test('the triple pendulum swing-up: a plan in ≤ 300 iterations, in short slice
   assert.ok(again.slice < 30, `a slice of ${again.slice} ms`);
 });
 
+test('a short sample time or many segments: the work per iteration stays that of the default, in short slices', () => {
+  // At Ts = 1 ms the force is held over 5 samples (steps of 5 ms on the
+  // controller's grid), and 40 segments solve by a banded Cholesky: neither
+  // costs much more per iteration than the default (before: 13.7 s and
+  // 25.8 s per plan, slices of 13 and 150 ms). Four iterations each, warm.
+  const perIteration = (opts) => {
+    const gen = planTransfer(tripleModel(), { ...OPTS, ...opts });
+    let slice = 0, its = 0, cpu = process.cpuUsage();
+    const c0 = process.cpuUsage();
+    while (its < 4) {
+      const s = gen.next();
+      const c = process.cpuUsage(cpu);
+      slice = Math.max(slice, (c.user + c.system) / 1000);
+      cpu = process.cpuUsage();
+      if (s.done) break;
+      if (s.value) its++;
+    }
+    const all = process.cpuUsage(c0);
+    return { ms: (all.user + all.system) / 1000 / its, slice };
+  };
+  const base = perIteration({});
+  for (const opts of [{ Ts: 0.001 }, { segments: 40 }]) {
+    const r = perIteration(opts);
+    assert.ok(r.slice < 30, `${JSON.stringify(opts)}: a slice of ${r.slice} ms`);
+    assert.ok(r.ms < 3 * base.ms + 20, `${JSON.stringify(opts)}: ${r.ms} ms per iteration, the default ${base.ms}`);
+  }
+});
+
 test('along the plan: the step map\'s Jacobians; TV-LQR meets dlqr at rest; the loop swings up and holds', () => {
   const model = tripleModel(), plan = planned();
   const { along, up, Qx, values } = swingUp(model, { plan });
@@ -130,4 +158,39 @@ test('a plan that cannot be: with 2 N the planner says so, with a hint, and stil
   assert.equal(plan.hint, 'needs more force or a longer T (now 2.4 s)');
   assert.ok(plan.iterations <= 300);
   assert.equal(plan.F.length, 240, 'the attempt, so it can be seen');
+});
+
+test('a sensor whose slope changes along the swing: the gains are mapped with its slope at each sample', async () => {
+  // The cart–pole, its angle read through y = θ + 0.2 sin θ (slope 0.8
+  // hanging, 1.2 upright): K_k = Kx_k C_k⁻¹ with C_k = ∂y/∂x at the plan's
+  // state, not at the origin.
+  const { normalizeDiagram, compileDiagram } = await import('../src/core/diagram.js');
+  const { SYSTEM_LIBRARY } = await import('../src/core/systems.js');
+  const { operatingPoint } = await import('../src/core/linearize.js');
+  const { lqrDesign } = await import('../src/core/design.js');
+  const { planValues } = await import('../src/core/planner.js');
+  const d = structuredClone(SYSTEM_LIBRARY.find((s) => s.name.startsWith('Pendulum')).plant.diagram);
+  d.blocks.push({ id: 'enc', type: 'fcn', name: 'encoder', params: { expr: 'u + 0.2*sin(u)' }, x: 0, y: 0 });
+  d.wires = d.wires.map((w) => (w.from === 'cart:1' && w.to === 'ctrl:2' ? { from: 'enc', to: 'ctrl:2' } : w)).concat([{ from: 'cart:1', to: 'enc' }]);
+  const model = compileDiagram(normalizeDiagram(d), 'plant', { mode: 'model' }).seen('ctrl');
+  const plan = runPlan(planTransfer(model, { T: 2.4, Ts: 0.01, segments: 12, Fmax: 18.75 }));
+  assert.ok(plan.ok, plan.message);
+  const along = alongPlan(model, plan);
+  const lin = linearize(model, operatingPoint(model, 'origin'));
+  assert.ok(Math.abs(lin.C[1][2] - 1.2) < 1e-9, 'the angle\'s slope upright');
+  const Q = [10, 50, 1, 1];
+  const up = lqrDesign(lin, { Q, R: 0.1, track: 1, Ts: 0.01 });
+  const Kx = tvlqrGains(along, { Q: up.Qx, R: 0.1, Pend: up.P });
+  const values = planValues(model, along, Kx, { K: up.K, kr: up.kr });
+  const n = 4, m = 4, k = 30;   // early in the swing: the pole still near hanging
+  const theta = along.xs[k * n + 2];
+  assert.ok(Math.abs(Math.cos(theta)) > 0.5, `θ ${theta}`);
+  const slope = along.Cy[(k * m + 1) * n + 2];
+  assert.ok(Math.abs(slope - (1 + 0.2 * Math.cos(theta))) < 1e-6, `slope ${slope}`);
+  // K_k C_k = Kx_k: the feedback in states is the one TV-LQR designed.
+  for (let c = 0; c < n; c++) {
+    let s = 0;
+    for (let i = 0; i < m; i++) s += values.K[k * m + i] * along.Cy[(k * m + i) * n + c];
+    assert.ok(Math.abs(s - Kx[k * n + c]) < 1e-9 * Math.max(1, Math.abs(Kx[k * n + c])), `K C [${c}] = ${s}, Kx ${Kx[k * n + c]}`);
+  }
 });

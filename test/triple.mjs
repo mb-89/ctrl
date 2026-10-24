@@ -27,5 +27,5 @@ export function swingUp(model, { T = 2.4, Ts = 0.01, segments = 12, Fmax = 30, Q
   const up = lqrDesign(lin, { Q, R, track: 1, Ts });
   const Qx = lin.C[0].map((_, a) => lin.C[0].map((__, b) => lin.C.reduce((s, row, k) => s + row[a] * Q[k] * row[b], 0)));
   const Kx = tvlqrGains(along, { Q: Qx, R, Pend: up.P });
-  return { plan, along, lin, up, Qx, Kx, values: planValues(model, along, Kx, { C: lin.C, K: up.K, kr: up.kr }) };
+  return { plan, along, lin, up, Qx, Kx, values: planValues(model, along, Kx, { K: up.K, kr: up.kr }) };
 }

@@ -197,7 +197,7 @@ export function c2d(A, B, Ts) {
 // by powers of 2 that evens out row and column norms. The eigenvalues stay
 // exactly the same but become less sensitive to rounding. Returns the
 // scaling d: the result is D⁻¹ A D with D = diag(d).
-function balance(a) {
+export function balance(a) {
   const n = a.length;
   const d = new Array(n).fill(1);
   let done = false;
@@ -761,6 +761,88 @@ export function ctrb(A, B) {
   const blocks = [Bm];
   for (let i = 1; i < n; i++) blocks.push(mul(A, blocks[i - 1]));
   return Bm.map((_, i) => blocks.flatMap((M) => M[i]));
+}
+
+// Row and column scales by powers of 2 (exact) so the largest entry of each
+// nonzero row and column of M lies in (1/2, 1]: a rank decided on the result
+// does not depend on the units of the rows and columns (a state in m beside
+// one in µm). Returns { M: diag(r)·M·diag(c), r, c }.
+export function equilibrate(M) {
+  const m = M.length, n = m ? M[0].length : 0;
+  const S = M.map((row) => Array.from(row)), r = new Array(m).fill(1), c = new Array(n).fill(1);
+  const pow2 = (v) => 2 ** -Math.ceil(Math.log2(v));
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < m; i++) {
+      let a = 0;
+      for (let j = 0; j < n; j++) a = Math.max(a, Math.abs(S[i][j]));
+      if (!(a > 0 && Number.isFinite(a))) continue;
+      const f = pow2(a);
+      r[i] *= f;
+      for (let j = 0; j < n; j++) S[i][j] *= f;
+    }
+    for (let j = 0; j < n; j++) {
+      let a = 0;
+      for (let i = 0; i < m; i++) a = Math.max(a, Math.abs(S[i][j]));
+      if (!(a > 0 && Number.isFinite(a))) continue;
+      const f = pow2(a);
+      c[j] *= f;
+      for (let i = 0; i < m; i++) S[i][j] *= f;
+    }
+  }
+  return { M: S, r, c };
+}
+
+// An orthonormal basis of the Krylov space of v under M (v, M v, M² v, …),
+// by Arnoldi with the Gram–Schmidt step done twice. A new direction shorter
+// than tol·‖M‖ ends it.
+function krylov(M, v, tol) {
+  const n = M.length, Q = [];
+  const norm = (w) => Math.hypot(...w);
+  let size = 0;
+  for (const row of M) for (const x of row) size += x * x;
+  size = Math.sqrt(size);
+  const v0 = norm(v);
+  if (!(v0 > 0)) return Q;
+  Q.push(v.map((x) => x / v0));
+  while (Q.length < n) {
+    const q = Q.at(-1);
+    const w = M.map((row) => row.reduce((s, x, j) => s + x * q[j], 0));
+    for (let pass = 0; pass < 2; pass++) {
+      for (const b of Q) {
+        const s = b.reduce((t, x, i) => t + x * w[i], 0);
+        for (let i = 0; i < n; i++) w[i] -= s * b[i];
+      }
+    }
+    const h = norm(w);
+    if (!(h > tol * size)) break;
+    Q.push(w.map((x) => x / h));
+  }
+  return Q;
+}
+
+// A minimal realisation of the SISO model ẋ = A x + b u, y = c x: the part
+// of the state u reaches (controllable) that y sees (observable). A is
+// balanced first, then projected on orthonormal bases of the Krylov spaces
+// of b under A and of cᵀ under Aᵀ (Arnoldi); a direction weaker than
+// tol·‖A‖ counts as cut off (the default 1e-8 is above the error of slopes
+// taken by finite differences, so a pole and zero that cancel in the plant
+// cancel here). The transfer function c (sI − A)⁻¹ b is kept. b and c are
+// plain vectors. Returns { A, b, c } of order r ≤ n.
+export function minreal(A, b, c, tol = 1e-8) {
+  const n = square(A, 'minreal');
+  if (!n) return { A: [], b: [], c: [] };
+  const a = A.map((row) => Array.from(row));
+  const d = balance(a);
+  const project = (M, v, w, Q) => ({
+    A: Q.map((p) => Q.map((q) => p.reduce((s, x, i) => s + x * M[i].reduce((t, y, j) => t + y * q[j], 0), 0))),
+    b: Q.map((p) => p.reduce((s, x, i) => s + x * v[i], 0)),
+    c: Q.map((q) => q.reduce((s, x, i) => s + x * w[i], 0)),
+  });
+  const ctl = project(a, b.map((v, i) => v / d[i]), c.map((v, i) => v * d[i]), krylov(a, b.map((v, i) => v / d[i]), tol));
+  const r = ctl.A.length;
+  if (!r) return ctl;
+  const At = ctl.A.map((_, i) => ctl.A.map((row) => row[i]));
+  return project(ctl.A, ctl.b, ctl.c, krylov(At, ctl.c, tol));
 }
 
 // Numerical rank: the number of diagonal entries of R above tol in a

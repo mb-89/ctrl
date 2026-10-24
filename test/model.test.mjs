@@ -177,8 +177,9 @@ test('model mode: the plant a block sees, reduced to what u moves and the measur
   assert.deepEqual(tank.delay, [0.1]);
   assert.deepEqual(Array.from(tank.x0), [0.15]);
 
-  // A quantizer is the identity and noise adds 0, each with a note; both
-  // go into the sensor of the measurement they sit on.
+  // A quantizer is the identity and noise adds 0; both go into the sensor
+  // of the measurement they sit on (what the Kalman filter's R is made of),
+  // not into the notes.
   const sensed = normalizeDiagram({
     blocks: [block('r', 'source', { signal: 'r' }), block('c', 'controller', { inputs: 2, Ts: 0.01 }, { variants: [{ type: 'pid' }] }),
       block('p', 'integrator', { K: 1 }, { name: 'plant' }), block('q', 'quantizer', { q: 0.25 }, { name: 'encoder' }), block('n', 'noise', { std: 0.01, seed: 3 }, { name: 'jitter' }),
@@ -188,9 +189,23 @@ test('model mode: the plant a block sees, reduced to what u moves and the measur
   const sm = modelOf(sensed, 'c');
   sm.y([0.3], 0, y);
   assert.equal(y[0], 0.3);
-  assert.deepEqual(sm.sensors, [{ std: 0.01, q: 0.25 }]);
-  assert.ok(sm.warnings.some((w) => /quantizer 'encoder' on .* identity .*0\.25/.test(w)), sm.warnings.join('; '));
-  assert.ok(sm.warnings.some((w) => /noise 'jitter' on .* adds 0 .*0\.01/.test(w)), sm.warnings.join('; '));
+  assert.deepEqual(sm.sensors, [{ std: 0.01, q: 0.25, parts: ["quantizer 'encoder' step 0.25", "noise 'jitter' σ 0.01"] }]);
+  assert.ok(!sm.warnings.some((w) => /encoder|jitter/.test(w)), sm.warnings.join('; '));
+  // Each counts with what reaches the measurement: a unit conversion after
+  // the noise scales its σ, one before the quantizer its step. Noise on the
+  // way in (a push on the plant) is on no measurement's way: a note.
+  const scaled = normalizeDiagram({
+    blocks: [block('r', 'source', { signal: 'r' }), block('c', 'controller', { inputs: 2, Ts: 0.01 }, { variants: [{ type: 'pid' }] }),
+      block('w', 'noise', { std: 0.3, seed: 1 }, { name: 'push' }), block('p', 'firstOrder', { K: 1, tau: 1 }, { name: 'plant' }),
+      block('n', 'noise', { std: 0.05, seed: 3 }, { name: 'jitter' }), block('k', 'gain', { K: 1000 }, { name: 'to mm' }),
+      block('q', 'quantizer', { q: 0.01 }, { name: 'encoder' }), block('h', 'gain', { K: 0.5 }, { name: 'half' }), block('y', 'sink', { name: 'y' })],
+    wires: [wire('r', 'c'), wire('c', 'w'), wire('w', 'p'), wire('p', 'n'), wire('n', 'k'), wire('k', 'q'), wire('q', 'h'), wire('h', 'c:1'), wire('h', 'y')],
+  });
+  const sc = modelOf(scaled, 'c');
+  assert.ok(Math.abs(sc.sensors[0].std - 25) < 1e-6, `σ ${sc.sensors[0].std}: 0.05 × 1000 × 0.5`);
+  assert.ok(Math.abs(sc.sensors[0].q - 0.005) < 1e-12, `q ${sc.sensors[0].q}: 0.01 × 0.5`);
+  assert.deepEqual(sc.sensors[0].parts, ["noise 'jitter' σ 0.05 × 500", "quantizer 'encoder' step 0.01 × 0.5"]);
+  assert.ok(sc.warnings.some((w) => /^noise 'push' adds 0 in the model \(σ 0\.3\): it is on no measurement's way$/.test(w)), sc.warnings.join('; '));
 
   // Two Controllers on one plant: each one's model holds the other's output.
   const two = normalizeDiagram({

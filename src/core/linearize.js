@@ -9,10 +9,11 @@
 //   trim(model, targets)          an equilibrium where the measurements are at targets
 //   linearize(model, op)          → { A, B, C, D, states, outputs, op, delay, sensors, warnings }
 //   firstOrderFit(lin, k)         K, τ, θ of the path from u to measurement k
+//   refuseKinks(lin, what)        a design's refusal of a kink at its operating point
 //
 // Matrices are arrays of rows, as in linalg.js: A n×n, B n×1, C m×n, D m×1.
 
-import { solve, rank } from './linalg.js';
+import { solve, eig, minreal } from './linalg.js';
 
 // An error a design reports: a code, a sentence, and a hint. The status of a
 // failed design carries all three; nothing breaks (the law then puts out 0).
@@ -102,6 +103,16 @@ export function operatingPoint(model, op, { umin = -Infinity, umax = Infinity } 
   return { kind: op.kind, op, x, u, y, drift, rest, label, warnings };
 }
 
+// A slope by finite differences from the values at v + h (p), v (c) and
+// v − h (q): central, unless one side is not finite or flat (it returns
+// exactly the value at v while the other side moves: a pump at zero flow,
+// a valve against its stop), then the other side alone.
+function slope(p, c, q, h) {
+  if (!Number.isFinite(q) || (q === c && p !== c)) return (p - c) / h;
+  if (!Number.isFinite(p) || (p === c && q !== c)) return (c - q) / h;
+  return (p - q) / (2 * h);
+}
+
 // The u that brings ẋ = f(x, u) closest to 0 at a fixed x (scalar
 // Gauss–Newton with halving steps), within [umin, umax].
 function restInput(model, x, umin, umax) {
@@ -114,7 +125,7 @@ function restInput(model, x, umin, umax) {
     model.f(x, u + h, fp); model.f(x, u - h, fm);
     cost(u);
     let gf = 0, gg = 0;
-    for (let i = 0; i < n; i++) { const g = (fp[i] - fm[i]) / (2 * h); gf += g * f0[i]; gg += g * g; }
+    for (let i = 0; i < n; i++) { const g = slope(fp[i], f0[i], fm[i], h); gf += g * f0[i]; gg += g * g; }
     if (!(gg > 0)) break;
     let du = -gf / gg, moved = false;
     for (let tries = 0; tries < 30; tries++, du /= 2) {
@@ -129,11 +140,17 @@ function restInput(model, x, umin, umax) {
 // An equilibrium f(x, u) = 0 with y_k(x, u) = targets[k] (null: free), over
 // the kept states and u. Damped Gauss–Newton with minimum-norm steps
 // Δ = −Jᵀ (J Jᵀ + λI)⁻¹ r, so coordinates the targets leave free (a cart's
-// position) stay where they start: at the start state x0, with the u that
-// comes closest to holding it. If the targets cannot be reached in one go
-// (a kink such as a pump that cannot run backwards), they are approached in
-// eight stages from where the start state is. Iteration caps only, no
-// randomness. Throws DesignError 'trim-failed' or 'u-limit'.
+// position) stay where they start. Each residual row is scaled by the size
+// of its Jacobian row, which leaves the minimum-norm step as it is but lets
+// a fast state's rate (10¹¹ per unit, a stiff filter) and a slow one's weigh
+// alike. Starts:
+//   1. from the targets: a measurement that reads one state alone (slope s)
+//      sets that state to its level, the rest stay at the start state, and
+//      u is the input that holds that (an empty tank trims at 0.1 m at once);
+//   2. from the start state x0, with the u that comes closest to holding it;
+//   3. from there in eight stages towards the levels (a kink such as a pump
+//      that cannot run backwards).
+// Iteration caps only, no randomness. Throws DesignError 'trim-failed' or 'u-limit'.
 export function trim(model, targets, { umin = -Infinity, umax = Infinity } = {}) {
   const { n, m } = model, N = n + 1, uName = model.input?.label ?? 'u';
   const tg = Array.isArray(targets) ? targets : [targets];
@@ -149,55 +166,91 @@ export function trim(model, targets, { umin = -Infinity, umax = Infinity } = {})
     model.y(x, u, y);
     for (let i = 0; i < n; i++) r[i] = f[i];
     for (let j = 0; j < free.length; j++) r[n + j] = y[free[j]] - goal[j];
-    return sumSq(r);
   };
   const zt = new Float64Array(N), r = new Float64Array(P), rt = new Float64Array(P), rp = new Float64Array(P), rm = new Float64Array(P);
-  const J = Array.from({ length: P }, () => new Array(N).fill(0));
-  // Gauss–Newton from z towards goal; returns the largest residual left.
+  const J = Array.from({ length: P }, () => new Array(N).fill(0)), rs = new Float64Array(P), tol = new Float64Array(P);
+  const scaledCost = (v) => { let s = 0; for (let i = 0; i < P; i++) s += (rs[i] * v[i]) ** 2; return s; };
+  // How far each residual may stay from 0: 1e-8, or what a relative error
+  // of 1e-12 in z leaves of it (a stiff state's rate cannot get closer).
+  const tolerances = (z) => { for (let i = 0; i < P; i++) { let s = 0; for (let j = 0; j < N; j++) s += Math.abs(J[i][j] * z[j]); tol[i] = 1e-8 + 1e-12 * s; } };
+  const worst = () => { let w = 0; for (let i = 0; i < P; i++) w = Math.max(w, Math.abs(r[i]) / tol[i]); return w; };
+  // Gauss–Newton from z towards goal; true when every residual is within its tolerance.
   const solveFrom = (z, iterations) => {
-    let cost = residual(z, r), lambda = 0;
-    for (let it = 0; it < iterations && maxAbs(r) > 1e-14; it++) {
+    residual(z, r);
+    let lambda = 0, jacobian = false;
+    for (let it = 0; it < iterations; it++) {
       for (let j = 0; j < N; j++) {
         const v = z[j], h = step(v);
         zt.set(z); zt[j] = v + h; residual(zt, rp);
         zt[j] = v - h; residual(zt, rm);
-        for (let i = 0; i < P; i++) J[i][j] = (rp[i] - rm[i]) / (2 * h);
+        // One side not finite, or flat for every row while the other moves: that side's slope is no slope.
+        let pBad = false, mBad = false, pFlat = true, mFlat = true;
+        for (let i = 0; i < P; i++) {
+          if (!Number.isFinite(rp[i])) pBad = true;
+          if (!Number.isFinite(rm[i])) mBad = true;
+          if (rp[i] !== r[i]) pFlat = false;
+          if (rm[i] !== r[i]) mFlat = false;
+        }
+        for (let i = 0; i < P; i++) J[i][j] = mBad || (mFlat && !pFlat) ? (rp[i] - r[i]) / h : pBad || (pFlat && !mFlat) ? (r[i] - rm[i]) / h : (rp[i] - rm[i]) / (2 * h);
       }
-      const JJ = J.map((a) => J.map((b) => a.reduce((s, x, k) => s + x * b[k], 0)));
+      jacobian = true;
+      tolerances(z);
+      if (worst() <= 1) return true;
+      for (let i = 0; i < P; i++) { let s = 0; for (let j = 0; j < N; j++) s += J[i][j] * J[i][j]; rs[i] = s > 0 && Number.isFinite(s) ? 1 / Math.sqrt(s) : 1; }
+      const Js = J.map((row, i) => row.map((v) => v * rs[i]));
+      const JJ = Js.map((a) => Js.map((b) => a.reduce((s, x, k) => s + x * b[k], 0)));
       const scale = Math.max(1e-300, ...JJ.map((row, i) => row[i]));
       lambda = lambda ? Math.max(lambda / 10, 1e-15 * scale) : 1e-12 * scale;
+      const cost = scaledCost(r), rsc = Array.from(r, (v, i) => v * rs[i]);
       let accepted = false;
       for (let tries = 0; tries < 12; tries++) {
         let w = null;
-        try { w = solve(JJ.map((row, i) => row.map((v, j) => v + (i === j ? lambda : 0))), Array.from(r)); } catch { /* singular: damp more */ }
+        try { w = solve(JJ.map((row, i) => row.map((v, j) => v + (i === j ? lambda : 0))), rsc); } catch { /* singular: damp more */ }
         if (w) {
-          for (let j = 0; j < N; j++) { let s = 0; for (let i = 0; i < P; i++) s += J[i][j] * w[i]; zt[j] = z[j] - s; }
-          const c = residual(zt, rt);
-          if (c < cost) { z.set(zt); r.set(rt); cost = c; accepted = true; break; }
+          for (let j = 0; j < N; j++) { let s = 0; for (let i = 0; i < P; i++) s += Js[i][j] * w[i]; zt[j] = z[j] - s; }
+          residual(zt, rt);
+          const c = scaledCost(rt);
+          if (c < cost) { z.set(zt); r.set(rt); accepted = true; break; }
         }
         lambda *= 10;
       }
       if (!accepted) break;
     }
-    residual(z, r);
-    return maxAbs(r);
+    if (!jacobian) return false;
+    return worst() <= 1;
   };
   const z0 = new Float64Array(N);
   z0.set(model.x0);
   z0[n] = restInput(model, model.x0, umin, umax);
   model.y(model.x0, z0[n], y);
   const y0 = free.map((k) => y[k]);
-  let z = Float64Array.from(z0);
   free.forEach((k, j) => { goal[j] = tg[k]; });
-  let res = solveFrom(z, 50);
-  if (!(res <= 1e-8)) {
+  // 1. From the targets, where a measurement reads one state alone.
+  const seed = Float64Array.from(z0);
+  let seeded = false;
+  free.forEach((k, j) => {
+    const o = model.outputs[k];
+    if (!(o && Number.isInteger(o.state) && Math.abs(o.slope) > 0)) return;
+    seed[o.state] = model.x0[o.state] + (tg[k] - y0[j]) / o.slope;
+    seeded = true;
+  });
+  let z = seed, ok = false;
+  if (seeded) {
+    seed[n] = restInput(model, seed.subarray(0, n), umin, umax);
+    ok = solveFrom(z, 50);
+  }
+  // 2. From the start state; 3. in stages from there.
+  if (!ok) { z = Float64Array.from(z0); ok = solveFrom(z, 50); }
+  if (!ok) {
     z = Float64Array.from(z0);
     for (let s = 1; s <= 8; s++) {
       free.forEach((k, j) => { goal[j] = y0[j] + ((tg[k] - y0[j]) * s) / 8; });
-      res = solveFrom(z, s < 8 ? 20 : 50);
+      ok = solveFrom(z, s < 8 ? 20 : 50);
     }
   }
-  if (!(res <= 1e-8)) throw new DesignError('trim-failed', `no equilibrium with ${label}: the best found leaves a residual of ${fmt(res)}`, `the level may be out of reach of ${uName}, or the levels contradict each other`);
+  residual(z, r);
+  const res = maxAbs(r);
+  if (!ok) throw new DesignError('trim-failed', `no equilibrium with ${label}: the best found leaves a residual of ${fmt(res)}`, `the level may be out of reach of ${uName}, or the levels contradict each other`);
   const u = z[n];
   if (u > umax + 1e-12) throw new DesignError('u-limit', `holding ${label} needs ${uName} = ${fmt(u)}, above u max ${fmt(umax)}`, 'choose a level the actuator can hold, or raise u max');
   if (u < umin - 1e-12) throw new DesignError('u-limit', `holding ${label} needs ${uName} = ${fmt(u)}, below u min ${fmt(umin)}`, 'choose a level the actuator can hold, or lower u min');
@@ -205,38 +258,82 @@ export function trim(model, targets, { umin = -Infinity, umax = Infinity } = {})
 }
 
 // The linear model at an operating point (a spec, or what operatingPoint
-// returned), by central differences with steps 1e-6·max(1, |v|):
+// returned), by central differences with steps h = 1e-6·max(1, |v|):
 //   δẋ = A δx + B δu,  δy = C δx + D δu.
+// A kink at the point (a saturation at its limit, a pump at zero flow, a
+// square root at 0) makes the slope differ left and right, and the central
+// difference is then neither. So each slope is also taken one-sided; where
+// the two sides disagree beyond 10⁻³ (and beyond the curvature a smooth
+// function shows: the gap must not shrink with a 10× shorter step), lin.kinks
+// names the state or input and what it moves, and LQR, the Kalman filter and
+// the PI design refuse. Saturations at their limit are named there too.
 export function linearize(model, op = 'origin') {
   const pt = op && op.x && 'u' in op ? op : operatingPoint(model, op);
-  const { n, m } = model, x = Float64Array.from(pt.x), u = pt.u;
-  const fp = new Float64Array(n), fm = new Float64Array(n), yp = new Float64Array(m), ym = new Float64Array(m);
-  const A = Array.from({ length: n }, () => new Array(n).fill(0)), C = Array.from({ length: m }, () => new Array(n).fill(0));
-  for (let j = 0; j < n; j++) {
-    const v = x[j], h = step(v);
-    x[j] = v + h; model.f(x, u, fp); model.y(x, u, yp);
-    x[j] = v - h; model.f(x, u, fm); model.y(x, u, ym);
-    x[j] = v;
-    for (let i = 0; i < n; i++) A[i][j] = (fp[i] - fm[i]) / (2 * h);
-    for (let k = 0; k < m; k++) C[k][j] = (yp[k] - ym[k]) / (2 * h);
+  const { n, m } = model, x = Float64Array.from(pt.x), u = pt.u, uName = model.input?.label ?? 'u';
+  const f0 = new Float64Array(n), y0 = new Float64Array(m);
+  model.f(x, u, f0); model.y(x, u, y0);
+  const c0 = Float64Array.from([...f0, ...y0]);
+  // The values of f and y (one vector) with coordinate j (n: u) moved by d.
+  const moved = (j, d) => {
+    const fv = new Float64Array(n), yv = new Float64Array(m);
+    if (j < n) { const v = x[j]; x[j] = v + d; model.f(x, u, fv); model.y(x, u, yv); x[j] = v; } else { model.f(x, u + d, fv); model.y(x, u + d, yv); }
+    return Float64Array.from([...fv, ...yv]);
+  };
+  const rows = n + m, cols = n + 1;
+  const S = Array.from({ length: rows }, () => new Array(cols).fill(0));
+  const side = [];
+  for (let j = 0; j < cols; j++) {
+    const v = j < n ? x[j] : u, h = step(v), p = moved(j, h), q = moved(j, -h);
+    for (let i = 0; i < rows; i++) S[i][j] = (p[i] - q[i]) / (2 * h);
+    side.push({ h, p, q });
   }
-  const h = step(u);
-  model.f(x, u + h, fp); model.y(x, u + h, yp);
-  model.f(x, u - h, fm); model.y(x, u - h, ym);
-  const B = Array.from({ length: n }, (_, i) => [(fp[i] - fm[i]) / (2 * h)]);
-  const D = Array.from({ length: m }, (_, k) => [(yp[k] - ym[k]) / (2 * h)]);
+  // One-sided slopes against the central ones; a suspect gap is checked with a 10× longer step.
+  const rowScale = S.map((row) => Math.max(0, ...row.map((v) => (Number.isFinite(v) ? Math.abs(v) : 0))));
+  const kinks = [];
+  const rowName = (i) => (i < n ? `the rate of ${model.states[i].label}` : model.outputs[i - n].label);
+  const colName = (j) => (j < n ? model.states[j].label : uName);
+  for (let j = 0; j < cols; j++) {
+    const { h, p, q } = side[j];
+    let far = null;
+    for (let i = 0; i < rows; i++) {
+      const fw = (p[i] - c0[i]) / h, bw = (c0[i] - q[i]) / h, gap = Math.abs(fw - bw);
+      const noise = (1e3 * Number.EPSILON * Math.max(Math.abs(c0[i]), Math.abs(p[i]), Math.abs(q[i]))) / h;
+      if (Number.isFinite(gap) && !(gap > 1e-3 * Math.max(Math.abs(fw), Math.abs(bw)) + 1e-6 * rowScale[i] + noise)) continue;
+      if (!far) far = { p: moved(j, 10 * h), q: moved(j, -10 * h) };
+      const gapFar = Math.abs((far.p[i] - c0[i]) / (10 * h) - (c0[i] - far.q[i]) / (10 * h));
+      if (Number.isFinite(gap) && Number.isFinite(gapFar) && !(gap > 0.5 * gapFar)) continue;
+      kinks.push(Number.isFinite(gap) ? `the slope of ${rowName(i)} along ${colName(j)} differs left and right (${fmt(bw)} and ${fmt(fw)})` : `${rowName(i)} has no slope along ${colName(j)} there`);
+      break;
+    }
+  }
+  const edges = (model.limits?.(x, u) ?? []).filter((s) => s.edge).map((s) => s.sentence);
+  const A = S.slice(0, n).map((row) => row.slice(0, n)), B = S.slice(0, n).map((row) => [row[n]]);
+  const C = S.slice(n).map((row) => row.slice(0, n)), D = S.slice(n).map((row) => [row[n]]);
   return {
     A, B, C, D, n, m,
     states: model.states, outputs: model.outputs, input: model.input ?? { label: 'u' },
     op: pt, delay: model.delay, sensors: model.sensors,
-    warnings: [...new Set([...model.warnings, ...pt.warnings])],
+    kinks: [...edges, ...kinks],
+    warnings: [...new Set([...model.warnings, ...pt.warnings, ...kinks.map((k) => `a kink at the operating point: ${k}`)])],
   };
+}
+
+// A design on a linear model refuses a kink at its operating point: the
+// slopes it would use are neither the left nor the right one.
+export function refuseKinks(lin, what) {
+  if (!lin.kinks?.length) return;
+  throw new DesignError('kink', `${what} needs slopes, and the plant has a kink at ${lin.op.label}: ${lin.kinks[0]}`, 'choose an operating point away from the limit or kink, or move the limit');
 }
 
 // The path from u to measurement k as a first-order lag with dead time,
 // K e^(−θs) / (τs + 1): the static gain K = D − C A⁻¹ B, the mean residence
 // time τ = C A⁻² B / K (exact for one state), θ the dead time reported on
-// the way. Only the states on the path (moved by u, seen by y_k) count.
+// the way. Computed on a minimal realisation of the path (linalg.js
+// minreal: balanced, then only the modes u moves and y_k sees), so badly
+// scaled states (a stiff filter beside a slow motor) and a pole cancelled by
+// a zero (an angle, then its derivative) do not get in the way. Refusals:
+// 'integrating-plant' (a pole at 0 left), 'unstable-plant' (a pole in the
+// right half-plane), 'zero-gain', 'no-path'.
 export function firstOrderFit(lin, k = 0) {
   if (!(k >= 0 && k < lin.m)) throw new DesignError('bad-output', `no measurement ${k + 1}; this block has ${lin.m}`);
   const label = lin.outputs[k].label, uName = lin.input.label;
@@ -252,15 +349,23 @@ export function firstOrderFit(lin, k = 0) {
   const toY = reach(lin.C[k].map((c) => c !== 0), (i, j) => lin.A[i][j] !== 0);
   const path = [];
   for (let i = 0; i < n; i++) if (fromU[i] && toY[i]) path.push(i);
-  if (!path.length) {
-    if (d === 0) throw new DesignError('no-path', `${uName} does not reach ${label}`, 'check the wiring from the controller output to the plant and on to this measurement');
+  if (!path.length && d === 0) throw new DesignError('no-path', `${uName} does not reach ${label}`, 'check the wiring from the controller output to the plant and on to this measurement');
+  const mr = minreal(path.map((i) => path.map((j) => lin.A[i][j])), path.map((i) => lin.B[i][0]), path.map((j) => lin.C[k][j]));
+  const A = mr.A, B = mr.b, C = mr.c, r = A.length;
+  if (!r) {
+    if (d === 0) throw new DesignError('zero-gain', `${uName} has no static effect on ${label}`, 'pole cancellation needs a plant whose output settles away from 0');
     return { K: d, tau: 0, theta: lin.delay[k] ?? 0, label, warnings: [] };
   }
-  const A = path.map((i) => path.map((j) => lin.A[i][j])), B = path.map((i) => lin.B[i][0]), C = path.map((j) => lin.C[k][j]);
-  if (rank(A) < path.length) throw new DesignError('integrating-plant', `${label} integrates ${uName}: it has no static gain`, 'pole cancellation needs a self-regulating plant; measure a rate, or use another design');
+  let size = 0;
+  for (const row of A) for (const v of row) size += v * v;
+  size = Math.sqrt(size);
+  const poles = eig(A);
+  if (poles.some((p) => Math.hypot(p.re, p.im) <= 1e-9 * size)) throw new DesignError('integrating-plant', `${label} integrates ${uName}: it has no static gain`, 'pole cancellation needs a self-regulating plant; measure a rate, or use another design');
+  const rhp = poles.filter((p) => p.re > 1e-9 * size);
+  if (rhp.length) throw new DesignError('unstable-plant', `the path from ${uName} to ${label} is unstable: a pole at ${fmt(rhp[0].re)}${rhp[0].im ? ` ± ${fmt(Math.abs(rhp[0].im))}i` : ''} rad/s`, 'pole cancellation needs a stable plant; stabilise it first (an inner loop), or use LQR');
   const x1 = solve(A, B), x2 = solve(A, x1);
   const K = d - C.reduce((s, c, i) => s + c * x1[i], 0);
-  if (!(Math.abs(K) > 1e-12 * Math.max(1, Math.abs(d)))) throw new DesignError('zero-gain', `${uName} has no static effect on ${label}`, 'pole cancellation needs a plant whose output settles away from 0');
+  if (!(Math.abs(K) > 1e-9 * Math.max(Math.abs(d), Math.hypot(...C) * Math.hypot(...B) / size))) throw new DesignError('zero-gain', `${uName} has no static effect on ${label}`, 'pole cancellation needs a plant whose output settles away from 0');
   const tau = C.reduce((s, c, i) => s + c * x2[i], 0) / K;
   const warnings = tau > 0 ? [] : [`the step response of ${label} is not lag-like (τ = ${fmt(tau)} s): it overshoots or starts the wrong way`];
   return { K, tau, theta: lin.delay[k] ?? 0, label, warnings };

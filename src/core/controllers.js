@@ -36,7 +36,7 @@
 // computation (a plan; the tab folds it away), `tune: false` one auto-tune
 // leaves alone.
 
-import { lqrDesign, scheduledPIDesign, trajectoryDesign } from './design.js';
+import { lqrDesign, scheduledPIDesign, trajectoryDesign, poleOf } from './design.js';
 import { DesignError } from './linearize.js';
 import { planLaw } from './planner.js';
 
@@ -254,34 +254,36 @@ export const CONTROLLERS = {
     // The swing-up above, its catch designed by LQR at the upright rest (the
     // origin of the plant this block sees, which must be the cart–pole's
     // x, θ, v, ω on inputs 2 to 5); x follows r. The energy pump keeps its
-    // hand gains.
+    // hand gains; the pole's l and g it measures energy with come from the
+    // plant too (poleOf), so a longer pole is pumped to its own top.
     label: 'Swing-up + LQR catch', summary: 'energy pumping, then u = kr r − K · y, K from the plant',
-    designed: true, version: 1, computes: ['K', 'kr'], twin: 'swingUp',
-    params: [...SWING, ...WEIGHTS, ...LIMITS],
+    designed: true, version: 2, computes: ['K', 'kr', 'l', 'g'], twin: 'swingUp',
+    params: [...SWING.filter((s) => s.key !== 'l' && s.key !== 'g'), ...WEIGHTS, ...LIMITS],
     design(p, ctx) {
       const lin = ctx.linearize('origin');
       const labels = lin.outputs.map((o) => o.label);
       if (lin.m !== 4 || !lin.outputs[1].angle) throw new DesignError('swing-inputs', `the swing-up reads x, θ, v, ω (θ an angle) from inputs 2 to 5; this block has ${labels.length ? labels.join(', ') : 'no measurements'}`, 'wire the cart–pole\'s x, θ, v, ω to inputs 2 to 5, or use LQR');
       const d = lqrDesign(lin, { Q: p.Q, R: p.R, track: 1, Ts: ctx.Ts });
-      return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
+      const { l, g } = poleOf(lin);
+      return { values: { K: d.K, kr: d.kr, l, g }, rows: [...d.rows, { label: 'pole', value: [l, g], labels: ['l', 'g'], note: 'm, m/s²: what the pump measures energy with' }], warnings: d.warnings };
     },
     make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.swingUpLqr.manual(p, values), Ts) : OFF; },
-    manual: (p, values) => ({ type: 'swingUp', params: { kE: p.kE, kx: p.kx, kv: p.kv, l: p.l, g: p.g, thetaS: p.thetaS, K: [...values.K], kr: values.kr, umin: p.umin, umax: p.umax } }),
+    manual: (p, values) => ({ type: 'swingUp', params: { kE: p.kE, kx: p.kx, kv: p.kv, l: values.l, g: values.g, thetaS: p.thetaS, K: [...values.K], kr: values.kr, umin: p.umin, umax: p.umax } }),
     linear: twinLinear('swingUpLqr'),
   },
   trajectory: {
     // A swing-up planned in the page from the plant this block sees
     // (planner.js, design.js): the force per sample that takes it from where
     // it starts to rest at the origin, followed with time-varying LQR along
-    // the plan; then the upright LQR holds it, x following r. T, segments and
-    // planShare shape the plan (changing them plans again, a few seconds);
-    // Q, R, start and the limits only re-run the gains. There is no Copy as
+    // the plan; then the upright LQR holds it, x following r. T, segments,
+    // planShare and the limits shape the plan (changing them plans again,
+    // seconds); Q, R and start only re-run the gains. There is no Copy as
     // numbers: a plan is always computed.
     label: 'Planned swing-up + TV-LQR', summary: 'u = F(t) − K(t)·(y − y*(t)), then u = kr r − K·y',
     designed: true, version: 1, computes: ['F', 'Y', 'K', 'Kup', 'kr'],
     params: [
       num('T', 'Swing-up time T', 2.4, { unit: 's', positive: true, heavy: true, tune: false, help: 'how long the swing-up takes; rounded to whole samples' }),
-      num('segments', 'Segments', 12, { int: true, min: 2, max: 40, heavy: true, tune: false, help: 'pieces the plan is solved in (multiple shooting)' }),
+      num('segments', 'Segments', 12, { int: true, min: 2, max: 40, heavy: true, tune: false, help: 'pieces the plan is solved in (multiple shooting); more take longer' }),
       num('planShare', 'Plan may use', 0.75, { min: 0.05, max: 1, heavy: true, tune: false, help: 'the share of the force limit the plan may use; the rest is left for the feedback' }),
       num('start', 'Starts at', 0, { unit: 's', min: 0, help: 'until then u = 0' }),
       ...WEIGHTS, ...LIMITS,

@@ -97,6 +97,15 @@ test('LQR from the plant reproduces the gains the library held, to 0.1 %; it ref
   assert.equal(motor.error.code, 'states-not-measured');
   assert.match(motor.error.message, /sees angle but not Motor\/armature and Motor\/load\./);
   assert.match(motor.error.hint, /^wire armature and load to inputs, or add a Kalman Observer$/);
+  // No weight on a mode that does not decay by itself: the cart's position
+  // (an integrator, |z| = 1), or with Q = 0 the falling pole too. Q says so,
+  // not the wiring.
+  const free = statusOf(project('Pendulum swing-up', [lqr([0, 50, 1, 1], 0.1)]));
+  assert.equal(free.error.code, 'not-stabilisable');
+  assert.match(free.error.message, /^LQR finds no gain that holds this plant: Q gives no weight to x, and a mode seen only there does not decay by itself \(\|z\| = 1\)$/);
+  assert.equal(free.error.hint, 'give x a weight above 0');
+  const none = statusOf(project('Pendulum swing-up', [lqr([0], 0.1)]));
+  assert.match(none.error.message, /Q gives no weight to x, θ, v and ω/);
 });
 
 test('the design store: a design runs again only when what it depends on changes', () => {
@@ -202,7 +211,8 @@ test('designs resolve observers first: a Controller looks through a designed obs
       ...[0, 1, 2, 3].map((j) => ({ from: j ? `obs:${j}` : 'obs', to: `ctrl:${j + 1}` })));
     const el = compileDiagram(normalizeDiagram(d), 'plant', { standalone: true, designs: createDesignStore() });
     assert.deepEqual(el.designs.map((s) => [s.path, s.status]), [['obs', 'ok'], ['ctrl', 'ok']]);
-    assert.equal(el.designs[0].seen, 'controller → x, θ · 4 states (x, v, θ, ω)');
+    // u is named by the Sink that records it, for an Observer as for a Controller.
+    assert.equal(el.designs[0].seen, 'F → x, θ · 4 states (x, v, θ, ω)');
     const direct = statusOf(project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1)]));
     assert.deepEqual(el.designs[1].values.K, direct.values.K);
   } finally { delete OBSERVERS.truth; }
@@ -256,6 +266,20 @@ test('scheduledPI: pole cancellation from the tank at each level reproduces the 
   assert.match(motor.error.message, /angle integrates V/);
   assert.throws(() => normalizeVariant({ type: 'scheduledPI', params: { at: [0.5, 0.2] } }), /the At values must increase/);
   assert.throws(() => normalizeVariant({ type: 'scheduledPI', params: { Tcl: 0 } }), /Tcl: above 0/);
+  // A closed loop faster than the pipe's dead time and half a sample allow
+  // would ring or cycle (Tcl 0.05 s cycles between 0.76 and 0.91 m): a
+  // warning with the numbers. So does a sample time long against Tcl.
+  const quick = statusOf(project('Conical tank', [{ type: 'scheduledPI', params: { at: [0.8], Tcl: 0.05, umin: 0, umax: 3 } }]));
+  assert.equal(quick.status, 'warn');
+  assert.ok(quick.warnings.includes('Tcl 0.05 s is faster than the loop can be: the dead time 0.1 s and half the sample time 0.02 s add 0.11 s, and the loop will ring or cycle; make Tcl at least 0.11 s'), quick.warnings.join(' | '));
+  const slow = project('Conical tank');
+  ctrlOf(slow).params.Ts = 0.5;
+  const ss = statusOf(slow);
+  assert.equal(ss.status, 'warn');
+  assert.ok(ss.warnings.some((w) => /^Tcl 0\.25 s is faster than the loop can be: the dead time 0\.1 s and half the sample time 0\.5 s add 0\.35 s/.test(w)), ss.warnings.join(' | '));
+  ctrlOf(slow).params.Ts = 0.1;
+  ctrlOf(slow).variants[0].params.Tcl = 0.3;
+  assert.ok(statusOf(slow).warnings.includes('the sample time 0.1 s is long against the closed loop Tcl 0.3 s; Ts ≤ Tcl / 4 (0.075 s) follows it closely'));
 });
 
 test('swingUpLqr: the catch is LQR from the plant; it needs the cart–pole\'s x, θ, v, ω', () => {
@@ -268,7 +292,16 @@ test('swingUpLqr: the catch is LQR from the plant; it needs the cart–pole\'s x
   // The same weights as "LQR only": the same gains.
   const only = project('Pendulum swing-up');
   ctrlOf(only).variant = 1;
-  assert.deepEqual(statusOf(only).values, st.values);
+  assert.deepEqual([statusOf(only).values.K, statusOf(only).values.kr], [st.values.K, st.values.kr]);
+  // The pole the pump measures energy with comes from the plant: l and g of
+  // the cart–pole, and a longer pole gives its own.
+  assert.ok(Math.abs(st.values.l - 0.5) < 1e-6 && Math.abs(st.values.g - 9.81) < 1e-5, `l ${st.values.l}, g ${st.values.g}`);
+  assert.deepEqual(st.rows.at(-1).labels, ['l', 'g']);
+  const longer = project('Pendulum swing-up');
+  longer.system.plant.diagram.blocks.find((b) => b.type === 'cartPole').params.l = 0.8;
+  const lv = statusOf(longer).values;
+  assert.ok(Math.abs(lv.l - 0.8) < 1e-6 && Math.abs(lv.g - 9.81) < 1e-5, `l ${lv.l}, g ${lv.g}`);
+  assert.deepEqual(CONTROLLERS.swingUpLqr.manual(ctrlOf(longer).variants[0].params, lv).params.l, lv.l);
   // On the triple pendulum the swing-up would read the wrong inputs: refused.
   const triple = statusOf(project('Triple', [{ type: 'swingUpLqr', params: { Q: Q_TRIPLE, R: 0.1 } }]));
   assert.equal(triple.error.code, 'swing-inputs');
@@ -297,7 +330,7 @@ test('Copy as numbers: the hand twins of swingUpLqr and scheduledPI run bit for 
   }
   // Computed numbers in a file are refused, naming the twin.
   assert.throws(() => normalizeVariant({ type: 'scheduledPI', params: { Kp: [1] } }), /scheduledPI computes Kp, Ki and u0 from the plant and at and Tcl; to set them by hand use Copy as numbers \(a PID or Gain-scheduled PI variant\)/);
-  assert.throws(() => normalizeVariant({ type: 'swingUpLqr', params: { kr: 1 } }), /swingUpLqr computes K and kr .* \(a Swing-up \(Lyapunov\) \+ state feedback variant\)/);
+  assert.throws(() => normalizeVariant({ type: 'swingUpLqr', params: { kr: 1 } }), /swingUpLqr computes K, kr, l and g .* \(a Swing-up \(Lyapunov\) \+ state feedback variant\)/);
 });
 
 test('guard: the library stores inputs only, never numbers computed from a plant', async () => {
@@ -317,7 +350,7 @@ test('guard: the library stores inputs only, never numbers computed from a plant
   assert.deepEqual(src.match(/\bK_\w*/g) ?? [], [], 'no stored gain tables');
 });
 
-test('trajectory: Q, R, start and the limits re-run the gains, never the plan; T plans again', () => {
+test('trajectory: Q, R and start re-run the gains, never the plan; T and the limits plan again', () => {
   // Test 7, the trajectory part. The library's triple pendulum runs it.
   const p = project('Triple');
   const v = ctrlOf(p).variants[0];
@@ -330,9 +363,10 @@ test('trajectory: Q, R, start and the limits re-run the gains, never the plan; T
   const first = st();
   assert.equal(first.status, 'ok', JSON.stringify(first.warnings));
   assert.deepEqual(counts(), [1, 1]);
-  assert.match(first.rows[0].value, /^Planned in [\d.]+ s \(\d+ iterations, start 1 of 3\)\. Verified: upright 1 s after T, peak F [\d.]+ of 40\.$/);
+  assert.match(first.rows[0].value, /^Planned in [\d.]+ s \(\d+ iterations, start 1 of 3\)\. Verified: at rest at the origin 1 s after T, peak F [\d.]+ \(limits -40 to 40\)\.$/);
   assert.equal(first.at, 'θ1, θ2, θ3 = 3.142 rad → origin');
-  assert.deepEqual(first.rows.map((r) => r.label), ['plan', 'T', 'F(t)', 'end error', 'defect', 'K upright', 'kr', 'slowest pole']);
+  assert.deepEqual(first.rows.map((r) => r.label), ['plan', 'T', 'F(t)', 'end error', 'defect', 'K at the origin', 'kr', 'slowest pole']);
+  assert.match(first.rows[2].note, /^-?[\d.]+ to [\d.]+, of -30 to 30 it may use$/);
   assert.ok(first.rows[2].spark.length <= 120);
   assert.deepEqual(first.rows[3].labels, ['x', 'θ1', 'θ2', 'θ3', 'v', 'ω1', 'ω2', 'ω3']);
   const { F, Y, K, Kup, angle } = first.values;
@@ -350,19 +384,60 @@ test('trajectory: Q, R, start and the limits re-run the gains, never the plan; T
   assert.ok(q.ms < 500, `${q.ms} ms for the gains`);
   v.params.R = 0.2; st();
   v.params.start = 0.5; st();
-  v.params.umax = 50; st();   // the plan may still use 75 % of the smaller limit, 40
-  assert.deepEqual(counts(), [5, 1], 'R, start and a limit that leaves the plan\'s force alone');
-  // The plan's own inputs: a new plan.
-  v.params.T = 2.5;
-  const longer = st();
-  assert.deepEqual(counts(), [6, 2], 'T plans again');
-  assert.equal(longer.values.F.length, 252, 'T snapped to whole samples: 12 segments of 21');
-  assert.ok(Math.abs(longer.rows[1].value - 2.52) < 1e-12);
-  // Back: both from the cache.
-  v.params.T = 2.4; v.params.Q = Q_TRIPLE; v.params.R = 0.1; v.params.start = 0; v.params.umax = 40;
+  assert.deepEqual(counts(), [4, 1], 'R and start');
+  // A limit is the plan's: it may use 75 % of each, so either one plans again
+  // (seen here as the heavy job a page's store would queue, without running it).
+  const queued = () => { const a = createDesignStore({ mode: 'async' }); statusOf(p, a); return a.queue()[0]?.key; };
+  const k0 = queued();
+  v.params.Q = Q_TRIPLE; assert.equal(queued(), k0, 'Q does not');
+  v.params.umax = 50; const k1 = queued();
+  v.params.umin = -30; const k2 = queued();
+  assert.ok(k0 && k1 !== k0 && k2 !== k1 && k2 !== k0, 'u max and u min do');
+  v.params.umax = 40; v.params.umin = -40;
+  assert.equal(queued(), k0);
+  // So do the plan's own inputs (the snapped grid of a new T is checked on the cart–pole, below).
+  for (const [key, value] of [['T', 2.5], ['segments', 10], ['planShare', 0.5]]) {
+    const old = v.params[key];
+    v.params[key] = value;
+    assert.notEqual(queued(), k0, `${key} plans again`);
+    v.params[key] = old;
+  }
+  assert.deepEqual(counts(), [4, 1]);
+  // Back: from the cache.
+  v.params.Q = Q_TRIPLE; v.params.R = 0.1; v.params.start = 0;
   const back = st();
   assert.ok(back.cached && same(back.values.K, K));
-  assert.deepEqual(counts(), [6, 2]);
+  assert.deepEqual(counts(), [4, 1]);
+});
+
+test('trajectory: verified as it runs, from t = 0 through start; the force it may use each way', () => {
+  // The single cart–pole, planned from θ = 2 rad (not at rest: it falls).
+  const p = project('Pendulum swing-up', [{ name: 'plan', type: 'trajectory', params: { T: 2.4, Q: [10, 50, 1, 1], R: 0.1, umin: -25, umax: 25 } }]);
+  p.system.plant.diagram.blocks.find((b) => b.type === 'cartPole').params.theta0 = 2;
+  const store = createDesignStore();
+  const now = statusOf(p, store);
+  assert.equal(now.status, 'ok', now.warnings.join(' | '));
+  // Starting 1 s later the pole has fallen elsewhere: the check runs the law
+  // as it runs (u = 0 until start), says the loop does not hold, and why.
+  ctrlOf(p).variants[0].params.start = 1;
+  const late = statusOf(p, store);
+  assert.equal(store.stats().heavyRuns, 1, 'start is light: the same plan');
+  assert.equal(late.status, 'warn');
+  assert.match(late.rows[0].value, /The loop does not hold: x is [\d.]+ m off 1 s after T\.$/);
+  assert.ok(late.warnings.includes('the plant does not rest at its start state, and the plan assumes it does until start (1 s): start at 0, or start the plant at rest'), late.warnings.join(' | '));
+  // A one-way-heavy actuator, −5 to 25 N: the plan may use 75 % of each side.
+  const asym = project('Pendulum swing-up', [{ name: 'plan', type: 'trajectory', params: { T: 2.4, Q: [10, 50, 1, 1], R: 0.1, umin: -5, umax: 25 } }]);
+  const a = statusOf(asym);
+  assert.equal(a.status, 'ok', a.warnings.join(' | '));
+  const lo = Math.min(...a.values.F), hi = Math.max(...a.values.F);
+  assert.ok(lo >= -3.75 * 1.05 && hi <= 18.75 * 1.05 && hi > 3.75 * 1.05, `F from ${lo} to ${hi}`);
+  assert.match(a.rows[2].note, /, of -3\.75 to 18\.75 it may use$/);
+  // T is snapped to whole samples: 2.5 s is 12 segments of 21 samples of 10 ms.
+  ctrlOf(asym).variants[0].params.T = 2.5;
+  const longer = statusOf(asym);
+  assert.equal(longer.values.F.length, 252);
+  assert.ok(Math.abs(longer.rows[1].value - 2.52) < 1e-12);
+  assert.equal(longer.rows[1].note, 's, 12 segments of 21 samples');
 });
 
 test('trajectory: a plan that cannot be is a warning, and the attempt still runs; plans are never kept in a file', () => {
@@ -392,9 +467,13 @@ test('cli: node cli.mjs design prints what the running designed variants compute
   const text = execFileSync('node', ['cli.mjs', 'design', file]).toString();
   assert.match(text, /^Triple pendulum: 1 designed variant running/);
   assert.match(text, /ctrl · controller · Planned swing-up \+ TV-LQR \(trajectory\): ok · /);
-  assert.match(text, /K upright +x -6\.99 +θ1 -497\.8/);
-  const json = JSON.parse(execFileSync('node', ['cli.mjs', 'design', file, '--json', '--block', 'ctrl']).toString());
-  assert.equal(json.title, 'Triple pendulum');
-  assert.deepEqual(json.designs.map((d) => [d.path, d.type, d.status]), [['ctrl', 'trajectory', 'ok']]);
-  assert.ok(json.designs[0].rows.some((r) => r.label === 'K upright' && r.value.length === 8));
+  assert.match(text, /K at the origin +x -6\.99 +θ1 -497\.8/);
+  // JSON, on a system that designs in milliseconds (one plan per test file is enough).
+  const single = join(mkdtempSync(join(tmpdir(), 'lt-')), 'pendulum.json');
+  execFileSync('node', ['cli.mjs', 'new', '--system', 'Pendulum swing-up', '-o', single]);
+  const json = JSON.parse(execFileSync('node', ['cli.mjs', 'design', single, '--json', '--block', 'ctrl']).toString());
+  assert.equal(json.title, 'Pendulum swing-up');
+  assert.deepEqual(json.designs.map((d) => [d.path, d.type, d.status]), [['ctrl', 'swingUpLqr', 'ok']]);
+  assert.ok(json.designs[0].rows.some((r) => r.label === 'K' && r.value.length === 4));
+  assert.ok(!/"values"/.test(JSON.stringify(json)), 'no numbers but the rows');
 });

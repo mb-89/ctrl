@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createDesignStore } from '../src/core/design.js';
+import { createDesignStore, useDesigns } from '../src/core/design.js';
 import { normalizeProject, evaluateSystem, autoTimebase } from '../src/core/project.js';
 import { SYSTEM_LIBRARY, applySystem } from '../src/core/systems.js';
 import { DEFAULT_PROJECT } from '../src/core/examples.js';
@@ -59,6 +59,20 @@ test('async store: pending runs u = 0, the plan is made in slices, then the run 
   const sync = evaluateSystem(p, { designs: createDesignStore() });
   for (const name of Object.keys(sync.signals)) assert.ok(same(done.signals[name], sync.signals[name]), name);
   assert.ok(Math.abs(at(done, 'theta1', 3.4)) < 0.05, 'swung up');
+
+  // A compile that names no store, in a page that named its own (useDesigns,
+  // as an analysis or an auto-tune run would): a guest. It reads the plan
+  // made, and neither starts a plan of its own nor plans on the spot.
+  useDesigns(store);
+  try {
+    assert.ok(same(evaluateSystem(p).signals.F, done.signals.F), 'the page\'s plan');
+    ctrlOf(p).variants[0].params.T = 2.7;
+    const guest = evaluateSystem(p).info.designs[0];
+    assert.equal(guest.status, 'stale', 'the previous plan, as in the page');
+    assert.equal(store.busy(), false, 'no job of its own');
+    assert.equal(store.stats().heavyRuns, 1, 'and no plan made at once');
+    ctrlOf(p).variants[0].params.T = 2.4;
+  } finally { useDesigns(null); }
 
   // A new plan: the previous one runs meanwhile ('stale': same measurements, same Ts).
   const v = ctrlOf(p).variants[0];

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { normalizeDiagram, compileDiagram } from '../src/core/diagram.js';
 import { EXAMPLE_PLANTS } from '../src/core/plants.js';
 import { DesignError, parseOp, opLabel, operatingPoint, trim, linearize, firstOrderFit } from '../src/core/linearize.js';
+import { lqrDesign, kalmanDesign, createDesignStore } from '../src/core/design.js';
 
 const system = (name) => normalizeDiagram(structuredClone(EXAMPLE_PLANTS.find((e) => e.name.startsWith(name)).diagram));
 const modelOf = (d, id = 'ctrl') => compileDiagram(d, 'plant', { mode: 'model' }).seen(id);
@@ -125,4 +126,95 @@ test('linearize and the first-order fit: exact on a lag; mean residence time on 
   assert.deepEqual(cp.D, [[0], [0], [0], [0]]);
   assert.equal(cp.op.label, 'origin (all states 0, u = 0)');
   assert.deepEqual(cp.outputs.map((o) => o.unit), ['m', 'rad', 'm/s', 'rad/s']);
+});
+
+// A library system's diagram, editable before it is normalised.
+const raw = (name) => structuredClone(EXAMPLE_PLANTS.find((e) => e.name.startsWith(name)).diagram);
+
+test('kinks: a saturation at its limit, one narrower than the step and the empty tank are named; LQR and the Kalman filter refuse them', () => {
+  // A one-way actuator, 0 to 25 N, between the controller and the cart–pole:
+  // at u = 0 it is at its limit, and the slope differs left and right.
+  const oneWay = (lo, hi) => {
+    const d = raw('Pendulum swing-up');
+    d.blocks.push({ id: 'amp', type: 'saturation', name: 'amp', params: { min: lo, max: hi }, x: 0, y: 0 });
+    d.wires = d.wires.map((w) => (w.from === 'ctrl' && w.to === 'sum' ? { from: 'amp', to: 'sum' } : w)).concat([{ from: 'ctrl', to: 'amp' }]);
+    return linearize(modelOf(normalizeDiagram(d)));
+  };
+  const lin = oneWay(0, 25);
+  assert.match(lin.kinks[0], /^'amp' is at its limit at the operating point \(input 0, limits 0 to 25\): the slope differs left and right$/);
+  assert.ok(lin.kinks.some((k) => /^the slope of the rate of cart and pole\.v along F differs left and right/.test(k)), lin.kinks.join(' | '));
+  refusal(() => lqrDesign(lin, { Q: [10, 50, 1, 1], R: 0.1, Ts: 0.01 }), 'kink', /^LQR needs slopes, and the plant has a kink at origin \(all states 0, u = 0\): 'amp' is at its limit/);
+  // Narrower than the difference step: one-sided slopes agree (both a tenth), the limit check does not.
+  refusal(() => lqrDesign(oneWay(-1e-7, 1e-7), { Q: [10, 50, 1, 1], R: 0.1, Ts: 0.01 }), 'kink', /'amp' is at its limit/);
+  // Well inside its limits the saturation is a wire: no kink, the library's gains.
+  const inside = oneWay(-25, 25);
+  assert.deepEqual(inside.kinks, []);
+  assert.ok(Math.abs(lqrDesign(inside, { Q: [10, 50, 1, 1], R: 0.1, Ts: 0.01 }).K[1] + 63.18) < 0.01);
+
+  // The tank at h = 0: √h has no slope there, and the pump cannot run backwards.
+  const tank = linearize(modelOf(system('Conical')), 'origin');
+  assert.ok(tank.kinks.some((k) => /^the slope of the rate of tank\.h along tank\.h differs left and right/.test(k)), tank.kinks.join(' | '));
+  assert.ok(tank.kinks.some((k) => /along q differs left and right/.test(k)), tank.kinks.join(' | '));
+  refusal(() => kalmanDesign(tank, { Q: [1], R: [1e-4], Ts: 0.02 }), 'kink', /^the Kalman filter needs slopes/);
+
+  // Smooth plants have none: the carts hanging and upright, the tank at its
+  // levels (also at the wall's top, H = 1, where only the curvature bends),
+  // the encoder with its resonance.
+  const tm = modelOf(system('Conical'));
+  for (const h of [0.1, 0.45, 1]) assert.deepEqual(linearize(tm, { y: [h] }).kinks, [], `tank at ${h}`);
+  const pend = modelOf(system('Pendulum swing-up'));
+  assert.deepEqual(linearize(pend, 'origin').kinks, []);
+  assert.deepEqual(linearize(pend, 'initial').kinks, []);
+  assert.deepEqual(linearize(modelOf(system('Encoder')), 'origin').kinks, []);
+  assert.deepEqual(linearize(modelOf(system('Triple')), 'origin').kinks, []);
+});
+
+test('trim starts from the levels: an empty tank trims at 0.1 m and its PI designs; levels of millimetres', () => {
+  const { a, g } = system('Conical').blocks.find((b) => b.type === 'conicalTank').params;
+  const d = raw('Conical');
+  d.blocks.find((b) => b.type === 'conicalTank').params.h0 = 0;
+  const empty = modelOf(normalizeDiagram(d));
+  for (const h of [0.05, 0.1, 0.5, 1]) close(trim(empty, [h]).u, a * Math.sqrt(2 * g * h), 1e-9, `u at h = ${h} from empty`);
+  assert.equal(operatingPoint(empty, 'initial').u, 0, 'an empty tank rests with the pump off');
+  // From the default start (0.15 m), a level of a few millimetres.
+  const tank = modelOf(system('Conical'));
+  for (const h of [0.001, 0.003]) close(trim(tank, [h]).u, a * Math.sqrt(2 * g * h), 1e-9, `u at h = ${h}`);
+  // The gain-scheduled PI of the library, on the empty tank: designed, u0 = 0.
+  const st = compileDiagram(normalizeDiagram(d), 'plant', { standalone: true, designs: createDesignStore() }).designs[0];
+  assert.equal(st.status, 'ok', JSON.stringify(st.error ?? st.warnings));
+  assert.equal(st.values.u0, 0);
+  // Its gains do not depend on where the tank starts; only u0 does.
+  const full = compileDiagram(system('Conical'), 'plant', { standalone: true, designs: createDesignStore() }).designs[0];
+  st.values.Kp.forEach((k, i) => close(k, full.values.Kp[i], 1e-9 * Math.abs(k), `Kp at ${st.values.at[i]}`));
+  assert.ok(full.values.u0 > 0.17);
+});
+
+test('a stiff plant (the encoder: a 70 Hz shaft and a 1 ms filter beside a slow motor) trims and fits; an unstable path and a cancelled integrator are told apart', () => {
+  // A has entries of 10¹¹ beside 1: the residuals are scaled row by row, so
+  // the stiff filter's rate no longer drowns the rest. The equilibrium found
+  // is the one nearest the start: the angle where the encoder reads 0.
+  const enc = modelOf(system('Encoder'));
+  const pt = trim(enc, [0]);
+  const y = new Float64Array(1), f = new Float64Array(enc.n);
+  enc.y(pt.x, pt.u, y); enc.f(pt.x, pt.u, f);
+  assert.ok(Math.abs(y[0]) < 1e-6, `speed ${y[0]}`);
+  f.forEach((v, i) => assert.ok(Math.abs(v) < 1e-7, `${enc.states[i].label} moves at ${v}`));
+  // The ripple torque, 0.05 sin(6θ), pushes the rotor away from θ = 0: the
+  // path from V to the speed is unstable there, and pole cancellation says so.
+  refusal(() => firstOrderFit(linearize(enc, 'origin')), 'unstable-plant', /^the path from V to speed from angle is unstable: a pole at 11\.4 rad\/s$/);
+  // Without it the angle's integrator is cancelled by the derivative after
+  // it (a pole and a zero at s = 0): the speed has a static gain,
+  // 20/3 V⁻¹·rad/s through the motor times the encoder's slope there.
+  const d = raw('Encoder');
+  d.blocks = d.blocks.filter((b) => b.id !== 'ripple' && b.id !== 'rough');
+  d.wires = d.wires.filter((w) => !/^(ripple|rough)/.test(w.from) && !/^(ripple|rough)/.test(w.to));
+  const smooth = modelOf(normalizeDiagram(d));
+  const lin = linearize(smooth, 'origin');
+  const slope = lin.C[0][4] / 1000 / 439.8 ** 2;
+  const fit = firstOrderFit(lin);
+  close(fit.K, (20 / 3) * slope, 1e-6, 'K');
+  assert.ok(fit.tau > 0.05 && fit.tau < 0.1, `τ ${fit.tau}`);
+  assert.ok(Math.abs(slope - 1.0284) < 1e-3, `the encoder's slope ${slope}`);
+  // The motor's angle alone still integrates.
+  refusal(() => firstOrderFit(linearize(modelOf(system('DC motor')))), 'integrating-plant', /angle integrates V/);
 });

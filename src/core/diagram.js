@@ -17,7 +17,7 @@ import { gaussAt } from './signals.js';
 import { compileExpr } from './expr.js';
 import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
 import { OBSERVERS } from './observers.js';
-import { SYNC_DESIGNS } from './design.js';
+import { SYNC_DESIGNS, defaultDesigns } from './design.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -538,13 +538,15 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // not: in the page, background jobs this compile did not ask for (a plan
     // for a variant no longer running) are dropped then.
     // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
-    const job = (opts.designs ?? SYNC_DESIGNS).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }));
+    const job = (opts.designs ?? defaultDesigns()).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }), { guest: !opts.designs && defaultDesigns() !== SYNC_DESIGNS });
     for (const nd of ctrls) {
       if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
       const inputs = blockInputNames(diagram, nd.idPath);
-      // What u is called: the Sink that records a Controller's output, or what feeds an Observer's u.
-      const sink = nd.observer ? null : probeList.find(([, k]) => nodes[k].kind === 'pass' && nodes[k].inputs[0] === nd.i);
-      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: nd.observer ? inputs[0] : sink?.[0] ?? 'u', outputs: nd.outv.length };
+      // What u is called: the Sink that records a Controller's output (for an
+      // Observer, what feeds its u), else what the Controller tab calls it.
+      const fed = nd.observer ? nd.inputs[0] : nd.i;
+      const sink = fed >= 0 ? probeList.find(([, k]) => nodes[k].kind === 'pass' && nodes[k].inputs[0] === fed) : null;
+      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: sink?.[0] ?? (nd.observer ? inputs[0] : 'u'), outputs: nd.outv.length };
       const status = job.resolve(block, nd.variant, nd.lib);
       nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
       designs.push(status);
@@ -748,23 +750,16 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
     }
 
-    // Sensors: quantizers and noise between the plant and each measurement.
+    // Sensors: quantizers and noise between the plant and each measurement
+    // (sensors[k], filled in below, once the Model can be evaluated). One
+    // elsewhere (noise on a torque, say) is process noise, which no design
+    // here accounts for: a note.
     const sensorPath = meas.map((mk) => walk([mk], reads));
-    const sensors = sensorPath.map((on) => {
-      let std2 = 0, q2 = 0;
-      for (let i = 0; i < nodes.length; i++) {
-        if (!on[i]) continue;
-        if (nodes[i].kind === 'quant') q2 += nodes[i].q ** 2;
-        if (nodes[i].kind === 'noise') std2 += nodes[i].std ** 2;
-      }
-      return { std: Math.sqrt(std2), q: Math.sqrt(q2) };
-    });
+    const sensors = meas.map(() => ({ std: 0, q: 0, parts: [] }));
     for (const i of slice) {
       const nd = nodes[i];
-      if (nd.kind !== 'quant' && nd.kind !== 'noise') continue;
-      const on = labels.filter((_, k) => sensorPath[k][i]);
-      const where = on.length ? ` on ${on.join(', ')}` : '';
-      notes.push(nd.kind === 'quant' ? `quantizer '${nd.name}'${where} is the identity in the model (step ${fmt(nd.q)})` : `noise '${nd.name}'${where} adds 0 in the model (σ ${fmt(nd.std)})`);
+      if ((nd.kind !== 'quant' && nd.kind !== 'noise') || sensorPath.some((on) => on[i])) continue;
+      notes.push(nd.kind === 'quant' ? `quantizer '${nd.name}' is the identity in the model (step ${fmt(nd.q)})` : `noise '${nd.name}' adds 0 in the model (σ ${fmt(nd.std)}): it is on no measurement's way`);
     }
 
     // Dead time per measurement: the shortest and longest sums along the
@@ -835,17 +830,50 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         evaluate(x, u, slice);
         for (let k = 0; k < m; k++) out[k] = meas[k] < 0 ? 0 : vals[meas[k]];
       },
-      // Saturations outside their limits at (x, u): there the model has no slope.
-      atLimits(x, u) {
+      // Saturations outside their limits at (x, u), where the model sees no
+      // slope through them, or at a limit (within a difference step), where
+      // the slope differs left and right (edge).
+      limits(x, u) {
         mdl.y(x, u, yScratch);
         const out = [];
         for (const i of slice) {
-          const nd = nodes[i], v = inOf(nd);
-          if (nd.kind === 'sat' && (v < nd.lo || v > nd.hi)) out.push(`'${nd.name}' is saturated at the operating point (input ${fmt(v)}, limits ${fmt(nd.lo)} to ${fmt(nd.hi)}): the model sees no slope through it`);
+          const nd = nodes[i];
+          if (nd.kind !== 'sat') continue;
+          const v = inOf(nd), near = 1e-6 * Math.max(1, Math.abs(v)), lim = `(input ${fmt(v)}, limits ${fmt(nd.lo)} to ${fmt(nd.hi)})`;
+          if (v < nd.lo || v > nd.hi) out.push({ name: nd.name, edge: false, sentence: `'${nd.name}' is saturated at the operating point ${lim}: the model sees no slope through it` });
+          else if (v - nd.lo <= near || nd.hi - v <= near) out.push({ name: nd.name, edge: true, sentence: `'${nd.name}' is at its limit at the operating point ${lim}: the slope differs left and right` });
         }
         return out;
       },
+      atLimits: (x, u) => mdl.limits(x, u).map((s) => s.sentence),
     };
+    // The sensor blocks on each measurement's way, each weighed by how much
+    // of it reaches the measurement (a unit-conversion gain after a noise
+    // block multiplies its σ), at the origin, where a Kalman filter is
+    // designed: |∂y_k / ∂(the block's output)|.
+    const zx = new Float64Array(nk);
+    const gainTo = (i, k) => {
+      if (meas[k] === i) return 1;
+      const p = slice.indexOf(i);
+      if (p < 0 || meas[k] < 0) return 0;
+      const head = slice.subarray(0, p + 1), tail = slice.subarray(p + 1);
+      evaluate(zx, 0, head);
+      const d = 1e-6 * Math.max(1, Math.abs(vals[i]));
+      const at = (e) => { evaluate(zx, 0, head); vals[i] += e; outputs(tail, t0, Xf, 0, 0); return vals[meas[k]]; };
+      return Math.abs((at(d) - at(-d)) / (2 * d));
+    };
+    sensors.forEach((sn, k) => {
+      let std2 = 0, q2 = 0;
+      for (const i of slice) {
+        const nd = nodes[i];
+        if (!sensorPath[k][i] || (nd.kind !== 'quant' && nd.kind !== 'noise')) continue;
+        const g = gainTo(i, k), times = Math.abs(g - 1) > 1e-6 ? ` × ${fmt(g)}` : '';
+        if (nd.kind === 'quant') { q2 += (g * nd.q) ** 2; sn.parts.push(`quantizer '${nd.name}' step ${fmt(nd.q)}${times}`); }
+        else { std2 += (g * nd.std) ** 2; sn.parts.push(`noise '${nd.name}' σ ${fmt(nd.std)}${times}`); }
+      }
+      sn.std = Math.sqrt(std2);
+      sn.q = Math.sqrt(q2);
+    });
     // A measurement is an angle when it is exactly one angle state (slope 1).
     // Such a measurement also has the state's unit ('h = 0.45 m').
     const xs = Float64Array.from(mdl.x0), yp = new Float64Array(m), ym = new Float64Array(m);
@@ -857,10 +885,13 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       xs[i] = x;
       for (let k = 0; k < m; k++) { const d = (yp[k] - ym[k]) / (2 * dx); if (Math.abs(d) > 1e-9) slopes[k].push([i, d]); }
     }
+    // A measurement that reads one state alone, with any slope, gives trim
+    // a start: that state at the level (outputs[k].state, .slope).
     slopes.forEach((row, k) => {
       const one = row.length === 1 && Math.abs(row[0][1] - 1) < 1e-6;
       mdl.outputs[k].angle = one && mdl.states[row[0][0]].angle;
       mdl.outputs[k].unit = one ? mdl.states[row[0][0]].unit : '';
+      if (row.length === 1) Object.assign(mdl.outputs[k], { state: row[0][0], slope: row[0][1] });
     });
     return mdl;
   }

@@ -34,7 +34,7 @@
 
 import { inv } from './linalg.js';
 
-export const PLAN_VERSION = 1;
+export const PLAN_VERSION = 2;
 
 // Continuation: [effort weight λ, weight of the defects and the end,
 // iteration cap]. First a loose fit that keeps F small, then the jumps
@@ -73,28 +73,37 @@ function stepper(f, n, Ts, sub) {
 }
 
 // Substeps per sample: steps of at most 5 ms, and short against the fastest dynamics.
+// (Also per held force step of the plan: substeps(model, hold·Ts).)
 export function substeps(model, Ts) {
   const hmax = Math.min(0.005, model.bound > 0 ? 0.5 / model.bound : Infinity);
   return Math.max(1, Math.ceil(Ts / hmax - 1e-9));
 }
 
 // model: a Model (n, x0, states, f, bound). opts: T (s; snapped to the sample
-// grid), Ts (the controller's sample time), segments, nodesPerSegment, Fmax
-// (the hinge; Infinity for none).
+// grid), Ts (the controller's sample time), segments, nodesPerSegment, Fmin
+// and Fmax (the hinge, each way; Fmin defaults to −Fmax; ±Infinity for none).
 // Yields null between short pieces of work and, per iteration,
-//   { stage, stages, iteration, cost, defect, terminal, fraction, start, starts }.
-// Returns { ok, code, message, hint, T, Ts, segments, perSegment, sub, z, F (per
-// sample), S (segment start states), iterations, start, starts, defect,
-// terminal (end error per state, angles wrapped), endError, Fpeak, Fmax }.
-export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax = Infinity } = {}) {
+//   { stage, stages, iteration, cost, defect, terminal, fraction, start, starts }
+// (fraction: of this start, from the stage and how far the defect and the
+// end have come towards feasible).
+// Returns { ok, code, message, hint, T, Ts, segments, perSegment (samples), hold,
+// sub, z, F (per sample), S (segment start states), iterations, start, starts,
+// defect, terminal (end error per state, angles wrapped), endError, Fpeak,
+// Flo, Fhi (the force's extremes), Fmin, Fmax }.
+// For a short Ts the force is held over hold = ⌈5 ms / Ts⌉ samples (a
+// zero-order hold on the controller's grid all the same), so the work grows
+// with T, not with T / Ts.
+export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax = Infinity, Fmin = -Fmax } = {}) {
   const n = model.n, M = Math.max(1, Math.round(segments)), nps = Math.max(1, Math.round(nodesPerSegment));
   if (!(Ts > 0) || !(T > 0)) throw new Error('planTransfer: T and Ts must be above 0');
   if (!n) throw new Error('planTransfer: the model has no states');
-  // The sample grid: perSegment samples per segment; T snapped to it.
-  const P = Math.max(4, Math.round(T / (Ts * M)));
-  const Tp = M * P * Ts, N = M * nps, K = M * P;
+  if (!(Fmin <= 0 && Fmax >= 0)) throw new Error('planTransfer: Fmin ≤ 0 ≤ Fmax');
+  // The sample grid: P held force steps of hold samples per segment; T snapped to it.
+  const hold = Math.max(1, Math.ceil(0.005 / Ts - 1e-9)), Th = hold * Ts;
+  const P = Math.max(4, Math.round(T / (Th * M)));
+  const Tp = M * P * Th, N = M * nps, K = M * P * hold;
   const sub = substeps(model, Ts);
-  const step = stepper(model.f, n, Ts, sub);
+  const step = stepper(model.f, n, Th, substeps(model, Th));
   const states = model.states, angle = states.map((s) => !!s.angle);
   const x0 = Float64Array.from(model.x0);
   // Sample i of a segment reads the nodes ia[i], ia[i] + 1 of it, weighted 1 − iw[i], iw[i].
@@ -130,14 +139,15 @@ export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4
     for (let j = 0; j < M - 1; j++) { const s = v.subarray(sOff(j + 1), sOff(j + 1) + n); for (let i = 0; i < n; i++) res[q++] = w.wd * (en[j * n + i] - s[i]); }
     for (let i = 0; i < n; i++) { const d = en[(M - 1) * n + i]; res[q++] = w.wd * (angle[i] ? wrapAngle(d) : d); }
     for (let k = 0; k <= N; k++) res[q++] = w.lam * v[k];
-    for (let k = 0; k <= N; k++) res[q++] = Fmax < Infinity ? HINGE * Math.max(0, Math.abs(v[k]) - Fmax) : 0;
+    for (let k = 0; k <= N; k++) res[q++] = HINGE * ((Fmax < Infinity ? Math.max(0, v[k] - Fmax) : 0) + (Fmin > -Infinity ? Math.max(0, Fmin - v[k]) : 0));
     for (let k = 0; k < N; k++) res[q++] = w.lam * (v[k + 1] - v[k]);
   }
   const sumsq = (v) => { let s = 0; for (let i = 0; i < v.length; i++) s += v[i] * v[i]; return s; };
   const norm = (v, a, b) => { let s = 0; for (let i = a; i < b; i++) s += v[i] * v[i]; return Math.sqrt(s); };
   const defectOf = (res) => norm(res, 0, n * (M - 1)) / w.wd;
   const terminalOf = (res) => norm(res, n * (M - 1), n * M) / w.wd;
-  const peakOf = (v) => { let p = 0; for (let k = 0; k <= N; k++) p = Math.max(p, Math.abs(v[k])); return p; };
+  // How far the nodes go beyond the force allowed, as a share of it (≤ 1: within).
+  const reachOf = (v) => { let p = 0; for (let k = 0; k <= N; k++) p = Math.max(p, v[k] / Fmax, v[k] / Fmin); return p; };
 
   // The Jacobian of one segment's end: n rows, columns its nps + 1 nodes and
   // (from segment 1 on) its n start states, by forward differences. Each
@@ -179,27 +189,34 @@ export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4
       }
     }
   }
-  // (H + μ(1 + diag H)) dz = g by Cholesky, in place on a preallocated copy.
-  const L = new Float64Array(nz * nz), dz = new Float64Array(nz);
+  // (H + μ(1 + diag H)) dz = g by a banded Cholesky. In the order ord (per
+  // segment its start state, from segment 1 on, then its nodes; the last
+  // node at the end) H is banded: a segment's block touches its start, its
+  // nodes, the next start and the next node, at most bw = 2n + nps apart.
+  // So a solve costs nz·bw², not nz³/6 (40 segments: 0.2 M, not 18 M).
+  const ord = new Int32Array(nz), bw = 2 * n + nps, W = bw + 1;
+  for (let j = 0, q = 0; j < M; j++) {
+    if (j > 0) for (let i = 0; i < n; i++) ord[q++] = sOff(j) + i;
+    for (let c = 0; c < nps; c++) ord[q++] = j * nps + c;
+    if (j === M - 1) ord[q] = N;
+  }
+  const Lb = new Float64Array(nz * W), yb = new Float64Array(nz), dz = new Float64Array(nz);
   function lmSolve(mu) {
-    L.set(H);
-    for (let i = 0; i < nz; i++) L[i * nz + i] += mu * (1 + H[i * nz + i]);
-    for (let j = 0; j < nz; j++) {
-      const rj = j * nz;
-      let d = L[rj + j];
-      for (let k = 0; k < j; k++) d -= L[rj + k] * L[rj + k];
-      if (!(d > 0)) return false;
-      d = Math.sqrt(d);
-      L[rj + j] = d;
-      for (let i = j + 1; i < nz; i++) {
-        const ri = i * nz;
-        let s = L[ri + j];
-        for (let k = 0; k < j; k++) s -= L[ri + k] * L[rj + k];
-        L[ri + j] = s / d;
+    for (let i = 0; i < nz; i++) {
+      const hi = ord[i] * nz, i0 = Math.max(0, i - bw), li = i * W + i;
+      for (let j = i0; j <= i; j++) {
+        let s = H[hi + ord[j]];
+        if (j === i) s += mu * (1 + s);
+        const lj = j * W + j;
+        for (let k = Math.max(i0, j - bw); k < j; k++) s -= Lb[li - k] * Lb[lj - k];
+        if (j < i) Lb[li - j] = s / Lb[j * W];
+        else if (s > 0) Lb[i * W] = Math.sqrt(s);
+        else return false;
       }
     }
-    for (let i = 0; i < nz; i++) { const ri = i * nz; let s = g[i]; for (let k = 0; k < i; k++) s -= L[ri + k] * dz[k]; dz[i] = s / L[ri + i]; }
-    for (let i = nz - 1; i >= 0; i--) { let s = dz[i]; for (let k = i + 1; k < nz; k++) s -= L[k * nz + i] * dz[k]; dz[i] = s / L[i * nz + i]; }
+    for (let i = 0; i < nz; i++) { const li = i * W + i; let s = g[ord[i]]; for (let k = Math.max(0, i - bw); k < i; k++) s -= Lb[li - k] * yb[k]; yb[i] = s / Lb[i * W]; }
+    for (let i = nz - 1; i >= 0; i--) { let s = yb[i]; for (let k = i + 1, e = Math.min(nz - 1, i + bw); k <= e; k++) s -= Lb[k * W + k - i] * yb[k]; yb[i] = s / Lb[i * W]; }
+    for (let i = 0; i < nz; i++) dz[ord[i]] = yb[i];
     return true;
   }
   function evaluate(v, St2, en, Ev, res) {
@@ -220,7 +237,7 @@ export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4
   let gain = Infinity;
   for (let i = 0; i < n; i++) { const bi = Math.abs(b0[i] - b1[i]) / 2e-3; if (bi > 1e-9) gain = Math.min(gain, bi); }
   const Fchar = Number.isFinite(gain) ? (2 * span * (2 * Math.PI / Tp) ** 2) / gain : 1;
-  const amp = 0.5 * Math.min(Fmax, Fchar || 1);
+  const amp = 0.5 * Math.min(Fmax, -Fmin, Fchar || 1);
   function guess(k) {
     for (let i = 0; i <= N; i++) z[i] = amp * Math.sin((k * Math.PI * i) / N);
     for (let j = 1; j < M; j++) for (let i = 0; i < n; i++) z[sOff(j) + i] = x0[i] + (j / M) * dist[i];
@@ -231,16 +248,16 @@ export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4
     const terminal = Float64Array.from(E[M - 1], (d, i) => (angle[i] ? wrapAngle(d) : d));
     let worst = 0, at = 0;
     terminal.forEach((d, i) => { const q = Math.abs(d) / planTol(states[i]); if (q > worst) { worst = q; at = i; } });
-    const defect = defectOf(r), Fpeak = peakOf(z);
-    const ok = defect < 1e-4 && worst < 1 && !(Fpeak > 1.05 * Fmax) && Number.isFinite(defect);
-    return { ok, terminal, defect, Fpeak, worst, at, badness: Number.isFinite(defect) ? worst + defect / 1e-4 + Math.max(0, Fpeak / Fmax - 1.05) * 10 : Infinity };
+    const defect = defectOf(r), reach = reachOf(z);
+    const ok = defect < 1e-4 && worst < 1 && !(reach > 1.05) && Number.isFinite(defect);
+    return { ok, terminal, defect, reach, worst, at, badness: Number.isFinite(defect) ? worst + defect / 1e-4 + Math.max(0, reach - 1.05) * 10 : Infinity };
   }
 
   let total = 0, best = null, tried = 0;
   for (let s = 0; s < STARTS.length && total < CAP; s++) {
     guess(STARTS[s]);
     tried++;
-    let mu = 1e-2, done = false, fraction = 0, spare = 0;
+    let mu = 1e-2, done = false, fraction = 0, spare = 0, far0 = 0;
     for (let st = 0; st < STAGES.length && !done && total < CAP; st++) {
       // A stage may use what the stages before it left of their caps.
       const [lam, wd, own] = STAGES[st], cap = own + spare, first = total;
@@ -282,10 +299,16 @@ export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4
         }
         total++;
         const defect = defectOf(r), terminal = terminalOf(r);
-        fraction = Math.max(fraction, Math.min(1, (st + (it + 1) / cap) / STAGES.length));
+        // Progress of this start: the stage, and (in log) how far the defect
+        // and the end have come towards feasible; never back, never 100 %
+        // before the end (a stage that ends early would otherwise jump).
+        const far = Math.max(1, defect / 1e-6, terminal / 1e-3);
+        far0 ||= far;
+        const near = far0 > 1 ? Math.min(1, Math.max(0, Math.log(far0 / far) / Math.log(far0))) : 1;
+        fraction = Math.max(fraction, Math.min(0.99, 0.25 * (st + (it + 1) / cap) / STAGES.length + 0.75 * near));
         yield { stage: st + 1, stages: STAGES.length, iteration: total, cost, defect, terminal, fraction, start: s + 1, starts: STARTS.length };
         if (!accepted) break;   // stuck in this stage
-        if (defect < 1e-6 && terminal < 1e-3 && !(peakOf(z) > 1.05 * Fmax)) { done = true; break; }
+        if (defect < 1e-6 && terminal < 1e-3 && !(reachOf(z) > 1.05)) { done = true; break; }
         hist.push(cost);
         if (hist.length > STALL && hist[hist.length - 1 - STALL] - cost < 1e-3 * hist[hist.length - 1 - STALL]) break;
       }
@@ -301,28 +324,30 @@ export function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4
   evaluate(z, S, ends, E, r);
   const q = judge();
   const F = new Float64Array(K);
-  for (let j = 0; j < M; j++) for (let i = 0; i < P; i++) { const a = j * nps + ia[i]; F[j * P + i] = z[a] + (z[a + 1] - z[a]) * iw[i]; }
-  let Fpeak = 0;
-  for (let k = 0; k < K; k++) Fpeak = Math.max(Fpeak, Math.abs(F[k]));
+  for (let j = 0; j < M; j++) for (let i = 0; i < P; i++) { const a = j * nps + ia[i], k = (j * P + i) * hold; F.fill(z[a] + (z[a + 1] - z[a]) * iw[i], k, k + hold); }
+  let Fpeak = 0, Flo = 0, Fhi = 0;
+  for (let k = 0; k < K; k++) { Fpeak = Math.max(Fpeak, Math.abs(F[k])); Flo = Math.min(Flo, F[k]); Fhi = Math.max(Fhi, F[k]); }
   const worst = states[q.at];
   const endError = { label: worst.name ?? worst.label, value: q.terminal[q.at], unit: worst.unit ?? '' };
   const plan = {
     ok: q.ok, code: q.ok ? null : 'plan-not-converged', message: '', hint: '',
-    T: Tp, Ts, segments: M, perSegment: P, nodesPerSegment: nps, sub,
+    T: Tp, Ts, segments: M, perSegment: P * hold, hold, nodesPerSegment: nps, sub,
     z: Float64Array.from(z), F, S: S.map((v) => Float64Array.from(v)),
     iterations: total, start: best.s + 1, starts: STARTS.length,
-    defect: q.defect, terminal: q.terminal, endError, Fpeak, Fmax,
+    defect: q.defect, terminal: q.terminal, endError, Fpeak, Flo, Fhi, Fmin, Fmax,
   };
   // Not converged: a sentence from the numbers, and what to change.
   if (!q.ok) {
     const off = `${endError.label} ends ${fmt(Math.abs(endError.value))}${endError.unit ? ` ${endError.unit}` : ''} off`;
     const u = model.input?.label ?? 'u';
     const tries = `${total} iterations, ${tried} start${tried > 1 ? 's' : ''}`;
-    if (Fpeak > 1.05 * Fmax) {
-      plan.message = `no plan found within the limit: it needs ${u} up to ${fmt(Fpeak)}, of the ${fmt(Fmax)} it may use (${tries})`;
+    // The side it hits: up to Fmax, or down to Fmin.
+    const up = Fhi / Fmax >= Flo / Fmin, side = up ? `up to ${fmt(Fhi)}, of the ${fmt(Fmax)}` : `down to ${fmt(Flo)}, of the ${fmt(Fmin)}`;
+    if (q.reach > 1.05) {
+      plan.message = `no plan found within the limit: it needs ${u} ${side} it may use (${tries})`;
       plan.hint = `needs more force or a longer T (now ${fmt(Tp)} s)`;
-    } else if (q.worst >= 1 && Fpeak >= 0.95 * Fmax) {
-      plan.message = `no plan found: ${off} at T = ${fmt(Tp)} s with ${u} at its limit ${fmt(Fmax)} (${tries})`;
+    } else if (q.worst >= 1 && q.reach >= 0.95) {
+      plan.message = `no plan found: ${off} at T = ${fmt(Tp)} s with ${u} at its limit ${fmt(up ? Fmax : Fmin)} (${tries})`;
       plan.hint = `needs more force or a longer T (now ${fmt(Tp)} s)`;
     } else if (q.defect >= 1e-4) {
       plan.message = `no plan found: the segments do not join (defect ${fmt(q.defect)}, ${tries})`;
@@ -349,18 +374,20 @@ export function runPlan(gen, onProgress) {
 // from the shooting starts (one long open-loop replay would blow the tiny
 // defects up), and the Jacobians Ad_k, Bd_k of the one-sample step map
 // there (sub RK4 substeps, the force held), by central differences: the
-// same discrete map the law lives on, so no c2d. Flat arrays: xs (K + 1)·n
-// (the last row is the plan's end), F K, Ad K·n·n, Bd K·n.
+// same discrete map the law lives on, so no c2d. Also Cy_k = ∂y/∂x there,
+// so a sensor whose slope changes along the way (an encoder's error) is
+// read with its own slope. Flat arrays: xs (K + 1)·n (the last row is the
+// plan's end), F K, Ad K·n·n, Bd K·n, Cy K·m·n.
 // alongPlanSteps is the same as a generator with a tick per segment, so it
 // can follow planTransfer in one sliced job (yield*).
 export function alongPlan(model, plan) {
   return runPlan(alongPlanSteps(model, plan));
 }
 export function* alongPlanSteps(model, plan) {
-  const n = model.n, { segments: M, perSegment: P, Ts, sub, F } = plan, K = M * P;
+  const n = model.n, m = model.m ?? 0, { segments: M, perSegment: P, Ts, sub, F } = plan, K = M * P;
   const step = stepper(model.f, n, Ts, sub);
-  const xs = new Float64Array((K + 1) * n), Ad = new Float64Array(K * n * n), Bd = new Float64Array(K * n);
-  const x = new Float64Array(n), xp = new Float64Array(n), xm = new Float64Array(n);
+  const xs = new Float64Array((K + 1) * n), Ad = new Float64Array(K * n * n), Bd = new Float64Array(K * n), Cy = new Float64Array(K * m * n);
+  const x = new Float64Array(n), xp = new Float64Array(n), xm = new Float64Array(n), yp = new Float64Array(m), ym = new Float64Array(m);
   for (let j = 0; j < M; j++) {
     x.set(plan.S[j]);
     for (let i = 0; i < P; i++) {
@@ -371,6 +398,11 @@ export function* alongPlanSteps(model, plan) {
         xp.set(x); xp[c] += d; step(xp, u);
         xm.set(x); xm[c] -= d; step(xm, u);
         for (let r = 0; r < n; r++) Ad[k * n * n + r * n + c] = (xp[r] - xm[r]) / (2 * d);
+        if (m) {
+          xp.set(x); xp[c] += d; model.y(xp, u, yp);
+          xm.set(x); xm[c] -= d; model.y(xm, u, ym);
+          for (let r = 0; r < m; r++) Cy[k * m * n + r * n + c] = (yp[r] - ym[r]) / (2 * d);
+        }
       }
       const du = 1e-6 * Math.max(1, Math.abs(u));
       xp.set(x); step(xp, u + du);
@@ -381,7 +413,7 @@ export function* alongPlanSteps(model, plan) {
     yield null;
   }
   xs.set(x, K * n);
-  return { n, K, Ts, sub, xs, F: Float64Array.from(F), Ad, Bd, angle: model.states.map((s) => !!s.angle) };
+  return { n, m, K, Ts, sub, xs, F: Float64Array.from(F), Ad, Bd, Cy, angle: model.states.map((s) => !!s.angle) };
 }
 
 // Time-varying LQR along a plan: the backward discrete Riccati recursion
@@ -410,16 +442,23 @@ export function tvlqrGains(along, { Q, R, Pend }) {
 }
 
 // The plan in measurement order, for planLaw: Y_k = y(x*_k), the
-// measurements along the plan, and K_k = Kx_k C⁻¹, the gains (Kx from
-// tvlqrGains, K·n in state order). C is the measurement matrix of the
-// linearisation at the origin (square and invertible: every state measured,
-// D = 0); up: the upright LQR's { K, kr } in measurement order.
-export function planValues(model, along, Kx, { C, K: Kup, kr }) {
-  const n = model.n, m = model.m, steps = along.K, Ci = inv(C);
+// measurements along the plan, and K_k = Kx_k C_k⁻¹, the gains (Kx from
+// tvlqrGains, K·n in state order), C_k = ∂y/∂x at x*_k (alongPlan's Cy:
+// square, every state measured). up: the upright LQR's { K, kr } in
+// measurement order. Throws (code 'states-not-measured') where some C_k is
+// singular: there the measurements do not tell the states apart.
+export function planValues(model, along, Kx, { K: Kup, kr }) {
+  const n = model.n, m = model.m, steps = along.K;
   const Y = new Float64Array(steps * m), K = new Float64Array(steps * m), y = new Float64Array(m);
   for (let k = 0; k < steps; k++) {
     model.y(along.xs.subarray(k * n, (k + 1) * n), along.F[k], y);
     Y.set(y, k * m);
+    const Ck = Array.from({ length: m }, (_, r) => Array.from(along.Cy.subarray((k * m + r) * n, (k * m + r + 1) * n)));
+    let Ci;
+    try { Ci = inv(Ck); } catch { Ci = null; }
+    if (!Ci || !Ci.every((row) => row.every(Number.isFinite))) {
+      throw Object.assign(new Error(`the measurements do not tell the states apart at t = ${(k * along.Ts).toFixed(2)} s of the plan`), { code: 'states-not-measured', hint: 'measure each state with a sensor whose slope stays away from 0 along the swing' });
+    }
     for (let i = 0; i < m; i++) { let s = 0; for (let c = 0; c < n; c++) s += Kx[k * n + c] * Ci[c][i]; K[k * m + i] = s; }
   }
   return { F: Float64Array.from(along.F), Y, K, Kup: Array.from(Kup), kr, angle: model.outputs.map((o) => !!o.angle) };

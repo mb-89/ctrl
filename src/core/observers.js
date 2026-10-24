@@ -38,9 +38,11 @@ function checkModel(p) {
   return '';
 }
 
-// Predict with the model, then correct with gain L (filter form).
+// Predict with the model, then correct with gain L (filter form):
+// x̂ = x̂⁻ + L (y − C x̂⁻), every innovation taken from the prediction before
+// any correction (the gain is designed for all measurements at once).
 function estimator({ n, m, Ad, Bd, C, L }) {
-  const x = new Float64Array(n), xp = new Float64Array(n), out = new Float64Array(n);
+  const x = new Float64Array(n), xp = new Float64Array(n), e = new Float64Array(m), out = new Float64Array(n);
   let first = true;
   return {
     step(inp) {
@@ -50,10 +52,11 @@ function estimator({ n, m, Ad, Bd, C, L }) {
         x.set(xp);
       }
       for (let k = 0; k < m; k++) {
-        let e = inp[k + 1] ?? 0;
-        for (let j = 0; j < n; j++) e -= C[k][j] * x[j];
-        for (let i = 0; i < n; i++) x[i] += L[i][k] * e;
+        let s = inp[k + 1] ?? 0;
+        for (let j = 0; j < n; j++) s -= C[k][j] * x[j];
+        e[k] = s;
       }
+      for (let i = 0; i < n; i++) { let s = 0; for (let k = 0; k < m; k++) s += L[i][k] * e[k]; x[i] += s; }
       out.set(x);
       return out;
     },

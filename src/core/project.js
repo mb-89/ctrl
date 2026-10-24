@@ -12,7 +12,6 @@ import { normalizeGoal, evaluateGoal, compareEvals } from './goal.js';
 import { normalizeDiagram, diagramNames, compileDiagram } from './diagram.js';
 import { normalizeView } from './views.js';
 import { DesignError, parseOp, operatingPoint, linearize } from './linearize.js';
-import { SYNC_DESIGNS } from './design.js';
 import { CONTROLLERS } from './controllers.js';
 
 export const FORMAT = 'loop-tuner/2';
@@ -291,7 +290,8 @@ function blockModel(project, idPath, at, { designs, limits } = {}) {
   const block = level?.blocks.find((b) => b.id === parts.at(-1));
   if (!block || (block.type !== 'controller' && block.type !== 'observer')) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl');
   const op = parseOp(at);
-  const store = designs ?? SYNC_DESIGNS;
+  // No store named: compileDiagram's default (Node: SYNC_DESIGNS; the page: its own, as a guest).
+  const store = designs;
   let statuses, snap = null;
   if (op.kind === 't') {
     const sim = simOf(project);
