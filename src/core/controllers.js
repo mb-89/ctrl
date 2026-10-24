@@ -219,7 +219,10 @@ export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
 
 // The law of a block's active variant. Normalised first: a project restored
 // from JSON (undo, redo) has its open limits as null, not ±Infinity.
+// An experiment Auto-tune runs (src/core/autotune.js: hold r, then step u)
+// brings its own law as a function, so it can never come from a file.
 export function makeLaw(variant, Ts, lib = CONTROLLERS) {
+  if (typeof variant.law === 'function') return variant.law(Ts);
   return lib[variant.type].make(normalizeVariant(variant, 'variant', lib).params, Ts);
 }
 

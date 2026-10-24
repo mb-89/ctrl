@@ -1,13 +1,13 @@
 // Tab 4, Auto-tune: improve a Controller block's running variant by
 // simulation. Three methods (src/core/autotune.js): iterate (Nelder–Mead on a
 // cost, one step at a time so the improvement can be watched), relay
-// (Åström–Hägglund: Ku and Pu, then a rule) and step response (SIMC). Every
-// result goes into a variant of its own, "<original> · auto-tuned" (or
-// "· relay T–L", "· SIMC"), so the original stays for comparison; the whole
-// run is one undo step. The work runs in slices between frames, so the page
-// keeps drawing. See design/output/autotune.md.
+// (Åström–Hägglund: Ku and Pu, then a rule) and step response (a model fit,
+// then SIMC). Every result goes into a variant of its own, "<original> ·
+// auto-tuned" (or "· relay T–L", "· SIMC"), so the original stays for
+// comparison; the whole run is one undo step. The work runs in slices
+// between frames, so the page keeps drawing. See design/output/autotune.md.
 
-import { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, COSTS, GOAL } from '../core/autotune.js';
+import { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, SIMC, COSTS, GOAL } from '../core/autotune.js';
 import { CONTROLLERS } from '../core/controllers.js';
 import { num, parseSI } from './units.js';
 
@@ -21,8 +21,8 @@ const METHODS = {
     about: 'A relay replaces the controller around the middle of r, so the loop oscillates at its ultimate period Pu; the amplitude gives the ultimate gain Ku (Åström & Hägglund 1984, as industrial auto-tuners do). A rule turns Ku and Pu into a PID.',
   },
   step: {
-    label: 'Step response', sub: 'FOPDT fit → SIMC PI',
-    about: 'Opens the loop and steps u. The reaction curve gives a gain K, a lag τ and a dead time θ, and SIMC (Skogestad 2003) a PI with closed-loop time τc = θ. For plants that settle on their own.',
+    label: 'Step response', sub: 'model fit → SIMC',
+    about: 'The running controller holds r at the middle of its range until y settles; then u is held and stepped. A response that settles gives a gain K, a lag τ and a dead time θ; one that ramps (an integrating plant, such as a motor\'s angle) gives a slope k′, a lag τ2 and a dead time θ, and the test ends once the slope is steady. A ripple on y is averaged over its period. SIMC (Skogestad 2003) turns the model into a PI, or a PID when the lag of an integrating plant outlasts its dead time. A gain-scheduled PI is tested at each point of its table and gets SIMC gains there.',
   },
 };
 const PACE = 1000 / 6;  // iterations per second while watching
@@ -31,7 +31,7 @@ const GOAL_ABOUT = 'The cost of one run: the error r − y (IAE, ITAE or ISE), p
 
 export function createAutotuneTab(host, app, display) {
   // Settings of this page session (not saved in the project).
-  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', amplitude: 0.1, maxIter: 60, fast: false };
+  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', simc: 'tight', amplitude: 0.1, maxIter: 60, fast: false };
   let job = null;   // the run in progress
   let shown = null; // what the progress column shows: the current or last run
 
@@ -111,7 +111,7 @@ export function createAutotuneTab(host, app, display) {
       + tunedValues(v).map(([k, x]) => `<li class="turow"><span>${esc(k)}</span><span>${show(x)}</span></li>`).join('');
     const { ctx, why: noCtx } = context();
     const why = noCtx ?? whyNot(ctx, st.method);
-    const into = job ? job.name : resultName(c.block, st.method, st.rule);
+    const into = job ? job.name : resultName(c.block, st.method, st.rule, st.simc);
     const target = $('#tu-target');
     if (job) { target.innerHTML = `Into <b>${esc(into)}</b>`; target.title = `${shown.before?.variant.name ?? v.name} stays as it was.`; }
     else if (why) { target.innerHTML = `<span class="tuwhy">${esc(why)}</span>`; target.title = ''; }
@@ -126,6 +126,7 @@ export function createAutotuneTab(host, app, display) {
       const opts = [];
       if (st.method === 'iterate') opts.push(field('maxIter', 'Iterations', st.maxIter, 'at most; stops when the cost stops falling'));
       if (st.method === 'relay') opts.push(`<label class="pf"><span class="pfl">Rule</span><select class="field" id="tu-rule" ${job ? 'disabled' : ''}>${Object.entries(RULES).map(([k, r]) => `<option value="${k}" ${k === st.rule ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(RULES[st.rule].about)}</span></label>`);
+      if (st.method === 'step') opts.push(`<label class="pf"><span class="pfl">SIMC τc</span><select class="field" id="tu-simc" ${job ? 'disabled' : ''}>${Object.entries(SIMC).map(([k, r]) => `<option value="${k}" ${k === st.simc ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(SIMC[st.simc].about)}</span></label>`);
       if (st.method !== 'iterate') opts.push(field('amplitude', st.method === 'relay' ? 'Relay ±d' : 'Step Δu', num(100 * st.amplitude, 3), '% of the actuator range'));
       $('#tu-opts').innerHTML = opts.join('');
     }
@@ -145,6 +146,8 @@ export function createAutotuneTab(host, app, display) {
     host.querySelectorAll('[data-cost]').forEach((el) => { el.onclick = () => { if (job) return; st.goal.cost = el.dataset.cost; renderSetup(); }; });
     const rule = $('#tu-rule');
     if (rule) rule.onchange = () => { if (job) return; st.rule = rule.value; rule.blur(); renderSetup(); };
+    const simc = $('#tu-simc');
+    if (simc) simc.onchange = () => { if (job) return; st.simc = simc.value; simc.blur(); renderSetup(); };
     host.querySelectorAll('input[data-k]').forEach((inp) => {
       inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } };
       inp.onblur = () => {
@@ -189,9 +192,9 @@ export function createAutotuneTab(host, app, display) {
     if (!c || why) { app.toast(why ?? 'There is no Controller block to tune.'); return; }
     // The settings are copied: changing them during the run changes nothing.
     const goal = { ...st.goal };
-    const name = resultName(c.block, st.method, st.rule);
-    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, amplitude: st.amplitude, maxIter: st.maxIter, name });
-    shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null };
+    const name = resultName(c.block, st.method, st.rule, st.simc);
+    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, simc: st.simc, amplitude: st.amplitude, maxIter: st.maxIter, name });
+    shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null, unit: unitY() };
     job = { gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, mode: display.mode, startData: display.data, timer: 0, edit: false, ran: false, swept: false, applied: Infinity, runs: 0 };
     if (st.method === 'iterate') { app.setRunMode('stop'); display.clearRuns(); }
     renderAll();
@@ -258,12 +261,13 @@ export function createAutotuneTab(host, app, display) {
     job.swept = true;
     app.setRunMode(st.fast ? 'stop' : 'single');
     display.clearRuns();
-    display.setData(res.method === 'relay' ? lastPeriod(res.run, res.ctx.sim.duration) : { t: res.run.t, signals: res.run.signals });
+    const T = res.ctx.sim.duration;
+    display.setData(res.method === 'relay' ? lastPeriod(res.run, T) : aroundStep(res.run, res.tHold ?? 0, T));
     // Numbers to three digits; a bias of a millionth of the swing is 0.
     const u = (x) => num(Math.abs(x) < 1e-6 * Math.abs(res.d ?? res.du ?? 1) ? 0 : x, 3);
     shown.status = (res.method === 'relay'
       ? `On the display: the relay experiment, u = ${u(res.u0)} ± ${u(res.d)} around r0 = ${u(res.r0)}, other inputs at 0.`
-      : `On the display: the step test, u held at ${u(res.u0)}, then at ${u(res.u0 + (res.du ?? 0))}; r0 = ${u(res.r0)}, other inputs at 0.`)
+      : stepStatus(res, u))
       + (res.ok ? '' : ` It gives no result: ${res.why}.`);
     renderAll();
     const sweep = 10 * app.project.scope.timebase.scale;
@@ -281,7 +285,20 @@ export function createAutotuneTab(host, app, display) {
     if (res.better) { place(res.variant, true); end(`Done.${notes}`); return; }
     // Worse than the running variant: kept to compare, not run.
     place(res.variant, false);
-    end(`The result scores worse than ${res.before.variant.name} (cost ×${num(res.after.J / res.before.cost.J, 2)}): it was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
+    end(`The result scores worse than ${res.before.variant.name} (cost ×${num(res.after.J / res.before.cost.J, 2)})${res.worse ? `: ${res.worse}` : ''}. It was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
+  }
+
+  // What the display shows of a step test, in words. Times on the display
+  // count from where it starts (aroundStep).
+  function stepStatus(res, u) {
+    const T = res.ctx.sim.duration, shift = Math.max(0, (res.tHold ?? 0) - 0.1 * T);
+    const unit = shown.unit ? ` ${shown.unit}` : '';
+    const where = res.model === 'schedule' ? `the step test at y = ${u(res.shownAt)}${unit} (one of ${res.points.length}, one per point of the table)` : 'the step test';
+    const held = res.tHold > 0
+      ? `${res.before?.variant.name ?? 'the running variant'} held r0 = ${u(res.r0)}${unit}, then u was set to ${u(res.u0 + res.du)} at t = ${num(res.tHold - shift, 3)} s, against a second run that held it at ${u(res.u0)}`
+      : `u was held at ${u(res.u0 + res.du)} from the start, against a second run that held it at ${u(res.u0)} (r0 = ${u(res.r0)}${unit})`;
+    const ended = res.model === 'integrating' ? `; y ramps, so the test ended ${num(res.tEnd, 3)} s later, once its slope was steady` : '';
+    return `On the display: ${where}: ${held}${ended}. Other inputs at 0.`;
   }
 
   // Ends the run: closes its undo step and brings back the loop's own run,
@@ -344,9 +361,24 @@ export function createAutotuneTab(host, app, display) {
       rows.push(row('Rule', RULES[res.rule].label, ''));
     }
     if (s.method === 'step' && res?.ok) {
-      rows.push(row('K', num(res.K, 4), 'y per u'));
-      rows.push(row('τ, θ', `${num(res.tau, 3)} s, ${num(res.theta, 3)} s`, 'lag, dead time'));
-      rows.push(row('τc', `${num(res.gains.tauC, 3)} s`, 'closed-loop time'));
+      // The model a step test fitted: a gain (or, ramping, a slope per unit
+      // of u) and a lag and dead time.
+      const fit = (m) => (m.model === 'integrating'
+        ? { gain: ['k′', num(m.kp, 3), 'slope of y per unit of u (it ramps)'], lag: ['τ2, θ', `${num(m.tau2, 3)} s, ${num(m.theta, 3)} s`] }
+        : { gain: ['K', num(m.K, 3), 'y per u'], lag: ['τ, θ', `${num(m.tau, 3)} s, ${num(m.theta, 3)} s`] });
+      if (res.model === 'schedule') {
+        for (const p of res.points) {
+          if (!p.ok) { rows.push(row(`at ${num(p.at, 3)}`, `gains of ${num(p.from, 3)}`, 'no result: see the status')); continue; }
+          const { gain, lag } = fit(p);
+          rows.push(row(`at ${num(p.at, 3)}`, `${gain[0]} ${gain[1]}; ${lag[0]} ${lag[1]}`, `Kp ${num(p.gains.Kp, 3)}, Ki ${num(p.gains.Ki, 3)}`));
+        }
+        rows.push(row('u0', num(res.trim, 3), 'balances the start level'));
+      } else {
+        const { gain, lag } = fit(res);
+        rows.push(row(...gain));
+        rows.push(row(...lag, 'lag, dead time'));
+      }
+      rows.push(row('SIMC', SIMC[res.simc].label, SIMC[res.simc].about));
     }
     if (s.before) {
       rows.push(row('Cost', costAfter ? `${num(s.before.cost.J, 3)} → ${num(costAfter.J, 3)}` : num(s.before.cost.J, 3), costAfter ? `×${num(costAfter.J / s.before.cost.J, 2)}` : 'at the start', costAfter && costAfter.J > s.before.cost.J ? 'tuworse' : 'tucost'));
@@ -432,6 +464,18 @@ function lastPeriod(run, T) {
   if (end <= T * 1.001) return { t: run.t, signals: run.signals };
   let k0 = 0;
   while (k0 < n - 1 && run.t[k0] < end - T) k0++;
+  const signals = {};
+  for (const [k, v] of Object.entries(run.signals)) signals[k] = v.subarray(k0);
+  return { t: run.t.subarray(k0).map((x) => x - run.t[k0]), signals };
+}
+
+// A step test on the display: from a tenth of a period before the step, so
+// the hold that came before it does not fill the screen; t from 0 there.
+function aroundStep(run, tHold, T) {
+  const t0 = Math.max(0, tHold - 0.1 * T);
+  if (!(t0 > 0)) return { t: run.t, signals: run.signals };
+  let k0 = 0;
+  while (k0 < run.t.length - 1 && run.t[k0] < t0 - 1e-9) k0++;
   const signals = {};
   for (const [k, v] of Object.entries(run.signals)) signals[k] = v.subarray(k0);
   return { t: run.t.subarray(k0).map((x) => x - run.t[k0]), signals };

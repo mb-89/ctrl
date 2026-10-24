@@ -527,8 +527,8 @@ function startApp() {
     stop: () => { display.setMode('stop'); controls.render('stop'); },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
     // Auto-tune a Controller block at once, as the Auto-tune tab does step by
-    // step: opts { block (id path, 'ctrl'), method, goal, rule, amplitude,
-    // maxIter, apply = true }. Applied, the result goes into a variant of its
+    // step: opts { block (id path, 'ctrl'), method, goal, rule, simc,
+    // amplitude, maxIter, apply = true }. Applied, the result goes into a variant of its
     // own, running if it scores better: one undo step.
     autotune: (opts = {}) => {
       tuneTab.stop();
