@@ -410,6 +410,10 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .tag-feature { background: var(--panel-2); color: var(--ink-2); }
 .tag-feature::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); margin-right: 5px; vertical-align: 0; }
 .tag-none { border: 1px dashed var(--muted); color: var(--muted); background: transparent; font-weight: 500; }
+button.tag { cursor: pointer; font-family: inherit; }
+button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 1px; }
+.tagfilter { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 0 6px 8px; border-bottom: 1px solid var(--line); }
+.tagcount { margin-left: auto; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .taglegend { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 2px 6px 6px; color: var(--muted); font-size: 11px; }
 .taglegend .tag { --tone: var(--muted); }
 
@@ -435,6 +439,41 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .an-fig figcaption .dim { color: var(--lcd-dim); overflow: hidden; text-overflow: ellipsis; }
 .an-fig canvas { flex: 1 1 0; min-height: 0; width: 100%; display: block; }
 @media (max-width: 900px) { .an { grid-template-columns: 1fr; } .an-grid { grid-template-columns: 1fr; } }
+
+/* Auto-tune tab: controller | method | goal | progress */
+.tune { display: grid; grid-template-columns: minmax(180px, 230px) minmax(220px, 290px) minmax(200px, 260px) minmax(280px, 1fr); gap: 14px; align-items: stretch; height: 100%; min-height: 0; }
+.tune > .gcol { min-height: 0; overflow: auto; }
+.tumethods { display: flex; flex-direction: column; gap: 4px; }
+.tumethod { flex-direction: column; align-items: flex-start; gap: 1px; }
+.tumethod span { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
+.tumethod.on span { color: var(--lcd-dim); }
+.tune .reps { align-self: flex-start; }
+.tune .pf .reps { grid-column: 2; }
+.turows { flex: 0 0 auto; gap: 1px; margin: 0; list-style: none; }
+.turows:empty { display: none; }
+.turow { display: grid; grid-template-columns: minmax(28px, auto) minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 1px 6px; font-family: var(--mono); font-size: 12.5px; }
+.turows.wide .turow { grid-template-columns: 78px minmax(0, 1fr) minmax(0, auto); }
+.turow > span:first-child { color: var(--lcd-dim); white-space: nowrap; }
+.turow > span:nth-child(2) { text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.turow em { font-style: normal; font-size: 11px; color: var(--lcd-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turow em:empty { display: none; }
+.turow.tucost > span:nth-child(2) { color: #33d17a; }
+.turow.tuworse > span:nth-child(2) { color: var(--bad); }
+.tuhead { display: flex; flex-direction: column; padding: 1px 6px 3px; font-size: 12.5px; }
+.tuhead b { font-family: var(--mono); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tuhead span { font-size: 11px; color: var(--lcd-dim); }
+.tustatus { font-size: 12.5px; line-height: 1.4; color: var(--ink-2); min-height: 18px; }
+.tustatus .dim { color: var(--muted); }
+.tuwhy { color: var(--bad); }
+.tuplot { display: block; width: 100%; height: 118px; flex: 0 0 auto; border-radius: 8px; background: #0a0d10; }
+.tuplot[hidden] { display: none; }
+.tune .field:disabled, .tune .rep:disabled { opacity: 0.55; cursor: default; }
+.tufast { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+/* Narrow: the columns stack, Start and the progress first. */
+@media (max-width: 900px) {
+  .tune { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .tune > .tuprogress { order: -1; }
+}
 
 /* Live (HIL, ui/live.js) and Save (ui/record.js). Live is a second row of
    Run Control, two lines under its keys whatever its state; Save sits under

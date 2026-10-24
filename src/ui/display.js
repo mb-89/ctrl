@@ -587,6 +587,9 @@ export function createDisplay(root, handlers) {
       draw();
     },
     clearRuns() { past = []; draw(); },
+    // Auto-tune: the run on screen (or the run given) becomes the newest faded one.
+    keep(d = data) { if (d) past = [d, ...past].slice(0, RUNS - 1); draw(); },
+    get data() { return data; },
     releaseLine() { if (line === null) return false; selectLine(null); return true; },
     // The instant other views follow: the hover cursor, else the scan line
     // while sweeping, else the right edge of the screen.

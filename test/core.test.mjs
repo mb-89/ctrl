@@ -248,6 +248,7 @@ test('2D views compile and move with the signals; library parts combine', async 
   assert.equal(fromLoop.candidates.length, 0, 'a whole load leaves no controller of an older project behind');
   assert.equal(loopReady({ ...fromLoop, candidates: EXAMPLES[0].candidates }), false, 'a diagram with its own Sources is never run as a loop plant');
   assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && (!s.ui.view || s.plant.views.some((v) => v.name === s.ui.view))), 'every system opens running, on a view it has');
+  assert.equal(SYSTEM_LIBRARY.find((s) => s.name.includes('badly tuned'))?.ui.tab, 'tune', 'the system made for Auto-tune opens on that tab');
   assert.deepEqual(p.ui, { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' }, 'a whole load brings how the system opens');
   assert.deepEqual(normalizeProject({ ui: { run: 'fast', tab: 'plant', extra: 1 } }).ui, { tab: 'plant' }, 'unknown ui values are dropped');
   assert.throws(() => normalizeProject({ system: { plant: { type: 'diagram', diagram: { blocks: [], wires: [] }, views: [{ kind: '2d', shapes: [{ type: 'line', x1: 'sin(' }] }] } } }), /views\[0\]/);
@@ -372,4 +373,16 @@ test('XY: following a sine, the error figure closes from a wide ellipse (P) to a
   };
   const [p, pd, pid] = ['P', 'PD', 'PID'].map(spread);
   assert.ok(p > 1.5 * pd && pd > 5 * pid && pid < 0.02 && p > 0.1, `σ: P ${p}, PD ${pd}, PID ${pid}`);
+});
+
+test('System library tags: every tag listed once, grouped; filtering keeps systems that carry all chosen tags', async () => {
+  const { SYSTEM_LIBRARY, libraryTags, filterByTags } = await import('../src/core/systems.js');
+  const tags = libraryTags();
+  assert.equal(new Set(tags.map((t) => t.label)).size, tags.length);
+  assert.ok(tags.findIndex((t) => t.kind === 'plant') < tags.findIndex((t) => t.kind === 'feature'));
+  assert.deepEqual(filterByTags([]), SYSTEM_LIBRARY.map((e, i) => i));
+  const lin = filterByTags(['Linear']), non = filterByTags(['Nonlinear']);
+  assert.ok(lin.length && non.length && lin.length + non.length === SYSTEM_LIBRARY.length, 'every system is linear or nonlinear');
+  const both = filterByTags(['Nonlinear', 'Disturbance']);
+  assert.ok(both.every((i) => non.includes(i) && SYSTEM_LIBRARY[i].tags.some((t) => t.label === 'Disturbance')));
 });

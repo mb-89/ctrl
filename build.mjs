@@ -11,9 +11,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MODULES = [
-  'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/observers.js', 'core/hil.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/spectrum.js', 'core/analysis.js',
+  'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/observers.js', 'core/hil.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/spectrum.js', 'core/analysis.js', 'core/autotune.js',
   'core/live.js', 'core/trace.js', 'core/zip.js',
-  'ui/units.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/controller.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/app.js',
+  'ui/units.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/controller.js', 'ui/autotune.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/app.js',
 ];
 
 // Live mode offers the external plant for download: the files of hil/ ride in
@@ -52,7 +52,7 @@ const ICON = {
 
 const HELP = `
 <h2 id="help-title">Loop Tuner</h2>
-<p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time: the Input tab makes the signals, the Plant tab wires the system as a block diagram, the Controller tab chooses and tunes its controllers. Earlier runs stay faded on the display for five runs, so a change can be compared with before.</p>
+<p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time: the Input tab makes the signals, the Plant tab wires the system as a block diagram, the Controller tab chooses and tunes its controllers, the Auto-tune tab improves them by simulation. Earlier runs stay faded on the display for five runs, so a change can be compared with before.</p>
 <h3>Display</h3>
 <div class="keys">
   <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record in real time, over and over.</span>
@@ -81,7 +81,9 @@ const HELP = `
 <p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (x, speed, …) can be shown on any channel. Double-click a <b>Controller</b> block to open it in the Controller tab. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Double-click a Switch to move it to its next input. Wheel zooms the canvas; dragging the background pans.</p>
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>Controller</h3>
-<p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
+<p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off).</p>
+<h3>Auto-tune</h3>
+<p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>.</p>
 <h3>Live (HIL)</h3>
 <p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time. Try <b>HIL: external motor</b> from the System library: Run Control gets a second row, <b>Connect</b>, <b>E-STOP</b>, <b>Reset</b>. <b>plant script…</b> under it gives you <code>hil-plant.zip</code>: unzip it and run <code>sh runme.sh</code> (Linux, macOS) or <code>runme.ps1</code> (Windows), which install what they need; with uv, <code>uv run hil_plant.py</code>. Then Connect. Every cycle the plant sends its outputs, the page runs the diagram and answers with the controller's output; edit the controller meanwhile and it takes effect at the next sample. <b>Run</b> and <b>Stop</b> start and stop the plant (each Run is a fresh run from t = 0), <b>Single</b> runs one screen. E-STOP on the page, Enter in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until Reset. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them.</p>
 <h3>System library</h3>
@@ -90,7 +92,7 @@ const HELP = `
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code> and <code>single()</code> (with a live plant these start and stop it).</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it) and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
 <p>Live: <code>loopTuner.live.connect(url?)</code>, <code>.disconnect()</code>, <code>.estop()</code>, <code>.reset()</code>, <code>.state()</code> (connection, run mode, the plant's ports and figures, how edits were taken). To tune while it runs, change a variant's parameters with <code>getProject()</code> and <code>setProject(p)</code>: they take effect at the next sample. Traces: <code>loopTuner.record.screen('csv' | 'json')</code> (every signal on the screen), <code>.live(format)</code> (the live record), <code>.reference(text, name)</code>, <code>.clearReferences()</code>, <code>.state()</code>. The protocol, for plants of your own: JSON-RPC 2.0 over a WebSocket, described in <code>hil_plant.py</code>'s header and in the repository's design/output/hil.md.</p>
 <p><button class="key primary" id="help-close">Close</button></p>`;
 
@@ -130,6 +132,7 @@ const SHELL = `<div id="lt-shell" class="app">
     <div id="tab-input" role="tabpanel"></div>
     <div id="tab-plant" role="tabpanel" hidden></div>
     <div id="tab-controller" role="tabpanel" hidden></div>
+    <div id="tab-tune" role="tabpanel" hidden></div>
     <div id="tab-analysis" role="tabpanel" hidden></div>
     <div id="tab-later" role="tabpanel" hidden></div>
   </div>

@@ -60,6 +60,9 @@ export function createRecord(app, display) {
     const [w0, w1] = windowOf();
     const tr = traceWindow(d, live ? -Infinity : w0, live ? Infinity : w1);
     if (tr.t.length < 2) return null;
+    // Every signal the scope can show; auto-tune's "ctrl.u" probes (a dot in
+    // the name) are not among them.
+    for (const nm of Object.keys(tr.signals)) if (nm.includes('.')) delete tr.signals[nm];
     tr.units = unitsOf(Object.keys(tr.signals));
     return { trace: tr, what: 'screen', source: live ? `the screen: a live sweep, t is screen time (plant time = t + ${num(d.plantOffset, 6)} s)` : 'the screen: a simulated run' };
   }

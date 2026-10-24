@@ -9,7 +9,7 @@
 // at t, Controller blocks sample on their own Ts), and reads the block's
 // inputs: that is the u sent back, at once, with the same seq.
 
-import { compileDiagram } from './diagram.js';
+import { compileDiagram, normalizeDiagram } from './diagram.js';
 import { referenceFn } from './signals.js';
 import { HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, uMessage, parseMessage, checkDescription, pageWatchdog, createLinkStats } from './hil.js';
 
@@ -40,17 +40,22 @@ function copyParams(own, next) {
 // signals: the project's named signals (the Sources play them).
 export function createLiveRunner(diagram, signals) {
   const fns = {};
-  let own, key, el, ext, X, Xt, k1, k2, k3, k4, tPrev, h;
+  let own, key, el, ext, keep, X, Xt, k1, k2, k3, k4, tPrev, h;
 
   function setSignals(sigs) {
     for (const name of Object.keys(fns)) delete fns[name];
     for (const [name, ref] of Object.entries(sigs ?? {})) fns[name] = referenceFn(ref, { sampleTime: h ?? 0.01 });
   }
+  // The runner's own copy, in normal form (a project restored by Undo has
+  // its open limits as null), so the laws hold its parameter objects.
   function build(d) {
-    own = structuredClone(d);
-    key = structureKey(d);
+    own = normalizeDiagram(structuredClone(d));
+    key = structureKey(own);
     const sources = new Proxy({}, { get: (_, name) => (t) => (fns[name] ? fns[name](t) : 0) });
     el = compileDiagram(own, 'plant', { standalone: true, sources });
+    // The scope's signals: Sources and Sinks. (Auto-tune's "ctrl.u" probes
+    // have a dot in their name and stay out, as on the scope.)
+    keep = el.probes().flatMap(([n], i) => (n.includes('.') ? [] : [i]));
     if (el.externals.length !== 1) throw new Error(el.externals.length ? 'one External plant per system, for now' : 'this system has no External plant block: add one from the Live group in the Plant tab');
     ext = el.externals[0];
     // Continuous blocks on the page integrate between cycles, in steps no
@@ -68,7 +73,7 @@ export function createLiveRunner(diagram, signals) {
   // probes() lists them only for the names the diagram actually plays.
   build(diagram);
   setSignals(signals);
-  const names = () => el.probes().map(([n]) => n);
+  const names = () => { const all = el.probes(); return keep.map((i) => all[i][0]); };
 
   function rk4(t, dt) {
     const N = el.n;
@@ -108,11 +113,10 @@ export function createLiveRunner(diagram, signals) {
       el.record();
       tPrev = t;
       const p = ext.params;
-      const values = el.probes().map(([, v]) => v);
-      if (held) {
-        ext.shows.forEach((js, i) => { for (const j of js) values[j] = p.safe[i]; });
-        return { u: [...p.safe], values };
-      }
+      const all = el.probes();
+      if (held) ext.shows.forEach((js, i) => { for (const j of js) all[j][1] = p.safe[i]; });
+      const values = keep.map((i) => all[i][1]);
+      if (held) return { u: [...p.safe], values };
       const u = ext.u().map((v, i) => (Number.isFinite(v) ? Math.min(p.max[i], Math.max(p.min[i], v)) : p.safe[i]));
       return { u, values };
     },
@@ -122,8 +126,9 @@ export function createLiveRunner(diagram, signals) {
     update(d, sigs) {
       if (sigs) setSignals(sigs);
       if (!d) return 'signals';
-      if (structureKey(d) === key) { copyParams(own, d); return 'kept'; }
-      build(d);
+      const next = normalizeDiagram(structuredClone(d));
+      if (structureKey(next) === key) { copyParams(own, next); return 'kept'; }
+      build(next);
       return 'rebuilt';
     },
     // Controllers start afresh, as after an E-stop.

@@ -313,15 +313,16 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const add = (node) => { nodes.push({ inputs: [], ...node }); return nodes.length - 1; };
   const externals = [];
   let extNode = -1, outNode = -1;
+  const ctrlNodes = [];  // [block id path, node] of every Controller block
 
   // Creates nodes for one level; returns, per block id, where its output
   // ports come from and where its input ports go.
-  function level(d, prefix, root) {
+  function level(d, prefix, root, ids = '') {
     const outs = {}, ins = {};
     for (const b of d.blocks) {
       const name = `${prefix}${b.name ?? b.id}`;
       if (b.type === 'subsystem') {
-        const inner = level(b.diagram, `${name}/`, false);
+        const inner = level(b.diagram, `${name}/`, false, `${ids}${b.id}/`);
         const ports = (t) => b.diagram.blocks.filter((x) => x.type === t).sort((a, c) => a.params.port - c.params.port);
         outs[b.id] = ports('outport').map((x) => inner.outs[x.id][0]);
         ins[b.id] = ports('inport').map((x) => inner.ins[x.id][0]);
@@ -376,6 +377,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         const k = add({ kind: 'ctrl', name, ft: false, observer: b.type === 'observer', inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts, lib), next: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
         outs[b.id] = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j })) : [k];
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+        if (b.type === 'controller') ctrlNodes.push([`${ids}${b.id}`, k]); // auto-tune probes (below)
         continue;
       }
       if (b.type === 'external') {
@@ -421,6 +423,15 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     return { outs, ins };
   }
   level(diagram, '', true);
+  // Auto-tune reads each Controller block's r (input 1), y (input 2) and u
+  // under its id path: "ctrl.r", "motor/ctrl.u". A signal name never has a
+  // dot, so no scope channel lists these.
+  for (const [key, k] of ctrlNodes) {
+    const [r = -1, y = -1] = nodes[k].inputs;
+    if (r >= 0) probeList.push([`${key}.r`, r]);
+    if (y >= 0) probeList.push([`${key}.y`, y]);
+    probeList.push([`${key}.u`, k]);
+  }
   if (!opts.standalone) {
     if (outNode < 0) throw new Error(`${path}: add an Out block for the plant output y`);
     if (extNode < 0) warnings.push(`${path}: no In block, so the plant ignores u`);

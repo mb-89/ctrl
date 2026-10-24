@@ -417,6 +417,10 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .tag-feature { background: var(--panel-2); color: var(--ink-2); }
 .tag-feature::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); margin-right: 5px; vertical-align: 0; }
 .tag-none { border: 1px dashed var(--muted); color: var(--muted); background: transparent; font-weight: 500; }
+button.tag { cursor: pointer; font-family: inherit; }
+button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 1px; }
+.tagfilter { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 0 6px 8px; border-bottom: 1px solid var(--line); }
+.tagcount { margin-left: auto; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .taglegend { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 2px 6px 6px; color: var(--muted); font-size: 11px; }
 .taglegend .tag { --tone: var(--muted); }
 
@@ -442,6 +446,41 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .an-fig figcaption .dim { color: var(--lcd-dim); overflow: hidden; text-overflow: ellipsis; }
 .an-fig canvas { flex: 1 1 0; min-height: 0; width: 100%; display: block; }
 @media (max-width: 900px) { .an { grid-template-columns: 1fr; } .an-grid { grid-template-columns: 1fr; } }
+
+/* Auto-tune tab: controller | method | goal | progress */
+.tune { display: grid; grid-template-columns: minmax(180px, 230px) minmax(220px, 290px) minmax(200px, 260px) minmax(280px, 1fr); gap: 14px; align-items: stretch; height: 100%; min-height: 0; }
+.tune > .gcol { min-height: 0; overflow: auto; }
+.tumethods { display: flex; flex-direction: column; gap: 4px; }
+.tumethod { flex-direction: column; align-items: flex-start; gap: 1px; }
+.tumethod span { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
+.tumethod.on span { color: var(--lcd-dim); }
+.tune .reps { align-self: flex-start; }
+.tune .pf .reps { grid-column: 2; }
+.turows { flex: 0 0 auto; gap: 1px; margin: 0; list-style: none; }
+.turows:empty { display: none; }
+.turow { display: grid; grid-template-columns: minmax(28px, auto) minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 1px 6px; font-family: var(--mono); font-size: 12.5px; }
+.turows.wide .turow { grid-template-columns: 78px minmax(0, 1fr) minmax(0, auto); }
+.turow > span:first-child { color: var(--lcd-dim); white-space: nowrap; }
+.turow > span:nth-child(2) { text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.turow em { font-style: normal; font-size: 11px; color: var(--lcd-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turow em:empty { display: none; }
+.turow.tucost > span:nth-child(2) { color: #33d17a; }
+.turow.tuworse > span:nth-child(2) { color: var(--bad); }
+.tuhead { display: flex; flex-direction: column; padding: 1px 6px 3px; font-size: 12.5px; }
+.tuhead b { font-family: var(--mono); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tuhead span { font-size: 11px; color: var(--lcd-dim); }
+.tustatus { font-size: 12.5px; line-height: 1.4; color: var(--ink-2); min-height: 18px; }
+.tustatus .dim { color: var(--muted); }
+.tuwhy { color: var(--bad); }
+.tuplot { display: block; width: 100%; height: 118px; flex: 0 0 auto; border-radius: 8px; background: #0a0d10; }
+.tuplot[hidden] { display: none; }
+.tune .field:disabled, .tune .rep:disabled { opacity: 0.55; cursor: default; }
+.tufast { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+/* Narrow: the columns stack, Start and the progress first. */
+@media (max-width: 900px) {
+  .tune { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .tune > .tuprogress { order: -1; }
+}
 
 /* Live (HIL, ui/live.js) and Save (ui/record.js). Live is a second row of
    Run Control, two lines under its keys whatever its state; Save sits under
@@ -535,6 +574,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
     <div id="tab-input" role="tabpanel"></div>
     <div id="tab-plant" role="tabpanel" hidden></div>
     <div id="tab-controller" role="tabpanel" hidden></div>
+    <div id="tab-tune" role="tabpanel" hidden></div>
     <div id="tab-analysis" role="tabpanel" hidden></div>
     <div id="tab-later" role="tabpanel" hidden></div>
   </div>
@@ -543,7 +583,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <div id="drop" class="drop" hidden>Drop a project file (.json or .html)</div>
 <div id="help-dlg" class="overlay" hidden><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
 <h2 id="help-title">Loop Tuner</h2>
-<p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time: the Input tab makes the signals, the Plant tab wires the system as a block diagram, the Controller tab chooses and tunes its controllers. Earlier runs stay faded on the display for five runs, so a change can be compared with before.</p>
+<p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time: the Input tab makes the signals, the Plant tab wires the system as a block diagram, the Controller tab chooses and tunes its controllers, the Auto-tune tab improves them by simulation. Earlier runs stay faded on the display for five runs, so a change can be compared with before.</p>
 <h3>Display</h3>
 <div class="keys">
   <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record in real time, over and over.</span>
@@ -572,7 +612,9 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (x, speed, …) can be shown on any channel. Double-click a <b>Controller</b> block to open it in the Controller tab. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Double-click a Switch to move it to its next input. Wheel zooms the canvas; dragging the background pans.</p>
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>Controller</h3>
-<p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
+<p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off).</p>
+<h3>Auto-tune</h3>
+<p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>.</p>
 <h3>Live (HIL)</h3>
 <p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time. Try <b>HIL: external motor</b> from the System library: Run Control gets a second row, <b>Connect</b>, <b>E-STOP</b>, <b>Reset</b>. <b>plant script…</b> under it gives you <code>hil-plant.zip</code>: unzip it and run <code>sh runme.sh</code> (Linux, macOS) or <code>runme.ps1</code> (Windows), which install what they need; with uv, <code>uv run hil_plant.py</code>. Then Connect. Every cycle the plant sends its outputs, the page runs the diagram and answers with the controller's output; edit the controller meanwhile and it takes effect at the next sample. <b>Run</b> and <b>Stop</b> start and stop the plant (each Run is a fresh run from t = 0), <b>Single</b> runs one screen. E-STOP on the page, Enter in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until Reset. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them.</p>
 <h3>System library</h3>
@@ -581,7 +623,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code> and <code>single()</code> (with a live plant these start and stop it).</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it) and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
 <p>Live: <code>loopTuner.live.connect(url?)</code>, <code>.disconnect()</code>, <code>.estop()</code>, <code>.reset()</code>, <code>.state()</code> (connection, run mode, the plant's ports and figures, how edits were taken). To tune while it runs, change a variant's parameters with <code>getProject()</code> and <code>setProject(p)</code>: they take effect at the next sample. Traces: <code>loopTuner.record.screen('csv' | 'json')</code> (every signal on the screen), <code>.live(format)</code> (the live record), <code>.reference(text, name)</code>, <code>.clearReferences()</code>, <code>.state()</code>. The protocol, for plants of your own: JSON-RPC 2.0 over a WebSocket, described in <code>hil_plant.py</code>'s header and in the repository's design/output/hil.md.</p>
 <p><button class="key primary" id="help-close">Close</button></p></div></div>
 </div>
@@ -1810,9 +1852,11 @@ function compileExpr(src, opts = {}) {
     if (tk.k === 'id') {
       take();
       const name = tk.v.toLowerCase();
-      if (name === 't') return (e) => e.t;
+      // In a view, a signal named T, E or PI is that signal, not the time or a constant.
+      const own = opts.vars && tk.v !== name && peek()?.v !== '(' ? tk.v : null;
+      if (name === 't') return own ? (e) => (Object.hasOwn(e, own) ? e[own] : e.t) : (e) => e.t;
       // Own properties only: names such as "constructor" must not resolve.
-      if (Object.hasOwn(CONST, name)) { const v = CONST[name]; return () => v; }
+      if (Object.hasOwn(CONST, name)) { const v = CONST[name]; return own ? (e) => (Object.hasOwn(e, own) ? e[own] : v) : () => v; }
       const arity = Object.hasOwn(FN1, name) ? 1 : Object.hasOwn(FN2, name) ? 2 : Object.hasOwn(FN3, name) ? 3 : 0;
       if (!arity && opts.vars && peek()?.v !== '(') { const v = tk.v; return (e) => (Object.hasOwn(e, v) ? e[v] : NaN); }
       if (!arity) throw new Error(`unknown name "${tk.v}"; use t, pi, e or a function such as sin, exp, step`);
@@ -2441,6 +2485,28 @@ const CONTROLLERS = {
       return staticLinear(p.kr, p.K);
     },
   },
+  relay: {
+    // On/off control: u0 + d while the error is positive, u0 − d while it is
+    // negative, switching only once e passes ±ε (hysteresis), so a noisy
+    // measurement cannot make it chatter. Auto-tune's relay experiment
+    // (Åström–Hägglund) runs one to find Ku and Pu. A negative d reverses it,
+    // for a plant whose y falls when u rises.
+    label: 'Relay (on/off)', summary: 'u = u0 ± d by the sign of e, hysteresis ε',
+    params: [num('d', 'Amplitude d', 1, { unit: 'u', help: 'negative for a plant whose y falls when u rises' }), num('eps', 'Hysteresis ε', 0, { min: 0, help: 'switches when e = r − y passes +ε or −ε' }), num('u0', 'Bias u0', 0, { unit: 'u' }), ...LIMITS],
+    make(p) {
+      let high = null;
+      return {
+        step(x) {
+          const e = x[0] - (x[1] ?? 0);
+          if (high === null) high = e >= 0;
+          if (e > p.eps) high = true;
+          else if (e < -p.eps) high = false;
+          return clamp(p.u0 + (high ? p.d : -p.d), p.umin, p.umax);
+        },
+      };
+    },
+    linear() { throw new Error('a relay switches between two outputs: it has no linear model'); },
+  },
 };
 
 const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
@@ -2473,9 +2539,15 @@ function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
   return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
 }
 
-// The law of a block's active variant.
+// The law of a block's active variant. Normalised first: a project restored
+// from JSON (undo, redo) has its open limits as null, not ±Infinity. Params
+// already in normal form are used as they are, so an edit of them while the
+// law runs (Live mode) reaches it.
+const same = (a, b) => (Array.isArray(b) ? Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]) : a === b);
 function makeLaw(variant, Ts, lib = CONTROLLERS) {
-  return lib[variant.type].make(variant.params, Ts);
+  const { params } = normalizeVariant(variant, 'variant', lib);
+  const keep = variant.params && Object.keys(params).every((k) => same(variant.params[k], params[k]));
+  return lib[variant.type].make(keep ? variant.params : params, Ts);
 }
 
 
@@ -3132,15 +3204,16 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   const add = (node) => { nodes.push({ inputs: [], ...node }); return nodes.length - 1; };
   const externals = [];
   let extNode = -1, outNode = -1;
+  const ctrlNodes = [];  // [block id path, node] of every Controller block
 
   // Creates nodes for one level; returns, per block id, where its output
   // ports come from and where its input ports go.
-  function level(d, prefix, root) {
+  function level(d, prefix, root, ids = '') {
     const outs = {}, ins = {};
     for (const b of d.blocks) {
       const name = `${prefix}${b.name ?? b.id}`;
       if (b.type === 'subsystem') {
-        const inner = level(b.diagram, `${name}/`, false);
+        const inner = level(b.diagram, `${name}/`, false, `${ids}${b.id}/`);
         const ports = (t) => b.diagram.blocks.filter((x) => x.type === t).sort((a, c) => a.params.port - c.params.port);
         outs[b.id] = ports('outport').map((x) => inner.outs[x.id][0]);
         ins[b.id] = ports('inport').map((x) => inner.ins[x.id][0]);
@@ -3195,6 +3268,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         const k = add({ kind: 'ctrl', name, ft: false, observer: b.type === 'observer', inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts, lib), next: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
         outs[b.id] = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j })) : [k];
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+        if (b.type === 'controller') ctrlNodes.push([`${ids}${b.id}`, k]); // auto-tune probes (below)
         continue;
       }
       if (b.type === 'external') {
@@ -3240,6 +3314,15 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     return { outs, ins };
   }
   level(diagram, '', true);
+  // Auto-tune reads each Controller block's r (input 1), y (input 2) and u
+  // under its id path: "ctrl.r", "motor/ctrl.u". A signal name never has a
+  // dot, so no scope channel lists these.
+  for (const [key, k] of ctrlNodes) {
+    const [r = -1, y = -1] = nodes[k].inputs;
+    if (r >= 0) probeList.push([`${key}.r`, r]);
+    if (y >= 0) probeList.push([`${key}.y`, y]);
+    probeList.push([`${key}.u`, k]);
+  }
   if (!opts.standalone) {
     if (outNode < 0) throw new Error(`${path}: add an Out block for the plant output y`);
     if (extNode < 0) warnings.push(`${path}: no In block, so the plant ignores u`);
@@ -4001,6 +4084,60 @@ const EXAMPLE_PLANTS = [
       { len: 0.25, angle: '-(theta3 - theta2)' },
     ], 'x {x:5.2} m   θ1 {theta1*180/pi:5.1}°   θ2 {theta2*180/pi:5.1}°   θ3 {theta3*180/pi:5.1}°   F {F:5.1} N', [-1.3, -0.4, 1.3, 1.1])],
   },
+  {
+    // Made for the Auto-tune tab: a classic process (three lags and a dead
+    // time) under a PID that was tuned badly by hand. Time is scaled so the
+    // demo fits 5 s. The gains are hand-picked to be poor; the tab computes
+    // better ones from the plant.
+    name: 'Oven, badly tuned',
+    notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled to fit 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }] },
+      d: { period: PERIOD, components: [pulse(25, 3.6, 0.8)] },
+    },
+    scope: { channels: channels('r', 'T', 'P', 'd') },
+    ui: { ...ui('Oven'), tab: 'tune' },
+    diagram: {
+      blocks: [
+        src('r', 30, 112, '°C'),
+        src('d', 300, 220, '%'),
+        ctrl(130, 90, 2, 0.02, [
+          { name: 'PID, badly tuned', type: 'pid', params: { Kp: 6, Ki: 12, Kd: 0.1, Tf: 0.02, umin: 0, umax: 100 } },
+        ]),
+        { id: 'heater', type: 'firstOrder', name: 'heater', params: { K: 1, tau: 0.1 }, x: 300, y: 96 },
+        { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 420, y: 104 },
+        { id: 'oven', type: 'firstOrder', name: 'chamber', params: { K: 1, tau: 0.5 }, x: 490, y: 96 },
+        { id: 'lag', type: 'delay', name: 'to sensor', params: { L: 0.1, y0: 0 }, x: 620, y: 96 },
+        { id: 'tc', type: 'firstOrder', name: 'thermocouple', params: { K: 1, tau: 0.05 }, x: 740, y: 96 },
+        sink('T', 900, 106, '°C'),
+        sink('P', 300, 20, '%'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'heater' }, { from: 'heater', to: 'sum' }, { from: 'd', to: 'sum:1' }, { from: 'sum', to: 'oven' },
+        { from: 'oven', to: 'lag' }, { from: 'lag', to: 'tc' }, { from: 'tc', to: 'T' }, { from: 'tc', to: 'ctrl:1' }, { from: 'ctrl', to: 'P' },
+      ],
+    },
+    views: [{
+      // The oven with its heating element (lit along its length by the
+      // power P, which the controller keeps within 0–100 %), a thermometer
+      // column for T (0–100 °C; an overshoot past that leaves the tube, as
+      // nothing is clamped) with the setpoint r marked, and the door, which
+      // opens while heat is lost (d).
+      name: 'Oven', kind: '2d', view: [-1.2, -0.75, 1.2, 0.95],
+      shapes: [
+        { type: 'rect', x: -0.75, y: -0.45, w: 1.1, h: 1.1, fill: 'panel', stroke: 'ink', lineWidth: 3 },
+        { type: 'rect', x: -0.65, y: -0.35, w: 0.9, h: 0.9, fill: 'muted' },
+        { type: 'line', x1: -0.6, y1: -0.28, x2: 0.2, y2: -0.28, stroke: 'ink', lineWidth: 6 },
+        { type: 'line', x1: -0.6, y1: -0.28, x2: '-0.6 + 0.008*P', y2: -0.28, stroke: 'ch3', lineWidth: 6 },
+        { type: 'group', x: 0.35, y: -0.45, angle: '-0.012*d', shapes: [{ type: 'rect', x: -0.05, y: 0, w: 0.05, h: 1.1, fill: 'ink' }] },
+        { type: 'rect', x: 0.7, y: -0.45, w: 0.12, h: 1.1, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        { type: 'rect', x: 0.72, y: -0.45, w: 0.08, h: '0.011*T', fill: 'ch2' },
+        { type: 'line', x1: 0.66, y1: '-0.45 + 0.011*r', x2: 0.86, y2: '-0.45 + 0.011*r', stroke: 'ch1', lineWidth: 3 },
+        { type: 'text', x: 0.92, y: '-0.45 + 0.011*r', text: 'r', size: 12, fill: 'ch1', anchor: 'start' },
+        { type: 'text', x: 0, y: 0.82, text: 'T {T:5.1} °C   r {r:4.0} °C   heater {P:5.1} %   door loss {d:4.0} %', size: 13 },
+      ],
+    }],
+  },
   // Live mode (design/output/hil.md): the plant is hil_plant.py, outside the
   // page; the External plant block's ports match what it describes. The
   // controller gains are chosen by hand: a P that gravity defeats, then better.
@@ -4355,7 +4492,7 @@ function normalizeProject(p) {
 // representation shown, and the setup area's share of the page height.
 // Unknown values are dropped.
 const UI_RUN = ['run', 'stop', 'single'];
-const UI_TABS = ['input', 'plant', 'controller', 'analysis'];
+const UI_TABS = ['input', 'plant', 'controller', 'tune', 'analysis'];
 function normalizeUi(ui) {
   if (!ui || typeof ui !== 'object') return null;
   const out = {};
@@ -4932,6 +5069,17 @@ function systemTags(e) {
 
 const SYSTEM_LIBRARY = EXAMPLE_PLANTS.map(fromPlant);
 
+// Every tag the library uses, once, grouped by what it is about (plant,
+// controller, observer, feature) in the order the systems show them.
+const KIND_ORDER = ['plant', 'none', 'controller', 'observer', 'feature'];
+function libraryTags(library = SYSTEM_LIBRARY) {
+  const seen = new Map();
+  for (const e of library) for (const t of e.tags) if (!seen.has(t.label)) seen.set(t.label, t);
+  return [...seen.values()].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
+}
+// The systems that carry every one of the given tags (no tags: all).
+const filterByTags = (labels, library = SYSTEM_LIBRARY) => library.map((e, i) => i).filter((i) => labels.every((l) => library[i].tags.some((t) => t.label === l)));
+
 // Copies the chosen parts of a library entry into a raw project (before
 // normalisation). parts: any of 'input', 'plant', 'controller'. A whole load
 // also takes the system's title, its scope setup and how it opens (ui).
@@ -4963,7 +5111,7 @@ function applySystem(project, entry, parts) {
   return p;
 }
 
-return { SYSTEM_PARTS, TAG_TONES, systemTags, SYSTEM_LIBRARY, applySystem };
+return { SYSTEM_PARTS, TAG_TONES, systemTags, SYSTEM_LIBRARY, libraryTags, filterByTags, applySystem };
 })();
 // ---- core/spectrum.js
 __mods['core/spectrum.js'] = (() => {
@@ -5580,6 +5728,805 @@ function analyzeLoop(plant, ctrl, Ts, { points = 400 } = {}) {
 
 return { discretePlant, openLoop, closedLoop, sOf, respondAt, frequencyData, loopMargins, stepResponse, locus, analyzeLoop };
 })();
+// ---- core/autotune.js
+__mods['core/autotune.js'] = (() => {
+// Auto-tune (Tab 4): improve a Controller block's running variant by
+// simulating the plant, the way a person would by trying gains. Nothing about
+// a plant is stored: every number here comes from simulations of the plant in
+// the project, run when asked. Three textbook strategies
+// (design/output/autotune.md):
+//   iterate  Nelder–Mead (1965) over the variant's gains, minimising a cost of
+//            one run: IAE, ITAE or ISE of e = r − y, plus effort and penalties
+//            for overshoot and saturation. The disturbance d plays in the run,
+//            so rejecting it counts too.
+//   relay    Åström and Hägglund's relay experiment (1984): a relay makes the
+//            loop oscillate; amplitude and period give the ultimate gain Ku and
+//            period Pu, and a rule (Ziegler–Nichols, Tyreus–Luyben, …) a PID.
+//   step     an open-loop step (process reaction curve) fitted with a first
+//            order plus dead time, then a SIMC PI (Skogestad 2003).
+// The simulations read the block's own r (input 1), y (input 2) and u from
+// the probes compileDiagram adds under "<block path>.r", ".y", ".u".
+// Every strategy is a generator that yields after each run of the loop, so
+// the page can keep drawing while it works (a run of a large plant takes tens
+// of milliseconds); drain() runs one to its end (tests, the command line).
+// autotune() is the one entry for the page, the command line and agents.
+
+const { simulateSystem } = __mods['core/sim.js'];
+const { defaultSampleTime } = __mods['core/project.js'];
+const { normalizeVariant } = __mods['core/controllers.js'];
+const { parseEnd, blockPorts } = __mods['core/diagram.js'];
+const DIVERGED = 100;        // the cost of a run that blew up (normal costs are O(1))
+const OVERSHOOT_WEIGHT = 2;  // cost per 100 % of overshoot beyond the bound
+const LOG_LIMIT = Math.log(1000);
+
+// Runs a strategy's generator to its end and returns its result.
+function drain(gen) {
+  for (;;) { const s = gen.next(); if (s.done) return s.value; }
+}
+
+// Every Controller block in a diagram, at any depth: { path, key, block, where }.
+function controllerBlocks(diagram) {
+  const out = [];
+  const walk = (d, path, where) => {
+    for (const b of d.blocks) {
+      if (b.type === 'controller') out.push({ path: [...path, b.id], key: [...path, b.id].join('/'), block: b, where: [...where, b.name ?? b.id].join(' / ') });
+      if (b.type === 'subsystem') walk(b.diagram, [...path, b.id], [...where, b.name ?? b.id]);
+    }
+  };
+  if (diagram) walk(diagram, [], []);
+  return out;
+}
+
+// The diagram level holding the block at path, and the block.
+function locate(diagram, path) {
+  let level = diagram;
+  for (const id of path.slice(0, -1)) level = level.blocks.find((b) => b.id === id).diagram;
+  return { level, block: level.blocks.find((b) => b.id === path.at(-1)) };
+}
+
+// A copy of the diagram in which the block runs this variant (the project is
+// not touched).
+function withVariant(diagram, path, variant) {
+  const d = structuredClone(diagram);
+  const { block } = locate(d, path);
+  block.variants = [variant];
+  block.variant = 0;
+  return d;
+}
+
+const wireTo = (level, id, port) => level.wires.find((w) => { const e = parseEnd(w.to); return e.id === id && e.port === port; });
+const portBlocks = (d, type) => d.blocks.filter((b) => b.type === type).sort((a, c) => a.params.port - c.params.port);
+
+// The Source whose signal reaches an input of the block at path: back along
+// the wires through blocks with one input (a gain, a lag, a prefilter) and
+// through subsystem ports. null when the input is not wired or is fed by
+// something else (a sum of signals, a loop).
+function upstreamSource(diagram, path, port) {
+  const frames = [{ d: diagram }];
+  for (const id of path.slice(0, -1)) frames.push({ d: frames.at(-1).d.blocks.find((b) => b.id === id).diagram, sub: id });
+  let id = path.at(-1), p = port;
+  for (let hop = 0; hop < 200; hop++) {
+    const { d } = frames.at(-1);
+    const w = wireTo(d, id, p);
+    if (!w) return null;
+    const from = parseEnd(w.from);
+    const b = d.blocks.find((x) => x.id === from.id);
+    if (!b) return null;
+    if (b.type === 'source') return b.params.signal;
+    if (b.type === 'inport') {
+      // Out of the subsystem, to the wire into its input port.
+      if (frames.length < 2) return null;
+      const { d: inner, sub } = frames.pop();
+      id = sub; p = portBlocks(inner, 'inport').indexOf(b);
+      continue;
+    }
+    if (b.type === 'subsystem') {
+      // Into the subsystem, to the wire into its output port.
+      const out = portBlocks(b.diagram, 'outport')[from.port];
+      if (!out) return null;
+      frames.push({ d: b.diagram, sub: b.id });
+      id = out.id; p = 0;
+      continue;
+    }
+    if (blockPorts(b)[0] !== 1) return null;
+    id = b.id; p = 0;
+  }
+  return null;
+}
+
+// What every strategy needs: the block, its running variant, and the
+// experiment: one period of the input (every step and disturbance in it),
+// sampled as the display samples it.
+function tuneContext(project, path) {
+  const plant = project.system.plant;
+  if (plant?.type !== 'diagram') throw new Error('the plant is not a block diagram yet');
+  const all = controllerBlocks(plant.diagram);
+  const key = path ? [].concat(path).join('/') : null;
+  const hit = (key && all.find((c) => c.key === key)) || all[0];
+  if (!hit) throw new Error('there is no Controller block in the plant');
+  const { block } = hit;
+  if (block.params.inputs < 2) throw new Error(`${hit.where} needs r on input 1 and the measurement y on input 2`);
+  // The cost and the experiments read r and y at the block: both must be wired.
+  const { level } = locate(plant.diagram, hit.path);
+  if (!wireTo(level, block.id, 0)) throw new Error(`${hit.where}: wire the reference r to input 1`);
+  if (!wireTo(level, block.id, 1)) throw new Error(`${hit.where}: wire the measurement y to input 2`);
+  const variant = normalizeVariant(block.variants[block.variant ?? 0]);
+  const period = Math.max(...Object.values(project.system.signals).map((s) => s.period));
+  const sim = { duration: period, sampleTime: project.sim?.sampleTime ?? defaultSampleTime(period) };
+  // Copies, so the page may change the project while a tuning run reads these.
+  const ctx = { diagram: structuredClone(plant.diagram), signals: structuredClone(project.system.signals), path: hit.path, key: hit.key, where: hit.where, block, variant, sim, Ts: block.params.Ts };
+  // The Source that feeds r, and the other inputs (the disturbance d, …).
+  ctx.source = upstreamSource(ctx.diagram, ctx.path, 0);
+  ctx.others = ctx.source ? Object.keys(ctx.signals).filter((k) => k !== ctx.source) : [];
+  return ctx;
+}
+
+function runVariant(ctx, variant, signals = ctx.signals, sim = ctx.sim) {
+  return simulateSystem(withVariant(ctx.diagram, ctx.path, variant), signals, sim);
+}
+
+// The block's own signals in a run.
+function loopSignals(run, key) {
+  const s = run.signals;
+  return { t: run.t, r: s[`${key}.r`], y: s[`${key}.y`], u: s[`${key}.u`] };
+}
+
+// Auto Scale: the scope channels that show one Controller block's r and the
+// y it compares with r (the same values as its probes), in groups of channel
+// indices, so they can share one scale and overlay. unitOf(name) gives a
+// signal's unit; channels of different units are not grouped.
+function loopOverlays(channels, signals, unitOf = () => '') {
+  const same = (a, b) => a && b && a.length === b.length && a.every((v, k) => Object.is(v, b[k]));
+  const groups = [];
+  for (const key of Object.keys(signals)) {
+    if (!key.endsWith('.r')) continue;
+    const r = signals[key], y = signals[`${key.slice(0, -2)}.y`];
+    const showing = (probe) => channels.map((ch, i) => (ch.on && same(signals[ch.source], probe) ? i : -1)).filter((i) => i >= 0);
+    const g = [...showing(r), ...showing(y)];
+    if (new Set(g).size > 1 && new Set(g.map((i) => unitOf(channels[i].source))).size === 1) groups.push([...new Set(g)]);
+  }
+  return groups;
+}
+
+const limitsOf = (v) => ({ lo: v.params.umin ?? -Infinity, hi: v.params.umax ?? Infinity });
+const finiteRange = (a, from = 0, to = a.length) => {
+  let lo = Infinity, hi = -Infinity;
+  for (let k = from; k < to; k++) if (Number.isFinite(a[k])) { lo = Math.min(lo, a[k]); hi = Math.max(hi, a[k]); }
+  return { lo, hi };
+};
+const mean = (a, from = 0, to = a.length) => { let s = 0; for (let k = from; k < to; k++) s += a[k]; return s / Math.max(1, to - from); };
+
+// ---- The cost of a run -------------------------------------------------
+
+const COSTS = {
+  IAE: 'mean |e|: every error counts by its size',
+  ITAE: 'mean |e| weighted by the time since the last reference step: errors that last count most',
+  ISE: 'mean e²: large errors count most',
+};
+const GOAL = { cost: 'IAE', effort: 0.05, overshoot: 10, saturation: 0.2 };
+
+// Scales that make the cost a plain number, fixed from the run the tuning
+// starts with: the error relative to the reference's span (or, when r does
+// not move, to the largest error), the effort relative to the actuator's range
+// (or, without limits, to the largest swing of u).
+function costScales(run, key, variant) {
+  const { r, y, u } = loopSignals(run, key);
+  const rr = finiteRange(r);
+  let e = rr.hi - rr.lo;
+  if (!(e > 1e-9)) { e = 0; for (let k = 0; k < r.length; k++) if (Number.isFinite(y[k])) e = Math.max(e, Math.abs(r[k] - y[k])); }
+  const { lo, hi } = limitsOf(variant);
+  let U = hi - lo;
+  if (!Number.isFinite(U)) { const ur = finiteRange(u); U = ur.hi - ur.lo; }
+  return { e: e > 1e-9 ? e : 1, u: U > 1e-9 && Number.isFinite(U) ? U : 1 };
+}
+
+// The cost J of one run, smaller is better:
+//   error       IAE, ITAE or ISE of e = r − y (the block's inputs 1 and 2), per sample
+//   effort      weight × mean (u − ū)² / U², the swing of u about its mean
+//   overshoot   for each reference step, 2 × the overshoot beyond the bound (a
+//               fraction of the step), until the next step or until another
+//               input (d) changes: recovering from a disturbance is not overshoot
+//   saturation  weight × the fraction of the time u sits at a limit
+// A run that diverges costs 100–200 (earlier is worse), so the search can
+// still tell which way is back. how: { scales, variant (for its limits),
+// others (names of the other inputs) }.
+function runCost(run, key, goal = {}, how = {}) {
+  const g = { ...GOAL, ...goal };
+  const { scales = { e: 1, u: 1 }, variant = null, others = [] } = how;
+  const { t, r, y, u } = loopSignals(run, key);
+  if (!r || !y || !u) throw new Error('the run has no r, y and u for this Controller block');
+  const n = t.length;
+  let valid = n;
+  for (let k = 0; k < n; k++) if (!Number.isFinite(r[k]) || !Number.isFinite(y[k]) || !Number.isFinite(u[k])) { valid = k; break; }
+  if (valid < n || run.info?.unstable) {
+    return { J: DIVERGED * (2 - valid / n), diverged: true, parts: { error: DIVERGED, effort: 0, overshoot: 0, saturation: 0 }, overshoot: Infinity, saturated: 0 };
+  }
+  const R = scales.e, U = scales.u;
+  // Reference steps: a jump of more than 5 % of the span in one sample.
+  const steps = [];
+  for (let k = 1; k < n; k++) if (Math.abs(r[k] - r[k - 1]) > 0.05 * R) steps.push(k);
+  const Tseg = (t[n - 1] - t[0]) / (steps.length + 1) || 1;
+  let err = 0, since = t[0], s = 0;
+  for (let k = 0; k < n; k++) {
+    if (k === steps[s]) { since = t[k]; s++; }
+    const e = (r[k] - y[k]) / R;
+    err += g.cost === 'ISE' ? e * e : g.cost === 'ITAE' ? ((t[k] - since) / Tseg) * Math.abs(e) : Math.abs(e);
+  }
+  err /= n;
+  const um = mean(u);
+  let swing = 0;
+  for (let k = 0; k < n; k++) swing += (u[k] - um) ** 2;
+  const effort = g.effort * swing / (n * U * U);
+  // Where another input jumps (5 % of its span in one sample), a step's
+  // overshoot window ends.
+  const cuts = [];
+  for (const name of others) {
+    const v = run.signals[name];
+    if (!v) continue;
+    const vr = finiteRange(v), jump = 0.05 * (vr.hi - vr.lo);
+    for (let k = 1; k < n; k++) if (Math.abs(v[k] - v[k - 1]) > jump) cuts.push(k);
+  }
+  cuts.sort((a, b) => a - b);
+  let worst = 0, over = 0;
+  steps.forEach((k0, i) => {
+    const k1 = Math.min(steps[i + 1] ?? n, cuts.find((c) => c > k0) ?? n), dr = r[k0] - r[k0 - 1], dir = Math.sign(dr);
+    let peak = 0;
+    for (let k = k0; k < k1; k++) peak = Math.max(peak, dir * (y[k] - r[k]));
+    const pct = (100 * peak) / Math.abs(dr);
+    worst = Math.max(worst, pct);
+    over += Math.max(0, pct - g.overshoot) / 100;
+  });
+  let sat = 0;
+  if (variant) {
+    const { lo, hi } = limitsOf(variant), tol = 1e-9 * (U + 1);
+    if (Number.isFinite(lo) || Number.isFinite(hi)) for (let k = 0; k < n; k++) if (u[k] <= lo + tol || u[k] >= hi - tol) sat++;
+  }
+  const parts = { error: err, effort, overshoot: OVERSHOOT_WEIGHT * over, saturation: g.saturation * sat / n };
+  const J = parts.error + parts.effort + parts.overshoot + parts.saturation;
+  return { J: Number.isFinite(J) ? Math.min(J, DIVERGED) : 2 * DIVERGED, diverged: false, parts, overshoot: worst, saturated: sat / n };
+}
+
+// The cost of running a variant in the context's experiment.
+function variantCost(ctx, variant, goal, scales) {
+  return runCost(runVariant(ctx, variant), ctx.key, goal, { scales, variant, others: ctx.others });
+}
+
+// ---- What can be tuned -------------------------------------------------
+
+const UNTUNABLE = {
+  off: 'Off has nothing to tune. Add a PID to this block in the Controller tab, then tune that.',
+  swingUp: 'A swing-up switches between pumping energy and catching the pole; its gains do not act on r − y. Tune its catching gains as a State feedback variant.',
+  relay: 'A relay has no gains to tune; the relay method uses one to find Ku and Pu.',
+};
+
+// The knobs the optimiser turns, as log factors on the variant's own values:
+// x = 0 is the variant as it is, x = ln 2 doubles a gain. A gain at 0 stays
+// off (the structure is the person's choice) and no sign ever flips.
+//   pid            Kp, Ki, Kd
+//   gainScheduled  the Kp table and the Ki table, each scaled as a whole
+//   stateFeedback  each gain in K, and the prefilter kr
+function tuningSpace(variant) {
+  const p = variant.params;
+  const f = (x) => Math.exp(Math.max(-LOG_LIMIT, Math.min(LOG_LIMIT, x)));
+  const on = (v) => Number.isFinite(v) && v !== 0;
+  let names, apply;
+  if (variant.type === 'pid') {
+    const keys = ['Kp', 'Ki', 'Kd'].filter((k) => on(p[k]));
+    names = keys;
+    apply = (x) => { const q = { ...p }; keys.forEach((k, i) => { q[k] = p[k] * f(x[i]); }); return q; };
+  } else if (variant.type === 'gainScheduled') {
+    const keys = ['Kp', 'Ki'].filter((k) => p[k].some(on));
+    names = keys.map((k) => `${k} table ×`);
+    apply = (x) => { const q = { ...p }; keys.forEach((k, i) => { q[k] = p[k].map((v) => v * f(x[i])); }); return q; };
+  } else if (variant.type === 'stateFeedback') {
+    const idx = p.K.map((v, i) => i).filter((i) => on(p.K[i]));
+    names = [...idx.map((i) => `K${i + 1}`), ...(on(p.kr) ? ['kr'] : [])];
+    apply = (x) => {
+      const q = { ...p, K: p.K.slice() };
+      idx.forEach((i, j) => { q.K[i] = p.K[i] * f(x[j]); });
+      if (on(p.kr)) q.kr = p.kr * f(x[idx.length]);
+      return q;
+    };
+  } else throw new Error(UNTUNABLE[variant.type] ?? `a ${variant.type} variant cannot be tuned`);
+  if (!names.length) throw new Error('every gain of this variant is 0; give the gains it should use a start value, then tune');
+  return { names, apply: (x) => ({ ...variant, params: apply(x) }) };
+}
+
+// The values the tuner turns, for showing before and after: [[name, value]].
+function tunedValues(variant) {
+  const p = variant.params;
+  if (variant.type === 'pid') return ['Kp', 'Ki', 'Kd'].map((k) => [k, p[k]]);
+  if (variant.type === 'gainScheduled') return [['Kp', p.Kp], ['Ki', p.Ki]];
+  if (variant.type === 'stateFeedback') return [['K', p.K], ['kr', p.kr]];
+  return [];
+}
+
+// ---- Strategy 1: Nelder–Mead -------------------------------------------
+
+// Nelder–Mead on the log factors. Deterministic. When the simplex has
+// collapsed it restarts around the best point with smaller steps, twice at
+// most (a common remedy for stalls). It stops after maxIter iterations, or
+// when 15 (patience) have not lowered the cost by 0.1 %. The goal is copied
+// at the start: changing it during a run cannot change the search.
+// Yields after every run of the loop { partial: true, … } and after every
+// iteration (a reflection, expansion, contraction or shrink of the simplex)
+// { iteration, evals, cost, start, best: { variant, cost, x }, tried, names };
+// the final value has done: true.
+function* iterate(project, path, goal = {}, opts = {}) {
+  const g = { ...GOAL, ...goal };
+  const ctx = tuneContext(project, path);
+  const space = tuningSpace(ctx.variant);
+  const n = space.names.length;
+  const maxIter = opts.maxIter ?? 60;
+  let step = opts.step ?? Math.log(2), restarts = opts.restarts ?? 2;
+  const startRun = runVariant(ctx, ctx.variant);
+  const scales = costScales(startRun, ctx.key, ctx.variant);
+  const detail = runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others });
+  const start = { cost: detail.J, detail, variant: ctx.variant };
+  const x0 = new Array(n).fill(0);
+  let evals = 1, best = { variant: ctx.variant, cost: detail, x: x0 }, tried = [detail.J], iteration = 0;
+  const report = (partial) => {
+    const out = { iteration, evals, cost: best.cost.J, start, best, tried, names: space.names, key: ctx.key, path: ctx.path, goal: g, scales };
+    if (partial) return { ...out, partial: true };
+    tried = [];
+    return out;
+  };
+  // One run of the loop with the gains at x.
+  function* f(x) {
+    const variant = space.apply(x);
+    let cost;
+    try { cost = variantCost(ctx, variant, g, scales); } catch { cost = { J: 2 * DIVERGED, diverged: true, parts: {} }; }
+    evals++;
+    tried.push(cost.J);
+    if (cost.J < best.cost.J) best = { variant, cost, x: x.slice() };
+    yield report(true);
+    return cost.J;
+  }
+  let simplex = [], fs = [];
+  function* build(xb, fb) {
+    simplex = [xb.slice()]; fs = [fb];
+    for (let i = 0; i < n; i++) { const x = xb.slice(); x[i] += step; simplex.push(x); fs.push(yield* f(x)); }
+  }
+  yield report(true);
+  yield* build(x0, detail.J);
+  yield report(false);
+  let mark = best.cost.J, since = 0;
+  const patience = opts.patience ?? 15;
+
+  for (iteration = 1; iteration <= maxIter; iteration++) {
+    const order = fs.map((_, i) => i).sort((a, b) => fs[a] - fs[b]);
+    simplex = order.map((i) => simplex[i]); fs = order.map((i) => fs[i]);
+    let spread = 0;
+    for (let i = 1; i <= n; i++) for (let j = 0; j < n; j++) spread = Math.max(spread, Math.abs(simplex[i][j] - simplex[0][j]));
+    if (spread < 1e-2 || fs[n] - fs[0] <= 1e-4 * Math.abs(fs[0])) {
+      if (!restarts--) break;
+      step /= 4;
+      yield* build(best.x, best.cost.J);
+    } else {
+      const c = new Array(n).fill(0);
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) c[j] += simplex[i][j] / n;
+      const at = (a) => c.map((cj, j) => cj + a * (simplex[n][j] - cj));
+      const xr = at(-1), fr = yield* f(xr);
+      if (fr < fs[0]) {
+        const xe = at(-2), fe = yield* f(xe);
+        if (fe < fr) { simplex[n] = xe; fs[n] = fe; } else { simplex[n] = xr; fs[n] = fr; }
+      } else if (fr < fs[n - 1]) {
+        simplex[n] = xr; fs[n] = fr;
+      } else {
+        const xc = fr < fs[n] ? at(-0.5) : at(0.5), fc = yield* f(xc);
+        if (fc < Math.min(fr, fs[n])) { simplex[n] = xc; fs[n] = fc; } else {
+          for (let i = 1; i <= n; i++) { simplex[i] = simplex[i].map((v, j) => simplex[0][j] + 0.5 * (v - simplex[0][j])); fs[i] = yield* f(simplex[i]); }
+        }
+      }
+    }
+    yield report(false);
+    // Done when the best cost has not fallen by 0.1 % for `patience` iterations.
+    if (best.cost.J < 0.999 * mark) { mark = best.cost.J; since = iteration; }
+    if (iteration - since >= patience) break;
+  }
+  iteration = Math.min(iteration, maxIter);
+  return { ...report(false), done: true };
+}
+
+function runIterate(project, path, goal, opts) {
+  return drain(iterate(project, path, goal, opts));
+}
+
+// ---- Experiments around an operating point -----------------------------
+
+const NO_RANGE = 'there is no scale for the test signal: the running variant has no actuator limits and its u does not move. Give it limits (u min, u max) in the Controller tab, or run a variant that controls';
+
+// The operating point for an experiment: the Source that feeds r (through
+// gains, lags and subsystem ports) held at the middle of its range, every
+// other input (the disturbance d, …) at 0; r0 is the r this gives. The
+// running variant holds r0 first; the u it needs there is the bias u0.
+function* operatingPoint(ctx) {
+  const ownRun = runVariant(ctx, ctx.variant);
+  yield { partial: true, phase: 'operating point' };
+  const own = loopSignals(ownRun, ctx.key);
+  const rr = finiteRange(own.r);
+  const name = ctx.source, notes = [];
+  let signals = ctx.signals;
+  if (name) {
+    const sr = finiteRange(ownRun.signals[name] ?? []);
+    const level = Number.isFinite(sr.lo) ? (sr.lo + sr.hi) / 2 : 0;
+    signals = {};
+    for (const [k, s] of Object.entries(ctx.signals)) signals[k] = { ...s, components: k === name ? [{ type: 'dc', params: { level } }] : [] };
+  } else notes.push('input 1 is not fed by a Source (through gains, lags or subsystem ports), so r cannot be held: the experiment runs with the inputs as they are, and the estimate is rough');
+  const sim = { ...ctx.sim };
+  const holdRun = runVariant(ctx, ctx.variant, signals, sim);
+  yield { partial: true, phase: 'operating point' };
+  const hold = loopSignals(holdRun, ctx.key);
+  const k0 = Math.floor(0.75 * hold.u.length);
+  const r0 = name ? mean(hold.r, k0) : (rr.lo + rr.hi) / 2;
+  let u0 = mean(hold.u, k0);
+  const { lo, hi } = limitsOf(ctx.variant);
+  if (!Number.isFinite(u0)) u0 = Number.isFinite(lo + hi) ? (lo + hi) / 2 : 0;
+  u0 = Math.min(hi, Math.max(lo, u0));
+  return { r0, name, signals, sim, u0, span: rr.hi - rr.lo, own, notes };
+}
+
+// The actuator range a test may use: the limits, or, without them, the swing
+// of u in the variant's own run; 0 when neither gives one.
+function actuatorRange(ctx, own) {
+  const { lo, hi } = limitsOf(ctx.variant);
+  if (Number.isFinite(hi - lo)) return hi - lo;
+  const ur = finiteRange(own.u);
+  const span = Math.max(ur.hi - ur.lo, Math.abs(ur.hi), Math.abs(ur.lo));
+  return span > 1e-9 ? span : 0;
+}
+
+// The controller replaced by a constant u (a PID without gains holds its start
+// output).
+const constantU = (u, lo, hi) => normalizeVariant({ name: 'Step test', type: 'pid', params: { Kp: 0, Ki: 0, Kd: 0, u0: u, umin: lo, umax: hi } });
+
+// Two open-loop runs, u held at u0 and at u0 + du; their difference dy is the
+// plant's step response from the same start, so the start transient cancels
+// (exact for a linear plant).
+function* openLoopStep(ctx, op, du, sim) {
+  const { lo, hi } = limitsOf(ctx.variant);
+  const runA = runVariant(ctx, constantU(op.u0, lo, hi), op.signals, sim);
+  yield { partial: true, phase: 'open loop' };
+  const runB = runVariant(ctx, constantU(op.u0 + du, lo, hi), op.signals, sim);
+  yield { partial: true, phase: 'open loop' };
+  const yA = loopSignals(runA, ctx.key).y, yB = loopSignals(runB, ctx.key).y;
+  return { runA, runB, dy: yB.map((v, k) => v - yA[k]) };
+}
+
+const longer = (sim, f) => ({ duration: sim.duration * f, sampleTime: sim.sampleTime });
+
+// ---- Strategy 2: relay feedback ----------------------------------------
+
+// Rules from the ultimate gain and period to a PID (Kp, Ti = Kp/Ki, Td = Kd/Kp).
+const RULES = {
+  zn: { label: 'Ziegler–Nichols', short: 'Z–N', kp: 0.6, ti: 1 / 2, td: 1 / 8, about: 'Ziegler & Nichols (1942): fast, about a quarter decay; overshoots' },
+  tl: { label: 'Tyreus–Luyben', short: 'T–L', kp: 1 / 2.2, ti: 2.2, td: 1 / 6.3, about: 'Tyreus & Luyben (1992): calmer and more robust, slower to remove errors' },
+  calm: { label: 'No overshoot', short: 'no overshoot', kp: 0.2, ti: 1 / 2, td: 1 / 3, about: 'the "no overshoot" row of the Ziegler–Nichols tables: gentle' },
+};
+
+// A negative Ku (a reverse-acting plant) gives negative gains, as it should.
+function pidFromUltimate(Ku, Pu, rule = 'zn') {
+  const r = RULES[rule];
+  if (!r) throw new Error(`rule: one of ${Object.keys(RULES).join(', ')}`);
+  const Kp = r.kp * Ku, Ti = r.ti * Pu, Td = r.td * Pu;
+  return { Kp, Ki: Kp / Ti, Kd: Kp * Td, Ti, Td };
+}
+
+// Reads the steady oscillation from the last cycles of a relay run.
+function readOscillation(run, key, mid, eps) {
+  const { t, y, u } = loopSignals(run, key);
+  const n = t.length;
+  let valid = n;
+  for (let k = 0; k < n; k++) if (!Number.isFinite(y[k])) { valid = k; break; }
+  const ups = [];
+  let switched = false;
+  for (let k = 1; k < valid; k++) {
+    if ((u[k] > mid) !== (u[k - 1] > mid)) switched = true;
+    if (u[k] > mid && u[k - 1] <= mid) ups.push(k);
+  }
+  const out = { switched, cycles: Math.max(0, ups.length - 1), diverged: valid < n };
+  if (ups.length < 4) return out;
+  // The last full cycle, and the cycles before it for the period.
+  const last = ups.length - 1, j0 = Math.max(1, last - 4);
+  const Pu = (t[ups[last]] - t[ups[j0]]) / (last - j0);
+  const P1 = t[ups[last]] - t[ups[last - 1]], P2 = t[ups[last - 1]] - t[ups[last - 2]];
+  const amp = (a, b) => { const r = finiteRange(y, a, b); return (r.hi - r.lo) / 2; };
+  const a = amp(ups[last - 1], ups[last]), a2 = amp(ups[last - 2], ups[last - 1]);
+  let high = 0;
+  for (let k = ups[last - 1]; k < ups[last]; k++) if (u[k] > mid) high++;
+  const yMean = mean(y, ups[last - 1], ups[last]), yPrev = mean(y, ups[last - 2], ups[last - 1]);
+  // The describing function assumes y is a sine: use the amplitude of the
+  // fundamental (a Fourier coefficient over the last cycle), not the peak,
+  // which the harmonics raise.
+  const k0 = ups[last - 1], k1 = ups[last], w = (2 * Math.PI) / (t[k1] - t[k0]);
+  let c = 0, sn = 0;
+  for (let k = k0; k < k1; k++) { c += (y[k] - yMean) * Math.cos(w * t[k]); sn += (y[k] - yMean) * Math.sin(w * t[k]); }
+  const a1 = (2 / (k1 - k0)) * Math.hypot(c, sn);
+  return {
+    ...out, Pu, a, a1, high: high / (ups[last] - ups[last - 1]), uMean: mean(u, ups[last - 1], ups[last]),
+    settled: Math.abs(P1 - P2) <= 0.05 * Pu && Math.abs(a - a2) <= 0.05 * a, drift: Math.abs(yMean - yPrev) > 0.2 * a,
+    hysteresisOnly: a < 1.5 * eps,
+  };
+}
+
+// The experiments replace the controller with a relay or a constant: that
+// only makes sense for a loop with one measurement (r, y).
+function siso(ctx) {
+  const m = ctx.block.params.inputs - 1;
+  return m > 1 ? `${ctx.where} uses ${m} measurements; the relay and step tests are for loops with one (r, y). Use the iterative method.` : '';
+}
+
+// Why a method cannot run on the context's variant, or '' when it can.
+function whyNot(ctx, method) {
+  if (method !== 'iterate') return siso(ctx);
+  try { tuningSpace(ctx.variant); return ''; } catch (err) { return err.message; }
+}
+
+// The relay experiment: around r0, u = u0 ± d with hysteresis ε. A short
+// open-loop step first tells which way the plant goes: if y falls when u
+// rises (reverse acting) the relay is reversed and Ku comes out negative. The
+// bias starts at what the running variant needs to hold r0 and is corrected
+// until the relay is high half the time (a symmetric oscillation). The run
+// grows until it holds enough cycles. Ku = 4d / (π √(a² − ε²)) from the
+// describing function of a relay with hysteresis, a the amplitude of y's
+// fundamental; Pu is the oscillation's period.
+// opts: amplitude (fraction of the actuator range, default 0.1) or d
+// (absolute), hysteresis (absolute; default 0.1 % of r's span).
+function* relayExperimentSteps(project, path, opts = {}) {
+  const ctx = tuneContext(project, path);
+  if (siso(ctx)) return { ctx, ok: false, notes: [], why: siso(ctx) };
+  const op = yield* operatingPoint(ctx);
+  const { lo, hi } = limitsOf(ctx.variant);
+  const notes = [...op.notes];
+  const base = { ctx, r0: op.r0, notes, source: op.name };
+  const range = actuatorRange(ctx, op.own);
+  if (opts.d === undefined && !range) return { ...base, ok: false, u0: op.u0, why: NO_RANGE };
+  const want = Math.abs(opts.d ?? (opts.amplitude ?? 0.1) * range);
+  const eps = opts.hysteresis ?? 0.001 * (op.span > 1e-9 ? op.span : Math.abs(op.r0) || 1);
+  // Which way y goes when u rises (up if there is room, else down).
+  const probe = hi - op.u0 >= Math.min(want, op.u0 - lo) ? want : -want;
+  const { dy } = yield* openLoopStep(ctx, op, probe, op.sim);
+  let moved = 0;
+  for (const v of dy) if (Number.isFinite(v)) moved += v;
+  const sign = moved * probe < 0 ? -1 : 1;
+  if (sign < 0) notes.push('y falls when u rises (a reverse-acting plant): the relay is reversed and Ku is negative');
+  let u0 = op.u0, sim = op.sim, run = null, osc = null, d = want;
+  for (let tries = 0; tries < 8; tries++) {
+    // The relay stays inside the limits so it is symmetric about u0.
+    d = Math.min(want, hi - u0, u0 - lo);
+    // Less than a tenth of the amplitude asked for is too little to read a cycle from.
+    if (!(d > 0.1 * want)) return { ...base, ok: false, u0, d, run, sign, why: `the bias u0 = ${fmtN(u0)} needed to hold r0 = ${fmtN(op.r0)} sits at an actuator limit (${fmtN(lo)} … ${fmtN(hi)}): no room for the relay to swing` };
+    const relay = normalizeVariant({ name: 'Relay experiment', type: 'relay', params: { d: sign * d, eps, u0, umin: lo, umax: hi } });
+    run = runVariant(ctx, relay, op.signals, sim);
+    yield { partial: true, phase: 'relay', run };
+    osc = readOscillation(run, ctx.key, u0, eps);
+    if (osc.diverged) return { ...base, ok: false, u0, d, run, sign, why: 'the relay run diverged: the plant may be unstable without its controller' };
+    if (!osc.switched) {
+      // Stuck on one side: the bias cannot carry y across r0. Move it by d.
+      const { y } = loopSignals(run, ctx.key);
+      u0 += sign * (y[y.length - 1] < op.r0 ? 1 : -1) * want;
+      if (u0 > hi || u0 < lo) return { ...base, ok: false, u0, d, run, sign, why: `the relay never switched: with u0 ± d inside the limits the measurement does not cross r0 = ${fmtN(op.r0)}` };
+      continue;
+    }
+    if (osc.cycles < 4) {
+      if (sim.duration >= 16 * ctx.sim.duration) break;
+      sim = longer(sim, 4);
+      continue;
+    }
+    if (Math.abs(osc.high - 0.5) > 0.03 && tries < 6) { u0 = Math.min(hi, Math.max(lo, osc.uMean)); continue; }
+    break;
+  }
+  const res = { ...base, u0, d, run, sim, osc, sign };
+  if (!osc?.switched) return { ...res, ok: false, why: `the relay never switched: the measurement does not cross r0 = ${fmtN(op.r0)}` };
+  if (osc.cycles < 4) return { ...res, ok: false, why: `only ${osc.cycles} cycle${osc.cycles === 1 ? '' : 's'} in ${fmtN(sim.duration)} s: the plant is too slow for this window (lengthen the input's period)` };
+  if (osc.hysteresisOnly) return { ...res, ok: false, why: 'the oscillation is no larger than the relay\'s hysteresis: the plant has too little lag for a relay test (an integrator or a first-order lag alone)' };
+  if (osc.drift) notes.push('y drifts from cycle to cycle (an integrating plant, or a load the bias does not balance): the estimate is rough');
+  if (!osc.settled) notes.push('the oscillation had not quite settled: the estimate is rough');
+  if (Math.abs(osc.high - 0.5) > 0.05) notes.push(`the oscillation is asymmetric (relay high ${Math.round(100 * osc.high)} % of the time)`);
+  if (d < 0.999 * want) notes.push(`the relay amplitude was reduced to ${fmtN(d)} to stay inside the actuator limits`);
+  const a = osc.a1;
+  const Ku = (4 * sign * d) / (Math.PI * Math.sqrt(Math.max(a * a - eps * eps, 1e-30)));
+  return { ...res, ok: true, Ku, Pu: osc.Pu, a };
+}
+
+const relayExperiment = (project, path, opts) => drain(relayExperimentSteps(project, path, opts));
+
+// Relay experiment, then a PID by the rule, as a new variant that keeps the
+// running variant's limits, start output, setpoint weight and prefilter.
+// opts.name: the new variant's name.
+function* relayTuneSteps(project, path, rule = 'tl', opts = {}) {
+  if (!RULES[rule]) throw new Error(`rule: one of ${Object.keys(RULES).join(', ')}`);
+  const ex = yield* relayExperimentSteps(project, path, opts);
+  if (!ex.ok) return ex;
+  const g = pidFromUltimate(ex.Ku, ex.Pu, rule);
+  const variant = pidVariant(ex.ctx.variant, g, opts.name ?? `${baseName(ex.ctx.variant.name)} · relay ${RULES[rule].short}`, ex.ctx.Ts);
+  return { ...ex, rule, gains: g, variant };
+}
+
+const relayTune = (project, path, rule, opts) => drain(relayTuneSteps(project, path, rule, opts));
+
+// ---- Strategy 3: step response and SIMC --------------------------------
+
+// The open-loop step test: the controller is replaced by a constant u0 (what
+// the running variant needs at r0), then u0 + Δu; their difference is the
+// plant's step response. If it has not settled in one period of the input it
+// runs once more, four times as long. A first order plus dead time is fitted
+// by Smith's two-point method (28.3 % and 63.2 % of the change):
+//   K = Δy∞ / Δu,  τ = 1.5 (t63 − t28),  θ = t63 − τ
+// and tuned by SIMC (Skogestad 2003) with τc = θ ("tight" control):
+//   Kp = τ / (K (τc + θ)),  Ti = min(τ, 4 (τc + θ))
+// θ includes half a controller sample, the delay a digital controller adds;
+// with almost no dead time τc is kept at τ / 10 at least.
+function* stepExperimentSteps(project, path, opts = {}) {
+  const ctx = tuneContext(project, path);
+  if (siso(ctx)) return { ctx, ok: false, notes: [], why: siso(ctx) };
+  const op = yield* operatingPoint(ctx);
+  const { lo, hi } = limitsOf(ctx.variant);
+  const range = actuatorRange(ctx, op.own);
+  const base = { ctx, r0: op.r0, u0: op.u0, notes: [...op.notes] };
+  if (opts.du === undefined && !range) return { ...base, ok: false, why: NO_RANGE };
+  const want = Math.abs(opts.du ?? (opts.amplitude ?? 0.1) * range);
+  // Upwards if there is room, else downwards, else as far as the limits allow.
+  const up = hi - op.u0, down = op.u0 - lo;
+  const du = up >= want ? want : down >= want ? -want : up >= down ? up : -down;
+  base.du = du;
+  if (Math.abs(du) < 0.1 * want) return { ...base, ok: false, why: 'the actuator is at a limit at the operating point: no room for a step' };
+  let sim = op.sim, runB, dy;
+  for (let tries = 0; tries < 2; tries++) {
+    ({ runB, dy } = yield* openLoopStep(ctx, op, du, sim));
+    const n = dy.length, end = dy[n - 1], k9 = Math.floor(0.9 * n);
+    if (!Number.isFinite(end)) return { ...base, ok: false, run: runB, why: 'the open-loop run diverged: the plant is unstable without its controller; use the relay or iterative method' };
+    if (Math.abs(end - dy[k9]) <= 0.02 * Math.abs(end)) break;
+    if (tries === 1) return { ...base, ok: false, run: runB, why: 'the step response has not settled in four periods of the input: an integrating or very slow plant (SIMC here assumes one that settles)' };
+    sim = longer(sim, 4);
+  }
+  const t = runB.t, n = dy.length, end = dy[n - 1];
+  if (Math.abs(end) < 1e-9) return { ...base, ok: false, run: runB, why: 'y does not respond to u: is the controller output wired to the plant?' };
+  const cross = (level) => {
+    for (let k = 1; k < n; k++) if ((dy[k] - level * end) * Math.sign(end) >= 0) {
+      const f = (level * end - dy[k - 1]) / (dy[k] - dy[k - 1] || 1);
+      return t[k - 1] + f * (t[k] - t[k - 1]);
+    }
+    return t[n - 1];
+  };
+  const K = end / du, t28 = cross(0.283), t63 = cross(0.632);
+  const tau = Math.max(1.5 * (t63 - t28), 1e-6), theta = Math.max(0, t63 - tau);
+  return { ...base, ok: true, run: runB, sim, K, tau, theta, t28, t63 };
+}
+
+const stepExperiment = (project, path, opts) => drain(stepExperimentSteps(project, path, opts));
+
+function simcGains(K, tau, theta, Ts = 0, tauC = null) {
+  const th = theta + Ts / 2;
+  const tc = tauC ?? Math.max(th, tau / 10);
+  const Kp = tau / (K * (tc + th)), Ti = Math.min(tau, 4 * (tc + th));
+  return { Kp, Ki: Kp / Ti, Kd: 0, Ti, Td: 0, tauC: tc };
+}
+
+// opts.name: the new variant's name; opts.tauC overrides τc = θ.
+function* stepTuneSteps(project, path, opts = {}) {
+  const ex = yield* stepExperimentSteps(project, path, opts);
+  if (!ex.ok) return ex;
+  const g = simcGains(ex.K, ex.tau, ex.theta, ex.ctx.Ts, opts.tauC);
+  const variant = pidVariant(ex.ctx.variant, g, opts.name ?? `${baseName(ex.ctx.variant.name)} · SIMC`, ex.ctx.Ts);
+  return { ...ex, gains: g, variant };
+}
+
+const stepTune = (project, path, opts) => drain(stepTuneSteps(project, path, opts));
+
+// ---- One entry: the page, the command line, agents ----------------------
+
+const METHODS = ['iterate', 'relay', 'step'];
+
+// Runs a method on the block at path (default: the first Controller block)
+// and scores its result against the running variant with the goal. Yields
+// what the strategy yields; returns
+//   { ok, why, method, key, where, before: { variant, cost }, variant (the
+//     result, named), after (its cost), better, notes, … the method's own:
+//     iterate: iterations, evals, names; relay: Ku, Pu, a, u0, d, r0, rule,
+//     gains, run; step: K, tau, theta, gains, run }
+// opts: method, goal, maxIter, rule, amplitude, name (of the result variant;
+// default resultName).
+function* autotuneSteps(project, path, opts = {}) {
+  const method = opts.method ?? 'iterate';
+  if (!METHODS.includes(method)) throw new Error(`method: one of ${METHODS.join(', ')}`);
+  const g = { ...GOAL, ...opts.goal };
+  const ctx = tuneContext(project, path);
+  const head = { method, key: ctx.key, path: ctx.path, where: ctx.where, goal: g };
+  const why = whyNot(ctx, method);
+  if (why) return { ...head, ok: false, why, notes: [] };
+  const name = opts.name ?? resultName(ctx.block, method, opts.rule);
+  if (method === 'iterate') {
+    const r = yield* iterate(project, path, g, { maxIter: opts.maxIter });
+    const better = r.best.cost.J < r.start.cost;
+    return {
+      ...head, ok: true, notes: [], before: { variant: ctx.variant, cost: r.start.detail },
+      variant: { ...r.best.variant, name }, after: r.best.cost, better, iterations: r.iteration, evals: r.evals, names: r.names,
+    };
+  }
+  const startRun = runVariant(ctx, ctx.variant);
+  const scales = costScales(startRun, ctx.key, ctx.variant);
+  const before = { variant: ctx.variant, cost: runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others }) };
+  yield { partial: true, phase: 'start', before };
+  const res = method === 'relay'
+    ? yield* relayTuneSteps(project, path, opts.rule ?? 'tl', { amplitude: opts.amplitude, d: opts.d, name })
+    : yield* stepTuneSteps(project, path, { amplitude: opts.amplitude, du: opts.du, name });
+  if (!res.ok) return { ...res, ...head, before };
+  const after = variantCost(ctx, res.variant, g, scales);
+  yield { partial: true, phase: 'score' };
+  return { ...res, ...head, before, after, better: after.J < before.cost.J };
+}
+
+const autotune = (project, path, opts) => drain(autotuneSteps(project, path, opts));
+
+// A result of autotune() as plain JSON (no runs; open limits as null), for
+// the command line and agents.
+function tuneReport(res) {
+  const cost = (c) => c && { J: c.J, overshoot: c.overshoot, saturated: c.saturated, diverged: c.diverged, parts: c.parts };
+  const out = { ok: res.ok, method: res.method, block: res.key, where: res.where, goal: res.goal };
+  if (!res.ok) Object.assign(out, { why: res.why, notes: res.notes ?? [] });
+  else {
+    Object.assign(out, { better: res.better, before: { variant: res.before.variant, cost: cost(res.before.cost) }, after: { variant: res.variant, cost: cost(res.after) }, notes: res.notes });
+    if (res.method === 'iterate') Object.assign(out, { iterations: res.iterations, evals: res.evals, tuned: res.names });
+    if (res.method === 'relay') Object.assign(out, { Ku: res.Ku, Pu: res.Pu, amplitude: res.a, r0: res.r0, u0: res.u0, d: res.d, rule: res.rule, gains: res.gains });
+    if (res.method === 'step') Object.assign(out, { K: res.K, tau: res.tau, theta: res.theta, r0: res.r0, u0: res.u0, du: res.du, gains: res.gains });
+  }
+  return JSON.parse(JSON.stringify(out));
+}
+
+// ---- Variants -----------------------------------------------------------
+
+// The name a variant had before any tuning suffix this module adds.
+function baseName(name) {
+  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC)( \d+)?)+$/, '');
+}
+
+// The name for a method's result: "<base> · auto-tuned", "· relay T–L" (by
+// the rule) or "· SIMC". A running variant that already has the name (or a
+// numbered one of it) keeps it: tuning again updates it. Another variant of
+// that name is never overwritten: the new one is numbered.
+function resultName(block, method, rule = 'tl') {
+  const running = block.variants[block.variant ?? 0];
+  const base = baseName(running.name);
+  const suffix = method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule]?.short ?? rule}` : ' · SIMC';
+  const named = (s) => `${base.slice(0, Math.max(0, 40 - s.length))}${s}`;
+  const plain = named(suffix);
+  if (running.name === plain || (running.name.startsWith(plain) && /^ \d+$/.test(running.name.slice(plain.length)))) return running.name;
+  const taken = new Set(block.variants.map((v) => v.name));
+  for (let i = 1; ; i++) { const s = named(i === 1 ? suffix : `${suffix} ${i}`); if (!taken.has(s)) return s; }
+}
+
+// Puts a variant into the block at path of the project (changing it): over
+// the variant of the same name, else after the running one. run: make it the
+// running variant. Returns its index.
+function placeVariant(project, path, variant, { run = true } = {}) {
+  const { block } = locate(project.system.plant.diagram, path);
+  let i = block.variants.findIndex((v) => v.name === variant.name);
+  if (i < 0) { i = (block.variant ?? 0) + 1; block.variants.splice(i, 0, null); }
+  block.variants[i] = structuredClone(variant);
+  if (run) block.variant = i;
+  return i;
+}
+
+// A PID with the given gains that drives the same actuator as the variant it
+// replaces: limits, start output, setpoint weight and prefilter carry over.
+// The derivative is filtered at Td / 10 (but not faster than a sample).
+function pidVariant(from, g, name, Ts) {
+  const p = from.params ?? {};
+  const pid = from.type === 'pid';
+  return normalizeVariant({
+    name: name.slice(0, 40), type: 'pid',
+    params: { Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, Tf: g.Kd ? Math.max(Ts, (g.Td ?? 0) / 10) : (pid ? p.Tf : 0.01), b: pid ? p.b : 1, Tr: p.Tr ?? 0, u0: p.u0 ?? 0, umin: p.umin ?? -Infinity, umax: p.umax ?? Infinity },
+  });
+}
+
+function fmtN(v) {
+  if (!Number.isFinite(v)) return String(v);
+  return String(Number(v.toPrecision(3)));
+}
+
+return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, stepExperimentSteps, stepExperiment, simcGains, stepTuneSteps, stepTune, METHODS, autotuneSteps, autotune, tuneReport, baseName, resultName, placeVariant, pidVariant };
+})();
 // ---- core/live.js
 __mods['core/live.js'] = (() => {
 // Live (HIL) mode, the loop: a diagram stepped one plant cycle at a time
@@ -5593,7 +6540,7 @@ __mods['core/live.js'] = (() => {
 // at t, Controller blocks sample on their own Ts), and reads the block's
 // inputs: that is the u sent back, at once, with the same seq.
 
-const { compileDiagram } = __mods['core/diagram.js'];
+const { compileDiagram, normalizeDiagram } = __mods['core/diagram.js'];
 const { referenceFn } = __mods['core/signals.js'];
 const { HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, uMessage, parseMessage, checkDescription, pageWatchdog, createLinkStats } = __mods['core/hil.js'];
 // What a running loop cannot take over in place: everything but block
@@ -5623,17 +6570,22 @@ function copyParams(own, next) {
 // signals: the project's named signals (the Sources play them).
 function createLiveRunner(diagram, signals) {
   const fns = {};
-  let own, key, el, ext, X, Xt, k1, k2, k3, k4, tPrev, h;
+  let own, key, el, ext, keep, X, Xt, k1, k2, k3, k4, tPrev, h;
 
   function setSignals(sigs) {
     for (const name of Object.keys(fns)) delete fns[name];
     for (const [name, ref] of Object.entries(sigs ?? {})) fns[name] = referenceFn(ref, { sampleTime: h ?? 0.01 });
   }
+  // The runner's own copy, in normal form (a project restored by Undo has
+  // its open limits as null), so the laws hold its parameter objects.
   function build(d) {
-    own = structuredClone(d);
-    key = structureKey(d);
+    own = normalizeDiagram(structuredClone(d));
+    key = structureKey(own);
     const sources = new Proxy({}, { get: (_, name) => (t) => (fns[name] ? fns[name](t) : 0) });
     el = compileDiagram(own, 'plant', { standalone: true, sources });
+    // The scope's signals: Sources and Sinks. (Auto-tune's "ctrl.u" probes
+    // have a dot in their name and stay out, as on the scope.)
+    keep = el.probes().flatMap(([n], i) => (n.includes('.') ? [] : [i]));
     if (el.externals.length !== 1) throw new Error(el.externals.length ? 'one External plant per system, for now' : 'this system has no External plant block: add one from the Live group in the Plant tab');
     ext = el.externals[0];
     // Continuous blocks on the page integrate between cycles, in steps no
@@ -5651,7 +6603,7 @@ function createLiveRunner(diagram, signals) {
   // probes() lists them only for the names the diagram actually plays.
   build(diagram);
   setSignals(signals);
-  const names = () => el.probes().map(([n]) => n);
+  const names = () => { const all = el.probes(); return keep.map((i) => all[i][0]); };
 
   function rk4(t, dt) {
     const N = el.n;
@@ -5691,11 +6643,10 @@ function createLiveRunner(diagram, signals) {
       el.record();
       tPrev = t;
       const p = ext.params;
-      const values = el.probes().map(([, v]) => v);
-      if (held) {
-        ext.shows.forEach((js, i) => { for (const j of js) values[j] = p.safe[i]; });
-        return { u: [...p.safe], values };
-      }
+      const all = el.probes();
+      if (held) ext.shows.forEach((js, i) => { for (const j of js) all[j][1] = p.safe[i]; });
+      const values = keep.map((i) => all[i][1]);
+      if (held) return { u: [...p.safe], values };
       const u = ext.u().map((v, i) => (Number.isFinite(v) ? Math.min(p.max[i], Math.max(p.min[i], v)) : p.safe[i]));
       return { u, values };
     },
@@ -5705,8 +6656,9 @@ function createLiveRunner(diagram, signals) {
     update(d, sigs) {
       if (sigs) setSignals(sigs);
       if (!d) return 'signals';
-      if (structureKey(d) === key) { copyParams(own, d); return 'kept'; }
-      build(d);
+      const next = normalizeDiagram(structuredClone(d));
+      if (structureKey(next) === key) { copyParams(own, next); return 'kept'; }
+      build(next);
       return 'rebuilt';
     },
     // Controllers start afresh, as after an E-stop.
@@ -7268,6 +8220,9 @@ function createDisplay(root, handlers) {
       draw();
     },
     clearRuns() { past = []; draw(); },
+    // Auto-tune: the run on screen (or the run given) becomes the newest faded one.
+    keep(d = data) { if (d) past = [d, ...past].slice(0, RUNS - 1); draw(); },
+    get data() { return data; },
     releaseLine() { if (line === null) return false; selectLine(null); return true; },
     // The instant other views follow: the hover cursor, else the scan line
     // while sweeping, else the right edge of the screen.
@@ -9092,6 +10047,7 @@ const ABOUT = {
   stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
+  relay: 'On/off control, as a thermostat: full push one way or the other by the sign of the error, switching once it passes ±ε. Around a setpoint it makes the loop oscillate; the Auto-tune tab reads Ku and Pu from that oscillation.',
   kalman: 'Predicts the states with the model, then corrects with the measurements, weighing them by the noise you expect: a large R trusts the model, a large Q trusts the measurements. The gain is the steady-state Kalman gain.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
@@ -9311,6 +10267,456 @@ function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 
 return { createControllerTab };
 })();
+// ---- ui/autotune.js
+__mods['ui/autotune.js'] = (() => {
+// Tab 4, Auto-tune: improve a Controller block's running variant by
+// simulation. Three methods (src/core/autotune.js): iterate (Nelder–Mead on a
+// cost, one step at a time so the improvement can be watched), relay
+// (Åström–Hägglund: Ku and Pu, then a rule) and step response (SIMC). Every
+// result goes into a variant of its own, "<original> · auto-tuned" (or
+// "· relay T–L", "· SIMC"), so the original stays for comparison; the whole
+// run is one undo step. The work runs in slices between frames, so the page
+// keeps drawing. See design/output/autotune.md.
+
+const { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, COSTS, GOAL } = __mods['core/autotune.js'];
+const { CONTROLLERS } = __mods['core/controllers.js'];
+const { num, parseSI } = __mods['ui/units.js'];
+const METHODS = {
+  iterate: {
+    label: 'Iterate', sub: 'Nelder–Mead on the cost',
+    about: 'Runs the loop, scores the run by the goal, changes the gains and runs again, keeping what scores better (the Nelder–Mead simplex search, 1965). Each improvement shows on the display; the runs before it fade.',
+  },
+  relay: {
+    label: 'Relay', sub: 'Åström–Hägglund → Ku, Pu → rule',
+    about: 'A relay replaces the controller around the middle of r, so the loop oscillates at its ultimate period Pu; the amplitude gives the ultimate gain Ku (Åström & Hägglund 1984, as industrial auto-tuners do). A rule turns Ku and Pu into a PID.',
+  },
+  step: {
+    label: 'Step response', sub: 'FOPDT fit → SIMC PI',
+    about: 'Opens the loop and steps u. The reaction curve gives a gain K, a lag τ and a dead time θ, and SIMC (Skogestad 2003) a PI with closed-loop time τc = θ. For plants that settle on their own.',
+  },
+};
+const PACE = 1000 / 6;  // iterations per second while watching
+const SLICE = 30;       // ms of computing per task, so the page keeps drawing
+const GOAL_ABOUT = 'The cost of one run: the error r − y (IAE, ITAE or ISE), plus the effort (the swing of u), the overshoot beyond the bound, and the time u sits at a limit. Over one period of the input, the disturbance d included.';
+
+function createAutotuneTab(host, app, display) {
+  // Settings of this page session (not saved in the project).
+  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', amplitude: 0.1, maxIter: 60, fast: false };
+  let job = null;   // the run in progress
+  let shown = null; // what the progress column shows: the current or last run
+
+  host.innerHTML = `
+    <div class="tune">
+      <section class="gcol" aria-label="Controller to tune">
+        <div class="ghead"><h3 class="glabel">Controller</h3></div>
+        <div id="tu-blocks" class="ctblocks"></div>
+        <ul class="plist turows" id="tu-now"></ul>
+        <p class="phelp" id="tu-target"></p>
+      </section>
+      <section class="gcol" aria-label="Method">
+        <div class="ghead"><h3 class="glabel">Method</h3></div>
+        <div class="tumethods" id="tu-methods" role="radiogroup" aria-label="Method"></div>
+        <div id="tu-opts" class="pform"></div>
+      </section>
+      <section class="gcol" aria-label="Goal">
+        <div class="ghead"><h3 class="glabel">Goal</h3></div>
+        <div class="reps" id="tu-costs" role="radiogroup" aria-label="Cost"></div>
+        <div id="tu-goal" class="pform"></div>
+        <p class="phelp" id="tu-goalhelp" title="${esc(GOAL_ABOUT)}"></p>
+      </section>
+      <section class="gcol tuprogress" aria-label="Progress">
+        <div class="ghead"><h3 class="glabel" id="tu-ptitle">Progress</h3>
+          <label class="tufast" title="Run the iterations as fast as the browser can, and skip the experiment's sweep"><button class="sw" id="tu-fast" role="switch" aria-checked="false" aria-label="Fast"></button>Fast</label>
+          <button class="key small primary" id="tu-start">Start</button></div>
+        <div class="tustatus" id="tu-status" role="status"></div>
+        <canvas class="tuplot" id="tu-plot" aria-label="Cost against iteration"></canvas>
+        <ul class="plist turows wide" id="tu-result"></ul>
+      </section>
+    </div>
+    <div class="ctempty" id="tu-empty" hidden></div>`;
+  const $ = (s) => host.querySelector(s);
+
+  const root = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
+  const blocks = () => controllerBlocks(root());
+  const current = () => { const all = blocks(); return all.find((c) => c.key === st.target) ?? all[0] ?? null; };
+  // The block's tuning context, or why there is none (an unwired input, …).
+  const context = () => { try { return { ctx: tuneContext(app.project, current()?.path) }; } catch (err) { return { why: err.message }; } };
+  const unitY = () => { const c = current(); return c ? app.unitOf(inputName(c, 1)) : ''; };
+  // The name of the signal on a block input, for its unit: the Source it
+  // comes from, or a Sink that shows the same wire.
+  function inputName(c, port) {
+    let lv = root();
+    for (const id of c.path.slice(0, -1)) lv = lv.blocks.find((b) => b.id === id).diagram;
+    const byId = (id) => lv.blocks.find((b) => b.id === String(id).split(':')[0]);
+    const w = lv.wires.find((x) => { const [id, k = '0'] = String(x.to).split(':'); return id === c.block.id && Number(k) === port; });
+    if (!w) return '';
+    if (byId(w.from)?.type === 'source') return byId(w.from).params.signal;
+    const sink = lv.wires.find((x) => x.from === w.from && byId(x.to)?.type === 'sink');
+    return sink ? byId(sink.to).params.name : '';
+  }
+
+  // ---- Setup columns ----------------------------------------------------
+
+  function field(key, label, value, hint) {
+    return `<label class="pf"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${key}" value="${esc(value)}" spellcheck="false" inputmode="decimal" ${job ? 'disabled' : ''}><span class="pfh">${esc(hint)}</span></label>`;
+  }
+  // A container being typed in is not redrawn.
+  const editing = (el) => el.contains(document.activeElement) && document.activeElement.matches('input, select');
+
+  function renderSetup() {
+    const c = current();
+    $('.tune').hidden = !c;
+    $('#tu-empty').hidden = !!c;
+    if (!c) {
+      $('#tu-empty').innerHTML = '<div class="later-box"><h3 class="glabel">Nothing to tune</h3><p>Auto-tune improves a <b>Controller</b> block of the plant. Add one in the Plant tab (library, Control group), or load a controlled system from the <b>System library</b>: <b>Oven, badly tuned</b> is made for this tab.</p></div>';
+      return;
+    }
+    renderButton();
+    const all = blocks();
+    const v = c.block.variants[c.block.variant ?? 0];
+    $('#tu-blocks').innerHTML = all.length > 1
+      ? all.map((x) => `<button class="sigkey ${x.key === c.key ? 'on' : ''}" data-path="${esc(x.key)}" ${job ? 'disabled' : ''}>${esc(x.where)}</button>`).join('')
+      : `<div class="ctname">${esc(c.where)}</div>`;
+    $('#tu-now').innerHTML = `<li class="tuhead"><b>${esc(v.name)}</b><span>${esc(CONTROLLERS[v.type]?.label ?? v.type)} · running</span></li>`
+      + tunedValues(v).map(([k, x]) => `<li class="turow"><span>${esc(k)}</span><span>${show(x)}</span></li>`).join('');
+    const { ctx, why: noCtx } = context();
+    const why = noCtx ?? whyNot(ctx, st.method);
+    const into = job ? job.name : resultName(c.block, st.method, st.rule);
+    const target = $('#tu-target');
+    if (job) { target.innerHTML = `Into <b>${esc(into)}</b>`; target.title = `${shown.before?.variant.name ?? v.name} stays as it was.`; }
+    else if (why) { target.innerHTML = `<span class="tuwhy">${esc(why)}</span>`; target.title = ''; }
+    else if (into === v.name) { target.innerHTML = `Updates <b>${esc(into)}</b>`; target.title = 'Tuning again from a tuned variant updates it in place.'; }
+    else {
+      target.innerHTML = `Into <b>${esc(into)}</b>`;
+      target.title = `The result goes into a variant of its own; ${v.name} stays, to compare in the Controller tab. An earlier result is never overwritten: a new one is numbered.`;
+    }
+
+    $('#tu-methods').innerHTML = Object.entries(METHODS).map(([k, m]) => `<button class="sigkey tumethod ${k === st.method ? 'on' : ''}" data-method="${k}" role="radio" aria-checked="${k === st.method}" title="${esc(m.about)}" ${job ? 'disabled' : ''}><b>${m.label}</b><span>${m.sub}</span></button>`).join('');
+    if (!editing($('#tu-opts'))) {
+      const opts = [];
+      if (st.method === 'iterate') opts.push(field('maxIter', 'Iterations', st.maxIter, 'at most; stops when the cost stops falling'));
+      if (st.method === 'relay') opts.push(`<label class="pf"><span class="pfl">Rule</span><select class="field" id="tu-rule" ${job ? 'disabled' : ''}>${Object.entries(RULES).map(([k, r]) => `<option value="${k}" ${k === st.rule ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(RULES[st.rule].about)}</span></label>`);
+      if (st.method !== 'iterate') opts.push(field('amplitude', st.method === 'relay' ? 'Relay ±d' : 'Step Δu', num(100 * st.amplitude, 3), '% of the actuator range'));
+      $('#tu-opts').innerHTML = opts.join('');
+    }
+
+    $('#tu-costs').innerHTML = Object.keys(COSTS).map((k) => `<button class="rep ${k === st.goal.cost ? 'on' : ''}" data-cost="${k}" role="radio" aria-checked="${k === st.goal.cost}" title="${esc(COSTS[k])}" ${job ? 'disabled' : ''}>${k}</button>`).join('');
+    if (!editing($('#tu-goal'))) {
+      $('#tu-goal').innerHTML = field('effort', 'Effort weight', num(st.goal.effort, 3), 'on the swing of u; 0 ignores it')
+        + field('overshoot', 'Overshoot ≤', num(st.goal.overshoot, 3), '% of a step; beyond costs extra');
+    }
+    $('#tu-goalhelp').textContent = st.method === 'iterate' ? 'Over one period of the input, d included.' : 'The rule ignores the goal; it scores the result.';
+    bind();
+  }
+
+  function bind() {
+    host.querySelectorAll('[data-path]').forEach((el) => { el.onclick = () => { if (job) return; st.target = el.dataset.path; shown = null; renderAll(); }; });
+    host.querySelectorAll('[data-method]').forEach((el) => { el.onclick = () => { if (job) return; st.method = el.dataset.method; renderAll(); }; });
+    host.querySelectorAll('[data-cost]').forEach((el) => { el.onclick = () => { if (job) return; st.goal.cost = el.dataset.cost; renderSetup(); }; });
+    const rule = $('#tu-rule');
+    if (rule) rule.onchange = () => { if (job) return; st.rule = rule.value; rule.blur(); renderSetup(); };
+    host.querySelectorAll('input[data-k]').forEach((inp) => {
+      inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } };
+      inp.onblur = () => {
+        if (inp.dataset.cancel || job) { delete inp.dataset.cancel; setTimeout(renderSetup); return; }
+        const v = parseSI(inp.value), k = inp.dataset.k;
+        const ok = Number.isFinite(v) && v >= 0 && (k !== 'maxIter' || v >= 1) && (k !== 'amplitude' || (v > 0 && v <= 100));
+        if (!ok) app.toast(k === 'amplitude' ? 'Enter a percentage above 0, up to 100.' : 'Enter a number, 0 or more.');
+        else if (k === 'maxIter') st.maxIter = Math.round(v);
+        else if (k === 'amplitude') st.amplitude = v / 100;
+        else st.goal[k] = v;
+        setTimeout(renderSetup);
+      };
+    });
+  }
+
+  function renderButton() {
+    const { ctx, why } = context();
+    const b = $('#tu-start');
+    b.textContent = job ? 'Stop' : 'Start';
+    b.className = `key small ${job ? 'lit-red' : 'primary'}`;
+    b.disabled = !job && !!(why ?? whyNot(ctx, st.method));
+    $('#tu-fast').classList.toggle('on', st.fast);
+    $('#tu-fast').setAttribute('aria-checked', String(st.fast));
+  }
+
+  // ---- Running ------------------------------------------------------------
+
+  // Puts a variant into the block (over the result of this run, or as a new
+  // one after the running variant). The first change opens the run's undo
+  // step; the run takes no other.
+  function place(variant, run) {
+    if (!job.edit) { app.beginEdit(); job.edit = true; }
+    app.tuneEdit((p) => placeVariant(p, job.path, variant, { run }));
+    if (run) job.ran = true;
+    shown.placed = structuredClone(variant);
+  }
+
+  function start() {
+    const c = current();
+    const { ctx, why: noCtx } = context();
+    const why = noCtx ?? whyNot(ctx, st.method);
+    if (!c || why) { app.toast(why ?? 'There is no Controller block to tune.'); return; }
+    // The settings are copied: changing them during the run changes nothing.
+    const goal = { ...st.goal };
+    const name = resultName(c.block, st.method, st.rule);
+    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, amplitude: st.amplitude, maxIter: st.maxIter, name });
+    shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null };
+    job = { gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, mode: display.mode, startData: display.data, timer: 0, edit: false, ran: false, swept: false, applied: Infinity, runs: 0 };
+    if (st.method === 'iterate') { app.setRunMode('stop'); display.clearRuns(); }
+    renderAll();
+    job.timer = setTimeout(tick);
+  }
+
+  const replaced = () => job && app.project.system.plant !== job.plant;
+
+  // Steps the method in slices of about SLICE ms; while iterating, one
+  // iteration per PACE so the improvement can be watched (Fast: no pause).
+  function tick() {
+    if (!job) return;
+    if (replaced()) { end('Stopped: the plant changed while tuning.', { gone: true }); return; }
+    const t0 = performance.now();
+    let iterated = false;
+    for (;;) {
+      let s;
+      try { s = job.gen.next(); } catch (err) { end(`Stopped: ${err.message}.`); return; }
+      if (s.done) { improve(); finish(s.value); return; }
+      const v = s.value;
+      job.runs++;
+      if (v.before) shown.before ??= v.before;
+      if (v.start) {
+        shown.before ??= { variant: v.start.variant, cost: v.start.detail };
+        Object.assign(shown, { best: v.best, iteration: v.iteration, evals: v.evals });
+      }
+      if (job.kind === 'iterate' && !v.partial) {
+        shown.status = 'Tuning…';
+        shown.history.push({ iteration: v.iteration, cost: v.cost, tried: v.tried });
+        iterated = true;
+        if (!st.fast) break;
+      }
+      if (performance.now() - t0 > SLICE) break;
+    }
+    if (iterated) improve();
+    if (job.kind !== 'iterate') shown.status = `Running the ${job.kind === 'relay' ? 'relay experiment' : 'step test'}… (${job.runs} run${job.runs === 1 ? '' : 's'} of the loop)`;
+    renderProgress();
+    // After a whole iteration, pause so a person can watch; between the runs
+    // of one, only let the page draw.
+    job.timer = setTimeout(tick, iterated && !st.fast ? Math.max(0, PACE - (performance.now() - t0)) : 0);
+  }
+
+  // A better run goes onto the display; the one before it fades.
+  function improve() {
+    const b = shown.best;
+    if (!b || !(b.cost.J < job.applied) || !(b.cost.J < shown.before.cost.J)) return;
+    job.applied = b.cost.J;
+    display.keep();
+    place({ ...b.variant, name: job.name }, true);
+  }
+
+  function finish(res) {
+    if (res.before) shown.before = res.before;
+    // An experiment's result shows once it has swept across the display.
+    if (res.method === 'iterate' || !res.run) shown.res = res;
+    if (res.method === 'iterate') {
+      if (!res.ok) { end(`Could not run: ${res.why}.`); return; }
+      end(res.better ? 'Done: the cost stopped falling.' : 'Done: no better gains found; the running variant stays.');
+      return;
+    }
+    if (!res.run) { end(res.ok ? 'Done.' : `Could not run: ${res.why}.`); return; }
+    // The experiment sweeps across the display as it ran (Fast: at once),
+    // then the loop's own run comes back, with the result if there is one.
+    job.swept = true;
+    app.setRunMode(st.fast ? 'stop' : 'single');
+    display.clearRuns();
+    display.setData(res.method === 'relay' ? lastPeriod(res.run, res.ctx.sim.duration) : { t: res.run.t, signals: res.run.signals });
+    // Numbers to three digits; a bias of a millionth of the swing is 0.
+    const u = (x) => num(Math.abs(x) < 1e-6 * Math.abs(res.d ?? res.du ?? 1) ? 0 : x, 3);
+    shown.status = (res.method === 'relay'
+      ? `On the display: the relay experiment, u = ${u(res.u0)} ± ${u(res.d)} around r0 = ${u(res.r0)}, other inputs at 0.`
+      : `On the display: the step test, u held at ${u(res.u0)}, then at ${u(res.u0 + (res.du ?? 0))}; r0 = ${u(res.r0)}, other inputs at 0.`)
+      + (res.ok ? '' : ` It gives no result: ${res.why}.`);
+    renderAll();
+    const sweep = 10 * app.project.scope.timebase.scale;
+    job.timer = setTimeout(() => {
+      if (!job) return;
+      if (replaced()) { end('Stopped: the plant changed during the experiment.', { gone: true }); return; }
+      apply(res);
+    }, st.fast ? 500 : 1000 * sweep + 400);
+  }
+
+  function apply(res) {
+    shown.res = res;
+    if (!res.ok) { end(`The experiment gave no result: ${res.why}.`); return; }
+    const notes = res.notes?.length ? ` Note: ${res.notes.join('; ')}.` : '';
+    if (res.better) { place(res.variant, true); end(`Done.${notes}`); return; }
+    // Worse than the running variant: kept to compare, not run.
+    place(res.variant, false);
+    end(`The result scores worse than ${res.before.variant.name} (cost ×${num(res.after.J / res.before.cost.J, 2)}): it was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
+  }
+
+  // Ends the run: closes its undo step and brings back the loop's own run,
+  // with the run it started from faded behind a new result, and the run
+  // mode. If the project was replaced meanwhile (loaded, undone), the
+  // display shows that one; its mode is restored only if nothing else set it.
+  function end(status = '', { gone = false } = {}) {
+    if (!job) return;
+    clearTimeout(job.timer);
+    const j = job;
+    job = null;
+    if (status && shown) shown.status = status;
+    if (j.edit) app.endEdit();
+    if (!gone) {
+      if (j.swept && !j.edit) display.setData(j.startData);
+      display.clearRuns();
+      if (j.ran) display.keep(j.startData);
+    }
+    if (!gone || display.mode === 'stop') app.setRunMode(j.mode === 'single' ? 'stop' : j.mode);
+    if (gone) { shown = null; app.toast(status); }
+    else if (j.ran) {
+      const after = shown.res?.after ?? shown.best?.cost;
+      if (after && shown.before) app.toast(`Auto-tune: cost ×${num(after.J / shown.before.cost.J, 2)} of the start; the faded run is where it started. Ctrl+Z undoes the whole run.`);
+    }
+    renderAll();
+  }
+
+  // ---- Progress -----------------------------------------------------------
+
+  // Whether the progress column's run still belongs to the project: the same
+  // block, and its result still in it (an undo or another system removes it).
+  function stillShown() {
+    const s = shown;
+    if (!s || s.title !== app.project.title) return false;
+    const c = blocks().find((x) => x.key === s.key);
+    if (!c || (current()?.key !== s.key)) return false;
+    if (!job && s.placed) return c.block.variants.some((v) => v.name === s.placed.name && JSON.stringify(v.params) === JSON.stringify(s.placed.params));
+    return true;
+  }
+
+  function renderProgress() {
+    if (shown && !job && !stillShown()) shown = null;
+    const s = shown;
+    $('#tu-plot').hidden = (s ? s.method : st.method) !== 'iterate';
+    $('#tu-ptitle').textContent = s ? `Progress · ${METHODS[s.method].label}` : 'Progress';
+    if (!s) {
+      $('#tu-status').innerHTML = `<span class="dim">Press Start. ${st.method === 'iterate' ? 'The display shows each improvement.' : 'The display shows the experiment, then the tuned loop.'}</span>`;
+      $('#tu-result').innerHTML = '';
+      drawPlot(null);
+      return;
+    }
+    const rows = [];
+    const res = s.res;
+    const after = s.method === 'iterate' ? (s.best && s.best.cost.J < s.before?.cost.J ? s.best.variant : null) : res?.ok ? res.variant : null;
+    const costAfter = s.method === 'iterate' ? s.best?.cost : res?.after;
+    if (s.method === 'iterate' && s.best) rows.push(row('Iteration', String(s.iteration), `${s.evals} runs`));
+    if (s.method === 'relay' && res?.ok) {
+      rows.push(row('Ku', num(res.Ku, 4), `ultimate gain; y swung ±${num(res.a, 3)} ${unitY()}`));
+      rows.push(row('Pu', `${num(res.Pu, 4)} s`, 'ultimate period'));
+      rows.push(row('Rule', RULES[res.rule].label, ''));
+    }
+    if (s.method === 'step' && res?.ok) {
+      rows.push(row('K', num(res.K, 4), 'y per u'));
+      rows.push(row('τ, θ', `${num(res.tau, 3)} s, ${num(res.theta, 3)} s`, 'lag, dead time'));
+      rows.push(row('τc', `${num(res.gains.tauC, 3)} s`, 'closed-loop time'));
+    }
+    if (s.before) {
+      rows.push(row('Cost', costAfter ? `${num(s.before.cost.J, 3)} → ${num(costAfter.J, 3)}` : num(s.before.cost.J, 3), costAfter ? `×${num(costAfter.J / s.before.cost.J, 2)}` : 'at the start', costAfter && costAfter.J > s.before.cost.J ? 'tuworse' : 'tucost'));
+      rows.push(row('Overshoot', costAfter ? `${pct(s.before.cost.overshoot)} → ${pct(costAfter.overshoot)}` : pct(s.before.cost.overshoot), 'largest'));
+      const b = tunedValues(s.before.variant), a = after ? tunedValues(after) : [];
+      if (after && after.type !== s.before.variant.type) rows.push(row('Type', `${CONTROLLERS[s.before.variant.type].label} → ${CONTROLLERS[after.type].label}`, ''));
+      const keys = [...new Set([...b, ...a].map(([k]) => k))];
+      for (const k of keys) {
+        const x = b.find(([q]) => q === k)?.[1], y = a.find(([q]) => q === k)?.[1];
+        rows.push(row(k, after ? `${x === undefined ? '—' : show(x)} → ${show(y)}` : show(x), ''));
+      }
+    }
+    if (s.placed) rows.push(row('Into', s.placed.name, ''));
+    $('#tu-result').innerHTML = rows.join('');
+    $('#tu-status').textContent = s.status;
+    drawPlot(s.method === 'iterate' ? s.history : null);
+  }
+
+  const row = (k, v, hint, cls = '') => `<li class="turow ${cls}"><span>${esc(k)}</span><span>${esc(v)}</span><em>${esc(hint)}</em></li>`;
+  const pct = (v) => (Number.isFinite(v) ? `${num(v, 3)} %` : '—');
+
+  // The cost of every run tried (dots) and the best so far (line) against
+  // the iteration, on a log scale; dark, like the scope.
+  function drawPlot(history) {
+    const cv = $('#tu-plot');
+    if (cv.hidden) return;
+    const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    if (!r.width) return;
+    const W = r.width, H = r.height;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = '#0a0d10'; g.fillRect(0, 0, W, H);
+    const P = { l: 44, r: W - 10, t: 8, b: H - 18 };
+    g.fillStyle = 'rgba(160, 175, 190, 0.32)';
+    for (let i = 0; i <= 10; i++) for (let j = 0; j <= 20; j++) g.fillRect(P.l + (i * (P.r - P.l)) / 10, P.t + (j * (P.b - P.t)) / 20, 1, 1);
+    g.strokeStyle = 'rgba(160, 175, 190, 0.5)'; g.strokeRect(P.l + 0.5, P.t + 0.5, P.r - P.l - 1, P.b - P.t - 1);
+    g.font = '10px "IBM Plex Mono", ui-monospace, monospace';
+    g.fillStyle = 'rgba(200, 210, 218, 0.75)';
+    g.textAlign = 'center'; g.textBaseline = 'top';
+    const n = Math.max(st.maxIter, history?.at(-1)?.iteration ?? 0, 10);
+    g.fillText('0', P.l, P.b + 4); g.fillText(String(n), P.r - 6, P.b + 4); g.fillText('iteration', (P.l + P.r) / 2, P.b + 4);
+    g.save(); g.translate(10, (P.t + P.b) / 2); g.rotate(-Math.PI / 2); g.fillText('cost', 0, -4); g.restore();
+    if (!history?.length) return;
+    // Diverged runs (cost 100 and up) stay off the scale.
+    const all = history.flatMap((h) => [h.cost, ...h.tried]).filter((v) => v > 0 && v < 100);
+    if (!all.length) return;
+    const top = Math.ceil(Math.log10(Math.max(...all)) * 4) / 4, bot = Math.min(Math.floor(Math.log10(Math.min(...all)) * 4) / 4, top - 0.25);
+    const x = (i) => P.l + (i / n) * (P.r - P.l);
+    const y = (v) => P.b - ((Math.log10(Math.min(Math.max(v, 10 ** bot), 10 ** top)) - bot) / (top - bot)) * (P.b - P.t);
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillText(num(10 ** top, 2), P.l - 4, P.t + 4);
+    g.fillText(num(10 ** bot, 2), P.l - 4, P.b - 4);
+    g.fillStyle = 'rgba(78, 166, 255, 0.6)';
+    for (const h of history) for (const v of h.tried) if (v < 100) g.fillRect(x(h.iteration) - 1, y(v) - 1, 2.5, 2.5);
+    g.strokeStyle = '#33d17a'; g.lineWidth = 1.8; g.shadowColor = '#33d17a'; g.shadowBlur = 5;
+    g.beginPath();
+    history.forEach((h, i) => { if (i) g.lineTo(x(h.iteration), y(history[i - 1].cost)); else g.moveTo(x(h.iteration), y(h.cost)); g.lineTo(x(h.iteration), y(h.cost)); });
+    g.stroke();
+    g.shadowBlur = 0;
+  }
+
+  function renderAll() { renderSetup(); renderProgress(); }
+
+  $('#tu-start').onclick = () => {
+    if (!job) start();
+    else end(job.kind === 'iterate' ? 'Stopped. The best gains so far are kept.' : 'Stopped before the result was applied.');
+  };
+  $('#tu-fast').onclick = (e) => { e.preventDefault(); st.fast = !st.fast; renderButton(); };
+  new ResizeObserver(() => { if (!host.hidden) drawPlot(shown?.method === 'iterate' ? shown.history : null); }).observe($('#tu-plot'));
+
+  return {
+    render() { if (!host.hidden) renderAll(); },
+    shown: renderAll,
+    stop() { if (job) end('Stopped.'); },
+  };
+}
+
+// The last period of a long experiment, from t = 0 on the display: where the
+// relay's cycle has settled and Ku and Pu are read.
+function lastPeriod(run, T) {
+  const n = run.t.length, end = run.t[n - 1];
+  if (end <= T * 1.001) return { t: run.t, signals: run.signals };
+  let k0 = 0;
+  while (k0 < n - 1 && run.t[k0] < end - T) k0++;
+  const signals = {};
+  for (const [k, v] of Object.entries(run.signals)) signals[k] = v.subarray(k0);
+  return { t: run.t.subarray(k0).map((x) => x - run.t[k0]), signals };
+}
+
+// A value for the lists: numbers to four digits, long tables shortened.
+function show(v) {
+  if (Array.isArray(v)) return v.length > 4 ? `${v.slice(0, 3).map((x) => num(x, 3)).join(', ')}, … (${v.length})` : v.map((x) => num(x, 3)).join(', ');
+  return num(v, 4);
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+return { createAutotuneTab };
+})();
 // ---- ui/layout.js
 __mods['ui/layout.js'] = (() => {
 // Draggable separators: between the display and the setup tabs, and between
@@ -9457,6 +10863,9 @@ function createRecord(app, display) {
     const [w0, w1] = windowOf();
     const tr = traceWindow(d, live ? -Infinity : w0, live ? Infinity : w1);
     if (tr.t.length < 2) return null;
+    // Every signal the scope can show; auto-tune's "ctrl.u" probes (a dot in
+    // the name) are not among them.
+    for (const nm of Object.keys(tr.signals)) if (nm.includes('.')) delete tr.signals[nm];
     tr.units = unitsOf(Object.keys(tr.signals));
     return { trace: tr, what: 'screen', source: live ? `the screen: a live sweep, t is screen time (plant time = t + ${num(d.plantOffset, 6)} s)` : 'the screen: a simulated run' };
   }
@@ -10048,10 +11457,12 @@ const { diagramNames } = __mods['core/diagram.js'];
 const { createPlantEditor } = __mods['ui/plant.js'];
 const { isDelta } = __mods['ui/xyview.js'];
 const { createControllerTab } = __mods['ui/controller.js'];
+const { createAutotuneTab } = __mods['ui/autotune.js'];
+const { loopOverlays, autotune, placeVariant, tuneReport } = __mods['core/autotune.js'];
 const { createAnalysisTab } = __mods['ui/analysis.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { DEFAULT_PROJECT } = __mods['core/examples.js'];
-const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = __mods['core/systems.js'];
+const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem, libraryTags, filterByTags } = __mods['core/systems.js'];
 const { createDisplay } = __mods['ui/display.js'];
 const { createControls } = __mods['ui/controls.js'];
 const { createGenerator } = __mods['ui/generator.js'];
@@ -10063,7 +11474,7 @@ const TABS = [
   { key: 'input', label: 'Input' },
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
-  { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
+  { key: 'tune', label: 'Auto-tune' },
   { key: 'analysis', label: 'Analysis' },
 ];
 
@@ -10299,6 +11710,13 @@ function startApp() {
       const fit = v && fitChannel(v);
       if (fit) Object.assign(ch, fit);
     });
+    // A Controller block's r and the y it compares with r share one scale and
+    // offset, so they overlay (src/core/autotune.js loopOverlays); not in XY,
+    // where channel 1 is the beam's x.
+    if (sc.view?.mode !== 'xy') for (const g of loopOverlays(sc.channels, data.signals, app.unitOf)) {
+      const fit = fitChannel(g.flatMap((i) => Array.from(data.signals[sc.channels[i].source])));
+      if (fit) for (const i of g) Object.assign(sc.channels[i], fit);
+    }
   }
   app.autoScale = () => {
     app.beginEdit();
@@ -10332,6 +11750,12 @@ function startApp() {
   // "Scope time" operating point.
   const analysisTab = createAnalysisTab($('tab-analysis'), app);
   app.scopeTime = () => display.time();
+  // Auto-tune changes the project many times in one run but takes one undo
+  // step for all of it (beginEdit at its start, endEdit at its end); each
+  // change goes through tuneEdit. It shows whole runs while it works.
+  app.tuneEdit = (fn) => { fn(app.project); changed(); };
+  app.setRunMode = (m) => { display.setMode(m); controls.render(display.mode); };
+  const tuneTab = createAutotuneTab($('tab-tune'), app, display);
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -10342,6 +11766,8 @@ function startApp() {
     $('tab-plant').hidden = app.tab !== 'plant';
     $('tab-controller').hidden = app.tab !== 'controller';
     if (app.tab === 'controller') controllerTab.shown();
+    $('tab-tune').hidden = app.tab !== 'tune';
+    if (app.tab === 'tune') tuneTab.shown();
     $('tab-analysis').hidden = app.tab !== 'analysis';
     if (app.tab === 'analysis') analysisTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
@@ -10367,6 +11793,7 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    if (app.tab === 'tune') tuneTab.render();
     if (app.tab === 'analysis') analysisTab.render();
     live.changed();  // a running loop takes the edit at its next cycle
     record.changed();  // references follow the window
@@ -10484,14 +11911,27 @@ function startApp() {
   };
   const pop = $('syslib-pop');
   const PART_LABEL = { input: 'Input', plant: 'Plant', controller: 'Controller' };
-  pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
-    + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
-    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => `<span class="tag tag-${t.kind} tone-${t.tone}">${esc(t.label)}</span>`).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
-      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>`).join('');
+  // Tags filter the list: every tag in the library is a chip at the top; a
+  // click on one there or on a card toggles it; systems must carry them all.
+  const tagFilter = new Set();
+  const chip = (t, extra = '') => `<button type="button" class="tag tag-${t.kind} tone-${t.tone}${extra}" data-tag="${esc(t.label)}" aria-pressed="${tagFilter.has(t.label)}" title="Show only systems tagged ${esc(t.label)}">${esc(t.label)}</button>`;
+  function renderLibrary() {
+    const shown = new Set(filterByTags([...tagFilter]));
+    pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
+      + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
+      + `<div class="tagfilter" role="group" aria-label="Filter by tag">${libraryTags().map((t) => chip(t)).join('')}`
+      + `<span class="tagcount">${tagFilter.size ? `${shown.size} of ${SYSTEM_LIBRARY.length} <button type="button" class="key small" data-tagclear>Clear</button>` : `${SYSTEM_LIBRARY.length} systems · click a tag to filter`}</span></div>`
+      + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
+      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>` : '')).join('');
+  }
+  renderLibrary();
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
   $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });
   pop.addEventListener('click', (e) => {
     e.stopPropagation();
+    const tag = e.target.closest('[data-tag]');
+    if (tag) { if (!tagFilter.delete(tag.dataset.tag)) tagFilter.add(tag.dataset.tag); renderLibrary(); return; }
+    if (e.target.closest('[data-tagclear]')) { tagFilter.clear(); renderLibrary(); return; }
     const b = e.target.closest('[data-sys]');
     if (!b) return;
     const entry = SYSTEM_LIBRARY[Number(b.dataset.sys)];
@@ -10550,6 +11990,17 @@ function startApp() {
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
     live: live.api,  // connect(url), disconnect(), estop(), reset(), state(): design/output/hil.md
     record: record.api,  // screen(format), live(format), reference(text, name), clearReferences(), state()
+    // Auto-tune a Controller block at once, as the Auto-tune tab does step by
+    // step: opts { block (id path, 'ctrl'), method, goal, rule, amplitude,
+    // maxIter, apply = true }. Applied, the result goes into a variant of its
+    // own, running if it scores better: one undo step.
+    autotune: (opts = {}) => {
+      tuneTab.stop();
+      let res;
+      try { res = autotune(app.project, opts.block ? String(opts.block).split('/') : null, opts); } catch (err) { return { ok: false, why: err.message }; }
+      if (res.ok && opts.apply !== false) { app.beginEdit(); placeVariant(app.project, res.path, res.variant, { run: res.better }); app.endEdit(); changed(); }
+      return tuneReport(res);
+    },
   };
 
   // Boot: the embedded project, unless this browser has newer work on it.

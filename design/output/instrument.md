@@ -69,8 +69,8 @@ Every knob has a readout below it. Click it to type a value: `20m`, `100 ms`, `2
 
 - **Run/Stop**: lit green while running, red while stopped. Stop freezes the sweep, not the data: edits still show at once.
 - **Single**: one sweep from the start of the screen (t = 0 at position 0), then stop; lit amber meanwhile. The plant's view replays it (the pendulum drops again). With a live plant, Run, Stop and Single go through the plant ([Live](#live-an-external-plant)).
-- **A project or system may say how it opens** (`ui`: run state, tab, view, setup height); the System library's systems open running on their view in the Plant tab ([project-format.md](project-format.md)).
-- **Auto Scale**: the timebase shows one period of the input (the smallest 1-2-5 step whose 10 divisions hold the period, position 0); each channel with a signal is scaled to about 6 divisions and centred on a whole division.
+- **A project or system may say how it opens** (`ui`: run state, tab, view, setup height); the System library's systems open running on their view in the Plant tab, except the badly tuned oven, which opens on the Auto-tune tab ([project-format.md](project-format.md)).
+- **Auto Scale**: the timebase shows one period of the input (the smallest 1-2-5 step whose 10 divisions hold the period, position 0); each channel with a signal is scaled to about 6 divisions and centred on a whole division. The channels showing a Controller block's r and the y it compares with r share one scale and offset (if they have one unit), so the reference and the output that follows it overlay (r and T of the oven); nothing else is grouped, and XY mode is left alone ([autotune.md](autotune.md)).
 
 ## Live (an external plant)
 
