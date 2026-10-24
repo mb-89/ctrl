@@ -4,6 +4,7 @@ Reader: anyone who wants to know why something is the way it is. Newest first. "
 
 ## 2026-10-24 · v2.7 ([input](../input/2026-10-24-09-analysis-autotune-triple-swingup.md))
 
+- **Spectrogram levels: the automatic floor stays the default.** (Person: "keep the automatic flow as the default. Yes, we can still slide up and down to see if we miss something, but the delta mode, I like that. Like dB above the local noise, I like that. … Make that a switch.") A switch adds colour as dB above the local noise (per frequency) next to the absolute levels.
 - **SETTLED: HIL has two modes. Do not reverse this without the person.** (Person, after going back and forth on it: "So we need both modes … Write that down so we find it later, so we don't make that same mistake again of going back and forward on this.")
   - **Control mode** (to tune controllers): the page is the controller and always sends the control effort u each cycle; it also sends the reference r (and the error e) for the plant's log only.
   - **Reference mode** (to log, or to drive a plant that runs its own controller): the page sends reference values and records what comes back. The page shows plainly that its Controller blocks and Auto-tune are not in the loop. Identification works only partly (the closed loop r to y; the plant itself from u to y if the plant reports its u).
