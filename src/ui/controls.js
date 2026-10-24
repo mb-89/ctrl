@@ -137,16 +137,19 @@ export function createControls(root, app) {
     keys.append(b);
   });
   // Display mode: time, FFT or spectrogram (the scope's view setting).
+  // A channel that switches between X − Y and itself is fitted again.
   root.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => setScope((sc) => {
-    const view = { ...(sc.view ?? {}) };
+    const before = structuredClone(sc), view = { ...(sc.view ?? {}) };
     if (b.dataset.view === 'time') delete view.mode; else view.mode = b.dataset.view;
     sc.view = view;
+    app.refitSwitched?.(before, sc);
   })));
   // XY: the channels draw channel 1 minus themselves (the error, for r and y).
   $('#k-delta').addEventListener('click', () => setScope((sc) => {
-    const view = { ...(sc.view ?? {}) };
+    const before = structuredClone(sc), view = { ...(sc.view ?? {}) };
     if (view.delta) delete view.delta; else view.delta = true;
     sc.view = view;
+    app.refitSwitched?.(before, sc);
   }));
   // The selected channel's display filter.
   const filt = $('#ch-filt');

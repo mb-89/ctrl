@@ -17,7 +17,8 @@ Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control lo
   - **Plant**: the system as a block diagram, Simulink-style: Source blocks play signals, Sink blocks (x, speed, …) are what the scope shows, blocks nest into subsystems. A plant can carry 2D views (simple shapes, or standard SVG bound to signals) that move with the simulation.
   - **Controller**: Controller blocks in the diagram hold interchangeable variants (PID, state feedback, gain-scheduled PI, energy swing-up); flip and tune them here. The run before stays faded on the display, for comparison.
   - The **System library** in the header holds complete systems, from a mass–spring–damper to a triple pendulum on a cart; load one whole, or only its input or plant.
-  - Auto-tune and Analysis come next.
+  - **Auto-tune**: improves a Controller block's running variant by simulation (iterate with Nelder–Mead, relay feedback, step response with SIMC); the result is a new variant to compare.
+  - **Analysis**: a Controller block's loop, linearised: stability, gain and phase margins, Ms, poles, root locus, Bode, Nyquist and the linear step, discrete as simulated. Built; it shows its numbers once the plant model from the design layer is merged, and says so until then.
 
 Projects are plain JSON, including how the display is set. Save, open, drop or paste them; **Export HTML** writes a copy of the page with the project inside, to send to someone. The built page carries no comments and no trace of where it was made (enforced by `test/provenance.test.mjs`). Where a hosting page offers a save adapter, saving goes through it; otherwise through a download link, and Copy JSON and Copy HTML remain.
 

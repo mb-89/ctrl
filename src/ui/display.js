@@ -17,7 +17,7 @@ import { siUnit, num } from './units.js';
 import { step125 } from '../core/scale.js';
 import { channelSignal, drawFrequency, freqRange } from './freqview.js';
 import { withLevels, levelsOf, withAboveNoise } from '../core/project.js';
-import { drawXY, vOfX } from './xyview.js';
+import { drawXY, vOfX, valueLabel, valueTargets, xyStatus, xyFrame, xyNearest } from './xyview.js';
 
 export const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
@@ -36,6 +36,21 @@ const r1 = (d) => Math.round(d * 10) / 10;
 export function createDisplay(root, handlers) {
   const status = root.querySelector('.status');
   const screen = root.querySelector('.screen');
+  // The levels strip's readout: right of the strip, outside the screen, so it
+  // never covers the plot while the levels are dragged.
+  const stripTip = document.createElement('div');
+  stripTip.className = 'striptip';
+  stripTip.hidden = true;
+  document.body.append(stripTip);
+  function showStripTip(tip) {
+    if (!tip || !S) { stripTip.hidden = true; return; }
+    const r = canvas.getBoundingClientRect();
+    stripTip.innerHTML = tip.rows.map(([t, c]) => `<div style="color:${c}">${t.replace(/[&<>]/g, (x) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[x])}</div>`).join('');
+    stripTip.hidden = false;
+    const w = stripTip.offsetWidth, h = stripTip.offsetHeight;
+    stripTip.style.left = `${Math.min(window.innerWidth - w - 4, r.left + S.r + 10)}px`;
+    stripTip.style.top = `${Math.max(4, Math.min(window.innerHeight - h - 4, r.top + tip.y - h / 2))}px`;
+  }
   const badges = root.querySelector('.badges');
   const canvas = document.createElement('canvas');
   canvas.setAttribute('role', 'img');
@@ -46,6 +61,9 @@ export function createDisplay(root, handlers) {
   let W = 0, H = 0, dpr = 1;
   let data = null, scope = null, preview = null, selected = 0, line = null;
   let mode = 'stop', tScan = 0, last = 0, raf = 0, hover = null, box = null;
+  // Where the cursor last pointed in time, kept after it leaves the screen
+  // (until a run starts): the instant the Analysis tab's "Scope time" uses.
+  let cursorT = null;
   // Earlier runs, newest first; each fades a step per run and is gone after
   // five (the person, 2026-10-24), so an edit can be compared with before.
   const RUNS = 5;
@@ -71,12 +89,27 @@ export function createDisplay(root, handlers) {
     draw();
   }
   // The plot area; wider right margin when a second axis is shown there.
+  // The value axes get room for their widest label, so a long one (−0.0121)
+  // keeps its sign instead of starting off the canvas.
   const viewMode = () => scope?.view?.mode ?? 'time';
   const rightAxis = () => (viewMode() === 'time' ? rightSet() : null);
+  const labelsWidth = (i) => {
+    if (i === null || i === undefined || !visible(i)) return 0;
+    ctx.font = `10.5px ${MONO}`;
+    let w = 0;
+    for (let j = 0; j <= DIVY; j++) w = Math.max(w, ctx.measureText(valueLabel(scope.channels[i], j)).width);
+    return w;
+  };
   function layout() {
-    const spec = !!scope && viewMode() === 'spectrogram';
+    const vm = viewMode(), spec = !!scope && vm === 'spectrogram';
     const wide = scope && (spec || rightAxis() !== null);
-    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - (wide ? PAD_RIGHT_AXIS : PAD.r) - (spec ? (W < NARROW ? STRIP_W_NARROW : STRIP_W) : 0), b: H - PAD.b });
+    let l = PAD.l, r = wide ? PAD_RIGHT_AXIS : PAD.r;
+    if (scope && data && (vm === 'time' || vm === 'xy')) {
+      const left = vm === 'xy' ? xyFrame({ data, scope, axis: axisChannel(), k: data.t.length - 1, win }).axis : axisChannel();
+      l = Math.max(PAD.l, Math.ceil(labelsWidth(left)) + 26);
+      if (rightAxis() !== null) r = Math.max(PAD_RIGHT_AXIS, Math.ceil(labelsWidth(rightAxis())) + 10);
+    }
+    Object.assign(P, { l, t: PAD.t, r: W - r - (spec ? (W < NARROW ? STRIP_W_NARROW : STRIP_W) : 0), b: H - PAD.b });
     P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
     Object.assign(S, spec ? { l: P.r + PAD_RIGHT_AXIS + 4, r: W - 6, st: P.t, t: P.t + SWITCH_H, b: P.b } : { l: 0, r: 0, t: 0, b: 0, st: 0 });
   }
@@ -135,21 +168,14 @@ export function createDisplay(root, handlers) {
     if (!visible(ci)) return;
     g.fillStyle = CHANNEL_COLORS[ci];
     g.textAlign = 'right'; g.textBaseline = 'middle';
-    for (let j = 0; j <= DIVY; j++) {
-      const y = P.t + j * P.dy;
-      const v = (DIVY / 2 - j) * ch.scale - ch.offset;
-      g.fillText(num(Math.abs(v) < ch.scale * 1e-9 ? 0 : v, 3), P.l - 22, Math.min(P.b - 5, Math.max(P.t + 5, y)));
-    }
+    for (let j = 0; j <= DIVY; j++) g.fillText(valueLabel(ch, j), P.l - 22, Math.min(P.b - 5, Math.max(P.t + 5, P.t + j * P.dy)));
     // A second channel's values at the right (the person, 2026-10-24).
     const ri = rightAxis();
     if (ri === null) return;
     const rc = scope.channels[ri];
     g.fillStyle = CHANNEL_COLORS[ri];
     g.textAlign = 'left';
-    for (let j = 0; j <= DIVY; j++) {
-      const v = (DIVY / 2 - j) * rc.scale - rc.offset;
-      g.fillText(num(Math.abs(v) < rc.scale * 1e-9 ? 0 : v, 3), P.r + 6, Math.min(P.b - 5, Math.max(P.t + 5, P.t + j * P.dy)));
-    }
+    for (let j = 0; j <= DIVY; j++) g.fillText(valueLabel(rc, j), P.r + 6, Math.min(P.b - 5, Math.max(P.t + 5, P.t + j * P.dy)));
   }
 
   // Polyline of v over t for samples [from, to], collapsing samples that share
@@ -193,11 +219,12 @@ export function createDisplay(root, handlers) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
     layout();
+    if (viewMode() !== 'spectrogram') showStripTip(null);
     if (viewMode() === 'xy') {
       strip = null;
       delete canvas.dataset.levels;
       levelsChanged();
-      drawXY({ g: ctx, P, data, past, scope, k: mode !== 'stop' ? indexAt(tScan) : data.t.length - 1, axis: axisChannel(), line, colors: CHANNEL_COLORS, drawGrid, unitLabel, vy, win, runs: RUNS });
+      drawXY({ ...xyArgs(), g: ctx, past, colors: CHANNEL_COLORS, drawGrid, runs: RUNS, hover: box || !hover || region(hover.x, hover.y) !== 'plot' ? null : hover });
       renderStatus();
       return;
     }
@@ -207,6 +234,7 @@ export function createDisplay(root, handlers) {
         sweeping: mode !== 'stop', tScan, tx, xt, vy, colors: CHANNEL_COLORS, drawGrid, unitLabel, levelScale });
       // For agents and tests: the levels as drawn (floor ceiling lo hi, dB), whether
       // automatic, and their unit: abs (dB of the signal's unit) or noise (dB above the noise).
+      showStripTip(strip?.tip);
       if (strip) canvas.dataset.levels = `${[strip.floor, strip.ceiling, strip.lo, strip.hi].map((d) => d.toFixed(1)).join(' ')} ${strip.auto ? 'auto' : 'fixed'} ${strip.aboveNoise ? 'noise' : 'abs'}`;
       else delete canvas.dataset.levels;
       levelsChanged();
@@ -360,7 +388,7 @@ export function createDisplay(root, handlers) {
       ${vm === 'spectrogram' && strip ? (strip.aboveNoise
         ? `<span class="st st-view" title="Spectrogram colour: dB above the noise at each frequency (0 dB: the noise there)">Above noise</span><span title="Spectrogram levels of ${strip.source}, dB above the noise: below the floor black, above the ceiling the brightest colour">${dbText(strip.floor, true)} … ${dbText(strip.ceiling, true)} dB</span><span class="dim">${strip.auto ? 'auto' : 'levels set'}</span>`
         : `<span class="dim" title="Spectrogram colour: dB of the signal's unit (0 dB: 1 ${unitLabel(strip.source)})">Absolute</span><span title="Spectrogram levels of ${strip.source}: below the floor black, above the ceiling the brightest colour">${dbText(strip.floor)} … ${dbText(strip.ceiling)} dB · ceiling ${num(10 ** (strip.ceiling / 20), 3)} ${unitLabel(strip.source)}</span><span class="dim">${strip.auto ? 'auto' : 'levels set'}</span>`) : ''}
-      ${vm === 'xy' ? `<span class="st st-view">XY${scope.view?.delta ? ' · Δ X − Y' : ''}</span>` : ''}
+      ${vm === 'xy' ? `<span class="st st-view">${xyStatus(scope, unitLabel, visible)}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
       ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
@@ -403,7 +431,7 @@ export function createDisplay(root, handlers) {
       }
     }
     draw();
-    if (mode !== 'stop') raf = requestAnimationFrame(frame);
+    if (mode !== 'stop') { raf = requestAnimationFrame(frame); handlers.onTime?.(); }
     else last = 0;
   }
   const kick = () => { if (!raf) raf = requestAnimationFrame(frame); };
@@ -442,9 +470,19 @@ export function createDisplay(root, handlers) {
   }
 
   // The channels a vertical gesture acts on: the selected line, or every
-  // channel that shows a signal.
-  // In XY mode channel 1 is the horizontal axis, so not among them.
-  const targets = () => (line !== null ? [line] : [0, 1, 2, 3].filter((i) => visible(i) && !(i === 0 && viewMode() === 'xy')));
+  // channel that shows a signal; in XY never channel 1, the horizontal axis.
+  const targets = () => valueTargets(viewMode(), line, visible);
+  // What XY needs to find its figure (drawing, and the sample under the pointer).
+  const xyArgs = () => ({ P, data, scope, k: mode !== 'stop' ? indexAt(tScan) : data.t.length - 1, axis: axisChannel(), line, unitLabel, vy, win });
+  // The time under the pointer, where the screen shows time across (Time,
+  // Spectrogram), or of the XY figure's sample nearest it; else null.
+  function hoverTime() {
+    if (!hover || box || !data || !scope || region(hover.x, hover.y) !== 'plot') return null;
+    const vm = viewMode();
+    if (vm === 'time' || vm === 'spectrogram') return Math.max(0, Math.min(data.t[data.t.length - 1], xt(hover.x)));
+    if (vm === 'xy') { const near = xyNearest(xyArgs(), hover.x, hover.y); return near ? data.t[near.j] : null; }
+    return null;
+  }
   // XY mode: channel 1's scale and position, around a screen column.
   function zoomX(sc, x, dir) {
     const ch = sc.channels[0], vc = vOfX(P, ch, x), kx = (x - P.l - P.w / 2) / P.dx;
@@ -619,6 +657,8 @@ export function createDisplay(root, handlers) {
     if (where === 'switch') canvas.style.cursor = 'pointer';
     else if (where === 'strip') canvas.style.cursor = strip ? (stripPart(p.y)[0] === 'both' ? 'grab' : 'ns-resize') : 'default';
     else canvas.style.cursor = hitLine(p.x, p.y) !== null ? 'grab' : where === 'xaxis' ? 'ew-resize' : where === 'yaxis' ? 'ns-resize' : 'crosshair';
+    const ht = hoverTime();
+    if (ht !== null && ht !== cursorT) { cursorT = ht; handlers.onTime?.(); }
     redraw();
   });
   const finish = (e) => {
@@ -677,6 +717,15 @@ export function createDisplay(root, handlers) {
     handlers.endEdit();
   }
 
+  function instant() {
+    if (!scope) return { t: 0, from: 'edge' };
+    const h = hoverTime();
+    if (h !== null) return { t: h, from: 'cursor' };
+    if (mode !== 'stop') return { t: tScan, from: 'sweep' };
+    if (cursorT !== null) return { t: cursorT, from: 'cursor' };
+    return { t: win()[1], from: 'edge' };
+  }
+
   new ResizeObserver(resize).observe(screen);
   document.fonts?.ready.then(() => draw());
 
@@ -687,11 +736,16 @@ export function createDisplay(root, handlers) {
     setFeed(fn) { feed = fn; data = fn ? fn().data : simData; renderBadges(); draw(); },
     setRefs(list) { refs = list; draw(); },
     renderStatus,  // Live's state changed while the screen stands still
-    get data() { return data; },
-    setScope(s, sel) { scope = s; selected = sel; if (line !== null && line !== sel) line = null; renderBadges(); draw(); },
+    setScope(s, sel) {
+      scope = s; selected = sel;
+      // In XY, channel 1 is the X axis: a line selected on it in Time is released.
+      if (line !== null && (line !== sel || (viewMode() === 'xy' && line === 0))) line = null;
+      renderBadges(); draw();
+    },
     setPreview(p) { preview = p; draw(); },
     setMode(m, { restart = false } = {}) {
       if ((m === 'single' || restart) && scope) { if (m === 'single' && mode !== 'single') keepRun(); tScan = win()[0]; }
+      if (m !== 'stop') cursorT = null;
       mode = m;
       last = 0;
       kick();
@@ -702,13 +756,12 @@ export function createDisplay(root, handlers) {
     keep(d = data) { if (d) past = [d, ...past].slice(0, RUNS - 1); draw(); },
     get data() { return data; },
     releaseLine() { if (line === null) return false; selectLine(null); return true; },
-    // The instant other views follow: the hover cursor, else the scan line
-    // while sweeping, else the right edge of the screen.
-    time() {
-      if (!scope) return 0;
-      if (hover && region(hover.x, hover.y) === 'plot') return xt(hover.x);
-      return mode !== 'stop' ? tScan : win()[1];
-    },
+    // The instant other views follow: the cursor's time (where the screen
+    // shows time across, or the XY sample under it), else the scan line while
+    // sweeping, else where the cursor last pointed, else the right edge of
+    // the screen. timeFrom() says which one it is.
+    time() { return instant().t; },
+    timeFrom() { return instant().from; },
     get mode() { return mode; },
     // The spectrogram's levels as drawn: { source, unit, floor, ceiling, auto,
     // aboveNoise (the levels are dB above the noise, not of the unit) }, or null.

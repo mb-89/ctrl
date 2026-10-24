@@ -485,14 +485,16 @@ function drawStrip(v, st, shown) {
     const y = Math.round(hover.y) + 0.5;
     g.strokeStyle = 'rgba(235, 240, 245, 0.5)'; g.setLineDash([2, 3]); g.lineWidth = 1;
     g.beginPath(); g.moveTo(hL, y); g.lineTo(S.r, y); g.stroke(); g.setLineDash([]);
-    readout(g, v.P, S.l - 4, [
+    // The readout goes to the right of the strip, outside the screen (the
+    // display places it), so the plot stays in view while the levels move.
+    st.tip = { y: hover.y, rows: [
       [sign ? `${fmtDb(d, 1, true)} dB above the noise` : `${fmtDb(d, 1)} dB = ${num(10 ** (d / 20))} ${st.unit}`, grey],
       [`${Math.round(100 * shareAbove(st.sorted, d))} % of the shown bins above`, grey],
       [`floor ${fmtDb(floor, 1, sign)} dB · ceiling ${fmtDb(ceiling, 1, sign)} dB`, grey],
       [st.auto ? autoText(st) : `set by hand for ${st.source} · double-click: auto`, dim],
       ['drag a handle or the band', dim],
       ['wheel: floor · Shift+wheel: ceiling', dim],
-    ], Math.max(S.t + 2, Math.min(S.b - 104, hover.y - 40)));
+    ] };
   }
 }
 
@@ -508,11 +510,13 @@ function freqLabelsTime(v) {
   }
 }
 
+// The hover readout goes in the top corner of the half the pointer is not in
+// (the person: "it blocks the view on the diagram"), as a scope's readouts do.
 function readout(g, P, x, rows, top = P.t + 6) {
   g.font = `11.5px ${MONO}`;
   g.textAlign = 'left'; g.textBaseline = 'top';
   const w = Math.max(...rows.map(([s]) => g.measureText(s).width)) + 14;
-  const bx = Math.max(2, x + 10 + w > P.r ? x - 10 - w : x + 10);
+  const bx = Math.max(2, x < (P.l + P.r) / 2 ? P.r - 6 - w : P.l + 6);
   g.fillStyle = 'rgba(10, 13, 16, 0.85)'; g.fillRect(bx, top, w, rows.length * 16 + 8);
   g.strokeStyle = 'rgba(160, 175, 190, 0.4)'; g.strokeRect(bx + 0.5, top + 0.5, w - 1, rows.length * 16 + 7);
   rows.forEach(([s, c], j) => { g.fillStyle = c; g.fillText(s, bx + 7, top + 5 + j * 16); });
