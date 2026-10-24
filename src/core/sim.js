@@ -227,7 +227,8 @@ export function simulateSystem(diagram, signals, sim) {
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
   const el = compileDiagram(diagram, 'plant', { sources, standalone: true });
   const warnings = [...el.warnings];
-  const hmax = el.bound > 0 ? 0.5 / el.bound : Ts;
+  // Steps no longer than a controller's sample time, so it samples on time.
+  const hmax = Math.min(el.bound > 0 ? 0.5 / el.bound : Ts, el.minTs);
   let m = Math.max(1, Math.ceil(Ts / hmax - 1e-9));
   if (K * m > MAX_STEPS) { m = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
   const h = Ts / m, N = el.n;
@@ -238,6 +239,7 @@ export function simulateSystem(diagram, signals, sim) {
   const t = new Float64Array(K + 1);
   const out = {};
   el.eval(0, X, 0, 0, null);
+  el.sample(0, X, 0, 0);
   el.record();
   let unstable = false;
   for (let k = 0; k <= K; k++) {
@@ -259,6 +261,7 @@ export function simulateSystem(diagram, signals, sim) {
       el.eval(ts + h, Xt, 0, 0, k4);
       for (let i = 0; i < N; i++) X[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
       el.eval(ts + h, X, 0, 0, null);
+      el.sample(ts + h, X, 0, 0);
       el.record();
     }
   }

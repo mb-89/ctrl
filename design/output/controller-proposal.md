@@ -1,11 +1,34 @@
-# Controller tab
+# Tab 3: the Controller
 
-Reader: whoever builds the Controller tab. **Status: decided 2026-10-24 (the person answered the proposal's questions); not built yet.**
+Reader: whoever changes controllers, their library or the Controller tab. **Status: built 2026-10-24** (decided with the person the same day; their words in [../input/2026-10-24-08-controllers-and-5-seconds.md](../input/2026-10-24-08-controllers-and-5-seconds.md)).
 
-The person proposed: the controller is one block in the plant diagram; the number of its inputs is set; double-clicking it opens the Controller tab, which has a library of common controllers. Our proposal, with the person's answers:
+**The controller is a block in the plant diagram, and a block holds several interchangeable implementations (variants, as Simulink's variant subsystems).** All variants of a block have the same interface, so flipping between them changes nothing else; Auto-tune will search their parameters and flip through them.
 
-1. **A Controller block in the plant diagram, two inputs by default**: r and the measurement (2-DOF), one output u. A single error input is a setting. Several Controller blocks make cascade or feedforward structures. (Person: "default two inputs".)
-2. **Double-click opens the Controller tab**, scoped to that block. Going back is the Plant tab, or a "Back to plant" button.
-3. **The Controller tab reuses the diagram editor** with a controller library: PID (derivative filter, setpoint weights, anti-windup), PI, lead/lag, state feedback, feedforward gain, rate limiter, sample delay.
-4. **One sample time per Controller block**; different blocks may differ. The inside runs digitally at Ts, output held between samples. (Person: "yes".)
-5. **Variants, as in Simulink**: a Controller block holds several selectable implementations behind the same interface (inputs, output, Ts), each with its own parameters. A candidate is a variant with its parameter values; the tab lists, steps through and overlays them like synthesizer patches, and **Auto-tune may flip through variants** as well as tune parameters. (Person: "Simulink-variant-like selectable implementations with the same interface … the tuner can flip through".)
+## The Controller block
+
+- Inputs: r first, then the measurements, as many as the block's **Inputs** (default 2: r and y). Output: u.
+- Digital: every variant runs at the block's **sample time Ts** and holds u between samples (zero-order hold). Several Controller blocks may have different Ts. The simulation steps no longer than the shortest Ts, and a controller samples on its own clock.
+- JSON: `{ "type": "controller", "params": { "inputs": 2, "Ts": 0.01 }, "variants": [ { "name": "PD", "type": "pid", "params": { … } } ], "variant": 0 }`. Open actuator limits are saved as `null`.
+
+## The controller library (`src/core/controllers.js`)
+
+| Type | Law | For |
+|---|---|---|
+| `off` | u = 0 | Seeing the plant on its own |
+| `pid` | Kp(b·r − y) + Ki∫e + Kd·ẏ filtered (Tf); prefilter Tr (Vorfilter); limits with anti-windup; start output u0 | Most loops |
+| `stateFeedback` | u = kr·r − K·y, one gain per measured state; kr is the static prefilter; optional Tr | Matrix controllers (Zustandsregler), LQR, pole placement |
+| `gainScheduled` | PI with Kp, Ki interpolated from a table over the measurement | Plants whose dynamics change with the operating point |
+| `swingUp` | Far from upright, u = kE·E·ω·cos θ (V = ½E² falls: a Lyapunov design) with cart centring; near upright, state feedback | Swinging a pendulum up and catching it |
+
+To add one: an entry in `CONTROLLERS` with `label`, `summary`, `params` and `make(params, Ts)` returning `{ step(inputs) → u }`; a sentence in `ABOUT` in `src/ui/controller.js`; a test.
+
+## The tab
+
+Four columns: the block (which one, if several; Inputs, Ts; what feeds each input), the **variants** (click one to run it, double-click to rename, Duplicate, Delete), the running variant's **parameters** (typed with SI prefixes, vectors comma-separated; the wheel nudges a number by 5 %, Shift 1 %, and the display follows at once), and the **library** (adds a variant that keeps the actuator limits and gets one gain per measurement).
+
+Comparing: the run before a change stays faded on the display for five runs, so flipping a variant or turning a parameter shows old against new.
+
+## Not yet
+
+- Variants that are diagrams (freeform controllers built from blocks); MIMO outputs.
+- Auto-tune over parameters and variants, with goals for following r and rejecting d.

@@ -5,6 +5,7 @@
 import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } from '../core/project.js';
 import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
+import { createControllerTab } from './controller.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
 import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../core/systems.js';
@@ -17,7 +18,7 @@ const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
   { key: 'input', label: 'Input' },
   { key: 'plant', label: 'Plant' },
-  { key: 'controller', label: 'Controller', next: 'Hand-tuned controller candidates, overlaid on the display and stepped through like patches on a synthesizer.' },
+  { key: 'controller', label: 'Controller' },
   { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
   { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
 ];
@@ -268,6 +269,9 @@ function startApp() {
   const controls = createControls($('controls'), app);
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
+  const controllerTab = createControllerTab($('tab-controller'), app);
+  // Opens the Controller tab on one Controller block (path of block ids).
+  app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -276,6 +280,8 @@ function startApp() {
     const t = TABS.find((x) => x.key === app.tab);
     $('tab-input').hidden = app.tab !== 'input';
     $('tab-plant').hidden = app.tab !== 'plant';
+    $('tab-controller').hidden = app.tab !== 'controller';
+    if (app.tab === 'controller') controllerTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
@@ -298,6 +304,7 @@ function startApp() {
     controls.render(display.mode);
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
+    if (app.tab === 'controller') controllerTab.render();
     renderChrome();
     autosave();
   }

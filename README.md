@@ -8,13 +8,14 @@ Tune a feedback loop's step response in the browser, side by side, like patches 
 
 Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control loop:
 
-- **Display**: four channels (r, y, u, e) on a 10 × 8 graticule; the screen is the record, swept in real time. Wheel to zoom (over an axis: that axis only), drag to pan, click a trace to work on it alone, Shift-drag to zoom to a box.
+- **Display**: four channels on a 10 × 8 graticule, any of the system's named signals; the screen is the record, swept in real time. Wheel to zoom (over an axis: that axis only), drag to pan, click a trace to work on it alone, Shift-drag to zoom to a box.
 - **Controls** to the right, as on a bench scope: Run/Stop, Single, Auto Scale; Horizontal and Vertical knobs whose readouts you can also type into.
 - **Tabs** below set the loop up one step at a time:
   - **Input**: a signal generator that sums primitives (DC, step, ramp, square/pulse train, sine, chirp, noise, a typed formula y(t), or a waveform loaded from a CSV file) into named signals, repeated with their period, with a dashed preview before each one is added.
   - **Plant**: the system as a block diagram, Simulink-style: Source blocks play signals, Sink blocks (x, speed, …) are what the scope shows, blocks nest into subsystems. A plant can carry 2D views (simple shapes, or standard SVG bound to signals) that move with the simulation.
-  - The **System library** in the header holds complete systems; load one whole, or only its input, plant or controller.
-  - Controller, Auto-tune and Analysis come next.
+  - **Controller**: Controller blocks in the diagram hold interchangeable variants (PID, state feedback, gain-scheduled PI, energy swing-up); flip and tune them here. The run before stays faded on the display, for comparison.
+  - The **System library** in the header holds complete systems, from a mass–spring–damper to a triple pendulum on a cart; load one whole, or only its input or plant.
+  - Auto-tune and Analysis come next.
 
 Projects are plain JSON, including how the display is set. Save, open, drop or paste them; **Export HTML** writes a copy of the page with the project inside, to send to someone.
 

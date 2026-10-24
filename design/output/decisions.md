@@ -2,6 +2,17 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.6: controllers ([input](../input/2026-10-24-08-controllers-and-5-seconds.md))
+
+- **Demos run 5 s**, and the mass–spring–damper moves slower (k 25 N/m, 0.8 Hz). (Person.)
+- **View captions keep their width** with `{formula:w.d}`. (Person.)
+- **The Controller block and tab are built** as decided: variants with one interface, flipped in the tab, one Ts per block. (Person.) A controller samples on its own clock; the simulation steps no longer than its Ts.
+- **Controller library**: off, PID (with prefilter Tr, the Vorfilter, anti-windup, start output), state feedback (matrix gains, prefilter kr), gain-scheduled PI, energy swing-up with state feedback (Lyapunov). (Person asked for PID, "the simple matrix controllers", Lyapunov, a gain scheduler, a Vorfilter.)
+- **Controlled systems of increasing difficulty**: DC motor with a deliberately mediocre P (person: "not that good … so we see it oscillating"), conical tank needing a gain scheduler, pendulum swing-up, and a **triple pendulum** for the complex controller (person: a simple pendulum for something simple, a triple one for the complex). The single pendulum's job became the swing-up (interpretation: two upright single pendulums would repeat each other).
+- **Every controlled system has a disturbance d** besides r (person), entering where it would physically: load torque inside the motor, water drawn off the tank, a push on the cart.
+- **Gains are computed, not guessed**: LQR by Riccati iteration on the linearised physics, tank PI by pole cancellation; the design is in system-library.md.
+- **WebAssembly**: not needed now; the person is fine with it if the speed is ever needed.
+
 ## 2026-10-24 · v2.5: old runs fade; the examples move ([input](../input/2026-10-24-07-old-runs-and-views-that-move.md))
 
 - **Earlier runs stay on the screen, whole and fading, gone after five** (all channels). (Person.) This revises v2.4's "nothing ahead of the scan line": the current run still stops at the scan line, the old ones show what lies ahead.

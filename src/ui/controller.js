@@ -1,0 +1,224 @@
+// Tab 3, Controller: the Controller blocks of the plant, each with its
+// variants (implementations with the same inputs and output, as Simulink's
+// variant subsystems). Clicking a variant runs it; the previous run stays
+// faded on the display for comparison. The active variant's parameters are
+// edited here; the library adds new variants. See design/output/controller-proposal.md.
+
+import { CONTROLLERS, CONTROLLER_TYPES, normalizeVariant } from '../core/controllers.js';
+import { diagramBlockDef, normalizeDiagram, parseEnd, outputNames } from '../core/diagram.js';
+import { num, parseSI } from './units.js';
+
+// What each implementation is for, in a sentence or two.
+const ABOUT = {
+  off: 'No control: the plant gets u = 0. Shows what the plant does on its own.',
+  pid: 'The workhorse. P reacts to the error, I removes what is left, D damps (on the measurement, filtered by Tf). b weights the reference in P; the prefilter Tr (Vorfilter) smooths reference jumps; u min/max are the actuator limits, with anti-windup.',
+  stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
+  gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
+  swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
+};
+
+export function createControllerTab(host, app) {
+  let target = null;   // path of subsystem ids and the Controller block id
+
+  host.innerHTML = `
+    <div class="ctl">
+      <section class="gcol" aria-label="Controller block">
+        <div class="ghead"><h3 class="glabel">Controller</h3></div>
+        <div id="ct-blocks" class="ctblocks"></div>
+        <div id="ct-block" class="pform"></div>
+        <p class="phelp" id="ct-ports"></p>
+      </section>
+      <section class="gcol" aria-label="Variants">
+        <div class="ghead"><h3 class="glabel">Variants</h3><button class="key small" id="ct-dup" title="Copy the running variant">Duplicate</button><button class="key small" id="ct-del" title="Remove the running variant">Delete</button></div>
+        <ul class="plist vlist" id="ct-vars" role="listbox" aria-label="Variants: click one to run it"></ul>
+        <p class="phelp">Click a variant to run it; the run before stays faded on the display. Double-click to rename.</p>
+      </section>
+      <section class="gcol" aria-label="Parameters">
+        <div class="ghead"><h3 class="glabel" id="ct-ptitle">Parameters</h3></div>
+        <div id="ct-params" class="pform ctparams"></div>
+        <p class="phelp" id="ct-about"></p>
+      </section>
+      <section class="gcol" aria-label="Controller library">
+        <div class="ghead"><h3 class="glabel">Library</h3></div>
+        <div id="ct-lib" class="ctlib"></div>
+      </section>
+    </div>
+    <div class="ctempty" id="ct-empty" hidden></div>`;
+  const $ = (s) => host.querySelector(s);
+
+  const root = () => app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null;
+  // Every Controller block, at any depth: [{ path, block, where }].
+  function controllers() {
+    const out = [];
+    const walk = (d, path, where) => {
+      for (const b of d.blocks) {
+        if (b.type === 'controller') out.push({ path: [...path, b.id], block: b, where: [...where, b.name ?? b.id].join(' / ') });
+        if (b.type === 'subsystem') walk(b.diagram, [...path, b.id], [...where, b.name ?? b.id]);
+      }
+    };
+    if (root()) walk(root(), [], []);
+    return out;
+  }
+  const levelOf = (d, path) => path.slice(0, -1).reduce((lv, id) => lv.blocks.find((b) => b.id === id).diagram, d);
+  const current = () => {
+    const all = controllers();
+    const hit = target && all.find((c) => c.path.join('/') === target.join('/'));
+    return hit ?? all[0] ?? null;
+  };
+
+  // Edits the current block in a copy of the diagram; the app takes it as one undo step.
+  function edit(fn) {
+    const c = current();
+    if (!c) return false;
+    const next = structuredClone(root());
+    const lv = levelOf(next, c.path);
+    const blk = lv.blocks.find((b) => b.id === c.path.at(-1));
+    if (fn(blk, lv) === false) return false;
+    try { app.setPlant(normalizeDiagram(next)); } catch (err) { app.toast(err.message); render(); return false; }
+    return true;
+  }
+
+  // What feeds each input: "r", "x (cart and pole)", …
+  function inputNames(c) {
+    const lv = levelOf(root(), c.path);
+    return Array.from({ length: c.block.params.inputs }, (_, k) => {
+      const w = lv.wires.find((x) => { const t = parseEnd(x.to); return t.id === c.block.id && t.port === k; });
+      if (!w) return 'not connected';
+      const f = parseEnd(w.from), src = lv.blocks.find((b) => b.id === f.id);
+      if (src.type === 'source') return src.params.signal;
+      const port = outputNames(diagramBlockDef(src.type), src.params)[f.port];
+      return port || (src.name ?? src.id);
+    });
+  }
+
+  function field(key, label, value, hint, kind = 'number', title = '') {
+    return `<label class="pf" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
+  }
+  const show = (v) => (Array.isArray(v) ? v.map((x) => num(x, 5)).join(', ') : Number.isFinite(v) ? num(v, 6) : '');
+
+  function render() {
+    const all = controllers();
+    const c = current();
+    $('.ctl').hidden = !c;
+    $('#ct-empty').hidden = !!c;
+    if (!c) {
+      $('#ct-empty').innerHTML = `<div class="later-box"><h3 class="glabel">No controller in this plant</h3><p>Add a <b>Controller</b> block from the library's Control group in the Plant tab. Wire the reference r to its first input and the measurements to the next ones, and its output u to the plant. Then it shows here, with its variants. Or load a controlled system from the <b>System library</b>.</p></div>`;
+      return;
+    }
+    target = c.path;
+    const b = c.block;
+    $('#ct-blocks').innerHTML = all.length > 1 ? all.map((x) => `<button class="sigkey ${x === c ? 'on' : ''}" data-path="${esc(x.path.join('/'))}">${esc(x.where)}</button>`).join('') : `<div class="ctname">${esc(c.where)}</div>`;
+    $('#ct-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
+    $('#ct-block').innerHTML = field('b:inputs', 'Inputs', b.params.inputs, 'r, then the measurements') + field('b:Ts', 'Sample time', num(b.params.Ts, 4), 'Ts, s; every variant runs at it');
+    const names = inputNames(c);
+    $('#ct-ports').innerHTML = `<b>In</b> ${names.map((n, k) => `<span class="ctport">${k + 1} ${esc(n)}</span>`).join(' ')}`;
+
+    $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="srow vrow ${i === b.variant ? 'editing' : ''}" data-v="${i}" role="option" aria-selected="${i === b.variant}">
+        <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype">${esc(CONTROLLERS[v.type].label)}</span></li>`).join('');
+    $('#ct-del').disabled = b.variants.length < 2;
+
+    const v = b.variants[b.variant];
+    const def = CONTROLLERS[v.type];
+    $('#ct-ptitle').textContent = `${v.name} · ${def.summary}`;
+    $('#ct-params').innerHTML = def.params.length
+      ? def.params.map((p) => field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
+      : '<p class="phelp">No parameters.</p>';
+    $('#ct-about').textContent = ABOUT[v.type] ?? '';
+    $('#ct-lib').innerHTML = CONTROLLER_TYPES.map((t) => `<button class="ctlibitem" data-add="${t}" title="${esc(ABOUT[t] ?? '')}"><b>${esc(CONTROLLERS[t].label)}</b><span>${esc(CONTROLLERS[t].summary)}</span></button>`).join('');
+    bind(c);
+  }
+
+  function commitField(inp) {
+    const k = inp.dataset.k, raw = inp.value.trim();
+    let value;
+    if (inp.dataset.kind === 'vector') {
+      value = raw.split(/[\s,;]+/).filter(Boolean).map(parseSI);
+      if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas.'); render(); return; }
+    } else if (raw === '' && /^p:umin|p:umax$/.test(k)) value = null;
+    else {
+      value = parseSI(raw);
+      if (!Number.isFinite(value)) { app.toast('Enter a number, e.g. 0.5, 20m, 2k.'); render(); return; }
+    }
+    // An unchanged field is left alone: re-rendering on every blur would
+    // swallow the click that moved the focus away.
+    const c = current(), old = k.startsWith('b:') ? c.block.params[k.slice(2)] : c.block.variants[c.block.variant].params[k.slice(2)];
+    const same = Array.isArray(value) ? Array.isArray(old) && value.length === old.length && value.every((x, i) => x === old[i]) : value === null ? !Number.isFinite(old) : value === old;
+    if (same) return;
+    edit((blk, lv) => {
+      if (k.startsWith('b:')) {
+        const key = k.slice(2);
+        if (blk.params[key] === value) return false;
+        blk.params[key] = value;
+        if (key === 'inputs') lv.wires = lv.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
+        return true;
+      }
+      const v = blk.variants[blk.variant];
+      v.params[k.slice(2)] = value;
+      return true;
+    });
+  }
+
+  function bind(c) {
+    host.querySelectorAll('input[data-k]').forEach((inp) => {
+      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } });
+      inp.addEventListener('blur', () => { if (inp.dataset.cancel) { delete inp.dataset.cancel; render(); return; } commitField(inp); });
+      // The wheel nudges a number by 5 % (Shift: 1 %), and the display follows at once.
+      inp.addEventListener('wheel', (e) => {
+        if (inp.dataset.kind !== 'number') return;
+        const v = parseSI(inp.value);
+        if (!Number.isFinite(v) || v === 0) return;
+        e.preventDefault();
+        const f = (e.shiftKey ? 1.01 : 1.05) ** (e.deltaY < 0 ? 1 : -1);
+        inp.value = num(v * f, 4);
+        commitField(inp);
+        host.querySelector(`input[data-k="${inp.dataset.k}"]`)?.focus();
+      }, { passive: false });
+    });
+    host.querySelectorAll('[data-v]').forEach((row) => {
+      row.addEventListener('click', () => { const i = Number(row.dataset.v); if (i !== c.block.variant) edit((blk) => { blk.variant = i; }); });
+      row.addEventListener('dblclick', () => rename(row, Number(row.dataset.v)));
+    });
+    $('#ct-dup').onclick = () => edit((blk) => {
+      const v = structuredClone(blk.variants[blk.variant]);
+      v.name = `${v.name} copy`.slice(0, 40);
+      blk.variants.splice(blk.variant + 1, 0, v);
+      blk.variant += 1;
+    });
+    $('#ct-del').onclick = () => edit((blk) => {
+      if (blk.variants.length < 2) return false;
+      blk.variants.splice(blk.variant, 1);
+      blk.variant = Math.min(blk.variant, blk.variants.length - 1);
+    });
+    host.querySelectorAll('[data-add]').forEach((btn) => btn.addEventListener('click', () => edit((blk) => {
+      const type = btn.dataset.add, prev = blk.variants[blk.variant].params;
+      const v = normalizeVariant({ type });
+      // A new variant drives the same actuator: it keeps the limits, and a
+      // gain vector gets one entry per measurement.
+      if ('umin' in v.params) { v.params.umin = prev.umin ?? -Infinity; v.params.umax = prev.umax ?? Infinity; }
+      if (Array.isArray(v.params.K)) { v.params.K = new Array(Math.max(1, blk.params.inputs - 1)).fill(0); v.params.kr = 0; }
+      blk.variants.push(v);
+      blk.variant = blk.variants.length - 1;
+      app.toast(`Added ${v.name}: set its parameters, then compare with the others.`);
+    })));
+  }
+
+  function rename(row, i) {
+    const name = row.querySelector('.sd');
+    const inp = document.createElement('input');
+    inp.className = 'field pfi';
+    inp.value = controllers().length ? current().block.variants[i].name : '';
+    name.replaceWith(inp);
+    inp.focus(); inp.select();
+    const done = (ok) => { if (ok && inp.value.trim()) edit((blk) => { blk.variants[i].name = inp.value.trim().slice(0, 40); }); else render(); };
+    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); });
+    inp.addEventListener('blur', () => done(true), { once: true });
+  }
+
+  return {
+    render() { if (!host.hidden) render(); },
+    shown: render,
+    open(path) { target = path; },
+  };
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }

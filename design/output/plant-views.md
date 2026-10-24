@@ -43,6 +43,7 @@ Style: `stroke`, `fill` (ink, muted, panel, ch1–ch4, or a CSS colour), `lineWi
 - Mass–spring–damper: "Hanging mass" (shapes; the mass hangs from a ceiling, as the person asked; bars for kinetic and spring energy).
 - Inverted pendulum: "Cart and pole" (shapes; nested groups move the cart and rotate the pole).
 - DC motor: "Motor shaft" (a rotor with a lobe and a pointer turning inside a fixed twelve-tick dial, so where it is and how fast it goes can be read; the person: "you need to have a mark on it").
+- Captions keep their width: `{formula:w.d}` prints d decimals padded to w characters. `polygon` (points `[[x, y], …]`) fills shapes such as the tank's water; `text` takes `anchor` (start, middle, end).
 - One view per system: the person found a shapes view and an SVG view of the same thing confusing. An arrow of zero length (a force of 0) is not drawn.
 
 ## Later

@@ -22,8 +22,10 @@
 //
 // Shapes: line, arrow (x1 y1 x2 y2), rect (x y w h, angle about its centre),
 // circle (cx cy r), spring and damper (x1 y1 x2 y2, width; spring: coils),
-// ground (x1 x2 y; "side": "above" hatches upwards, as a ceiling), text (x y text size; "{formula}" inside text is replaced
-// by its value), group (x y angle: translate then rotate; shapes inside).
+// ground (x1 x2 y; "side": "above" hatches upwards, as a ceiling), polygon
+// (points: [[x, y], …]), text (x y text size anchor; "{formula}" inside text
+// is replaced by its value, "{formula:6.1}" with 1 decimal in 6 characters),
+// group (x y angle: translate then rotate; shapes inside).
 // Style: stroke, fill (ink, muted, panel, ch1 … ch4, or any CSS colour) and
 // lineWidth (pixels). Angles in radians,
 // counter-clockwise. evalScene turns a view and the signal values at one
@@ -35,8 +37,18 @@ const ATTRS = {
   line: ['x1', 'y1', 'x2', 'y2'], arrow: ['x1', 'y1', 'x2', 'y2'],
   rect: ['x', 'y', 'w', 'h', 'angle'], circle: ['cx', 'cy', 'r'],
   spring: ['x1', 'y1', 'x2', 'y2', 'width', 'coils'], damper: ['x1', 'y1', 'x2', 'y2', 'width'],
-  ground: ['x1', 'x2', 'y'], text: ['x', 'y', 'size'], group: ['x', 'y', 'angle'],
+  ground: ['x1', 'x2', 'y'], text: ['x', 'y', 'size'], group: ['x', 'y', 'angle'], polygon: [],
 };
+
+// A text placeholder is {formula} or {formula:w.d}: d decimals, padded to w
+// characters, so a caption keeps its width while the numbers change.
+function placeholder(src, where) {
+  const m = /^(.*?):(\d*)\.?(\d*)$/.exec(src);
+  const f = value(m ? m[1] : src, where);
+  if (!m || (m[2] === '' && m[3] === '')) return (env) => fmt(f(env));
+  const w = Number(m[2] || 0), d = Number(m[3] || 0);
+  return (env) => { const v = f(env); return (Number.isFinite(v) ? v.toFixed(d) : '—').padStart(w, '\u2007'); };
+}
 
 function value(v, where) {
   if (typeof v === 'number') { const n = v; return () => n; }
@@ -47,7 +59,7 @@ function value(v, where) {
 }
 
 function template(src, where) {
-  return String(src).split(/(\{[^}]*\})/).map((part) => (part.startsWith('{') ? value(part.slice(1, -1), where) : part));
+  return String(src).split(/(\{[^}]*\})/).map((part) => (part.startsWith('{') ? placeholder(part.slice(1, -1), where) : part));
 }
 
 function normalizeSvgView(v, path) {
@@ -66,7 +78,7 @@ function normalizeSvgView(v, path) {
 
 // The bindings of an SVG view at one instant: [{ select, attr, value }].
 export function compileBindings(view) {
-  const list = view.bind.map((b) => ({ ...b, parts: template(b.value, 'bind') }));
+  const list = view.bind.map((b) => ({ ...b, parts: String(b.value).split(/(\{[^}]*\})/).map((part) => (part.startsWith('{') ? value(part.slice(1, -1), 'bind') : part)) }));
   return (env) => list.map(({ select, attr, parts }) => ({ select, attr, value: parts.map((p) => (typeof p === 'string' ? p : fmtAttr(p(env)))).join('') }));
 }
 const fmtAttr = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(6))) : '0');
@@ -83,6 +95,11 @@ export function normalizeView(v, path = 'views[0]') {
       const where = `${p}[${i}]`;
       if (!ATTRS[s?.type]) throw new Error(`${where}.type: one of ${Object.keys(ATTRS).join(', ')}`);
       for (const a of ATTRS[s.type]) if (s[a] !== undefined) value(s[a], `${where}.${a}`);
+      if (s.type === 'polygon') {
+        if (!Array.isArray(s.points) || s.points.length < 2 || !s.points.every((q) => Array.isArray(q) && q.length === 2)) throw new Error(`${where}.points: a list of [x, y] pairs`);
+        s.points.forEach((q, j) => q.forEach((c) => value(c, `${where}.points[${j}]`)));
+      }
+      if (s.type === 'text') template(s.text ?? '', `${where}.text`);
       if (s.type === 'group') check(s.shapes ?? [], `${where}.shapes`);
     });
   };
@@ -95,14 +112,15 @@ export function compileScene(view) {
   const build = (shapes) => shapes.map((s) => {
     const f = {};
     for (const a of ATTRS[s.type]) f[a] = s[a] === undefined ? null : value(s[a], s.type);
-    const parts = s.type === 'text' ? String(s.text ?? '').split(/(\{[^}]*\})/).map((part) => (part.startsWith('{') ? value(part.slice(1, -1), 'text') : part)) : null;
-    return { s, f, parts, kids: s.type === 'group' ? build(s.shapes ?? []) : null };
+    const parts = s.type === 'text' ? template(s.text ?? '', 'text') : null;
+    const pts = s.type === 'polygon' ? s.points.map(([x, y]) => [value(x, 'polygon'), value(y, 'polygon')]) : null;
+    return { s, f, parts, pts, kids: s.type === 'group' ? build(s.shapes ?? []) : null };
   });
   const tree = build(view.shapes);
   return (env) => {
     const ops = [];
     const walk = (nodes, T) => {
-      for (const { s, f, parts, kids } of nodes) {
+      for (const { s, f, parts, pts, kids } of nodes) {
         const g = (a, d = 0) => (f[a] ? f[a](env) : d);
         const style = { stroke: s.stroke ?? 'ink', fill: s.fill ?? 'none', width: Number(s.lineWidth ?? 2) };
         const P = (x, y) => T(x, y);
@@ -156,9 +174,12 @@ export function compileScene(view) {
             for (let x = x1 + step / 2; x < x2; x += step) ops.push({ op: 'poly', closed: false, pts: [P(x, y), P(x - step * 0.8, y + dir * step * 0.8)], ...style, stroke: 'muted', width: 1, fill: 'none' });
             break;
           }
+          case 'polygon':
+            ops.push({ op: 'poly', closed: true, pts: pts.map(([x, y]) => P(x(env), y(env))), ...style, fill: s.fill ?? 'panel' });
+            break;
           case 'text': {
-            const text = parts.map((p) => (typeof p === 'string' ? p : fmt(p(env)))).join('');
-            ops.push({ op: 'text', at: P(g('x'), g('y')), text, size: g('size', 13), fill: s.fill ?? 'ink' });
+            const text = parts.map((p) => (typeof p === 'string' ? p : p(env))).join('');
+            ops.push({ op: 'text', at: P(g('x'), g('y')), text, size: g('size', 13), fill: s.fill ?? 'ink', anchor: ['start', 'end'].includes(s.anchor) ? s.anchor : 'middle' });
             break;
           }
           default:

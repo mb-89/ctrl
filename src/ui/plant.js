@@ -3,7 +3,7 @@
 // from the library, wired output to input, grouped into subsystems that nest,
 // and subsystems can be saved to the library. See design/output/plant-editor.md.
 
-import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram } from '../core/diagram.js';
+import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames } from '../core/diagram.js';
 import { SYSTEM_LIBRARY } from '../core/systems.js';
 import { num, parseSI } from './units.js';
 import { createScene } from './scene.js';
@@ -12,11 +12,12 @@ const NS = 'http://www.w3.org/2000/svg';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const GROUPS = [
   ['Signals', ['source', 'sink', 'terminator']],
-  ['Math', ['gain', 'sum', 'switch']],
+  ['Control', ['controller']],
+  ['Math', ['gain', 'sum', 'switch', 'fcn']],
   ['Dynamics', ['integrator', 'delay', 'firstOrder', 'secondOrder', 'tf']],
   ['Models', ['fopdt', 'lagChain', 'integratorLag', 'doubleIntegrator', 'inverseResponse']],
   ['Sensors', ['quantizer', 'noise']],
-  ['Physics', ['cartPole']],
+  ['Physics', ['cartPole', 'pendulumCart', 'conicalTank']],
   ['Nonlinear', ['saturation']],
   ['Structure', ['subsystem', 'inport', 'outport']],
 ];
@@ -31,7 +32,8 @@ function size(b) {
   if (b.type === 'sum') return [34, 34];
   if (b.type === 'gain') return [58, 40];
   if (['source', 'sink', 'inport', 'outport'].includes(b.type)) return [70, 28];
-  if (diagramBlockDef(b.type).ode) return [150, 60];
+  if (diagramBlockDef(b.type).ode) return [150, Math.max(60, 18 * blockPorts(b)[1] + 12)];
+  if (b.type === 'controller') return [150, Math.max(60, 18 * blockPorts(b)[0] + 12)];
   if (b.type === 'terminator') return [26, 26];
   if (b.type === 'switch') { const n = b.params.inputs; return [56, Math.max(40, 18 * n + 8)]; }
   const [ni, no] = blockPorts(b);
@@ -274,7 +276,7 @@ export function createPlantEditor(root, app) {
         text = `<text class="bt" x="${b.x + 9}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${b.x + 9}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
-    const outNames = def.outputs ?? [];
+    const outNames = outputNames(def, b.params);
     const ports = g.outs.map((p, i) => (outNames[i] ? `<text class="pn" x="${p.x + (b.flip ? 8 : -8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'start' : 'end'}">${esc(outNames[i])}</text>` : '')).join('')
       + g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
       + g.outs.map((p, i) => `<circle class="port out" data-port="out" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('');
@@ -286,7 +288,7 @@ export function createPlantEditor(root, app) {
   // parameters are on the right), else its first parameters, cut to fit.
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const text = def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
     const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
@@ -378,9 +380,10 @@ export function createPlantEditor(root, app) {
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="key small" data-act="flip">Flip</button>`;
       if (b.type === 'subsystem') html += `<button class="key small" data-act="open">Open</button><button class="key small" data-act="save">Save to library</button>`;
       if (b.type === 'source') html += `<button class="key small" data-act="signal">Edit signal ${esc(b.params.signal)}</button>`;
+      if (b.type === 'controller') html += `<button class="key small primary" data-act="controller">Open in the Controller tab</button>`;
       html += '</div>';
       if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="key small primary" data-act="saveok">Save</button><button class="key small" data-act="savecancel">Cancel</button></div>`;
-      const role = { sink: ' · recorded: pick it as a scope channel source', source: ' · plays the signal made in the Input tab', terminator: ' · ends a signal without recording it', outport: ' · passes the signal up to the enclosing block', inport: ' · takes the signal from the enclosing block', switch: ' · double-click it on the canvas to move to the next input' }[b.type] ?? '';
+      const role = { sink: ' · recorded: pick it as a scope channel source', source: ' · plays the signal made in the Input tab', terminator: ' · ends a signal without recording it', outport: ' · passes the signal up to the enclosing block', inport: ' · takes the signal from the enclosing block', switch: ' · double-click it on the canvas to move to the next input', controller: ` · runs “${esc(b.variants?.[b.variant]?.name ?? '')}”; double-click it to open the Controller tab` }[b.type] ?? '';
       html += `<p class="phelp">${esc(def.formula)}${role}</p>`;
       box.innerHTML = html;
       bindFields(b);
@@ -419,6 +422,7 @@ export function createPlantEditor(root, app) {
           const key = f.slice(2);
           if ((blk.type === 'source' && key === 'signal') || (blk.type === 'sink' && key === 'name')) { renameNamed(blk, value); return false; }
           if (blk.type === 'sum' && key === 'signs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value.length; });
+          if (blk.type === 'controller' && key === 'inputs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
           if (blk.type === 'switch' && key === 'inputs') {
             d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
             blk.params.position = Math.min(blk.params.position, value);
@@ -433,6 +437,7 @@ export function createPlantEditor(root, app) {
     if (what === 'flip') edit((d) => { const blk = d.blocks.find((x) => x.id === b.id); blk.flip = !blk.flip; if (!blk.flip) delete blk.flip; });
     if (what === 'open') enter(b.id);
     if (what === 'signal') app.editSignal(b.params.signal);
+    if (what === 'controller') app.openController([...path, b.id]);
     if (what === 'save') { saveName = b.name ?? 'My block'; renderProps(); $('#pl-props [data-f="libname"]')?.focus(); }
     if (what === 'savecancel') { saveName = null; renderProps(); }
     if (what === 'saveok') {
@@ -590,6 +595,7 @@ export function createPlantEditor(root, app) {
         // preventDefault keeps this mouse-down from moving focus off the new field.
         if (blk?.type === 'source' || blk?.type === 'sink') { e.preventDefault(); renameOnCanvas(blk); }
         else if (blk?.type === 'switch') edit((d) => { const s2 = d.blocks.find((x) => x.id === id); s2.params.position = (s2.params.position % s2.params.inputs) + 1; });
+        else if (blk?.type === 'controller') app.openController([...path, id]);
         else enter(id);
         return;
       }

@@ -364,6 +364,22 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   .pview { height: 360px; }
   .plib { max-height: 200px; }
 }
+
+/* Controller tab */
+.ctl { display: grid; grid-template-columns: minmax(200px, 250px) minmax(200px, 260px) minmax(260px, 1fr) minmax(200px, 260px); gap: 14px; align-items: stretch; height: 100%; min-height: 0; }
+.ctl > .gcol { min-height: 0; overflow: auto; }
+.ctname { font-weight: 600; font-size: 13px; color: var(--ink); }
+.ctblocks { display: flex; flex-direction: column; gap: 4px; }
+.ctport { display: inline-block; font-family: var(--mono); font-size: 11.5px; padding: 0 5px; margin: 2px 2px 0 0; border-radius: 4px; background: var(--panel); border: 1px solid var(--line); white-space: nowrap; }
+.vlist { margin: 0; list-style: none; flex: 0 1 auto; }
+.vrow { grid-template-columns: 14px minmax(0, 1fr) auto; }
+.vrow .vdot { font-size: 10px; color: #33d17a; }
+.vrow .vtype { font-size: 11px; color: var(--lcd-dim); white-space: nowrap; }
+.ctparams .pf { grid-template-columns: 120px minmax(0, 1fr); }
+.ctlib { display: flex; flex-direction: column; gap: 6px; }
+.ctlibitem { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); cursor: pointer; font: inherit; font-size: 12.5px; }
+.ctlibitem:hover { border-color: var(--ink-2); }
+.ctlibitem span { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -402,6 +418,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   <div class="tabpanel">
     <div id="tab-input" role="tabpanel"></div>
     <div id="tab-plant" role="tabpanel" hidden></div>
+    <div id="tab-controller" role="tabpanel" hidden></div>
     <div id="tab-later" role="tabpanel" hidden></div>
   </div>
 </section>
@@ -409,7 +426,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <div id="drop" class="drop" hidden>Drop a project file (.json or .html)</div>
 <div id="help-dlg" class="overlay" hidden><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
 <h2 id="help-title">Loop Tuner</h2>
-<p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time: the Input tab makes the signals, the Plant tab wires the system as a block diagram.</p>
+<p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time: the Input tab makes the signals, the Plant tab wires the system as a block diagram, the Controller tab chooses and tunes its controllers. Earlier runs stay faded on the display for five runs, so a change can be compared with before.</p>
 <h3>Display</h3>
 <div class="keys">
   <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record in real time, over and over.</span>
@@ -435,10 +452,12 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   <span><kbd>Ctrl</kbd> <kbd>Z</kbd></span><span>Undo; <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd> redo</span>
 </div>
 <h3>Plant</h3>
-<p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (y1, y2, …) can be shown on any channel. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Double-click a Switch to move it to its next input. Wheel zooms the canvas; dragging the background pans.</p>
+<p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (x, speed, …) can be shown on any channel. Double-click a <b>Controller</b> block to open it in the Controller tab. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Double-click a Switch to move it to its next input. Wheel zooms the canvas; dragging the background pans.</p>
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
+<h3>Controller</h3>
+<p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
 <h3>System library</h3>
-<p>Complete example systems: input, plant and, where there is one, controller. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
+<p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
@@ -1319,6 +1338,170 @@ function penalized(ev) {
 
 return { DEFAULT_GOAL, normalizeGoal, evaluateGoal, compareEvals, penalized };
 })();
+// ---- core/controllers.js
+__mods['core/controllers.js'] = (() => {
+// The controller library: implementations a Controller block can run. Every
+// implementation has the same interface, so a block can hold several of them
+// as variants and switch between them (as Simulink's variant subsystems):
+//
+//   inputs  [r, y1, y2, …]   the reference first, then the measurements
+//   output  u                held between samples (zero-order hold)
+//
+// Each runs digitally at the block's sample time Ts. make(params, Ts) returns
+// { step(inputs) -> u }, called once per sample with the inputs at that instant.
+
+const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
+const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
+const LIMITS = [num('umin', 'u min', -Infinity, { unit: 'u' }), num('umax', 'u max', Infinity, { unit: 'u' })];
+const PREFILTER = num('Tr', 'Prefilter Tr', 0, { unit: 's', min: 0, help: 'Vorfilter: a first-order lag on r; 0 is off' });
+const START = num('u0', 'Start output u0', 0, { unit: 'u', help: 'the integral part at t = 0, so a loop can start in balance' });
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
+
+// A first-order prefilter on the reference (Vorfilter), exact for a held input.
+function prefilter(Tr, Ts) {
+  if (!(Tr > 0)) return (r) => r;
+  const a = Math.exp(-Ts / Tr);
+  let rf = null;
+  return (r) => { rf = rf === null ? r : a * rf + (1 - a) * r; return rf; };
+}
+
+// Linear interpolation in a table, held flat beyond its ends.
+function lookup(xs, ys, x) {
+  if (x <= xs[0]) return ys[0];
+  for (let i = 1; i < xs.length; i++) if (x <= xs[i]) return ys[i - 1] + ((ys[i] - ys[i - 1]) * (x - xs[i - 1])) / (xs[i] - xs[i - 1]);
+  return ys[ys.length - 1];
+}
+
+// A PI(D) step shared by the fixed and the scheduled controller: derivative on
+// the measurement (filtered), setpoint weight b on the P part, integration
+// stopped while the output is saturated and the error would push it further.
+function pidCore(Ts, u0 = 0) {
+  let I = u0, D = 0, yPrev = null;
+  return (rf, y, g) => {
+    if (yPrev === null) yPrev = y;
+    D = (g.Tf * D - g.Kd * (y - yPrev)) / (g.Tf + Ts);
+    yPrev = y;
+    const e = rf - y;
+    const v = g.Kp * (g.b * rf - y) + I + D;
+    const u = clamp(v, g.umin, g.umax);
+    if (u === v || Math.sign(e) !== Math.sign(v - u)) I += g.Ki * Ts * e;
+    return u;
+  };
+}
+
+const CONTROLLERS = {
+  off: {
+    label: 'Off', summary: 'u = 0', params: [],
+    make: () => ({ step: () => 0 }),
+  },
+  pid: {
+    label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
+    params: [num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1), PREFILTER, START, ...LIMITS],
+    make(p, Ts) {
+      const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
+      return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
+    },
+  },
+  stateFeedback: {
+    label: 'State feedback', summary: 'u = kr r − K · y',
+    params: [vec('K', 'Gains K', [1]), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
+    make(p, Ts) {
+      const pre = prefilter(p.Tr, Ts);
+      return {
+        step(x) {
+          let u = p.kr * pre(x[0]);
+          for (let i = 0; i < p.K.length; i++) u -= p.K[i] * (x[i + 1] ?? 0);
+          return clamp(u, p.umin, p.umax);
+        },
+      };
+    },
+  },
+  gainScheduled: {
+    label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
+    params: [vec('at', 'At y =', [0, 1]), vec('Kp', 'Kp', [1, 1]), vec('Ki', 'Ki', [0, 0]), PREFILTER, START, ...LIMITS],
+    check(p) { if (p.Kp.length !== p.at.length || p.Ki.length !== p.at.length) return 'At, Kp and Ki need the same number of values'; if (p.at.some((v, i) => i && v <= p.at[i - 1])) return 'the At values must increase'; return ''; },
+    make(p, Ts) {
+      const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
+      const g = { Kp: 0, Ki: 0, Kd: 0, Tf: 0, b: 1, umin: p.umin, umax: p.umax };
+      return {
+        step(x) {
+          const y = x[1] ?? 0;
+          g.Kp = lookup(p.at, p.Kp, y); g.Ki = lookup(p.at, p.Ki, y);
+          return core(pre(x[0]), y, g);
+        },
+      };
+    },
+  },
+  swingUp: {
+    // For a pendulum on a cart, inputs r, x, θ, v, ω (θ = 0 upright). Far from
+    // upright it pumps energy: with E = ½ l² ω² + g l (cos θ − 1), zero at the
+    // top, the push u = kE · E · ω · cos θ makes V = ½ E² fall (a Lyapunov
+    // function), so each swing climbs higher, while kx, kv pull the cart back to the
+    // middle. Near the top (|θ| < θs) it
+    // catches the pole with state feedback u = kr r − K · [x, θ, v, ω].
+    label: 'Swing-up (Lyapunov) + state feedback', summary: 'energy pumping, then u = kr r − K · y',
+    params: [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 }), vec('K', 'Gains K', [-1, -30, -2, -5]), num('kr', 'Prefilter kr', -1), ...LIMITS],
+    make(p) {
+      let caught = false;
+      return {
+        step([r, x = 0, th = 0, v = 0, w = 0]) {
+          const tw = wrap(th);
+          if (Math.abs(tw) < p.thetaS) caught = true;
+          else if (Math.abs(tw) > 2 * p.thetaS) caught = false;
+          if (caught) {
+            const y = [x, tw, v, w];
+            let u = p.kr * r;
+            for (let i = 0; i < p.K.length; i++) u -= p.K[i] * y[i];
+            return clamp(u, p.umin, p.umax);
+          }
+          const E = 0.5 * p.l * p.l * w * w + p.g * p.l * (Math.cos(tw) - 1);
+          // A pole hanging still has no swing to pump: give it a start.
+          const pump = Math.abs(w) < 1e-3 && Math.abs(Math.cos(tw) + 1) < 1e-3 ? 1 : p.kE * E * w * Math.cos(tw);
+          return clamp(pump - p.kx * x - p.kv * v, p.umin, p.umax);
+        },
+      };
+    },
+  },
+};
+
+const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
+
+function normalizeParam(spec, v, where) {
+  v ??= spec.default;
+  if (spec.kind === 'vector') {
+    if (!Array.isArray(v) || !v.length || !v.every((x) => Number.isFinite(Number(x)))) throw new Error(`${where}.${spec.key}: a list of numbers`);
+    return v.map(Number);
+  }
+  if (v === null || v === '' || v === 'inf' || v === 'Infinity' || v === '-inf' || v === '-Infinity') return v && String(v).startsWith('-') ? -Infinity : spec.default;
+  const n = Number(v);
+  if (Number.isNaN(n)) throw new Error(`${where}.${spec.key}: expected a number`);
+  if (spec.min !== undefined && n < spec.min) throw new Error(`${where}.${spec.key}: at least ${spec.min}`);
+  return n;
+}
+
+// One variant: { name, type, params }. Unknown types and bad values fail with
+// the valid choices named.
+function normalizeVariant(v, where = 'variant') {
+  const def = CONTROLLERS[v?.type];
+  if (!def) throw new Error(`${where}.type: one of ${CONTROLLER_TYPES.join(', ')}`);
+  const params = {};
+  for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
+  if (params.umin > params.umax) [params.umin, params.umax] = [params.umax, params.umin];
+  const bad = def.check?.(params);
+  if (bad) throw new Error(`${where}: ${bad}`);
+  return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
+}
+
+// The law of a Controller block's active variant.
+function makeLaw(variant, Ts) {
+  return CONTROLLERS[variant.type].make(variant.params, Ts);
+}
+
+
+return { CONTROLLERS, CONTROLLER_TYPES, normalizeVariant, makeLaw };
+})();
 // ---- core/diagram.js
 __mods['core/diagram.js'] = (() => {
 // Block diagrams: the plant as blocks wired together, with subsystems that
@@ -1338,6 +1521,7 @@ const { BLOCKS, blockDef, normalizeBlock } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
 const { gaussAt } = __mods['core/signals.js'];
 const { compileExpr } = __mods['core/expr.js'];
+const { normalizeVariant, makeLaw } = __mods['core/controllers.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
 // Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
@@ -1356,7 +1540,7 @@ const ELEMENTS = {
   gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
   integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
-  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 })], ports: () => [1, 1], formula: 'e^(−Ls)' },
+  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before L', 0)], ports: () => [1, 1], formula: 'e^(−Ls)' },
   fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
@@ -1364,12 +1548,12 @@ const ELEMENTS = {
   cartPole: {
     // Point mass m on a massless pole of length l, hinged on a cart of mass M.
     // θ = 0 is upright, positive leaning towards +x. b is the cart's friction.
-    label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ', outputs: ['x', 'θ'], ports: () => [1, 2],
+    label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ, v, ω', outputs: ['x', 'θ', 'v', 'ω'], ports: () => [1, 4],
     params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
     ode: {
       n: 4,
       init: (p) => [0, 0, p.theta0, 0],
-      out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; },
+      out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; y[2] = X[o + 1]; y[3] = X[o + 3]; },
       f: (X, o, u, p, dX) => {
         const v = X[o + 1], th = X[o + 2], w = X[o + 3];
         const s = Math.sin(th), c = Math.cos(th);
@@ -1379,8 +1563,105 @@ const ELEMENTS = {
       bound: (p) => 2 * Math.sqrt(p.g * (p.M + p.m) / (p.M * p.l)) + p.b / p.M,
     },
   },
+  pendulumCart: {
+    // A chain of 1–3 rods on a cart (mass M): point masses m1, m2, m3 at the
+    // ends of massless rods l1, l2, l3, each hinged on the one before. Angles
+    // from upright, positive leaning towards +x. Lagrange's equations
+    // M(q) q̈ = f(q, q̇, F) are solved at each evaluation.
+    label: 'Pendulum chain on cart', group: 'Physics', formula: 'F → x, θ…, v, ω…',
+    outputs: (p) => ['x', ...links(p).map((i) => `θ${i + 1}`), 'v', ...links(p).map((i) => `ω${i + 1}`)],
+    ports: (p) => [1, 2 * p.links + 2],
+    params: [num('links', 'Links', 3, { min: 1, int: true, max: 3 }), num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }),
+      ...[1, 2, 3].flatMap((i) => [num(`m${i}`, `Mass m${i}`, 0.1, { unit: 'kg', min: 1e-6 }), num(`l${i}`, `Rod l${i}`, 0.25, { unit: 'm', min: 1e-6 })]),
+      num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }),
+      ...[1, 2, 3].map((i) => num(`theta${i}0`, `Start θ${i}₀`, i === 1 ? 0.05 : 0, { unit: 'rad' }))],
+    ode: {
+      n: (p) => 2 * p.links + 2,
+      init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
+      out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
+      f: (X, o, u, p, dX) => {
+        const n = p.links, ix = links(p);
+        const m = ix.map((i) => p[`m${i + 1}`]), l = ix.map((i) => p[`l${i + 1}`]);
+        const th = ix.map((i) => X[o + 1 + i]), w = ix.map((i) => X[o + n + 2 + i]), v = X[o + n + 1];
+        const mu = ix.map((i) => m.slice(i).reduce((a, b) => a + b, 0));   // mass at or beyond link i
+        const A = Array.from({ length: n + 1 }, () => new Array(n + 1).fill(0)), rhs = new Array(n + 1).fill(0);
+        A[0][0] = p.M + mu[0];
+        rhs[0] = u - p.b * v;
+        for (const j of ix) {
+          A[0][j + 1] = A[j + 1][0] = mu[j] * l[j] * Math.cos(th[j]);
+          rhs[0] += mu[j] * l[j] * Math.sin(th[j]) * w[j] * w[j];
+          rhs[j + 1] = mu[j] * p.g * l[j] * Math.sin(th[j]);
+          for (const k of ix) {
+            const mk = mu[Math.max(j, k)] * l[j] * l[k];
+            A[j + 1][k + 1] = mk * Math.cos(th[j] - th[k]);
+            rhs[j + 1] -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
+          }
+        }
+        const q = solveLinear(A, rhs);
+        dX[o] = v;
+        for (const j of ix) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
+        dX[o + n + 1] = q[0];
+      },
+      bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
+    },
+  },
+  conicalTank: {
+    // A tank that widens upwards (radius r0 at the bottom, R at height H),
+    // filled at q and draining through an outlet of area a (Torricelli). Its
+    // dynamics are fast when nearly empty and slow when full.
+    label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
+    params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
+    ode: {
+      n: 1,
+      init: (p) => [p.h0],
+      out: (X, o, p, y) => { y[0] = X[o]; },
+      f: (X, o, u, p, dX) => {
+        const h = Math.max(0, X[o]);
+        const r = p.r0 + ((p.R - p.r0) * Math.min(h, p.H)) / p.H;
+        const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
+        dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+      },
+      bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
+    },
+  },
+  // A digital controller: inputs r, y1, y2, …; output u, held between samples.
+  // It holds one or more variants (implementations from controllers.js with
+  // this same interface); "variant" is the index of the one that runs.
+  controller: {
+    label: 'Controller', group: 'Control', formula: 'u = C(r, y)',
+    params: [num('inputs', 'Inputs (r, y…)', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.01, { unit: 's', min: 1e-4 })],
+    ports: (p) => [p.inputs, 1],
+  },
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
+
+const links = (p) => Array.from({ length: p.links }, (_, i) => i);
+
+// Solves A x = b (small, dense) by Gaussian elimination with partial pivoting.
+function solveLinear(A, b) {
+  const n = b.length, M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    for (let r = c + 1; r < n; r++) {
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  const x = new Array(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = M[r][n];
+    for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k];
+    x[r] = s / M[r][r];
+  }
+  return x;
+}
+
+// Output names of a block (physics blocks may depend on their parameters).
+function outputNames(def, params) {
+  return typeof def.outputs === 'function' ? def.outputs(params) : def.outputs ?? [];
+}
 
 // Every type a diagram can hold, with its label, group, params and ports.
 function diagramBlockDef(type) {
@@ -1430,6 +1711,7 @@ function normalizeParams(type, params = {}, where) {
       if (!Number.isFinite(v)) throw new Error(`${where}.${p.key}: expected a number`);
       if (p.int) v = Math.round(v);
       if (p.min !== undefined && v < p.min) throw new Error(`${where}.${p.key}: at least ${p.min}`);
+      if (p.max !== undefined && v > p.max) throw new Error(`${where}.${p.key}: at most ${p.max}`);
     }
     out[p.key] = v;
   }
@@ -1449,6 +1731,11 @@ function normalizeDiagram(d, path = 'plant') {
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
+    if (b.type === 'controller') {
+      const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: 'pid' }];
+      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`));
+      out.variant = Math.min(Math.max(0, Math.round(Number(b.variant) || 0)), out.variants.length - 1);
+    }
     return out;
   });
   const byId = Object.fromEntries(blocks.map((b) => [b.id, b]));
@@ -1569,11 +1856,17 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       const def = diagramBlockDef(b.type);
       const [nIn, nOut] = blockPorts(b);
+      if (b.type === 'controller') {
+        const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: 'pid' });
+        const k = add({ kind: 'ctrl', name, ft: false, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts), next: 0, u: 0, x: new Float64Array(nIn) });
+        outs[b.id] = [k]; ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+        continue;
+      }
       if (def.ode) {
         // A physics block: its state integrates inside the diagram; one tap
         // node per output reads what the block computed from its state.
         const k = add({ kind: 'ode', name, ft: false, ode: def.ode, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
-        outs[b.id] = def.outputs.map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
+        outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
@@ -1586,7 +1879,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       } else if (b.type === 'gain') Object.assign(node, { kind: 'gain', K: b.params.K, ft: true });
       else if (b.type === 'sum') Object.assign(node, { kind: 'sum', signs: [...b.params.signs].map((c) => (c === '-' ? -1 : 1)), ft: true });
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
-      else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, ft: b.params.L <= 0 });
+      else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, y0: b.params.y0, ft: b.params.L <= 0 });
       else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
       else if (b.type === 'fcn') Object.assign(node, { kind: 'fcn', f: compileExpr(b.params.expr, { vars: true }), env: { u: 0, t: 0 }, ft: true });
       else if (b.type === 'quantizer') Object.assign(node, { kind: 'quant', q: b.params.q, ft: true });
@@ -1625,22 +1918,38 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   let n = 0, bound = 0;
   for (const nd of nodes) {
     if (nd.kind === 'ss') { nd.off = n; n += nd.ss.n; bound = Math.max(bound, nd.bound); }
-    if (nd.kind === 'ode') { nd.off = n; n += nd.ode.n; bound = Math.max(bound, nd.bound); }
+    if (nd.kind === 'ode') { nd.off = n; n += typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n; bound = Math.max(bound, nd.bound); }
   }
   const vals = new Float64Array(nodes.length);
+  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl');
+  const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
-  const histAt = (hist, tau) => {
-    if (tau < 0 || !hist.length) return 0;
+  const histAt = (hist, tau, y0 = 0) => {
+    if (tau < 0 || !hist.length) return y0;
     const f = tau / h, i = Math.floor(f);
     if (i >= hist.length - 1) return hist[hist.length - 1];
     return hist[i] + (hist[i + 1] - hist[i]) * (f - i);
   };
   const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
 
-  return {
-    n, bound, warnings,
+  const self = {
+    n, bound, warnings, minTs,
     setStep(step) { h = step; },
+    // Called at each completed step with the state there: a controller whose
+    // sample is due reads its inputs and sets its held output; the outputs are
+    // then evaluated again so what is recorded at t already sees it.
+    sample(t, X, o, u) {
+      let due = false;
+      for (const nd of ctrls) {
+        if (t < nd.next - 1e-9) continue;
+        for (let s = 0; s < nd.x.length; s++) nd.x[s] = inOf(nd, s);
+        nd.u = nd.law.step(nd.x);
+        while (nd.next <= t + 1e-9) nd.next += nd.Ts;
+        due = true;
+      }
+      if (due) self.eval(t, X, o, u, null);
+    },
     // Initial state: zero, except for physics blocks with initial conditions.
     init(X, o) { for (const nd of nodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
     eval(t, X, o, u, dX) {
@@ -1654,13 +1963,14 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
           case 'gain': y = nd.K * inOf(nd); break;
           case 'sum': y = 0; for (let s = 0; s < nd.signs.length; s++) y += nd.signs[s] * inOf(nd, s); break;
           case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
-          case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L) : inOf(nd); break;
+          case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L, nd.y0) : inOf(nd); break;
           case 'switch': y = inOf(nd, nd.pick); break;
           case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
           case 'quant': y = nd.q * Math.round(inOf(nd) / nd.q); break;
           case 'noise': y = inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
           case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
           case 'tap': y = nodes[nd.parent].outv[nd.j]; break;
+          case 'ctrl': y = nd.u; break;
           default: {
             const { ss } = nd;
             const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
@@ -1690,9 +2000,10 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
   };
+  return self;
 }
 
-return { ELEMENTS, diagramBlockDef, diagramTypes, blockPorts, parseEnd, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, compileDiagram };
+return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, compileDiagram };
 })();
 // ---- core/sim.js
 __mods['core/sim.js'] = (() => {
@@ -1924,7 +2235,8 @@ function simulateSystem(diagram, signals, sim) {
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
   const el = compileDiagram(diagram, 'plant', { sources, standalone: true });
   const warnings = [...el.warnings];
-  const hmax = el.bound > 0 ? 0.5 / el.bound : Ts;
+  // Steps no longer than a controller's sample time, so it samples on time.
+  const hmax = Math.min(el.bound > 0 ? 0.5 / el.bound : Ts, el.minTs);
   let m = Math.max(1, Math.ceil(Ts / hmax - 1e-9));
   if (K * m > MAX_STEPS) { m = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
   const h = Ts / m, N = el.n;
@@ -1935,6 +2247,7 @@ function simulateSystem(diagram, signals, sim) {
   const t = new Float64Array(K + 1);
   const out = {};
   el.eval(0, X, 0, 0, null);
+  el.sample(0, X, 0, 0);
   el.record();
   let unstable = false;
   for (let k = 0; k <= K; k++) {
@@ -1956,6 +2269,7 @@ function simulateSystem(diagram, signals, sim) {
       el.eval(ts + h, Xt, 0, 0, k4);
       for (let i = 0; i < N; i++) X[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
       el.eval(ts + h, X, 0, 0, null);
+      el.sample(ts + h, X, 0, 0);
       el.record();
     }
   }
@@ -1969,24 +2283,67 @@ __mods['core/plants.js'] = (() => {
 // The System library's systems. Few, and each one does something visible:
 // its input moves the plant, its signals are named for what they are (force F,
 // position x, …) and on the scope, and its view shows the motion
-// (design/output/system-library.md). Each opens running, on its view in the
-// Plant tab (ui). Closed-loop systems join once the Controller tab exists.
+// (design/output/system-library.md). Each runs 5 s and opens running, on its
+// view in the Plant tab (ui). The controlled ones grow in difficulty: a PID
+// on a motor, a gain-scheduled PI on a tank, an energy (Lyapunov) swing-up of a
+// pendulum, state feedback on a triple pendulum. Each has a reference r and a
+// disturbance d, and a Controller block whose variants can be flipped.
 
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
 const channels = (...sources) => [0, 1, 2, 3].map((i) => ({ source: sources[i] ?? '', on: !!sources[i], scale: 1, offset: 0 }));
 const ui = (view) => ({ run: 'run', tab: 'plant', setup: 0.42, view });
+const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: 'controller', name: 'controller', params: { inputs, Ts }, variants, variant, x, y });
+const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
+const PERIOD = 5;
 
 // A fixed dial: twelve ticks every 30°, the quarter ones longer.
 const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
   type: 'group', angle: (i * Math.PI) / 6, shapes: [{ type: 'line', x1: 0, y1: r, x2: 0, y2: r + (i % 3 ? 0.06 : 0.12), stroke: 'muted', lineWidth: i % 3 ? 1.5 : 3 }],
 }));
 
+// A cart on a track carrying a chain of rods (angles from upright), with the
+// control force F and the disturbance d as arrows on the cart, and the
+// reference r as a mark on the track.
+function cartView(name, track, rods, caption, box) {
+  let chain = [];
+  for (let i = rods.length - 1; i >= 0; i--) {
+    const { len, angle } = rods[i];
+    chain = [{ type: 'group', y: i ? rods[i - 1].len : 0.1, angle, shapes: [
+      { type: 'line', x1: 0, y1: 0, x2: 0, y2: len, lineWidth: 4 },
+      { type: 'circle', cx: 0, cy: len, r: 0.04, fill: 'ch3' },
+      ...chain,
+    ] }];
+  }
+  return {
+    name, kind: '2d', view: box,
+    shapes: [
+      { type: 'line', x1: -track, y1: -0.065, x2: track, y2: -0.065, stroke: 'muted', lineWidth: 3 },
+      { type: 'line', x1: 'r', y1: -0.16, x2: 'r', y2: -0.08, stroke: 'ch1', lineWidth: 3 },
+      { type: 'group', x: `clamp(x, ${-track + 0.16}, ${track - 0.16})`, y: 0, shapes: [
+        { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
+        { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
+        { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
+        ...chain,
+        { type: 'arrow', x1: '-0.17 - 0.03*F', y1: 0.04, x2: -0.17, y2: 0.04, stroke: 'ch4', lineWidth: 3 },
+        { type: 'arrow', x1: '-0.17 - 0.03*d', y1: -0.02, x2: -0.17, y2: -0.02, stroke: 'muted', lineWidth: 3 },
+      ] },
+      { type: 'text', x: 0, y: box[3] - 0.08, text: caption, size: 13 },
+    ],
+  };
+}
+
+// Cart–pole gains: discrete LQR (Ts = 10 ms) at the upright rest, for the
+// outputs in block order (x, θ…, v, ω…); see design/output/system-library.md.
+const K_SINGLE = [-9.177, -63.18, -10.33, -13.34];
+const K_TRIPLE = [-6.9896, -497.8, 1400.5, -1011.7, -12.018, -18.079, 79.602, -102.41];
+const K_TRIPLE_GENTLE = [-2.3, -417, 1050, -686, -4.496, -14.83, 62.84, -67.32];
+
 const EXAMPLE_PLANTS = [
   {
     name: 'Mass–spring–damper',
-    notes: 'A 1 kg mass hangs on a spring (100 N/m) and a damper (1 N·s/m). At 0.1 s a force F = 1 N pulls it down: it drops about 10 mm and rings at 1.6 Hz while it settles, its energy swapping between motion (Ekin) and spring (Epot).',
-    signals: { F: { period: 2, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
+    notes: 'A 1 kg mass hangs on a spring (25 N/m) and a damper (0.5 N·s/m). At 0.1 s a force F = 1 N pulls it down: it drops about 40 mm and swings at 0.8 Hz while it settles, its energy moving between motion (Ekin) and spring (Epot). No controller.',
+    signals: { F: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
     scope: { channels: channels('F', 'x', 'Ekin', 'Epot') },
     ui: ui('Hanging mass'),
     diagram: {
@@ -1998,11 +2355,11 @@ const EXAMPLE_PLANTS = [
         { id: 'pos', type: 'integrator', name: 'position', params: { K: 1 }, x: 490, y: 100 },
         sink('x', 680, 108, 'm'),
         sink('v', 680, 20, 'm/s'),
-        { id: 'c', type: 'gain', name: 'damping c', params: { K: 1 }, x: 330, y: 200, flip: true },
-        { id: 'k', type: 'gain', name: 'spring k', params: { K: 100 }, x: 490, y: 270, flip: true },
+        { id: 'c', type: 'gain', name: 'damping c', params: { K: 0.5 }, x: 330, y: 200, flip: true },
+        { id: 'k', type: 'gain', name: 'spring k', params: { K: 25 }, x: 490, y: 270, flip: true },
         { id: 'ek', type: 'fcn', name: 'kinetic ½mv²', params: { expr: '0.5*1*u^2' }, x: 490, y: 360 },
         sink('Ekin', 680, 368, 'J'),
-        { id: 'ep', type: 'fcn', name: 'spring ½kx²', params: { expr: '0.5*100*u^2' }, x: 490, y: 440 },
+        { id: 'ep', type: 'fcn', name: 'spring ½kx²', params: { expr: '0.5*25*u^2' }, x: 490, y: 440 },
         sink('Epot', 680, 448, 'J'),
       ],
       wires: [
@@ -2012,108 +2369,206 @@ const EXAMPLE_PLANTS = [
       ],
     },
     views: [{
-      // x is the displacement downwards, drawn ×20; the energies are bars, 20 per J.
+      // x is the displacement downwards, drawn ×5; the energies are bars, 8 per J.
       name: 'Hanging mass', kind: '2d', view: [-0.9, -0.95, 1.1, 0.62],
       shapes: [
         { type: 'ground', x1: -0.35, x2: 0.35, y: 0.5, side: 'above' },
-        { type: 'spring', x1: -0.08, y1: 0.5, x2: -0.08, y2: '0 - 20*x', width: 0.09, coils: 8 },
-        { type: 'damper', x1: 0.09, y1: 0.5, x2: 0.09, y2: '0 - 20*x', width: 0.08 },
-        { type: 'rect', x: -0.18, y: '-0.26 - 20*x', w: 0.36, h: 0.26, fill: 'ch2' },
-        { type: 'text', x: 0, y: '-0.13 - 20*x', text: 'm', size: 18, fill: 'panel' },
-        { type: 'arrow', x1: 0, y1: '-0.28 - 20*x', x2: 0, y2: '-0.28 - 20*x - 0.25*F', stroke: 'ch1', lineWidth: 3 },
+        { type: 'spring', x1: -0.08, y1: 0.5, x2: -0.08, y2: '0 - 5*x', width: 0.09, coils: 8 },
+        { type: 'damper', x1: 0.09, y1: 0.5, x2: 0.09, y2: '0 - 5*x', width: 0.08 },
+        { type: 'rect', x: -0.18, y: '-0.26 - 5*x', w: 0.36, h: 0.26, fill: 'ch2' },
+        { type: 'text', x: 0, y: '-0.13 - 5*x', text: 'm', size: 18, fill: 'panel' },
+        { type: 'arrow', x1: 0, y1: '-0.28 - 5*x', x2: 0, y2: '-0.28 - 5*x - 0.25*F', stroke: 'ch1', lineWidth: 3 },
         { type: 'line', x1: -0.55, y1: -0.26, x2: -0.22, y2: -0.26, stroke: 'muted', lineWidth: 1 },
         { type: 'text', x: -0.68, y: -0.26, text: 'rest', size: 11, fill: 'muted' },
         { type: 'line', x1: 0.55, y1: -0.7, x2: 1.0, y2: -0.7, stroke: 'muted', lineWidth: 1 },
-        { type: 'rect', x: 0.6, y: -0.7, w: 0.14, h: '20*Ekin', fill: 'ch3' },
-        { type: 'rect', x: 0.82, y: -0.7, w: 0.14, h: '20*Epot', fill: 'ch4' },
+        { type: 'rect', x: 0.6, y: -0.7, w: 0.14, h: '8*Ekin', fill: 'ch3' },
+        { type: 'rect', x: 0.82, y: -0.7, w: 0.14, h: '8*Epot', fill: 'ch4' },
         { type: 'text', x: 0.67, y: -0.78, text: 'Ekin', size: 11, fill: 'muted' },
         { type: 'text', x: 0.89, y: -0.78, text: 'Epot', size: 11, fill: 'muted' },
-        { type: 'text', x: 0.1, y: -0.9, text: 'x = {1000*x} mm down (drawn ×20)   F = {F} N', size: 13 },
+        { type: 'text', x: 0.1, y: -0.9, text: 'x = {1000*x:5.1} mm down (drawn ×5)   F = {F:3.1} N', size: 13 },
       ],
     }],
   },
   {
-    name: 'Inverted pendulum',
-    notes: 'A pole balanced on a cart (nonlinear, the Cart–pole block). It starts tilted 1°; at 0.1 s a short push (F = 2 N for 0.1 s) moves the cart. With no controller yet the pole falls over in about half a second.',
-    signals: { F: { period: 1.5, components: [{ type: 'square', params: { amplitude: 2, time: 0.1, width: 0.1, period: 1, count: 1 } }] } },
-    scope: { channels: channels('F', 'x', 'theta') },
-    ui: ui('Cart and pole'),
-    diagram: {
-      blocks: [
-        src('F', 30, 124, 'N'),
-        { id: 'cart', type: 'cartPole', name: 'cart and pole', params: { M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: 0.0175 }, x: 160, y: 104 },
-        sink('x', 380, 100, 'm'), sink('theta', 380, 160, 'rad'),
-      ],
-      wires: [{ from: 'F', to: 'cart' }, { from: 'cart', to: 'x' }, { from: 'cart:1', to: 'theta' }],
+    name: 'DC motor, position control',
+    notes: 'A PID controls the shaft angle of a DC motor; the reference r jumps between 0 and 2 rad, and a load torque d brakes the shaft at 3.2 s. The controller it starts with is too aggressive: the shaft overshoots and rings. Flip the Controller tab to PD or PID with prefilter to see it settle, or tune it yourself.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 2, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
+      d: { period: PERIOD, components: [pulse(0.3, 3.2, 0.5)] },
     },
-    views: [{
-      name: 'Cart and pole', kind: '2d', view: [-1.2, -0.62, 1.2, 0.85],
-      shapes: [
-        { type: 'line', x1: -1.2, y1: -0.065, x2: 1.2, y2: -0.065, stroke: 'muted', lineWidth: 3 },
-        { type: 'line', x1: 0, y1: -0.12, x2: 0, y2: -0.065, stroke: 'muted', lineWidth: 1 },
-        { type: 'group', x: 'clamp(x, -1.05, 1.05)', y: 0, shapes: [
-          { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
-          { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
-          { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
-          { type: 'group', y: 0.1, angle: '-theta', shapes: [
-            { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.5, lineWidth: 4 },
-            { type: 'circle', cx: 0, cy: 0.5, r: 0.045, fill: 'ch3' },
-          ] },
-          { type: 'arrow', x1: '-0.17 - 0.15*F', y1: 0.04, x2: -0.17, y2: 0.04, stroke: 'ch1', lineWidth: 3 },
-        ] },
-        { type: 'text', x: 0, y: 0.76, text: 'x = {x} m   θ = {theta*180/pi}°   F = {F} N', size: 13 },
-      ],
-    }],
-  },
-  {
-    name: 'DC motor',
-    notes: 'A 6 V step drives a motor (armature lag, torque constant, load inertia, back-EMF feedback inside a Motor subsystem). The speed settles at 8.6 rad/s, about 1.4 turns a second; the angle keeps growing.',
-    signals: { V: { period: 2, components: [{ type: 'step', params: { amplitude: 6, time: 0.1 } }] } },
-    scope: { channels: channels('V', 'angle', 'speed') },
+    scope: { channels: channels('r', 'angle', 'V', 'd') },
     ui: ui('Motor shaft'),
     diagram: {
       blocks: [
-        src('V', 30, 112, 'V'),
+        src('r', 30, 112, 'rad'),
+        src('d', 180, 230, 'N·m'),
+        ctrl(130, 90, 2, 0.01, [
+          { name: 'P, too aggressive', type: 'pid', params: { Kp: 30, umin: -12, umax: 12 } },
+          { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
+          { name: 'PID with prefilter', type: 'pid', params: { Kp: 20, Ki: 10, Kd: 1.5, Tf: 0.01, Tr: 0.1, umin: -12, umax: 12 } },
+          { name: 'Off', type: 'off', params: {} },
+        ]),
         {
-          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 150, y: 96,
+          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
           diagram: {
             blocks: [
-              { id: 'V', type: 'inport', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 300, y: 220 },
               { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
               { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
               { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 360, y: 100 },
-              { id: 'mech', type: 'firstOrder', name: 'load', params: { K: 10, tau: 0.2 }, x: 460, y: 96 },
-              { id: 'w', type: 'outport', params: { port: 1 }, x: 630, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 360, y: 200, flip: true },
+              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
+              { id: 'mech', type: 'firstOrder', name: 'load', params: { K: 10, tau: 0.2 }, x: 510, y: 96 },
+              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
+              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 360, y: 280, flip: true },
             ],
             wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'mech' },
-              { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
+              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
             ],
           },
         },
-        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 340, y: 96 },
-        sink('angle', 540, 106, 'rad'),
-        sink('speed', 540, 200, 'rad/s'),
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        sink('angle', 690, 106, 'rad'),
+        sink('speed', 690, 30, 'rad/s'),
+        sink('V', 330, 20, 'V'),
       ],
-      wires: [{ from: 'V', to: 'motor' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' }, { from: 'motor', to: 'speed' }],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
+        { from: 'motor', to: 'speed' }, { from: 'int', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
+      ],
     },
     views: [{
       // The rotor turns with angle (counter-clockwise positive) inside a fixed
-      // dial; an off-centre lobe and a pointer show where it is.
+      // dial; the yellow mark on the dial is the reference r.
       name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
       shapes: [
         { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
         ...ticks(0.62),
+        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: 0.66, x2: 0, y2: 0.8, stroke: 'ch1', lineWidth: 5 }] },
         { type: 'group', angle: 'angle', shapes: [
           { type: 'circle', cx: 0, cy: 0, r: 0.5, fill: 'ink' },
           { type: 'circle', cx: 0, cy: 0.27, r: 0.15, fill: 'ch2' },
-          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch1', lineWidth: 6 },
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
         ] },
         { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.82, text: '{angle/(2*pi)} turns   {speed} rad/s   V = {V} V', size: 13 },
+        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
       ],
     }],
+  },
+  {
+    name: 'Conical tank, gain scheduling',
+    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The gain-scheduled PI looks its gains up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }] },
+      d: { period: PERIOD, components: [pulse(0.15, 2.2, 0.5)] },
+    },
+    scope: { channels: channels('r', 'h', 'q', 'd') },
+    ui: ui('Tank'),
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'm'),
+        src('d', 300, 220, 'm³/s'),
+        // PI by pole cancellation for a 0.25 s closed loop at level h:
+        // Kp = A(h) / 0.25, Ki = a √(2g) / (2 √h · 0.25); u0 balances the outlet at 0.15 m.
+        ctrl(130, 90, 2, 0.02, [
+          { name: 'Gain-scheduled PI', type: 'gainScheduled', params: { at: [0.1, 0.25, 0.5, 0.75, 1], Kp: [0.113, 0.332, 0.95, 1.887, 3.142], Ki: [2.801, 1.772, 1.253, 1.023, 0.886], u0: 0.172, Tr: 0.1, umin: 0, umax: 3 } },
+          { name: 'PI tuned for full', type: 'pid', params: { Kp: 2.112, Ki: 0.99, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
+          { name: 'PI tuned for empty', type: 'pid', params: { Kp: 0.173, Ki: 2.287, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
+          { name: 'Off', type: 'off', params: {} },
+        ]),
+        { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: 0.172 }, x: 320, y: 96 },
+        { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
+        { id: 'tank', type: 'conicalTank', name: 'tank', params: { r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }, x: 510, y: 90 },
+        sink('h', 720, 106, 'm'),
+        sink('q', 320, 20, 'm³/s'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'pipe' }, { from: 'pipe', to: 'sum' }, { from: 'd', to: 'sum:1' }, { from: 'sum', to: 'tank' },
+        { from: 'tank', to: 'h' }, { from: 'tank', to: 'ctrl:1' }, { from: 'ctrl', to: 'q' },
+      ],
+    },
+    views: [{
+      name: 'Tank', kind: '2d', view: [-1, -0.25, 1, 1.3],
+      shapes: [
+        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)'], ['-0.05 - 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)']], fill: 'ch3', stroke: 'none' },
+        { type: 'line', x1: -0.05, y1: 0, x2: -0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
+        { type: 'line', x1: 0.05, y1: 0, x2: 0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
+        { type: 'line', x1: '-0.05 - 0.45*r', y1: 'r', x2: '0.05 + 0.45*r', y2: 'r', stroke: 'ch1', lineWidth: 2 },
+        { type: 'text', x: '0.12 + 0.45*r', y: 'r', text: 'r', size: 12, fill: 'ch1', anchor: 'start' },
+        { type: 'line', x1: -0.9, y1: 1.12, x2: -0.15, y2: 1.12, stroke: 'muted', lineWidth: 6 },
+        { type: 'arrow', x1: -0.15, y1: 1.12, x2: -0.15, y2: '1.1 - 0.25*q', stroke: 'ch2', lineWidth: 4 },
+        { type: 'line', x1: 0, y1: 0, x2: 0, y2: -0.12, stroke: 'muted', lineWidth: 6 },
+        { type: 'arrow', x1: 0.06, y1: -0.08, x2: '0.06 + 0.6*d', y2: -0.08, stroke: 'ch4', lineWidth: 3 },
+        { type: 'text', x: 0, y: 1.24, text: 'h {h:4.2} m   r {r:4.2} m   pump q {q:4.2} m³/s   drawn off d {d:4.2} m³/s', size: 13 },
+      ],
+    }],
+  },
+  {
+    name: 'Pendulum swing-up',
+    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with state feedback and holds it; at 3.5 s it is pushed (d). Flip to "State feedback only" to see why the swing-up is needed.',
+    signals: {
+      r: { period: PERIOD, components: [] },
+      d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
+    },
+    scope: { channels: channels('x', 'theta', 'F', 'd') },
+    ui: ui('Cart and pole'),
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'm'),
+        src('d', 300, 200, 'N'),
+        ctrl(130, 80, 5, 0.01, [
+          { name: 'Swing-up + state feedback', type: 'swingUp', params: { kE: 3, kx: 8, kv: 5, l: 0.5, g: 9.81, thetaS: 0.4, K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
+          { name: 'State feedback only', type: 'stateFeedback', params: { K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
+          { name: 'Off', type: 'off', params: {} },
+        ]),
+        { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 104 },
+        { id: 'cart', type: 'cartPole', name: 'cart and pole', params: { M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: Math.PI }, x: 400, y: 80 },
+        sink('x', 640, 84, 'm'), sink('theta', 640, 120, 'rad'),
+        sink('F', 330, 20, 'N'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'sum' }, { from: 'd', to: 'sum:1' }, { from: 'sum', to: 'cart' }, { from: 'ctrl', to: 'F' },
+        { from: 'cart', to: 'x' }, { from: 'cart:1', to: 'theta' },
+        { from: 'cart', to: 'ctrl:1' }, { from: 'cart:1', to: 'ctrl:2' }, { from: 'cart:2', to: 'ctrl:3' }, { from: 'cart:3', to: 'ctrl:4' },
+      ],
+    },
+    views: [cartView('Cart and pole', 1.8, [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
+  },
+  {
+    name: 'Triple pendulum',
+    notes: 'Three rods balanced on top of each other on a cart, held up by state feedback from all eight states (positions, angles and their rates; gains from LQR). It starts with the lowest rod tilted 3°, is pushed at 1 s (d), and the cart is moved 0.5 m at 2.5 s (r). Flip to the gentle LQR to see a softer, slower controller.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 0.5, time: 2.5 } }] },
+      d: { period: PERIOD, components: [pulse(4, 1, 0.1)] },
+    },
+    scope: { channels: channels('r', 'x', 'theta1', 'F') },
+    ui: ui('Cart and triple pendulum'),
+    diagram: {
+      blocks: [
+        src('r', 30, 132, 'm'),
+        src('d', 300, 260, 'N'),
+        ctrl(130, 70, 9, 0.01, [
+          { name: 'LQR', type: 'stateFeedback', params: { K: K_TRIPLE, kr: K_TRIPLE[0], umin: -40, umax: 40 } },
+          { name: 'LQR, gentle', type: 'stateFeedback', params: { K: K_TRIPLE_GENTLE, kr: K_TRIPLE_GENTLE[0], umin: -40, umax: 40 } },
+          { name: 'Off', type: 'off', params: {} },
+        ]),
+        { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },
+        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: 0.05, theta20: 0, theta30: 0 }, x: 400, y: 60 },
+        sink('x', 640, 64, 'm'), sink('theta1', 640, 100, 'rad'), sink('theta2', 640, 136, 'rad'), sink('theta3', 640, 172, 'rad'),
+        sink('F', 330, 20, 'N'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'sum' }, { from: 'd', to: 'sum:1' }, { from: 'sum', to: 'cart' }, { from: 'ctrl', to: 'F' },
+        { from: 'cart', to: 'x' }, { from: 'cart:1', to: 'theta1' }, { from: 'cart:2', to: 'theta2' }, { from: 'cart:3', to: 'theta3' },
+        ...Array.from({ length: 8 }, (_, i) => ({ from: i ? `cart:${i}` : 'cart', to: `ctrl:${i + 1}` })),
+      ],
+    },
+    views: [cartView('Cart and triple pendulum', 1.2, [
+      { len: 0.25, angle: '-theta1' },
+      { len: 0.25, angle: '-(theta2 - theta1)' },
+      { len: 0.25, angle: '-(theta3 - theta2)' },
+    ], 'x {x:5.2} m   θ1 {theta1*180/pi:5.1}°   θ2 {theta2*180/pi:5.1}°   θ3 {theta3*180/pi:5.1}°   F {F:5.1} N', [-1.3, -0.4, 1.3, 1.1])],
   },
 ];
 
@@ -2148,8 +2603,10 @@ __mods['core/views.js'] = (() => {
 //
 // Shapes: line, arrow (x1 y1 x2 y2), rect (x y w h, angle about its centre),
 // circle (cx cy r), spring and damper (x1 y1 x2 y2, width; spring: coils),
-// ground (x1 x2 y; "side": "above" hatches upwards, as a ceiling), text (x y text size; "{formula}" inside text is replaced
-// by its value), group (x y angle: translate then rotate; shapes inside).
+// ground (x1 x2 y; "side": "above" hatches upwards, as a ceiling), polygon
+// (points: [[x, y], …]), text (x y text size anchor; "{formula}" inside text
+// is replaced by its value, "{formula:6.1}" with 1 decimal in 6 characters),
+// group (x y angle: translate then rotate; shapes inside).
 // Style: stroke, fill (ink, muted, panel, ch1 … ch4, or any CSS colour) and
 // lineWidth (pixels). Angles in radians,
 // counter-clockwise. evalScene turns a view and the signal values at one
@@ -2160,8 +2617,18 @@ const ATTRS = {
   line: ['x1', 'y1', 'x2', 'y2'], arrow: ['x1', 'y1', 'x2', 'y2'],
   rect: ['x', 'y', 'w', 'h', 'angle'], circle: ['cx', 'cy', 'r'],
   spring: ['x1', 'y1', 'x2', 'y2', 'width', 'coils'], damper: ['x1', 'y1', 'x2', 'y2', 'width'],
-  ground: ['x1', 'x2', 'y'], text: ['x', 'y', 'size'], group: ['x', 'y', 'angle'],
+  ground: ['x1', 'x2', 'y'], text: ['x', 'y', 'size'], group: ['x', 'y', 'angle'], polygon: [],
 };
+
+// A text placeholder is {formula} or {formula:w.d}: d decimals, padded to w
+// characters, so a caption keeps its width while the numbers change.
+function placeholder(src, where) {
+  const m = /^(.*?):(\d*)\.?(\d*)$/.exec(src);
+  const f = value(m ? m[1] : src, where);
+  if (!m || (m[2] === '' && m[3] === '')) return (env) => fmt(f(env));
+  const w = Number(m[2] || 0), d = Number(m[3] || 0);
+  return (env) => { const v = f(env); return (Number.isFinite(v) ? v.toFixed(d) : '—').padStart(w, '\u2007'); };
+}
 
 function value(v, where) {
   if (typeof v === 'number') { const n = v; return () => n; }
@@ -2172,7 +2639,7 @@ function value(v, where) {
 }
 
 function template(src, where) {
-  return String(src).split(/(\{[^}]*\})/).map((part) => (part.startsWith('{') ? value(part.slice(1, -1), where) : part));
+  return String(src).split(/(\{[^}]*\})/).map((part) => (part.startsWith('{') ? placeholder(part.slice(1, -1), where) : part));
 }
 
 function normalizeSvgView(v, path) {
@@ -2191,7 +2658,7 @@ function normalizeSvgView(v, path) {
 
 // The bindings of an SVG view at one instant: [{ select, attr, value }].
 function compileBindings(view) {
-  const list = view.bind.map((b) => ({ ...b, parts: template(b.value, 'bind') }));
+  const list = view.bind.map((b) => ({ ...b, parts: String(b.value).split(/(\{[^}]*\})/).map((part) => (part.startsWith('{') ? value(part.slice(1, -1), 'bind') : part)) }));
   return (env) => list.map(({ select, attr, parts }) => ({ select, attr, value: parts.map((p) => (typeof p === 'string' ? p : fmtAttr(p(env)))).join('') }));
 }
 const fmtAttr = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(6))) : '0');
@@ -2208,6 +2675,11 @@ function normalizeView(v, path = 'views[0]') {
       const where = `${p}[${i}]`;
       if (!ATTRS[s?.type]) throw new Error(`${where}.type: one of ${Object.keys(ATTRS).join(', ')}`);
       for (const a of ATTRS[s.type]) if (s[a] !== undefined) value(s[a], `${where}.${a}`);
+      if (s.type === 'polygon') {
+        if (!Array.isArray(s.points) || s.points.length < 2 || !s.points.every((q) => Array.isArray(q) && q.length === 2)) throw new Error(`${where}.points: a list of [x, y] pairs`);
+        s.points.forEach((q, j) => q.forEach((c) => value(c, `${where}.points[${j}]`)));
+      }
+      if (s.type === 'text') template(s.text ?? '', `${where}.text`);
       if (s.type === 'group') check(s.shapes ?? [], `${where}.shapes`);
     });
   };
@@ -2220,14 +2692,15 @@ function compileScene(view) {
   const build = (shapes) => shapes.map((s) => {
     const f = {};
     for (const a of ATTRS[s.type]) f[a] = s[a] === undefined ? null : value(s[a], s.type);
-    const parts = s.type === 'text' ? String(s.text ?? '').split(/(\{[^}]*\})/).map((part) => (part.startsWith('{') ? value(part.slice(1, -1), 'text') : part)) : null;
-    return { s, f, parts, kids: s.type === 'group' ? build(s.shapes ?? []) : null };
+    const parts = s.type === 'text' ? template(s.text ?? '', 'text') : null;
+    const pts = s.type === 'polygon' ? s.points.map(([x, y]) => [value(x, 'polygon'), value(y, 'polygon')]) : null;
+    return { s, f, parts, pts, kids: s.type === 'group' ? build(s.shapes ?? []) : null };
   });
   const tree = build(view.shapes);
   return (env) => {
     const ops = [];
     const walk = (nodes, T) => {
-      for (const { s, f, parts, kids } of nodes) {
+      for (const { s, f, parts, pts, kids } of nodes) {
         const g = (a, d = 0) => (f[a] ? f[a](env) : d);
         const style = { stroke: s.stroke ?? 'ink', fill: s.fill ?? 'none', width: Number(s.lineWidth ?? 2) };
         const P = (x, y) => T(x, y);
@@ -2281,9 +2754,12 @@ function compileScene(view) {
             for (let x = x1 + step / 2; x < x2; x += step) ops.push({ op: 'poly', closed: false, pts: [P(x, y), P(x - step * 0.8, y + dir * step * 0.8)], ...style, stroke: 'muted', width: 1, fill: 'none' });
             break;
           }
+          case 'polygon':
+            ops.push({ op: 'poly', closed: true, pts: pts.map(([x, y]) => P(x(env), y(env))), ...style, fill: s.fill ?? 'panel' });
+            break;
           case 'text': {
-            const text = parts.map((p) => (typeof p === 'string' ? p : fmt(p(env)))).join('');
-            ops.push({ op: 'text', at: P(g('x'), g('y')), text, size: g('size', 13), fill: s.fill ?? 'ink' });
+            const text = parts.map((p) => (typeof p === 'string' ? p : p(env))).join('');
+            ops.push({ op: 'text', at: P(g('x'), g('y')), text, size: g('size', 13), fill: s.fill ?? 'ink', anchor: ['start', 'end'].includes(s.anchor) ? s.anchor : 'middle' });
             break;
           }
           default:
@@ -2397,7 +2873,7 @@ function normalizeProject(p) {
 // representation shown, and the setup area's share of the page height.
 // Unknown values are dropped.
 const UI_RUN = ['run', 'stop', 'single'];
-const UI_TABS = ['input', 'plant'];
+const UI_TABS = ['input', 'plant', 'controller'];
 function normalizeUi(ui) {
   if (!ui || typeof ui !== 'object') return null;
   const out = {};
@@ -4033,7 +4509,7 @@ function createScene(host, app) {
         } else if (o.op === 'circle' && Number.isFinite(o.c[0])) {
           html += `<circle cx="${X(o.c)}" cy="${Y(o.c)}" r="${(o.r * k).toFixed(1)}" ${st}/>`;
         } else if (o.op === 'text' && Number.isFinite(o.at[0])) {
-          html += `<text x="${X(o.at)}" y="${Y(o.at)}" font-size="${o.size}" fill="${colour(o.fill)}" text-anchor="middle" dominant-baseline="middle">${o.text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</text>`;
+          html += `<text x="${X(o.at)}" y="${Y(o.at)}" font-size="${o.size}" fill="${colour(o.fill)}" text-anchor="${o.anchor ?? 'middle'}" dominant-baseline="middle" xml:space="preserve">${o.text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</text>`;
         }
       }
       html += `<text class="sctime" x="10" y="${r.height - 10}">t = ${env.t.toFixed(3)} s</text>`;
@@ -4070,7 +4546,7 @@ __mods['ui/plant.js'] = (() => {
 // from the library, wired output to input, grouped into subsystems that nest,
 // and subsystems can be saved to the library. See design/output/plant-editor.md.
 
-const { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram } = __mods['core/diagram.js'];
+const { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames } = __mods['core/diagram.js'];
 const { SYSTEM_LIBRARY } = __mods['core/systems.js'];
 const { num, parseSI } = __mods['ui/units.js'];
 const { createScene } = __mods['ui/scene.js'];
@@ -4078,11 +4554,12 @@ const NS = 'http://www.w3.org/2000/svg';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const GROUPS = [
   ['Signals', ['source', 'sink', 'terminator']],
-  ['Math', ['gain', 'sum', 'switch']],
+  ['Control', ['controller']],
+  ['Math', ['gain', 'sum', 'switch', 'fcn']],
   ['Dynamics', ['integrator', 'delay', 'firstOrder', 'secondOrder', 'tf']],
   ['Models', ['fopdt', 'lagChain', 'integratorLag', 'doubleIntegrator', 'inverseResponse']],
   ['Sensors', ['quantizer', 'noise']],
-  ['Physics', ['cartPole']],
+  ['Physics', ['cartPole', 'pendulumCart', 'conicalTank']],
   ['Nonlinear', ['saturation']],
   ['Structure', ['subsystem', 'inport', 'outport']],
 ];
@@ -4097,7 +4574,8 @@ function size(b) {
   if (b.type === 'sum') return [34, 34];
   if (b.type === 'gain') return [58, 40];
   if (['source', 'sink', 'inport', 'outport'].includes(b.type)) return [70, 28];
-  if (diagramBlockDef(b.type).ode) return [150, 60];
+  if (diagramBlockDef(b.type).ode) return [150, Math.max(60, 18 * blockPorts(b)[1] + 12)];
+  if (b.type === 'controller') return [150, Math.max(60, 18 * blockPorts(b)[0] + 12)];
   if (b.type === 'terminator') return [26, 26];
   if (b.type === 'switch') { const n = b.params.inputs; return [56, Math.max(40, 18 * n + 8)]; }
   const [ni, no] = blockPorts(b);
@@ -4340,7 +4818,7 @@ function createPlantEditor(root, app) {
         text = `<text class="bt" x="${b.x + 9}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${b.x + 9}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
-    const outNames = def.outputs ?? [];
+    const outNames = outputNames(def, b.params);
     const ports = g.outs.map((p, i) => (outNames[i] ? `<text class="pn" x="${p.x + (b.flip ? 8 : -8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'start' : 'end'}">${esc(outNames[i])}</text>` : '')).join('')
       + g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
       + g.outs.map((p, i) => `<circle class="port out" data-port="out" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('');
@@ -4352,7 +4830,7 @@ function createPlantEditor(root, app) {
   // parameters are on the right), else its first parameters, cut to fit.
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const text = def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
     const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
@@ -4444,9 +4922,10 @@ function createPlantEditor(root, app) {
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="key small" data-act="flip">Flip</button>`;
       if (b.type === 'subsystem') html += `<button class="key small" data-act="open">Open</button><button class="key small" data-act="save">Save to library</button>`;
       if (b.type === 'source') html += `<button class="key small" data-act="signal">Edit signal ${esc(b.params.signal)}</button>`;
+      if (b.type === 'controller') html += `<button class="key small primary" data-act="controller">Open in the Controller tab</button>`;
       html += '</div>';
       if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="key small primary" data-act="saveok">Save</button><button class="key small" data-act="savecancel">Cancel</button></div>`;
-      const role = { sink: ' · recorded: pick it as a scope channel source', source: ' · plays the signal made in the Input tab', terminator: ' · ends a signal without recording it', outport: ' · passes the signal up to the enclosing block', inport: ' · takes the signal from the enclosing block', switch: ' · double-click it on the canvas to move to the next input' }[b.type] ?? '';
+      const role = { sink: ' · recorded: pick it as a scope channel source', source: ' · plays the signal made in the Input tab', terminator: ' · ends a signal without recording it', outport: ' · passes the signal up to the enclosing block', inport: ' · takes the signal from the enclosing block', switch: ' · double-click it on the canvas to move to the next input', controller: ` · runs “${esc(b.variants?.[b.variant]?.name ?? '')}”; double-click it to open the Controller tab` }[b.type] ?? '';
       html += `<p class="phelp">${esc(def.formula)}${role}</p>`;
       box.innerHTML = html;
       bindFields(b);
@@ -4485,6 +4964,7 @@ function createPlantEditor(root, app) {
           const key = f.slice(2);
           if ((blk.type === 'source' && key === 'signal') || (blk.type === 'sink' && key === 'name')) { renameNamed(blk, value); return false; }
           if (blk.type === 'sum' && key === 'signs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value.length; });
+          if (blk.type === 'controller' && key === 'inputs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
           if (blk.type === 'switch' && key === 'inputs') {
             d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
             blk.params.position = Math.min(blk.params.position, value);
@@ -4499,6 +4979,7 @@ function createPlantEditor(root, app) {
     if (what === 'flip') edit((d) => { const blk = d.blocks.find((x) => x.id === b.id); blk.flip = !blk.flip; if (!blk.flip) delete blk.flip; });
     if (what === 'open') enter(b.id);
     if (what === 'signal') app.editSignal(b.params.signal);
+    if (what === 'controller') app.openController([...path, b.id]);
     if (what === 'save') { saveName = b.name ?? 'My block'; renderProps(); $('#pl-props [data-f="libname"]')?.focus(); }
     if (what === 'savecancel') { saveName = null; renderProps(); }
     if (what === 'saveok') {
@@ -4656,6 +5137,7 @@ function createPlantEditor(root, app) {
         // preventDefault keeps this mouse-down from moving focus off the new field.
         if (blk?.type === 'source' || blk?.type === 'sink') { e.preventDefault(); renameOnCanvas(blk); }
         else if (blk?.type === 'switch') edit((d) => { const s2 = d.blocks.find((x) => x.id === id); s2.params.position = (s2.params.position % s2.params.inputs) + 1; });
+        else if (blk?.type === 'controller') app.openController([...path, id]);
         else enter(id);
         return;
       }
@@ -4778,6 +5260,234 @@ function createPlantEditor(root, app) {
 
 return { createPlantEditor };
 })();
+// ---- ui/controller.js
+__mods['ui/controller.js'] = (() => {
+// Tab 3, Controller: the Controller blocks of the plant, each with its
+// variants (implementations with the same inputs and output, as Simulink's
+// variant subsystems). Clicking a variant runs it; the previous run stays
+// faded on the display for comparison. The active variant's parameters are
+// edited here; the library adds new variants. See design/output/controller-proposal.md.
+
+const { CONTROLLERS, CONTROLLER_TYPES, normalizeVariant } = __mods['core/controllers.js'];
+const { diagramBlockDef, normalizeDiagram, parseEnd, outputNames } = __mods['core/diagram.js'];
+const { num, parseSI } = __mods['ui/units.js'];
+// What each implementation is for, in a sentence or two.
+const ABOUT = {
+  off: 'No control: the plant gets u = 0. Shows what the plant does on its own.',
+  pid: 'The workhorse. P reacts to the error, I removes what is left, D damps (on the measurement, filtered by Tf). b weights the reference in P; the prefilter Tr (Vorfilter) smooths reference jumps; u min/max are the actuator limits, with anti-windup.',
+  stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
+  gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
+  swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
+};
+
+function createControllerTab(host, app) {
+  let target = null;   // path of subsystem ids and the Controller block id
+
+  host.innerHTML = `
+    <div class="ctl">
+      <section class="gcol" aria-label="Controller block">
+        <div class="ghead"><h3 class="glabel">Controller</h3></div>
+        <div id="ct-blocks" class="ctblocks"></div>
+        <div id="ct-block" class="pform"></div>
+        <p class="phelp" id="ct-ports"></p>
+      </section>
+      <section class="gcol" aria-label="Variants">
+        <div class="ghead"><h3 class="glabel">Variants</h3><button class="key small" id="ct-dup" title="Copy the running variant">Duplicate</button><button class="key small" id="ct-del" title="Remove the running variant">Delete</button></div>
+        <ul class="plist vlist" id="ct-vars" role="listbox" aria-label="Variants: click one to run it"></ul>
+        <p class="phelp">Click a variant to run it; the run before stays faded on the display. Double-click to rename.</p>
+      </section>
+      <section class="gcol" aria-label="Parameters">
+        <div class="ghead"><h3 class="glabel" id="ct-ptitle">Parameters</h3></div>
+        <div id="ct-params" class="pform ctparams"></div>
+        <p class="phelp" id="ct-about"></p>
+      </section>
+      <section class="gcol" aria-label="Controller library">
+        <div class="ghead"><h3 class="glabel">Library</h3></div>
+        <div id="ct-lib" class="ctlib"></div>
+      </section>
+    </div>
+    <div class="ctempty" id="ct-empty" hidden></div>`;
+  const $ = (s) => host.querySelector(s);
+
+  const root = () => app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null;
+  // Every Controller block, at any depth: [{ path, block, where }].
+  function controllers() {
+    const out = [];
+    const walk = (d, path, where) => {
+      for (const b of d.blocks) {
+        if (b.type === 'controller') out.push({ path: [...path, b.id], block: b, where: [...where, b.name ?? b.id].join(' / ') });
+        if (b.type === 'subsystem') walk(b.diagram, [...path, b.id], [...where, b.name ?? b.id]);
+      }
+    };
+    if (root()) walk(root(), [], []);
+    return out;
+  }
+  const levelOf = (d, path) => path.slice(0, -1).reduce((lv, id) => lv.blocks.find((b) => b.id === id).diagram, d);
+  const current = () => {
+    const all = controllers();
+    const hit = target && all.find((c) => c.path.join('/') === target.join('/'));
+    return hit ?? all[0] ?? null;
+  };
+
+  // Edits the current block in a copy of the diagram; the app takes it as one undo step.
+  function edit(fn) {
+    const c = current();
+    if (!c) return false;
+    const next = structuredClone(root());
+    const lv = levelOf(next, c.path);
+    const blk = lv.blocks.find((b) => b.id === c.path.at(-1));
+    if (fn(blk, lv) === false) return false;
+    try { app.setPlant(normalizeDiagram(next)); } catch (err) { app.toast(err.message); render(); return false; }
+    return true;
+  }
+
+  // What feeds each input: "r", "x (cart and pole)", …
+  function inputNames(c) {
+    const lv = levelOf(root(), c.path);
+    return Array.from({ length: c.block.params.inputs }, (_, k) => {
+      const w = lv.wires.find((x) => { const t = parseEnd(x.to); return t.id === c.block.id && t.port === k; });
+      if (!w) return 'not connected';
+      const f = parseEnd(w.from), src = lv.blocks.find((b) => b.id === f.id);
+      if (src.type === 'source') return src.params.signal;
+      const port = outputNames(diagramBlockDef(src.type), src.params)[f.port];
+      return port || (src.name ?? src.id);
+    });
+  }
+
+  function field(key, label, value, hint, kind = 'number', title = '') {
+    return `<label class="pf" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
+  }
+  const show = (v) => (Array.isArray(v) ? v.map((x) => num(x, 5)).join(', ') : Number.isFinite(v) ? num(v, 6) : '');
+
+  function render() {
+    const all = controllers();
+    const c = current();
+    $('.ctl').hidden = !c;
+    $('#ct-empty').hidden = !!c;
+    if (!c) {
+      $('#ct-empty').innerHTML = `<div class="later-box"><h3 class="glabel">No controller in this plant</h3><p>Add a <b>Controller</b> block from the library's Control group in the Plant tab. Wire the reference r to its first input and the measurements to the next ones, and its output u to the plant. Then it shows here, with its variants. Or load a controlled system from the <b>System library</b>.</p></div>`;
+      return;
+    }
+    target = c.path;
+    const b = c.block;
+    $('#ct-blocks').innerHTML = all.length > 1 ? all.map((x) => `<button class="sigkey ${x === c ? 'on' : ''}" data-path="${esc(x.path.join('/'))}">${esc(x.where)}</button>`).join('') : `<div class="ctname">${esc(c.where)}</div>`;
+    $('#ct-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
+    $('#ct-block').innerHTML = field('b:inputs', 'Inputs', b.params.inputs, 'r, then the measurements') + field('b:Ts', 'Sample time', num(b.params.Ts, 4), 'Ts, s; every variant runs at it');
+    const names = inputNames(c);
+    $('#ct-ports').innerHTML = `<b>In</b> ${names.map((n, k) => `<span class="ctport">${k + 1} ${esc(n)}</span>`).join(' ')}`;
+
+    $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="srow vrow ${i === b.variant ? 'editing' : ''}" data-v="${i}" role="option" aria-selected="${i === b.variant}">
+        <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype">${esc(CONTROLLERS[v.type].label)}</span></li>`).join('');
+    $('#ct-del').disabled = b.variants.length < 2;
+
+    const v = b.variants[b.variant];
+    const def = CONTROLLERS[v.type];
+    $('#ct-ptitle').textContent = `${v.name} · ${def.summary}`;
+    $('#ct-params').innerHTML = def.params.length
+      ? def.params.map((p) => field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
+      : '<p class="phelp">No parameters.</p>';
+    $('#ct-about').textContent = ABOUT[v.type] ?? '';
+    $('#ct-lib').innerHTML = CONTROLLER_TYPES.map((t) => `<button class="ctlibitem" data-add="${t}" title="${esc(ABOUT[t] ?? '')}"><b>${esc(CONTROLLERS[t].label)}</b><span>${esc(CONTROLLERS[t].summary)}</span></button>`).join('');
+    bind(c);
+  }
+
+  function commitField(inp) {
+    const k = inp.dataset.k, raw = inp.value.trim();
+    let value;
+    if (inp.dataset.kind === 'vector') {
+      value = raw.split(/[\s,;]+/).filter(Boolean).map(parseSI);
+      if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas.'); render(); return; }
+    } else if (raw === '' && /^p:umin|p:umax$/.test(k)) value = null;
+    else {
+      value = parseSI(raw);
+      if (!Number.isFinite(value)) { app.toast('Enter a number, e.g. 0.5, 20m, 2k.'); render(); return; }
+    }
+    // An unchanged field is left alone: re-rendering on every blur would
+    // swallow the click that moved the focus away.
+    const c = current(), old = k.startsWith('b:') ? c.block.params[k.slice(2)] : c.block.variants[c.block.variant].params[k.slice(2)];
+    const same = Array.isArray(value) ? Array.isArray(old) && value.length === old.length && value.every((x, i) => x === old[i]) : value === null ? !Number.isFinite(old) : value === old;
+    if (same) return;
+    edit((blk, lv) => {
+      if (k.startsWith('b:')) {
+        const key = k.slice(2);
+        if (blk.params[key] === value) return false;
+        blk.params[key] = value;
+        if (key === 'inputs') lv.wires = lv.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
+        return true;
+      }
+      const v = blk.variants[blk.variant];
+      v.params[k.slice(2)] = value;
+      return true;
+    });
+  }
+
+  function bind(c) {
+    host.querySelectorAll('input[data-k]').forEach((inp) => {
+      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } });
+      inp.addEventListener('blur', () => { if (inp.dataset.cancel) { delete inp.dataset.cancel; render(); return; } commitField(inp); });
+      // The wheel nudges a number by 5 % (Shift: 1 %), and the display follows at once.
+      inp.addEventListener('wheel', (e) => {
+        if (inp.dataset.kind !== 'number') return;
+        const v = parseSI(inp.value);
+        if (!Number.isFinite(v) || v === 0) return;
+        e.preventDefault();
+        const f = (e.shiftKey ? 1.01 : 1.05) ** (e.deltaY < 0 ? 1 : -1);
+        inp.value = num(v * f, 4);
+        commitField(inp);
+        host.querySelector(`input[data-k="${inp.dataset.k}"]`)?.focus();
+      }, { passive: false });
+    });
+    host.querySelectorAll('[data-v]').forEach((row) => {
+      row.addEventListener('click', () => { const i = Number(row.dataset.v); if (i !== c.block.variant) edit((blk) => { blk.variant = i; }); });
+      row.addEventListener('dblclick', () => rename(row, Number(row.dataset.v)));
+    });
+    $('#ct-dup').onclick = () => edit((blk) => {
+      const v = structuredClone(blk.variants[blk.variant]);
+      v.name = `${v.name} copy`.slice(0, 40);
+      blk.variants.splice(blk.variant + 1, 0, v);
+      blk.variant += 1;
+    });
+    $('#ct-del').onclick = () => edit((blk) => {
+      if (blk.variants.length < 2) return false;
+      blk.variants.splice(blk.variant, 1);
+      blk.variant = Math.min(blk.variant, blk.variants.length - 1);
+    });
+    host.querySelectorAll('[data-add]').forEach((btn) => btn.addEventListener('click', () => edit((blk) => {
+      const type = btn.dataset.add, prev = blk.variants[blk.variant].params;
+      const v = normalizeVariant({ type });
+      // A new variant drives the same actuator: it keeps the limits, and a
+      // gain vector gets one entry per measurement.
+      if ('umin' in v.params) { v.params.umin = prev.umin ?? -Infinity; v.params.umax = prev.umax ?? Infinity; }
+      if (Array.isArray(v.params.K)) { v.params.K = new Array(Math.max(1, blk.params.inputs - 1)).fill(0); v.params.kr = 0; }
+      blk.variants.push(v);
+      blk.variant = blk.variants.length - 1;
+      app.toast(`Added ${v.name}: set its parameters, then compare with the others.`);
+    })));
+  }
+
+  function rename(row, i) {
+    const name = row.querySelector('.sd');
+    const inp = document.createElement('input');
+    inp.className = 'field pfi';
+    inp.value = controllers().length ? current().block.variants[i].name : '';
+    name.replaceWith(inp);
+    inp.focus(); inp.select();
+    const done = (ok) => { if (ok && inp.value.trim()) edit((blk) => { blk.variants[i].name = inp.value.trim().slice(0, 40); }); else render(); };
+    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); });
+    inp.addEventListener('blur', () => done(true), { once: true });
+  }
+
+  return {
+    render() { if (!host.hidden) render(); },
+    shown: render,
+    open(path) { target = path; },
+  };
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+return { createControllerTab };
+})();
 // ---- ui/layout.js
 __mods['ui/layout.js'] = (() => {
 // Draggable separators: between the display and the setup tabs, and between
@@ -4870,6 +5580,7 @@ __mods['ui/app.js'] = (() => {
 const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } = __mods['core/project.js'];
 const { diagramNames } = __mods['core/diagram.js'];
 const { createPlantEditor } = __mods['ui/plant.js'];
+const { createControllerTab } = __mods['ui/controller.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { DEFAULT_PROJECT } = __mods['core/examples.js'];
 const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = __mods['core/systems.js'];
@@ -4881,7 +5592,7 @@ const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
   { key: 'input', label: 'Input' },
   { key: 'plant', label: 'Plant' },
-  { key: 'controller', label: 'Controller', next: 'Hand-tuned controller candidates, overlaid on the display and stepped through like patches on a synthesizer.' },
+  { key: 'controller', label: 'Controller' },
   { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
   { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
 ];
@@ -5132,6 +5843,9 @@ function startApp() {
   const controls = createControls($('controls'), app);
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
+  const controllerTab = createControllerTab($('tab-controller'), app);
+  // Opens the Controller tab on one Controller block (path of block ids).
+  app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -5140,6 +5854,8 @@ function startApp() {
     const t = TABS.find((x) => x.key === app.tab);
     $('tab-input').hidden = app.tab !== 'input';
     $('tab-plant').hidden = app.tab !== 'plant';
+    $('tab-controller').hidden = app.tab !== 'controller';
+    if (app.tab === 'controller') controllerTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
@@ -5162,6 +5878,7 @@ function startApp() {
     controls.render(display.mode);
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
+    if (app.tab === 'controller') controllerTab.render();
     renderChrome();
     autosave();
   }

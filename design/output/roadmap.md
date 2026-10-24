@@ -9,18 +9,21 @@ Reader: whoever picks the next piece of work.
 - v2 instrument: display with axis labels and direct manipulation, Run Control, Horizontal, Vertical with editable readouts, Auto Scale, draggable separators ([instrument.md](instrument.md)).
 - Tab 1, Input: the signal generator with named signals, Period, Square with count, Function formulas ([signal-generator.md](signal-generator.md)).
 - Tab 2, Plant: block-diagram editor with Sources, Sinks, Terminator, Switch, subsystems, a resizable folding library, sensors and a cart–pole ([plant-editor.md](plant-editor.md)); 2D views in the plant's JSON ([plant-views.md](plant-views.md)).
-- System library: three systems that move, loaded whole or by part, opening running on their view ([system-library.md](system-library.md)).
+- Tab 3, Controller: Controller blocks with variants (PID, state feedback, gain-scheduled PI, energy swing-up, off), the tab to flip and tune them ([controller-proposal.md](controller-proposal.md)).
+- System library: five 5-second systems, four of them controlled (motor, conical tank, pendulum swing-up, triple pendulum), with disturbances.
+- Earlier runs fade over five runs for comparison.
+- (Superseded) System library: three systems that move, loaded whole or by part, opening running on their view ([system-library.md](system-library.md)).
 - Units on every signal; scope channels list only names the diagram defines; projects carry how they open (`ui`).
 
 ## Next, in order
 
-1. **Controller tab**: as decided in [controller-proposal.md](controller-proposal.md): Controller block (2 inputs, own Ts, variants), double-click to the tab, candidates overlaid and stepped through like patches; then closed-loop systems in the library (pendulum balanced, MSD position control).
-2. **Auto-tune tab**: goal editor, score, optimiser (v1's, reshaped). Add robustness: check a candidate against plant variations.
+1. **Auto-tune tab**: goal editor (following r, rejecting d, effort, bounds), score, optimiser (v1's, reshaped) over a Controller block's parameters, flipping through its variants. Add robustness: check against plant variations.
+2. **Controller, more**: variants built as diagrams (freeform), MIMO, more library entries (lead/lag, observer-based state feedback, MPC).
 3. **Analysis tab**: root locus, Bode, Nyquist, pole-zero, computed step metrics.
 
 ## Later
 
-- 3D views (URDF); a triple inverted pendulum; MIMO; system identification from measured data (Arb input + measured output); WebAssembly if a feature needs the speed.
+- 3D views (URDF); MIMO; WebAssembly for the simulation core if a feature needs the speed (the person: fine, not required); system identification from measured data (Arb input + measured output); WebAssembly if a feature needs the speed.
 
 ## Plant editor, not yet
 

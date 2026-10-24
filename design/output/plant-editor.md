@@ -13,7 +13,10 @@ Reader: whoever changes how the plant is built or simulated.
 - **Every Source and Sink has a unit** (parameter `unit`, default `1`); so does every physical block parameter. The scope shows the units.
 - **Block labels stay short**; a physics block shows its formula (the Cart–pole: `F → x, θ`). Subsystem parameters that set inner blocks (a mask) are on the roadmap.
 - **Double-click a Source or Sink on the canvas to rename it.** Renaming a Source renames its signal (the Input tab follows); renaming a Sink carries into the scope channels that showed it.
-- **In** and **Out** blocks are the ports of a subsystem (and, later, the plant's connection to the controller).
+- **In** and **Out** blocks are the ports of a subsystem.
+- **Controller** (group Control): a digital controller, inputs r then the measurements, output u held between samples at its own Ts. It holds variants; double-click it (or "Open in the Controller tab") to choose and tune them ([controller-proposal.md](controller-proposal.md)). Its canvas label shows the variant that runs.
+- **Physics**: Cart–pole (`F → x, θ, v, ω`), Pendulum chain on cart (1–3 rods, `F → x, θ…, v, ω…`, Lagrange's equations solved each step), Conical tank (`q → h`, Torricelli outlet). Physics blocks give their state rates as outputs, so state feedback can use them.
+- **Dead time** has an output before L (default 0): a pipe that was already flowing starts at its flow.
 
 ## Canvas
 

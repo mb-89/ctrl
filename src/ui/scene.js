@@ -73,7 +73,7 @@ export function createScene(host, app) {
         } else if (o.op === 'circle' && Number.isFinite(o.c[0])) {
           html += `<circle cx="${X(o.c)}" cy="${Y(o.c)}" r="${(o.r * k).toFixed(1)}" ${st}/>`;
         } else if (o.op === 'text' && Number.isFinite(o.at[0])) {
-          html += `<text x="${X(o.at)}" y="${Y(o.at)}" font-size="${o.size}" fill="${colour(o.fill)}" text-anchor="middle" dominant-baseline="middle">${o.text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</text>`;
+          html += `<text x="${X(o.at)}" y="${Y(o.at)}" font-size="${o.size}" fill="${colour(o.fill)}" text-anchor="${o.anchor ?? 'middle'}" dominant-baseline="middle" xml:space="preserve">${o.text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</text>`;
         }
       }
       html += `<text class="sctime" x="10" y="${r.height - 10}">t = ${env.t.toFixed(3)} s</text>`;

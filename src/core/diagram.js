@@ -15,6 +15,7 @@ import { BLOCKS, blockDef, normalizeBlock } from './blocks.js';
 import { tf2ss, rootBound } from './poly.js';
 import { gaussAt } from './signals.js';
 import { compileExpr } from './expr.js';
+import { normalizeVariant, makeLaw } from './controllers.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -34,7 +35,7 @@ export const ELEMENTS = {
   gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
   integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
-  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 })], ports: () => [1, 1], formula: 'e^(−Ls)' },
+  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before L', 0)], ports: () => [1, 1], formula: 'e^(−Ls)' },
   fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
@@ -42,12 +43,12 @@ export const ELEMENTS = {
   cartPole: {
     // Point mass m on a massless pole of length l, hinged on a cart of mass M.
     // θ = 0 is upright, positive leaning towards +x. b is the cart's friction.
-    label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ', outputs: ['x', 'θ'], ports: () => [1, 2],
+    label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ, v, ω', outputs: ['x', 'θ', 'v', 'ω'], ports: () => [1, 4],
     params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
     ode: {
       n: 4,
       init: (p) => [0, 0, p.theta0, 0],
-      out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; },
+      out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; y[2] = X[o + 1]; y[3] = X[o + 3]; },
       f: (X, o, u, p, dX) => {
         const v = X[o + 1], th = X[o + 2], w = X[o + 3];
         const s = Math.sin(th), c = Math.cos(th);
@@ -57,8 +58,105 @@ export const ELEMENTS = {
       bound: (p) => 2 * Math.sqrt(p.g * (p.M + p.m) / (p.M * p.l)) + p.b / p.M,
     },
   },
+  pendulumCart: {
+    // A chain of 1–3 rods on a cart (mass M): point masses m1, m2, m3 at the
+    // ends of massless rods l1, l2, l3, each hinged on the one before. Angles
+    // from upright, positive leaning towards +x. Lagrange's equations
+    // M(q) q̈ = f(q, q̇, F) are solved at each evaluation.
+    label: 'Pendulum chain on cart', group: 'Physics', formula: 'F → x, θ…, v, ω…',
+    outputs: (p) => ['x', ...links(p).map((i) => `θ${i + 1}`), 'v', ...links(p).map((i) => `ω${i + 1}`)],
+    ports: (p) => [1, 2 * p.links + 2],
+    params: [num('links', 'Links', 3, { min: 1, int: true, max: 3 }), num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }),
+      ...[1, 2, 3].flatMap((i) => [num(`m${i}`, `Mass m${i}`, 0.1, { unit: 'kg', min: 1e-6 }), num(`l${i}`, `Rod l${i}`, 0.25, { unit: 'm', min: 1e-6 })]),
+      num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }),
+      ...[1, 2, 3].map((i) => num(`theta${i}0`, `Start θ${i}₀`, i === 1 ? 0.05 : 0, { unit: 'rad' }))],
+    ode: {
+      n: (p) => 2 * p.links + 2,
+      init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
+      out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
+      f: (X, o, u, p, dX) => {
+        const n = p.links, ix = links(p);
+        const m = ix.map((i) => p[`m${i + 1}`]), l = ix.map((i) => p[`l${i + 1}`]);
+        const th = ix.map((i) => X[o + 1 + i]), w = ix.map((i) => X[o + n + 2 + i]), v = X[o + n + 1];
+        const mu = ix.map((i) => m.slice(i).reduce((a, b) => a + b, 0));   // mass at or beyond link i
+        const A = Array.from({ length: n + 1 }, () => new Array(n + 1).fill(0)), rhs = new Array(n + 1).fill(0);
+        A[0][0] = p.M + mu[0];
+        rhs[0] = u - p.b * v;
+        for (const j of ix) {
+          A[0][j + 1] = A[j + 1][0] = mu[j] * l[j] * Math.cos(th[j]);
+          rhs[0] += mu[j] * l[j] * Math.sin(th[j]) * w[j] * w[j];
+          rhs[j + 1] = mu[j] * p.g * l[j] * Math.sin(th[j]);
+          for (const k of ix) {
+            const mk = mu[Math.max(j, k)] * l[j] * l[k];
+            A[j + 1][k + 1] = mk * Math.cos(th[j] - th[k]);
+            rhs[j + 1] -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
+          }
+        }
+        const q = solveLinear(A, rhs);
+        dX[o] = v;
+        for (const j of ix) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
+        dX[o + n + 1] = q[0];
+      },
+      bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
+    },
+  },
+  conicalTank: {
+    // A tank that widens upwards (radius r0 at the bottom, R at height H),
+    // filled at q and draining through an outlet of area a (Torricelli). Its
+    // dynamics are fast when nearly empty and slow when full.
+    label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
+    params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
+    ode: {
+      n: 1,
+      init: (p) => [p.h0],
+      out: (X, o, p, y) => { y[0] = X[o]; },
+      f: (X, o, u, p, dX) => {
+        const h = Math.max(0, X[o]);
+        const r = p.r0 + ((p.R - p.r0) * Math.min(h, p.H)) / p.H;
+        const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
+        dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+      },
+      bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
+    },
+  },
+  // A digital controller: inputs r, y1, y2, …; output u, held between samples.
+  // It holds one or more variants (implementations from controllers.js with
+  // this same interface); "variant" is the index of the one that runs.
+  controller: {
+    label: 'Controller', group: 'Control', formula: 'u = C(r, y)',
+    params: [num('inputs', 'Inputs (r, y…)', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.01, { unit: 's', min: 1e-4 })],
+    ports: (p) => [p.inputs, 1],
+  },
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
+
+const links = (p) => Array.from({ length: p.links }, (_, i) => i);
+
+// Solves A x = b (small, dense) by Gaussian elimination with partial pivoting.
+function solveLinear(A, b) {
+  const n = b.length, M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    for (let r = c + 1; r < n; r++) {
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  const x = new Array(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = M[r][n];
+    for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k];
+    x[r] = s / M[r][r];
+  }
+  return x;
+}
+
+// Output names of a block (physics blocks may depend on their parameters).
+export function outputNames(def, params) {
+  return typeof def.outputs === 'function' ? def.outputs(params) : def.outputs ?? [];
+}
 
 // Every type a diagram can hold, with its label, group, params and ports.
 export function diagramBlockDef(type) {
@@ -108,6 +206,7 @@ function normalizeParams(type, params = {}, where) {
       if (!Number.isFinite(v)) throw new Error(`${where}.${p.key}: expected a number`);
       if (p.int) v = Math.round(v);
       if (p.min !== undefined && v < p.min) throw new Error(`${where}.${p.key}: at least ${p.min}`);
+      if (p.max !== undefined && v > p.max) throw new Error(`${where}.${p.key}: at most ${p.max}`);
     }
     out[p.key] = v;
   }
@@ -127,6 +226,11 @@ export function normalizeDiagram(d, path = 'plant') {
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
+    if (b.type === 'controller') {
+      const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: 'pid' }];
+      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`));
+      out.variant = Math.min(Math.max(0, Math.round(Number(b.variant) || 0)), out.variants.length - 1);
+    }
     return out;
   });
   const byId = Object.fromEntries(blocks.map((b) => [b.id, b]));
@@ -247,11 +351,17 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       const def = diagramBlockDef(b.type);
       const [nIn, nOut] = blockPorts(b);
+      if (b.type === 'controller') {
+        const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: 'pid' });
+        const k = add({ kind: 'ctrl', name, ft: false, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts), next: 0, u: 0, x: new Float64Array(nIn) });
+        outs[b.id] = [k]; ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+        continue;
+      }
       if (def.ode) {
         // A physics block: its state integrates inside the diagram; one tap
         // node per output reads what the block computed from its state.
         const k = add({ kind: 'ode', name, ft: false, ode: def.ode, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
-        outs[b.id] = def.outputs.map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
+        outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
@@ -264,7 +374,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       } else if (b.type === 'gain') Object.assign(node, { kind: 'gain', K: b.params.K, ft: true });
       else if (b.type === 'sum') Object.assign(node, { kind: 'sum', signs: [...b.params.signs].map((c) => (c === '-' ? -1 : 1)), ft: true });
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
-      else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, ft: b.params.L <= 0 });
+      else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, y0: b.params.y0, ft: b.params.L <= 0 });
       else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
       else if (b.type === 'fcn') Object.assign(node, { kind: 'fcn', f: compileExpr(b.params.expr, { vars: true }), env: { u: 0, t: 0 }, ft: true });
       else if (b.type === 'quantizer') Object.assign(node, { kind: 'quant', q: b.params.q, ft: true });
@@ -303,22 +413,38 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   let n = 0, bound = 0;
   for (const nd of nodes) {
     if (nd.kind === 'ss') { nd.off = n; n += nd.ss.n; bound = Math.max(bound, nd.bound); }
-    if (nd.kind === 'ode') { nd.off = n; n += nd.ode.n; bound = Math.max(bound, nd.bound); }
+    if (nd.kind === 'ode') { nd.off = n; n += typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n; bound = Math.max(bound, nd.bound); }
   }
   const vals = new Float64Array(nodes.length);
+  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl');
+  const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
-  const histAt = (hist, tau) => {
-    if (tau < 0 || !hist.length) return 0;
+  const histAt = (hist, tau, y0 = 0) => {
+    if (tau < 0 || !hist.length) return y0;
     const f = tau / h, i = Math.floor(f);
     if (i >= hist.length - 1) return hist[hist.length - 1];
     return hist[i] + (hist[i + 1] - hist[i]) * (f - i);
   };
   const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
 
-  return {
-    n, bound, warnings,
+  const self = {
+    n, bound, warnings, minTs,
     setStep(step) { h = step; },
+    // Called at each completed step with the state there: a controller whose
+    // sample is due reads its inputs and sets its held output; the outputs are
+    // then evaluated again so what is recorded at t already sees it.
+    sample(t, X, o, u) {
+      let due = false;
+      for (const nd of ctrls) {
+        if (t < nd.next - 1e-9) continue;
+        for (let s = 0; s < nd.x.length; s++) nd.x[s] = inOf(nd, s);
+        nd.u = nd.law.step(nd.x);
+        while (nd.next <= t + 1e-9) nd.next += nd.Ts;
+        due = true;
+      }
+      if (due) self.eval(t, X, o, u, null);
+    },
     // Initial state: zero, except for physics blocks with initial conditions.
     init(X, o) { for (const nd of nodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
     eval(t, X, o, u, dX) {
@@ -332,13 +458,14 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
           case 'gain': y = nd.K * inOf(nd); break;
           case 'sum': y = 0; for (let s = 0; s < nd.signs.length; s++) y += nd.signs[s] * inOf(nd, s); break;
           case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
-          case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L) : inOf(nd); break;
+          case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L, nd.y0) : inOf(nd); break;
           case 'switch': y = inOf(nd, nd.pick); break;
           case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
           case 'quant': y = nd.q * Math.round(inOf(nd) / nd.q); break;
           case 'noise': y = inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
           case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
           case 'tap': y = nodes[nd.parent].outv[nd.j]; break;
+          case 'ctrl': y = nd.u; break;
           default: {
             const { ss } = nd;
             const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
@@ -368,4 +495,5 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
   };
+  return self;
 }

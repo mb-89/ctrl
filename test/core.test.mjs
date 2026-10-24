@@ -173,15 +173,20 @@ test('a diagram plant matches its single-block equivalent, nested or not', async
   const sim = { duration: 2, sampleTime: 0.001 };
   const msdOut = simulateSystem(normalizeDiagram(EXAMPLE_PLANTS.find((p) => p.name.startsWith('Mass')).diagram), { F: signals.r }, sim).signals;
   const msd = msdOut.x;
-  const so = simulateSystem(normalizeDiagram({ blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 'p', type: 'secondOrder', params: { K: 1 / 100, wn: 10, zeta: 0.05 } }, { id: 'y1', type: 'sink', params: { name: 'y1' } }], wires: [{ from: 'r', to: 'p' }, { from: 'p', to: 'y1' }] }), signals, sim).signals.y1;
+  const so = simulateSystem(normalizeDiagram({ blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 'p', type: 'secondOrder', params: { K: 1 / 25, wn: 5, zeta: 0.05 } }, { id: 'y1', type: 'sink', params: { name: 'y1' } }], wires: [{ from: 'r', to: 'p' }, { from: 'p', to: 'y1' }] }), signals, sim).signals.y1;
   for (const k of [100, 500, 1000, 2000]) assert.ok(Math.abs(msd[k] - so[k]) < 1e-6, `t = ${k / 1000}: ${msd[k]} vs ${so[k]}`);
   // The Function blocks: energies ½mv² and ½kx² from the same run.
   for (const k of [300, 1200]) {
     assert.ok(Math.abs(msdOut.Ekin[k] - 0.5 * msdOut.v[k] ** 2) < 1e-12);
-    assert.ok(Math.abs(msdOut.Epot[k] - 50 * msd[k] ** 2) < 1e-12);
+    assert.ok(Math.abs(msdOut.Epot[k] - 12.5 * msd[k] ** 2) < 1e-12);
   }
-  const motor = simulateSystem(normalizeDiagram(EXAMPLE_PLANTS.find((p) => p.name === 'DC motor').diagram), { V: signals.r }, sim).signals;
-  // Steady speed of the motor per volt: Kt·10 / (1 + Ke·Kt·10) = 5 / 3.5
+  // The motor with its controller off and 1 V in place of it: steady speed
+  // per volt Kt·10 / (1 + Ke·Kt·10) = 5 / 3.5, through the nested Motor.
+  const motorSys = structuredClone(EXAMPLE_PLANTS.find((p) => p.name.startsWith('DC motor')).diagram);
+  motorSys.blocks.find((b) => b.type === 'controller').variant = 3;
+  motorSys.blocks.push({ id: 'one', type: 'source', params: { signal: 'one' } });
+  motorSys.wires = motorSys.wires.map((w) => (w.from === 'ctrl' && w.to === 'motor' ? { from: 'one', to: 'motor' } : w));
+  const motor = simulateSystem(normalizeDiagram(motorSys), { one: signals.r }, sim).signals;
   assert.ok(Math.abs(motor.speed[2000] - 5 / 3.5) < 1e-3);
   assert.ok(motor.angle[2000] > 2);
 });
@@ -224,18 +229,19 @@ test('the cart-pole falls the right way at the right rate; sensor blocks behave'
 test('2D views compile and move with the signals; library parts combine', async () => {
   const { SYSTEM_LIBRARY, applySystem } = await import('../src/core/systems.js');
   const { compileScene } = await import('../src/core/views.js');
-  const pend = SYSTEM_LIBRARY.find((s) => s.name === 'Inverted pendulum');
+  const pend = SYSTEM_LIBRARY.find((s) => s.name === 'Pendulum swing-up');
   const p = normalizeProject(applySystem(structuredClone(DEFAULT_PROJECT), pend, ['input', 'plant', 'controller']));
-  assert.equal(p.title, 'Inverted pendulum');
+  assert.equal(p.title, 'Pendulum swing-up');
   const scene = compileScene(p.system.plant.views[0]);
-  const bob = (th) => scene({ t: 0, F: 0, x: 0, theta: th }).find((o) => o.op === 'circle' && o.fill === 'ch3').c;
+  const bob = (th) => scene({ t: 0, F: 0, d: 0, r: 0, x: 0, theta: th }).find((o) => o.op === 'circle' && o.fill === 'ch3').c;
   assert.ok(Math.abs(bob(0)[0]) < 1e-12 && Math.abs(bob(0)[1] - 0.6) < 1e-12);
   assert.ok(bob(0.3)[0] > 0.1, 'positive θ leans towards +x');
   const msd = SYSTEM_LIBRARY.find((s) => s.name === 'Mass–spring–damper');
-  const mixed = normalizeProject(applySystem(p, msd, ['plant']));
-  assert.equal(mixed.system.signals.F.components[0].type, 'square', 'the input stays from the pendulum');
-  assert.equal(mixed.system.plant.views[0].name, 'Hanging mass');
-  assert.deepEqual(mixed.scope.channels.map((c) => c.source), ['F', 'x', '', ''], 'a whole load brings the system scope; a plant load keeps what still exists');
+  const motorSys = SYSTEM_LIBRARY.find((s) => s.name.startsWith('DC motor'));
+  const mixed = normalizeProject(applySystem(normalizeProject(applySystem(DEFAULT_PROJECT, motorSys, ['input', 'plant'])), SYSTEM_LIBRARY.find((s) => s.name.startsWith('Triple')), ['plant']));
+  assert.equal(mixed.system.signals.r.components[0].type, 'square', 'the input stays from the motor');
+  assert.equal(mixed.system.plant.views[0].name, 'Cart and triple pendulum');
+  assert.deepEqual(mixed.scope.channels.map((c) => c.source), ['r', '', '', 'd'], 'a whole load brings the system scope; a plant load keeps what still exists');
   assert.ok(SYSTEM_LIBRARY.every((s) => s.plant.views?.length), 'every system has a view');
   const { loopReady } = await import('../src/core/project.js');
   const fromLoop = normalizeProject(applySystem(EXAMPLES[0], msd, ['input', 'plant']));
@@ -280,4 +286,52 @@ test('only what the diagram names exists: signals and channels are pruned, units
   assert.deepEqual(p.scope.channels.map((c) => `${c.source}:${c.on}`), ['r:true', 'y1:true', ':false', ':false']);
   const { diagramNames } = await import('../src/core/diagram.js');
   assert.deepEqual(diagramNames(p.system.plant.diagram).units, { r: 'N', y1: 'm' });
+});
+
+test('controllers: the variants of every system run; the good ones control, the bad ones show why', async () => {
+  const { SYSTEM_LIBRARY, applySystem } = await import('../src/core/systems.js');
+  const { evaluateSystem, autoTimebase } = await import('../src/core/project.js');
+  const run = (name, variant) => {
+    const p = normalizeProject(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY.find((s) => s.name.startsWith(name)), ['input', 'plant']));
+    p.scope.timebase = autoTimebase(p);
+    const c = p.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+    c.variant = c.variants.findIndex((v) => v.name === variant);
+    assert.ok(c.variant >= 0, variant);
+    const res = evaluateSystem(p);
+    return (sig, t) => res.signals[sig][Math.round((t / 5) * (res.signals[sig].length - 1))];
+  };
+  const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
+  // Motor: the aggressive P overshoots 2 rad by more than 15 %; PD does not.
+  const pAgg = run('DC motor', 'P, too aggressive'), pd = run('DC motor', 'PD');
+  const peak = (f) => Math.max(...Array.from({ length: 100 }, (_, i) => f('angle', 0.25 + i * 0.0125)));
+  assert.ok(peak(pAgg) > 2.3 && peak(pd) < 2.05, `${peak(pAgg)} ${peak(pd)}`);
+  assert.ok(Math.abs(pd('angle', 1.4) - 2) < 0.02);
+  // Tank: the scheduled PI holds every level; the PI tuned for full oscillates when nearly empty.
+  const sched = run('Conical tank', 'Gain-scheduled PI'), full = run('Conical tank', 'PI tuned for full');
+  for (const [t, r] of [[1.4, 0.15], [2.15, 0.45], [4.9, 0.8]]) assert.ok(Math.abs(sched('h', t) - r) < 0.03, `h(${t}) = ${sched('h', t)}`);
+  const swing = (f, a, b) => { const v = Array.from({ length: 50 }, (_, i) => f('h', a + ((b - a) * i) / 50)); return Math.max(...v) - Math.min(...v); };
+  assert.ok(swing(full, 0.5, 1.5) > 0.1 && swing(sched, 0.5, 1.5) < 0.08, `${swing(full, 0.5, 1.5)} ${swing(sched, 0.5, 1.5)}`);
+  // Swing-up: from hanging to upright and held, through the push; state feedback alone cannot.
+  const up = run('Pendulum', 'Swing-up + state feedback'), sf = run('Pendulum', 'State feedback only');
+  for (const t of [2.5, 3.4, 4.9]) assert.ok(Math.abs(wrap(up('theta', t))) < 0.05, `θ(${t}) = ${up('theta', t)}`);
+  assert.ok(Math.abs(wrap(sf('theta', 4.9))) > 1);
+  // Triple pendulum: LQR keeps all three rods within 5° and follows the cart reference.
+  const lqr = run('Triple', 'LQR');
+  for (const t of [0.5, 1.5, 3, 4.9]) for (const k of ['theta1', 'theta2', 'theta3']) assert.ok(Math.abs(lqr(k, t)) < 0.09, `${k}(${t}) = ${lqr(k, t)}`);
+  assert.ok(lqr('x', 4.9) > 0.35);
+});
+
+test('controller variants are validated; view captions keep their width', async () => {
+  const { normalizeVariant } = await import('../src/core/controllers.js');
+  assert.throws(() => normalizeVariant({ type: 'fuzzy' }), /pid, stateFeedback/);
+  assert.throws(() => normalizeVariant({ type: 'gainScheduled', params: { at: [0, 1], Kp: [1], Ki: [1, 1] } }), /same number/);
+  const v = normalizeVariant({ type: 'pid', params: { Kp: 2, umin: null } });
+  assert.equal(v.params.umin, -Infinity);
+  assert.equal(JSON.parse(JSON.stringify(v)).params.umin, null, 'an open limit is saved as null and read back as open');
+  const { compileScene } = await import('../src/core/views.js');
+  const scene = compileScene({ kind: '2d', view: [-1, -1, 1, 1], shapes: [{ type: 'text', x: 0, y: 0, text: 'x = {x:6.2} m' }, { type: 'polygon', points: [[0, 0], [1, 0], ['x', 1]] }] });
+  const a = scene({ x: 1.5 }), b = scene({ x: -12.25 });
+  assert.equal(a[0].text.length, b[0].text.length);
+  assert.equal(b[0].text, 'x = -12.25 m');
+  assert.deepEqual(a[1].pts[2], [1.5, 1]);
 });
