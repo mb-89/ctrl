@@ -7,3 +7,7 @@
 ## Added while this was being built: no black-box models
 
 > And in general, what I see a lot is that you put like the cart and the three rods, you just put that as a black box model. Think about if you can, I guess an agent can do that, like make these black box models understandable for the user. I want to be able to click into that and see what it's about. Model it in our diagrams. And if you find that there's something you can't model, then add it as a primitive to our diagrams, right? So they shouldn't be black boxes.
+
+## Added while this was being built: one button, semantic styles in one place
+
+> And then maybe some UX thing for the inputs. If I select the R or the D as an input in the input generator, it's really hard to see which one is selected. It's not clear what, it seems black is selected, but that's not clear from the, yeah, it's not clear. In general, it seems like every button looks different. Like the buttons for the channels look different than the run control, looks different than the time, looks different than the buttons down there. See that you put everything through a single master style sheet. There's no need for 5 different types of buttons. Pick one. And this goes, that goes for all the design elements, right? Don't have 5 different styles for everything in our design. Like the styles are supposed to be semantic. And then we choose a semantic style and we change it in one place.
