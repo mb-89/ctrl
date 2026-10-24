@@ -10,8 +10,8 @@ Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control lo
 
 - **Display**: four channels on a 10 × 8 graticule, any of the system's named signals; the screen is the record, swept in real time. Wheel to zoom (over an axis: that axis only), drag to pan, click a trace to work on it alone, Shift-drag to zoom to a box.
 - **Controls** to the right, as on a bench scope: Run/Stop, Single, Auto Scale; Horizontal and Vertical knobs whose readouts you can also type into.
-- **Rec**, under the screen, keeps the last minutes of every signal (5 min unless set), live or simulated: save them as CSV or JSON, and open a saved trace to see it dashed behind the live ones.
-- **Live (HIL)**: a system's plant can run outside the page, in real time. Load **HIL: external motor**, take its plant script (`hil/hil_plant.py`) from Run Control's **plant script…**, run `uv run hil_plant.py`, press **Connect**, and tune the controller while the motor runs at 100 Hz. Ten silent cycles on either side are an E-stop. The protocol (JSON-RPC 2.0 over a WebSocket) is in [design/output/hil.md](design/output/hil.md), for plants of your own.
+- **Save ▾**, under the screen, stores what the screen holds with every signal (CSV, JSON) or as a picture (PNG); **Open** shows a saved trace dashed behind the live ones.
+- **Live (HIL)**: a system's plant can run outside the page, in real time. Load **HIL: external motor**, download **hil-plant.zip** from Run Control's **plant script…**, unzip it and run `runme.sh` (Linux, macOS) or `runme.ps1` (Windows), which install what they need; press **Connect**, and tune the controller while the motor runs at 100 Hz. The scope's Run and Stop start and stop the plant; E-STOP on the page, or Enter at the plant, stops it, and ten silent cycles on either side are an E-stop too. **Rec** keeps the last minutes of every live signal (5 min unless set). The protocol (JSON-RPC 2.0 over a WebSocket) is in [design/output/hil.md](design/output/hil.md), for plants of your own, in any language.
 - **Tabs** below set the loop up one step at a time:
   - **Input**: a signal generator that sums primitives (DC, step, ramp, square/pulse train, sine, chirp, noise, a typed formula y(t), or a waveform loaded from a CSV file) into named signals, repeated with their period, with a dashed preview before each one is added.
   - **Plant**: the system as a block diagram, Simulink-style: Source blocks play signals, Sink blocks (x, speed, …) are what the scope shows, blocks nest into subsystems. A plant can carry 2D views (simple shapes, or standard SVG bound to signals) that move with the simulation.
@@ -25,7 +25,7 @@ The design, its decisions and what comes next are in [design/output](design/outp
 
 ## Build and test
 
-Node 18 or later, no dependencies. (The plant script needs Python 3.9+ and the websockets package, which `uv run` installs; the tests only run its physics, with `python3` if it is there.)
+Node 18 or later, no dependencies. (The plant script needs Python 3.9+ and the websockets package, which `uv run` installs; the tests run its physics with `python3` if it is there, and the whole protocol against it when websockets can be had, from python3 or uv's cache, and skip that otherwise.)
 
 ```
 node build.mjs        # writes dist/loop-tuner.html (and dist/artifact.html, a page fragment)
@@ -48,8 +48,9 @@ node cli.mjs help
 | `src/core/tune.js` | Auto-tune: a seeded scan, then Nelder–Mead on the penalised score. |
 | `src/core/project.js` | The project file: normalisation, evaluation, candidates. |
 | `src/core/hil.js`, `src/core/live.js` | Live mode: the protocol, the External plant block, watchdogs, and the loop that steps the diagram against an external plant (in a Web Worker). |
-| `src/core/trace.js` | Record: a ring buffer of every signal; traces as CSV or JSON, and back. |
-| `hil/hil_plant.py` | The external plant of "HIL: external motor": `uv run hil_plant.py`. |
+| `src/core/trace.js`, `src/ui/record.js` | Saving traces: the screen or the live record (a ring buffer of every live signal) as CSV, JSON or PNG, and back as references; where live and saved time lands on the screen. |
+| `src/core/zip.js` | A stored zip, for the plant's download. |
+| `hil/` | The external plant of "HIL: external motor": `hil_plant.py` (`uv run hil_plant.py`), `runme.sh`, `runme.ps1`, `README.txt`; the page offers them as `hil-plant.zip`. |
 | `src/ui/` | The page: display, controls, dial, signal generator, app wiring. |
 | `build.mjs` | Bundles core and UI into one HTML file. |
 | `cli.mjs` | The command line, for agents and scripts. |

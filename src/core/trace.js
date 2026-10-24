@@ -37,10 +37,10 @@ export function refSteps(t0, t1, w0, W) {
 // samples come, up to MAX_RECORD_VALUES numbers; beyond that the oldest go
 // first, and longest() says how long that holds at the current rate. Times
 // must not decrease.
-export function createRecorder(seconds = 300) {
+export function createRecorder(seconds = 300, maxValues = MAX_RECORD_VALUES) {
   let names = [], units = {}, cap = 0, n = 0, head = 0, t = new Float64Array(0), cols = [];
   let lastIn = null, map = [];
-  const limit = () => Math.floor(MAX_RECORD_VALUES / (names.length + 1));
+  const limit = () => Math.floor(maxValues / (names.length + 1));
   const oldest = () => (head - n + cap) % cap;
   // New buffers of size c holding the newest samples, in time order from 0.
   function relayout(c) {

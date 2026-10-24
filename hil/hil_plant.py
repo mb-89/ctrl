@@ -12,7 +12,9 @@ in real time at 100 Hz on your computer, for Loop Tuner's Live (HIL) mode.
     python3 hil_plant.py --describe prints what it tells the page about itself
 
 Then, in Loop Tuner: System library > "HIL: external motor" > Load, and press
-Connect under Live. Options: --port, --rate, --watchdog, --allow-origin
+Connect under Live. The scope's Run and Stop start and stop this plant. Press
+Enter here to E-stop it (its own stop button); Ctrl+C ends it. Options:
+--port, --rate, --watchdog, --allow-origin, --strict-origin
 (python3 hil_plant.py --help).
 
 The protocol is JSON-RPC 2.0, one message per WebSocket text frame, at
@@ -27,9 +29,9 @@ ws://127.0.0.1:8765 (Loop Tuner's design/output/hil.md has all of it):
 
 This script owns the clock: every cycle it integrates the physics, sends the
 outputs y and applies each input u from the moment it arrives. It is also the
-safety authority: if no u comes for 10 cycles, or the page goes away while
-running, it applies the safe inputs and latches an emergency stop (E-stop)
-until the page sends "reset".
+safety authority: if no u comes for 10 cycles, the page goes away while
+running, the page asks for it, or Enter is pressed here, it applies the safe
+inputs and latches an emergency stop (E-stop) until the page sends "reset".
 
 To put real hardware behind Loop Tuner, keep the server, the watchdog and the
 cycle, and replace Motor with your device's I/O.
@@ -41,6 +43,7 @@ import json
 import math
 import re
 import sys
+import threading
 import time
 
 PROTOCOL = "loop-tuner-hil/1"
@@ -139,10 +142,13 @@ class Plant:
 
     def origin_ok(self, origin):
         """A browser says which page opened the connection. Allowed: no Origin
-        (scripts), "null" (a page opened from a file), localhost, and every
-        --allow-origin. Any web page could otherwise drive the plant."""
+        (scripts), localhost, every --allow-origin, and "null", which a page
+        opened from a file sends (Loop Tuner's usual case). Other web sites are
+        refused, since WebSockets have no CORS. But a sandboxed frame on any
+        web site also sends "null": with --strict-origin it is refused too
+        (then serve the page from localhost). For real hardware, use that."""
         allowed = self.args.allow_origin
-        if origin is None or "*" in allowed or origin in allowed or origin == "null":
+        if origin is None or "*" in allowed or origin in allowed or (origin == "null" and not self.args.strict_origin):
             return True
         return re.fullmatch(r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?", origin) is not None
 
@@ -276,6 +282,22 @@ class Plant:
         print(f"E-STOP: {reason}; safe inputs applied, latched until the page resets it")
         self.notify("estop", {"reason": reason, "t": round((self.k - self.k_start) * self.dt, 6)})
 
+    async def shutdown(self, reason):
+        """Ctrl+C: safe inputs, and the page hears why before the connection
+        closes (an E-stop if it was running), not just a lost connection."""
+        self.u = list(self.safe)
+        ws, self.client = self.client, None
+        if ws is None:
+            return
+        try:
+            if self.running:
+                self.estop_reason = reason
+                msg = {"jsonrpc": "2.0", "method": "estop", "params": {"reason": reason, "t": round((self.k - self.k_start) * self.dt, 6)}}
+                await asyncio.wait_for(ws.send(json.dumps(msg)), 0.5)
+            await asyncio.wait_for(ws.close(1001, reason), 0.5)
+        except Exception:  # the page may be gone already
+            pass
+
     def notify(self, method, params):
         """Sends a notification without ever blocking the cycle: if the page is
         not reading (its buffer is full), the message is dropped and counted."""
@@ -375,6 +397,16 @@ def check():
     return 0 if 1.0 < m.angle < 1.4 else 1
 
 
+def stop_key(loop, plant):
+    """The plant's own stop button (the page has its E-STOP): every Enter in
+    this window latches an E-stop, which the page's Reset clears."""
+    try:
+        for _ in sys.stdin:
+            loop.call_soon_threadsafe(plant.trip, "stop pressed at the plant")
+    except (OSError, ValueError):  # no console
+        pass
+
+
 async def serve_forever(args):
     try:
         from websockets.asyncio.server import serve
@@ -383,9 +415,17 @@ async def serve_forever(args):
     plant = Plant(args)
     async with serve(plant.handler, args.host, args.port, max_size=2 ** 20):
         print(f"Loop Tuner external plant: {plant.describe({})['name']}")
-        print(f"listening on ws://{args.host}:{args.port} at {args.rate:g} Hz; watchdog {args.watchdog} cycles. Ctrl+C stops.")
-        print("In Loop Tuner: System library > HIL: external motor > Load, then Connect under Live.")
-        await plant.run()
+        print(f"listening on ws://{args.host}:{args.port} at {args.rate:g} Hz; watchdog {args.watchdog} cycles.")
+        print("In Loop Tuner: System library > HIL: external motor > Load, then Connect under Live; Run and Stop start and stop this plant.")
+        if sys.stdin is not None and sys.stdin.isatty():
+            threading.Thread(target=stop_key, args=(asyncio.get_running_loop(), plant), daemon=True).start()
+            print("Enter: E-stop (the page's Reset clears it). Ctrl+C: end.")
+        else:
+            print("Ctrl+C: end.")
+        try:
+            await plant.run()
+        finally:
+            await plant.shutdown("the plant was shut down (Ctrl+C)")
 
 
 def main():
@@ -396,6 +436,9 @@ def main():
     p.add_argument("--watchdog", type=int, default=10, help="E-stop after this many cycles without u (default 10)")
     p.add_argument("--allow-origin", action="append", default=[], metavar="ORIGIN",
                    help="also accept pages from this origin, e.g. https://example.org ('*' accepts any page)")
+    p.add_argument("--strict-origin", action="store_true",
+                   help="also refuse pages with Origin null: a page opened from a file sends it, but so does a sandboxed frame on any web site "
+                        "(serve the page from localhost then; recommended for real hardware)")
     p.add_argument("--spin", type=float, default=2.0 if sys.platform == "win32" else 0.0, metavar="MS",
                    help="wait out the last MS milliseconds of each cycle actively, for coarse OS timers (default: 2 on Windows, else 0)")
     p.add_argument("--check", action="store_true", help="run 3 s of physics without a server and exit")

@@ -14,11 +14,13 @@ import { HIL_URL, externalParams, sameDescription, samePorts, findExternal } fro
 import { createLiveLoop } from '../core/live.js';
 import { normalizeDiagram, parseEnd } from '../core/diagram.js';
 import { sweepStart } from '../core/trace.js';
+import { zipFiles } from '../core/zip.js';
 import { fitChannel } from '../core/project.js';
 
 const MAX_SWEEP = 200000;
-// The plant script's text, put into the bundle by build.mjs.
-const PLANT_PY = typeof __HIL_PLANT_PY === 'string' ? __HIL_PLANT_PY : '';
+// The plant's files (hil/), put into the bundle by build.mjs.
+const HIL_FILES = typeof __HIL_FILES === 'object' ? __HIL_FILES : {};
+const PLANT_PY = HIL_FILES['hil_plant.py'] ?? '';
 const RUN_PY = 'uv run hil_plant.py';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -167,7 +169,9 @@ export function createLive(app, display, controlsRoot, record) {
     const w0 = Math.max(0, tb.position);
     return [w0, Math.max(tb.position + 10 * tb.scale - w0, 1e-6)];
   }
-  const view = (s) => ({ t: s.t.subarray(0, s.n), signals: Object.fromEntries(names.map((nm, j) => [nm, s.cols[j].subarray(0, s.n)])) });
+  // A sweep as the display takes it; plantOffset turns its screen time into
+  // the plant's (for Save, ui/record.js).
+  const view = (s) => ({ t: s.t.subarray(0, s.n), signals: Object.fromEntries(names.map((nm, j) => [nm, s.cols[j].subarray(0, s.n)])), plantOffset: s.start - s.w0 });
   // A sweep covers one screen width of plant time from sweepStart, drawn at
   // w0 + (t − start): at position w0 the first sweep shows plant time
   // w0 … w0 + W, as a simulated run does (core/trace.js).
@@ -180,8 +184,11 @@ export function createLive(app, display, controlsRoot, record) {
   }
   function addSample(t, vals) {
     const [w0, W] = windowOf();
-    if (!sweep || sweep.w0 !== w0 || sweep.W !== W || t < sweep.start - 1e-9 || t - sweep.start >= W - 1e-9) newSweep(t, w0, W);
     lastT = t;
+    // Before the window's left edge (the start of a run at a position > 0)
+    // nothing is on the screen, as in a simulated run.
+    if (t < w0 - 1e-9) return;
+    if (!sweep || sweep.w0 !== w0 || sweep.W !== W || t < sweep.start - 1e-9 || t - sweep.start >= W - 1e-9) newSweep(t, w0, W);
     const s = sweep;
     if (s.k++ % s.every || s.n >= s.cap) return;
     s.t[s.n] = s.w0 + (t - s.start);
@@ -226,7 +233,6 @@ export function createLive(app, display, controlsRoot, record) {
     display.setFeed(null);
     display.clearRuns();
   }
-  record.bindLive(() => (feeding && sweep ? { offset: sweep.start - sweep.w0 } : null));
 
   function onSamples(m) {
     if (m.names.join('\n') !== names.join('\n')) { names = m.names; sweep = null; }
@@ -234,27 +240,40 @@ export function createLive(app, display, controlsRoot, record) {
     record.live.samples(m.names, m.t, m.values);
   }
 
-  // ---- The plant script: download or copy, with how to run it.
+  // ---- The plant: a zip with runme scripts that install what it needs (the
+  // person, 2026-10-24), or the script alone; copy where files cannot leave.
+  const plantZip = () => new Blob([zipFiles(Object.entries(HIL_FILES).map(([name, data]) => ({ name: `hil-plant/${name}`, data, mode: name.endsWith('.sh') ? 0o755 : 0o644 })))], { type: 'application/zip' });
   const dlg = document.createElement('div');
   dlg.className = 'overlay';
   dlg.hidden = true;
   dlg.innerHTML = `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="lv-dlg-title">
     <h2 id="lv-dlg-title">The external plant</h2>
-    <p><code>hil_plant.py</code> is a DC motor swinging an unbalanced arm, simulated in real time at 100 Hz on your computer: the plant of <b>HIL: external motor</b>. It listens on <code>${HIL_URL}</code>, sends its outputs every cycle and applies the inputs this page sends back. The scope's Run and Stop start and stop it. If it hears nothing for 10 cycles it stops the motor (E-stop) until you press Reset; pressing Enter in its window stops it too.</p>
-    <pre>${RUN_PY}</pre>
-    <p>uv installs what it needs (the websockets package) by itself. Without uv: <code>pip install websockets</code>, then <code>python3 hil_plant.py</code>. <code>--help</code> lists its options (port, rate, watchdog).</p>
-    <p class="dim">${framed ? 'This viewer may not let the page connect to your computer or download files: copy the script here, and use Copy HTML to open Loop Tuner from a file in your browser.' : 'To put real hardware behind Loop Tuner, keep the script\'s server, cycle and watchdog and replace its Motor with your device.'}</p>
-    <p class="lv-btns">${framed ? '' : '<button class="key primary" id="lv-dl">Download hil_plant.py</button>'}<button class="key" id="lv-copy-py">Copy the script</button><button class="key" id="lv-copy-cmd">Copy “${RUN_PY}”</button><button class="key" id="lv-close">Close</button></p>
+    <p><code>hil_plant.py</code> is a DC motor swinging an unbalanced arm, simulated in real time at 100 Hz on your computer: the plant of <b>HIL: external motor</b>. It listens on <code>${HIL_URL}</code>, sends its outputs every cycle and applies the inputs this page sends back. The scope's Run and Stop start and stop it. If it hears nothing for 10 cycles it stops the motor (E-stop) until you press Reset; Enter in its window stops it too.</p>
+    <p><b>hil-plant.zip</b> holds it with two scripts that install what it needs (uv, which brings Python and the websockets package) and start it:</p>
+    <pre>sh runme.sh      Linux, macOS
+runme.ps1        Windows: right-click › Run with PowerShell</pre>
+    <p>With uv already there: <code>${RUN_PY}</code>. With Python: <code>pip install websockets</code>, then <code>python3 hil_plant.py</code>. <code>--help</code> lists its options (port, rate, watchdog).</p>
+    <p class="dim" id="lv-dlg-note"></p>
+    <p class="lv-btns"><button class="key primary" id="lv-dl-zip">Download hil-plant.zip</button><button class="key" id="lv-dl">Download hil_plant.py</button><button class="key" id="lv-copy-py">Copy the script</button><button class="key" id="lv-close">Close</button></p>
   </div>`;
   document.getElementById('lt-shell').append(dlg);
   const closeDlg = () => { dlg.hidden = true; };
-  $('lv-script').addEventListener('click', () => { dlg.hidden = false; ($('lv-dl') ?? $('lv-copy-py')).focus(); });
+  $('lv-script').addEventListener('click', () => {
+    // Files leave through app.download; the claude.ai viewer takes a zip, not a .py.
+    const can = app.canDownload();
+    $('lv-dl-zip').hidden = !can;
+    $('lv-dl').hidden = !can || framed;
+    $('lv-dlg-note').textContent = framed ? 'This viewer may not let the page connect to your computer: use Copy HTML, save it as a file and open that in your browser to go live.'
+      : 'To put real hardware behind Loop Tuner, keep the script\'s server, cycle and watchdog and replace its Motor with your device; any language that speaks the protocol works.';
+    dlg.hidden = false;
+    ($('lv-dl-zip').hidden ? $('lv-copy-py') : $('lv-dl-zip')).focus();
+  });
   $('lv-close').addEventListener('click', closeDlg);
   dlg.addEventListener('click', (e) => { if (e.target === dlg) closeDlg(); });
   dlg.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeDlg(); } });
-  $('lv-dl')?.addEventListener('click', () => { app.download('hil_plant.py', PLANT_PY, 'text/x-python'); app.toast(`Saved hil_plant.py. Run it with: ${RUN_PY}`); });
+  $('lv-dl-zip').addEventListener('click', async () => { if (await app.download('hil-plant.zip', plantZip(), 'application/zip')) app.toast('Saved hil-plant.zip: unzip it and run runme.sh (Linux, macOS) or runme.ps1 (Windows).'); });
+  $('lv-dl').addEventListener('click', async () => { if (await app.download('hil_plant.py', PLANT_PY, 'text/x-python')) app.toast(`Saved hil_plant.py. Run it with: ${RUN_PY}`); });
   $('lv-copy-py').addEventListener('click', () => app.copy(PLANT_PY, 'hil_plant.py'));
-  $('lv-copy-cmd').addEventListener('click', () => app.copy(RUN_PY, 'The command'));
 
   // ---- Live controls
   const on = () => ['connecting', 'open', 'running'].includes(state);
@@ -272,6 +291,7 @@ export function createLive(app, display, controlsRoot, record) {
   function render() {
     const hit = external();
     liveEl.hidden = !hit;
+    display.renderStatus();
     if (!hit) return;
     const k = $('lv-connect');
     k.textContent = on() ? 'Disconnect' : 'Connect';
@@ -292,13 +312,13 @@ export function createLive(app, display, controlsRoot, record) {
     el.title = '';
     const lines = (...ls) => { el.innerHTML = ls.map((l) => `<div>${l}</div>`).join(''); };
     if (estop) {
-      lines(`<span class="bad">E-STOP: ${esc(estop.reason)}</span>`, `${estop.by === 'plant' ? 'by the plant' : 'by this page'} · safe inputs until ${connected() ? 'Reset' : 'Connect, Reset'}`);
+      lines(`<span class="bad">E-STOP: ${esc(estop.reason)}</span>`, `${estop.by === 'plant' ? 'by the plant · safe' : 'safe inputs'} until ${connected() ? 'Reset' : 'Connect, Reset'}`);
       el.title = `E-STOP: ${estop.reason}`;
       return;
     }
     if (!running) {
       lines(esc({
-        idle: 'not connected: run the plant script, then Connect',
+        idle: 'start the plant, then Connect',
         connecting: 'connecting…',
         open: detail === 'stopped' ? 'stopped · Run starts it again' : 'connected · Run starts the plant',
         running: 'running',
@@ -344,7 +364,8 @@ export function createLive(app, display, controlsRoot, record) {
       if (!hit) { app.toast('This system has no External plant block: Live disconnected.'); host.post({ type: 'disconnect' }); return; }
       if (!desc) return;
       if (!samePorts(hit.block.params, desc)) {
-        if (takePorts(desc)) app.toast(`While connected, the External plant block keeps the plant's ports (${portText(desc)}); Disconnect to change them.`);
+        // (after the toast of whatever caused it, such as Undo)
+        if (takePorts(desc)) setTimeout(() => app.toast(`While connected, the External plant block keeps the plant's ports (${portText(desc)}); Disconnect to change them.`));
         return;
       }
       sendProgram();

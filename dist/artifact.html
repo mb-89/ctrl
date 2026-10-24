@@ -439,9 +439,10 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .an-fig canvas { flex: 1 1 0; min-height: 0; width: 100%; display: block; }
 @media (max-width: 900px) { .an { grid-template-columns: 1fr; } .an-grid { grid-template-columns: 1fr; } }
 
-/* Live (HIL) and Record (ui/live.js). Live is a second row of Run Control;
-   Record sits under the screen beside the channel badges, in the bezel's
-   colours, like a scope's save keys. */
+/* Live (HIL, ui/live.js) and Save (ui/record.js). Live is a second row of
+   Run Control, two lines under its keys whatever its state; Save sits under
+   the screen beside the channel badges, in the bezel's colours, like a
+   scope's save keys. */
 .st-live { background: transparent; color: var(--lit-green); box-shadow: inset 0 0 0 1px var(--lit-green); }
 .st-estop { background: var(--lit-red); color: #3a0606; }
 .st-wait { background: transparent; color: var(--lit-amber); box-shadow: inset 0 0 0 1px var(--lit-amber); }
@@ -454,7 +455,9 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .lv-url:disabled { color: var(--ink-2); }
 .lv-link { border: 0; background: none; padding: 0; font-size: 11.5px; color: var(--ink-2); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; white-space: nowrap; }
 .lv-link:hover { color: var(--ink); }
-.lv-stats { font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--ink-2); min-height: 2.9em; }
+.lv-stats { font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--ink-2); min-height: 1.45em; }
+.lv-stats > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lv-line[hidden] + .lv-stats { min-height: calc(24px + 1.45em); }  /* the address line's height: the block keeps its size */
 .lv-stats .bad { color: var(--bad); font-weight: 600; }
 .lv-stats .ok { color: var(--lit-green); }
 .key.estop:not(.lit-red):not(:disabled) { color: var(--bad); }
@@ -474,8 +477,15 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .recbar .rkey:focus-visible { outline: 2px solid #c9d3da; outline-offset: 1px; }
 .rc-menu { position: relative; }
 .rc-pop { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 5; display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 6px; border: 1px solid #333a40; background: #0f1316; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); }
-.rc-pop .rkey { text-align: left; }
-.rc-refs { display: inline-flex; }
+.rc-pop .rkey { height: 24px; padding: 0 8px; }
+.rc-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.rc-what { display: flex; flex-direction: column; color: #e7ebee; font-size: 12px; line-height: 1.25; }
+.rc-note { color: #7f8c96; font-size: 11px; }
+.rc-keys { display: flex; gap: 4px; }
+.rc-rec { display: inline-flex; align-items: center; gap: 6px; }
+.recbar .rc-step { padding: 0 7px; }
+.recbar .rkey:disabled { opacity: 0.4; cursor: default; }
+.rc-refs { display: inline-flex; gap: 4px; }
 .recbar .rc-ref { border-style: dashed; color: #9aa7b1; }
 @media (max-width: 900px) {
   .display { grid-template-rows: 22px minmax(0, 1fr) 30px auto; height: 420px; }
@@ -540,7 +550,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   <span><kbd>Shift</kbd> + drag</span><span>Zoom to the marked box; a flat band zooms time only, a narrow band values only</span>
   <span>Separators</span><span>Drag the gaps between display, controls and tabs to resize; double-click to reset</span>
 </div>
-<p>The screen is the record: what you see is simulated and swept, in real time.</p>
+<p>The screen is the record: what you see is simulated and swept, in real time. <b>Save ▾</b>, under the screen, stores it: every signal as CSV or JSON, or a picture (PNG). <b>Open…</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>); <b>◀ ▶</b> step through one longer than the screen.</p>
 <h3>Signal generator</h3>
 <p>Press a waveform key to draft a component: the display shows it dashed on its own and added to the signal. Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
 <div class="keys">
@@ -557,24 +567,24 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %), or add a variant from the library: PID, state feedback, gain-scheduled PI, energy swing-up.</p>
-<h3>Live (HIL) and Record</h3>
-<p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time. Try <b>HIL: external motor</b> from the System library: Run Control gets a second row, <b>Connect</b>, <b>E-STOP</b>, <b>Reset</b>; <b>plant script…</b> under it gives you <code>hil_plant.py</code>; run <code>uv run hil_plant.py</code>, then Connect. Every cycle the plant sends its outputs, the page runs the diagram and answers with the controller's output; edit the controller meanwhile and it takes effect at the next cycle. If either side hears nothing for 10 cycles it stops (E-STOP) until Reset. Live data sweeps the screen like a simulation.</p>
-<p><b>Rec</b>, under the screen, keeps the last minutes of every signal, live or simulated (click the length to change it). <b>Save</b> writes them as CSV or JSON; <b>Open</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>).</p>
+<h3>Live (HIL)</h3>
+<p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time. Try <b>HIL: external motor</b> from the System library: Run Control gets a second row, <b>Connect</b>, <b>E-STOP</b>, <b>Reset</b>. <b>plant script…</b> under it gives you <code>hil-plant.zip</code>: unzip it and run <code>sh runme.sh</code> (Linux, macOS) or <code>runme.ps1</code> (Windows), which install what they need; with uv, <code>uv run hil_plant.py</code>. Then Connect. Every cycle the plant sends its outputs, the page runs the diagram and answers with the controller's output; edit the controller meanwhile and it takes effect at the next sample. <b>Run</b> and <b>Stop</b> start and stop the plant (each Run is a fresh run from t = 0), <b>Single</b> runs one screen. E-STOP on the page, Enter in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until Reset. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them.</p>
 <h3>System library</h3>
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code> and <code>stop()</code>.</p>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code> and <code>single()</code> (with a live plant these start and stop it).</p>
+<p>Live: <code>loopTuner.live.connect(url?)</code>, <code>.disconnect()</code>, <code>.estop()</code>, <code>.reset()</code>, <code>.state()</code> (connection, run mode, the plant's ports and figures, how edits were taken). To tune while it runs, change a variant's parameters with <code>getProject()</code> and <code>setProject(p)</code>: they take effect at the next sample. Traces: <code>loopTuner.record.screen('csv' | 'json')</code> (every signal on the screen), <code>.live(format)</code> (the live record), <code>.reference(text, name)</code>, <code>.clearReferences()</code>, <code>.state()</code>. The protocol, for plants of your own: JSON-RPC 2.0 over a WebSocket, described in <code>hil_plant.py</code>'s header and in the repository's design/output/hil.md.</p>
 <p><button class="key primary" id="help-close">Close</button></p></div></div>
 </div>
 <script type="application/json" id="loop-tuner-project"></script>
 <script id="lt-script">(() => {
 'use strict';
 const __mods = {};
-// hil/hil_plant.py, offered under Live
-const __HIL_PLANT_PY = "#!/usr/bin/env python3\n# /// script\n# requires-python = \">=3.9\"\n# dependencies = [\"websockets>=13\"]\n# ///\n\"\"\"Loop Tuner external plant: a DC motor swinging an unbalanced arm, simulated\nin real time at 100 Hz on your computer, for Loop Tuner's Live (HIL) mode.\n\n    uv run hil_plant.py             uv installs websockets by itself\n    python3 hil_plant.py            with websockets installed (pip install websockets)\n    python3 hil_plant.py --check    runs the physics for 3 s, no server, no websockets\n    python3 hil_plant.py --describe prints what it tells the page about itself\n\nThen, in Loop Tuner: System library > \"HIL: external motor\" > Load, and press\nConnect under Live. Options: --port, --rate, --watchdog, --allow-origin\n(python3 hil_plant.py --help).\n\nThe protocol is JSON-RPC 2.0, one message per WebSocket text frame, at\nws://127.0.0.1:8765 (Loop Tuner's design/output/hil.md has all of it):\n\n  page -> plant  {\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"describe\"}\n                 requests \"start\", \"stop\", \"reset\", \"estop\", each answered\n                 {\"jsonrpc\": \"2.0\", \"method\": \"u\", \"params\": {\"seq\": 42, \"u\": [3.1, 0]}}\n  plant -> page  {\"jsonrpc\": \"2.0\", \"method\": \"y\", \"params\": {\"seq\": 42, \"t\": 0.42, \"y\": [1.2, 0.3, 0.8]}}\n                 {\"jsonrpc\": \"2.0\", \"method\": \"estop\", \"params\": {\"reason\": \"...\", \"t\": 1.23}}\n                 {\"jsonrpc\": \"2.0\", \"method\": \"status\", \"params\": {...}}  once a second\n\nThis script owns the clock: every cycle it integrates the physics, sends the\noutputs y and applies each input u from the moment it arrives. It is also the\nsafety authority: if no u comes for 10 cycles, or the page goes away while\nrunning, it applies the safe inputs and latches an emergency stop (E-stop)\nuntil the page sends \"reset\".\n\nTo put real hardware behind Loop Tuner, keep the server, the watchdog and the\ncycle, and replace Motor with your device's I/O.\n\"\"\"\n\nimport argparse\nimport asyncio\nimport json\nimport math\nimport re\nimport sys\nimport time\n\nPROTOCOL = \"loop-tuner-hil/1\"\n\n\nclass Motor:\n    \"\"\"A DC motor (armature resistance R, inductance L, torque and back-EMF\n    constant k) turning an arm with an unbalanced mass: gravity pulls with\n    m g l sin(angle), angle 0 hanging down, positive counter-clockwise. Viscous\n    friction b and Coulomb friction Tc (smoothed around standstill) brake it;\n    `load` is an extra torque on the shaft, from a test rig, positive along +angle.\n    The page's PID has to beat gravity (it needs integral action to hold the\n    arm up) and friction, with the motor's 12 V.\"\"\"\n\n    R, L, k = 2.0, 4e-3, 0.1        # ohm, H, N·m/A (= V·s/rad)\n    J, b = 2.5e-3, 2e-3             # kg·m², N·m·s/rad\n    Tc, w_eps = 0.01, 0.01          # N·m, rad/s\n    mgl = 0.1                       # N·m: the arm's unbalance\n    H = 5e-4                        # s: integration substep (the electrical time constant is 2 ms)\n\n    INPUTS = [\n        {\"name\": \"V\", \"unit\": \"V\", \"min\": -12.0, \"max\": 12.0, \"safe\": 0.0},\n        {\"name\": \"load\", \"unit\": \"N·m\", \"min\": -0.2, \"max\": 0.2, \"safe\": 0.0},\n    ]\n    OUTPUTS = [\n        {\"name\": \"angle\", \"unit\": \"rad\"},\n        {\"name\": \"speed\", \"unit\": \"rad/s\"},\n        {\"name\": \"current\", \"unit\": \"A\"},\n    ]\n\n    def __init__(self):\n        self.i = self.w = self.angle = 0.0\n\n    def rates(self, i, w, angle, V, load):\n        di = (V - self.R * i - self.k * w) / self.L\n        friction = self.b * w + self.Tc * math.tanh(w / self.w_eps)\n        dw = (self.k * i - friction - self.mgl * math.sin(angle) + load) / self.J\n        return di, dw, w\n\n    def advance(self, span, u):\n        \"\"\"Integrates `span` seconds with the inputs u held (fixed-step RK4).\"\"\"\n        if span <= 0:\n            return\n        n = max(1, math.ceil(span / self.H - 1e-9))\n        h = span / n\n        V, load = u\n        s = (self.i, self.w, self.angle)\n        for _ in range(n):\n            k1 = self.rates(*s, V, load)\n            k2 = self.rates(*(x + 0.5 * h * d for x, d in zip(s, k1)), V, load)\n            k3 = self.rates(*(x + 0.5 * h * d for x, d in zip(s, k2)), V, load)\n            k4 = self.rates(*(x + h * d for x, d in zip(s, k3)), V, load)\n            s = tuple(x + h / 6 * (a + 2 * b + 2 * c + d) for x, a, b, c, d in zip(s, k1, k2, k3, k4))\n        self.i, self.w, self.angle = s\n\n    def outputs(self):\n        return [self.angle, self.w, self.i]\n\n\nclass Stats:\n    \"\"\"Mean and maximum of what happened in the last second.\"\"\"\n\n    def __init__(self):\n        self.values = []\n\n    def add(self, v):\n        self.values.append(v)\n\n    def take(self):\n        v, self.values = self.values, []\n        return {\"mean\": round(sum(v) / len(v), 3) if v else None, \"max\": round(max(v), 3) if v else None}\n\n\nclass Plant:\n    def __init__(self, args):\n        self.args = args\n        self.rate = args.rate\n        self.dt = 1.0 / args.rate\n        self.motor = Motor()\n        self.safe = [p[\"safe\"] for p in Motor.INPUTS]\n        self.u = list(self.safe)          # the inputs applied now\n        self.pending = []                 # (arrival time, u) received since the last cycle\n        self.client = None                # the one connected page\n        self.running = False              # sending y and taking u\n        self.estop_reason = None          # latched E-stop, until \"reset\"\n        self.k = 0                        # cycle counter since this script started\n        self.k_start = 0                  # cycle of the last \"start\": seq = k - k_start\n        self.since_u = 0                  # cycles without a new u (the watchdog)\n        self.sent = {}                    # seq -> when its y was sent, for the round trip\n        self.late = 0                     # cycles that began without a new u\n        self.overruns = 0                 # cycles skipped because the computer stalled\n        self.dropped = 0                  # y not sent because the page did not read them\n        self.jitter, self.rtt = Stats(), Stats()\n\n    # ---- the page\n\n    def origin_ok(self, origin):\n        \"\"\"A browser says which page opened the connection. Allowed: no Origin\n        (scripts), \"null\" (a page opened from a file), localhost, and every\n        --allow-origin. Any web page could otherwise drive the plant.\"\"\"\n        allowed = self.args.allow_origin\n        if origin is None or \"*\" in allowed or origin in allowed or origin == \"null\":\n            return True\n        return re.fullmatch(r\"https?://(localhost|127\\.0\\.0\\.1|\\[::1\\])(:\\d+)?\", origin) is not None\n\n    async def handler(self, ws):\n        origin = ws.request.headers.get(\"Origin\")\n        if not self.origin_ok(origin):\n            print(f\"refused a page from {origin}: start with --allow-origin {origin} to allow it\")\n            await ws.close(1008, \"origin not allowed; see the plant's console\")\n            return\n        if self.client is not None:\n            await ws.close(1013, \"busy: another page is connected\")\n            return\n        self.client = ws\n        print(f\"page connected ({origin or 'no origin'})\")\n        try:\n            async for text in ws:\n                await self.on_message(ws, text)\n        except Exception as err:  # a broken connection ends like a closed one\n            print(f\"connection error: {err}\")\n        finally:\n            self.client = None\n            if self.running:\n                self.trip(\"connection lost\")\n            self.running = False\n            print(\"page disconnected\")\n\n    async def on_message(self, ws, text):\n        try:\n            msg = json.loads(text)\n        except ValueError:\n            await self.reply(ws, None, error=(-32700, \"parse error: not JSON\"))\n            return\n        if not isinstance(msg, dict) or msg.get(\"jsonrpc\") != \"2.0\" or not isinstance(msg.get(\"method\"), str):\n            await self.reply(ws, msg.get(\"id\") if isinstance(msg, dict) else None, error=(-32600, \"invalid request\"))\n            return\n        method, params, rid = msg[\"method\"], msg.get(\"params\") or {}, msg.get(\"id\")\n        if method == \"u\":\n            self.take_u(params)\n            return\n        handlers = {\"describe\": self.describe, \"start\": self.start, \"stop\": self.stop, \"reset\": self.reset, \"estop\": self.manual_estop}\n        if method not in handlers:\n            if rid is not None:\n                await self.reply(ws, rid, error=(-32601, f\"no method {method}; methods: {', '.join(handlers)}, u\"))\n            return\n        try:\n            result = handlers[method](params)\n        except RuntimeError as err:\n            await self.reply(ws, rid, error=(-32000, str(err)))\n            return\n        if rid is not None:\n            await self.reply(ws, rid, result=result)\n\n    async def reply(self, ws, rid, result=None, error=None):\n        msg = {\"jsonrpc\": \"2.0\", \"id\": rid}\n        if error:\n            msg[\"error\"] = {\"code\": error[0], \"message\": error[1]}\n        else:\n            msg[\"result\"] = result\n        await ws.send(json.dumps(msg))\n\n    def describe(self, _params):\n        return {\n            \"protocol\": PROTOCOL,\n            \"name\": \"DC motor with an unbalanced arm (simulated)\",\n            \"rate_hz\": self.rate,\n            \"watchdog_cycles\": self.args.watchdog,\n            \"inputs\": Motor.INPUTS,\n            \"outputs\": Motor.OUTPUTS,\n            \"running\": self.running,\n            \"estop\": self.estop_reason,\n        }\n\n    def start(self, _params):\n        if self.estop_reason:\n            raise RuntimeError(f\"E-stop latched ({self.estop_reason}); send reset first\")\n        if not self.running:\n            self.running = True\n            self.k_start = self.k              # the next cycle is seq 0, t 0\n            self.since_u = 0\n            self.sent.clear()\n            print(\"started\")\n        return {\"rate_hz\": self.rate}\n\n    def stop(self, _params):\n        if self.running:\n            print(\"stopped\")\n        self.running = False\n        self.u = list(self.safe)\n        self.pending.clear()\n        return {}\n\n    def reset(self, _params):\n        if self.estop_reason:\n            print(f\"E-stop reset (was: {self.estop_reason})\")\n        self.estop_reason = None\n        self.since_u = 0\n        return {}\n\n    def manual_estop(self, params):\n        self.trip(str(params.get(\"reason\") or \"pressed on the page\"))\n        return {}\n\n    def take_u(self, params):\n        \"\"\"A new input, from the moment it arrives. Ignored while stopped or\n        E-stopped; clamped to each input's limits; a bad value is the safe one.\"\"\"\n        if not self.running or self.estop_reason:\n            return\n        u = params.get(\"u\")\n        if not isinstance(u, list) or len(u) != len(Motor.INPUTS):\n            return\n        clean = []\n        for v, spec in zip(u, Motor.INPUTS):\n            ok = isinstance(v, (int, float)) and math.isfinite(v)\n            clean.append(min(spec[\"max\"], max(spec[\"min\"], v)) if ok else spec[\"safe\"])\n        now = time.perf_counter()\n        sent = self.sent.pop(params.get(\"seq\"), None)\n        if sent is not None:\n            self.rtt.add(1000 * (now - sent))\n        self.pending.append((now, clean))\n        self.since_u = 0\n\n    # ---- safety\n\n    def trip(self, reason):\n        \"\"\"Emergency stop: safe inputs now, latched until \"reset\".\"\"\"\n        if self.estop_reason:\n            return\n        self.estop_reason = reason\n        self.u = list(self.safe)\n        self.pending.clear()\n        print(f\"E-STOP: {reason}; safe inputs applied, latched until the page resets it\")\n        self.notify(\"estop\", {\"reason\": reason, \"t\": round((self.k - self.k_start) * self.dt, 6)})\n\n    def notify(self, method, params):\n        \"\"\"Sends a notification without ever blocking the cycle: if the page is\n        not reading (its buffer is full), the message is dropped and counted.\"\"\"\n        ws = self.client\n        if ws is None:\n            return\n        if ws.transport is not None and ws.transport.get_write_buffer_size() > 65536:\n            self.dropped += 1\n            return\n        task = asyncio.ensure_future(ws.send(json.dumps({\"jsonrpc\": \"2.0\", \"method\": method, \"params\": params})))\n        task.add_done_callback(lambda f: f.cancelled() or f.exception())  # a closed page is handled by handler()\n\n    # ---- the cycle\n\n    def cycle(self, now, last, span):\n        \"\"\"One cycle: the physics over the last `span` seconds, each u applied\n        from the moment it arrived; then the watchdog; then y.\"\"\"\n        at = 0.0\n        for arrived, u in self.pending:\n            off = min(max(arrived - last, 0.0), span)\n            self.motor.advance(off - at, self.u)\n            self.u, at = u, off\n        self.motor.advance(span - at, self.u)\n        had_u = bool(self.pending)\n        self.pending.clear()\n        if not self.running:\n            return\n        seq = self.k - self.k_start\n        # The watchdog counts y the page left unanswered: cycles this script\n        # skipped itself (a stalled computer) sent no y, so they do not count.\n        if seq > 0 and not had_u:\n            self.since_u += 1\n            if not self.estop_reason:\n                self.late += 1\n        if self.since_u >= self.args.watchdog and not self.estop_reason:\n            self.trip(f\"no u for {self.since_u} cycles\")\n        self.sent[seq] = time.perf_counter()\n        self.sent.pop(seq - 50, None)\n        self.notify(\"y\", {\"seq\": seq, \"t\": round(seq * self.dt, 6), \"y\": [round(v, 6) for v in self.motor.outputs()]})\n\n    async def run(self):\n        \"\"\"The real-time loop: deadlines are absolute (start + k·dt), so sleep\n        errors never add up; a stall longer than 5 cycles is skipped over in\n        one physics step, and the skipped cycles show as a gap in seq. With\n        --spin, the last milliseconds before a deadline are waited out by\n        yielding to the event loop, for operating systems with coarse timers.\"\"\"\n        t0 = time.perf_counter()\n        last = t0\n        next_status = t0 + 1.0\n        cycles = 0\n        spin = self.args.spin / 1000\n        while True:\n            deadline = t0 + self.k * self.dt\n            wait = deadline - time.perf_counter() - spin\n            if wait > 0:\n                await asyncio.sleep(wait)\n            while spin and time.perf_counter() < deadline:\n                await asyncio.sleep(0)\n            now = time.perf_counter()\n            skip = int((now - deadline) / self.dt) if now - deadline > 5 * self.dt else 0\n            if skip:\n                self.overruns += skip\n                self.k += skip\n                deadline = t0 + self.k * self.dt\n            self.jitter.add(1000 * (now - deadline))\n            self.cycle(now, last, (skip + 1) * self.dt)\n            last = now\n            cycles += 1\n            self.k += 1\n            if now >= next_status:\n                self.status(cycles / (now - next_status + 1.0))\n                cycles = 0\n                next_status = now + 1.0\n\n    def status(self, rate):\n        jitter, rtt = self.jitter.take(), self.rtt.take()\n        s = {\"t\": round((self.k - self.k_start) * self.dt, 3) if self.running else None, \"rate_hz\": round(rate, 2), \"jitter_ms\": jitter, \"rtt_ms\": rtt,\n             \"late\": self.late, \"overruns\": self.overruns, \"dropped\": self.dropped, \"running\": self.running, \"estop\": self.estop_reason}\n        self.notify(\"status\", s)\n        # The console: one line rewritten every second in a terminal, a new line every 5 s otherwise.\n        tty = sys.stdout.isatty()\n        if tty or self.k % round(5 * self.rate) < self.rate:\n            state = f\"E-STOP ({self.estop_reason})\" if self.estop_reason else \"running\" if self.running else \"waiting\" if self.client else \"no page\"\n            fmt = lambda st: f\"{st['mean']:.2f}/{st['max']:.2f} ms\" if st[\"mean\"] is not None else \"-\"\n            print(f\"\\r{state:<28.28} {rate:6.1f} Hz  jitter {fmt(jitter)}  round trip {fmt(rtt)}  late {self.late}  \"\n                  f\"angle {self.motor.angle:+6.2f} rad  V {self.u[0]:+6.2f}   \", end=\"\" if tty else \"\\n\", flush=True)\n\n\ndef check():\n    \"\"\"--check: 3 s of physics with a PD at 100 Hz, no server. The arm should\n    rise to about 1.2 rad (gravity leaves an offset without integral action).\"\"\"\n    m = Motor()\n    for k in range(300):\n        V = max(-12.0, min(12.0, 6 * (1.5 - m.angle) - 0.6 * m.w))\n        m.advance(0.01, [V, 0.0])\n    print(f\"angle {m.angle:.3f} rad, speed {m.w:.3f} rad/s, current {m.i:.3f} A after 3 s of PD control towards 1.5 rad\")\n    return 0 if 1.0 < m.angle < 1.4 else 1\n\n\nasync def serve_forever(args):\n    try:\n        from websockets.asyncio.server import serve\n    except ImportError:\n        sys.exit(\"hil_plant.py needs websockets 13 or newer:\\n  uv run hil_plant.py        (installs it by itself)\\n  pip install 'websockets>=13' && python3 hil_plant.py\")\n    plant = Plant(args)\n    async with serve(plant.handler, args.host, args.port, max_size=2 ** 20):\n        print(f\"Loop Tuner external plant: {plant.describe({})['name']}\")\n        print(f\"listening on ws://{args.host}:{args.port} at {args.rate:g} Hz; watchdog {args.watchdog} cycles. Ctrl+C stops.\")\n        print(\"In Loop Tuner: System library > HIL: external motor > Load, then Connect under Live.\")\n        await plant.run()\n\n\ndef main():\n    p = argparse.ArgumentParser(description=\"Loop Tuner external plant (HIL demo): a DC motor with an unbalanced arm, in real time.\")\n    p.add_argument(\"--host\", default=\"127.0.0.1\", help=\"address to listen on (default 127.0.0.1: this computer only)\")\n    p.add_argument(\"--port\", type=int, default=8765, help=\"port (default 8765)\")\n    p.add_argument(\"--rate\", type=float, default=100.0, help=\"cycle rate in Hz (default 100)\")\n    p.add_argument(\"--watchdog\", type=int, default=10, help=\"E-stop after this many cycles without u (default 10)\")\n    p.add_argument(\"--allow-origin\", action=\"append\", default=[], metavar=\"ORIGIN\",\n                   help=\"also accept pages from this origin, e.g. https://example.org ('*' accepts any page)\")\n    p.add_argument(\"--spin\", type=float, default=2.0 if sys.platform == \"win32\" else 0.0, metavar=\"MS\",\n                   help=\"wait out the last MS milliseconds of each cycle actively, for coarse OS timers (default: 2 on Windows, else 0)\")\n    p.add_argument(\"--check\", action=\"store_true\", help=\"run 3 s of physics without a server and exit\")\n    p.add_argument(\"--describe\", action=\"store_true\", help=\"print the answer to describe (JSON) and exit\")\n    args = p.parse_args()\n    if args.check:\n        sys.exit(check())\n    if args.describe:\n        print(json.dumps(Plant(args).describe({}), ensure_ascii=False))\n        return\n    try:\n        asyncio.run(serve_forever(args))\n    except KeyboardInterrupt:\n        print(\"\\nstopped: the plant applies its safe inputs\")\n    except OSError as err:\n        sys.exit(f\"cannot listen on {args.host}:{args.port}: {err}\")\n\n\nif __name__ == \"__main__\":\n    main()\n";
+// hil/: the external plant, offered under Live
+const __HIL_FILES = {"hil_plant.py":"#!/usr/bin/env python3\n# /// script\n# requires-python = \">=3.9\"\n# dependencies = [\"websockets>=13\"]\n# ///\n\"\"\"Loop Tuner external plant: a DC motor swinging an unbalanced arm, simulated\nin real time at 100 Hz on your computer, for Loop Tuner's Live (HIL) mode.\n\n    uv run hil_plant.py             uv installs websockets by itself\n    python3 hil_plant.py            with websockets installed (pip install websockets)\n    python3 hil_plant.py --check    runs the physics for 3 s, no server, no websockets\n    python3 hil_plant.py --describe prints what it tells the page about itself\n\nThen, in Loop Tuner: System library > \"HIL: external motor\" > Load, and press\nConnect under Live. The scope's Run and Stop start and stop this plant. Press\nEnter here to E-stop it (its own stop button); Ctrl+C ends it. Options:\n--port, --rate, --watchdog, --allow-origin, --strict-origin\n(python3 hil_plant.py --help).\n\nThe protocol is JSON-RPC 2.0, one message per WebSocket text frame, at\nws://127.0.0.1:8765 (Loop Tuner's design/output/hil.md has all of it):\n\n  page -> plant  {\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"describe\"}\n                 requests \"start\", \"stop\", \"reset\", \"estop\", each answered\n                 {\"jsonrpc\": \"2.0\", \"method\": \"u\", \"params\": {\"seq\": 42, \"u\": [3.1, 0]}}\n  plant -> page  {\"jsonrpc\": \"2.0\", \"method\": \"y\", \"params\": {\"seq\": 42, \"t\": 0.42, \"y\": [1.2, 0.3, 0.8]}}\n                 {\"jsonrpc\": \"2.0\", \"method\": \"estop\", \"params\": {\"reason\": \"...\", \"t\": 1.23}}\n                 {\"jsonrpc\": \"2.0\", \"method\": \"status\", \"params\": {...}}  once a second\n\nThis script owns the clock: every cycle it integrates the physics, sends the\noutputs y and applies each input u from the moment it arrives. It is also the\nsafety authority: if no u comes for 10 cycles, the page goes away while\nrunning, the page asks for it, or Enter is pressed here, it applies the safe\ninputs and latches an emergency stop (E-stop) until the page sends \"reset\".\n\nTo put real hardware behind Loop Tuner, keep the server, the watchdog and the\ncycle, and replace Motor with your device's I/O.\n\"\"\"\n\nimport argparse\nimport asyncio\nimport json\nimport math\nimport re\nimport sys\nimport threading\nimport time\n\nPROTOCOL = \"loop-tuner-hil/1\"\n\n\nclass Motor:\n    \"\"\"A DC motor (armature resistance R, inductance L, torque and back-EMF\n    constant k) turning an arm with an unbalanced mass: gravity pulls with\n    m g l sin(angle), angle 0 hanging down, positive counter-clockwise. Viscous\n    friction b and Coulomb friction Tc (smoothed around standstill) brake it;\n    `load` is an extra torque on the shaft, from a test rig, positive along +angle.\n    The page's PID has to beat gravity (it needs integral action to hold the\n    arm up) and friction, with the motor's 12 V.\"\"\"\n\n    R, L, k = 2.0, 4e-3, 0.1        # ohm, H, N·m/A (= V·s/rad)\n    J, b = 2.5e-3, 2e-3             # kg·m², N·m·s/rad\n    Tc, w_eps = 0.01, 0.01          # N·m, rad/s\n    mgl = 0.1                       # N·m: the arm's unbalance\n    H = 5e-4                        # s: integration substep (the electrical time constant is 2 ms)\n\n    INPUTS = [\n        {\"name\": \"V\", \"unit\": \"V\", \"min\": -12.0, \"max\": 12.0, \"safe\": 0.0},\n        {\"name\": \"load\", \"unit\": \"N·m\", \"min\": -0.2, \"max\": 0.2, \"safe\": 0.0},\n    ]\n    OUTPUTS = [\n        {\"name\": \"angle\", \"unit\": \"rad\"},\n        {\"name\": \"speed\", \"unit\": \"rad/s\"},\n        {\"name\": \"current\", \"unit\": \"A\"},\n    ]\n\n    def __init__(self):\n        self.i = self.w = self.angle = 0.0\n\n    def rates(self, i, w, angle, V, load):\n        di = (V - self.R * i - self.k * w) / self.L\n        friction = self.b * w + self.Tc * math.tanh(w / self.w_eps)\n        dw = (self.k * i - friction - self.mgl * math.sin(angle) + load) / self.J\n        return di, dw, w\n\n    def advance(self, span, u):\n        \"\"\"Integrates `span` seconds with the inputs u held (fixed-step RK4).\"\"\"\n        if span <= 0:\n            return\n        n = max(1, math.ceil(span / self.H - 1e-9))\n        h = span / n\n        V, load = u\n        s = (self.i, self.w, self.angle)\n        for _ in range(n):\n            k1 = self.rates(*s, V, load)\n            k2 = self.rates(*(x + 0.5 * h * d for x, d in zip(s, k1)), V, load)\n            k3 = self.rates(*(x + 0.5 * h * d for x, d in zip(s, k2)), V, load)\n            k4 = self.rates(*(x + h * d for x, d in zip(s, k3)), V, load)\n            s = tuple(x + h / 6 * (a + 2 * b + 2 * c + d) for x, a, b, c, d in zip(s, k1, k2, k3, k4))\n        self.i, self.w, self.angle = s\n\n    def outputs(self):\n        return [self.angle, self.w, self.i]\n\n\nclass Stats:\n    \"\"\"Mean and maximum of what happened in the last second.\"\"\"\n\n    def __init__(self):\n        self.values = []\n\n    def add(self, v):\n        self.values.append(v)\n\n    def take(self):\n        v, self.values = self.values, []\n        return {\"mean\": round(sum(v) / len(v), 3) if v else None, \"max\": round(max(v), 3) if v else None}\n\n\nclass Plant:\n    def __init__(self, args):\n        self.args = args\n        self.rate = args.rate\n        self.dt = 1.0 / args.rate\n        self.motor = Motor()\n        self.safe = [p[\"safe\"] for p in Motor.INPUTS]\n        self.u = list(self.safe)          # the inputs applied now\n        self.pending = []                 # (arrival time, u) received since the last cycle\n        self.client = None                # the one connected page\n        self.running = False              # sending y and taking u\n        self.estop_reason = None          # latched E-stop, until \"reset\"\n        self.k = 0                        # cycle counter since this script started\n        self.k_start = 0                  # cycle of the last \"start\": seq = k - k_start\n        self.since_u = 0                  # cycles without a new u (the watchdog)\n        self.sent = {}                    # seq -> when its y was sent, for the round trip\n        self.late = 0                     # cycles that began without a new u\n        self.overruns = 0                 # cycles skipped because the computer stalled\n        self.dropped = 0                  # y not sent because the page did not read them\n        self.jitter, self.rtt = Stats(), Stats()\n\n    # ---- the page\n\n    def origin_ok(self, origin):\n        \"\"\"A browser says which page opened the connection. Allowed: no Origin\n        (scripts), localhost, every --allow-origin, and \"null\", which a page\n        opened from a file sends (Loop Tuner's usual case). Other web sites are\n        refused, since WebSockets have no CORS. But a sandboxed frame on any\n        web site also sends \"null\": with --strict-origin it is refused too\n        (then serve the page from localhost). For real hardware, use that.\"\"\"\n        allowed = self.args.allow_origin\n        if origin is None or \"*\" in allowed or origin in allowed or (origin == \"null\" and not self.args.strict_origin):\n            return True\n        return re.fullmatch(r\"https?://(localhost|127\\.0\\.0\\.1|\\[::1\\])(:\\d+)?\", origin) is not None\n\n    async def handler(self, ws):\n        origin = ws.request.headers.get(\"Origin\")\n        if not self.origin_ok(origin):\n            print(f\"refused a page from {origin}: start with --allow-origin {origin} to allow it\")\n            await ws.close(1008, \"origin not allowed; see the plant's console\")\n            return\n        if self.client is not None:\n            await ws.close(1013, \"busy: another page is connected\")\n            return\n        self.client = ws\n        print(f\"page connected ({origin or 'no origin'})\")\n        try:\n            async for text in ws:\n                await self.on_message(ws, text)\n        except Exception as err:  # a broken connection ends like a closed one\n            print(f\"connection error: {err}\")\n        finally:\n            self.client = None\n            if self.running:\n                self.trip(\"connection lost\")\n            self.running = False\n            print(\"page disconnected\")\n\n    async def on_message(self, ws, text):\n        try:\n            msg = json.loads(text)\n        except ValueError:\n            await self.reply(ws, None, error=(-32700, \"parse error: not JSON\"))\n            return\n        if not isinstance(msg, dict) or msg.get(\"jsonrpc\") != \"2.0\" or not isinstance(msg.get(\"method\"), str):\n            await self.reply(ws, msg.get(\"id\") if isinstance(msg, dict) else None, error=(-32600, \"invalid request\"))\n            return\n        method, params, rid = msg[\"method\"], msg.get(\"params\") or {}, msg.get(\"id\")\n        if method == \"u\":\n            self.take_u(params)\n            return\n        handlers = {\"describe\": self.describe, \"start\": self.start, \"stop\": self.stop, \"reset\": self.reset, \"estop\": self.manual_estop}\n        if method not in handlers:\n            if rid is not None:\n                await self.reply(ws, rid, error=(-32601, f\"no method {method}; methods: {', '.join(handlers)}, u\"))\n            return\n        try:\n            result = handlers[method](params)\n        except RuntimeError as err:\n            await self.reply(ws, rid, error=(-32000, str(err)))\n            return\n        if rid is not None:\n            await self.reply(ws, rid, result=result)\n\n    async def reply(self, ws, rid, result=None, error=None):\n        msg = {\"jsonrpc\": \"2.0\", \"id\": rid}\n        if error:\n            msg[\"error\"] = {\"code\": error[0], \"message\": error[1]}\n        else:\n            msg[\"result\"] = result\n        await ws.send(json.dumps(msg))\n\n    def describe(self, _params):\n        return {\n            \"protocol\": PROTOCOL,\n            \"name\": \"DC motor with an unbalanced arm (simulated)\",\n            \"rate_hz\": self.rate,\n            \"watchdog_cycles\": self.args.watchdog,\n            \"inputs\": Motor.INPUTS,\n            \"outputs\": Motor.OUTPUTS,\n            \"running\": self.running,\n            \"estop\": self.estop_reason,\n        }\n\n    def start(self, _params):\n        if self.estop_reason:\n            raise RuntimeError(f\"E-stop latched ({self.estop_reason}); send reset first\")\n        if not self.running:\n            self.running = True\n            self.k_start = self.k              # the next cycle is seq 0, t 0\n            self.since_u = 0\n            self.sent.clear()\n            print(\"started\")\n        return {\"rate_hz\": self.rate}\n\n    def stop(self, _params):\n        if self.running:\n            print(\"stopped\")\n        self.running = False\n        self.u = list(self.safe)\n        self.pending.clear()\n        return {}\n\n    def reset(self, _params):\n        if self.estop_reason:\n            print(f\"E-stop reset (was: {self.estop_reason})\")\n        self.estop_reason = None\n        self.since_u = 0\n        return {}\n\n    def manual_estop(self, params):\n        self.trip(str(params.get(\"reason\") or \"pressed on the page\"))\n        return {}\n\n    def take_u(self, params):\n        \"\"\"A new input, from the moment it arrives. Ignored while stopped or\n        E-stopped; clamped to each input's limits; a bad value is the safe one.\"\"\"\n        if not self.running or self.estop_reason:\n            return\n        u = params.get(\"u\")\n        if not isinstance(u, list) or len(u) != len(Motor.INPUTS):\n            return\n        clean = []\n        for v, spec in zip(u, Motor.INPUTS):\n            ok = isinstance(v, (int, float)) and math.isfinite(v)\n            clean.append(min(spec[\"max\"], max(spec[\"min\"], v)) if ok else spec[\"safe\"])\n        now = time.perf_counter()\n        sent = self.sent.pop(params.get(\"seq\"), None)\n        if sent is not None:\n            self.rtt.add(1000 * (now - sent))\n        self.pending.append((now, clean))\n        self.since_u = 0\n\n    # ---- safety\n\n    def trip(self, reason):\n        \"\"\"Emergency stop: safe inputs now, latched until \"reset\".\"\"\"\n        if self.estop_reason:\n            return\n        self.estop_reason = reason\n        self.u = list(self.safe)\n        self.pending.clear()\n        print(f\"E-STOP: {reason}; safe inputs applied, latched until the page resets it\")\n        self.notify(\"estop\", {\"reason\": reason, \"t\": round((self.k - self.k_start) * self.dt, 6)})\n\n    async def shutdown(self, reason):\n        \"\"\"Ctrl+C: safe inputs, and the page hears why before the connection\n        closes (an E-stop if it was running), not just a lost connection.\"\"\"\n        self.u = list(self.safe)\n        ws, self.client = self.client, None\n        if ws is None:\n            return\n        try:\n            if self.running:\n                self.estop_reason = reason\n                msg = {\"jsonrpc\": \"2.0\", \"method\": \"estop\", \"params\": {\"reason\": reason, \"t\": round((self.k - self.k_start) * self.dt, 6)}}\n                await asyncio.wait_for(ws.send(json.dumps(msg)), 0.5)\n            await asyncio.wait_for(ws.close(1001, reason), 0.5)\n        except Exception:  # the page may be gone already\n            pass\n\n    def notify(self, method, params):\n        \"\"\"Sends a notification without ever blocking the cycle: if the page is\n        not reading (its buffer is full), the message is dropped and counted.\"\"\"\n        ws = self.client\n        if ws is None:\n            return\n        if ws.transport is not None and ws.transport.get_write_buffer_size() > 65536:\n            self.dropped += 1\n            return\n        task = asyncio.ensure_future(ws.send(json.dumps({\"jsonrpc\": \"2.0\", \"method\": method, \"params\": params})))\n        task.add_done_callback(lambda f: f.cancelled() or f.exception())  # a closed page is handled by handler()\n\n    # ---- the cycle\n\n    def cycle(self, now, last, span):\n        \"\"\"One cycle: the physics over the last `span` seconds, each u applied\n        from the moment it arrived; then the watchdog; then y.\"\"\"\n        at = 0.0\n        for arrived, u in self.pending:\n            off = min(max(arrived - last, 0.0), span)\n            self.motor.advance(off - at, self.u)\n            self.u, at = u, off\n        self.motor.advance(span - at, self.u)\n        had_u = bool(self.pending)\n        self.pending.clear()\n        if not self.running:\n            return\n        seq = self.k - self.k_start\n        # The watchdog counts y the page left unanswered: cycles this script\n        # skipped itself (a stalled computer) sent no y, so they do not count.\n        if seq > 0 and not had_u:\n            self.since_u += 1\n            if not self.estop_reason:\n                self.late += 1\n        if self.since_u >= self.args.watchdog and not self.estop_reason:\n            self.trip(f\"no u for {self.since_u} cycles\")\n        self.sent[seq] = time.perf_counter()\n        self.sent.pop(seq - 50, None)\n        self.notify(\"y\", {\"seq\": seq, \"t\": round(seq * self.dt, 6), \"y\": [round(v, 6) for v in self.motor.outputs()]})\n\n    async def run(self):\n        \"\"\"The real-time loop: deadlines are absolute (start + k·dt), so sleep\n        errors never add up; a stall longer than 5 cycles is skipped over in\n        one physics step, and the skipped cycles show as a gap in seq. With\n        --spin, the last milliseconds before a deadline are waited out by\n        yielding to the event loop, for operating systems with coarse timers.\"\"\"\n        t0 = time.perf_counter()\n        last = t0\n        next_status = t0 + 1.0\n        cycles = 0\n        spin = self.args.spin / 1000\n        while True:\n            deadline = t0 + self.k * self.dt\n            wait = deadline - time.perf_counter() - spin\n            if wait > 0:\n                await asyncio.sleep(wait)\n            while spin and time.perf_counter() < deadline:\n                await asyncio.sleep(0)\n            now = time.perf_counter()\n            skip = int((now - deadline) / self.dt) if now - deadline > 5 * self.dt else 0\n            if skip:\n                self.overruns += skip\n                self.k += skip\n                deadline = t0 + self.k * self.dt\n            self.jitter.add(1000 * (now - deadline))\n            self.cycle(now, last, (skip + 1) * self.dt)\n            last = now\n            cycles += 1\n            self.k += 1\n            if now >= next_status:\n                self.status(cycles / (now - next_status + 1.0))\n                cycles = 0\n                next_status = now + 1.0\n\n    def status(self, rate):\n        jitter, rtt = self.jitter.take(), self.rtt.take()\n        s = {\"t\": round((self.k - self.k_start) * self.dt, 3) if self.running else None, \"rate_hz\": round(rate, 2), \"jitter_ms\": jitter, \"rtt_ms\": rtt,\n             \"late\": self.late, \"overruns\": self.overruns, \"dropped\": self.dropped, \"running\": self.running, \"estop\": self.estop_reason}\n        self.notify(\"status\", s)\n        # The console: one line rewritten every second in a terminal, a new line every 5 s otherwise.\n        tty = sys.stdout.isatty()\n        if tty or self.k % round(5 * self.rate) < self.rate:\n            state = f\"E-STOP ({self.estop_reason})\" if self.estop_reason else \"running\" if self.running else \"waiting\" if self.client else \"no page\"\n            fmt = lambda st: f\"{st['mean']:.2f}/{st['max']:.2f} ms\" if st[\"mean\"] is not None else \"-\"\n            print(f\"\\r{state:<28.28} {rate:6.1f} Hz  jitter {fmt(jitter)}  round trip {fmt(rtt)}  late {self.late}  \"\n                  f\"angle {self.motor.angle:+6.2f} rad  V {self.u[0]:+6.2f}   \", end=\"\" if tty else \"\\n\", flush=True)\n\n\ndef check():\n    \"\"\"--check: 3 s of physics with a PD at 100 Hz, no server. The arm should\n    rise to about 1.2 rad (gravity leaves an offset without integral action).\"\"\"\n    m = Motor()\n    for k in range(300):\n        V = max(-12.0, min(12.0, 6 * (1.5 - m.angle) - 0.6 * m.w))\n        m.advance(0.01, [V, 0.0])\n    print(f\"angle {m.angle:.3f} rad, speed {m.w:.3f} rad/s, current {m.i:.3f} A after 3 s of PD control towards 1.5 rad\")\n    return 0 if 1.0 < m.angle < 1.4 else 1\n\n\ndef stop_key(loop, plant):\n    \"\"\"The plant's own stop button (the page has its E-STOP): every Enter in\n    this window latches an E-stop, which the page's Reset clears.\"\"\"\n    try:\n        for _ in sys.stdin:\n            loop.call_soon_threadsafe(plant.trip, \"stop pressed at the plant\")\n    except (OSError, ValueError):  # no console\n        pass\n\n\nasync def serve_forever(args):\n    try:\n        from websockets.asyncio.server import serve\n    except ImportError:\n        sys.exit(\"hil_plant.py needs websockets 13 or newer:\\n  uv run hil_plant.py        (installs it by itself)\\n  pip install 'websockets>=13' && python3 hil_plant.py\")\n    plant = Plant(args)\n    async with serve(plant.handler, args.host, args.port, max_size=2 ** 20):\n        print(f\"Loop Tuner external plant: {plant.describe({})['name']}\")\n        print(f\"listening on ws://{args.host}:{args.port} at {args.rate:g} Hz; watchdog {args.watchdog} cycles.\")\n        print(\"In Loop Tuner: System library > HIL: external motor > Load, then Connect under Live; Run and Stop start and stop this plant.\")\n        if sys.stdin is not None and sys.stdin.isatty():\n            threading.Thread(target=stop_key, args=(asyncio.get_running_loop(), plant), daemon=True).start()\n            print(\"Enter: E-stop (the page's Reset clears it). Ctrl+C: end.\")\n        else:\n            print(\"Ctrl+C: end.\")\n        try:\n            await plant.run()\n        finally:\n            await plant.shutdown(\"the plant was shut down (Ctrl+C)\")\n\n\ndef main():\n    p = argparse.ArgumentParser(description=\"Loop Tuner external plant (HIL demo): a DC motor with an unbalanced arm, in real time.\")\n    p.add_argument(\"--host\", default=\"127.0.0.1\", help=\"address to listen on (default 127.0.0.1: this computer only)\")\n    p.add_argument(\"--port\", type=int, default=8765, help=\"port (default 8765)\")\n    p.add_argument(\"--rate\", type=float, default=100.0, help=\"cycle rate in Hz (default 100)\")\n    p.add_argument(\"--watchdog\", type=int, default=10, help=\"E-stop after this many cycles without u (default 10)\")\n    p.add_argument(\"--allow-origin\", action=\"append\", default=[], metavar=\"ORIGIN\",\n                   help=\"also accept pages from this origin, e.g. https://example.org ('*' accepts any page)\")\n    p.add_argument(\"--strict-origin\", action=\"store_true\",\n                   help=\"also refuse pages with Origin null: a page opened from a file sends it, but so does a sandboxed frame on any web site \"\n                        \"(serve the page from localhost then; recommended for real hardware)\")\n    p.add_argument(\"--spin\", type=float, default=2.0 if sys.platform == \"win32\" else 0.0, metavar=\"MS\",\n                   help=\"wait out the last MS milliseconds of each cycle actively, for coarse OS timers (default: 2 on Windows, else 0)\")\n    p.add_argument(\"--check\", action=\"store_true\", help=\"run 3 s of physics without a server and exit\")\n    p.add_argument(\"--describe\", action=\"store_true\", help=\"print the answer to describe (JSON) and exit\")\n    args = p.parse_args()\n    if args.check:\n        sys.exit(check())\n    if args.describe:\n        print(json.dumps(Plant(args).describe({}), ensure_ascii=False))\n        return\n    try:\n        asyncio.run(serve_forever(args))\n    except KeyboardInterrupt:\n        print(\"\\nstopped: the plant applies its safe inputs\")\n    except OSError as err:\n        sys.exit(f\"cannot listen on {args.host}:{args.port}: {err}\")\n\n\nif __name__ == \"__main__\":\n    main()\n","runme.sh":"#!/bin/sh\n# Loop Tuner's external plant (Live mode): installs what it needs, then runs.\n# Linux and macOS:  sh runme.sh      (options go to hil_plant.py: sh runme.sh --help)\n# It needs only curl or wget: uv (https://docs.astral.sh/uv/) installs itself\n# into ~/.local/bin, then fetches Python and the websockets package for\n# hil_plant.py. Run it again any time; what is installed stays.\nset -e\ncd \"$(dirname \"$0\")\"\nPATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$PATH\"\nif ! command -v uv >/dev/null 2>&1; then\n  echo \"Installing uv, the Python runner (https://docs.astral.sh/uv/) ...\"\n  if command -v curl >/dev/null 2>&1; then curl -LsSf https://astral.sh/uv/install.sh | sh\n  elif command -v wget >/dev/null 2>&1; then wget -qO- https://astral.sh/uv/install.sh | sh\n  else\n    echo \"runme.sh needs curl or wget to install uv. Or, with Python 3.9+: pip install websockets && python3 hil_plant.py\"\n    exit 1\n  fi\nfi\nexec uv run hil_plant.py \"$@\"\n","runme.ps1":"# Loop Tuner's external plant (Live mode): installs what it needs, then runs.\n# Windows: right-click > Run with PowerShell, or in a terminal:\n#   powershell -ExecutionPolicy Bypass -File runme.ps1      (options go to hil_plant.py: ... runme.ps1 --help)\n# It installs uv (https://docs.astral.sh/uv/) with winget, or with uv's own\n# installer where there is no winget; uv then fetches Python and the\n# websockets package for hil_plant.py. Run it again any time; what is\n# installed stays.\n$ErrorActionPreference = 'Stop'\nSet-Location $PSScriptRoot\n$env:Path = \"$env:USERPROFILE\\.local\\bin;$env:Path\"\nif (-not (Get-Command uv -ErrorAction SilentlyContinue)) {\n  Write-Host 'Installing uv, the Python runner (https://docs.astral.sh/uv/) ...'\n  if (Get-Command winget -ErrorAction SilentlyContinue) {\n    winget install --id=astral-sh.uv -e --accept-source-agreements --accept-package-agreements\n  } else {\n    powershell -NoProfile -ExecutionPolicy Bypass -Command 'irm https://astral.sh/uv/install.ps1 | iex'\n  }\n  # The installer changed PATH for new windows; read it back for this one.\n  $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine') + \";$env:USERPROFILE\\.local\\bin\"\n}\nuv run hil_plant.py @args\nif ($LASTEXITCODE) { Read-Host 'hil_plant.py stopped with an error; press Enter to close' }\n","README.txt":"Loop Tuner: the external plant for Live (HIL) mode\n==================================================\n\nhil_plant.py is a DC motor swinging an unbalanced arm, simulated in real time\nat 100 Hz on your computer: the plant of the system \"HIL: external motor\" in\nLoop Tuner's System library. It listens on ws://127.0.0.1:8765 (this computer\nonly), sends its outputs every cycle and applies the inputs the page sends\nback.\n\nStart it\n  Linux, macOS:  sh runme.sh\n  Windows:       right-click runme.ps1 > Run with PowerShell\n                 (or: powershell -ExecutionPolicy Bypass -File runme.ps1)\n  With uv:       uv run hil_plant.py\n  With Python:   pip install websockets, then python3 hil_plant.py\n\nThe runme scripts install uv if it is missing (curl or wget on Linux and\nmacOS; winget on Windows), and uv fetches Python and the websockets package.\n\nThen, in Loop Tuner: System library > HIL: external motor > Load, and press\nConnect under Run Control. Run and Stop on the scope start and stop the plant.\n\nSafety: if the plant hears nothing for 10 cycles, or you press Enter in its\nwindow, it applies its safe inputs (0 V) and stays stopped (E-stop) until the\npage's Reset. Ctrl+C ends it.\n\nOptions: --port, --rate, --watchdog, --allow-origin, --strict-origin, --check,\n--describe (sh runme.sh --help). The protocol is JSON-RPC 2.0 over a WebSocket,\ndescribed in hil_plant.py's header; any language can implement it, so real\nhardware can take the motor's place.\n"};
 // ---- core/poly.js
 __mods['core/poly.js'] = (() => {
 // Polynomials (coefficients highest power first) and transfer-function to
@@ -3997,6 +4007,7 @@ const EXAMPLE_PLANTS = [
     },
     scope: { channels: channels('r', 'angle', 'V', 'd') },
     ui: { ...ui('Arm'), setup: 0.36 },  // Live adds a row to Run Control
+    tags: [{ label: 'Nonlinear', kind: 'plant' }],  // the arm: gravity and Coulomb friction, outside the page
     diagram: {
       blocks: [
         src('r', 30, 156, 'rad'),
@@ -4897,7 +4908,9 @@ function systemTags(e) {
   walk(e.diagram);
   const tags = [];
   const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind, tone: toneOf(label) }); };
-  add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
+  // An External plant's physics is outside the page: its entry says what it is.
+  const own = blocks.some((b) => b.type === 'external') ? (e.tags ?? []).filter((t) => t.kind === 'plant') : [];
+  if (own.length) for (const t of own) add(t.label, 'plant'); else add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
   if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
@@ -5847,7 +5860,7 @@ function createLiveLoop(post, env = globalThis) {
       say('open', 'stopped');
     },
     async estop() {
-      latch('page', 'E-STOP pressed');
+      latch('page', 'pressed on this page');
       try { await call('estop', { reason: 'E-STOP pressed on the page' }); } catch { /* the plant's watchdog trips anyway */ }
     },
     // Reset clears both latches and goes on, the controllers afresh: a plant
@@ -5923,10 +5936,10 @@ function refSteps(t0, t1, w0, W) {
 // samples come, up to MAX_RECORD_VALUES numbers; beyond that the oldest go
 // first, and longest() says how long that holds at the current rate. Times
 // must not decrease.
-function createRecorder(seconds = 300) {
+function createRecorder(seconds = 300, maxValues = MAX_RECORD_VALUES) {
   let names = [], units = {}, cap = 0, n = 0, head = 0, t = new Float64Array(0), cols = [];
   let lastIn = null, map = [];
-  const limit = () => Math.floor(MAX_RECORD_VALUES / (names.length + 1));
+  const limit = () => Math.floor(maxValues / (names.length + 1));
   const oldest = () => (head - n + cap) % cap;
   // New buffers of size c holding the newest samples, in time order from 0.
   function relayout(c) {
@@ -6064,6 +6077,64 @@ function parseTrace(text) {
 }
 
 return { TRACE_FORMAT, MAX_RECORD_VALUES, sweepStart, refShift, refSteps, createRecorder, traceWindow, traceToCsvParts, traceToCsv, traceToJsonParts, traceToJson, parseTrace };
+})();
+// ---- core/zip.js
+__mods['core/zip.js'] = (() => {
+// A zip file without compression ("stored"), enough to hand over a few text
+// files as one download: the external plant with its runme scripts (Live
+// mode). No DOM. Each file: { name, data (string or Uint8Array), mode }; mode
+// is the Unix permission (0o755 makes runme.sh executable after unzipping).
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function zipFiles(files, date = new Date()) {
+  const enc = new TextEncoder();
+  // MS-DOS time and date, as every zip reader expects them.
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | (date.getSeconds() >> 1);
+  const day = ((Math.max(1980, date.getFullYear()) - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  const parts = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = typeof f.data === 'string' ? enc.encode(f.data) : f.data;
+    const crc = crc32(data);
+    // The fields both headers share: version 2.0, UTF-8 names, stored.
+    const common = (v) => { v.setUint16(0, 20, true); v.setUint16(2, 0x0800, true); v.setUint16(4, 0, true); v.setUint16(6, time, true); v.setUint16(8, day, true); v.setUint32(10, crc, true); v.setUint32(14, data.length, true); v.setUint32(18, data.length, true); v.setUint16(22, name.length, true); };
+    const local = new Uint8Array(30 + name.length), lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true);
+    common(new DataView(local.buffer, 4));
+    local.set(name, 30);
+    const head = new Uint8Array(46 + name.length), cv = new DataView(head.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, (3 << 8) | 20, true);  // made by: Unix, so the mode below counts
+    common(new DataView(head.buffer, 6));
+    cv.setUint32(38, (((f.mode ?? 0o644) | 0o100000) << 16) >>> 0, true);
+    cv.setUint32(42, offset, true);
+    head.set(name, 46);
+    parts.push(local, data);
+    central.push(head);
+    offset += local.length + data.length;
+  }
+  const size = central.reduce((s, h) => s + h.length, 0);
+  const end = new Uint8Array(22), ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true);
+  ev.setUint32(12, size, true); ev.setUint32(16, offset, true);
+  const out = new Uint8Array(offset + size + 22);
+  let at = 0;
+  for (const p of [...parts, ...central, end]) { out.set(p, at); at += p.length; }
+  return out;
+}
+
+return { crc32, zipFiles };
 })();
 // ---- ui/units.js
 __mods['ui/units.js'] = (() => {
@@ -7175,10 +7246,11 @@ function createDisplay(root, handlers) {
 
   return {
     setData(d) { simData = d; if (!feed) data = d; if (line !== null && !visible(line)) line = null; renderBadges(); draw(); },
-    // Live mode: fn() -> { data, scan, done } each frame; null returns to the
-    // simulation (earlier live sweeps stay faded behind it).
+    // Live mode: fn() -> { data, scan, done, past } each frame; null returns
+    // to the simulation.
     setFeed(fn) { feed = fn; data = fn ? fn().data : simData; renderBadges(); draw(); },
     setRefs(list) { refs = list; draw(); },
+    renderStatus,  // Live's state changed while the screen stands still
     get data() { return data; },
     setScope(s, sel) { scope = s; selected = sel; if (line !== null && line !== sel) line = null; renderBadges(); draw(); },
     setPreview(p) { preview = p; draw(); },
@@ -8310,6 +8382,7 @@ function size(b) {
   if (diagramBlockDef(b.type).ode) return [150, Math.max(60, 18 * blockPorts(b)[1] + 12)];
   if (b.type === 'controller') return [150, Math.max(60, 18 * blockPorts(b)[0] + 12)];
   if (b.type === 'terminator') return [26, 26];
+  if (b.type === 'external') return [150, 18 * Math.max(...blockPorts(b)) + 32];  // room for both sides' port labels
   if (b.type === 'switch') { const n = b.params.inputs; return [56, Math.max(40, 18 * n + 8)]; }
   const [ni, no] = blockPorts(b);
   return [130, Math.max(48, 18 * Math.max(ni, no) + 12)];
@@ -8551,8 +8624,9 @@ function createPlantEditor(root, app) {
         text = `<text class="bt" x="${b.x + 9}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${b.x + 9}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
-    const outNames = outputNames(def, b.params);
+    const outNames = outputNames(def, b.params), inNames = def.inputNames?.(b.params) ?? [];
     const ports = g.outs.map((p, i) => (outNames[i] ? `<text class="pn" x="${p.x + (b.flip ? 8 : -8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'start' : 'end'}">${esc(outNames[i])}</text>` : '')).join('')
+      + g.ins.map((p, i) => (inNames[i] ? `<text class="pn" x="${p.x + (b.flip ? -8 : 8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'end' : 'start'}">${esc(inNames[i])}</text>` : '')).join('')
       + g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
       + g.outs.map((p, i) => `<circle class="port out" data-port="out" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('');
     const stack = b.type === 'subsystem' ? `<rect class="stack" x="${b.x + 4}" y="${b.y + 4}" width="${g.w}" height="${g.h}" rx="5"/>` : '';
@@ -8649,7 +8723,7 @@ function createPlantEditor(root, app) {
       for (const p of def.params) {
         const v = b.params[p.key];
         const hint = p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}`;
-        html += field(`p:${p.key}`, p.label, p.kind === 'vector' ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', hint);
+        html += field(`p:${p.key}`, p.label, p.kind === 'vector' || Array.isArray(v) ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', hint);
       }
       html += '</div><div class="pbtns">';
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="key small" data-act="flip">Flip</button>`;
@@ -9368,17 +9442,17 @@ function createRecord(app, display) {
   const unitsOf = (list) => Object.fromEntries(list.map((nm) => [nm, app.unitOf(nm)]));
   const windowOf = () => { const tb = app.project.scope.timebase; const w0 = Math.max(0, tb.position); return [w0, tb.position + 10 * tb.scale]; };
 
-  // ---- The screen: a simulated run over the window, or the live sweep.
-  let liveInfo = () => null;  // set by ui/live.js: { offset } while the screen shows a live sweep
+  // ---- The screen: a simulated run over the window, or a live sweep (which
+  // carries plantOffset, ui/live.js).
   function screenTrace() {
     const d = display.data;
     if (!(d?.t?.length > 1)) return null;
-    const lv = liveInfo();
+    const live = d.plantOffset !== undefined;
     const [w0, w1] = windowOf();
-    const tr = traceWindow(d, lv ? -Infinity : w0, lv ? Infinity : w1);
+    const tr = traceWindow(d, live ? -Infinity : w0, live ? Infinity : w1);
     if (tr.t.length < 2) return null;
     tr.units = unitsOf(Object.keys(tr.signals));
-    return { trace: tr, what: 'screen', source: lv ? `the screen: a live sweep, t is screen time (plant time = t + ${num(lv.offset, 6)} s)` : 'the screen: a simulated run' };
+    return { trace: tr, what: 'screen', source: live ? `the screen: a live sweep, t is screen time (plant time = t + ${num(d.plantOffset, 6)} s)` : 'the screen: a simulated run' };
   }
 
   // ---- The live record: plant time, run after run, on one real-time axis.
@@ -9491,6 +9565,7 @@ function createRecord(app, display) {
     renderRec();
   });
   function renderRec() {
+    if (!app.project) return;  // (made before the project loads)
     const shown = !!findExternal(app.project.system.plant?.diagram) || rec.length > 0;
     $('rc-rec').hidden = !shown;
     if (!shown) return;
@@ -9553,8 +9628,6 @@ function createRecord(app, display) {
   renderRec();
   return {
     live,
-    // ui/live.js says when the screen shows a live sweep, and its offset.
-    bindLive(fn) { liveInfo = fn; },
     // After every change of the project: references follow the window.
     changed() { if (refs.length) placeRefs(); renderRec(); },
     // For agents (window.loopTuner.record): the same as the keys.
@@ -9588,10 +9661,12 @@ const { HIL_URL, externalParams, sameDescription, samePorts, findExternal } = __
 const { createLiveLoop } = __mods['core/live.js'];
 const { normalizeDiagram, parseEnd } = __mods['core/diagram.js'];
 const { sweepStart } = __mods['core/trace.js'];
+const { zipFiles } = __mods['core/zip.js'];
 const { fitChannel } = __mods['core/project.js'];
 const MAX_SWEEP = 200000;
-// The plant script's text, put into the bundle by build.mjs.
-const PLANT_PY = typeof __HIL_PLANT_PY === 'string' ? __HIL_PLANT_PY : '';
+// The plant's files (hil/), put into the bundle by build.mjs.
+const HIL_FILES = typeof __HIL_FILES === 'object' ? __HIL_FILES : {};
+const PLANT_PY = HIL_FILES['hil_plant.py'] ?? '';
 const RUN_PY = 'uv run hil_plant.py';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -9740,7 +9815,9 @@ function createLive(app, display, controlsRoot, record) {
     const w0 = Math.max(0, tb.position);
     return [w0, Math.max(tb.position + 10 * tb.scale - w0, 1e-6)];
   }
-  const view = (s) => ({ t: s.t.subarray(0, s.n), signals: Object.fromEntries(names.map((nm, j) => [nm, s.cols[j].subarray(0, s.n)])) });
+  // A sweep as the display takes it; plantOffset turns its screen time into
+  // the plant's (for Save, ui/record.js).
+  const view = (s) => ({ t: s.t.subarray(0, s.n), signals: Object.fromEntries(names.map((nm, j) => [nm, s.cols[j].subarray(0, s.n)])), plantOffset: s.start - s.w0 });
   // A sweep covers one screen width of plant time from sweepStart, drawn at
   // w0 + (t − start): at position w0 the first sweep shows plant time
   // w0 … w0 + W, as a simulated run does (core/trace.js).
@@ -9753,8 +9830,11 @@ function createLive(app, display, controlsRoot, record) {
   }
   function addSample(t, vals) {
     const [w0, W] = windowOf();
-    if (!sweep || sweep.w0 !== w0 || sweep.W !== W || t < sweep.start - 1e-9 || t - sweep.start >= W - 1e-9) newSweep(t, w0, W);
     lastT = t;
+    // Before the window's left edge (the start of a run at a position > 0)
+    // nothing is on the screen, as in a simulated run.
+    if (t < w0 - 1e-9) return;
+    if (!sweep || sweep.w0 !== w0 || sweep.W !== W || t < sweep.start - 1e-9 || t - sweep.start >= W - 1e-9) newSweep(t, w0, W);
     const s = sweep;
     if (s.k++ % s.every || s.n >= s.cap) return;
     s.t[s.n] = s.w0 + (t - s.start);
@@ -9799,7 +9879,6 @@ function createLive(app, display, controlsRoot, record) {
     display.setFeed(null);
     display.clearRuns();
   }
-  record.bindLive(() => (feeding && sweep ? { offset: sweep.start - sweep.w0 } : null));
 
   function onSamples(m) {
     if (m.names.join('\n') !== names.join('\n')) { names = m.names; sweep = null; }
@@ -9807,27 +9886,40 @@ function createLive(app, display, controlsRoot, record) {
     record.live.samples(m.names, m.t, m.values);
   }
 
-  // ---- The plant script: download or copy, with how to run it.
+  // ---- The plant: a zip with runme scripts that install what it needs (the
+  // person, 2026-10-24), or the script alone; copy where files cannot leave.
+  const plantZip = () => new Blob([zipFiles(Object.entries(HIL_FILES).map(([name, data]) => ({ name: `hil-plant/${name}`, data, mode: name.endsWith('.sh') ? 0o755 : 0o644 })))], { type: 'application/zip' });
   const dlg = document.createElement('div');
   dlg.className = 'overlay';
   dlg.hidden = true;
   dlg.innerHTML = `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="lv-dlg-title">
     <h2 id="lv-dlg-title">The external plant</h2>
-    <p><code>hil_plant.py</code> is a DC motor swinging an unbalanced arm, simulated in real time at 100 Hz on your computer: the plant of <b>HIL: external motor</b>. It listens on <code>${HIL_URL}</code>, sends its outputs every cycle and applies the inputs this page sends back. The scope's Run and Stop start and stop it. If it hears nothing for 10 cycles it stops the motor (E-stop) until you press Reset; pressing Enter in its window stops it too.</p>
-    <pre>${RUN_PY}</pre>
-    <p>uv installs what it needs (the websockets package) by itself. Without uv: <code>pip install websockets</code>, then <code>python3 hil_plant.py</code>. <code>--help</code> lists its options (port, rate, watchdog).</p>
-    <p class="dim">${framed ? 'This viewer may not let the page connect to your computer or download files: copy the script here, and use Copy HTML to open Loop Tuner from a file in your browser.' : 'To put real hardware behind Loop Tuner, keep the script\'s server, cycle and watchdog and replace its Motor with your device.'}</p>
-    <p class="lv-btns">${framed ? '' : '<button class="key primary" id="lv-dl">Download hil_plant.py</button>'}<button class="key" id="lv-copy-py">Copy the script</button><button class="key" id="lv-copy-cmd">Copy “${RUN_PY}”</button><button class="key" id="lv-close">Close</button></p>
+    <p><code>hil_plant.py</code> is a DC motor swinging an unbalanced arm, simulated in real time at 100 Hz on your computer: the plant of <b>HIL: external motor</b>. It listens on <code>${HIL_URL}</code>, sends its outputs every cycle and applies the inputs this page sends back. The scope's Run and Stop start and stop it. If it hears nothing for 10 cycles it stops the motor (E-stop) until you press Reset; Enter in its window stops it too.</p>
+    <p><b>hil-plant.zip</b> holds it with two scripts that install what it needs (uv, which brings Python and the websockets package) and start it:</p>
+    <pre>sh runme.sh      Linux, macOS
+runme.ps1        Windows: right-click › Run with PowerShell</pre>
+    <p>With uv already there: <code>${RUN_PY}</code>. With Python: <code>pip install websockets</code>, then <code>python3 hil_plant.py</code>. <code>--help</code> lists its options (port, rate, watchdog).</p>
+    <p class="dim" id="lv-dlg-note"></p>
+    <p class="lv-btns"><button class="key primary" id="lv-dl-zip">Download hil-plant.zip</button><button class="key" id="lv-dl">Download hil_plant.py</button><button class="key" id="lv-copy-py">Copy the script</button><button class="key" id="lv-close">Close</button></p>
   </div>`;
   document.getElementById('lt-shell').append(dlg);
   const closeDlg = () => { dlg.hidden = true; };
-  $('lv-script').addEventListener('click', () => { dlg.hidden = false; ($('lv-dl') ?? $('lv-copy-py')).focus(); });
+  $('lv-script').addEventListener('click', () => {
+    // Files leave through app.download; the claude.ai viewer takes a zip, not a .py.
+    const can = app.canDownload();
+    $('lv-dl-zip').hidden = !can;
+    $('lv-dl').hidden = !can || framed;
+    $('lv-dlg-note').textContent = framed ? 'This viewer may not let the page connect to your computer: use Copy HTML, save it as a file and open that in your browser to go live.'
+      : 'To put real hardware behind Loop Tuner, keep the script\'s server, cycle and watchdog and replace its Motor with your device; any language that speaks the protocol works.';
+    dlg.hidden = false;
+    ($('lv-dl-zip').hidden ? $('lv-copy-py') : $('lv-dl-zip')).focus();
+  });
   $('lv-close').addEventListener('click', closeDlg);
   dlg.addEventListener('click', (e) => { if (e.target === dlg) closeDlg(); });
   dlg.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeDlg(); } });
-  $('lv-dl')?.addEventListener('click', () => { app.download('hil_plant.py', PLANT_PY, 'text/x-python'); app.toast(`Saved hil_plant.py. Run it with: ${RUN_PY}`); });
+  $('lv-dl-zip').addEventListener('click', async () => { if (await app.download('hil-plant.zip', plantZip(), 'application/zip')) app.toast('Saved hil-plant.zip: unzip it and run runme.sh (Linux, macOS) or runme.ps1 (Windows).'); });
+  $('lv-dl').addEventListener('click', async () => { if (await app.download('hil_plant.py', PLANT_PY, 'text/x-python')) app.toast(`Saved hil_plant.py. Run it with: ${RUN_PY}`); });
   $('lv-copy-py').addEventListener('click', () => app.copy(PLANT_PY, 'hil_plant.py'));
-  $('lv-copy-cmd').addEventListener('click', () => app.copy(RUN_PY, 'The command'));
 
   // ---- Live controls
   const on = () => ['connecting', 'open', 'running'].includes(state);
@@ -9845,6 +9937,7 @@ function createLive(app, display, controlsRoot, record) {
   function render() {
     const hit = external();
     liveEl.hidden = !hit;
+    display.renderStatus();
     if (!hit) return;
     const k = $('lv-connect');
     k.textContent = on() ? 'Disconnect' : 'Connect';
@@ -9865,13 +9958,13 @@ function createLive(app, display, controlsRoot, record) {
     el.title = '';
     const lines = (...ls) => { el.innerHTML = ls.map((l) => `<div>${l}</div>`).join(''); };
     if (estop) {
-      lines(`<span class="bad">E-STOP: ${esc(estop.reason)}</span>`, `${estop.by === 'plant' ? 'by the plant' : 'by this page'} · safe inputs until ${connected() ? 'Reset' : 'Connect, Reset'}`);
+      lines(`<span class="bad">E-STOP: ${esc(estop.reason)}</span>`, `${estop.by === 'plant' ? 'by the plant · safe' : 'safe inputs'} until ${connected() ? 'Reset' : 'Connect, Reset'}`);
       el.title = `E-STOP: ${estop.reason}`;
       return;
     }
     if (!running) {
       lines(esc({
-        idle: 'not connected: run the plant script, then Connect',
+        idle: 'start the plant, then Connect',
         connecting: 'connecting…',
         open: detail === 'stopped' ? 'stopped · Run starts it again' : 'connected · Run starts the plant',
         running: 'running',
@@ -9917,7 +10010,8 @@ function createLive(app, display, controlsRoot, record) {
       if (!hit) { app.toast('This system has no External plant block: Live disconnected.'); host.post({ type: 'disconnect' }); return; }
       if (!desc) return;
       if (!samePorts(hit.block.params, desc)) {
-        if (takePorts(desc)) app.toast(`While connected, the External plant block keeps the plant's ports (${portText(desc)}); Disconnect to change them.`);
+        // (after the toast of whatever caused it, such as Undo)
+        if (takePorts(desc)) setTimeout(() => app.toast(`While connected, the External plant block keeps the plant's ports (${portText(desc)}); Disconnect to change them.`));
         return;
       }
       sendProgram();

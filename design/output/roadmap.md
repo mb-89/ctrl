@@ -12,8 +12,8 @@ Reader: whoever picks the next piece of work.
 - Tab 3, Controller: Controller blocks with variants (PID, state feedback, gain-scheduled PI, energy swing-up, off), the tab to flip and tune them ([controller-proposal.md](controller-proposal.md)).
 - System library: five 5-second systems, four of them controlled (motor, conical tank, pendulum swing-up, triple pendulum), with disturbances.
 - Earlier runs fade over five runs for comparison.
-- Live (HIL) mode: an External plant block, a plant outside the page over WebSocket (JSON-RPC 2.0, 100 Hz), watchdogs and a latched E-stop on both sides, the loop in a Web Worker; `hil/hil_plant.py` (uv) and the "HIL: external motor" system ([hil.md](hil.md)).
-- Record: the last minutes of every signal, live or simulated; Save as CSV or JSON (Copy CSV where downloads are blocked); saved traces open as dashed references ([instrument.md](instrument.md#record-and-references)).
+- Live (HIL) mode: an External plant block, a plant outside the page over WebSocket (JSON-RPC 2.0, 100 Hz, the plant sets the cycle and defines the signals), watchdogs and a latched E-stop on both sides (the page's E-STOP key, the plant's stop key), Run and Stop through the plant, the loop in a Web Worker, live edits of every controller and observer parameter; `hil-plant.zip` (`hil_plant.py` with runme.sh and runme.ps1) and the "HIL: external motor" system; `window.loopTuner.live` for agents ([hil.md](hil.md)).
+- Saving traces: Save ▾ stores the screen with every signal (CSV, JSON) or as a picture (PNG); the live record keeps the last minutes of every live signal; saved traces open as dashed references, stepped through when longer than the screen ([instrument.md](instrument.md#save-the-live-record-and-references)).
 - (Superseded) System library: three systems that move, loaded whole or by part, opening running on their view ([system-library.md](system-library.md)).
 - Units on every signal; scope channels list only names the diagram defines; projects carry how they open (`ui`).
 
@@ -25,7 +25,7 @@ Reader: whoever picks the next piece of work.
 
 ## Later
 
-- Live, more: signals the plant only logs, several External blocks, remote plants (wss://, authentication), a trigger for live sweeps, a plant recording on its own side ([hil.md](hil.md#not-yet)).
+- Live, more ([hil.md](hil.md#not-yet)), from the person's words of 2026-10-24: a plant that runs its own loop and takes the reference r from the page ("we could also be sending the reference value"); signals the plant only logs ("use our page here just to log stuff"); an agent tuning a live loop through MCP ("could we also connect an agent to that web page"); then several External blocks, remote plants (wss://, a token), a trigger for live sweeps, a plant recording on its own side. Check `runme.ps1` and the plant's timing on Windows (untested here).
 - 3D views (URDF); MIMO; WebAssembly for the simulation core if a feature needs the speed (the person: fine, not required); system identification from measured data (Arb input + measured output); WebAssembly if a feature needs the speed.
 
 ## Plant editor, not yet

@@ -571,10 +571,11 @@ export function createDisplay(root, handlers) {
 
   return {
     setData(d) { simData = d; if (!feed) data = d; if (line !== null && !visible(line)) line = null; renderBadges(); draw(); },
-    // Live mode: fn() -> { data, scan, done } each frame; null returns to the
-    // simulation (earlier live sweeps stay faded behind it).
+    // Live mode: fn() -> { data, scan, done, past } each frame; null returns
+    // to the simulation.
     setFeed(fn) { feed = fn; data = fn ? fn().data : simData; renderBadges(); draw(); },
     setRefs(list) { refs = list; draw(); },
+    renderStatus,  // Live's state changed while the screen stands still
     get data() { return data; },
     setScope(s, sel) { scope = s; selected = sel; if (line !== null && line !== sel) line = null; renderBadges(); draw(); },
     setPreview(p) { preview = p; draw(); },

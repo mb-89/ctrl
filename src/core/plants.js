@@ -376,6 +376,7 @@ export const EXAMPLE_PLANTS = [
     },
     scope: { channels: channels('r', 'angle', 'V', 'd') },
     ui: { ...ui('Arm'), setup: 0.36 },  // Live adds a row to Run Control
+    tags: [{ label: 'Nonlinear', kind: 'plant' }],  // the arm: gravity and Coulomb friction, outside the page
     diagram: {
       blocks: [
         src('r', 30, 156, 'rad'),

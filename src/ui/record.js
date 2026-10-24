@@ -51,17 +51,17 @@ export function createRecord(app, display) {
   const unitsOf = (list) => Object.fromEntries(list.map((nm) => [nm, app.unitOf(nm)]));
   const windowOf = () => { const tb = app.project.scope.timebase; const w0 = Math.max(0, tb.position); return [w0, tb.position + 10 * tb.scale]; };
 
-  // ---- The screen: a simulated run over the window, or the live sweep.
-  let liveInfo = () => null;  // set by ui/live.js: { offset } while the screen shows a live sweep
+  // ---- The screen: a simulated run over the window, or a live sweep (which
+  // carries plantOffset, ui/live.js).
   function screenTrace() {
     const d = display.data;
     if (!(d?.t?.length > 1)) return null;
-    const lv = liveInfo();
+    const live = d.plantOffset !== undefined;
     const [w0, w1] = windowOf();
-    const tr = traceWindow(d, lv ? -Infinity : w0, lv ? Infinity : w1);
+    const tr = traceWindow(d, live ? -Infinity : w0, live ? Infinity : w1);
     if (tr.t.length < 2) return null;
     tr.units = unitsOf(Object.keys(tr.signals));
-    return { trace: tr, what: 'screen', source: lv ? `the screen: a live sweep, t is screen time (plant time = t + ${num(lv.offset, 6)} s)` : 'the screen: a simulated run' };
+    return { trace: tr, what: 'screen', source: live ? `the screen: a live sweep, t is screen time (plant time = t + ${num(d.plantOffset, 6)} s)` : 'the screen: a simulated run' };
   }
 
   // ---- The live record: plant time, run after run, on one real-time axis.
@@ -174,6 +174,7 @@ export function createRecord(app, display) {
     renderRec();
   });
   function renderRec() {
+    if (!app.project) return;  // (made before the project loads)
     const shown = !!findExternal(app.project.system.plant?.diagram) || rec.length > 0;
     $('rc-rec').hidden = !shown;
     if (!shown) return;
@@ -236,8 +237,6 @@ export function createRecord(app, display) {
   renderRec();
   return {
     live,
-    // ui/live.js says when the screen shows a live sweep, and its offset.
-    bindLive(fn) { liveInfo = fn; },
     // After every change of the project: references follow the window.
     changed() { if (refs.length) placeRefs(); renderRec(); },
     // For agents (window.loopTuner.record): the same as the keys.

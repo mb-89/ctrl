@@ -283,7 +283,7 @@ export function createLiveLoop(post, env = globalThis) {
       say('open', 'stopped');
     },
     async estop() {
-      latch('page', 'E-STOP pressed');
+      latch('page', 'pressed on this page');
       try { await call('estop', { reason: 'E-STOP pressed on the page' }); } catch { /* the plant's watchdog trips anyway */ }
     },
     // Reset clears both latches and goes on, the controllers afresh: a plant
