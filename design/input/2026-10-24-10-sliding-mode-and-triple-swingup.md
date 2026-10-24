@@ -49,3 +49,23 @@
 > So yeah, you usually, yeah, I would also assume that you have a set point. You have a set point feed forward, if that makes sense. You have an position and acceleration feed forward, if that makes sense. I feel like in badly tuned controllers, you can still set that to a bad value. But yeah, nobody that does serious control theory does it without feed forward. So our controllers need to support it.
 
 > And yeah, anti-windup is also a feature that we can have in, and then for one example where we want it badly tuned, we can flip it off. But again, that's also something I would consider just state of the art, so it needs to be in.
+
+## Added while this was being built: the page always sends the effort; the reference goes along for the plant's log
+
+> About reference mode, I feel like what is you? Is you the effort? We should never say, like, we are. Normally, we would send the reference value and we would send. Wait. No, I guess maybe I was wrong about the reference mode. We know the reference in our system. We should send it to the other system so they can log it on their side. But yeah, obviously, we are always sending the control effort. Yeah, I was tripping there. Sorry.
+
+## Added while this was being built: both HIL modes, settled
+
+> Okay, maybe I have to revise myself again about the reference mode. If we want to be tuning the controllers, then obviously we are always going to be sending the control effort, but that's not all we want to do. We may just want to use that thing to log data, and then we would send reference values. So we need both modes. It's just like the reference mode, obviously, I feel like we should then display something in the controllers, that the controllers are not in the loop. And also the auto-tuning is not in the loop. And yeah, I guess we can identify to some extent with a reference mode. So yeah, it should be in. The hill mode should support it. Write that down so we find it later, so we don't make that same mistake again of going back and forward on this.
+
+## Added while this was being built: Live controls in the plant panel; a clear plant download
+
+> Okay, I feel like for the hill example, the plant script is not clear enough. I'm not sure if I want the hill stuff in the Ostsee controls. Just put them in the plant controls in the bottom right corner. And make it clear, like, yeah, that's too small, the download button for the script. I guess I'm not gonna test it today. But yeah, you can still fix that.
+
+(Transcription: "Ostsee controls" is "oscilloscope controls", the Run Control panel; "hill" is HIL.)
+
+> It's okay if e-stop stays visible from anywhere, but then put it into the header bar. Make it red, put it into the header bar, right in the middle, next to system library, that's fine.
+
+> And I guess the two sentences on what it is, they can go into the help, right?
+
+> And really, when the hill is offline, I also don't want the traces to run. So even when you have connected, you still need to press the run button so that we actually start.

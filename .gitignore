@@ -3,3 +3,4 @@ node_modules/
 /undefined/
 /.claude/worktrees/
 /.harness/
+__pycache__/
