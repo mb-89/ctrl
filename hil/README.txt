@@ -24,7 +24,14 @@ Safety: if the plant hears nothing for 10 cycles, or you press Enter in its
 window, it applies its safe inputs (0 V) and stays stopped (E-stop) until the
 page's Reset. Ctrl+C ends it.
 
-Options: --port, --rate, --watchdog, --allow-origin, --strict-origin, --check,
---describe (sh runme.sh --help). The protocol is JSON-RPC 2.0 over a WebSocket,
-described in hil_plant.py's header; any language can implement it, so real
-hardware can take the motor's place.
+The plant is not quite the nominal one: each physical parameter differs by up
+to 15 % (--vary 0.15), a new plant each start unless --seed is given; --set
+J=0.003 fixes a parameter, --vary 0 gives the nominal plant. It prints the
+plant it runs; Loop Tuner is not told, as with a real device.
+
+Options: --port, --rate, --watchdog, --vary, --seed, --set, --allow-origin,
+--strict-origin, --check, --describe (sh runme.sh --help).
+
+The protocol is JSON-RPC 2.0 over a WebSocket, described in hil_plant.py's
+header; any language can implement it, so real hardware can take the motor's
+place.

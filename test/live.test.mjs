@@ -454,6 +454,12 @@ test('the plant script runs its physics and describes itself as the HIL system e
   const block = normalizeDiagram(hil.plant.diagram).blocks.find((b) => b.type === 'external');
   assert.ok(sameDescription(block.params, desc), 'connecting changes nothing in the library system');
   assert.equal(desc.watchdog, 10);
+  // The plant the page is not told: within ±15 % of nominal, the same for a
+  // seed, a parameter fixed with --set.
+  const script = new URL('../hil/hil_plant.py', import.meta.url).pathname;
+  const probe = "import importlib.util, sys, types; spec = importlib.util.spec_from_file_location('hp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); a = types.SimpleNamespace(vary=0.15, seed=7, set=['J=0.003']); p = m.plant_params(a); print(p == m.plant_params(a), p['J'], all(abs(p[n] / getattr(m.Motor, n) - 1) <= 0.15 for n in m.Motor.PHYSICS if n != 'J'), len(set(p.values())) == len(p))";
+  assert.equal(execFileSync('python3', ['-I', '-B', '-c', probe, script]).toString().trim(), 'True 0.003 True True');
+  assert.throws(() => execFileSync('python3', ['-I', script, '--set', 'X=1', '--describe'], { stdio: 'pipe' }), /--set X=1: one of R, L, k, J, b, Tc, mgl/);
 });
 
 // Starts hil_plant.py on a free port: with python3 if it has websockets, else

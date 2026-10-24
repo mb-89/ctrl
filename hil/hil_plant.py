@@ -13,9 +13,10 @@ in real time at 100 Hz on your computer, for Loop Tuner's Live (HIL) mode.
 
 Then, in Loop Tuner: System library > "HIL: external motor" > Load, and press
 Connect under Live. The scope's Run and Stop start and stop this plant. Press
-Enter here to E-stop it (its own stop button); Ctrl+C ends it. Options:
---port, --rate, --watchdog, --allow-origin, --strict-origin
-(python3 hil_plant.py --help).
+Enter here to E-stop it (its own stop button); Ctrl+C ends it. Its physics
+varies from nominal by up to ±15 % (--vary, --seed, --set), and the page is
+not told. Options: --port, --rate, --watchdog, --vary, --seed, --set,
+--allow-origin, --strict-origin (python3 hil_plant.py --help).
 
 The protocol is JSON-RPC 2.0, one message per WebSocket text frame, at
 ws://127.0.0.1:8765 (Loop Tuner's design/output/hil.md has all of it):
@@ -41,6 +42,7 @@ import argparse
 import asyncio
 import json
 import math
+import random
 import re
 import sys
 import threading
@@ -74,7 +76,12 @@ class Motor:
         {"name": "current", "unit": "A"},
     ]
 
-    def __init__(self):
+    # The physical parameters, which the page does not know (see plant_params).
+    PHYSICS = {"R": "ohm", "L": "H", "k": "N·m/A", "J": "kg·m²", "b": "N·m·s/rad", "Tc": "N·m", "mgl": "N·m"}
+
+    def __init__(self, params=None):
+        for name, value in (params or {}).items():
+            setattr(self, name, value)
         self.i = self.w = self.angle = 0.0
 
     def rates(self, i, w, angle, V, load):
@@ -122,7 +129,7 @@ class Plant:
         self.args = args
         self.rate = args.rate
         self.dt = 1.0 / args.rate
-        self.motor = Motor()
+        self.motor = Motor(plant_params(args))
         self.safe = [p["safe"] for p in Motor.INPUTS]
         self.u = list(self.safe)          # the inputs applied now
         self.pending = []                 # (arrival time, u) received since the last cycle
@@ -386,6 +393,24 @@ class Plant:
                   f"angle {self.motor.angle:+6.2f} rad  V {self.u[0]:+6.2f}   ", end="" if tty else "\n", flush=True)
 
 
+def plant_params(args):
+    """The plant this run simulates: by default every physical parameter
+    differs from the nominal one by a random factor within ±15 % (--vary), so
+    the page, which is not told, has to identify it as it would a real one.
+    --seed gives the same plant again; --set fixes a parameter. Printed at
+    the start, for the person at the plant."""
+    rng = random.Random(args.seed)
+    params = {}
+    for name in Motor.PHYSICS:
+        params[name] = getattr(Motor, name) * (1 + args.vary * rng.uniform(-1, 1))
+    for item in args.set:
+        name, _, value = item.partition("=")
+        if name not in Motor.PHYSICS:
+            sys.exit(f"--set {item}: one of {', '.join(Motor.PHYSICS)}")
+        params[name] = float(value)
+    return params
+
+
 def check():
     """--check: 3 s of physics with a PD at 100 Hz, no server. The arm should
     rise to about 1.2 rad (gravity leaves an offset without integral action)."""
@@ -415,6 +440,8 @@ async def serve_forever(args):
     plant = Plant(args)
     async with serve(plant.handler, args.host, args.port, max_size=2 ** 20):
         print(f"Loop Tuner external plant: {plant.describe({})['name']}")
+        varied = f"varied up to ±{args.vary:.0%}, seed {args.seed}" if args.vary else "nominal"
+        print(f"this plant ({varied}; the page is not told): " + ", ".join(f"{n} {getattr(plant.motor, n):.4g} {u}" for n, u in Motor.PHYSICS.items()))
         print(f"listening on ws://{args.host}:{args.port} at {args.rate:g} Hz; watchdog {args.watchdog} cycles.")
         print("In Loop Tuner: System library > HIL: external motor > Load, then Connect under Live; Run and Stop start and stop this plant.")
         if sys.stdin is not None and sys.stdin.isatty():
@@ -441,9 +468,16 @@ def main():
                         "(serve the page from localhost then; recommended for real hardware)")
     p.add_argument("--spin", type=float, default=2.0 if sys.platform == "win32" else 0.0, metavar="MS",
                    help="wait out the last MS milliseconds of each cycle actively, for coarse OS timers (default: 2 on Windows, else 0)")
-    p.add_argument("--check", action="store_true", help="run 3 s of physics without a server and exit")
+    p.add_argument("--vary", type=float, default=0.15, metavar="F",
+                   help="each physical parameter differs from nominal by a random factor within ±F, unknown to the page (default 0.15; 0: the nominal plant)")
+    p.add_argument("--seed", type=int, default=None, help="seed for --vary: the same plant again (default: a new one each start)")
+    p.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                   help="fix a physical parameter: " + ", ".join(f"{n} [{u}]" for n, u in Motor.PHYSICS.items()))
+    p.add_argument("--check", action="store_true", help="run 3 s of the nominal physics without a server and exit")
     p.add_argument("--describe", action="store_true", help="print the answer to describe (JSON) and exit")
     args = p.parse_args()
+    if args.seed is None:
+        args.seed = random.randrange(10000)
     if args.check:
         sys.exit(check())
     if args.describe:

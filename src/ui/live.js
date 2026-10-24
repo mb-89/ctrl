@@ -252,7 +252,7 @@ export function createLive(app, display, controlsRoot, record) {
     <p><b>hil-plant.zip</b> holds it with two scripts that install what it needs (uv, which brings Python and the websockets package) and start it:</p>
     <pre>sh runme.sh      Linux, macOS
 runme.ps1        Windows: right-click › Run with PowerShell</pre>
-    <p>With uv already there: <code>${RUN_PY}</code>. With Python: <code>pip install websockets</code>, then <code>python3 hil_plant.py</code>. <code>--help</code> lists its options (port, rate, watchdog).</p>
+    <p>With uv already there: <code>${RUN_PY}</code>. With Python: <code>pip install websockets</code>, then <code>python3 hil_plant.py</code>. <code>--help</code> lists its options (port, rate, watchdog, and how far its plant varies from nominal: up to ±15 %, unknown to this page).</p>
     <p class="dim" id="lv-dlg-note"></p>
     <p class="lv-btns"><button class="key primary" id="lv-dl-zip">Download hil-plant.zip</button><button class="key" id="lv-dl">Download hil_plant.py</button><button class="key" id="lv-copy-py">Copy the script</button><button class="key" id="lv-close">Close</button></p>
   </div>`;

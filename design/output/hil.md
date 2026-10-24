@@ -8,6 +8,7 @@ Reader: whoever changes Live mode, its protocol, the plant and its download, or 
 - "we could also be sending the reference value … The limiting needs to happen on the plant side and the monitoring … it needs to work via the browser tool … He needs to find all the documentation."
 - "we should also provide a stop signal … a red stop button in the hill plant … the other side is also needs to have it."
 - "our stop and run signal that would also have to go through the plant."
+- And in [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md): "in hill we are fixed to 1.0"; "our hill simulator will always have some variation up to like 15% or so … we can set it on the hill side. It's going to have a command line interface, so we can set the plant that is running, but the other side doesn't know it, so we have to identify it."
 
 **A system can have its plant outside the page. The plant runs in real time on its own clock; every cycle it sends its outputs, the page runs the rest of the diagram (Sources, Controller and Observer blocks, anything else) against them and answers at once with the inputs to apply. The controller is tuned in the page while the plant runs; the scope's Run and Stop start and stop the plant.** The System library's **HIL: external motor** is made for it; its plant ships in the page as `hil-plant.zip`.
 
@@ -141,6 +142,10 @@ Headless software rendering makes the page's drawing slow, which exaggerates the
 - **Live runs at 1×**: the plant's clock is real time. The planned time control in the header (the person, [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md): "in hill we are fixed to 1.0") must hold at 1× while a plant is connected.
 - One External plant per system, one page per plant; 1–8 inputs, 1–16 outputs, 1–1000 Hz (100 Hz tested); text frames (JSON), fine at 100 Hz, binary would be needed far above.
 
+## The plant the page does not know
+
+`hil_plant.py` varies its plant (the person, input 10): each physical parameter (R, L, k, J, b, Tc, m g l) differs from nominal by a random factor within ±15 % (`--vary 0.15`, the default; `--vary 0` is the nominal plant). `--seed N` gives the same plant again (the seed is printed; a new one each start otherwise), `--set J=0.003` fixes a parameter. The script prints the plant it runs, for the person at the plant; the page is not told, as with a real device: the description carries ports, not physics. The library's hand-picked gains hold across the range. Identifying the plant from the page (the person: an Identification step before Auto-tune and Analysis, so both work for HIL) is separate work on the roadmap. `--check` runs the nominal physics.
+
 ## A plant of your own
 
 Keep `hil_plant.py`'s server, cycle, watchdog and status, and replace its `Motor` with your device's I/O: `INPUTS` and `OUTPUTS` are the description, `advance(span, u)` applies the inputs for a span of time, `outputs()` reads the measurements. Any language works if it speaks the protocol above (the person: "I'm not bound on Python"). Then add an External plant block to a system, or connect "HIL: external motor": the block takes the new plant's ports.
@@ -149,4 +154,5 @@ Keep `hil_plant.py`'s server, cycle, watchdog and status, and replace its `Motor
 
 - A plant that runs its own loop and takes the reference r from the page (the protocol allows it; `hil_plant.py` does not do it yet).
 - Signals the plant only logs (outputs it sends that are not ports, for "just to log stuff"); today every output is a port, and the live record logs them all.
+- Identifying the plant from the page (it varies by ±15 % and is not described), so Auto-tune and Analysis work for HIL.
 - An agent tuning through MCP; remote plants (wss://, a token); several External blocks; the plant recording on its side; a trigger for live sweeps beyond the window alignment.
