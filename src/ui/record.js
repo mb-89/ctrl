@@ -121,7 +121,7 @@ export function createRecord(app, display) {
     g.font = `${Math.round(12 * k)}px "IBM Plex Mono", ui-monospace, monospace`;
     g.textBaseline = 'middle';
     g.fillStyle = '#c9d3da';
-    const status = document.querySelector('#display .status').textContent.replace(/\s+/g, ' ').trim();
+    const status = [...document.querySelector('#display .status').children].map((e) => e.textContent.trim()).filter(Boolean).join('  ');
     g.fillText(`${app.project.title} · ${status}`, pad, pad + line / 2);
     g.textAlign = 'right'; g.fillStyle = '#7f8c96';
     g.fillText(new Date().toLocaleString(), c.width - pad, pad + line / 2);

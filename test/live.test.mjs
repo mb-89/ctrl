@@ -343,6 +343,16 @@ test('live edits of any variant parameter are taken in place; names are cosmetic
   const renamed = structuredClone(lowered);
   renamed.blocks.find((b) => b.id === 'c').variants[0].name = 'Scheduled';
   assert.equal(runner.update(renamed, SIGNALS), 'kept', 'renaming a variant restarts nothing');
+  // A project restored by Undo carries open limits as null (JSON): edits are
+  // still taken in place, and the limits stay open.
+  const restored = JSON.parse(JSON.stringify(LOOP({ name: 'P', type: 'pid', params: { Kp: 3 } })));
+  const r2 = createLiveRunner(restored, SIGNALS);
+  r2.step(0, [0, 0]);
+  restored.blocks.find((b) => b.id === 'c').variants[0].params.Kp = 30;
+  assert.equal(r2.update(restored, SIGNALS), 'kept');
+  const out = r2.step(0.1, [0, 0]);
+  assert.equal(out.values[3], 30, 'V: Kp 30 on r = 1, no limit');
+  assert.equal(out.u[0], 12, 'sent within the plant\'s 12 V');
   // Every parameter of every controller type.
   for (const type of CONTROLLER_TYPES) {
     const v = { name: type, type, params: LAW_PARAMS[type] ?? {} };
