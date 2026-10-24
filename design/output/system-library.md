@@ -20,7 +20,7 @@ Reader: whoever adds an example system or changes how systems load.
 - **Following a sine (XY)** (XY demo): the DC motor follows a slow sine (0.2 Hz, one period per sweep); the scope opens in XY with Δ, error over reference. P: a wide ellipse (the error leads r by a quarter period); PD: a smaller one; PID: a thin tilted line (the integral turns the error against r). The motor diagram and picture are shared with *DC motor, position control* (`motorDiagram`, `motorViews` in `plants.js`).
 - **Encoder errors and torque ripple** (FFT and spectrogram demo): a speed-controlled motor sweeping to 300 rad/s, an encoder with 1× and 2× angle errors, 6× torque ripple; opens in Spectrogram mode on the measured speed.
 - **Signals are named for what they are** (F in N, x in m, θ in rad, …). Controlled systems have a reference **r** and a disturbance **d**, so both following and rejection can be tuned (the person).
-- **The page opens the Mass–spring–damper**, running, on its view. **Loading a system shows it running**: a whole load takes the title, scope channels and `ui` (run, Plant tab, its view, setup area at 42 %).
+- **The page opens the Mass–spring–damper**, running, on its view. **Loading a system shows it running**: a whole load takes the title, scope channels and `ui` (run, Plant tab, its view, setup area at 42 %; the badly tuned oven opens on the Auto-tune tab instead).
 - **Header, "System library ▾"**: every system, with Load and one button per part. **Plant tab, "System library" group**: a click loads the plant only.
 - Entries live in `src/core/plants.js`; v1's closed-loop examples stay in `src/core/examples.js` for the CLI.
 

@@ -19,7 +19,7 @@ Reader: whoever changes controllers, their library or the Controller tab. **Stat
 | `stateFeedback` | u = kr·r − K·y, one gain per measured state; kr is the static prefilter; optional Tr | Matrix controllers (Zustandsregler), LQR, pole placement |
 | `gainScheduled` | PI with Kp, Ki interpolated from a table over the measurement | Plants whose dynamics change with the operating point |
 | `swingUp` | Far from upright, u = kE·E·ω·cos θ (V = ½E² falls: a Lyapunov design) with cart centring; near upright, state feedback | Swinging a pendulum up and catching it |
-| `relay` | u = u0 ± d by the sign of e, switching when e passes ±ε (hysteresis) | On/off control (a thermostat); Auto-tune's relay experiment |
+| `relay` | u = u0 ± d by the sign of e, switching when e passes ±ε (hysteresis); a negative d reverses it | On/off control (a thermostat); Auto-tune's relay experiment |
 
 To add one: an entry in `CONTROLLERS` with `label`, `summary`, `params` and `make(params, Ts)` returning `{ step(inputs) → u }`; a sentence in `ABOUT` in `src/ui/controller.js`; a test.
 
