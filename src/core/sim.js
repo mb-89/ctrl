@@ -73,6 +73,7 @@ export function simulate(loop, sim, opts = {}) {
   const rand = gaussian(noise.seed);
 
   const X = new Float64Array(N);
+  for (const el of elems) el.init(X, el.off);
   const Xt = new Float64Array(N);
   const k1 = new Float64Array(N), k2 = new Float64Array(N), k3 = new Float64Array(N), k4 = new Float64Array(N);
 
@@ -232,6 +233,7 @@ export function simulateSystem(diagram, signals, sim) {
   const h = Ts / m, N = el.n;
   el.setStep(h);
   const X = new Float64Array(N), Xt = new Float64Array(N);
+  el.init(X, 0);
   const k1 = new Float64Array(N), k2 = new Float64Array(N), k3 = new Float64Array(N), k4 = new Float64Array(N);
   const t = new Float64Array(K + 1);
   const out = {};

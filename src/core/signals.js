@@ -88,7 +88,7 @@ function hash32(a) {
   return (a ^ (a >>> 16)) >>> 0;
 }
 
-function gaussAt(seed, k) {
+export function gaussAt(seed, k) {
   const u1 = (hash32((seed * 2654435761 + k * 2) | 0) + 1) / 4294967297;
   const u2 = hash32((seed * 2654435761 + k * 2 + 1) | 0) / 4294967296;
   return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);

@@ -11,8 +11,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MODULES = [
-  'core/poly.js', 'core/scale.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/project.js', 'core/tune.js', 'core/examples.js',
-  'ui/units.js', 'ui/dial.js', 'ui/display.js', 'ui/controls.js', 'ui/generator.js', 'ui/plant.js', 'ui/layout.js', 'ui/app.js',
+  'core/poly.js', 'core/scale.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js',
+  'ui/units.js', 'ui/dial.js', 'ui/display.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/layout.js', 'ui/app.js',
 ];
 
 // Each module runs in its own function scope; its exports go into a registry
@@ -71,7 +71,10 @@ const HELP = `
   <span><kbd>Ctrl</kbd> <kbd>Z</kbd></span><span>Undo; <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd> redo</span>
 </div>
 <h3>Plant</h3>
-<p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (y1, y2, …) can be shown on any channel. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Wheel zooms the canvas; dragging the background pans.</p>
+<p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (y1, y2, …) can be shown on any channel. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Double-click a Switch to move it to its next input. Wheel zooms the canvas; dragging the background pans.</p>
+<p>A plant can also have <b>2D views</b> (Diagram | views above the canvas): scenes configured in its JSON that move with the signals, following the scope's scan line or your cursor.</p>
+<h3>System library</h3>
+<p>Complete example systems: input, plant and, where there is one, controller. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
@@ -85,7 +88,7 @@ const SHELL = `<div id="lt-shell" class="app">
   <input id="title" class="title" aria-label="Project title" spellcheck="false">
   <span id="loopnote" class="loopnote"></span>
   <div class="actions">
-    <select id="examples" class="btn" aria-label="Load an example"><option value="">Examples…</option></select>
+    <div class="popwrap"><button id="syslib" class="btn" aria-haspopup="true" aria-expanded="false" title="Complete systems: load one whole, or only its input, plant or controller">System library ▾</button><div id="syslib-pop" class="popover" hidden></div></div>
     <span class="sep"></span>
     <button id="undo" class="btn icon" title="Undo (Ctrl+Z)" aria-label="Undo">${ICON.undo}</button>
     <button id="redo" class="btn icon" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">${ICON.redo}</button>

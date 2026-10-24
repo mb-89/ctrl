@@ -431,6 +431,13 @@ export function createDisplay(root, handlers) {
       draw();
     },
     releaseLine() { if (line === null) return false; selectLine(null); return true; },
+    // The instant other views follow: the hover cursor, else the scan line
+    // while sweeping, else the right edge of the screen.
+    time() {
+      if (!scope) return 0;
+      if (hover && region(hover.x, hover.y) === 'plot') return xt(hover.x);
+      return mode !== 'stop' ? tScan : win()[1];
+    },
     get mode() { return mode; },
   };
 }

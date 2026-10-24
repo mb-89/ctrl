@@ -272,7 +272,33 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 
 /* Plant tab: library | canvas | parameters, filling the setup area */
 .tabpanel > [role="tabpanel"] { height: 100%; }
-.plant { height: 100%; min-height: 0; display: grid; grid-template-columns: 196px minmax(0, 1fr) 248px; gap: 12px; }
+.plant { height: 100%; min-height: 0; display: grid; grid-template-columns: var(--lib-w, 196px) 10px minmax(0, 1fr) 248px; column-gap: 0; }
+.plant .pcan { margin-right: 12px; }
+.plsplit { cursor: col-resize; }
+.lgname { display: flex; align-items: center; gap: 5px; width: 100%; border: 0; background: none; padding: 2px 0; cursor: pointer; text-align: left; }
+.lgname .chev { width: 10px; color: var(--muted); }
+.pdiag .term, .pdiag .swline { stroke: var(--ink); stroke-width: 2; fill: none; }
+.pdiag .swdot { fill: var(--ink-2); }
+.pdiag .pn { font-family: var(--mono); font-size: 10px; fill: var(--ink-2); }
+.reps { display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--recess); flex-wrap: wrap; }
+.rep { border: 0; background: transparent; border-radius: 5px; padding: 2px 9px; font-size: 12px; font-weight: 600; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+.rep.on { background: var(--panel); color: var(--ink); box-shadow: 0 1px 0 var(--line-strong); }
+.rep.add { color: var(--muted); }
+.pscenebox { background: var(--panel); background-image: none; }
+.pscene { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pscene text { font-family: var(--mono); }
+.pscene .sctime { fill: var(--muted); font-size: 11px; }
+.pscene .scerr { fill: var(--bad); font-size: 12px; }
+.vjson { width: 100%; min-height: 140px; height: 40%; resize: vertical; font-family: var(--mono); font-size: 11.5px; line-height: 1.4; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); padding: 6px; }
+.pmsg:empty { display: none; }
+.popwrap { position: relative; }
+.popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 25; width: min(520px, calc(100vw - 32px)); max-height: 70vh; overflow: auto; background: var(--panel-2); border: 1px solid var(--line-strong); border-radius: 10px; padding: 8px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25); }
+.pophead { font-weight: 600; padding: 4px 6px 8px; }
+.pophead span { font-weight: 400; color: var(--muted); margin-left: 6px; font-size: 12.5px; }
+.sysrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 6px; border-top: 1px solid var(--line); }
+.sysname { font-weight: 600; font-size: 13.5px; }
+.sysnote { font-weight: 400; font-size: 12px; color: var(--ink-2); line-height: 1.35; margin-top: 2px; }
+.sysbtns { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .plib, .pprops { min-height: 0; overflow: auto; }
 .plib .glabel { margin-bottom: 4px; }
 .lgroup { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
@@ -329,6 +355,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .pmsg { font-size: 12.5px; line-height: 1.45; color: var(--bad); margin: 6px 0; }
 @media (max-width: 900px) {
   .plant { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .plsplit { display: none; }
   .pview { height: 360px; }
   .plib { max-height: 200px; }
 }
@@ -339,7 +366,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   <input id="title" class="title" aria-label="Project title" spellcheck="false">
   <span id="loopnote" class="loopnote"></span>
   <div class="actions">
-    <select id="examples" class="btn" aria-label="Load an example"><option value="">Examples…</option></select>
+    <div class="popwrap"><button id="syslib" class="btn" aria-haspopup="true" aria-expanded="false" title="Complete systems: load one whole, or only its input, plant or controller">System library ▾</button><div id="syslib-pop" class="popover" hidden></div></div>
     <span class="sep"></span>
     <button id="undo" class="btn icon" title="Undo (Ctrl+Z)" aria-label="Undo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3 L2.5 6.5 L6 10 M2.5 6.5 H10 a3.5 3.5 0 0 1 0 7 H7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <button id="redo" class="btn icon" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 L13.5 6.5 L10 10 M13.5 6.5 H6 a3.5 3.5 0 0 0 0 7 H9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -401,7 +428,10 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   <span><kbd>Ctrl</kbd> <kbd>Z</kbd></span><span>Undo; <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd> redo</span>
 </div>
 <h3>Plant</h3>
-<p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (y1, y2, …) can be shown on any channel. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Wheel zooms the canvas; dragging the background pans.</p>
+<p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (y1, y2, …) can be shown on any channel. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Double-click a Switch to move it to its next input. Wheel zooms the canvas; dragging the background pans.</p>
+<p>A plant can also have <b>2D views</b> (Diagram | views above the canvas): scenes configured in its JSON that move with the signals, following the scope's scan line or your cursor.</p>
+<h3>System library</h3>
+<p>Complete example systems: input, plant and, where there is one, controller. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
@@ -776,7 +806,9 @@ function tokenize(src) {
 }
 
 // Compiles src to t => value. Throws with a readable message on bad input.
-function compileExpr(src) {
+// With opts.vars, other names are variables: the result is env => value,
+// reading env[name] (NaN when absent), as 2D views use signal names.
+function compileExpr(src, opts = {}) {
   const toks = tokenize(String(src));
   let i = 0;
   const peek = () => toks[i];
@@ -787,7 +819,7 @@ function compileExpr(src) {
     let a = term();
     while (peek()?.k === 'op' && (peek().v === '+' || peek().v === '-')) {
       const op = take().v, b = term(), l = a;
-      a = op === '+' ? (t) => l(t) + b(t) : (t) => l(t) - b(t);
+      a = op === '+' ? (e) => l(e) + b(e) : (e) => l(e) - b(e);
     }
     return a;
   }
@@ -801,21 +833,21 @@ function compileExpr(src) {
       if (!explicit && !implicit) return a;
       const op = explicit ? take().v : '*';
       const b = unary(), l = a;
-      a = op === '*' ? (t) => l(t) * b(t) : (t) => l(t) / b(t);
+      a = op === '*' ? (e) => l(e) * b(e) : (e) => l(e) / b(e);
     }
   }
   // unary := '-' unary | power
   function unary() {
     if (peek()?.k === 'op' && (peek().v === '-' || peek().v === '+')) {
       const neg = take().v === '-', a = unary();
-      return neg ? (t) => -a(t) : a;
+      return neg ? (e) => -a(e) : a;
     }
     return power();
   }
   // power := atom ('^' unary)?   (right-associative)
   function power() {
     const a = atom();
-    if (peek()?.k === 'op' && peek().v === '^') { take(); const b = unary(); return (t) => Math.pow(a(t), b(t)); }
+    if (peek()?.k === 'op' && peek().v === '^') { take(); const b = unary(); return (e) => Math.pow(a(e), b(e)); }
     return a;
   }
   function atom() {
@@ -826,19 +858,20 @@ function compileExpr(src) {
     if (tk.k === 'id') {
       take();
       const name = tk.v.toLowerCase();
-      if (name === 't') return (t) => t;
+      if (name === 't') return (e) => e.t;
       // Own properties only: names such as "constructor" must not resolve.
       if (Object.hasOwn(CONST, name)) { const v = CONST[name]; return () => v; }
       const arity = Object.hasOwn(FN1, name) ? 1 : Object.hasOwn(FN2, name) ? 2 : Object.hasOwn(FN3, name) ? 3 : 0;
+      if (!arity && opts.vars && peek()?.v !== '(') { const v = tk.v; return (e) => (Object.hasOwn(e, v) ? e[v] : NaN); }
       if (!arity) throw new Error(`unknown name "${tk.v}"; use t, pi, e or a function such as sin, exp, step`);
       take('(');
       const args = [expr()];
       while (args.length < arity) { take(','); args.push(expr()); }
       take(')');
       const [a, b, c] = args;
-      if (arity === 1) { const f = FN1[name]; return (t) => f(a(t)); }
-      if (arity === 2) { const f = FN2[name]; return (t) => f(a(t), b(t)); }
-      const f = FN3[name]; return (t) => f(a(t), b(t), c(t));
+      if (arity === 1) { const f = FN1[name]; return (e) => f(a(e)); }
+      if (arity === 2) { const f = FN2[name]; return (e) => f(a(e), b(e)); }
+      const f = FN3[name]; return (e) => f(a(e), b(e), c(e));
     }
     throw new Error(`unexpected "${tk.v}"`);
   }
@@ -846,7 +879,9 @@ function compileExpr(src) {
   if (!toks.length) throw new Error('enter a formula in t, for example 0.5*sin(2*pi*t)');
   const f = expr();
   if (i < toks.length) throw new Error(`unexpected "${toks[i].v}"`);
-  return (t) => { const v = f(t); return Number.isFinite(v) ? v : 0; };
+  if (opts.vars) return f;
+  const env = { t: 0 };
+  return (t) => { env.t = t; const v = f(env); return Number.isFinite(v) ? v : 0; };
 }
 
 return { EXPR_HELP, compileExpr };
@@ -1064,7 +1099,7 @@ function migrateComponents(block, duration) {
   }
 }
 
-return { SIGNALS, normalizeComponent, DEFAULT_PERIOD, normalizeReference, componentFn, referenceFn, describeComponent, sampleSignal, parseWaveform, migrateReferenceBlock };
+return { SIGNALS, gaussAt, normalizeComponent, DEFAULT_PERIOD, normalizeReference, componentFn, referenceFn, describeComponent, sampleSignal, parseWaveform, migrateReferenceBlock };
 })();
 // ---- core/metrics.js
 __mods['core/metrics.js'] = (() => {
@@ -1294,6 +1329,7 @@ __mods['core/diagram.js'] = (() => {
 
 const { BLOCKS, blockDef, normalizeBlock } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
+const { gaussAt } = __mods['core/signals.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
 // Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
@@ -1301,6 +1337,12 @@ const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...ext
 const ELEMENTS = {
   source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }], ports: () => [0, 1], formula: 'r(t)' },
   sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }], ports: () => [1, 0], formula: 'y' },
+  terminator: { label: 'Terminator', group: 'Signals', params: [], ports: () => [1, 0], formula: 'ends a signal' },
+  switch: {
+    label: 'Switch', group: 'Math', formula: 'passes one input',
+    params: [num('inputs', 'Inputs', 2, { min: 2, int: true }), num('position', 'Position', 1, { min: 1, int: true })],
+    ports: (p) => [p.inputs, 1],
+  },
   inport: { label: 'In', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [0, 1], formula: 'u' },
   outport: { label: 'Out', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [1, 0], formula: 'y' },
   gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
@@ -1308,6 +1350,26 @@ const ELEMENTS = {
   integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
   delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 })], ports: () => [1, 1], formula: 'e^(−Ls)' },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
+  quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
+  noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
+  cartPole: {
+    // Point mass m on a massless pole of length l, hinged on a cart of mass M.
+    // θ = 0 is upright, positive leaning towards +x. b is the cart's friction.
+    label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ', outputs: ['x', 'θ'], ports: () => [1, 2],
+    params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
+    ode: {
+      n: 4,
+      init: (p) => [0, 0, p.theta0, 0],
+      out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; },
+      f: (X, o, u, p, dX) => {
+        const v = X[o + 1], th = X[o + 2], w = X[o + 3];
+        const s = Math.sin(th), c = Math.cos(th);
+        const a = (u - p.b * v + p.m * p.l * w * w * s - p.m * p.g * s * c) / (p.M + p.m * s * s);
+        dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (p.g * s - a * c) / p.l;
+      },
+      bound: (p) => 2 * Math.sqrt(p.g * (p.M + p.m) / (p.M * p.l)) + p.b / p.M,
+    },
+  },
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
@@ -1356,6 +1418,7 @@ function normalizeParams(type, params = {}, where) {
     }
     out[p.key] = v;
   }
+  if (type === 'switch') out.position = Math.min(out.position, out.inputs);
   return out;
 }
 
@@ -1462,6 +1525,11 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         outs[b.id] = []; ins[b.id] = [[k, 0]];
         continue;
       }
+      if (b.type === 'terminator') {
+        const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+        outs[b.id] = []; ins[b.id] = [[k, 0]];
+        continue;
+      }
       if (b.type === 'inport') {
         if (root && opts.standalone) {
           const k = add({ kind: 'src', name, ft: false, fn: () => 0 });
@@ -1484,7 +1552,15 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         continue;
       }
       const def = diagramBlockDef(b.type);
-      const nIn = blockPorts(b)[0];
+      const [nIn, nOut] = blockPorts(b);
+      if (def.ode) {
+        // A physics block: its state integrates inside the diagram; one tap
+        // node per output reads what the block computed from its state.
+        const k = add({ kind: 'ode', name, ft: false, ode: def.ode, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
+        outs[b.id] = def.outputs.map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
+        ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+        continue;
+      }
       const node = { name, inputs: new Array(nIn).fill(-1) };
       if (def.tf) {
         const tf = def.tf(b.params);
@@ -1495,6 +1571,9 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       else if (b.type === 'sum') Object.assign(node, { kind: 'sum', signs: [...b.params.signs].map((c) => (c === '-' ? -1 : 1)), ft: true });
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
       else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, ft: b.params.L <= 0 });
+      else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
+      else if (b.type === 'quantizer') Object.assign(node, { kind: 'quant', q: b.params.q, ft: true });
+      else if (b.type === 'noise') Object.assign(node, { kind: 'noise', std: b.params.std, seed: b.params.seed, ft: true });
       const k = add(node);
       outs[b.id] = [k];
       ins[b.id] = node.inputs.map((_, s) => [k, s]);
@@ -1527,7 +1606,10 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   if (pending.size) throw new Error(`${path}: algebraic loop through ${[...pending].map((i) => nodes[i].name).join(', ')}; put a block with state (integrator, lag) in the loop`);
 
   let n = 0, bound = 0;
-  for (const nd of nodes) if (nd.kind === 'ss') { nd.off = n; n += nd.ss.n; bound = Math.max(bound, nd.bound); }
+  for (const nd of nodes) {
+    if (nd.kind === 'ss') { nd.off = n; n += nd.ss.n; bound = Math.max(bound, nd.bound); }
+    if (nd.kind === 'ode') { nd.off = n; n += nd.ode.n; bound = Math.max(bound, nd.bound); }
+  }
   const vals = new Float64Array(nodes.length);
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
@@ -1542,6 +1624,8 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   return {
     n, bound, warnings,
     setStep(step) { h = step; },
+    // Initial state: zero, except for physics blocks with initial conditions.
+    init(X, o) { for (const nd of nodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
     eval(t, X, o, u, dX) {
       for (const i of order) {
         const nd = nodes[i];
@@ -1554,6 +1638,11 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
           case 'sum': y = 0; for (let s = 0; s < nd.signs.length; s++) y += nd.signs[s] * inOf(nd, s); break;
           case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
           case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L) : inOf(nd); break;
+          case 'switch': y = inOf(nd, nd.pick); break;
+          case 'quant': y = nd.q * Math.round(inOf(nd) / nd.q); break;
+          case 'noise': y = inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
+          case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
+          case 'tap': y = nodes[nd.parent].outv[nd.j]; break;
           default: {
             const { ss } = nd;
             const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
@@ -1565,6 +1654,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       if (dX) {
         for (const nd of nodes) {
+          if (nd.kind === 'ode') { nd.ode.f(X, o + nd.off, inOf(nd), nd.p, dX); continue; }
           if (nd.kind !== 'ss') continue;
           const { ss } = nd, base = o + nd.off;
           const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
@@ -1662,6 +1752,7 @@ function simulate(loop, sim, opts = {}) {
   const rand = gaussian(noise.seed);
 
   const X = new Float64Array(N);
+  for (const el of elems) el.init(X, el.off);
   const Xt = new Float64Array(N);
   const k1 = new Float64Array(N), k2 = new Float64Array(N), k3 = new Float64Array(N), k4 = new Float64Array(N);
 
@@ -1821,6 +1912,7 @@ function simulateSystem(diagram, signals, sim) {
   const h = Ts / m, N = el.n;
   el.setStep(h);
   const X = new Float64Array(N), Xt = new Float64Array(N);
+  el.init(X, 0);
   const k1 = new Float64Array(N), k2 = new Float64Array(N), k3 = new Float64Array(N), k4 = new Float64Array(N);
   const t = new Float64Array(K + 1);
   const out = {};
@@ -1876,7 +1968,37 @@ const EXAMPLE_PLANTS = [
   chain('inverseResponse', { K: 1, Tz: 0.05, tau1: 0.1, tau2: 0.2 }, 'Inverse response'),
   {
     name: 'Mass–spring–damper',
-    notes: 'm ẍ + c ẋ + k x = F, built from integrators: m = 1, c = 2, k = 400 (ωn = 20 rad/s, ζ = 0.05).',
+    notes: 'm ẍ + c ẋ + k x = F, built from integrators: m = 1, c = 2, k = 400 (ωn = 20 rad/s, ζ = 0.05). Has a 2D view.',
+    views: [{
+      // Hanging: x (y1) is measured downwards, drawn ×40 so millimetres show.
+      name: 'Hanging mass', kind: '2d', view: [-0.75, -0.75, 0.75, 0.62],
+      shapes: [
+        { type: 'ground', x1: -0.35, x2: 0.35, y: 0.5, side: 'above' },
+        { type: 'spring', x1: -0.08, y1: 0.5, x2: -0.08, y2: '0.02 - 40*y1', width: 0.08, coils: 7 },
+        { type: 'damper', x1: 0.09, y1: 0.5, x2: 0.09, y2: '0.02 - 40*y1', width: 0.07 },
+        { type: 'rect', x: -0.17, y: '-0.2 - 40*y1', w: 0.34, h: 0.22, fill: 'ch2' },
+        { type: 'text', x: 0, y: '-0.09 - 40*y1', text: 'm', size: 16, fill: 'panel' },
+        { type: 'arrow', x1: 0, y1: '-0.22 - 40*y1', x2: 0, y2: '-0.22 - 40*y1 - 0.12*r', stroke: 'ch1', lineWidth: 3 },
+        { type: 'line', x1: -0.45, y1: -0.2, x2: -0.3, y2: -0.2, stroke: 'muted', lineWidth: 1 },
+        { type: 'text', x: -0.55, y: -0.2, text: 'rest', size: 11, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.68, text: 'x = {1000*y1} mm down (drawn ×40)   F = {r} N', size: 13 },
+      ],
+    }, {
+      // The same picture as a standard SVG drawing: element attributes are
+      // bound to formulas in the signal names. Any vector editor can make the drawing.
+      name: 'Hanging mass (SVG)', kind: 'svg',
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-160 -130 320 280">'
+        + '<rect x="-80" y="-118" width="160" height="10" fill="#8a929a"/>'
+        + '<line id="spring" x1="-22" y1="-108" x2="-22" y2="0" stroke="#4b535b" stroke-width="3" stroke-dasharray="7 4"/>'
+        + '<line id="damper" x1="22" y1="-108" x2="22" y2="0" stroke="#4b535b" stroke-width="6"/>'
+        + '<rect id="mass" x="-45" y="0" width="90" height="56" rx="4" fill="#33d17a" stroke="#12703c" stroke-width="2"/>'
+        + '<text id="label" x="0" y="130" text-anchor="middle" font-family="monospace" font-size="13" fill="#7c858d">x</text></svg>',
+      bind: [
+        { select: '#mass', attr: 'y', value: '{4000*y1}' },
+        { select: '#spring, #damper', attr: 'y2', value: '{4000*y1}' },
+        { select: '#label', attr: 'text', value: 'x = {1000*y1} mm (drawn ×4)' },
+      ],
+    }],
     diagram: {
       blocks: [
         src(30, 112),
@@ -1927,10 +2049,223 @@ const EXAMPLE_PLANTS = [
   },
 ];
 
+// The cart–pole: a nonlinear physics block, falling until a controller holds it.
+EXAMPLE_PLANTS.push({
+  name: 'Inverted pendulum',
+  notes: 'A pole balanced on a cart (nonlinear). r is the force on the cart: a short push. Without a controller the pole falls. Has a 2D view.',
+  signals: { r: { period: 1.5, components: [{ type: 'square', params: { amplitude: 2, time: 0.1, width: 0.1, period: 1, count: 1 } }] } },
+  diagram: {
+    blocks: [
+      src(30, 120),
+      { id: 'cart', type: 'cartPole', name: 'cart and pole', params: { M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: 0.02 }, x: 160, y: 100 },
+      sink('y1', 360, 96), sink('y2', 360, 150),
+    ],
+    wires: [{ from: 'r', to: 'cart' }, { from: 'cart', to: 'y1' }, { from: 'cart:1', to: 'y2' }],
+  },
+  views: [{
+    name: 'Cart and pole', kind: '2d', view: [-1.2, -0.55, 1.2, 0.85],
+    shapes: [
+      { type: 'line', x1: -1.2, y1: -0.065, x2: 1.2, y2: -0.065, stroke: 'muted', lineWidth: 3 },
+      { type: 'group', x: 'clamp(y1, -1.05, 1.05)', y: 0, shapes: [
+        { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
+        { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
+        { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
+        { type: 'group', y: 0.1, angle: '-y2', shapes: [
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.5, lineWidth: 4 },
+          { type: 'circle', cx: 0, cy: 0.5, r: 0.045, fill: 'ch3' },
+        ] },
+        { type: 'arrow', x1: '-0.16 - 0.15*r', y1: 0.04, x2: -0.17, y2: 0.04, stroke: 'ch1', lineWidth: 3 },
+      ] },
+      { type: 'text', x: 0, y: 0.75, text: 'x = {y1} m   θ = {y2*180/pi}°   F = {r} N', size: 13 },
+    ],
+  }],
+});
+
 // A new project's plant: the reference alone.
 const EMPTY_PLANT = { blocks: [src(60, 104)], wires: [] };
 
 return { EXAMPLE_PLANTS, EMPTY_PLANT };
+})();
+// ---- core/views.js
+__mods['core/views.js'] = (() => {
+// Representations of a plant besides its block diagram. They are configured
+// in the project JSON, not drawn in an editor. Two kinds exist:
+//   "2d"  a small scene of shapes, below; easy for a person or an agent to write.
+//   "svg" a standard SVG drawing (made in any vector editor) plus bindings that
+//         set element attributes from formulas:
+//         { "name": "Cart", "kind": "svg", "svg": "<svg viewBox=…>…<g id=\"cart\">…</g></svg>",
+//           "bind": [ { "select": "#cart", "attr": "transform", "value": "translate({100*y1}, 0)" } ] }
+//         "attr": "text" sets an element's text. Event handlers and links cannot be bound.
+// 3D (URDF, joints bound to signals) is planned the same way.
+//
+// The "2d" kind: A 2D view is a small
+// scene in world coordinates (y up) whose numbers may be formulas in t and
+// the signal names (Sources and Sinks), so the scene moves with the signals:
+//
+//   { "name": "Cart", "kind": "2d", "view": [-1.2, -0.3, 1.2, 0.8],
+//     "shapes": [
+//       { "type": "ground", "x1": -1.2, "x2": 1.2, "y": 0 },
+//       { "type": "group", "x": "y1", "y": 0, "shapes": [
+//         { "type": "rect", "x": -0.15, "y": 0, "w": 0.3, "h": 0.12, "fill": "ch2" },
+//         { "type": "group", "y": 0.12, "angle": "-y2", "shapes": [
+//           { "type": "line", "x1": 0, "y1": 0, "x2": 0, "y2": 0.5, "width": 4 } ] } ] } ] }
+//
+// Shapes: line, arrow (x1 y1 x2 y2), rect (x y w h, angle about its centre),
+// circle (cx cy r), spring and damper (x1 y1 x2 y2, width; spring: coils),
+// ground (x1 x2 y; "side": "above" hatches upwards, as a ceiling), text (x y text size; "{formula}" inside text is replaced
+// by its value), group (x y angle: translate then rotate; shapes inside).
+// Style: stroke, fill (ink, muted, panel, ch1 … ch4, or any CSS colour) and
+// lineWidth (pixels). Angles in radians,
+// counter-clockwise. evalScene turns a view and the signal values at one
+// instant into flat drawing operations; the UI only draws them.
+
+const { compileExpr } = __mods['core/expr.js'];
+const ATTRS = {
+  line: ['x1', 'y1', 'x2', 'y2'], arrow: ['x1', 'y1', 'x2', 'y2'],
+  rect: ['x', 'y', 'w', 'h', 'angle'], circle: ['cx', 'cy', 'r'],
+  spring: ['x1', 'y1', 'x2', 'y2', 'width', 'coils'], damper: ['x1', 'y1', 'x2', 'y2', 'width'],
+  ground: ['x1', 'x2', 'y'], text: ['x', 'y', 'size'], group: ['x', 'y', 'angle'],
+};
+
+function value(v, where) {
+  if (typeof v === 'number') { const n = v; return () => n; }
+  if (typeof v === 'string') {
+    try { return compileExpr(v, { vars: true }); } catch (e) { throw new Error(`${where}: ${e.message}`); }
+  }
+  return () => 0;
+}
+
+function template(src, where) {
+  return String(src).split(/(\{[^}]*\})/).map((part) => (part.startsWith('{') ? value(part.slice(1, -1), where) : part));
+}
+
+function normalizeSvgView(v, path) {
+  const svg = String(v.svg ?? '').trim();
+  if (!/^<svg[\s>/]/i.test(svg)) throw new Error(`${path}.svg: an SVG document, starting with <svg`);
+  const bind = (v.bind ?? []).map((b, i) => {
+    const where = `${path}.bind[${i}]`;
+    if (!b?.select || typeof b.select !== 'string') throw new Error(`${where}.select: a CSS selector such as #cart`);
+    const attr = String(b.attr ?? '');
+    if (!/^[A-Za-z][\w:-]*$/.test(attr) || /^on/i.test(attr) || /href$/i.test(attr)) throw new Error(`${where}.attr: an attribute such as transform, x, fill, or "text"; not an event or link`);
+    template(b.value ?? '', `${where}.value`);
+    return { select: b.select, attr, value: String(b.value ?? '') };
+  });
+  return { name: String(v.name ?? 'SVG view'), kind: 'svg', svg, bind };
+}
+
+// The bindings of an SVG view at one instant: [{ select, attr, value }].
+function compileBindings(view) {
+  const list = view.bind.map((b) => ({ ...b, parts: template(b.value, 'bind') }));
+  return (env) => list.map(({ select, attr, parts }) => ({ select, attr, value: parts.map((p) => (typeof p === 'string' ? p : fmtAttr(p(env)))).join('') }));
+}
+const fmtAttr = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(6))) : '0');
+
+function normalizeView(v, path = 'views[0]') {
+  if (!v || typeof v !== 'object') throw new Error(`${path}: a view is an object`);
+  if (v.kind === 'svg') return normalizeSvgView(v, path);
+  if (v.kind !== '2d') throw new Error(`${path}.kind: "2d" (shapes) or "svg" (an SVG drawing with bindings)`);
+  const box = v.view ?? [-1, -1, 1, 1];
+  if (!Array.isArray(box) || box.length !== 4 || !box.every(Number.isFinite) || box[2] <= box[0] || box[3] <= box[1]) throw new Error(`${path}.view: [xmin, ymin, xmax, ymax]`);
+  const check = (shapes, p) => {
+    if (!Array.isArray(shapes)) throw new Error(`${p}: "shapes" is a list`);
+    shapes.forEach((s, i) => {
+      const where = `${p}[${i}]`;
+      if (!ATTRS[s?.type]) throw new Error(`${where}.type: one of ${Object.keys(ATTRS).join(', ')}`);
+      for (const a of ATTRS[s.type]) if (s[a] !== undefined) value(s[a], `${where}.${a}`);
+      if (s.type === 'group') check(s.shapes ?? [], `${where}.shapes`);
+    });
+  };
+  check(v.shapes ?? [], `${path}.shapes`);
+  return { name: String(v.name ?? '2D view'), kind: '2d', view: box.map(Number), shapes: structuredClone(v.shapes ?? []) };
+}
+
+// Compiles once; returns env => [ops]. env holds t and every signal's value.
+function compileScene(view) {
+  const build = (shapes) => shapes.map((s) => {
+    const f = {};
+    for (const a of ATTRS[s.type]) f[a] = s[a] === undefined ? null : value(s[a], s.type);
+    const parts = s.type === 'text' ? String(s.text ?? '').split(/(\{[^}]*\})/).map((part) => (part.startsWith('{') ? value(part.slice(1, -1), 'text') : part)) : null;
+    return { s, f, parts, kids: s.type === 'group' ? build(s.shapes ?? []) : null };
+  });
+  const tree = build(view.shapes);
+  return (env) => {
+    const ops = [];
+    const walk = (nodes, T) => {
+      for (const { s, f, parts, kids } of nodes) {
+        const g = (a, d = 0) => (f[a] ? f[a](env) : d);
+        const style = { stroke: s.stroke ?? 'ink', fill: s.fill ?? 'none', width: Number(s.lineWidth ?? 2) };
+        const P = (x, y) => T(x, y);
+        switch (s.type) {
+          case 'group': {
+            const tx = g('x'), ty = g('y'), a = g('angle'), c = Math.cos(a), sn = Math.sin(a);
+            walk(kids, (x, y) => T(tx + c * x - sn * y, ty + sn * x + c * y));
+            break;
+          }
+          case 'line': case 'arrow': {
+            const p = P(g('x1'), g('y1')), q = P(g('x2'), g('y2'));
+            ops.push({ op: s.type, pts: [p, q], ...style });
+            break;
+          }
+          case 'rect': {
+            const x = g('x'), y = g('y'), w = g('w'), h = g('h'), a = g('angle');
+            const cx = x + w / 2, cy = y + h / 2, c = Math.cos(a), sn = Math.sin(a);
+            const corner = (dx, dy) => P(cx + c * dx - sn * dy, cy + sn * dx + c * dy);
+            ops.push({ op: 'poly', closed: true, pts: [corner(-w / 2, -h / 2), corner(w / 2, -h / 2), corner(w / 2, h / 2), corner(-w / 2, h / 2)], ...style, fill: s.fill ?? 'panel' });
+            break;
+          }
+          case 'circle': {
+            const c = P(g('cx'), g('cy')), r = g('r', 0.05);
+            const e = P(g('cx') + r, g('cy'));
+            ops.push({ op: 'circle', c, r: Math.hypot(e[0] - c[0], e[1] - c[1]), ...style, fill: s.fill ?? 'panel' });
+            break;
+          }
+          case 'spring': case 'damper': {
+            const x1 = g('x1'), y1 = g('y1'), x2 = g('x2'), y2 = g('y2'), w = g('width', 0.06);
+            const L = Math.hypot(x2 - x1, y2 - y1) || 1e-9, ux = (x2 - x1) / L, uy = (y2 - y1) / L, nx = -uy, ny = ux;
+            const at = (s1, o) => P(x1 + ux * s1 + nx * o, y1 + uy * s1 + ny * o);
+            if (s.type === 'spring') {
+              const n = Math.max(2, Math.round(g('coils', 6))) * 2, lead = Math.min(0.1 * L, 0.03);
+              const pts = [at(0, 0), at(lead, 0)];
+              for (let i = 1; i < n; i++) pts.push(at(lead + ((L - 2 * lead) * i) / n, (i % 2 ? 1 : -1) * w / 2));
+              pts.push(at(L - lead, 0), at(L, 0));
+              ops.push({ op: 'poly', closed: false, pts, ...style, fill: 'none', width: Number(s.lineWidth ?? 1.6) });
+            } else {
+              const mid = L / 2, cyl = Math.max(0.25 * L, 0.04);
+              ops.push({ op: 'poly', closed: false, pts: [at(0, 0), at(mid - cyl / 2, 0)], ...style, fill: 'none' });
+              ops.push({ op: 'poly', closed: false, pts: [at(mid + cyl / 2, w / 2), at(mid - cyl / 2, w / 2), at(mid - cyl / 2, -w / 2), at(mid + cyl / 2, -w / 2)], ...style, fill: 'none' });
+              ops.push({ op: 'poly', closed: false, pts: [at(mid - cyl / 6, w / 2.6), at(mid - cyl / 6, -w / 2.6)], ...style, fill: 'none' });
+              ops.push({ op: 'poly', closed: false, pts: [at(mid - cyl / 6, 0), at(L, 0)], ...style, fill: 'none' });
+            }
+            break;
+          }
+          case 'ground': {
+            const x1 = g('x1'), x2 = g('x2'), y = g('y');
+            ops.push({ op: 'poly', closed: false, pts: [P(x1, y), P(x2, y)], ...style, fill: 'none' });
+            const step = (x2 - x1) / 24, dir = s.side === 'above' ? 1 : -1;
+            for (let x = x1 + step / 2; x < x2; x += step) ops.push({ op: 'poly', closed: false, pts: [P(x, y), P(x - step * 0.8, y + dir * step * 0.8)], ...style, stroke: 'muted', width: 1, fill: 'none' });
+            break;
+          }
+          case 'text': {
+            const text = parts.map((p) => (typeof p === 'string' ? p : fmt(p(env)))).join('');
+            ops.push({ op: 'text', at: P(g('x'), g('y')), text, size: g('size', 13), fill: s.fill ?? 'ink' });
+            break;
+          }
+          default:
+        }
+      }
+    };
+    walk(tree, (x, y) => [x, y]);
+    return ops;
+  };
+}
+
+function fmt(v) {
+  if (!Number.isFinite(v)) return '—';
+  const a = Math.abs(v);
+  return a !== 0 && (a >= 1e5 || a < 1e-3) ? v.toExponential(2) : String(Number(v.toPrecision(3)));
+}
+
+return { compileBindings, normalizeView, compileScene };
 })();
 // ---- core/project.js
 __mods['core/project.js'] = (() => {
@@ -1946,6 +2281,7 @@ const { simulate, simulateSystem } = __mods['core/sim.js'];
 const { computeMetrics } = __mods['core/metrics.js'];
 const { normalizeGoal, evaluateGoal, compareEvals } = __mods['core/goal.js'];
 const { normalizeDiagram, diagramNames } = __mods['core/diagram.js'];
+const { normalizeView } = __mods['core/views.js'];
 const FORMAT = 'loop-tuner/2';
 const PALETTE_SIZE = 8;
 // Signals of the closed loop, available once a controller exists.
@@ -2023,7 +2359,11 @@ const longestPeriod = (signals) => Math.max(...Object.values(signals).map((s) =>
 
 // A plant is a single model block or a diagram ({ "type": "diagram", "diagram": {...} }).
 function normalizePlant(plant) {
-  if (plant.type === 'diagram') return { type: 'diagram', diagram: normalizeDiagram(plant.diagram) };
+  if (plant.type === 'diagram') {
+    const out = { type: 'diagram', diagram: normalizeDiagram(plant.diagram) };
+    if (Array.isArray(plant.views) && plant.views.length) out.views = plant.views.map((v, i) => normalizeView(v, `plant.views[${i}]`));
+    return out;
+  }
   return normalizeBlock('plant', plant);
 }
 
@@ -2441,6 +2781,63 @@ const EXAMPLES = [
 ];
 
 return { DEFAULT_PROJECT, EXAMPLES };
+})();
+// ---- core/systems.js
+__mods['core/systems.js'] = (() => {
+// The system library: complete systems (input signals, plant, controller and
+// its parameters) that load whole or by part, so the input of one system can
+// drive the plant of another. Built from the example plants (no controller
+// yet) and the closed-loop examples (plant with a tuned controller).
+
+const { EXAMPLE_PLANTS } = __mods['core/plants.js'];
+const { EXAMPLES } = __mods['core/examples.js'];
+const { normalizeProject } = __mods['core/project.js'];
+const STEP = { r: { period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } };
+
+const SYSTEM_PARTS = ['input', 'plant', 'controller'];
+
+function fromPlant(e) {
+  return {
+    name: e.name, notes: e.notes ?? '',
+    input: { signals: structuredClone(e.signals ?? STEP) },
+    plant: { type: 'diagram', diagram: structuredClone(e.diagram), ...(e.views ? { views: structuredClone(e.views) } : {}) },
+  };
+}
+
+function fromLoop(ex) {
+  const p = normalizeProject(structuredClone(ex));
+  return {
+    name: `${p.title} (closed loop)`, notes: p.notes ?? '',
+    input: { signals: p.system.signals },
+    plant: p.system.plant,
+    controller: {
+      candidates: p.candidates, goal: p.goal, sim: p.sim, selected: p.selected,
+      actuator: p.system.actuator, sensor: p.system.sensor, disturbance: p.system.disturbance, noise: p.system.noise,
+    },
+  };
+}
+
+const SYSTEM_LIBRARY = [...EXAMPLE_PLANTS.map(fromPlant), ...EXAMPLES.map(fromLoop)];
+
+// Copies the chosen parts of a library entry into a raw project (before
+// normalisation). parts: any of 'input', 'plant', 'controller'.
+function applySystem(project, entry, parts) {
+  const p = structuredClone(project);
+  p.system ??= {};
+  if (parts.includes('input') && entry.input) p.system.signals = structuredClone(entry.input.signals);
+  if (parts.includes('plant') && entry.plant) p.system.plant = structuredClone(entry.plant);
+  if (parts.includes('controller') && entry.controller) {
+    const c = structuredClone(entry.controller);
+    Object.assign(p, { candidates: c.candidates, goal: c.goal, sim: c.sim });
+    if (c.selected) p.selected = c.selected; else delete p.selected;
+    for (const k of ['actuator', 'sensor', 'disturbance', 'noise']) p.system[k] = c[k];
+  }
+  if (SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k))) p.title = entry.name;
+  delete p.system.reference;
+  return p;
+}
+
+return { SYSTEM_PARTS, SYSTEM_LIBRARY, applySystem };
 })();
 // ---- ui/units.js
 __mods['ui/units.js'] = (() => {
@@ -2996,6 +3393,13 @@ function createDisplay(root, handlers) {
       draw();
     },
     releaseLine() { if (line === null) return false; selectLine(null); return true; },
+    // The instant other views follow: the hover cursor, else the scan line
+    // while sweeping, else the right edge of the screen.
+    time() {
+      if (!scope) return 0;
+      if (hover && region(hover.x, hover.y) === 'plot') return xt(hover.x);
+      return mode !== 'stop' ? tScan : win()[1];
+    },
     get mode() { return mode; },
   };
 }
@@ -3454,6 +3858,111 @@ function createGenerator(root, app) {
 
 return { createGenerator };
 })();
+// ---- ui/scene.js
+__mods['ui/scene.js'] = (() => {
+// Draws a 2D view (core/views.js) as SVG, animated at the scope's time: the
+// scan line while it sweeps, the hover cursor while the mouse is on the plot,
+// otherwise the right edge of the screen.
+
+const { compileScene, compileBindings } = __mods['core/views.js'];
+const { CHANNEL_COLORS } = __mods['ui/display.js'];
+const NS = 'http://www.w3.org/2000/svg';
+
+function colour(name) {
+  const m = /^ch([1-4])$/.exec(name ?? '');
+  if (m) return CHANNEL_COLORS[Number(m[1]) - 1];
+  return { ink: 'var(--ink)', muted: 'var(--muted)', panel: 'var(--panel)', none: 'none' }[name] ?? name;
+}
+
+function createScene(host, app) {
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'pscene');
+  svg.setAttribute('role', 'img');
+  host.append(svg);
+  let view = null, scene = null, raf = 0, error = '', svgRoot = null, binds = null;
+
+  // An SVG view: the drawing is cleaned (no scripts, event handlers, outside
+  // links), inserted once, and its bound attributes updated every frame.
+  function mountSvg(v) {
+    const doc = new DOMParser().parseFromString(v.svg, 'image/svg+xml');
+    if (doc.querySelector('parsererror')) throw new Error('the SVG does not parse');
+    doc.querySelectorAll('script, foreignObject, iframe, object, embed').forEach((n) => n.remove());
+    for (const el of doc.querySelectorAll('*')) {
+      for (const a of [...el.attributes]) {
+        if (/^on/i.test(a.name) || (/href$/i.test(a.name) && !a.value.startsWith('#'))) el.removeAttribute(a.name);
+      }
+    }
+    svgRoot = document.importNode(doc.documentElement, true);
+    svgRoot.setAttribute('class', 'pscene');
+    if (!svgRoot.getAttribute('preserveAspectRatio')) svgRoot.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svg.replaceWith(svgRoot);
+    binds = compileBindings(v);
+  }
+  function unmountSvg() { if (svgRoot) { svgRoot.replaceWith(svg); svgRoot = null; binds = null; } }
+
+  function drawSvg() {
+    for (const { select, attr, value } of binds(app.sceneEnv())) {
+      for (const el of svgRoot.querySelectorAll(select)) {
+        if (attr === 'text') el.textContent = value; else el.setAttribute(attr, value);
+      }
+    }
+  }
+
+  function draw() {
+    raf = 0;
+    if (!view || host.hidden) return;
+    if (view.kind === 'svg') { try { drawSvg(); } catch { /* a bad selector draws nothing */ } raf = requestAnimationFrame(draw); return; }
+    const [x0, y0, x1, y1] = view.view;
+    const r = host.getBoundingClientRect();
+    if (!r.width || !r.height) { raf = requestAnimationFrame(draw); return; }
+    // World to pixels, uniform scale, centred, y up.
+    const k = Math.min(r.width / (x1 - x0), r.height / (y1 - y0));
+    const ox = (r.width - (x1 - x0) * k) / 2 - x0 * k, oy = (r.height + (y1 - y0) * k) / 2 + y0 * k;
+    const X = (p) => (ox + p[0] * k).toFixed(1), Y = (p) => (oy - p[1] * k).toFixed(1);
+    const env = app.sceneEnv();
+    let html = '<defs><marker id="sc-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs>';
+    try {
+      for (const o of scene(env)) {
+        if (o.pts?.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) continue;
+        const st = `stroke="${colour(o.stroke)}" stroke-width="${o.width}" fill="${colour(o.fill)}" stroke-linejoin="round" stroke-linecap="round"`;
+        if (o.op === 'line' || o.op === 'arrow') {
+          const [p, q] = o.pts;
+          html += `<line x1="${X(p)}" y1="${Y(p)}" x2="${X(q)}" y2="${Y(q)}" ${st}${o.op === 'arrow' ? ' marker-end="url(#sc-arrow)"' : ''}/>`;
+        } else if (o.op === 'poly') {
+          html += `<${o.closed ? 'polygon' : 'polyline'} points="${o.pts.map((p) => `${X(p)},${Y(p)}`).join(' ')}" ${st}/>`;
+        } else if (o.op === 'circle' && Number.isFinite(o.c[0])) {
+          html += `<circle cx="${X(o.c)}" cy="${Y(o.c)}" r="${(o.r * k).toFixed(1)}" ${st}/>`;
+        } else if (o.op === 'text' && Number.isFinite(o.at[0])) {
+          html += `<text x="${X(o.at)}" y="${Y(o.at)}" font-size="${o.size}" fill="${colour(o.fill)}" text-anchor="middle" dominant-baseline="middle">${o.text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</text>`;
+        }
+      }
+      html += `<text class="sctime" x="10" y="${r.height - 10}">t = ${env.t.toFixed(3)} s</text>`;
+    } catch (err) { html += `<text class="scerr" x="10" y="20">${String(err.message)}</text>`; }
+    svg.innerHTML = html;
+    raf = requestAnimationFrame(draw);
+  }
+
+  return {
+    show(v) {
+      view = v;
+      error = '';
+      unmountSvg();
+      try {
+        if (v.kind === 'svg') mountSvg(v); else scene = compileScene(v);
+      } catch (err) {
+        error = err.message;
+        view = { ...v, kind: '2d', view: [-1, -1, 1, 1], shapes: [{ type: 'text', x: 0, y: 0, text: `View error: ${err.message.replace(/[{}]/g, '')}` }] };
+        scene = compileScene(view);
+      }
+      if (!raf) raf = requestAnimationFrame(draw);
+      return error;
+    },
+    stop() { if (raf) cancelAnimationFrame(raf); raf = 0; view = null; unmountSvg(); },
+  };
+}
+
+return { createScene };
+})();
 // ---- ui/plant.js
 __mods['ui/plant.js'] = (() => {
 // Tab 2, the Plant: a block-diagram editor. Library on the left, canvas in the
@@ -3462,24 +3971,43 @@ __mods['ui/plant.js'] = (() => {
 // and subsystems can be saved to the library. See design/output/plant-editor.md.
 
 const { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram } = __mods['core/diagram.js'];
-const { EXAMPLE_PLANTS } = __mods['core/plants.js'];
+const { SYSTEM_LIBRARY } = __mods['core/systems.js'];
+const { normalizeView } = __mods['core/views.js'];
 const { num, parseSI } = __mods['ui/units.js'];
+const { createScene } = __mods['ui/scene.js'];
 const NS = 'http://www.w3.org/2000/svg';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const GROUPS = [
-  ['Signals', ['source', 'sink']],
-  ['Math', ['gain', 'sum']],
+  ['Signals', ['source', 'sink', 'terminator']],
+  ['Math', ['gain', 'sum', 'switch']],
   ['Dynamics', ['integrator', 'delay', 'firstOrder', 'secondOrder', 'tf']],
   ['Models', ['fopdt', 'lagChain', 'integratorLag', 'doubleIntegrator', 'inverseResponse']],
+  ['Sensors', ['quantizer', 'noise']],
+  ['Physics', ['cartPole']],
   ['Nonlinear', ['saturation']],
   ['Structure', ['subsystem', 'inport', 'outport']],
 ];
+// Library groups the viewer has folded, remembered in this browser.
+const FOLD_KEY = 'loop-tuner:library-folded';
+const LAYOUT_KEY = 'loop-tuner:plant-layout';
+const loadJson = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } };
+const saveJson = (key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage unavailable */ } };
+const VIEW_TEMPLATE = {
+  name: '2D view', kind: '2d', view: [-1, -0.6, 1, 0.8],
+  shapes: [
+    { type: 'ground', x1: -1, x2: 1, y: -0.1 },
+    { type: 'circle', cx: 'clamp(y1, -0.9, 0.9)', cy: 0.05, r: 0.15, fill: 'ch2' },
+    { type: 'text', x: 0, y: 0.6, text: 'y1 = {y1}' },
+  ],
+};
 
 // Block geometry in canvas units.
 function size(b) {
   if (b.type === 'sum') return [34, 34];
   if (b.type === 'gain') return [58, 40];
   if (['source', 'sink', 'inport', 'outport'].includes(b.type)) return [70, 28];
+  if (b.type === 'terminator') return [26, 26];
+  if (b.type === 'switch') { const n = b.params.inputs; return [56, Math.max(40, 18 * n + 8)]; }
   const [ni, no] = blockPorts(b);
   return [130, Math.max(48, 18 * Math.max(ni, no) + 12)];
 }
@@ -3511,14 +4039,17 @@ function createPlantEditor(root, app) {
   root.innerHTML = `
     <div class="plant">
       <section class="plib" aria-label="Block library"><div id="pl-lib"></div></section>
+      <div class="split split-v plsplit" id="pl-split" role="separator" aria-orientation="vertical" aria-label="Resize the library" tabindex="0" title="Drag to resize · double-click to reset"></div>
       <section class="pcan" aria-label="Diagram">
         <div class="ptool">
+          <div class="reps" id="pl-reps" role="tablist" aria-label="Representation"></div>
           <nav class="crumbs" id="pl-crumbs"></nav>
           <button class="key small" id="pl-group" title="Put the selected blocks into a subsystem (Ctrl+G)">Group</button>
           <button class="key small" id="pl-del" title="Delete the selection (Del)">Delete</button>
           <button class="key small" id="pl-fit" title="Fit the diagram to the view">Fit</button>
         </div>
         <div class="pview" id="pl-view" tabindex="0" aria-label="Diagram canvas: drag blocks in from the library; drag from an output to an input to wire; Shift-drag to select; double-click a subsystem to open it"></div>
+        <div class="pview pscenebox" id="pl-scene" hidden></div>
       </section>
       <section class="pprops" aria-label="Block parameters"><div id="pl-props"></div></section>
     </div>`;
@@ -3535,6 +4066,35 @@ function createPlantEditor(root, app) {
   let gesture = null;
   let lastClick = { id: null, t: 0 };
   let saveName = null;           // library name being typed for a subsystem
+  let rep = -1;                  // -1: the block diagram; otherwise a 2D view index
+  let viewDraft = null;          // the view JSON being edited
+  const folded = new Set(loadJson(FOLD_KEY, ['Models', 'Sensors', 'Physics', 'Nonlinear', 'Structure']));
+  const scene = createScene($('#pl-scene'), app);
+
+  // The library column's width, set by its separator and kept in this browser.
+  const layout = loadJson(LAYOUT_KEY, {});
+  const plantEl = root.querySelector('.plant');
+  const applyWidth = () => { if (layout.libW) plantEl.style.setProperty('--lib-w', `${Math.round(Math.max(130, Math.min(420, layout.libW)))}px`); else plantEl.style.removeProperty('--lib-w'); };
+  applyWidth();
+  {
+    const sp = $('#pl-split');
+    sp.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      sp.setPointerCapture(e.pointerId);
+      const x0 = e.clientX, w0 = $('.plib').getBoundingClientRect().width;
+      const move = (ev) => { layout.libW = w0 + ev.clientX - x0; applyWidth(); };
+      const up = () => { sp.removeEventListener('pointermove', move); sp.removeEventListener('pointerup', up); saveJson(LAYOUT_KEY, layout); };
+      sp.addEventListener('pointermove', move);
+      sp.addEventListener('pointerup', up);
+    });
+    sp.addEventListener('keydown', (e) => {
+      const d = { ArrowLeft: -16, ArrowRight: 16 }[e.key];
+      if (!d) return;
+      e.preventDefault(); e.stopPropagation();
+      layout.libW = $('.plib').getBoundingClientRect().width + d; applyWidth(); saveJson(LAYOUT_KEY, layout);
+    });
+    sp.addEventListener('dblclick', () => { delete layout.libW; applyWidth(); saveJson(LAYOUT_KEY, layout); });
+  }
 
   // The diagram being edited (root, or a subsystem's inner diagram).
   const rootDiagram = () => (app.project.system.plant ? plantDiagram(app.project.system.plant) : { blocks: [], wires: [] });
@@ -3589,35 +4149,33 @@ function createPlantEditor(root, app) {
   function renderLibrary() {
     const lib = app.project.library ?? [];
     const item = (data, label, title, extra = '') => `<button class="litem" draggable="true" data-add="${esc(data)}" title="${esc(title)}">${label}${extra}</button>`;
+    const group = (name, body) => {
+      const open = !folded.has(name);
+      return `<div class="lgroup"><button class="lgname" data-fold="${esc(name)}" aria-expanded="${open}"><span class="chev">${open ? '▾' : '▸'}</span>${esc(name)}</button>${open ? body : ''}</div>`;
+    };
     let html = '<h3 class="glabel">Library</h3>';
     for (const [g, types] of GROUPS) {
-      html += `<div class="lgroup"><div class="lgname">${g}</div>`;
-      for (const t of types) {
-        const def = diagramBlockDef(t);
-        html += item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="lf">${esc(def.formula)}</span>`);
-      }
-      html += '</div>';
+      html += group(g, types.map((t) => { const def = diagramBlockDef(t); return item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="lf">${esc(def.formula)}</span>`); }).join(''));
     }
-    html += '<div class="lgroup"><div class="lgname">My blocks</div>';
-    html += lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="lempty">Select a subsystem and save it here.</div>';
-    html += '</div><div class="lgroup"><div class="lgname">Example plants</div>';
-    html += EXAMPLE_PLANTS.map((e, i) => `<button class="litem ex" data-example="${i}" title="${esc(e.notes ?? 'Replace the diagram with this example')}">${esc(e.name)}<span class="lf">load</span></button>`).join('');
-    html += '</div>';
+    html += group('My blocks', lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="lempty">Select a subsystem and save it here.</div>');
+    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="litem ex" data-system="${i}" title="${esc(`${e.notes} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="lf">plant</span></button>` : '')).join(''));
     $('#pl-lib').innerHTML = html;
+    $('#pl-lib').querySelectorAll('[data-fold]').forEach((b) => b.addEventListener('click', () => {
+      const n = b.dataset.fold;
+      if (folded.has(n)) folded.delete(n); else folded.add(n);
+      saveJson(FOLD_KEY, [...folded]);
+      renderLibrary();
+    }));
     $('#pl-lib').querySelectorAll('[data-add]').forEach((b) => {
       b.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', b.dataset.add); e.dataTransfer.effectAllowed = 'copy'; });
       b.addEventListener('click', () => {
+        if (rep >= 0) showRep(-1);
         const r = viewEl.getBoundingClientRect(), v = view();
         addFrom(b.dataset.add, (r.width / 2 - v.x) / v.k, (r.height / 2 - v.y) / v.k);
       });
     });
-    $('#pl-lib').querySelectorAll('[data-example]').forEach((b) => b.addEventListener('click', () => {
-      const ex = EXAMPLE_PLANTS[Number(b.dataset.example)];
-      path = []; sel.clear(); wireSel = -1;
-      app.setPlant(normalizeDiagram(structuredClone(ex.diagram)));
-      app.toast(`Loaded the example plant “${ex.name}”. Ctrl+Z goes back.`);
-      render();
-      fit();
+    $('#pl-lib').querySelectorAll('[data-system]').forEach((b) => b.addEventListener('click', () => {
+      app.loadSystem(SYSTEM_LIBRARY[Number(b.dataset.system)], ['plant']);
     }));
   }
 
@@ -3662,6 +4220,18 @@ function createPlantEditor(root, app) {
       shape = `<circle class="body" cx="${cx}" cy="${cy}" r="${g.w / 2}"/>`;
       text = `<text class="bt" x="${cx}" y="${cy + 5}" text-anchor="middle">Σ</text>`
         + g.ins.map((p, i) => `<text class="sign" x="${p.x + (b.flip ? -9 : 9)}" y="${p.y + (p.y < cy ? 9 : -2)}" text-anchor="middle">${b.params.signs[i]}</text>`).join('');
+    } else if (b.type === 'terminator') {
+      shape = `<rect class="body" x="${b.x}" y="${b.y}" width="${g.w}" height="${g.h}" rx="4"/>`;
+      const x = b.flip ? b.x + 8 : b.x + g.w - 8;
+      text = `<path class="term" d="M${b.x + (b.flip ? g.w : 0)},${cy} H${x} M${x},${cy - 7} V${cy + 7}"/>`;
+    } else if (b.type === 'switch') {
+      // The switch symbol: the active input joined to the output.
+      shape = `<rect class="body" x="${b.x}" y="${b.y}" width="${g.w}" height="${g.h}" rx="5"/>`;
+      const p = g.ins[b.params.position - 1], q = g.outs[0];
+      const ix = p.x + (b.flip ? -10 : 10), ox = q.x + (b.flip ? 10 : -10);
+      text = g.ins.map((pt) => `<circle class="swdot" cx="${pt.x + (b.flip ? -10 : 10)}" cy="${pt.y}" r="2.2"/>`).join('')
+        + `<path class="swline" d="M${p.x},${p.y} H${ix} L${ox},${q.y} H${q.x}"/>`
+        + (b.name ? `<text class="bn" x="${cx}" y="${b.y - 5}" text-anchor="middle">${esc(b.name)}</text>` : '');
     } else if (b.type === 'gain') {
       const pts = b.flip ? `${b.x + g.w},${b.y} ${b.x + g.w},${b.y + g.h} ${b.x},${cy}` : `${b.x},${b.y} ${b.x},${b.y + g.h} ${b.x + g.w},${cy}`;
       shape = `<polygon class="body" points="${pts}"/>`;
@@ -3679,7 +4249,9 @@ function createPlantEditor(root, app) {
         text = `<text class="bt" x="${b.x + 9}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${b.x + 9}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
-    const ports = g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
+    const outNames = def.outputs ?? [];
+    const ports = g.outs.map((p, i) => (outNames[i] ? `<text class="pn" x="${p.x + (b.flip ? 8 : -8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'start' : 'end'}">${esc(outNames[i])}</text>` : '')).join('')
+      + g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
       + g.outs.map((p, i) => `<circle class="port out" data-port="out" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('');
     const stack = b.type === 'subsystem' ? `<rect class="stack" x="${b.x + 4}" y="${b.y + 4}" width="${g.w}" height="${g.h}" rx="5"/>` : '';
     return `<g class="${cls}" data-block="${b.id}">${stack}${shape}${text}${ports}</g>`;
@@ -3690,8 +4262,71 @@ function createPlantEditor(root, app) {
     return def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
   }
 
+  const plantViews = () => app.project.system.plant?.views ?? [];
+  function renderReps() {
+    const vs = plantViews();
+    if (rep >= vs.length) rep = -1;
+    $('#pl-reps').innerHTML = `<button class="rep ${rep < 0 ? 'on' : ''}" data-rep="-1" role="tab" aria-selected="${rep < 0}">Diagram</button>`
+      + vs.map((v, i) => `<button class="rep ${rep === i ? 'on' : ''}" data-rep="${i}" role="tab" aria-selected="${rep === i}" title="2D view">${esc(v.name)}</button>`).join('')
+      + `<button class="rep add" data-rep="new" title="Add a 2D view of this plant: a scene whose shapes move with the signals">+ 2D</button>`;
+    $('#pl-reps').querySelectorAll('[data-rep]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.rep === 'new') {
+        if (app.project.system.plant?.type !== 'diagram') app.setPlant(normalizeDiagram(rootDiagram()));
+        app.setViews([...plantViews(), normalizeView(VIEW_TEMPLATE)]);
+        showRep(plantViews().length - 1);
+      } else showRep(Number(b.dataset.rep));
+    }));
+  }
+
+  function showRep(i) {
+    rep = i;
+    viewDraft = null;
+    const inView = rep >= 0;
+    viewEl.hidden = inView;
+    $('#pl-scene').hidden = !inView;
+    for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = inView;
+    if (inView) scene.show(plantViews()[rep]); else scene.stop();
+    render();
+  }
+
+  function renderViewProps() {
+    const v = plantViews()[rep];
+    const box = $('#pl-props');
+    box.innerHTML = `<h3 class="glabel">2D view</h3>
+      <p class="phelp">The scene follows the scope: the scan line while it runs, the cursor while you hover the plot. Numbers can be formulas in t and the signal names (${esc(Object.keys(app.sceneEnv()).filter((k) => k !== 't').join(', ') || 'none yet')}).</p>
+      <textarea class="vjson" id="pl-vjson" spellcheck="false" aria-label="The view as JSON"></textarea>
+      <p class="pmsg" id="pl-vmsg"></p>
+      <div class="pbtns"><button class="key small primary" data-vact="apply">Apply</button><button class="key small" data-vact="revert">Revert</button><button class="key small" data-vact="delete">Delete view</button></div>
+      <p class="phelp">Shapes: line, arrow, rect, circle, spring, damper, ground, text ("{formula}" inside text shows a value), group (moves and rotates its shapes). Colours: ink, muted, panel, ch1–ch4. Format: design/output/plant-views.md.</p>`;
+    const ta = $('#pl-vjson');
+    ta.value = viewDraft ?? JSON.stringify(v, null, 2);
+    ta.addEventListener('input', () => { viewDraft = ta.value; });
+    ta.addEventListener('keydown', (e) => { e.stopPropagation(); if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') applyView(); });
+    box.querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.vact === 'apply') applyView();
+      if (b.dataset.vact === 'revert') { viewDraft = null; renderViewProps(); }
+      if (b.dataset.vact === 'delete') { app.setViews(plantViews().filter((_, j) => j !== rep)); showRep(-1); }
+    }));
+  }
+
+  function applyView() {
+    const ta = $('#pl-vjson');
+    let v;
+    try { v = normalizeView(JSON.parse(ta.value), 'view'); } catch (err) { $('#pl-vmsg').textContent = err.message; return; }
+    const vs = plantViews().slice();
+    vs[rep] = v;
+    app.setViews(vs);
+    viewDraft = null;
+    scene.show(v);
+    renderReps();
+    renderViewProps();
+    app.toast('View applied');
+  }
+
   let compileMsg = '';
   function render() {
+    renderReps();
+    if (rep >= 0) { renderViewProps(); return; }
     const d = level();
     // Validity of the whole diagram, shown in the parameters panel.
     compileMsg = '';
@@ -3748,7 +4383,8 @@ function createPlantEditor(root, app) {
       if (b.type === 'source') html += `<button class="key small" data-act="signal">Edit signal ${esc(b.params.signal)}</button>`;
       html += '</div>';
       if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="key small primary" data-act="saveok">Save</button><button class="key small" data-act="savecancel">Cancel</button></div>`;
-      html += `<p class="phelp">${esc(def.formula)}${b.type === 'sink' ? ' · shows on the scope as a channel source' : ''}${b.type === 'source' ? ' · plays the signal made in the Input tab' : ''}</p>`;
+      const role = { sink: ' · recorded: pick it as a scope channel source', source: ' · plays the signal made in the Input tab', terminator: ' · ends a signal without recording it', outport: ' · passes the signal up to the enclosing block', inport: ' · takes the signal from the enclosing block', switch: ' · double-click it on the canvas to move to the next input' }[b.type] ?? '';
+      html += `<p class="phelp">${esc(def.formula)}${role}</p>`;
       box.innerHTML = html;
       bindFields(b);
       box.querySelectorAll('[data-act]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.act, b)));
@@ -3786,6 +4422,10 @@ function createPlantEditor(root, app) {
           const key = f.slice(2);
           if (blk.type === 'source' && key === 'signal' && value !== blk.params.signal) app.renameSignal(blk.params.signal, value, diagramNames(rootDiagram()).sources.filter((s) => s === blk.params.signal).length);
           if (blk.type === 'sum' && key === 'signs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value.length; });
+          if (blk.type === 'switch' && key === 'inputs') {
+            d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
+            blk.params.position = Math.min(blk.params.position, value);
+          }
           blk.params[key] = value;
         });
       });
@@ -3911,7 +4551,13 @@ function createPlantEditor(root, app) {
       // Double-click, detected here: the first click re-renders the canvas,
       // so the browser's dblclick would lose its target.
       const now = performance.now();
-      if (lastClick.id === id && now - lastClick.t < 400) { lastClick = { id: null, t: 0 }; enter(id); return; }
+      if (lastClick.id === id && now - lastClick.t < 400) {
+        lastClick = { id: null, t: 0 };
+        const blk = level().blocks.find((x) => x.id === id);
+        if (blk?.type === 'switch') edit((d) => { const s2 = d.blocks.find((x) => x.id === id); s2.params.position = (s2.params.position % s2.params.inputs) + 1; });
+        else enter(id);
+        return;
+      }
       lastClick = { id, t: now };
       if (e.shiftKey) { if (sel.has(id)) sel.delete(id); else sel.add(id); }
       else if (!sel.has(id)) sel = new Set([id]);
@@ -4017,9 +4663,11 @@ function createPlantEditor(root, app) {
   let first = true;
   return {
     render() { renderLibrary(); render(); },
-    shown() { renderLibrary(); render(); if (first) { first = false; fit(); } },
+    shown() { renderLibrary(); if (rep >= 0) showRep(rep); else render(); if (first) { first = false; fit(); } },
+    hidden() { scene.stop(); },
+    fit,
     handleKey,
-    reset() { path = []; sel.clear(); wireSel = -1; first = true; },
+    reset() { path = []; sel.clear(); wireSel = -1; first = true; if (rep >= 0) { rep = -1; scene.stop(); viewEl.hidden = false; $('#pl-scene').hidden = true; for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = false; } },
   };
 }
 
@@ -4110,7 +4758,8 @@ const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluate
 const { diagramNames } = __mods['core/diagram.js'];
 const { createPlantEditor } = __mods['ui/plant.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
-const { EXAMPLES, DEFAULT_PROJECT } = __mods['core/examples.js'];
+const { DEFAULT_PROJECT } = __mods['core/examples.js'];
+const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = __mods['core/systems.js'];
 const { createDisplay } = __mods['ui/display.js'];
 const { createControls } = __mods['ui/controls.js'];
 const { createGenerator } = __mods['ui/generator.js'];
@@ -4193,7 +4842,13 @@ function startApp() {
     }
     return acq;
   }
-  app.signalNames = () => [...new Set([...Object.keys(acquire().signals), ...(loopReady(app.project) ? LOOP_SIGNALS : [])])];
+  // What a scope channel can show: every Source and Sink in the diagram (at
+  // any depth), whatever was simulated, and the loop's signals with a controller.
+  app.signalNames = () => {
+    const plant = app.project.system.plant;
+    const names = plant?.type === 'diagram' ? diagramNames(plant.diagram) : { sources: [], sinks: [] };
+    return [...new Set([...names.sources, ...names.sinks, ...Object.keys(app.project.system.signals), ...Object.keys(acquire().signals), ...(loopReady(app.project) ? LOOP_SIGNALS : [])])];
+  };
   const sig = () => app.project.system.signals[app.signal] ?? app.project.system.signals[(app.signal = Object.keys(app.project.system.signals)[0])];
   app.signalRef = sig;
 
@@ -4243,15 +4898,36 @@ function startApp() {
   };
 
   // The plant diagram. Every Source needs a signal: new names get an empty one.
-  app.setPlant = (diagram) => {
+  app.setPlant = (diagram, views) => {
     app.beginEdit();
-    app.project.system.plant = { type: 'diagram', diagram };
+    const keep = views ?? app.project.system.plant?.views;
+    app.project.system.plant = { type: 'diagram', diagram, ...(keep?.length ? { views: keep } : {}) };
     const signals = app.project.system.signals;
     for (const name of diagramNames(diagram).sources) signals[name] ??= { period: Math.max(...Object.values(signals).map((x) => x.period), 1), components: [] };
     app.endEdit();
     changed();
   };
   app.plantMoved = () => { changed({ data: false }); };
+  app.setViews = (views) => {
+    const plant = app.project.system.plant;
+    if (plant?.type !== 'diagram') return;
+    app.beginEdit();
+    if (views.length) plant.views = views; else delete plant.views;
+    app.endEdit();
+    autosave();
+  };
+  // Signal values at the scope's current instant, for 2D views.
+  app.sceneEnv = () => {
+    const data = acquire();
+    const t = display.time();
+    const env = { t };
+    if (data?.t?.length > 1) {
+      const k = Math.max(0, Math.min(data.t.length - 1, Math.round(t / (data.t[1] - data.t[0]))));
+      env.t = data.t[k];
+      for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
+    }
+    return env;
+  };
   app.renameSignal = (from, to, users) => {
     const signals = app.project.system.signals;
     app.beginEdit();
@@ -4328,6 +5004,7 @@ function startApp() {
     const t = TABS.find((x) => x.key === app.tab);
     $('tab-input').hidden = app.tab !== 'input';
     $('tab-plant').hidden = app.tab !== 'plant';
+    if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
     if (t.next) {
@@ -4412,16 +5089,31 @@ function startApp() {
     try { load(text); } catch (err) { toast(`Pasted text is not a project: ${err.message}`); }
   });
 
-  const ex = $('examples');
-  [DEFAULT_PROJECT, ...EXAMPLES].forEach((x, i) => { const o = document.createElement('option'); o.value = i; o.textContent = x.title; ex.append(o); });
-  ex.addEventListener('change', () => {
-    if (ex.value === '') return;
-    const src = [DEFAULT_PROJECT, ...EXAMPLES][Number(ex.value)];
-    const fresh = !src.scope;
-    load(structuredClone(src));
-    if (fresh) app.autoScale();
-    ex.value = '';
+  // The System library: complete systems, loaded whole or by part.
+  app.loadSystem = (entry, parts) => {
+    try { load(applySystem(app.project, entry, parts), { quiet: true }); } catch (err) { toast(`Could not load ${entry.name}: ${err.message}`); return; }
+    if (parts.includes('input') || parts.includes('plant')) app.autoScale();
+    if (app.tab === 'plant') plantEditor.shown();
+    const what = SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k)) ? '' : ` (${parts.join(' and ')})`;
+    toast(`Loaded ${entry.name}${what}. Ctrl+Z goes back.`);
+  };
+  const pop = $('syslib-pop');
+  const PART_LABEL = { input: 'Input', plant: 'Plant', controller: 'Controller' };
+  pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
+    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="sysnote">${esc(e.notes)}</div></div>
+      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>`).join('');
+  const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
+  $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });
+  pop.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const b = e.target.closest('[data-sys]');
+    if (!b) return;
+    const entry = SYSTEM_LIBRARY[Number(b.dataset.sys)];
+    app.loadSystem(entry, b.dataset.parts === 'all' ? SYSTEM_PARTS.filter((k) => entry[k]) : [b.dataset.parts]);
+    closePop();
   });
+  document.addEventListener('click', closePop);
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) { closePop(); e.stopImmediatePropagation(); } }, true);
   $('title').addEventListener('change', () => { app.beginEdit(); app.project.title = $('title').value.trim() || 'Untitled loop'; app.endEdit(); autosave(); });
   $('title').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); });
   $('undo').addEventListener('click', app.undo);

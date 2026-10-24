@@ -7,7 +7,8 @@ Reader: whoever changes how the plant is built or simulated.
 ## Sources and sinks (the person, 2026-10-24)
 
 - A **Source** plays a named signal (r, r1, d, …) made in the Input tab. The Input tab's Edit column lists every signal the Sources use; adding a Source with a new name adds a signal.
-- A **Sink** records its input under a name (y1, y2, …); every Sink is a channel source on the scope.
+- A **Sink** records its input under a name (y1, y2, …); every Sink anywhere in the diagram, also inside subsystems (and later controllers), is a channel source on the scope, as is every Source.
+- Three ways for a signal to end (the person): **Out** passes it up to the enclosing block, **Sink** records it for the scope, **Terminator** just ends it.
 - A diagram with only a Source shows only that signal.
 - **In** and **Out** blocks are the ports of a subsystem (and, later, the plant's connection to the controller).
 
@@ -25,10 +26,14 @@ Reader: whoever changes how the plant is built or simulated.
 | `Ctrl+G` or Group | Put the selection into a subsystem; wires crossing the boundary become its In/Out ports |
 | Double-click a subsystem, or Open | Go inside; the breadcrumb or `Esc` goes back up |
 | Flip | Mirror a block (inputs right, outputs left), for feedback paths |
+| Double-click a Switch | Move it to its next input (its number of inputs is a parameter) |
+| Representation switch (Diagram, views, + 2D) | Show the block diagram or one of the plant's views ([plant-views.md](plant-views.md)) |
 
 ## Library
 
-Signals (Source, Sink) · Math (Gain, Sum with signs such as `+--`) · Dynamics (Integrator, Dead time, First order, Second order, Transfer function) · Models (first order with dead time, n equal lags, integrator with lag, double integrator, inverse response) · Nonlinear (Saturation) · Structure (Subsystem, In, Out) · **My blocks**: subsystems the person saved, kept in the project file · **Example plants**: whole systems to load (first order, third-order lag, dead time, inverse response, mass–spring–damper from integrators, DC motor with a nested Motor subsystem).
+The column can be resized by its separator, and each group folds open or closed (both remembered in the browser).
+
+Signals (Source, Sink, Terminator) · Math (Gain, Sum with signs such as `+--`, Switch) · Dynamics (Integrator, Dead time, First order, Second order, Transfer function) · Models (first order with dead time, n equal lags, integrator with lag, double integrator, inverse response) · Sensors (Quantizer, Noise; lags and dead time are in Dynamics) · Physics (Cart–pole: nonlinear, force in, cart position and pole angle out) · Nonlinear (Saturation) · Structure (Subsystem, In, Out) · **My blocks**: subsystems the person saved, kept in the project file · **System library**: complete systems; a click here loads the plant ([system-library.md](system-library.md)).
 
 ## Simulation
 
@@ -37,6 +42,8 @@ Signals (Source, Sink) · Math (Gain, Sum with signs such as `+--`) · Dynamics 
 ## Parameters panel
 
 One block: label, parameters (typed, SI prefixes accepted), Flip; Open and Save to library for a subsystem; "Edit signal" for a Source. Several blocks: Group, Delete. Nothing: the diagram's sources, sinks, and whether it is valid (errors in red, with the offending blocks outlined).
+
+Physics blocks integrate their own nonlinear state inside the diagram and can have several outputs (labelled at their ports) and initial conditions.
 
 ## Not yet
 

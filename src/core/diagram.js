@@ -13,6 +13,7 @@
 
 import { BLOCKS, blockDef, normalizeBlock } from './blocks.js';
 import { tf2ss, rootBound } from './poly.js';
+import { gaussAt } from './signals.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -21,6 +22,12 @@ const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...ext
 export const ELEMENTS = {
   source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }], ports: () => [0, 1], formula: 'r(t)' },
   sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }], ports: () => [1, 0], formula: 'y' },
+  terminator: { label: 'Terminator', group: 'Signals', params: [], ports: () => [1, 0], formula: 'ends a signal' },
+  switch: {
+    label: 'Switch', group: 'Math', formula: 'passes one input',
+    params: [num('inputs', 'Inputs', 2, { min: 2, int: true }), num('position', 'Position', 1, { min: 1, int: true })],
+    ports: (p) => [p.inputs, 1],
+  },
   inport: { label: 'In', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [0, 1], formula: 'u' },
   outport: { label: 'Out', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [1, 0], formula: 'y' },
   gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
@@ -28,6 +35,26 @@ export const ELEMENTS = {
   integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
   delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 })], ports: () => [1, 1], formula: 'e^(−Ls)' },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
+  quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
+  noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
+  cartPole: {
+    // Point mass m on a massless pole of length l, hinged on a cart of mass M.
+    // θ = 0 is upright, positive leaning towards +x. b is the cart's friction.
+    label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ', outputs: ['x', 'θ'], ports: () => [1, 2],
+    params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
+    ode: {
+      n: 4,
+      init: (p) => [0, 0, p.theta0, 0],
+      out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; },
+      f: (X, o, u, p, dX) => {
+        const v = X[o + 1], th = X[o + 2], w = X[o + 3];
+        const s = Math.sin(th), c = Math.cos(th);
+        const a = (u - p.b * v + p.m * p.l * w * w * s - p.m * p.g * s * c) / (p.M + p.m * s * s);
+        dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (p.g * s - a * c) / p.l;
+      },
+      bound: (p) => 2 * Math.sqrt(p.g * (p.M + p.m) / (p.M * p.l)) + p.b / p.M,
+    },
+  },
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
@@ -76,6 +103,7 @@ function normalizeParams(type, params = {}, where) {
     }
     out[p.key] = v;
   }
+  if (type === 'switch') out.position = Math.min(out.position, out.inputs);
   return out;
 }
 
@@ -182,6 +210,11 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         outs[b.id] = []; ins[b.id] = [[k, 0]];
         continue;
       }
+      if (b.type === 'terminator') {
+        const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+        outs[b.id] = []; ins[b.id] = [[k, 0]];
+        continue;
+      }
       if (b.type === 'inport') {
         if (root && opts.standalone) {
           const k = add({ kind: 'src', name, ft: false, fn: () => 0 });
@@ -204,7 +237,15 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         continue;
       }
       const def = diagramBlockDef(b.type);
-      const nIn = blockPorts(b)[0];
+      const [nIn, nOut] = blockPorts(b);
+      if (def.ode) {
+        // A physics block: its state integrates inside the diagram; one tap
+        // node per output reads what the block computed from its state.
+        const k = add({ kind: 'ode', name, ft: false, ode: def.ode, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
+        outs[b.id] = def.outputs.map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
+        ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+        continue;
+      }
       const node = { name, inputs: new Array(nIn).fill(-1) };
       if (def.tf) {
         const tf = def.tf(b.params);
@@ -215,6 +256,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       else if (b.type === 'sum') Object.assign(node, { kind: 'sum', signs: [...b.params.signs].map((c) => (c === '-' ? -1 : 1)), ft: true });
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
       else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, ft: b.params.L <= 0 });
+      else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
+      else if (b.type === 'quantizer') Object.assign(node, { kind: 'quant', q: b.params.q, ft: true });
+      else if (b.type === 'noise') Object.assign(node, { kind: 'noise', std: b.params.std, seed: b.params.seed, ft: true });
       const k = add(node);
       outs[b.id] = [k];
       ins[b.id] = node.inputs.map((_, s) => [k, s]);
@@ -247,7 +291,10 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   if (pending.size) throw new Error(`${path}: algebraic loop through ${[...pending].map((i) => nodes[i].name).join(', ')}; put a block with state (integrator, lag) in the loop`);
 
   let n = 0, bound = 0;
-  for (const nd of nodes) if (nd.kind === 'ss') { nd.off = n; n += nd.ss.n; bound = Math.max(bound, nd.bound); }
+  for (const nd of nodes) {
+    if (nd.kind === 'ss') { nd.off = n; n += nd.ss.n; bound = Math.max(bound, nd.bound); }
+    if (nd.kind === 'ode') { nd.off = n; n += nd.ode.n; bound = Math.max(bound, nd.bound); }
+  }
   const vals = new Float64Array(nodes.length);
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
@@ -262,6 +309,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   return {
     n, bound, warnings,
     setStep(step) { h = step; },
+    // Initial state: zero, except for physics blocks with initial conditions.
+    init(X, o) { for (const nd of nodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
     eval(t, X, o, u, dX) {
       for (const i of order) {
         const nd = nodes[i];
@@ -274,6 +323,11 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
           case 'sum': y = 0; for (let s = 0; s < nd.signs.length; s++) y += nd.signs[s] * inOf(nd, s); break;
           case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
           case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L) : inOf(nd); break;
+          case 'switch': y = inOf(nd, nd.pick); break;
+          case 'quant': y = nd.q * Math.round(inOf(nd) / nd.q); break;
+          case 'noise': y = inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
+          case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
+          case 'tap': y = nodes[nd.parent].outv[nd.j]; break;
           default: {
             const { ss } = nd;
             const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
@@ -285,6 +339,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       if (dX) {
         for (const nd of nodes) {
+          if (nd.kind === 'ode') { nd.ode.f(X, o + nd.off, inOf(nd), nd.p, dX); continue; }
           if (nd.kind !== 'ss') continue;
           const { ss } = nd, base = o + nd.off;
           const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);

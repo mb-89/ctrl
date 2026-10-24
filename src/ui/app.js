@@ -6,7 +6,8 @@ import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluat
 import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
-import { EXAMPLES, DEFAULT_PROJECT } from '../core/examples.js';
+import { DEFAULT_PROJECT } from '../core/examples.js';
+import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../core/systems.js';
 import { createDisplay } from './display.js';
 import { createControls } from './controls.js';
 import { createGenerator } from './generator.js';
@@ -90,7 +91,13 @@ function startApp() {
     }
     return acq;
   }
-  app.signalNames = () => [...new Set([...Object.keys(acquire().signals), ...(loopReady(app.project) ? LOOP_SIGNALS : [])])];
+  // What a scope channel can show: every Source and Sink in the diagram (at
+  // any depth), whatever was simulated, and the loop's signals with a controller.
+  app.signalNames = () => {
+    const plant = app.project.system.plant;
+    const names = plant?.type === 'diagram' ? diagramNames(plant.diagram) : { sources: [], sinks: [] };
+    return [...new Set([...names.sources, ...names.sinks, ...Object.keys(app.project.system.signals), ...Object.keys(acquire().signals), ...(loopReady(app.project) ? LOOP_SIGNALS : [])])];
+  };
   const sig = () => app.project.system.signals[app.signal] ?? app.project.system.signals[(app.signal = Object.keys(app.project.system.signals)[0])];
   app.signalRef = sig;
 
@@ -140,15 +147,36 @@ function startApp() {
   };
 
   // The plant diagram. Every Source needs a signal: new names get an empty one.
-  app.setPlant = (diagram) => {
+  app.setPlant = (diagram, views) => {
     app.beginEdit();
-    app.project.system.plant = { type: 'diagram', diagram };
+    const keep = views ?? app.project.system.plant?.views;
+    app.project.system.plant = { type: 'diagram', diagram, ...(keep?.length ? { views: keep } : {}) };
     const signals = app.project.system.signals;
     for (const name of diagramNames(diagram).sources) signals[name] ??= { period: Math.max(...Object.values(signals).map((x) => x.period), 1), components: [] };
     app.endEdit();
     changed();
   };
   app.plantMoved = () => { changed({ data: false }); };
+  app.setViews = (views) => {
+    const plant = app.project.system.plant;
+    if (plant?.type !== 'diagram') return;
+    app.beginEdit();
+    if (views.length) plant.views = views; else delete plant.views;
+    app.endEdit();
+    autosave();
+  };
+  // Signal values at the scope's current instant, for 2D views.
+  app.sceneEnv = () => {
+    const data = acquire();
+    const t = display.time();
+    const env = { t };
+    if (data?.t?.length > 1) {
+      const k = Math.max(0, Math.min(data.t.length - 1, Math.round(t / (data.t[1] - data.t[0]))));
+      env.t = data.t[k];
+      for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
+    }
+    return env;
+  };
   app.renameSignal = (from, to, users) => {
     const signals = app.project.system.signals;
     app.beginEdit();
@@ -225,6 +253,7 @@ function startApp() {
     const t = TABS.find((x) => x.key === app.tab);
     $('tab-input').hidden = app.tab !== 'input';
     $('tab-plant').hidden = app.tab !== 'plant';
+    if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
     if (t.next) {
@@ -309,16 +338,31 @@ function startApp() {
     try { load(text); } catch (err) { toast(`Pasted text is not a project: ${err.message}`); }
   });
 
-  const ex = $('examples');
-  [DEFAULT_PROJECT, ...EXAMPLES].forEach((x, i) => { const o = document.createElement('option'); o.value = i; o.textContent = x.title; ex.append(o); });
-  ex.addEventListener('change', () => {
-    if (ex.value === '') return;
-    const src = [DEFAULT_PROJECT, ...EXAMPLES][Number(ex.value)];
-    const fresh = !src.scope;
-    load(structuredClone(src));
-    if (fresh) app.autoScale();
-    ex.value = '';
+  // The System library: complete systems, loaded whole or by part.
+  app.loadSystem = (entry, parts) => {
+    try { load(applySystem(app.project, entry, parts), { quiet: true }); } catch (err) { toast(`Could not load ${entry.name}: ${err.message}`); return; }
+    if (parts.includes('input') || parts.includes('plant')) app.autoScale();
+    if (app.tab === 'plant') plantEditor.shown();
+    const what = SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k)) ? '' : ` (${parts.join(' and ')})`;
+    toast(`Loaded ${entry.name}${what}. Ctrl+Z goes back.`);
+  };
+  const pop = $('syslib-pop');
+  const PART_LABEL = { input: 'Input', plant: 'Plant', controller: 'Controller' };
+  pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
+    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="sysnote">${esc(e.notes)}</div></div>
+      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>`).join('');
+  const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
+  $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });
+  pop.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const b = e.target.closest('[data-sys]');
+    if (!b) return;
+    const entry = SYSTEM_LIBRARY[Number(b.dataset.sys)];
+    app.loadSystem(entry, b.dataset.parts === 'all' ? SYSTEM_PARTS.filter((k) => entry[k]) : [b.dataset.parts]);
+    closePop();
   });
+  document.addEventListener('click', closePop);
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) { closePop(); e.stopImmediatePropagation(); } }, true);
   $('title').addEventListener('change', () => { app.beginEdit(); app.project.title = $('title').value.trim() || 'Untitled loop'; app.endEdit(); autosave(); });
   $('title').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); });
   $('undo').addEventListener('click', app.undo);

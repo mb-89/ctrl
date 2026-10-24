@@ -34,7 +34,9 @@ function tokenize(src) {
 }
 
 // Compiles src to t => value. Throws with a readable message on bad input.
-export function compileExpr(src) {
+// With opts.vars, other names are variables: the result is env => value,
+// reading env[name] (NaN when absent), as 2D views use signal names.
+export function compileExpr(src, opts = {}) {
   const toks = tokenize(String(src));
   let i = 0;
   const peek = () => toks[i];
@@ -45,7 +47,7 @@ export function compileExpr(src) {
     let a = term();
     while (peek()?.k === 'op' && (peek().v === '+' || peek().v === '-')) {
       const op = take().v, b = term(), l = a;
-      a = op === '+' ? (t) => l(t) + b(t) : (t) => l(t) - b(t);
+      a = op === '+' ? (e) => l(e) + b(e) : (e) => l(e) - b(e);
     }
     return a;
   }
@@ -59,21 +61,21 @@ export function compileExpr(src) {
       if (!explicit && !implicit) return a;
       const op = explicit ? take().v : '*';
       const b = unary(), l = a;
-      a = op === '*' ? (t) => l(t) * b(t) : (t) => l(t) / b(t);
+      a = op === '*' ? (e) => l(e) * b(e) : (e) => l(e) / b(e);
     }
   }
   // unary := '-' unary | power
   function unary() {
     if (peek()?.k === 'op' && (peek().v === '-' || peek().v === '+')) {
       const neg = take().v === '-', a = unary();
-      return neg ? (t) => -a(t) : a;
+      return neg ? (e) => -a(e) : a;
     }
     return power();
   }
   // power := atom ('^' unary)?   (right-associative)
   function power() {
     const a = atom();
-    if (peek()?.k === 'op' && peek().v === '^') { take(); const b = unary(); return (t) => Math.pow(a(t), b(t)); }
+    if (peek()?.k === 'op' && peek().v === '^') { take(); const b = unary(); return (e) => Math.pow(a(e), b(e)); }
     return a;
   }
   function atom() {
@@ -84,19 +86,20 @@ export function compileExpr(src) {
     if (tk.k === 'id') {
       take();
       const name = tk.v.toLowerCase();
-      if (name === 't') return (t) => t;
+      if (name === 't') return (e) => e.t;
       // Own properties only: names such as "constructor" must not resolve.
       if (Object.hasOwn(CONST, name)) { const v = CONST[name]; return () => v; }
       const arity = Object.hasOwn(FN1, name) ? 1 : Object.hasOwn(FN2, name) ? 2 : Object.hasOwn(FN3, name) ? 3 : 0;
+      if (!arity && opts.vars && peek()?.v !== '(') { const v = tk.v; return (e) => (Object.hasOwn(e, v) ? e[v] : NaN); }
       if (!arity) throw new Error(`unknown name "${tk.v}"; use t, pi, e or a function such as sin, exp, step`);
       take('(');
       const args = [expr()];
       while (args.length < arity) { take(','); args.push(expr()); }
       take(')');
       const [a, b, c] = args;
-      if (arity === 1) { const f = FN1[name]; return (t) => f(a(t)); }
-      if (arity === 2) { const f = FN2[name]; return (t) => f(a(t), b(t)); }
-      const f = FN3[name]; return (t) => f(a(t), b(t), c(t));
+      if (arity === 1) { const f = FN1[name]; return (e) => f(a(e)); }
+      if (arity === 2) { const f = FN2[name]; return (e) => f(a(e), b(e)); }
+      const f = FN3[name]; return (e) => f(a(e), b(e), c(e));
     }
     throw new Error(`unexpected "${tk.v}"`);
   }
@@ -104,5 +107,7 @@ export function compileExpr(src) {
   if (!toks.length) throw new Error('enter a formula in t, for example 0.5*sin(2*pi*t)');
   const f = expr();
   if (i < toks.length) throw new Error(`unexpected "${toks[i].v}"`);
-  return (t) => { const v = f(t); return Number.isFinite(v) ? v : 0; };
+  if (opts.vars) return f;
+  const env = { t: 0 };
+  return (t) => { env.t = t; const v = f(env); return Number.isFinite(v) ? v : 0; };
 }

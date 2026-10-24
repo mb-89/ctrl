@@ -10,6 +10,7 @@ import { simulate, simulateSystem } from './sim.js';
 import { computeMetrics } from './metrics.js';
 import { normalizeGoal, evaluateGoal, compareEvals } from './goal.js';
 import { normalizeDiagram, diagramNames } from './diagram.js';
+import { normalizeView } from './views.js';
 
 export const FORMAT = 'loop-tuner/2';
 export const PALETTE_SIZE = 8;
@@ -88,7 +89,11 @@ const longestPeriod = (signals) => Math.max(...Object.values(signals).map((s) =>
 
 // A plant is a single model block or a diagram ({ "type": "diagram", "diagram": {...} }).
 export function normalizePlant(plant) {
-  if (plant.type === 'diagram') return { type: 'diagram', diagram: normalizeDiagram(plant.diagram) };
+  if (plant.type === 'diagram') {
+    const out = { type: 'diagram', diagram: normalizeDiagram(plant.diagram) };
+    if (Array.isArray(plant.views) && plant.views.length) out.views = plant.views.map((v, i) => normalizeView(v, `plant.views[${i}]`));
+    return out;
+  }
   return normalizeBlock('plant', plant);
 }
 

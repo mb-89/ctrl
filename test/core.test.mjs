@@ -193,3 +193,62 @@ test('an algebraic loop is refused; an empty diagram shows the reference alone',
   assert.deepEqual(Object.keys(sys.signals), ['r']);
   assert.equal(sys.signals.r[sys.signals.r.length - 1], 1);
 });
+
+test('the cart-pole falls the right way at the right rate; sensor blocks behave', async () => {
+  const { simulateSystem } = await import('../src/core/sim.js');
+  const { normalizeDiagram } = await import('../src/core/diagram.js');
+  const d = normalizeDiagram({
+    blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 'cp', type: 'cartPole', params: { M: 1, m: 0.2, l: 0.5, b: 0, theta0: 0.001 } },
+      { id: 'x', type: 'sink', params: { name: 'x' } }, { id: 'th', type: 'sink', params: { name: 'th' } }],
+    wires: [{ from: 'r', to: 'cp' }, { from: 'cp', to: 'x' }, { from: 'cp:1', to: 'th' }],
+  });
+  const zero = { r: normalizeReference({ period: 10, components: [] }) };
+  const { signals } = simulateSystem(d, zero, { duration: 0.5, sampleTime: 0.001 });
+  // Linearised: θ'' = g (M + m) / (M l) θ, so θ grows like cosh(λt).
+  const lam = Math.sqrt(9.81 * 1.2 / 0.5);
+  assert.ok(Math.abs(signals.th[500] / (0.001 * Math.cosh(lam * 0.5)) - 1) < 0.02);
+  assert.ok(signals.x[500] < 0, 'the cart moves away from the fall');
+  const q = normalizeDiagram({ blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 'q', type: 'quantizer', params: { q: 0.25 } }, { id: 'y1', type: 'sink', params: { name: 'y1' } }], wires: [{ from: 'r', to: 'q' }, { from: 'q', to: 'y1' }] });
+  const ramp = { r: normalizeReference({ period: 10, components: [{ type: 'ramp', params: { amplitude: 1, time: 0, rise: 1 } }] }) };
+  const out = simulateSystem(q, ramp, { duration: 1, sampleTime: 0.01 }).signals.y1;
+  assert.equal(out[40], 0.5);
+  assert.equal(out[60], 0.5);
+});
+
+test('2D views compile and move with the signals; library parts combine', async () => {
+  const { SYSTEM_LIBRARY, applySystem } = await import('../src/core/systems.js');
+  const { compileScene } = await import('../src/core/views.js');
+  const pend = SYSTEM_LIBRARY.find((s) => s.name === 'Inverted pendulum');
+  const p = normalizeProject(applySystem(structuredClone(DEFAULT_PROJECT), pend, ['input', 'plant', 'controller']));
+  assert.equal(p.title, 'Inverted pendulum');
+  const scene = compileScene(p.system.plant.views[0]);
+  const bob = (th) => scene({ t: 0, r: 0, y1: 0, y2: th }).find((o) => o.op === 'circle' && o.fill === 'ch3').c;
+  assert.ok(Math.abs(bob(0)[0]) < 1e-12 && Math.abs(bob(0)[1] - 0.6) < 1e-12);
+  assert.ok(bob(0.3)[0] > 0.1, 'positive θ leans towards +x');
+  const msd = SYSTEM_LIBRARY.find((s) => s.name === 'Mass–spring–damper');
+  const mixed = normalizeProject(applySystem(p, msd, ['plant']));
+  assert.equal(mixed.system.signals.r.components[0].type, 'square', 'the input stays from the pendulum');
+  assert.equal(mixed.system.plant.views[0].name, 'Hanging mass');
+  const loop = SYSTEM_LIBRARY.find((s) => s.controller);
+  assert.ok(normalizeProject(applySystem(mixed, loop, ['controller'])).candidates.length > 0);
+  assert.throws(() => normalizeProject({ system: { plant: { type: 'diagram', diagram: { blocks: [], wires: [] }, views: [{ kind: '2d', shapes: [{ type: 'line', x1: 'sin(' }] }] } } }), /views\[0\]/);
+});
+
+test('a switch passes its chosen input; a terminator ends a signal; SVG views bind safely', async () => {
+  const { simulateSystem } = await import('../src/core/sim.js');
+  const { normalizeDiagram } = await import('../src/core/diagram.js');
+  const { normalizeView, compileBindings } = await import('../src/core/views.js');
+  const d = (position) => normalizeDiagram({
+    blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 'k', type: 'gain', params: { K: 3 } }, { id: 'sw', type: 'switch', params: { inputs: 2, position } },
+      { id: 'y1', type: 'sink', params: { name: 'y1' } }, { id: 'end', type: 'terminator' }],
+    wires: [{ from: 'r', to: 'sw' }, { from: 'r', to: 'k' }, { from: 'k', to: 'sw:1' }, { from: 'sw', to: 'y1' }, { from: 'k', to: 'end' }],
+  });
+  const sig = { r: normalizeReference({ period: 10, components: [{ type: 'dc', params: { level: 2 } }] }) };
+  const run = (pos) => simulateSystem(d(pos), sig, { duration: 0.1, sampleTime: 0.01 });
+  assert.equal(run(1).signals.y1[5], 2);
+  assert.equal(run(2).signals.y1[5], 6);
+  assert.deepEqual(Object.keys(run(2).signals).sort(), ['r', 'y1']);
+  const v = normalizeView({ kind: 'svg', svg: '<svg viewBox="0 0 10 10"><rect id="m" width="1" height="1"/></svg>', bind: [{ select: '#m', attr: 'transform', value: 'translate({100*y1}, 0)' }] });
+  assert.deepEqual(compileBindings(v)({ t: 0, y1: 0.02 }), [{ select: '#m', attr: 'transform', value: 'translate(2, 0)' }]);
+  assert.throws(() => normalizeView({ kind: 'svg', svg: '<svg/>', bind: [{ select: '#m', attr: 'onclick', value: 'x' }] }), /not an event/);
+});

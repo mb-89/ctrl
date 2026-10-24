@@ -269,7 +269,33 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 
 /* Plant tab: library | canvas | parameters, filling the setup area */
 .tabpanel > [role="tabpanel"] { height: 100%; }
-.plant { height: 100%; min-height: 0; display: grid; grid-template-columns: 196px minmax(0, 1fr) 248px; gap: 12px; }
+.plant { height: 100%; min-height: 0; display: grid; grid-template-columns: var(--lib-w, 196px) 10px minmax(0, 1fr) 248px; column-gap: 0; }
+.plant .pcan { margin-right: 12px; }
+.plsplit { cursor: col-resize; }
+.lgname { display: flex; align-items: center; gap: 5px; width: 100%; border: 0; background: none; padding: 2px 0; cursor: pointer; text-align: left; }
+.lgname .chev { width: 10px; color: var(--muted); }
+.pdiag .term, .pdiag .swline { stroke: var(--ink); stroke-width: 2; fill: none; }
+.pdiag .swdot { fill: var(--ink-2); }
+.pdiag .pn { font-family: var(--mono); font-size: 10px; fill: var(--ink-2); }
+.reps { display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--recess); flex-wrap: wrap; }
+.rep { border: 0; background: transparent; border-radius: 5px; padding: 2px 9px; font-size: 12px; font-weight: 600; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+.rep.on { background: var(--panel); color: var(--ink); box-shadow: 0 1px 0 var(--line-strong); }
+.rep.add { color: var(--muted); }
+.pscenebox { background: var(--panel); background-image: none; }
+.pscene { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pscene text { font-family: var(--mono); }
+.pscene .sctime { fill: var(--muted); font-size: 11px; }
+.pscene .scerr { fill: var(--bad); font-size: 12px; }
+.vjson { width: 100%; min-height: 140px; height: 40%; resize: vertical; font-family: var(--mono); font-size: 11.5px; line-height: 1.4; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); padding: 6px; }
+.pmsg:empty { display: none; }
+.popwrap { position: relative; }
+.popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 25; width: min(520px, calc(100vw - 32px)); max-height: 70vh; overflow: auto; background: var(--panel-2); border: 1px solid var(--line-strong); border-radius: 10px; padding: 8px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25); }
+.pophead { font-weight: 600; padding: 4px 6px 8px; }
+.pophead span { font-weight: 400; color: var(--muted); margin-left: 6px; font-size: 12.5px; }
+.sysrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 6px; border-top: 1px solid var(--line); }
+.sysname { font-weight: 600; font-size: 13.5px; }
+.sysnote { font-weight: 400; font-size: 12px; color: var(--ink-2); line-height: 1.35; margin-top: 2px; }
+.sysbtns { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .plib, .pprops { min-height: 0; overflow: auto; }
 .plib .glabel { margin-bottom: 4px; }
 .lgroup { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
@@ -326,6 +352,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .pmsg { font-size: 12.5px; line-height: 1.45; color: var(--bad); margin: 6px 0; }
 @media (max-width: 900px) {
   .plant { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .plsplit { display: none; }
   .pview { height: 360px; }
   .plib { max-height: 200px; }
 }

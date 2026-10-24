@@ -2,6 +2,20 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.3: views, system library, library column ([input](../input/2026-10-24-05-library-controller-views.md))
+
+- **The library column resizes and its groups fold**; both kept per viewer. Rarely used groups start folded. (Person; the starting fold is our choice.)
+- **Sensors and Physics groups**: Quantizer and Noise; a nonlinear Cart–pole with two outputs and an initial angle. Interpretation of "sensors would also be selected from that".
+- **Terminator and Switch blocks**; Out passes up, Sink records, Terminator ends. Double-click a Switch to move it to its next input. (Person.)
+- **Scope channels list every Source and Sink in the diagram** at any depth, whether or not the system simulates. (Person: they were "not in sync".)
+- **Plants carry views in their JSON; there is no view editor beyond the JSON panel.** (Person.) Two kinds: `2d` shapes (ours, simple for agents) and `svg`, a standard SVG drawing with attribute bindings. 3D will use URDF. (Person: "if there are standards … we can use them".) Formulas in views read signals by name, through the same parser as the Function waveform.
+- **Views follow the scope's time**: the scan line, the hover cursor, or the screen's right edge. Interpretation: it ties the animation to the sweep the person already has.
+- **SVG views are cleaned before display** (no scripts, handlers, outside links) and bindings cannot target events or links: a shared file cannot run code. Interpretation, for safety.
+- **The mass–spring–damper hangs vertically** from a ceiling. (Person.) Its motion is drawn exaggerated (×40) and says so.
+- **Examples become the System library**: complete systems (input, plant with views, controller) loaded whole or by part from the header; the Plant tab's list draws from the same library. (Person.)
+- **The controller as a block**: proposed in [controller-proposal.md](controller-proposal.md), not built; waiting for the person's answers.
+- **Repository**: github.com/mb-89/ctrl. The v1 tag could not be pushed (the session's git proxy refuses tag pushes); v1 is commit `b13ff03`.
+
 ## 2026-10-24 · v2.2: the Plant tab ([input](../input/2026-10-24-04-plant-tab.md))
 
 - **The plant is a Simulink-like block diagram**: library left, canvas middle, parameters right; blocks nest as subsystems; subsystems can be saved to the library. (Person.)
@@ -45,7 +59,7 @@ Reader: anyone who wants to know why something is the way it is. Newest first. "
 - **A loop defined in the file is shown before its tabs exist.** Projects from v1 or the CLI carry a plant and candidates; the display then shows y, u, e for the selected candidate.
 - **Auto Scale uses 1-2-5 steps**, so a 30 s record gets 5 s/div and fills 6 of 10 divisions, as on a real scope.
 - **Unitless channel values are plain numbers** (`0.2/div`, `-0.4`); SI prefixes only for seconds, so `-400 m` is never read as metres.
-- **v1 is superseded, not deleted**: git tag `v1`. Its blocks, metrics, goal, auto-tune and CLI carry over into the later tabs.
+- **v1 is superseded, not deleted**: commit `b13ff03`. Its blocks, metrics, goal, auto-tune and CLI carry over into the later tabs.
 
 ## 2026-10-24 · v1
 
