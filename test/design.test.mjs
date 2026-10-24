@@ -232,9 +232,10 @@ test('scheduledPI: pole cancellation from the tank at each level reproduces the 
   rel(u0, tank.a * Math.sqrt(2 * tank.g * tank.h0), 1e-9, 'u0');
   assert.equal(Number(u0.toFixed(4)), 0.1716);
   assert.equal(st.at, 'h = 0.1 … 1 m (5 levels)');
-  assert.deepEqual(st.rows[0].head, ['h (m)', 'q', 'K', 'τ (s)', 'θ (s)', 'Kp', 'Ki']);
-  assert.equal(st.rows[0].table.length, 5);
-  assert.deepEqual(st.rows[1], { label: 'u0', value: u0, note: 'holds h = 0.15 m, where it starts' });
+  assert.deepEqual(st.rows[0].head, ['h (m)', 'q', 'K', 'τ (s)', 'Kp', 'Ki']);
+  assert.deepEqual(st.rows[0].table.map((row) => row.slice(4)), at.map((_, i) => [Kp[i], Ki[i]]));
+  assert.deepEqual(st.rows[1], { label: 'dead time θ', value: 0.1, note: 's, left out' });
+  assert.deepEqual(st.rows[2], { label: 'u0', value: u0, note: 'holds h = 0.15 m, where it starts' });
   assert.ok(st.warnings.includes('dead time 0.1 s on h is not in this design: pole cancellation leaves it out'));
   // The fixed PIs, tuned for full (0.8 m) and for empty (0.15 m), to 0.5 %.
   for (const [name, kp, ki] of [['PI tuned for full', 2.112, 0.99], ['PI tuned for empty', 0.173, 2.287]]) {

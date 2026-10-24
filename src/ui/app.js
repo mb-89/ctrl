@@ -294,12 +294,28 @@ function startApp() {
     }
   }
 
+  // The note beside the title: a plant that does not run, or a design that
+  // failed (later: one being planned); a click opens the tab that says why.
+  let noteAction = null;
+  function designNote() {
+    const s = (app.designStatuses ?? []).find((x) => ['error', 'warn', 'pending', 'stale'].includes(x.status));
+    if (!s) return null;
+    const what = s.status === 'error' ? 'no design' : s.status === 'warn' ? 'check its design' : `planning ${Math.round(100 * (s.progress?.fraction ?? 0))} %`;
+    return { text: `${s.block} · ${s.variant}: ${what}`, path: s.path };
+  }
   function renderChrome() {
     $('undo').disabled = !undoStack.length;
     $('redo').disabled = !redoStack.length;
     $('title').value = app.project.title;
-    $('loopnote').textContent = app.systemError ? 'plant: see the Plant tab' : loopNote;
+    const note = app.systemError ? null : designNote();
+    const el = $('loopnote');
+    el.textContent = app.systemError ? 'plant: see the Plant tab' : note?.text ?? loopNote;
+    noteAction = app.systemError ? () => { app.tab = 'plant'; renderTabs(); } : note ? () => app.openController(note.path.split('/')) : null;
+    el.classList.toggle('act', !!noteAction);
+    if (noteAction) { el.setAttribute('role', 'button'); el.tabIndex = 0; el.title = 'Open the tab that says why'; } else { el.removeAttribute('role'); el.removeAttribute('tabindex'); el.title = ''; }
   }
+  $('loopnote').addEventListener('click', () => noteAction?.());
+  $('loopnote').addEventListener('keydown', (e) => { if (noteAction && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); noteAction(); } });
 
   function changed({ data = true } = {}) {
     if (data) display.setData(acquire());

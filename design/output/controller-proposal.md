@@ -20,11 +20,13 @@ Reader: whoever changes controllers, their library or the Controller tab. **Stat
 | `gainScheduled` | PI with Kp, Ki interpolated from a table over the measurement | Plants whose dynamics change with the operating point |
 | `swingUp` | Far from upright, u = kE·E·ω·cos θ (V = ½E² falls: a Lyapunov design) with cart centring; near upright, state feedback | Swinging a pendulum up and catching it |
 
-To add one: an entry in `CONTROLLERS` with `label`, `summary`, `params` and `make(params, Ts)` returning `{ step(inputs) → u }`; a sentence in `ABOUT` in `src/ui/controller.js`; a test.
+Designed types hold inputs only and compute their numbers from the plant in the page ([designs.md](designs.md)): `lqr` (state feedback by LQR), `scheduledPI` (PI from the plant, one level or scheduled), `swingUpLqr` (the swing-up with its catch by LQR). Each has a hand twin that **Copy as numbers** makes.
+
+To add one: an entry in `CONTROLLERS` with `label`, `summary`, `params` and `make(params, Ts)` returning `{ step(inputs) → u }` (a designed type adds the fields in designs.md); a sentence in `ABOUT` in `src/ui/controller.js`; a test.
 
 ## The tab
 
-Four columns: the block (which one, if several; Inputs, Ts; what feeds each input), the **variants** (click one to run it, double-click to rename, Duplicate, Delete), the running variant's **parameters** (typed with SI prefixes, vectors comma-separated; the wheel nudges a number by 5 %, Shift 1 %, and the display follows at once), and the **library** (adds a variant that keeps the actuator limits and gets one gain per measurement).
+Four columns: the block (which one, if several; Inputs, Ts; what feeds each input), the **variants** (click one to run it, double-click to rename, Duplicate, Delete; a designed one is marked "computed", or "! no design" when its design was refused), the running variant's **parameters** (typed with SI prefixes, vectors comma-separated and their entries named; the wheel nudges a number by 5 %, Shift 1 %, or the entry under the caret in a focused list, and the display follows at once) with, for a designed variant, the read-only **Computed** box and **Copy as numbers**, and the **library** in two groups, From the plant and By hand (adds a variant that keeps the actuator limits and gets one gain or weight per measurement).
 
 Comparing: the run before a change stays faded on the display for five runs, so flipping a variant or turning a parameter shows old against new.
 

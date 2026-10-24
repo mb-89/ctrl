@@ -71,6 +71,8 @@ button, input, select { font: inherit; color: inherit; }
 .title:hover { border-color: var(--line); }
 .title:focus { border-color: var(--line-strong); background: var(--panel-2); outline: none; }
 .loopnote { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.loopnote.act { cursor: pointer; color: var(--ink-2); text-decoration: underline dotted; text-underline-offset: 3px; }
+.loopnote.act:hover { color: var(--ink); }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--panel-2); cursor: pointer; white-space: nowrap; font-size: 13px; }
 .btn:hover { background: var(--recess); }
@@ -368,8 +370,45 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .vrow { grid-template-columns: 14px minmax(0, 1fr) auto; }
 .vrow .vdot { font-size: 10px; color: #33d17a; }
 .vrow .vtype { font-size: 11px; color: var(--lcd-dim); white-space: nowrap; }
-.ctparams .pf { grid-template-columns: 120px minmax(0, 1fr); }
+.vrow .vtype.bad { color: var(--lit-red); }
+.vrow .vtype.warn { color: var(--lit-amber); }
+.ctwork { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 16px; }
+.ctwork .ctparams { flex: 1 1 210px; min-width: 0; }
+.ctparams .pf { grid-template-columns: 100px minmax(0, 1fr); }
+.ctparams .pf.wide { grid-template-columns: minmax(0, 1fr); }
+.ctparams .pf.wide .pfh { grid-column: 1; }
+.pfold { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 4px; }
+.pfold summary { cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.pfold .pfh { grid-column: auto; }
+/* What a designed variant computed from the plant: a read-only readout. */
+.cbox { flex: 1.4 1 260px; min-width: 0; margin: 6px 0; padding: 6px 10px 8px; border-radius: 8px; background: var(--lcd); color: var(--lcd-ink); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5); font-size: 12.5px; line-height: 1.4; display: flex; flex-direction: column; gap: 3px; }
+.cbox .chead { display: flex; align-items: baseline; gap: 8px; }
+.cbox .chead .glabel { margin-right: auto; color: var(--lcd-dim); }
+.cbox p { margin: 0; }
+.cbox .cst { font-family: var(--mono); font-size: 11px; padding: 0 5px; border: 1px solid currentColor; border-radius: 3px; }
+.cst-ok { color: var(--lit-green); }
+.cst-warn, .cst-pending, .cst-stale { color: var(--lit-amber); }
+.cst-error, .cst-cancelled { color: var(--lit-red); }
+.cbox .cmeta { font-family: var(--mono); font-size: 11px; color: var(--lcd-dim); }
+.cbox .cline b { font-weight: 600; }
+.cbox .ck { color: var(--lcd-dim); }
+.cbox .crow { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.cbox .cv { display: flex; flex-wrap: wrap; gap: 0 12px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.cbox .cpair { white-space: nowrap; }
+.cbox .cpair i { font-style: normal; color: var(--lcd-dim); margin-right: 5px; }
+.cbox .cnote { font-family: var(--ui); color: var(--lcd-dim); }
+.cbox .ctabwrap { overflow-x: auto; }
+.cbox .ctab { border-collapse: collapse; font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cbox .ctab th { font-weight: 400; color: var(--lcd-dim); text-align: right; padding: 0 0 1px 8px; white-space: nowrap; }
+.cbox .ctab td { text-align: right; padding: 0 0 0 8px; }
+.cbox .ctab :is(th, td):first-child { padding-left: 0; }
+.cbox .cerr { color: #ff8f8f; }
+.cbox .cmsg { color: var(--lcd-dim); }
+.cbox .cwarn { margin: 2px 0 0; padding-left: 14px; color: #d9bb72; }
+.cbox .pbtns { margin: 4px 0 0; }
 .ctlib { display: flex; flex-direction: column; gap: 6px; }
+.ctlibhead { margin: 4px 0 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.ctlibhead:first-child { margin-top: 0; }
 .ctlibitem { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); cursor: pointer; font: inherit; font-size: 12.5px; }
 .ctlibitem:hover { border-color: var(--ink-2); }
 .ctlibitem span { font-family: var(--mono); font-size: 11px; color: var(--muted); }

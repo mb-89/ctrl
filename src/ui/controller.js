@@ -3,6 +3,12 @@
 // variant subsystems). Clicking a variant runs it; the previous run stays
 // faded on the display for comparison. The active variant's parameters are
 // edited here; the library adds new variants. See design/output/controller-proposal.md.
+//
+// A designed variant (design/output/designs.md) holds only its inputs; what
+// its design computed from the plant shows read-only in the Computed box
+// beside (or, when narrow, below) its parameters. renderComputed() patches
+// that box, the variant glyphs and nothing else, so a field being typed in
+// keeps its focus when a design settles.
 
 import { CONTROLLERS, normalizeVariant } from '../core/controllers.js';
 import { OBSERVERS } from '../core/observers.js';
@@ -16,15 +22,19 @@ const ABOUT = {
   stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
   lqr: 'State feedback whose gains are computed from the plant as it is wired: the page linearises it at its origin and solves the discrete LQR problem. Q weighs the error of each measurement, R the effort; every state must be measured. Change the plant and the gains follow.',
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
+  scheduledPI: 'A PI computed from the plant: at each level of the measurement the page finds the input that holds it, linearises the plant there and fits a first-order lag; Kp and Ki then cancel that lag so the loop answers with the time constant Tcl. One level gives a fixed PI, several a gain-scheduled one. It starts with the input that holds the level the plant starts at.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
+  swingUpLqr: 'The energy swing-up (the pump gains are yours), with the catch near the top designed by LQR from the cart and pole as they are wired: Q weighs x, θ, v, ω, R the force. Change the pole and the catch follows.',
   kalman: 'Predicts the states with the model, then corrects with the measurements, weighing them by the noise you expect: a large R trusts the model, a large Q trusts the measurements. The gain is the steady-state Kalman gain.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
 };
 const LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
+const STATUS_WORD = { ok: 'ok', warn: 'warning', error: 'error', pending: 'pending', stale: 'previous values', cancelled: 'cancelled' };
 
 export function createControllerTab(host, app) {
   let target = null;   // path of subsystem ids and the Controller block id
+  let planOpen = false;   // the Plan fold, kept while the page is open
 
   host.innerHTML = `
     <div class="ctl">
@@ -41,7 +51,10 @@ export function createControllerTab(host, app) {
       </section>
       <section class="gcol" aria-label="Parameters">
         <div class="ghead"><h3 class="glabel" id="ct-ptitle">Parameters</h3></div>
-        <div id="ct-params" class="pform ctparams"></div>
+        <div class="ctwork">
+          <div id="ct-params" class="pform ctparams"></div>
+          <div id="ct-computed" class="cbox" aria-label="Computed from the plant" aria-live="polite" hidden></div>
+        </div>
         <p class="phelp" id="ct-about"></p>
       </section>
       <section class="gcol" aria-label="Controller library">
@@ -71,6 +84,8 @@ export function createControllerTab(host, app) {
     const hit = target && all.find((c) => c.path.join('/') === target.join('/'));
     return hit ?? all[0] ?? null;
   };
+  // What the running designed variant of a block computed (app.designStatuses, from the last run).
+  const statusOf = (c) => (app.designStatuses ?? []).find((s) => s.path === c.path.join('/')) ?? null;
 
   // Edits the current block in a copy of the diagram; the app takes it as one undo step.
   function edit(fn) {
@@ -85,9 +100,16 @@ export function createControllerTab(host, app) {
   }
 
   function field(key, label, value, hint, kind = 'number', title = '') {
-    return `<label class="pf" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
+    return `<label class="pf${kind === 'vector' ? ' wide' : ''}" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
   }
   const show = (v) => (Array.isArray(v) ? v.map((x) => num(x, 5)).join(', ') : Number.isFinite(v) ? num(v, 6) : '');
+  // A parameter's hint: its unit, and for a vector what its entries stand
+  // for, named by what feeds the block's inputs ("x, θ, v, ω").
+  function hintOf(p, names) {
+    const meas = names.slice(1);
+    const per = p.per === 'measurement' ? `for ${meas.join(', ')}` : p.per === 'level' ? `levels of ${meas[0] ?? 'y1'}` : '';
+    return [p.kind === 'vector' ? 'comma-separated' : '', per, p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · ');
+  }
 
   function render() {
     const all = controllers();
@@ -110,23 +132,90 @@ export function createControllerTab(host, app) {
     $('#ct-ports').innerHTML = `<b>In</b> ${names.map((n, k) => `<span class="ctport">${k + 1} ${esc(n)}</span>`).join(' ')}`;
 
     $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="srow vrow ${i === b.variant ? 'editing' : ''}" data-v="${i}" role="option" aria-selected="${i === b.variant}">
-        <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype">${esc(lib[v.type].label)}</span></li>`).join('');
+        <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype"></span></li>`).join('');
     $('#ct-del').disabled = b.variants.length < 2;
 
     const v = b.variants[b.variant];
     const def = lib[v.type];
     $('#ct-ptitle').textContent = `${v.name} · ${def.summary}`;
+    const one = (p) => p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), hintOf(p, names), p.kind ?? 'number', p.help ?? '');
+    // Inputs that start a long computation (a plan) sit in a fold, so they
+    // are changed on purpose, not nudged by the way.
+    const light = def.params.filter((p) => !p.heavy), heavy = def.params.filter((p) => p.heavy);
     $('#ct-params').innerHTML = def.params.length
-      ? def.params.map((p) => p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
+      ? light.map(one).join('') + (heavy.length ? `<details class="pfold" id="ct-plan" ${planOpen ? 'open' : ''}><summary>Plan</summary><p class="pfh">Changing these computes the plan again, which takes a few seconds.</p>${heavy.map(one).join('')}</details>` : '')
       : '<p class="phelp">No parameters.</p>';
+    $('#ct-plan')?.addEventListener('toggle', (e) => { planOpen = e.target.open; });
     $('#ct-about').textContent = ABOUT[v.type] ?? '';
-    // Planned trajectories are made offline, not added by hand.
-    $('#ct-lib').innerHTML = Object.keys(lib).filter((t) => t !== 'trajectory').map((t) => `<button class="ctlibitem" data-add="${t}" title="${esc(ABOUT[t] ?? '')}"><b>${esc(lib[t].label)}</b><span>${esc(lib[t].summary)}</span></button>`).join('');
+    // The library: designs computed from the plant first, then the hand types.
+    const types = Object.keys(lib);
+    const group = (title, list) => (list.length ? `<h4 class="ctlibhead">${title}</h4>` + list.map((t) => `<button class="ctlibitem" data-add="${t}" title="${esc(ABOUT[t] ?? '')}"><b>${esc(lib[t].label)}</b><span>${esc(lib[t].summary)}</span></button>`).join('') : '');
+    $('#ct-lib').innerHTML = group('From the plant', types.filter((t) => lib[t].designed)) + group('By hand', types.filter((t) => !lib[t].designed));
     bind(c);
+    renderComputed();
+  }
+
+  // The variant glyphs and the Computed box, from the last run's design
+  // statuses. Touches no input.
+  function renderComputed() {
+    const c = current();
+    if (!c || $('.ctl').hidden) return;
+    const b = c.block, lib = LIBS[b.type], st = statusOf(c);
+    host.querySelectorAll('#ct-vars [data-v]').forEach((row) => {
+      const i = Number(row.dataset.v), v = b.variants[i], def = lib[v.type];
+      const g = row.querySelector('.vtype');
+      let text = def.label, cls = '';
+      if (def.designed) {
+        const s = i === b.variant ? st : null;
+        if (s?.status === 'error') { text = '! no design'; cls = 'bad'; }
+        else if (s?.status === 'warn') { text = '! computed'; cls = 'warn'; }
+        else if (s?.status === 'pending' || s?.status === 'stale') { text = `⟳ ${Math.round(100 * (s.progress?.fraction ?? 0))} %`; }
+        else text = 'computed';
+      }
+      g.textContent = text;
+      g.className = `vtype ${cls}`;
+      row.title = def.designed ? `${def.label}: computed from the plant${i === b.variant && st?.error ? `. ${st.error.message}` : ''}` : def.label;
+    });
+    const box = $('#ct-computed');
+    const v = b.variants[b.variant], def = lib[v.type];
+    box.hidden = !def.designed;
+    if (!def.designed) { box.innerHTML = ''; return; }
+    const off = b.type === 'observer' ? 'zero estimates' : 'u = 0';
+    if (!st) {
+      box.innerHTML = `<div class="chead"><h4 class="glabel">Computed</h4></div><p class="cmsg">Not computed: ${app.systemError ? 'the plant does not run (see the Plant tab)' : 'the plant has not run yet'}.</p>`;
+      return;
+    }
+    const canCopy = st.values && def.manual;
+    const time = st.cached ? 'cached' : `${st.ms < 10 ? st.ms.toFixed(1) : Math.round(st.ms)} ms`;
+    let body = `<p class="cline"><b>${esc(def.label)}</b>${st.at ? ` at ${esc(st.at)}` : ''}</p>`;
+    if (st.seen) body += `<p class="cline"><span class="ck">plant seen</span> ${esc(st.seen)}</p>`;
+    if (st.error) body += `<p class="cerr">${esc(st.error.message)}</p>${st.error.hint ? `<p class="cmsg">${esc(st.error.hint)}</p>` : ''}<p class="cmsg">Until then the block puts out ${off}.</p>`;
+    body += st.rows.map(rowHtml).join('');
+    if (st.warnings.length) body += `<ul class="cwarn">${st.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>`;
+    box.innerHTML = `<div class="chead"><h4 class="glabel">Computed</h4><span class="cst cst-${esc(st.status)}">${esc(STATUS_WORD[st.status] ?? st.status)}</span><span class="cmeta" title="the design's key: the same inputs give the same numbers">${time} · #${esc(st.key.slice(0, 6))}</span></div>${body}`
+      + (canCopy ? `<div class="pbtns"><button class="key small" id="ct-copy" title="Add a hand variant with these numbers after this one, and run it">Copy as numbers</button></div>` : '');
+    $('#ct-copy')?.addEventListener('click', () => copyAsNumbers(c, st));
+  }
+
+  // Copy as numbers: the design's numbers as a hand variant after this one,
+  // running at once. It runs exactly as the designed one did, so the faded
+  // run and the new one coincide; from now on its numbers stay put.
+  function copyAsNumbers(c, st) {
+    const lib = LIBS[c.block.type];
+    const ok = edit((blk) => {
+      const v = blk.variants[blk.variant];
+      const twin = lib[v.type].manual(v.params, st.values);
+      blk.variants.splice(blk.variant + 1, 0, normalizeVariant({ name: `${v.name.slice(0, 30)} (numbers)`, ...twin }, 'variant', lib));
+      blk.variant += 1;
+    });
+    if (ok) app.toast('Copied: these numbers no longer follow the plant.');
   }
 
   function commitField(inp) {
     const k = inp.dataset.k, raw = inp.value.trim();
+    // Text as rendered is left alone: a field shows rounded numbers, and
+    // committing them would change what the variant holds.
+    if (inp.value === inp.defaultValue) return;
     let value;
     if (inp.dataset.kind === 'vector') {
       value = raw.split(/[\s,;]+/).filter(Boolean).map(parseSI);
@@ -155,21 +244,31 @@ export function createControllerTab(host, app) {
     });
   }
 
+  // The wheel nudges a number by 5 % (Shift: 1 %); in a vector, the entry
+  // under the caret, once the field has the focus (so scrolling the column
+  // over a list of weights changes none of them). The display, and any
+  // design, follow at once, and the field keeps the focus and the caret.
+  function nudge(inp, e) {
+    const vector = inp.dataset.kind === 'vector';
+    if (vector ? document.activeElement !== inp : inp.dataset.kind !== 'number') return;
+    const parts = vector ? inp.value.split(',').map((x) => x.trim()) : [inp.value.trim()];
+    const i = vector ? (inp.value.slice(0, inp.selectionStart ?? 0).match(/,/g) ?? []).length : 0;
+    const v = parseSI(parts[i] ?? '');
+    if (!Number.isFinite(v) || v === 0) return;
+    e.preventDefault();
+    parts[i] = num(v * (e.shiftKey ? 1.01 : 1.05) ** (e.deltaY < 0 ? 1 : -1), 4);
+    inp.value = parts.join(', ');
+    const caret = parts.slice(0, i + 1).join(', ').length;
+    commitField(inp);
+    const next = host.querySelector(`input[data-k="${inp.dataset.k}"]`);
+    if (next) { next.focus(); if (vector) next.setSelectionRange(caret, caret); }
+  }
+
   function bind(c) {
     host.querySelectorAll('input[data-k]').forEach((inp) => {
       inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } });
       inp.addEventListener('blur', () => { if (inp.dataset.cancel) { delete inp.dataset.cancel; render(); return; } commitField(inp); });
-      // The wheel nudges a number by 5 % (Shift: 1 %), and the display follows at once.
-      inp.addEventListener('wheel', (e) => {
-        if (inp.dataset.kind !== 'number') return;
-        const v = parseSI(inp.value);
-        if (!Number.isFinite(v) || v === 0) return;
-        e.preventDefault();
-        const f = (e.shiftKey ? 1.01 : 1.05) ** (e.deltaY < 0 ? 1 : -1);
-        inp.value = num(v * f, 4);
-        commitField(inp);
-        host.querySelector(`input[data-k="${inp.dataset.k}"]`)?.focus();
-      }, { passive: false });
+      inp.addEventListener('wheel', (e) => nudge(inp, e), { passive: false });
     });
     host.querySelectorAll('[data-v]').forEach((row) => {
       row.addEventListener('click', () => { const i = Number(row.dataset.v); if (i !== c.block.variant) edit((blk) => { blk.variant = i; }); });
@@ -191,12 +290,14 @@ export function createControllerTab(host, app) {
       if (blk.type === 'observer') { blk.variants.push(normalizeVariant({ type }, 'variant', OBSERVERS)); blk.variant = blk.variants.length - 1; return; }
       const v = normalizeVariant({ type });
       // A new variant drives the same actuator: it keeps the limits, and a
-      // gain vector gets one entry per measurement.
+      // gain or weight vector gets one entry per measurement.
+      const m = Math.max(1, blk.params.inputs - 1);
       if ('umin' in v.params) { v.params.umin = prev.umin ?? -Infinity; v.params.umax = prev.umax ?? Infinity; }
-      if (Array.isArray(v.params.K)) { v.params.K = new Array(Math.max(1, blk.params.inputs - 1)).fill(0); v.params.kr = 0; }
+      if (Array.isArray(v.params.K)) { v.params.K = new Array(m).fill(0); v.params.kr = 0; }
+      if (Array.isArray(v.params.Q)) v.params.Q = new Array(m).fill(1);
       blk.variants.push(v);
       blk.variant = blk.variants.length - 1;
-      app.toast(`Added ${v.name}: set its parameters, then compare with the others.`);
+      app.toast(CONTROLLERS[type].designed ? `Added ${v.name}: its numbers are computed from the plant; set its inputs, then compare.` : `Added ${v.name}: set its parameters, then compare with the others.`);
     })));
   }
 
@@ -214,9 +315,25 @@ export function createControllerTab(host, app) {
 
   return {
     render() { if (!host.hidden) render(); },
+    // Only the Computed box and the variant glyphs, for designs that settle on their own.
+    renderComputed() { if (!host.hidden) renderComputed(); },
     shown: render,
     open(path) { target = path; },
   };
 }
+
+// One row of a design's status: labelled values (K for x, θ, …), a number
+// with a note, a sentence, or a table.
+function rowHtml(r) {
+  if (r.table) {
+    // Three digits in a table, so it fits beside the parameters; Copy as numbers keeps them all.
+    return `<div class="ctabwrap"><table class="ctab"><thead><tr>${r.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${r.table.map((row) => `<tr>${row.map((x) => `<td>${val(x, 3)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  }
+  const value = Array.isArray(r.value)
+    ? (r.labels ? r.value.map((x, i) => `<span class="cpair"><i>${esc(r.labels[i] ?? '')}</i>${val(x)}</span>`).join('') : r.value.map(val).join(', '))
+    : val(r.value);
+  return `<div class="crow"><span class="ck">${esc(r.label)}</span><span class="cv">${value}${r.note ? ` <span class="cnote">${esc(r.note)}</span>` : ''}</span></div>`;
+}
+const val = (x, digits = 4) => (typeof x === 'number' ? num(x, digits).replace(/^-/, '−') : esc(x ?? ''));
 
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
