@@ -494,6 +494,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         self.eval(t, X, o, u, null);
       }
     },
+    // The next instant a sampled block is due (Infinity without one).
+    nextSample() { let t = Infinity; for (const nd of ctrls) if (nd.next < t) t = nd.next; return t; },
     // Initial state: zero, except for physics blocks with initial conditions.
     init(X, o) { for (const nd of nodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
     eval(t, X, o, u, dX) {

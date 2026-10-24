@@ -48,7 +48,7 @@ Reader: whoever picks the next piece of work.
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
 - ~~Should the input repeat with its period?~~ Settled (2026-10-24): it repeats; no play-once mode.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?
-- An accuracy step bound for every system: today's bound h ≤ 0.5/bound is a stability bound, and a switching law can lock into a different limit cycle at h = τ/2 (the relay at a 5 ms step: 24 against 43 mrad). The sliding-mode system avoids it by its own record step; tightening the bound everywhere changes other systems' runs slightly and needs its own check.
+- An accuracy step bound for every system: today's bound h ≤ 0.5/bound is a stability bound, and a switching law can lock into a different limit cycle at h = τ/2 (the relay at a 5 ms step: 24 against 42 mrad). The sliding-mode system avoids it by its own record step; tightening the bound everywhere changes other systems' runs slightly and needs its own check.
 - ~~Spectrogram levels by default~~: answered (2026-10-24): the automatic floor stays the default, with a switch to dB above the local noise (decisions.md).
 
 ## Backlog, at the very end (the person, 2026-10-24)

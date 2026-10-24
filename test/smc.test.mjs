@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CONTROLLERS, normalizeVariant } from '../src/core/controllers.js';
 import { normalizeDiagram } from '../src/core/diagram.js';
-import { simulateSystem, substeps } from '../src/core/sim.js';
+import { simulateSystem, stepPlan } from '../src/core/sim.js';
 import { normalizeReference } from '../src/core/signals.js';
 import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem, systemTags } from '../src/core/systems.js';
 import { normalizeProject, evaluateSystem, autoTimebase } from '../src/core/project.js';
@@ -73,7 +73,7 @@ test('slidingMode is linear only with a boundary layer: a PD with Kp = K·λ/φ,
 test('both sliding-mode laws need ẏ on input 3: a block with 2 inputs is refused', () => {
   for (const type of ['slidingMode', 'superTwisting']) {
     const d = (inputs) => ({ blocks: [{ id: 'c', type: 'controller', params: { inputs, Ts: 0.001 }, variants: [{ type }] }], wires: [] });
-    assert.throws(() => normalizeDiagram(d(2)), /needs ẏ on input 3; to make it from y, place a Finite difference observer/);
+    assert.throws(() => normalizeDiagram(d(2)), /needs ẏ on input 3: set the Controller block's Inputs to 3/);
     assert.doesNotThrow(() => normalizeDiagram(d(3)));
   }
 });
@@ -350,7 +350,7 @@ test('physics: a ten times faster armature makes the relay chatter faster and bu
   const fast = runOf(RELAY, { armDen: [0.001, 1] });
   const f = fundamental(fast).f;                       // 250 Hz (f_s/4)
   assert.ok(f >= 200, `chatter at ${f} Hz`);
-  const loss = holdLoss(fast);                         // 35.7 W at the 0.25 ms record (34.8 exact)
+  const loss = holdLoss(fast);                         // 35.7 W at the 0.25 ms record (34.6 exact; 0.1 ms samples read 34.75)
   assert.ok(loss > 30 && loss < 40, `${loss} W`);
   // At 16 samples per period the Measure line does not flag it.
   assert.equal(holdMeasure(fast, 'i', 0.5).under, false);
@@ -360,31 +360,63 @@ test('physics: a ten times faster armature makes the relay chatter faster and bu
 
 test('a Controller at Ts samples at exactly k·Ts, whatever the record step', () => {
   // u = r(t) at each sample, r = t: the held u is the instant of the last sample.
-  const d = normalizeDiagram({
+  const d = (Ts) => normalizeDiagram({
     blocks: [
       { id: 'r', type: 'source', params: { signal: 'r' } },
-      { id: 'c', type: 'controller', params: { inputs: 1, Ts: 0.001 }, variants: [{ type: 'stateFeedback', params: { K: [0], kr: 1 } }] },
+      { id: 'c', type: 'controller', params: { inputs: 1, Ts }, variants: [{ type: 'stateFeedback', params: { K: [0], kr: 1 } }] },
       { id: 'u', type: 'sink', params: { name: 'u' } },
     ],
     wires: [{ from: 'r', to: 'c' }, { from: 'c', to: 'u' }],
   });
   const ramp = { r: normalizeReference({ period: 100, components: [{ type: 'ramp', params: { amplitude: 10, time: 0, rise: 10 } }] }) };
-  for (const T of [0.0025, 0.00025, 0.004, 0.0015, 0.01]) {
-    const { t, signals, info } = simulateSystem(d, ramp, { duration: 1, sampleTime: T });
+  for (const Ts of [0.001, 0.0011, 0.00102]) for (const T of [0.0025, 0.00025, 0.004, 0.0015, 0.01]) {
+    const { t, signals, info } = simulateSystem(d(Ts), ramp, { duration: 1, sampleTime: T });
     for (let k = 0; k < t.length; k++) {
-      const last = Math.floor(t[k] / 0.001 + 1e-9) * 0.001;
-      assert.ok(Math.abs(signals.u[k] - last) < 1e-12, `record ${T}: at ${t[k]} the last sample was ${signals.u[k]}, not ${last} (h ${info.h})`);
+      const last = Math.floor(t[k] / Ts + 1e-9) * Ts;
+      assert.ok(Math.abs(signals.u[k] - last) < 1e-12, `Ts ${Ts}, record ${T}: at ${t[k]} the last sample was ${signals.u[k]}, not ${last} (h ${info.h})`);
     }
   }
-  // The steps: a multiple of T/gcd(T, Ts), at least the stability bound needs.
-  assert.equal(substeps(0.0025, 0, [0.001]), 5);
-  assert.equal(substeps(0.0025, 0, [0.01]), 1);
-  assert.equal(substeps(0.0025, 1000, [0.001]), 5, '0.5 ms already meets the bound of 0.5 ms');
-  assert.equal(substeps(0.0025, 3000, [0.001]), 15, 'the bound needs 15; 15 is a multiple of 5');
-  assert.equal(substeps(0.00025, 100, [0.001]), 1);
+  // The steps: a common grid (a multiple of T/gcd(T, Ts), at least what the
+  // stability bound needs) when it costs no more than cutting the steps at
+  // the sample instants; otherwise the bound's steps, cut there.
+  assert.deepEqual(stepPlan(0.0025, 1000, [0.001]), { m: 5, split: false }, '0.5 ms already meets the bound of 0.5 ms');
+  assert.deepEqual(stepPlan(0.0025, 3000, [0.001]), { m: 15, split: false }, 'the bound needs 15; 15 is a multiple of 5');
+  assert.deepEqual(stepPlan(0.0025, 0, [0.01]), { m: 1, split: false });
+  assert.deepEqual(stepPlan(0.00025, 100, [0.001]), { m: 1, split: false });
+  assert.deepEqual(stepPlan(0.0025, 0, [0.001]), { m: 1, split: true }, 'a grid of 5 against 1 step and 3 cuts');
+  assert.deepEqual(stepPlan(0.0025, 0, [0.0011]), { m: 1, split: true }, 'a grid of 25 (g = 0.1 ms)');
+  assert.deepEqual(stepPlan(0.0025, 0, [0.00102]), { m: 1, split: true }, 'a grid of 125');
   const warnings = [];
-  assert.ok(substeps(0.0025, 0, [0.001234567], 2000, warnings) >= 3);
-  assert.match(warnings[0], /share no common step/);
+  assert.deepEqual(stepPlan(0.0025, 0, [0.001234567], 2000, warnings), { m: 1, split: true });
+  assert.deepEqual(warnings, []);
+  // Cutting costs about one step per sample: a 1.02 ms controller at the
+  // 2.5 ms record takes at most 4 steps per record (a grid would take 125).
+  const run = simulateSystem(d(0.00102), ramp, { duration: 1, sampleTime: 0.0025 });
+  assert.ok(run.info.steps <= 4 * 400, `${run.info.steps} steps`);
+});
+
+test('a Source edge at a sample instant reaches the Controller at that sample, not one later', () => {
+  // r steps at 0.25, 1.5, 2.75 and 4.0 s; d adds 10 over 3.2–3.7 s. u = r + d
+  // as last sampled; read at the first record at or after each edge.
+  const d = (Ts) => normalizeDiagram({
+    blocks: [
+      { id: 'r', type: 'source', params: { signal: 'r' } },
+      { id: 'c', type: 'controller', params: { inputs: 1, Ts }, variants: [{ type: 'stateFeedback', params: { K: [0], kr: 1 } }] },
+      { id: 'u', type: 'sink', params: { name: 'u' } },
+    ],
+    wires: [{ from: 'r', to: 'c' }, { from: 'c', to: 'u' }],
+  });
+  const sq = { r: normalizeReference({ period: 5, components: [
+    { type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } },
+    { type: 'square', params: { amplitude: 10, time: 3.2, width: 0.5, period: 5, count: 1 } }] }) };
+  const want = (t) => (t >= 0.25 && (t - 0.25) % 2.5 < 1.25 - 1e-12 ? 1 : 0) + (t >= 3.2 && t < 3.7 - 1e-12 ? 10 : 0);
+  for (const Ts of [0.001, 0.002, 0.005, 0.01]) for (const T of [0.00025, 0.0005, 0.001, 0.0015, 0.0025, 0.004, 0.01]) {
+    const { t, signals } = simulateSystem(d(Ts), sq, { duration: 5, sampleTime: T });
+    for (const edge of [0.25, 1.5, 2.75, 3.2, 3.7, 4.0]) {
+      const k = Math.ceil(edge / T - 1e-9), last = Math.floor(t[k] / Ts + 1e-9) * Ts;
+      assert.equal(signals.u[k], want(last + 1e-12), `Ts ${Ts}, record ${T}: the edge at ${edge} s`);
+    }
+  }
 });
 
 test('the encoder example samples as before: same steps, its speed follows as well', () => {

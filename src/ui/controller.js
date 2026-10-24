@@ -140,7 +140,8 @@ export function createControllerTab(host, app) {
 
     const v = b.variants[b.variant];
     const def = lib[v.type];
-    $('#ct-ptitle').textContent = `${v.name} · ${def.summary}`;
+    // The formula keeps its case (Λ and Φ are other letters than λ and φ).
+    $('#ct-ptitle').innerHTML = `${esc(v.name)} ·<span class="eq">${esc(def.summary)}</span>`;
     $('#ct-params').innerHTML = def.params.length
       ? def.params.map((p) => p.kind === 'choice' ? choice(`p:${p.key}`, p, v.params[p.key]) : p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
       : '<p class="phelp">No parameters.</p>';
@@ -221,6 +222,10 @@ export function createControllerTab(host, app) {
     host.querySelectorAll('[data-add]').forEach((btn) => btn.addEventListener('click', () => edit((blk) => {
       const type = btn.dataset.add, prev = blk.variants[blk.variant].params;
       if (blk.type === 'observer') { blk.variants.push(normalizeVariant({ type }, 'variant', OBSERVERS)); blk.variant = blk.variants.length - 1; return; }
+      // A type this block cannot run (sliding mode on a block without ẏ) is
+      // refused here, saying what to change, not by the diagram's check.
+      const why = CONTROLLERS[type].check?.(normalizeVariant({ type }).params, { inputs: blk.params.inputs });
+      if (why) { app.toast(`${CONTROLLERS[type].label} cannot run on this block: ${why}.`); return false; }
       const v = normalizeVariant({ type });
       // A new variant drives the same actuator: it keeps the limits, and a
       // gain vector gets one entry per measurement.

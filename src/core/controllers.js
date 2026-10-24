@@ -342,7 +342,7 @@ function surface(p, Ts) {
 }
 // A sliding-mode law reads ẏ on input 3; it never differentiates y itself.
 function needsRate(p, ctx) {
-  return ctx?.inputs !== undefined && ctx.inputs < 3 ? 'sliding mode needs ẏ on input 3; to make it from y, place a Finite difference observer in the diagram' : '';
+  return ctx?.inputs !== undefined && ctx.inputs < 3 ? 'sliding mode needs ẏ on input 3: set the Controller block\'s Inputs to 3 in the Plant tab and wire the measured rate there (a Finite difference observer makes it from y)' : '';
 }
 
 export const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
