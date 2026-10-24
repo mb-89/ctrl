@@ -8,7 +8,7 @@ import { createPlantEditor } from './plant.js';
 import { drawnValues, refitSwitched } from './xyview.js';
 import { createControllerTab } from './controller.js';
 import { createAutotuneTab } from './autotune.js';
-import { loopOverlays, autotune, placeVariant, tuneReport } from '../core/autotune.js';
+import { loopOverlays, autotune, placeVariant, tuneReport, withVariant } from '../core/autotune.js';
 import { createAnalysisTab } from './analysis.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
@@ -19,6 +19,8 @@ import { createGenerator } from './generator.js';
 import { createSplitters } from './layout.js';
 import { createLive } from './live.js';
 import { createRecord } from './record.js';
+import { createSpeed } from './speed.js';
+import { speedToJson } from '../core/speed.js';
 
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
@@ -67,20 +69,32 @@ function startApp() {
   // changes (a new version of the page), the old work is not restored over it.
   const startText = embeddedText || JSON.stringify(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY[0], SYSTEM_PARTS.filter((k) => SYSTEM_LIBRARY[0][k])));
   const base = `${startText.length}:${hash(startText)}`;
+  const saveNow = () => { saveTimer = null; try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch { /* storage unavailable */ } };
   function autosave() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch { /* storage unavailable */ } }, 300);
+    saveTimer = setTimeout(saveNow, 300);
   }
+  // A reload or a closed tab right after a change still keeps it.
+  const flushSave = () => { if (saveTimer) { clearTimeout(saveTimer); saveNow(); } };
+  window.addEventListener('pagehide', flushSave);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
 
   // The acquisition: every signal the display can show. Without a plant and a
   // controller there is only r(t).
   let acqKey = '', acq = null, loopNote = '';
   app.systemError = '';
+  const acqKeyOf = (p) => JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal]);
   function acquire() {
     const p = app.project;
-    const key = JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal]);
+    const key = acqKeyOf(p);
     if (key === acqKey) return acq;
     acqKey = key;
+    const t0 = performance.now();
+    acq = simulateScreen(p);
+    timedSim(key, simOf(p).duration, performance.now() - t0, () => simulateScreen(p));
+    return acq;
+  }
+  function simulateScreen(p) {
     loopNote = '';
     app.systemError = '';
     if (loopReady(p)) {
@@ -92,22 +106,65 @@ function startApp() {
         Object.assign(signals, { y: result.y, u: result.u, e: result.e, ym: result.ym, d: result.d });
         loopNote = `loop: ${cand.name}`;
       } catch (err) { app.systemError = err.message; }
-      acq = { t, signals };
-      return acq;
+      return { t, signals };
     }
     // No controller yet: the diagram is the whole system. If it cannot run,
     // the signals still show and the Plant tab says why.
     try {
       const sys = evaluateSystem(p);
-      acq = { t: sys.t, signals: sys.signals };
+      return { t: sys.t, signals: sys.signals };
     } catch (err) {
       app.systemError = err.message;
       const signals = {};
       let t = null;
       for (const name of Object.keys(p.system.signals)) { const tr = referenceTrace(p, name); signals[name] = tr.r; t = tr.t; }
-      acq = { t, signals };
+      return { t, signals };
     }
-    return acq;
+  }
+  // How fast this page simulates the screen: its simulated seconds over the
+  // wall time the simulation took, the fastest of up to three timings (a
+  // first run is slowed by the browser compiling; the others are taken only
+  // while the speed is held to it). A screen simulated in under 2 ms is run a
+  // few more times, so the timing is longer than the clock's resolution. No
+  // speed runs faster (core/speed.js paceOf); ∞ runs at it.
+  let simTiming = { key: '', duration: 0, ms: [], again: null, at: 0, timer: 0 };
+  function timedSim(key, duration, ms, again) {
+    let n = 1;
+    if (ms < 2) { const t0 = performance.now() - ms; while (performance.now() - t0 < 2 && n < 64) { again(); n++; } ms = (performance.now() - t0) / n; }
+    clearTimeout(simTiming.timer);
+    simTiming = { key, duration, ms: [ms], again, at: performance.now(), timer: 0 };
+  }
+  app.simRate = ({ retime = false } = {}) => {
+    const ms = Math.min(...simTiming.ms);
+    const rate = ms > 0 && simTiming.duration > 0 ? simTiming.duration / (ms / 1000) : Infinity;
+    // Sweeping held to it: time it again (once a second, twice at most), as
+    // the first timing may be the slow one.
+    if (retime && simTiming.ms.length < 3 && !simTiming.timer && simTiming.again && performance.now() - simTiming.at > 1000 && (app.speed?.() ?? 1) >= rate) {
+      const t = simTiming;
+      t.timer = setTimeout(() => {
+        t.timer = 0;
+        if (t !== simTiming || acqKeyOf(app.project) !== t.key) return;
+        const t0 = performance.now();
+        t.again();
+        t.ms.push(performance.now() - t0);
+        t.at = performance.now();
+      }, 0);
+    }
+    return rate;
+  };
+  // Auto-tune's run with the gains it just put in stands for the screen's own
+  // when the screen would simulate exactly that: the same diagram but for the
+  // tuned block's variants, the same inputs, one period of the input on the
+  // same time grid. Saves simulating it again for every improvement.
+  function adoptRun({ run, ctx, variant }) {
+    const p = app.project;
+    if (!run || !ctx || loopReady(p) || p.system.plant?.type !== 'diagram') return;
+    if (JSON.stringify(simOf(p)) !== JSON.stringify(ctx.sim) || JSON.stringify(p.system.signals) !== JSON.stringify(ctx.signals)) return;
+    if (JSON.stringify(withVariant(p.system.plant.diagram, ctx.path, variant)) !== JSON.stringify(withVariant(ctx.diagram, ctx.path, variant))) return;
+    acqKey = acqKeyOf(p);
+    acq = { t: run.t, signals: run.signals };
+    loopNote = '';
+    app.systemError = '';
   }
   // What a scope channel can show: only names the diagram gives (its Sources
   // and Sinks, r always), each with its unit.
@@ -251,7 +308,11 @@ function startApp() {
   }
 
   // Run control. In Live mode Run and Stop go through the plant (ui/live.js).
-  app.setMode = (m) => { display.setMode(m); controls.render(display.mode); live?.mode(m); };
+  app.setMode = (m) => {
+    // The scope's Stop while Auto-tune sweeps its runs stops the tuning.
+    if (m === 'stop') tuneTab?.scopeStopped();
+    display.setMode(m); controls.render(display.mode); live?.mode(m);
+  };
   app.toggleRun = () => app.setMode(display.mode === 'stop' ? 'run' : 'stop');
   app.single = () => app.setMode('single');
   // Auto Scale: one period of the input across the screen, then every
@@ -286,15 +347,28 @@ function startApp() {
 
   // Rendering
   let live = null;  // Live mode (ui/live.js), made below
+  let tuneTab = null;  // the Auto-tune tab (ui/autotune.js), made below
+  // Speed, in the header (ui/speed.js): the factor every clock of the page
+  // runs at, held at 1× while a live plant is connected (it owns the clock),
+  // and the speed achieved.
+  app.speedLock = () => live?.lockReason() ?? null;
+  app.speedChanged = () => autosave();
+  const speed = createSpeed(app);
+  app.speed = () => speed.effective();
+  app.timeRan = (t, seconds) => speed.ran(t, seconds);
+  app.speedRender = () => speed.render();
   const display = createDisplay($('display'), {
     onSelectChannel: (i) => app.selectChannel(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
-    onStopped: () => { controls.render(display.mode); live?.mode('stop'); },  // a Single ended
+    onStopped: () => { controls.render(display.mode); live?.mode('stop'); app.sweepEnded?.(); },  // a Single ended
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
     onTime: () => app.onScopeTime?.(),
     liveTag: () => live?.tag(),
+    speed: () => speed.effective(),
+    simRate: () => app.simRate({ retime: true }),
+    onSweep: (t, seconds) => speed.ran(t, seconds),
     onLevels: () => app.renderLevels?.(),  // the typed spectrogram levels follow the strip
   });
   app.display = display;
@@ -318,9 +392,11 @@ function startApp() {
   // Auto-tune changes the project many times in one run but takes one undo
   // step for all of it (beginEdit at its start, endEdit at its end); each
   // change goes through tuneEdit. It shows whole runs while it works.
-  app.tuneEdit = (fn) => { fn(app.project); changed(); };
+  app.tuneEdit = (fn, from) => { fn(app.project); if (from) adoptRun(from); changed(); };
+  app.showLoop = () => display.setData(acquire());  // the loop's own run back on the display
+  app.playRun = (d, past) => { display.play(d, past); controls.render(display.mode); };  // one run swept once
   app.setRunMode = (m) => { display.setMode(m); controls.render(display.mode); };
-  const tuneTab = createAutotuneTab($('tab-tune'), app, display);
+  tuneTab = createAutotuneTab($('tab-tune'), app, display);
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -370,11 +446,12 @@ function startApp() {
   // `ui` when it is saved, and is applied when a project or system opens.
   let layout = null;
   const withUi = () => {
-    const ui = { run: display.mode, ...(UI_TABS.includes(app.tab) ? { tab: app.tab } : {}), ...(plantEditor.viewName() ? { view: plantEditor.viewName() } : {}), ...(layout ? { setup: layout.setupShare() } : {}) };
+    const ui = { run: display.mode, ...(UI_TABS.includes(app.tab) ? { tab: app.tab } : {}), ...(plantEditor.viewName() ? { view: plantEditor.viewName() } : {}), ...(layout ? { setup: layout.setupShare() } : {}), speed: speedToJson(speed.set) };
     return { ...app.project, ui };
   };
   function applyUi(ui = {}) {
     if (ui.tab) app.tab = ui.tab;
+    if (ui.speed !== undefined) speed.setSpeed(ui.speed);
     plantEditor.view(ui.view ?? '');
     if (ui.setup) layout?.setSetup(ui.setup);
     renderTabs();
@@ -491,7 +568,12 @@ function startApp() {
   }
   renderLibrary();
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
-  $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });
+  $('syslib').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (pop.hidden) document.dispatchEvent(new MouseEvent('click'));  // one menu open at a time: the others close
+    pop.hidden = !pop.hidden;
+    $('syslib').setAttribute('aria-expanded', String(!pop.hidden));
+  });
   pop.addEventListener('click', (e) => {
     e.stopPropagation();
     const tag = e.target.closest('[data-tag]');
@@ -552,6 +634,15 @@ function startApp() {
     run: () => app.setMode('run'),
     stop: () => app.setMode('stop'),
     single: () => app.setMode('single'),
+    // The speed of time: x a factor, or -1 (or 'inf') for as fast as possible.
+    // Returns { speed, effective, achieved, simulation, locked } (-1 for as
+    // fast as possible; simulation: how fast the page simulates the screen,
+    // which no speed exceeds, or null if not timed).
+    speed: (x) => {
+      if (x !== undefined && !speed.setSpeed(x)) throw new Error('speed: a factor above 0, or -1 for as fast as possible');
+      const sim = app.simRate();
+      return { speed: speedToJson(speed.set), effective: speedToJson(speed.effective()), achieved: speed.achieved(), simulation: Number.isFinite(sim) ? sim : null, locked: speed.locked() };
+    },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
     live: live.api,  // connect(url), disconnect(), estop(), reset(), state(): design/output/hil.md
     record: record.api,  // screen(format), live(format), reference(text, name), clearReferences(), state()

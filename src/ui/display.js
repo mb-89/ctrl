@@ -1,6 +1,8 @@
 // The scope display: a 10 × 8 division graticule with time labels below and
 // the active channel's values to the left, four channels, a sweep that crosses
-// the screen in real time (the screen is the record), the generator's dashed
+// the screen at the speed set in the header (1×: real time; the screen is the
+// record; never faster than the page simulates it; core/speed.js paceOf and
+// sweepClock), the generator's dashed
 // preview, a hover cursor, and direct manipulation:
 //   wheel on the plot     zoom time and values around the cursor
 //   wheel on an axis      zoom that axis only
@@ -18,6 +20,7 @@ import { step125 } from '../core/scale.js';
 import { channelSignal, drawFrequency, freqRange, nyquist } from './freqview.js';
 import { withLevels, levelsOf, withAboveNoise } from '../core/project.js';
 import { drawXY, vOfX, valueLabel, valueTargets, xyStatus, xyFrame, xyNearest } from './xyview.js';
+import { sweepClock, paceOf, MAX_FRAME, AS_FAST } from '../core/speed.js';
 
 export const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
@@ -64,6 +67,11 @@ export function createDisplay(root, handlers) {
   // Where the cursor last pointed in time, kept after it leaves the screen
   // (until a run starts): the instant the Analysis tab's "Scope time" uses.
   let cursorT = null;
+  // Auto-tune's run sweeping once (play): its own clock from 0 to its length
+  // T, at the speed; the scan line follows it across the screen. framing: a
+  // frame is under way (a run that starts in it goes on from where the one
+  // before ended).
+  let run = null, framing = false;
   // Earlier runs, newest first; each fades a step per run and is gone after
   // five (the person, 2026-10-24), so an edit can be compared with before.
   const RUNS = 5;
@@ -396,7 +404,7 @@ export function createDisplay(root, handlers) {
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
       ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
       <span class="grow"></span>
-      ${mode !== 'stop' ? `<span class="dim">t ${siUnit(tScan, 's', 3)}</span>` : ''}`;
+      ${mode !== 'stop' ? `<span class="dim">t ${siUnit(run ? run.t : tScan, 's', 3)}</span>` : ''}`;
   }
 
   function renderBadges() {
@@ -411,10 +419,15 @@ export function createDisplay(root, handlers) {
     badges.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => handlers.onSelectChannel(Number(b.dataset.ch))));
   }
 
-  // Sweep
+  // Sweep. Simulated time runs at the header's speed (handlers.speed(): a
+  // factor, or Infinity), never faster than the page simulates the screen
+  // (handlers.simRate(), measured; ∞ runs at it); each frame tells
+  // handlers.onSweep how much simulated time it swept, for the achieved speed.
+  // A live feed brings its own scan line and its own clock.
   function frame(now) {
     raf = 0;
-    const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
+    framing = true;
+    const dt = last ? (now - last) / 1000 : 0;
     last = now;
     if (mode !== 'stop' && data && scope && feed) {
       // Live: data and scan line come from the plant; a finished sweep becomes
@@ -424,17 +437,41 @@ export function createDisplay(root, handlers) {
       if (s.done && mode === 'single') { data = s.done; tScan = win()[1]; mode = 'stop'; handlers.onStopped?.(); }
       else { if (s.done) past = [s.done, ...past].slice(0, RUNS - 1); data = s.data; tScan = s.scan; }
       if (Object.keys(data.signals).join() !== names) renderBadges();
+    } else if (mode !== 'stop' && data && scope && run) {
+      // Auto-tune's run: it lasts its own length at the speed (the tuner
+      // simulated it already), whatever the screen's width. When it ends, the
+      // tuner may start the next one at once (handlers.onStopped); the time
+      // left of this frame counts for that one.
+      const sp = handlers.speed?.() ?? 1;
+      const c = sweepClock(run.t, 0, run.T, sp, dt, true);
+      run.t = c.scan;
+      const [w0, w1] = win();
+      tScan = Math.min(Math.max(run.t, w0), w1);
+      // At ∞ the tuner counted the run as it computed it; shown at once, it adds nothing.
+      handlers.onSweep?.(now / 1000, sp === AS_FAST ? 0 : c.advanced);
+      if (c.ended) {
+        const rest = sp === AS_FAST ? 0 : Math.max(0, Math.min(MAX_FRAME, dt) - c.advanced / sp);
+        run = null;
+        mode = 'stop';
+        last = now - 1000 * rest;
+        handlers.onStopped?.();
+      }
     } else if (mode !== 'stop' && data && scope) {
       const [w0, w1] = win();
-      if (tScan < w0 || tScan > w1) tScan = w0;
-      tScan += dt;
-      if (tScan >= w1) {
-        if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); }
-        else { tScan = w0 + ((tScan - w0) % (w1 - w0)); keepRun(); }
+      const c = sweepClock(tScan, w0, w1, paceOf(handlers.speed?.() ?? 1, handlers.simRate?.()), dt, mode === 'single');
+      tScan = c.scan;
+      handlers.onSweep?.(now / 1000, c.advanced);
+      if (c.ended) {
+        if (mode === 'single') { mode = 'stop'; handlers.onStopped?.(); }
+        // At ∞ the same run comes round many times a second: only a changed
+        // run becomes an earlier one, so after an edit the run before it stays
+        // to compare (at a finite speed every sweep fades them a step).
+        else if ((handlers.speed?.() ?? 1) !== AS_FAST || past[0] !== data) keepRun();
       }
     }
+    framing = false;
     draw();
-    if (mode !== 'stop') { raf = requestAnimationFrame(frame); handlers.onTime?.(); }
+    if (mode !== 'stop') { if (!raf) raf = requestAnimationFrame(frame); handlers.onTime?.(); }
     else last = 0;
   }
   const kick = () => { if (!raf) raf = requestAnimationFrame(frame); };
@@ -730,6 +767,7 @@ export function createDisplay(root, handlers) {
     if (!scope) return { t: 0, from: 'edge' };
     const h = hoverTime();
     if (h !== null) return { t: h, from: 'cursor' };
+    if (run) return { t: run.t, from: 'sweep' };  // Auto-tune's run: its own time, also beyond the screen
     if (mode !== 'stop') return { t: tScan, from: 'sweep' };
     if (cursorT !== null) return { t: cursorT, from: 'cursor' };
     return { t: win()[1], from: 'edge' };
@@ -756,11 +794,31 @@ export function createDisplay(root, handlers) {
       if ((m === 'single' || restart) && scope) { if (m === 'single' && mode !== 'single') keepRun(); tScan = win()[0]; }
       if (m !== 'stop') cursorT = null;
       mode = m;
+      run = null;
       last = 0;
       kick();
       draw();
     },
     clearRuns() { past = []; draw(); },
+    // Auto-tune: the earlier runs behind the one on screen, newest first.
+    setPast(list) { past = list.filter(Boolean).slice(0, RUNS - 1); draw(); },
+    // Auto-tune: run d (from t = 0) sweeps once across the screen at the
+    // header's speed, the runs in list faded behind it, and lasts its own
+    // length: a 5 s run takes 5 s at 1×, on any screen. Called as the run
+    // before it ends (from handlers.onStopped), it goes on from that instant,
+    // so no time is lost between runs.
+    play(d, list) {
+      simData = d;
+      if (!feed) data = d;
+      past = list.filter(Boolean).slice(0, RUNS - 1);
+      if (line !== null && !visible(line)) line = null;
+      renderBadges();
+      mode = 'single';
+      run = { t: 0, T: d.t.length ? d.t[d.t.length - 1] : 0 };
+      tScan = scope ? win()[0] : 0;
+      if (!framing) last = performance.now();
+      kick();
+    },
     // Auto-tune: the run on screen (or the run given) becomes the newest faded one.
     keep(d = data) { if (d) past = [d, ...past].slice(0, RUNS - 1); draw(); },
     get data() { return data; },

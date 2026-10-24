@@ -393,6 +393,29 @@ test('Iterate yields after every run, and a goal changed mid-run changes nothing
   assert.equal(s.value.goal.cost, 'IAE');
 });
 
+test('every run a method yields says how much time it simulated; Iterate\'s carry the run, to sweep', async () => {
+  const { autotuneSteps } = await import('../src/core/autotune.js');
+  const p = system('Oven'), T = Math.max(...Object.values(p.system.signals).map((x) => x.period));
+  for (const method of ['iterate', 'relay', 'step']) {
+    const gen = autotuneSteps(p, null, { method, maxIter: 4 });
+    let s, runs = 0, seconds = 0;
+    for (;;) {
+      s = gen.next();
+      if (s.done) break;
+      const v = s.value;
+      if (v.seconds) { runs++; seconds += v.seconds; }
+      else assert.ok(!v.partial || method !== 'iterate', `${method}: a partial yield without seconds (${v.phase ?? ''})`);
+      if (method === 'iterate' && v.partial) {
+        assert.equal(v.seconds, T, 'an Iterate run covers one period of the input');
+        assert.ok(v.run?.t?.length > 1 && v.run.signals.T, 'and carries the run, with the signals the scope shows');
+      }
+    }
+    assert.ok(s.value.ok, `${method}: ${s.value.why}`);
+    if (method === 'iterate') assert.equal(runs, s.value.evals, 'Iterate: one yield with seconds per run of the loop');
+    assert.ok(seconds >= runs * T, `${method}: ${runs} runs, ${seconds} s simulated`);
+  }
+});
+
 test('the relay: reverse-acting plants, a bias at a limit, a reduced amplitude, r through a gain', () => {
   // y falls when u rises: the relay is reversed and Ku comes out negative.
   const rev = relayExperiment(loop({ type: 'lagChain', params: { K: -8, tau: 1, n: 3 } }, { variant: { name: 'PI', type: 'pid', params: { Kp: -0.1, Ki: -0.05 } } }), null, { d: 0.1 });
