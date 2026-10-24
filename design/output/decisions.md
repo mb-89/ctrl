@@ -2,6 +2,20 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.7.1: the design layer after two reviews
+
+Two reviews of the design layer (numerics; the page) found the filter that runs differing from the one designed, slopes taken across kinks without a word, trims and fits that failed on an empty tank and on the encoder's stiff realisation, a check that did not cover a delayed start, and a Plan button that did nothing. All are fixed, each with a test; designs.md has the details. The person's request at the time (a resonance in the encoder example) was already built (the 70 Hz shaft).
+
+Decisions:
+- **A kink at the operating point refuses LQR, the Kalman filter and the PI design** (`kink`), naming the saturation or the state: a slope across a kink is neither side's, and the design would be quietly wrong.
+- **A trajectory's limits are plan inputs.** The plan may use planShare of each limit (a −5 to 25 N actuator gives it −3.75 to 18.75 N), so changing a limit plans again; Q, R and start still only re-run the gains. The Controller tab says so.
+- **The swing-up's pole length and g are computed** from the plant (the linearisation at the top), no longer stored: 0.5 and 9.81 were a copy of the cart–pole's own, the one place a plant property was baked into the library. In a file they are refused like K.
+- **A trajectory is verified as it runs**, from t = 0 through its start; a start state that moves under u = 0 gets a warning when start > 0.
+- **The PI from the plant warns when Tcl is faster than the dead time plus half a sample** (status warn), or the sample time long against Tcl.
+- **While a plan is made the display and the plant's view draw at most 20 frames a second**, and the plan runs in slices of 24 to 40 ms: what runs meanwhile is u = 0 or the previous plan. Measured: Node 2.8 to 3.5 s, the page 5 to 7 s (headless, this machine), down from 7 to 22 s. The plan's solve is banded and its force held over 5 ms for short sample times, so 40 segments or Ts = 1 ms cost about what the defaults do.
+- **No Web Worker, again**: plans are well below the 10 s that v2.7 set as the point to revisit it, and one code path stays. Revisit if a plan the library ships passes 10 s in the page.
+- **A compile that names no design store uses the page's, as a guest** (reads designs and plans, starts no job, drops none): code on main's Auto-tune and Live paths then never plans on the main thread. Merging main is left for whoever lands this branch (the review's list is in the roadmap).
+
 ## 2026-10-24 · v2.7: designs are computed in the page ([input](../input/2026-10-24-09-analysis-autotune-triple-swingup.md))
 
 The person: "I really don't want you to store stuff that is specific to any plant into the HTML … It should be computable in principle … the optimizer, it should be part of the package that we deliver, not something that you bake in." The architecture is in [designs.md](designs.md) (condensed) and [designs-in-the-page.md](designs-in-the-page.md) (the full plan from a three-proposal, three-judge panel). It is built in steps; the status is in designs.md.
@@ -19,7 +33,7 @@ Interpretations:
 - "Computed" covers everything derived from the plant: gains, tables, trim values (u0, a pipe's start flow), models and plans. Hand gains, energy-pump gains and physics are inputs.
 - A design sees the plant with other Controllers holding their output, so cascades are designed with the inner loop open (the status says so). It sees through Kalman observers (estimate k counts as the true state k) and holds hand observers.
 - Dead time is left out of state-space designs and reported. Quantisers and noise are left out of LQR and used for the Kalman R.
-- Plans are computed when a system loads (2–4 s, visible) and are not kept across page loads. A plan that failed still runs, so the attempt can be seen.
+- Plans are computed when a system loads (visible; about 3 s in Node, 5 to 7 s in a headless browser after v2.7.1) and are not kept across page loads. A plan that failed still runs, so the attempt can be seen.
 - Hand types stay for people who want numbers. "Copy as numbers" is the bridge, offered for LQR, PI and Kalman, never for plans.
 - The heavy job (the triple-pendulum swing-up plan) runs on the main thread in short slices, not in a Web Worker: the sandboxed page would likely refuse a worker, and two code paths for one job are not worth it until a design passes about 10 s.
 

@@ -19,6 +19,7 @@ Reader: whoever picks the next piece of work.
 
 ## Next, in order
 
+0. **Land feat/designs on main** (the design layer's branch is behind main). Merge main into it, then redo the browser checks on the merged build. What the review found main's code needs then: main's Analysis tab keys its cache on `[system, path, spec]` and must add `app.designs.generation`, or it keeps "its plan is not made yet" after the plan settles; main's Auto-tune must skip parameters flagged `tune: false` (the plan's T, segments and planShare); main's new `external` block (the HIL plant) needs a model-mode test. Main's Auto-tune and Live compile without a store: in the page they now use the page's store as a guest (designs.md), so they never plan on the main thread.
 1. **Auto-tune tab**: goal editor (following r, rejecting d, effort, bounds), score, optimiser (v1's, reshaped) over a Controller block's parameters, flipping through its variants. Add robustness: check against plant variations.
 2. **Controller, more**: variants built as diagrams (freeform), MIMO, more library entries (lead/lag, observer-based state feedback, MPC).
 3. **Analysis tab**: root locus, Bode, Nyquist, pole-zero, computed step metrics. Its models are built (`loopModel`, [designs.md](designs.md)); still to do there: an Observer's own dynamics in the loop (observer types need `linear`).
