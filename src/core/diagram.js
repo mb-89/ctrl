@@ -48,13 +48,17 @@ export const ELEMENTS = {
     params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
     ode: {
       n: 4,
+      states: () => [state('x', 'm'), state('v', 'm/s'), state('θ', 'rad', true), state('ω', 'rad/s')],
       init: (p) => [0, 0, p.theta0, 0],
       out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; y[2] = X[o + 1]; y[3] = X[o + 3]; },
-      f: (X, o, u, p, dX) => {
-        const v = X[o + 1], th = X[o + 2], w = X[o + 3];
-        const s = Math.sin(th), c = Math.cos(th);
-        const a = (u - p.b * v + p.m * p.l * w * w * s - p.m * p.g * s * c) / (p.M + p.m * s * s);
-        dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (p.g * s - a * c) / p.l;
+      make(p) {
+        const { M, m, l, g, b } = p, ml = m * l, mg = m * g;
+        return (X, o, u, dX) => {
+          const v = X[o + 1], th = X[o + 2], w = X[o + 3];
+          const s = Math.sin(th), c = Math.cos(th);
+          const a = (u - b * v + ml * w * w * s - mg * s * c) / (M + m * s * s);
+          dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (g * s - a * c) / l;
+        };
       },
       bound: (p) => 2 * Math.sqrt(p.g * (p.M + p.m) / (p.M * p.l)) + p.b / p.M,
     },
@@ -63,7 +67,7 @@ export const ELEMENTS = {
     // A chain of 1–3 rods on a cart (mass M): point masses m1, m2, m3 at the
     // ends of massless rods l1, l2, l3, each hinged on the one before. Angles
     // from upright, positive leaning towards +x. Lagrange's equations
-    // M(q) q̈ = f(q, q̇, F) are solved at each evaluation.
+    // M(q) q̈ = f(q, q̇, F) are solved at each evaluation (chainRates).
     label: 'Pendulum chain on cart', group: 'Physics', formula: 'F → x, θ…, v, ω…',
     outputs: (p) => ['x', ...links(p).map((i) => `θ${i + 1}`), 'v', ...links(p).map((i) => `ω${i + 1}`)],
     ports: (p) => [1, 2 * p.links + 2],
@@ -73,9 +77,10 @@ export const ELEMENTS = {
       ...[1, 2, 3].map((i) => num(`theta${i}0`, `Start θ${i}₀`, i === 1 ? 0.05 : 0, { unit: 'rad' }))],
     ode: {
       n: (p) => 2 * p.links + 2,
+      states: (p) => [state('x', 'm'), ...links(p).map((i) => state(`θ${i + 1}`, 'rad', true)), state('v', 'm/s'), ...links(p).map((i) => state(`ω${i + 1}`, 'rad/s'))],
       init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
       out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
-      f: (X, o, u, p, dX) => chainRates(X, o, u, p, dX),
+      make: (p) => chainRates(p),
       bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
     },
   },
@@ -87,13 +92,17 @@ export const ELEMENTS = {
     params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
     ode: {
       n: 1,
+      states: () => [state('h', 'm')],
       init: (p) => [p.h0],
       out: (X, o, p, y) => { y[0] = X[o]; },
-      f: (X, o, u, p, dX) => {
-        const h = Math.max(0, X[o]);
-        const r = p.r0 + ((p.R - p.r0) * Math.min(h, p.H)) / p.H;
-        const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
-        dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+      make(p) {
+        const { r0, H } = p, slope = (p.R - r0) / H, out = p.a * Math.sqrt(2 * p.g);
+        return (X, o, u, dX) => {
+          const h = Math.max(0, X[o]);
+          const r = r0 + slope * Math.min(h, H);
+          const flow = Math.max(0, u) - out * Math.sqrt(h);
+          dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+        };
       },
       bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
     },
@@ -121,47 +130,66 @@ const VARIANT_LIBS = { controller: undefined, observer: OBSERVERS };
 
 const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
-// The chain's rates, allocation-free (the swing-up planner calls this
-// millions of times): build M(q) q̈ = f in a scratch matrix and solve it.
-const CH = { m: new Float64Array(3), l: new Float64Array(3), mu: new Float64Array(3), th: new Float64Array(3), w: new Float64Array(3), A: new Float64Array(20), q: new Float64Array(4) };
-function chainRates(X, o, u, p, dX) {
-  const n = p.links, N = n + 1, W = N + 1, { m, l, mu, th, w, A, q } = CH;
-  for (let i = 0; i < n; i++) { m[i] = p[`m${i + 1}`]; l[i] = p[`l${i + 1}`]; th[i] = X[o + 1 + i]; w[i] = X[o + n + 2 + i]; }
-  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += m[i]; mu[i] = acc; }   // mass at or beyond link i
-  const v = X[o + n + 1];
-  A.fill(0);
-  A[0] = p.M + mu[0];
-  A[N] = u - p.b * v;   // right-hand side in column N of an N × (N + 1) augmented matrix
+// A state of a physics block, as ode.states lists it; angle: compared
+// modulo 2π (a pendulum that went round once is where it started).
+const state = (name, unit, angle = false) => ({ name, unit, angle });
+
+// The chain's rate function for parameters p, allocation-free (the swing-up
+// planner calls it millions of times). Constants are computed once: the mass
+// at or beyond each link μj and its products. Per call: one sin and one cos
+// per angle (differences by the angle-sum identities), the mass matrix
+// M(q) q̈ = r built in a scratch buffer and solved by Cholesky without
+// square roots (LDLᵀ; M(q) is positive definite, so no pivoting).
+function chainRates(p) {
+  const n = p.links, N = n + 1, { g, b } = p;
+  const mu = new Float64Array(n), ml = new Float64Array(n), mgl = new Float64Array(n), mll = new Float64Array(n * n);
+  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += p[`m${i + 1}`]; mu[i] = acc; }
   for (let j = 0; j < n; j++) {
-    const c = mu[j] * l[j] * Math.cos(th[j]), sj = Math.sin(th[j]);
-    A[j + 1] = c; A[(j + 1) * W] = c;
-    A[N] += mu[j] * l[j] * sj * w[j] * w[j];
-    let r = mu[j] * p.g * l[j] * sj;
-    for (let k = 0; k < n; k++) {
-      const mk = mu[Math.max(j, k)] * l[j] * l[k];
-      A[(j + 1) * W + k + 1] = mk * Math.cos(th[j] - th[k]);
-      r -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
+    const lj = p[`l${j + 1}`];
+    ml[j] = mu[j] * lj; mgl[j] = mu[j] * g * lj;
+    for (let k = 0; k < n; k++) mll[j * n + k] = mu[Math.max(j, k)] * lj * p[`l${k + 1}`];
+  }
+  const total = p.M + mu[0];
+  const s = new Float64Array(n), c = new Float64Array(n), w2 = new Float64Array(n);
+  const A = new Float64Array(N * N), r = new Float64Array(N), q = new Float64Array(N);
+  return (X, o, u, dX) => {
+    for (let j = 0; j < n; j++) {
+      const th = X[o + 1 + j], w = X[o + n + 2 + j];
+      s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w;
     }
-    A[(j + 1) * W + N] = r;
-  }
-  // Gaussian elimination with partial pivoting on the augmented rows.
-  for (let c = 0; c < N; c++) {
-    let piv = c;
-    for (let r = c + 1; r < N; r++) if (Math.abs(A[r * W + c]) > Math.abs(A[piv * W + c])) piv = r;
-    if (piv !== c) for (let k = 0; k < W; k++) { const t = A[c * W + k]; A[c * W + k] = A[piv * W + k]; A[piv * W + k] = t; }
-    for (let r = c + 1; r < N; r++) {
-      const f = A[r * W + c] / A[c * W + c];
-      for (let k = c; k < W; k++) A[r * W + k] -= f * A[c * W + k];
+    // Lower triangle of M(q) and the right-hand side r.
+    A[0] = total;
+    r[0] = u - b * X[o + n + 1];
+    for (let j = 0; j < n; j++) {
+      const row = (j + 1) * N;
+      A[row] = ml[j] * c[j];
+      r[0] += ml[j] * s[j] * w2[j];
+      let rj = mgl[j] * s[j];
+      for (let k = 0; k < n; k++) {
+        const cjk = c[j] * c[k] + s[j] * s[k], sjk = s[j] * c[k] - c[j] * s[k];   // cos, sin of θj − θk
+        if (k <= j) A[row + k + 1] = mll[j * n + k] * cjk;
+        rj -= mll[j * n + k] * sjk * w2[k];
+      }
+      r[j + 1] = rj;
     }
-  }
-  for (let r = N - 1; r >= 0; r--) {
-    let s2 = A[r * W + N];
-    for (let k = r + 1; k < N; k++) s2 -= A[r * W + k] * q[k];
-    q[r] = s2 / A[r * W + r];
-  }
-  dX[o] = v;
-  for (let j = 0; j < n; j++) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
-  dX[o + n + 1] = q[0];
+    // LDLᵀ in place: L below the diagonal (unit diagonal implied), D on it.
+    for (let j = 0; j < N; j++) {
+      let d = A[j * N + j];
+      for (let k = 0; k < j; k++) d -= A[j * N + k] * A[j * N + k] * A[k * N + k];
+      A[j * N + j] = d;
+      for (let i = j + 1; i < N; i++) {
+        let e = A[i * N + j];
+        for (let k = 0; k < j; k++) e -= A[i * N + k] * A[j * N + k] * A[k * N + k];
+        A[i * N + j] = e / d;
+      }
+    }
+    for (let i = 0; i < N; i++) { let e = r[i]; for (let k = 0; k < i; k++) e -= A[i * N + k] * q[k]; q[i] = e; }
+    for (let i = 0; i < N; i++) q[i] /= A[i * N + i];
+    for (let i = N - 1; i >= 0; i--) { let e = q[i]; for (let k = i + 1; k < N; k++) e -= A[k * N + i] * q[k]; q[i] = e; }
+    dX[o] = X[o + n + 1];
+    for (let j = 0; j < n; j++) { dX[o + 1 + j] = X[o + n + 2 + j]; dX[o + n + 2 + j] = q[j + 1]; }
+    dX[o + n + 1] = q[0];
+  };
 }
 
 // Output names of a block (physics blocks may depend on their parameters).
@@ -374,7 +402,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (def.ode) {
         // A physics block: its state integrates inside the diagram; one tap
         // node per output reads what the block computed from its state.
-        const k = add({ kind: 'ode', name, ft: false, ode: def.ode, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
+        const k = add({ kind: 'ode', name, ft: false, ode: def.ode, rates: def.ode.make(b.params), p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
         outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
@@ -492,7 +520,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       if (dX) {
         for (const nd of nodes) {
-          if (nd.kind === 'ode') { nd.ode.f(X, o + nd.off, inOf(nd), nd.p, dX); continue; }
+          if (nd.kind === 'ode') { nd.rates(X, o + nd.off, inOf(nd), dX); continue; }
           if (nd.kind !== 'ss') continue;
           const { ss } = nd, base = o + nd.off;
           const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);

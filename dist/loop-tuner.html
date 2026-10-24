@@ -2163,6 +2163,262 @@ function penalized(ev) {
 
 return { DEFAULT_GOAL, normalizeGoal, evaluateGoal, compareEvals, penalized };
 })();
+// ---- core/planner.js
+__mods['core/planner.js'] = (() => {
+// Trajectory planning: finds an input u(t) on [0, T] that takes ẋ = f(x, u)
+// from x0 to a target (for example a pendulum chain from hanging to upright),
+// by multiple shooting and Levenberg–Marquardt. It ships with the page and
+// runs from the plant's own dynamics: nothing is planned offline (the person,
+// design/input/2026-10-24-09-…). Method after Glück, Eder & Kugi, "Swing-up
+// control of a triple pendulum on a cart with experimental validation",
+// Automatica 49 (2013): a two-point boundary value problem for the
+// feedforward, then a time-varying LQR along it (tvlqr below).
+//
+// Unknowns: u at N + 1 nodes (piecewise linear in time) and the states at the
+// starts of segments 1 … M−1. Residuals: the jumps between a segment's end and
+// the next start (defects), the distance of the end state to the target, a
+// small penalty on u, and a penalty on |u| beyond umax. Each segment depends
+// only on its own start and on the u nodes in its span, so the Jacobian is
+// built segment by segment (a few integrations per column, not a whole run).
+//
+// planTrajectory(problem) is a generator: it yields progress after every
+// iteration, so the page can run it in slices without freezing; Node runs it
+// to the end with runPlan. It is deterministic.
+
+const { c2d, dlqr } = __mods['core/linalg.js'];
+// problem: { n, f(x, u, dx), x0, T, segments = 12, perSegment = 4, h = 0.01,
+//   target (array, n), wrap (array of 0/1: angle states, compared modulo 2π),
+//   weight (array, n: terminal weights), umax = Infinity, effort = 3e-4 }
+function* planTrajectory(problem) {
+  const { n, f, x0, T } = problem;
+  const M = problem.segments ?? 12, K = problem.perSegment ?? 4, N = M * K;
+  const steps = Math.max(1, Math.round(T / M / (problem.h ?? 0.01))), h = T / M / steps;
+  const target = problem.target ?? new Array(n).fill(0), wrap = problem.wrap ?? new Array(n).fill(0);
+  const weight = problem.weight ?? new Array(n).fill(1), umax = problem.umax ?? Infinity;
+  const nz = N + 1 + n * (M - 1);
+
+  // RK4 over one segment with u linear between nodes; scratch is reused.
+  const k1 = new Float64Array(n), k2 = new Float64Array(n), k3 = new Float64Array(n), k4 = new Float64Array(n), xt = new Float64Array(n);
+  const uAt = (z, t) => { const s = Math.min(N - 1e-9, Math.max(0, (t / T) * N)), i = Math.floor(s); return z[i] + (z[i + 1] - z[i]) * (s - i); };
+  function segment(z, j, start, out, record) {
+    out.set(start);
+    for (let s = 0; s < steps; s++) {
+      const t = (j * steps + s) * h, u1 = uAt(z, t), u2 = uAt(z, t + h / 2), u3 = uAt(z, t + h);
+      f(out, u1, k1);
+      for (let i = 0; i < n; i++) xt[i] = out[i] + (h / 2) * k1[i];
+      f(xt, u2, k2);
+      for (let i = 0; i < n; i++) xt[i] = out[i] + (h / 2) * k2[i];
+      f(xt, u2, k3);
+      for (let i = 0; i < n; i++) xt[i] = out[i] + h * k3[i];
+      f(xt, u3, k4);
+      for (let i = 0; i < n; i++) out[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+      record?.(t + h, out);
+    }
+  }
+  const startOf = (z, j) => (j === 0 ? x0 : z.subarray(N + 1 + n * (j - 1), N + 1 + n * j));
+  const wrapped = (d, i) => (wrap[i] ? d - 2 * Math.PI * Math.round(d / (2 * Math.PI)) : d);
+
+  // Residual layout: defects n·(M−1), terminal n, effort N+1, bound N+1.
+  const nr = n * (M - 1) + n + 2 * (N + 1);
+  const W = { defect: 1, effort: problem.effort ?? 3e-4, bound: 3 };
+  const ends = Array.from({ length: M }, () => new Float64Array(n));
+  function residual(z, r) {
+    for (let j = 0; j < M; j++) segment(z, j, startOf(z, j), ends[j]);
+    fill(z, r);
+  }
+  function fill(z, r) {
+    let q = 0;
+    for (let j = 0; j < M - 1; j++) { const s = startOf(z, j + 1); for (let i = 0; i < n; i++) r[q++] = W.defect * (ends[j][i] - s[i]); }
+    for (let i = 0; i < n; i++) r[q++] = weight[i] * wrapped(ends[M - 1][i] - target[i], i);
+    for (let k = 0; k <= N; k++) r[q++] = W.effort * z[k];
+    for (let k = 0; k <= N; k++) r[q++] = W.bound * Math.max(0, Math.abs(z[k]) - umax);
+  }
+
+  // Deterministic start: u a slow sine (as a person would rock the cart),
+  // states interpolated from x0 to the target.
+  const z = new Float64Array(nz);
+  const swing = problem.uGuess ?? (Number.isFinite(umax) ? 0.5 * umax : 8);
+  for (let k = 0; k <= N; k++) z[k] = swing * Math.sin((3 * Math.PI * k) / N);
+  for (let j = 1; j < M; j++) {
+    const s = startOf(z, j), a = j / M;
+    for (let i = 0; i < n; i++) s[i] = x0[i] + a * wrapped(target[i] - x0[i], i);
+  }
+
+  const r = new Float64Array(nr), rc = new Float64Array(nr), zc = new Float64Array(nz);
+  const J = Array.from({ length: nr }, () => new Float64Array(nz));
+  const endC = new Float64Array(n);
+  const sumsq = (v) => { let s = 0; for (let i = 0; i < v.length; i++) s += v[i] * v[i]; return s; };
+  const norms = () => ({ defect: Math.sqrt(sumsq(r.subarray(0, n * (M - 1)))) / W.defect, terminal: Math.sqrt(sumsq(r.subarray(n * (M - 1), n * M))) });
+  residual(z, r);
+  let cost = sumsq(r), mu = 1e-2, iteration = 0;
+  // Continuation: first a loose fit with more weight on small u, then the
+  // jumps between segments are squeezed out. Done when the path is continuous
+  // and ends on the target.
+  const stages = problem.stages ?? [[3e-3, 1, 100], [1e-3, 10, 60], [3e-4, 100, 60]];
+  const done = () => { const nm = norms(); return nm.defect < 1e-6 && nm.terminal < 1e-3; };
+  for (const [effort, defect, iters] of stages) {
+    if (done()) break;
+    W.effort = effort; W.defect = defect;
+    residual(z, r); cost = sumsq(r);
+    for (let it = 0; it < iters; it++, iteration++) {
+      // Jacobian, segment by segment: column c moves segment ends that depend on it.
+      for (const row of J) row.fill(0);
+      const eps = 1e-6;
+      for (let j = 0; j < M; j++) {
+        const cols = [];
+        for (let k = j * K; k <= (j + 1) * K; k++) cols.push(k);
+        if (j > 0) for (let i = 0; i < n; i++) cols.push(N + 1 + n * (j - 1) + i);
+        for (const c of cols) {
+          zc.set(z); zc[c] += eps;
+          segment(zc, j, startOf(zc, j), endC);
+          // Rows touched: this segment's defect (or the terminal rows), via its end state.
+          const base = j < M - 1 ? n * j : n * (M - 1);
+          for (let i = 0; i < n; i++) {
+            const d = (endC[i] - ends[j][i]) / eps;
+            J[base + i][c] += (j < M - 1 ? W.defect : weight[i]) * d;
+          }
+        }
+        // The next segment's start enters its predecessor's defect with −1.
+        if (j < M - 1) for (let i = 0; i < n; i++) J[n * j + i][N + 1 + n * j + i] -= W.defect;
+      }
+      for (let k = 0; k <= N; k++) {
+        J[n * M + k][k] = W.effort;
+        J[n * M + N + 1 + k][k] = Math.abs(z[k]) > umax ? W.bound * Math.sign(z[k]) : 0;
+      }
+      // Levenberg–Marquardt step on the normal equations.
+      const JtJ = Array.from({ length: nz }, () => new Float64Array(nz)), Jtr = new Float64Array(nz);
+      for (let i = 0; i < nr; i++) {
+        const row = J[i], ri = r[i];
+        for (let a = 0; a < nz; a++) {
+          const va = row[a];
+          if (va === 0) continue;
+          Jtr[a] += va * ri;
+          const ja = JtJ[a];
+          for (let b = a; b < nz; b++) if (row[b] !== 0) ja[b] += va * row[b];
+        }
+      }
+      for (let a = 0; a < nz; a++) for (let b = 0; b < a; b++) JtJ[a][b] = JtJ[b][a];
+      let accepted = false;
+      for (let tries = 0; tries < 10 && !accepted; tries++) {
+        const A = JtJ.map((row, i) => { const c = Float64Array.from(row); c[i] += mu * (1 + row[i]); return c; });
+        const dz = solveSym(A, Jtr);
+        for (let i = 0; i < nz; i++) zc[i] = z[i] - dz[i];
+        residual(zc, rc);
+        const cn = sumsq(rc);
+        if (Number.isFinite(cn) && cn < cost) { z.set(zc); r.set(rc); cost = cn; mu = Math.max(1e-9, mu / 3); accepted = true; } else mu *= 4;
+      }
+      residual(z, r);
+      const nm = norms();
+      yield { iteration, cost, ...nm, umax: Math.max(...z.subarray(0, N + 1).map(Math.abs)) };
+      if (!accepted || done()) break;
+    }
+  }
+
+  // The nominal path, sampled on the integration grid, taken from the
+  // segments themselves (one long run from x0 would blow the tiny defects up).
+  const t = [0], X = [Float64Array.from(x0)];
+  for (let j = 0; j < M; j++) segment(z, j, startOf(z, j), ends[j], (tt, x) => { t.push(tt); X.push(Float64Array.from(x)); });
+  const nm = norms();
+  return {
+    ok: nm.defect < 1e-4 && nm.terminal < 1e-2,
+    T, N, u: Float64Array.from(z.subarray(0, N + 1)), uAt: (tt) => uAt(z, tt),
+    t: Float64Array.from(t), X, ...nm, iterations: iteration,
+  };
+}
+
+// Runs a planning generator to its end (Node, tests); onProgress is optional.
+function runPlan(gen, onProgress) {
+  for (;;) {
+    const s = gen.next();
+    if (s.done) return s.value;
+    onProgress?.(s.value);
+  }
+}
+
+// Time-varying LQR along a plan, sampled every Ts: linearises f at the
+// nominal (x*, u*) by finite differences, discretises with a zero-order hold
+// and runs the Riccati recursion backwards from Pend (the upright LQR's P).
+// Returns K as an array of gain rows, one per sample: u = u* − K (x − x*).
+function tvlqr({ n, f, plan, Ts, Q, R, Pend, wrap }) {
+  const steps = Math.floor(plan.T / Ts + 1e-9);
+  const xs = [], us = [];
+  for (let k = 0; k <= steps; k++) {
+    const t = k * Ts, i = Math.min(plan.t.length - 1, Math.round((t / plan.T) * (plan.t.length - 1)));
+    xs.push(plan.X[i]); us.push(plan.uAt(t));
+  }
+  const dx = new Float64Array(n), dxp = new Float64Array(n), xp = new Float64Array(n), eps = 1e-6;
+  const lin = (x, u) => {
+    const A = Array.from({ length: n }, () => new Array(n).fill(0)), B = Array.from({ length: n }, () => [0]);
+    f(x, u, dx);
+    for (let c = 0; c < n; c++) { xp.set(x); xp[c] += eps; f(xp, u, dxp); for (let i = 0; i < n; i++) A[i][c] = (dxp[i] - dx[i]) / eps; }
+    f(x, u + eps, dxp);
+    for (let i = 0; i < n; i++) B[i][0] = (dxp[i] - dx[i]) / eps;
+    return c2d(A, B, Ts);
+  };
+  let P = Pend.map((row) => [...row]);
+  const Ks = new Array(steps);
+  for (let k = steps - 1; k >= 0; k--) {
+    const { Ad, Bd } = lin(xs[k], us[k]);
+    // K = (R + Bᵀ P B)⁻¹ Bᵀ P A;  P ← Q + Aᵀ P (A − B K)
+    const PB = P.map((row) => row.reduce((s, v, j) => s + v * Bd[j][0], 0));
+    const S = R + PB.reduce((s, v, i) => s + v * Bd[i][0], 0);
+    const BtPA = Array.from({ length: n }, (_, c) => PB.reduce((s, v, i) => s + v * Ad[i][c], 0));
+    const Kk = BtPA.map((v) => v / S);
+    Ks[k] = Kk;
+    const AmBK = Ad.map((row, i) => row.map((v, c) => v - Bd[i][0] * Kk[c]));
+    const PA = P.map((row) => AmBK[0].map((_, c) => row.reduce((s, v, j) => s + v * AmBK[j][c], 0)));
+    P = Ad[0].map((_, a) => Ad[0].map((__, b) => Q[a][b] + Ad.reduce((s, row, i) => s + row[a] * PA[i][b], 0)));
+    for (let a = 0; a < n; a++) for (let b = 0; b < a; b++) { const v = (P[a][b] + P[b][a]) / 2; P[a][b] = v; P[b][a] = v; }
+  }
+  return { K: Ks, x: xs.slice(0, steps), u: us.slice(0, steps), wrap };
+}
+
+// The steady upright LQR used at the end of the plan and after it.
+function uprightLqr({ n, f, x, u = 0, Ts, Q, R }) {
+  const dx = new Float64Array(n), dxp = new Float64Array(n), xp = new Float64Array(n), eps = 1e-6;
+  const A = Array.from({ length: n }, () => new Array(n).fill(0)), B = Array.from({ length: n }, () => [0]);
+  f(x, u, dx);
+  for (let c = 0; c < n; c++) { xp.set(x); xp[c] += eps; f(xp, u, dxp); for (let i = 0; i < n; i++) A[i][c] = (dxp[i] - dx[i]) / eps; }
+  f(x, u + eps, dxp);
+  for (let i = 0; i < n; i++) B[i][0] = (dxp[i] - dx[i]) / eps;
+  const { Ad, Bd } = c2d(A, B, Ts);
+  return dlqr(Ad, Bd, Q, R);
+}
+
+// Symmetric positive-definite solve (Cholesky), falling back to elimination.
+function solveSym(A, b) {
+  const n = b.length, L = A.map((row) => Float64Array.from(row));
+  for (let j = 0; j < n; j++) {
+    let d = L[j][j];
+    for (let k = 0; k < j; k++) d -= L[j][k] * L[j][k];
+    if (!(d > 0)) return solveGauss(A, b);
+    d = Math.sqrt(d); L[j][j] = d;
+    for (let i = j + 1; i < n; i++) {
+      let s = L[i][j];
+      for (let k = 0; k < j; k++) s -= L[i][k] * L[j][k];
+      L[i][j] = s / d;
+    }
+  }
+  const y = new Float64Array(n), x = new Float64Array(n);
+  for (let i = 0; i < n; i++) { let s = b[i]; for (let k = 0; k < i; k++) s -= L[i][k] * y[k]; y[i] = s / L[i][i]; }
+  for (let i = n - 1; i >= 0; i--) { let s = y[i]; for (let k = i + 1; k < n; k++) s -= L[k][i] * x[k]; x[i] = s / L[i][i]; }
+  return x;
+}
+function solveGauss(A, b) {
+  const n = b.length, M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = c + 1; r < n; r++) { const q = M[r][c] / M[c][c]; for (let k = c; k <= n; k++) M[r][k] -= q * M[c][k]; }
+  }
+  const x = new Float64Array(n);
+  for (let r = n - 1; r >= 0; r--) { let s = M[r][n]; for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k]; x[r] = s / M[r][r]; }
+  return x;
+}
+
+return { planTrajectory, runPlan, tvlqr, uprightLqr };
+})();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
 // The controller library: implementations a Controller block can run. Every
@@ -2487,13 +2743,17 @@ const ELEMENTS = {
     params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
     ode: {
       n: 4,
+      states: () => [state('x', 'm'), state('v', 'm/s'), state('θ', 'rad', true), state('ω', 'rad/s')],
       init: (p) => [0, 0, p.theta0, 0],
       out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; y[2] = X[o + 1]; y[3] = X[o + 3]; },
-      f: (X, o, u, p, dX) => {
-        const v = X[o + 1], th = X[o + 2], w = X[o + 3];
-        const s = Math.sin(th), c = Math.cos(th);
-        const a = (u - p.b * v + p.m * p.l * w * w * s - p.m * p.g * s * c) / (p.M + p.m * s * s);
-        dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (p.g * s - a * c) / p.l;
+      make(p) {
+        const { M, m, l, g, b } = p, ml = m * l, mg = m * g;
+        return (X, o, u, dX) => {
+          const v = X[o + 1], th = X[o + 2], w = X[o + 3];
+          const s = Math.sin(th), c = Math.cos(th);
+          const a = (u - b * v + ml * w * w * s - mg * s * c) / (M + m * s * s);
+          dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (g * s - a * c) / l;
+        };
       },
       bound: (p) => 2 * Math.sqrt(p.g * (p.M + p.m) / (p.M * p.l)) + p.b / p.M,
     },
@@ -2502,7 +2762,7 @@ const ELEMENTS = {
     // A chain of 1–3 rods on a cart (mass M): point masses m1, m2, m3 at the
     // ends of massless rods l1, l2, l3, each hinged on the one before. Angles
     // from upright, positive leaning towards +x. Lagrange's equations
-    // M(q) q̈ = f(q, q̇, F) are solved at each evaluation.
+    // M(q) q̈ = f(q, q̇, F) are solved at each evaluation (chainRates).
     label: 'Pendulum chain on cart', group: 'Physics', formula: 'F → x, θ…, v, ω…',
     outputs: (p) => ['x', ...links(p).map((i) => `θ${i + 1}`), 'v', ...links(p).map((i) => `ω${i + 1}`)],
     ports: (p) => [1, 2 * p.links + 2],
@@ -2512,9 +2772,10 @@ const ELEMENTS = {
       ...[1, 2, 3].map((i) => num(`theta${i}0`, `Start θ${i}₀`, i === 1 ? 0.05 : 0, { unit: 'rad' }))],
     ode: {
       n: (p) => 2 * p.links + 2,
+      states: (p) => [state('x', 'm'), ...links(p).map((i) => state(`θ${i + 1}`, 'rad', true)), state('v', 'm/s'), ...links(p).map((i) => state(`ω${i + 1}`, 'rad/s'))],
       init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
       out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
-      f: (X, o, u, p, dX) => chainRates(X, o, u, p, dX),
+      make: (p) => chainRates(p),
       bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
     },
   },
@@ -2526,13 +2787,17 @@ const ELEMENTS = {
     params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
     ode: {
       n: 1,
+      states: () => [state('h', 'm')],
       init: (p) => [p.h0],
       out: (X, o, p, y) => { y[0] = X[o]; },
-      f: (X, o, u, p, dX) => {
-        const h = Math.max(0, X[o]);
-        const r = p.r0 + ((p.R - p.r0) * Math.min(h, p.H)) / p.H;
-        const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
-        dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+      make(p) {
+        const { r0, H } = p, slope = (p.R - r0) / H, out = p.a * Math.sqrt(2 * p.g);
+        return (X, o, u, dX) => {
+          const h = Math.max(0, X[o]);
+          const r = r0 + slope * Math.min(h, H);
+          const flow = Math.max(0, u) - out * Math.sqrt(h);
+          dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+        };
       },
       bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
     },
@@ -2560,47 +2825,66 @@ const VARIANT_LIBS = { controller: undefined, observer: OBSERVERS };
 
 const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
-// The chain's rates, allocation-free (the swing-up planner calls this
-// millions of times): build M(q) q̈ = f in a scratch matrix and solve it.
-const CH = { m: new Float64Array(3), l: new Float64Array(3), mu: new Float64Array(3), th: new Float64Array(3), w: new Float64Array(3), A: new Float64Array(20), q: new Float64Array(4) };
-function chainRates(X, o, u, p, dX) {
-  const n = p.links, N = n + 1, W = N + 1, { m, l, mu, th, w, A, q } = CH;
-  for (let i = 0; i < n; i++) { m[i] = p[`m${i + 1}`]; l[i] = p[`l${i + 1}`]; th[i] = X[o + 1 + i]; w[i] = X[o + n + 2 + i]; }
-  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += m[i]; mu[i] = acc; }   // mass at or beyond link i
-  const v = X[o + n + 1];
-  A.fill(0);
-  A[0] = p.M + mu[0];
-  A[N] = u - p.b * v;   // right-hand side in column N of an N × (N + 1) augmented matrix
+// A state of a physics block, as ode.states lists it; angle: compared
+// modulo 2π (a pendulum that went round once is where it started).
+const state = (name, unit, angle = false) => ({ name, unit, angle });
+
+// The chain's rate function for parameters p, allocation-free (the swing-up
+// planner calls it millions of times). Constants are computed once: the mass
+// at or beyond each link μj and its products. Per call: one sin and one cos
+// per angle (differences by the angle-sum identities), the mass matrix
+// M(q) q̈ = r built in a scratch buffer and solved by Cholesky without
+// square roots (LDLᵀ; M(q) is positive definite, so no pivoting).
+function chainRates(p) {
+  const n = p.links, N = n + 1, { g, b } = p;
+  const mu = new Float64Array(n), ml = new Float64Array(n), mgl = new Float64Array(n), mll = new Float64Array(n * n);
+  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += p[`m${i + 1}`]; mu[i] = acc; }
   for (let j = 0; j < n; j++) {
-    const c = mu[j] * l[j] * Math.cos(th[j]), sj = Math.sin(th[j]);
-    A[j + 1] = c; A[(j + 1) * W] = c;
-    A[N] += mu[j] * l[j] * sj * w[j] * w[j];
-    let r = mu[j] * p.g * l[j] * sj;
-    for (let k = 0; k < n; k++) {
-      const mk = mu[Math.max(j, k)] * l[j] * l[k];
-      A[(j + 1) * W + k + 1] = mk * Math.cos(th[j] - th[k]);
-      r -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
+    const lj = p[`l${j + 1}`];
+    ml[j] = mu[j] * lj; mgl[j] = mu[j] * g * lj;
+    for (let k = 0; k < n; k++) mll[j * n + k] = mu[Math.max(j, k)] * lj * p[`l${k + 1}`];
+  }
+  const total = p.M + mu[0];
+  const s = new Float64Array(n), c = new Float64Array(n), w2 = new Float64Array(n);
+  const A = new Float64Array(N * N), r = new Float64Array(N), q = new Float64Array(N);
+  return (X, o, u, dX) => {
+    for (let j = 0; j < n; j++) {
+      const th = X[o + 1 + j], w = X[o + n + 2 + j];
+      s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w;
     }
-    A[(j + 1) * W + N] = r;
-  }
-  // Gaussian elimination with partial pivoting on the augmented rows.
-  for (let c = 0; c < N; c++) {
-    let piv = c;
-    for (let r = c + 1; r < N; r++) if (Math.abs(A[r * W + c]) > Math.abs(A[piv * W + c])) piv = r;
-    if (piv !== c) for (let k = 0; k < W; k++) { const t = A[c * W + k]; A[c * W + k] = A[piv * W + k]; A[piv * W + k] = t; }
-    for (let r = c + 1; r < N; r++) {
-      const f = A[r * W + c] / A[c * W + c];
-      for (let k = c; k < W; k++) A[r * W + k] -= f * A[c * W + k];
+    // Lower triangle of M(q) and the right-hand side r.
+    A[0] = total;
+    r[0] = u - b * X[o + n + 1];
+    for (let j = 0; j < n; j++) {
+      const row = (j + 1) * N;
+      A[row] = ml[j] * c[j];
+      r[0] += ml[j] * s[j] * w2[j];
+      let rj = mgl[j] * s[j];
+      for (let k = 0; k < n; k++) {
+        const cjk = c[j] * c[k] + s[j] * s[k], sjk = s[j] * c[k] - c[j] * s[k];   // cos, sin of θj − θk
+        if (k <= j) A[row + k + 1] = mll[j * n + k] * cjk;
+        rj -= mll[j * n + k] * sjk * w2[k];
+      }
+      r[j + 1] = rj;
     }
-  }
-  for (let r = N - 1; r >= 0; r--) {
-    let s2 = A[r * W + N];
-    for (let k = r + 1; k < N; k++) s2 -= A[r * W + k] * q[k];
-    q[r] = s2 / A[r * W + r];
-  }
-  dX[o] = v;
-  for (let j = 0; j < n; j++) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
-  dX[o + n + 1] = q[0];
+    // LDLᵀ in place: L below the diagonal (unit diagonal implied), D on it.
+    for (let j = 0; j < N; j++) {
+      let d = A[j * N + j];
+      for (let k = 0; k < j; k++) d -= A[j * N + k] * A[j * N + k] * A[k * N + k];
+      A[j * N + j] = d;
+      for (let i = j + 1; i < N; i++) {
+        let e = A[i * N + j];
+        for (let k = 0; k < j; k++) e -= A[i * N + k] * A[j * N + k] * A[k * N + k];
+        A[i * N + j] = e / d;
+      }
+    }
+    for (let i = 0; i < N; i++) { let e = r[i]; for (let k = 0; k < i; k++) e -= A[i * N + k] * q[k]; q[i] = e; }
+    for (let i = 0; i < N; i++) q[i] /= A[i * N + i];
+    for (let i = N - 1; i >= 0; i--) { let e = q[i]; for (let k = i + 1; k < N; k++) e -= A[k * N + i] * q[k]; q[i] = e; }
+    dX[o] = X[o + n + 1];
+    for (let j = 0; j < n; j++) { dX[o + 1 + j] = X[o + n + 2 + j]; dX[o + n + 2 + j] = q[j + 1]; }
+    dX[o + n + 1] = q[0];
+  };
 }
 
 // Output names of a block (physics blocks may depend on their parameters).
@@ -2813,7 +3097,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (def.ode) {
         // A physics block: its state integrates inside the diagram; one tap
         // node per output reads what the block computed from its state.
-        const k = add({ kind: 'ode', name, ft: false, ode: def.ode, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
+        const k = add({ kind: 'ode', name, ft: false, ode: def.ode, rates: def.ode.make(b.params), p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
         outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
@@ -2931,7 +3215,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       if (dX) {
         for (const nd of nodes) {
-          if (nd.kind === 'ode') { nd.ode.f(X, o + nd.off, inOf(nd), nd.p, dX); continue; }
+          if (nd.kind === 'ode') { nd.rates(X, o + nd.off, inOf(nd), dX); continue; }
           if (nd.kind !== 'ss') continue;
           const { ss } = nd, base = o + nd.off;
           const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);

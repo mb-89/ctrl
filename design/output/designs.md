@@ -88,8 +88,8 @@ The Controller tab gets a read-only **Computed** box under the parameters (metho
 | Step | What | Status |
 |---|---|---|
 | 0 | This page, decisions v2.7 | Built |
-| 1 | `ode.states`, `ode.make` for the physics blocks; `planner.js` in the bundle | Next |
-| 2 | Model mode in `diagram.js`, `el.seen`, `laws: false`, n = 1 realisation, `blockInputNames` in core, nullable Dead time `y0` (the tank's pipe has none baked in) | |
+| 1 | `ode.states`, `ode.make` for the physics blocks; `planner.js` in the bundle | Built |
+| 2 | Model mode in `diagram.js`, `el.seen`, `laws: false`, n = 1 realisation, `blockInputNames` in core, nullable Dead time `y0` (the tank's pipe has none baked in) | Next |
 | 3 | `linearize.js` | |
 | 4 | `design.js`, the store, the `lqr` type, designs resolved while compiling | |
 | 5 | `swingUpLqr`, `scheduledPI` and their manual twins | |
