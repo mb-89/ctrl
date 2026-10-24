@@ -545,8 +545,8 @@ function startApp() {
     live: live.api,  // connect(url), disconnect(), estop(), reset(), state(): design/output/hil.md
     record: record.api,  // screen(format), live(format), reference(text, name), clearReferences(), state()
     // Auto-tune a Controller block at once, as the Auto-tune tab does step by
-    // step: opts { block (id path, 'ctrl'), method, goal, rule, amplitude,
-    // maxIter, apply = true }. Applied, the result goes into a variant of its
+    // step: opts { block (id path, 'ctrl'), method, goal, rule, simc,
+    // amplitude, maxIter, apply = true }. Applied, the result goes into a variant of its
     // own, running if it scores better: one undo step.
     autotune: (opts = {}) => {
       tuneTab.stop();

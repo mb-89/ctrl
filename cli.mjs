@@ -11,7 +11,7 @@ import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, un
 import { SIGNALS, normalizeComponent, describeComponent } from './src/core/signals.js';
 import { runTune, tunableParams } from './src/core/tune.js';
 import { EXAMPLES, DEFAULT_PROJECT } from './src/core/examples.js';
-import { autotune, tuneReport, placeVariant, controllerBlocks, tunedValues, METHODS as TUNE_METHODS, RULES, COSTS } from './src/core/autotune.js';
+import { autotune, tuneReport, placeVariant, controllerBlocks, tunedValues, METHODS as TUNE_METHODS, RULES, SIMC, COSTS, tauCSource } from './src/core/autotune.js';
 
 const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command> [options]
 
@@ -27,7 +27,7 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
                                         evaluate a variation of a candidate; --save adds it
   tune <project> [--from <name>] [--params Kp,Ki] [--evals 300] [--seed 1] [--name <n>] [--save]
                                         auto-tune a candidate's gains; --save adds the result
-  autotune <project> [--block <id path>] [--method iterate|relay|step] [--rule tl|zn|calm]
+  autotune <project> [--block <id path>] [--method iterate|relay|step] [--rule tl|zn|calm] [--simc tight|smooth]
            [--cost IAE|ITAE|ISE] [--effort 0.05] [--overshoot 10] [--iterations 60] [--amplitude 10] [--save]
                                         improve a Controller block's running variant by simulation, as the
                                         page's Auto-tune tab does; --save puts the result into the block as a
@@ -265,6 +265,7 @@ switch (cmd) {
     const method = opt.method ?? 'iterate';
     if (!TUNE_METHODS.includes(method)) fail(`--method: one of ${TUNE_METHODS.join(', ')}`);
     if (opt.rule && !RULES[opt.rule]) fail(`--rule: one of ${Object.keys(RULES).join(', ')}`);
+    if (opt.simc && !SIMC[opt.simc]) fail(`--simc: one of ${Object.keys(SIMC).join(', ')}`);
     const goal = {};
     if (opt.cost) { goal.cost = opt.cost.toUpperCase(); if (!COSTS[goal.cost]) fail(`--cost: one of ${Object.keys(COSTS).join(', ')}`); }
     for (const k of ['effort', 'overshoot']) if (opt[k] !== undefined) { goal[k] = Number(opt[k]); if (!(goal[k] >= 0)) fail(`--${k}: a number, 0 or more`); }
@@ -273,7 +274,7 @@ switch (cmd) {
     const path = opt.block ? opt.block.split('/') : null;
     if (path && !controllerBlocks(project.system.plant?.diagram).some((c) => c.key === opt.block)) fail(`--block ${opt.block}: no Controller block there; blocks: ${controllerBlocks(project.system.plant?.diagram).map((c) => c.key).join(', ') || 'none'}`);
     let res;
-    try { res = autotune(project, path, { method, goal, rule: opt.rule, amplitude, maxIter: opt.iterations ? Number(opt.iterations) : undefined }); } catch (e) { fail(e.message); }
+    try { res = autotune(project, path, { method, goal, rule: opt.rule, simc: opt.simc, amplitude, maxIter: opt.iterations ? Number(opt.iterations) : undefined }); } catch (e) { fail(e.message); }
     if (res.ok && opt.save) { placeVariant(project, res.path, res.variant, { run: res.better }); writeProject(pos[1], project); }
     const rep = tuneReport(res);
     if (opt.json) { console.log(JSON.stringify(rep, null, 2)); if (!res.ok) process.exitCode = 1; break; }
@@ -286,9 +287,19 @@ switch (cmd) {
     console.log(line('after ', res.variant, res.after) + `  (cost ×${fmt(res.after.J / res.before.cost.J)})`);
     if (method === 'iterate') console.log(`  ${res.iterations} iterations, ${res.evals} runs of the loop`);
     if (method === 'relay') console.log(`  relay around r0 = ${fmt(res.r0)}: Ku ${fmt(res.Ku)}, Pu ${fmt(res.Pu)} s; rule ${RULES[res.rule].label}`);
-    if (method === 'step') console.log(`  step at r0 = ${fmt(res.r0)}: K ${fmt(res.K)}, τ ${fmt(res.tau)} s, θ ${fmt(res.theta)} s; SIMC, τc ${fmt(res.gains.tauC)} s`);
+    if (method === 'step') {
+      const model = (m) => (m.model === 'integrating' ? `ramps: k′ ${fmt(m.kp)} (y/s per unit of u), τ2 ${fmt(m.tau2)} s, θ ${fmt(m.theta)} s` : `K ${fmt(m.K)}, τ ${fmt(m.tau)} s, θ ${fmt(m.theta)} s`);
+      const simc = `SIMC ${SIMC[res.simc].label.toLowerCase()}`;
+      if (res.model === 'schedule') {
+        console.log(`  a step test at each point of the table; ${simc}; u0 ${fmt(res.trim)} (the trim at the start level ${fmt(res.y0)})`);
+        for (const p of res.points) {
+          console.log(p.ok ? `    at ${fmt(p.at)}: ${model(p)}; τc ${fmt(p.gains.tauC)} s; Kp ${fmt(p.gains.Kp)}, Ki ${fmt(p.gains.Ki)}` : `    at ${fmt(p.at)}: no result (${p.why}); the gains from ${fmt(p.from)}`);
+          for (const n of p.ok ? p.notes : []) console.log(`      note: ${n}`);
+        }
+      } else console.log(`  step at r0 = ${fmt(res.r0)}: ${model(res)}; ${simc}, τc ${fmt(res.gains.tauC)} s = ${tauCSource(res.gains, res.simc)}`);
+    }
     for (const n of res.notes ?? []) console.log(`  note: ${n}`);
-    if (!res.better) console.log('  the result scores no better than the running variant');
+    if (!res.better) console.log(`  the result scores no better than the running variant${res.worse ? `: ${res.worse}` : ''}`);
     if (opt.save) console.log(res.better ? `saved: “${res.variant.name}” now runs in ${pos[1]}` : `saved: “${res.variant.name}” added to ${pos[1]}; “${res.before.variant.name}” keeps running`);
     break;
   }

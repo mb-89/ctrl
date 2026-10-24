@@ -434,7 +434,7 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
 .tuhead { display: flex; flex-direction: column; padding: 1px 6px 3px; font-size: 12.5px; }
 .tuhead b { font-family: var(--mono); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tuhead span { font-size: 11px; color: var(--lcd-dim); }
-.tustatus { font-size: 12.5px; line-height: 1.4; color: var(--ink-2); min-height: 18px; }
+.tustatus { flex: 0 0 auto; font-size: 12.5px; line-height: 1.4; color: var(--ink-2); min-height: 18px; }
 .tustatus .dim { color: var(--muted); }
 .tuwhy { color: var(--bad); }
 .tuplot { display: block; width: 100%; height: 118px; flex: 0 0 auto; border-radius: 8px; background: #0a0d10; }
@@ -2197,6 +2197,7 @@ function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
 
 const same = (a, b) => (Array.isArray(b) ? Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]) : a === b);
 function makeLaw(variant, Ts, lib = CONTROLLERS) {
+  if (typeof variant.law === 'function') return variant.law(Ts);
   const { params } = normalizeVariant(variant, 'variant', lib);
   const keep = variant.params && Object.keys(params).every((k) => same(variant.params[k], params[k]));
   return lib[variant.type].make(keep ? variant.params : params, Ts);
@@ -5059,8 +5060,9 @@ __mods['core/autotune.js'] = (() => {
 
 const { simulateSystem } = __mods['core/sim.js'];
 const { defaultSampleTime } = __mods['core/project.js'];
-const { normalizeVariant } = __mods['core/controllers.js'];
+const { normalizeVariant, makeLaw } = __mods['core/controllers.js'];
 const { parseEnd, blockPorts } = __mods['core/diagram.js'];
+const { amplitudeSpectrum } = __mods['core/spectrum.js'];
 const DIVERGED = 100;        
 const OVERSHOOT_WEIGHT = 2;  
 const LOG_LIMIT = Math.log(1000);
@@ -5079,6 +5081,15 @@ function controllerBlocks(diagram) {
   };
   if (diagram) walk(diagram, [], []);
   return out;
+}
+
+function externalBlock(diagram) {
+  for (const b of diagram.blocks) {
+    if (b.type === 'external') return b;
+    const inner = b.type === 'subsystem' ? externalBlock(b.diagram) : null;
+    if (inner) return inner;
+  }
+  return null;
 }
 
 function locate(diagram, path) {
@@ -5132,6 +5143,8 @@ function upstreamSource(diagram, path, port) {
 function tuneContext(project, path) {
   const plant = project.system.plant;
   if (plant?.type !== 'diagram') throw new Error('the plant is not a block diagram yet');
+  const ext = externalBlock(plant.diagram);
+  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}); Auto-tune simulates the loop and has no model of it (identification is not built yet). Tune it live in the Controller tab`);
   const all = controllerBlocks(plant.diagram);
   const key = path ? [].concat(path).join('/') : null;
   const hit = (key && all.find((c) => c.key === key)) || all[0];
@@ -5386,12 +5399,11 @@ function* operatingPoint(ctx) {
   const own = loopSignals(ownRun, ctx.key);
   const rr = finiteRange(own.r);
   const name = ctx.source, notes = [];
-  let signals = ctx.signals;
+  let signals = ctx.signals, level = null;
   if (name) {
     const sr = finiteRange(ownRun.signals[name] ?? []);
-    const level = Number.isFinite(sr.lo) ? (sr.lo + sr.hi) / 2 : 0;
-    signals = {};
-    for (const [k, s] of Object.entries(ctx.signals)) signals[k] = { ...s, components: k === name ? [{ type: 'dc', params: { level } }] : [] };
+    level = Number.isFinite(sr.lo) ? (sr.lo + sr.hi) / 2 : 0;
+    signals = holding(ctx, level);
   } else notes.push('input 1 is not fed by a Source (through gains, lags or subsystem ports), so r cannot be held: the experiment runs with the inputs as they are, and the estimate is rough');
   const sim = { ...ctx.sim };
   const holdRun = runVariant(ctx, ctx.variant, signals, sim);
@@ -5403,7 +5415,13 @@ function* operatingPoint(ctx) {
   const { lo, hi } = limitsOf(ctx.variant);
   if (!Number.isFinite(u0)) u0 = Number.isFinite(lo + hi) ? (lo + hi) / 2 : 0;
   u0 = Math.min(hi, Math.max(lo, u0));
-  return { r0, name, signals, sim, u0, span: rr.hi - rr.lo, own, notes };
+  return { r0, name, level, signals, sim, u0, span: rr.hi - rr.lo, rRange: rr, own, ownRun, holdRun, notes };
+}
+
+function holding(ctx, level) {
+  const signals = {};
+  for (const [k, s] of Object.entries(ctx.signals)) signals[k] = { ...s, components: k === ctx.source ? [{ type: 'dc', params: { level } }] : [] };
+  return signals;
 }
 
 function actuatorRange(ctx, own) {
@@ -5551,57 +5569,425 @@ function* relayTuneSteps(project, path, rule = 'tl', opts = {}) {
 const relayTune = (project, path, rule, opts) => drain(relayTuneSteps(project, path, rule, opts));
 
 
-function* stepExperimentSteps(project, path, opts = {}) {
-  const ctx = tuneContext(project, path);
-  if (siso(ctx)) return { ctx, ok: false, notes: [], why: siso(ctx) };
-  const op = yield* operatingPoint(ctx);
-  const { lo, hi } = limitsOf(ctx.variant);
-  const range = actuatorRange(ctx, op.own);
-  const base = { ctx, r0: op.r0, u0: op.u0, notes: [...op.notes] };
-  if (opts.du === undefined && !range) return { ...base, ok: false, why: NO_RANGE };
-  const want = Math.abs(opts.du ?? (opts.amplitude ?? 0.1) * range);
-  const up = hi - op.u0, down = op.u0 - lo;
-  const du = up >= want ? want : down >= want ? -want : up >= down ? up : -down;
-  base.du = du;
-  if (Math.abs(du) < 0.1 * want) return { ...base, ok: false, why: 'the actuator is at a limit at the operating point: no room for a step' };
-  let sim = op.sim, runB, dy;
-  for (let tries = 0; tries < 2; tries++) {
-    ({ runB, dy } = yield* openLoopStep(ctx, op, du, sim));
-    const n = dy.length, end = dy[n - 1], k9 = Math.floor(0.9 * n);
-    if (!Number.isFinite(end)) return { ...base, ok: false, run: runB, why: 'the open-loop run diverged: the plant is unstable without its controller; use the relay or iterative method' };
-    if (Math.abs(end - dy[k9]) <= 0.02 * Math.abs(end)) break;
-    if (tries === 1) return { ...base, ok: false, run: runB, why: 'the step response has not settled in four periods of the input: an integrating or very slow plant (SIMC here assumes one that settles)' };
-    sim = longer(sim, 4);
+function trailing(y, m) {
+  const n = y.length, s = new Float64Array(n);
+  let acc = 0;
+  for (let k = 0; k < n; k++) { acc += y[k]; if (k >= m) acc -= y[k - m]; s[k] = acc / Math.min(k + 1, m); }
+  return s;
+}
+function centred(y, m) {
+  const n = y.length, s = new Float64Array(n), h = Math.floor(m / 2);
+  const at = (k) => y[Math.min(n - 1, Math.max(0, k))];
+  let acc = 0;
+  for (let j = -h; j < m - h; j++) acc += at(j);
+  for (let k = 0; k < n; k++) { s[k] = acc / m; acc += at(k + m - h) - at(k - h); }
+  return s;
+}
+const smooth = (y, m, how = trailing) => (m > 1 ? how(how(y, m), m) : Float64Array.from(y));
+
+function lastStretch(t, last) {
+  const n = t.length, t1 = t[n - 1] - last * (t[n - 1] - t[0]);
+  let k = n - 1;
+  while (k > 0 && t[k - 1] >= t1) k--;
+  return k;
+}
+
+function lineFit(x, y, from = 0, to = y.length) {
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  const N = to - from;
+  for (let k = from; k < to; k++) { sx += x[k]; sy += y[k]; sxx += x[k] * x[k]; sxy += x[k] * y[k]; }
+  const b = (N * sxy - sx * sy) / (N * sxx - sx * sx || 1);
+  return { a: (sy - b * sx) / N, b };
+}
+
+function ripplePeriod(y, dt, size) {
+  const n = y.length, k0 = Math.floor(0.6 * n);
+  if (n - k0 < 32 || !(size > 0)) return 0;
+  const { f, amp } = amplitudeSpectrum(y.slice(k0), dt, { detrend: 'linear' });
+  const fmin = 6 / ((n - k0) * dt);
+  let top = 0;
+  for (let k = 1; k < amp.length; k++) if (f[k] >= fmin) top = Math.max(top, amp[k]);
+  if (!(top >= 0.002 * size)) return 0;
+  for (let k = 1; k < amp.length - 1; k++) {
+    if (f[k] >= fmin && amp[k] >= top / 4 && amp[k] >= amp[k - 1] && amp[k] >= amp[k + 1]) return Math.max(2, Math.round(1 / (f[k] * dt)));
   }
-  const t = runB.t, n = dy.length, end = dy[n - 1];
-  if (Math.abs(end) < 1e-9) return { ...base, ok: false, run: runB, why: 'y does not respond to u: is the controller output wired to the plant?' };
+  return 0;
+}
+
+function rippleOf(y, m, from) {
+  const n = y.length;
+  let lo = Infinity, hi = -Infinity;
+  if (m > 1) {
+    const s = smooth(y, m, centred);
+    for (let k = from; k < n - m; k++) { lo = Math.min(lo, y[k] - s[k]); hi = Math.max(hi, y[k] - s[k]); }
+  } else {
+    const x = Array.from({ length: n }, (_, k) => k), { a, b } = lineFit(x, y, from, n);
+    for (let k = from; k < n; k++) { const e = y[k] - a - b * k; lo = Math.min(lo, e); hi = Math.max(hi, e); }
+  }
+  return hi > lo ? (hi - lo) / 2 : 0;
+}
+
+function settledLevel(t, y, { band = 0.02, last = 0.2 } = {}) {
+  const n = y.length;
+  if (n < 16) return { settled: false, final: y[n - 1], size: 0, ripple: 0, m: 0 };
+  const dt = (t[n - 1] - t[0]) / (n - 1), k1 = lastStretch(t, last);
+  const m = ripplePeriod(y, dt, Math.abs(mean(y, k1) - y[0]));
+  const s = smooth(y, m);
+  const final = s[n - 1], size = Math.abs(final - y[0]);
+  const from = Math.min(n - 1, Math.max(k1, 2 * m));
+  let dev = 0;
+  for (let k = from; k < n; k++) dev = Math.max(dev, Math.abs(s[k] - final));
+  return { settled: size > 0 && dev <= band * size, final, size, m, ripple: rippleOf(y, m, from) };
+}
+
+function settledSlope(t, y, { band = 0.02, last = 0.2 } = {}) {
+  const n = y.length;
+  const no = { ramps: false, slope: 0, tSteady: t[n - 1], m: 0, ripple: 0 };
+  if (n < 16) return no;
+  const dt = (t[n - 1] - t[0]) / (n - 1), k1 = lastStretch(t, last);
+  const m = ripplePeriod(y, dt, Math.abs(y[n - 1] - y[0]));
+  const s = smooth(y, m), q = Math.max(m, Math.round(0.02 * n), 1);
+  const from = Math.max(k1, 2 * m + q);
+  if (from >= n - 1) return no;
+  const g = (k) => (s[k] - s[k - q]) / (t[k] - t[k - q]);
+  const gF = g(n - 1);
+  let dev = 0;
+  for (let k = from; k < n; k++) dev = Math.max(dev, Math.abs(g(k) - gF));
+  const ramps = Number.isFinite(gF) && gF !== 0 && dev <= band * Math.abs(gF) && Math.abs(gF) * (t[n - 1] - t[0]) >= 0.5 * Math.abs(s[n - 1] - y[0]);
+  let ks = n - 1;
+  while (ks > 2 * m + q && Math.abs(g(ks - 1) - gF) <= band * Math.abs(gF)) ks--;
+  return { ramps, slope: gF, tSteady: t[ks], m, ripple: rippleOf(y, m, from) };
+}
+
+function settleTime(t, y, scale) {
+  const n = y.length, dt = (t[n - 1] - t[0]) / (n - 1);
+  const moved = Math.abs(mean(y, lastStretch(t, 0.2)) - y[0]);
+  const m = ripplePeriod(y, dt, Math.max(moved, scale));
+  const s = smooth(y, m), final = s[n - 1];
+  const tol = 0.02 * Math.max(Math.abs(final - y[0]), scale);
+  let k = n - 1;
+  while (k > 0 && Math.abs(s[k - 1] - final) <= tol) k--;
+  if (m > 1 && n > 4 * m) {
+    const c = smooth(y, m, centred), kEnd = n - m, swing = (j) => Math.abs(y[j] - c[j]);
+    let end = 0;
+    for (let j = Math.min(lastStretch(t, 0.2), kEnd - 1); j < kEnd; j++) end = Math.max(end, swing(j));
+    let j = kEnd - 1;
+    while (j > 0 && swing(j - 1) <= end + tol) j--;
+    k = Math.max(k, j);
+  }
+  return { settled: Number.isFinite(final) && t[k] <= t[0] + 0.8 * (t[n - 1] - t[0]), time: t[k] };
+}
+
+function fitFopdt(t, y, du, final, m = 0) {
+  const s = smooth(y, m, centred), n = s.length;
   const cross = (level) => {
-    for (let k = 1; k < n; k++) if ((dy[k] - level * end) * Math.sign(end) >= 0) {
-      const f = (level * end - dy[k - 1]) / (dy[k] - dy[k - 1] || 1);
+    for (let k = 1; k < n; k++) if ((s[k] - level * final) * Math.sign(final) >= 0) {
+      const f = (level * final - s[k - 1]) / (s[k] - s[k - 1] || 1);
       return t[k - 1] + f * (t[k] - t[k - 1]);
     }
     return t[n - 1];
   };
-  const K = end / du, t28 = cross(0.283), t63 = cross(0.632);
-  const tau = Math.max(1.5 * (t63 - t28), 1e-6), theta = Math.max(0, t63 - tau);
-  return { ...base, ok: true, run: runB, sim, K, tau, theta, t28, t63 };
+  const t28 = cross(0.283), t63 = cross(0.632), t2 = cross(0.02);
+  let tau = Math.max(1.5 * (t63 - t28), 1e-6), theta = Math.max(0, t63 - tau);
+  if (theta < 0.5 * t2) { theta = t2; tau = Math.max(t63 - t2, 1e-6); }
+  return { K: final / du, tau, theta, t28, t63 };
+}
+
+function fitIntegrating(t, y, du, from) {
+  const n = y.length, { a, b } = lineFit(t, y, from, n);
+  const L = Math.max(0, -a / b);
+  const sse = (tau2) => {
+    const th = L - tau2;
+    let e = 0;
+    for (let k = 0; k < n; k++) {
+      const x = t[k] - th;
+      const model = x <= 0 ? 0 : tau2 > 1e-12 ? b * (x - tau2 * (1 - Math.exp(-x / tau2))) : b * x;
+      e += (y[k] - model) ** 2;
+    }
+    return e;
+  };
+  let best = 0, bestE = Infinity;
+  for (let i = 0; i <= 40; i++) { const e = sse((i / 40) * L); if (e < bestE) { bestE = e; best = i; } }
+  let lo = (Math.max(0, best - 1) / 40) * L, hi = (Math.min(40, best + 1) / 40) * L;
+  const gr = (Math.sqrt(5) - 1) / 2;
+  for (let i = 0; i < 40; i++) { const c = hi - gr * (hi - lo), d = lo + gr * (hi - lo); if (sse(c) < sse(d)) hi = d; else lo = c; }
+  const tau2 = (lo + hi) / 2;
+  return { kp: b / du, slope: b, L, tau2, theta: L - tau2 };
+}
+
+
+function holdThen(variant, tSwitch, u, lo, hi) {
+  const v = Math.min(hi, Math.max(lo, u));
+  return {
+    name: 'Step test', type: variant.type, params: variant.params,
+    law: (Ts) => {
+      const inner = makeLaw(variant, Ts), kSwitch = Math.round(tSwitch / Ts);
+      let k = 0;
+      return { step: (x) => (k++ < kSwitch ? inner.step(x) : v) };
+    },
+  };
+}
+
+const cutRun = (run, k) => ({ ...run, t: run.t.subarray(0, k), signals: Object.fromEntries(Object.entries(run.signals).map(([name, v]) => [name, v.subarray(0, k)])) });
+
+function* stepAt(ctx, point, du, bound = Infinity) {
+  const { lo, hi } = limitsOf(ctx.variant);
+  const hold = loopSignals(point.hold, ctx.key);
+  const st = settleTime(hold.t, hold.y, point.scale);
+  const notes = [];
+  if (!st.settled) notes.push(`${ctx.variant.name} does not settle at r0 = ${fmtN(point.r0)}, so the test starts at t = 0 from the plant's start: exact for a linear plant, rough otherwise`);
+  const tHold = st.settled ? Math.ceil(st.time / ctx.Ts - 1e-6) * ctx.Ts : 0;
+  const out = { du, u0: point.u0, r0: point.r0, tHold, notes };
+  let W = ctx.sim.duration, runB = null;
+  for (let tries = 0; tries < 2; tries++, W *= 4) {
+    const sim = { duration: tHold + W, sampleTime: ctx.sim.sampleTime };
+    const runA = runVariant(ctx, holdThen(ctx.variant, tHold, point.u0, lo, hi), point.signals, sim);
+    yield { partial: true, phase: 'step test' };
+    runB = runVariant(ctx, holdThen(ctx.variant, tHold, point.u0 + du, lo, hi), point.signals, sim);
+    yield { partial: true, phase: 'step test' };
+    const yA = loopSignals(runA, ctx.key).y, { t: tB, y: yB } = loopSignals(runB, ctx.key);
+    let k0 = 0;
+    while (k0 < tB.length - 1 && tB[k0] < tHold - 1e-9) k0++;
+    const n = tB.length - k0, t = new Float64Array(n), dy = new Float64Array(n);
+    let kBad = n, kOut = n;
+    for (let k = 0; k < n; k++) {
+      t[k] = tB[k0 + k] - tHold;
+      dy[k] = yB[k0 + k] - yA[k0 + k];
+      if (!Number.isFinite(dy[k]) && kBad === n) kBad = k;
+      if (Math.abs(dy[k]) > bound && kOut === n) kOut = k;
+    }
+    if (kBad <= kOut && kBad < n) return { ...out, ok: false, run: runB, why: 'the open-loop run diverged: the plant is unstable without its controller; use the relay or iterative method' };
+    let moved = 0;
+    for (let k = 0; k < n; k++) if (Number.isFinite(dy[k])) moved = Math.max(moved, Math.abs(dy[k]));
+    if (!(moved > 1e-9 * point.scale)) return { ...out, ok: false, still: true, run: runB, why: `y does not respond to a step of u (Δu = ${fmtN(du)}) at r0 = ${fmtN(point.r0)}: is the controller's output wired to the plant, or does the plant sit at a limit of its own there?` };
+    const level = settledLevel(t, dy);
+    if (level.settled) {
+      if (Math.abs(level.final) > bound) return { ...out, ok: false, exceeded: true, final: level.final, run: runB };
+      const fit = fitFopdt(t, dy, du, level.final, level.m);
+      return { ...out, ok: true, model: 'fopdt', ...fit, ripple: level.ripple, rippleT: level.m > 1 ? level.m * ctx.sim.sampleTime : 0, size: level.size, run: runB, tEnd: t[n - 1] };
+    }
+    const kEnd = Math.min(n, kOut);
+    const ramp = settledSlope(t.subarray(0, kEnd), dy.subarray(0, kEnd));
+    if (ramp.ramps) {
+      let kStop = 16;
+      while (kStop < kEnd && t[kStop - 1] < ramp.tSteady / 0.8) kStop++;
+      let r = settledSlope(t.subarray(0, kStop), dy.subarray(0, kStop));
+      while (!r.ramps && kStop < kEnd) { kStop = Math.min(kEnd, Math.ceil(1.05 * kStop) + 1); r = settledSlope(t.subarray(0, kStop), dy.subarray(0, kStop)); }
+      let fit = null, faded = false;
+      for (let pass = 0; pass < 4; pass++) {
+        const tt = t.subarray(0, kStop);
+        fit = fitIntegrating(tt, dy.subarray(0, kStop), du, lastStretch(tt, 0.2));
+        const tNeed = (fit.L + 5 * fit.tau2) / 0.8;
+        faded = t[kStop - 1] >= 0.98 * tNeed;
+        if (faded || kStop >= n) break;
+        let k = kStop;
+        while (k < n && t[k - 1] < tNeed) k++;
+        if (k > kEnd) return { ...out, ok: false, exceeded: true, reach: Math.abs(fit.slope) * Math.max(tNeed - fit.L, 0), run: runB };
+        kStop = k;
+      }
+      r = settledSlope(t.subarray(0, kStop), dy.subarray(0, kStop));
+      const tt = t.subarray(0, kStop), yy = dy.subarray(0, kStop);
+      return { ...out, ok: true, model: 'integrating', ...fit, faded, ripple: r.ripple, rippleT: r.m > 1 ? r.m * ctx.sim.sampleTime : 0, moved: yy[kStop - 1], run: cutRun(runB, k0 + kStop), tEnd: tt[kStop - 1] };
+    }
+    if (kOut < n) return { ...out, ok: false, exceeded: true, reach: moved, run: runB };
+  }
+  return { ...out, ok: false, run: runB, why: 'the step response settled neither to a level nor to a steady slope in four periods of the input: a very slow plant (lengthen the input\'s period)' };
+}
+
+function* boundedStep(ctx, point, want, dir, bound, boundWhy, responds = false) {
+  const { lo, hi } = limitsOf(ctx.variant);
+  const room = (s) => (s > 0 ? hi - point.u0 : point.u0 - lo);
+  const enough = (s) => room(s) >= (dir ? 0.1 : 1) * want;
+  const first = dir || 1;
+  const s = enough(first) ? first : room(-first) >= want ? -first : room(first) >= room(-first) ? first : -first;
+  let du = s * Math.min(want, room(s));
+  if (!(Math.abs(du) >= 0.1 * want)) return { du, u0: point.u0, r0: point.r0, notes: [], ok: false, why: `the actuator is at a limit at r0 = ${fmtN(point.r0)} (u0 = ${fmtN(point.u0)}): no room for a step` };
+  const notes = [], unit = measurement(ctx).unit, u = unit ? ` ${unit}` : '';
+  if (dir && s !== dir) notes.push(`the step went the other way (Δu = ${fmtN(du)}): no room for it in u`);
+  else if (Math.abs(du) < want) notes.push(`the step was made smaller, Δu = ${fmtN(du)}, to stay inside the actuator limits`);
+  let moved = null;
+  for (let tries = 0; ; tries++) {
+    const r = yield* stepAt(ctx, point, du, bound);
+    if (r.still && (moved || responds)) {
+      r.why = `y does not respond to a step of u (Δu = ${fmtN(du)}) at r0 = ${fmtN(point.r0)}${u}, ${moved ? `though a step of Δu = ${fmtN(moved)} moved it by more than ${fmtN(bound)}${u}` : 'though it does at other points'}: the plant sits at a limit of its own there`;
+    }
+    if (!r.exceeded) { r.notes.unshift(...notes); return { ...r, bound, boundWhy }; }
+    if (tries === 5) return { ...r, ok: false, notes, why: `even a step of Δu = ${fmtN(du)} moves y by more than ${fmtN(bound)}${u} (${boundWhy}) before it settles` };
+    moved = du;
+    const far = Math.abs(r.final ?? r.reach ?? NaN);
+    du *= far > 0 && Number.isFinite(far) ? Math.min(0.5, (0.8 * bound) / far) : 0.5;
+    notes.splice(0, notes.length, `the step was made smaller, Δu = ${fmtN(du)}, so y moves by at most ${fmtN(bound)}${u} (${boundWhy})`);
+  }
+}
+
+function* holdAt(ctx, op, target, scale) {
+  let level = target, signals, run, r, y, u, sim = ctx.sim;
+  for (let i = 0; i < 3; i++) {
+    signals = holding(ctx, level);
+    run = runVariant(ctx, ctx.variant, signals, sim);
+    yield { partial: true, phase: 'hold' };
+    const s = loopSignals(run, ctx.key), k0 = Math.floor(0.75 * s.t.length);
+    r = mean(s.r, k0); y = mean(s.y, k0); u = mean(s.u, k0);
+    if (Math.abs(r - target) > 1e-3 * scale && Math.abs(op.r0 - r) > 1e-12 && level !== op.level && i === 0) {
+      level += ((target - r) * (op.level - level)) / (op.r0 - r);
+      continue;
+    }
+    if (sim !== ctx.sim || settleTime(s.t, s.y, scale).settled) break;
+    sim = longer(ctx.sim, 4);
+  }
+  const { lo, hi } = limitsOf(ctx.variant);
+  return { signals, hold: run, r0: r, y, u0: Math.min(hi, Math.max(lo, u)), scale, reached: Math.abs(y - target) <= 0.02 * scale };
+}
+
+function* scheduleExperiment(ctx, op, want, base, scale) {
+  const at = ctx.variant.params.at;
+  const mid = (at[0] + at[at.length - 1]) / 2;
+  const order = at.map((_, i) => i).sort((a, b) => Math.abs(at[a] - mid) - Math.abs(at[b] - mid) || a - b);
+  const points = new Array(at.length);
+  let sign = 0;
+  for (const i of order) {
+    const target = at[i];
+    const point = yield* holdAt(ctx, op, target, scale);
+    if (!point.reached) { points[i] = { at: target, ok: false, notes: [], why: `${ctx.variant.name} holds y at ${fmtN(point.y)}, not at ${fmtN(target)}` }; continue; }
+    const toward = target <= mid ? 1 : -1, next = at[i + toward] ?? at[i - toward];
+    const bound = next === undefined ? (op.span > 1e-9 ? op.span / 2 : Infinity) : Math.abs(next - target) / 2;
+    const r = yield* boundedStep(ctx, point, want, sign ? toward * sign : 0, bound, 'half the way to the next point', sign !== 0);
+    if (r.ok && !sign) sign = Math.sign(r.model === 'integrating' ? r.kp : r.K) || 1;
+    points[i] = { at: target, ...r, notes: [...r.notes, ...stepNotes(r, measurement(ctx).unit)] };
+  }
+  const ok = points.filter((p) => p.ok);
+  const show = points[order.find((i) => points[i].ok) ?? order[0]];
+  if (!ok.length) return { ...base, ...show, ok: false, model: 'schedule', points, shownAt: show.at, why: `no step test worked; at ${fmtN(show.at)}: ${show.why}` };
+  const y0 = loopSignals(op.ownRun, ctx.key).y[0];
+  let trim = ok.find((p) => Math.abs(p.at - y0) <= 1e-6 * scale)?.u0;
+  const notes = [...base.notes];
+  if (trim === undefined) {
+    const h = yield* holdAt(ctx, op, y0, scale);
+    trim = h.u0;
+    if (!h.reached) notes.push(`${ctx.variant.name} does not hold y at its start level ${fmtN(y0)}: u0 is rough`);
+  }
+  return { ...base, ok: true, model: 'schedule', points, trim, y0, notes, run: show.run, u0: show.u0, r0: show.r0, du: show.du, tHold: show.tHold, shownAt: show.at };
+}
+
+function* stepExperimentSteps(project, path, opts = {}) {
+  const ctx = tuneContext(project, path);
+  if (siso(ctx)) return { ctx, ok: false, notes: [], why: siso(ctx) };
+  const op = yield* operatingPoint(ctx);
+  const range = actuatorRange(ctx, op.own);
+  const base = { ctx, r0: op.r0, u0: op.u0, notes: [...op.notes] };
+  if (opts.du === undefined && !range) return { ...base, ok: false, why: NO_RANGE };
+  const want = Math.abs(opts.du ?? (opts.amplitude ?? 0.1) * range);
+  const scale = op.span > 1e-9 ? op.span : Math.abs(op.r0) || 1;
+  if (ctx.variant.type === 'gainScheduled' && op.name) return yield* scheduleExperiment(ctx, op, want, base, scale);
+  const point = { signals: op.signals, hold: op.holdRun, u0: op.u0, r0: op.r0, scale };
+  const r = yield* boundedStep(ctx, point, want, 0, op.span > 1e-9 ? op.span / 2 : Infinity, 'half of r\'s span');
+  return { ...base, ...r, notes: [...base.notes, ...r.notes, ...stepNotes(r, measurement(ctx).unit)] };
 }
 
 const stepExperiment = (project, path, opts) => drain(stepExperimentSteps(project, path, opts));
 
-function simcGains(K, tau, theta, Ts = 0, tauC = null) {
-  const th = theta + Ts / 2;
-  const tc = tauC ?? Math.max(th, tau / 10);
+function stepNotes(r, unit = '') {
+  if (!r.ok) return [];
+  const notes = [], u = unit ? ` ${unit}` : '';
+  if (r.model === 'integrating') notes.push(`y ramps (an integrating plant): the test ended ${fmtN(r.tEnd)} s after the step, once its slope was steady${r.faded ? ' and its lag\'s transient had faded below 1 %' : ', before its lag had faded (the record is too short, so the estimate is rough)'}, with y moved by ${fmtN(Math.abs(r.moved))}${u}${Number.isFinite(r.bound) ? ` (it may move ${fmtN(r.bound)}${u}, ${r.boundWhy})` : ''}`);
+  const size = r.model === 'integrating' ? Math.abs(r.moved) : r.size;
+  if (r.ripple > 0.005 * size) notes.push(`y ripples by ±${fmtN(r.ripple)}${u} (${fmtN((100 * r.ripple) / size)} % of the step response)${r.rippleT ? `, slowest strong period ${fmtN(r.rippleT)} s; the test reads y averaged over it` : ''}`);
+  return notes;
+}
+
+const SIMC = {
+  tight: { label: 'Tight', short: '', f: 1, about: 'τc = θ (Skogestad 2003): fast; his margins on the model: Ms 1.6–1.7, gain margin about 3' },
+  smooth: { label: 'Smooth', short: ' smooth', f: 3, about: 'τc = 3θ: slower and gentler on u, more robust' },
+};
+const simcFactor = (rule) => {
+  if (!SIMC[rule]) throw new Error(`SIMC τc: one of ${Object.keys(SIMC).join(', ')}`);
+  return SIMC[rule].f;
+};
+
+function tauCSource(g, rule = 'tight') {
+  const f = SIMC[rule]?.f ?? 1, x = f === 1 ? '' : `${f} × `;
+  if (g.by === 'ripple') return `${x}the ripple's period on y (our floor), not the dead time θ = ${fmtN(g.theta)} s`;
+  if (g.by === 'lag') return `${x}a tenth of the lag τ (our floor), not the dead time θ = ${fmtN(g.theta)} s, which is shorter`;
+  if (g.by === 'given') return 'given';
+  const dead = `the dead time${g.Tf ? ' with the derivative\'s filter' : ''}`;
+  return f === 1 ? `θ, ${dead} (Skogestad's tight rule)` : `${f}θ (θ = ${fmtN(g.theta)} s, ${dead})`;
+}
+
+function tauCShort(g, rule = 'tight') {
+  const f = SIMC[rule]?.f ?? 1, x = f === 1 ? '' : `${f} × `;
+  return g.by === 'ripple' ? `${x}ripple period` : g.by === 'lag' ? `${x}τ/10` : g.by === 'given' ? 'given' : `${f === 1 ? '' : f}θ`;
+}
+
+function simcGains(K, tau, theta, Ts = 0, tauC = null, rule = 'tight', minTauC = 0) {
+  const th = theta + Ts / 2, base = Math.max(th, tau / 10, minTauC);
+  const by = tauC !== null ? 'given' : base === th ? 'theta' : minTauC >= tau / 10 ? 'ripple' : 'lag';
+  const tc = tauC ?? simcFactor(rule) * base;
   const Kp = tau / (K * (tc + th)), Ti = Math.min(tau, 4 * (tc + th));
-  return { Kp, Ki: Kp / Ti, Kd: 0, Ti, Td: 0, tauC: tc };
+  return { Kp, Ki: Kp / Ti, Kd: 0, Ti, Td: 0, tauC: tc, theta: th, thetaPlant: th, Ts, by, byRipple: by === 'ripple' };
+}
+
+function simcIntegrating(kp, theta, tau2 = 0, Ts = 0, { rule = 'tight', pid = null, minTauC = 0, dFilter = null } = {}) {
+  const withD = pid ?? tau2 > theta + Ts / 2, f = simcFactor(rule);
+  const own = withD && dFilter;
+  const thPlant = (withD ? theta : theta + tau2 / 2) + Ts / 2;
+  let Tf = own ? dFilter(tau2) : 0, g = null;
+  for (let i = 0; i < 50; i++) {
+    const th = thPlant + (own ? Tf : 0), base = Math.max(th, minTauC);
+    const tc = f * base;
+    const Kc = 1 / (kp * (tc + th)), tauI = 4 * (tc + th), tauD = withD ? tau2 : 0;
+    const Kp = Kc * (1 + tauD / tauI), Ki = Kc / tauI, Kd = Kc * tauD;
+    g = { Kp, Ki, Kd, Ti: Kp / Ki, Td: Kd / Kp, tauC: tc, theta: th, thetaPlant: thPlant, Ts, Tf: own ? Tf : undefined, Kc, tauI, tauD, by: base === th ? 'theta' : 'ripple', byRipple: base !== th };
+    if (!own) break;
+    const next = dFilter(g.Td);
+    if (Math.abs(next - Tf) <= 1e-12 + 1e-9 * Tf) break;
+    Tf = next;
+  }
+  return g;
+}
+
+function simcFor(m, Ts, rule, pid = null) {
+  return m.model === 'integrating'
+    ? simcIntegrating(m.kp, m.theta, m.tau2, Ts, { rule, pid, minTauC: m.rippleT ?? 0, dFilter: (Td) => derivativeFilter(Td, Ts) })
+    : simcGains(m.K, m.tau, m.theta, Ts, null, rule, m.rippleT ?? 0);
 }
 
 function* stepTuneSteps(project, path, opts = {}) {
+  const rule = opts.simc ?? 'tight';
+  simcFactor(rule);
   const ex = yield* stepExperimentSteps(project, path, opts);
   if (!ex.ok) return ex;
-  const g = simcGains(ex.K, ex.tau, ex.theta, ex.ctx.Ts, opts.tauC);
-  const variant = pidVariant(ex.ctx.variant, g, opts.name ?? `${baseName(ex.ctx.variant.name)} · SIMC`, ex.ctx.Ts);
-  return { ...ex, gains: g, variant };
+  const from = ex.ctx.variant, Ts = ex.ctx.Ts;
+  const name = (opts.name ?? `${baseName(from.name)} · SIMC${SIMC[rule].short}`).slice(0, 40);
+  if (ex.model === 'schedule') {
+    const ok = ex.points.filter((p) => p.ok);
+    const notes = [...ex.notes];
+    const points = ex.points.map((p) => {
+      if (p.ok) {
+        const gains = simcFor(p, Ts, rule, false);
+        return { ...p, gains, notes: [...p.notes, ...simcNotes(p, gains, true)] };
+      }
+      const near = ok.reduce((a, b) => (Math.abs(b.at - p.at) < Math.abs(a.at - p.at) ? b : a));
+      notes.push(`at ${fmtN(p.at)}: ${p.why}; its gains are those found at ${fmtN(near.at)}`);
+      return { ...p, gains: simcFor(near, Ts, rule, false), from: near.at };
+    });
+    const p = from.params;
+    const variant = normalizeVariant({ name, type: 'gainScheduled', params: { at: p.at, Kp: points.map((q) => q.gains.Kp), Ki: points.map((q) => q.gains.Ki), Tr: p.Tr, u0: ex.trim, umin: p.umin, umax: p.umax } });
+    return { ...ex, points, notes, simc: rule, variant };
+  }
+  const g = simcFor(ex, Ts, rule);
+  return { ...ex, notes: [...ex.notes, ...simcNotes(ex, g)], simc: rule, gains: g, variant: pidVariant(from, g, name, Ts) };
+}
+
+function simcNotes(m, g, scheduled = false) {
+  const notes = [];
+  if (g.by === 'ripple') notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s): a faster loop would chase the ripple`);
+  if (g.by === 'lag') notes.push(`τc = ${fmtN(g.tauC)} s is set from a tenth of the lag τ = ${fmtN(m.tau)} s (our floor), not from the dead time θ = ${fmtN(g.theta)} s, which is shorter`);
+  if (m.model === 'integrating' && m.tau2 > 0.02 * m.L) {
+    if (g.Kd) notes.push(`the lag τ2 = ${fmtN(m.tau2)} s is longer than the dead time θ = ${fmtN(g.thetaPlant)} s (half a controller sample included), so the PI gets a derivative that cancels it (SIMC PID)`);
+    else notes.push(`${scheduled ? 'a gain-scheduled PI has no derivative' : `the lag τ2 = ${fmtN(m.tau2)} s is no longer than the dead time`}, so half of τ2 counts as dead time (the half rule)`);
+  }
+  if (g.Tf) notes.push(`SIMC's margins are for an unfiltered derivative; this PID filters it at Tf = ${fmtN(g.Tf)} s (Td/10, at least a sample), a lag that counts as dead time: θ = ${fmtN(g.thetaPlant)} + ${fmtN(g.Tf)} = ${fmtN(g.theta)} s`);
+  return notes;
 }
 
 const stepTune = (project, path, opts) => drain(stepTuneSteps(project, path, opts));
@@ -5617,7 +6003,7 @@ function* autotuneSteps(project, path, opts = {}) {
   const head = { method, key: ctx.key, path: ctx.path, where: ctx.where, goal: g };
   const why = whyNot(ctx, method);
   if (why) return { ...head, ok: false, why, notes: [] };
-  const name = opts.name ?? resultName(ctx.block, method, opts.rule);
+  const name = opts.name ?? resultName(ctx.block, method, opts.rule, opts.simc);
   if (method === 'iterate') {
     const r = yield* iterate(project, path, g, { maxIter: opts.maxIter });
     const better = r.best.cost.J < r.start.cost;
@@ -5632,37 +6018,92 @@ function* autotuneSteps(project, path, opts = {}) {
   yield { partial: true, phase: 'start', before };
   const res = method === 'relay'
     ? yield* relayTuneSteps(project, path, opts.rule ?? 'tl', { amplitude: opts.amplitude, d: opts.d, name })
-    : yield* stepTuneSteps(project, path, { amplitude: opts.amplitude, du: opts.du, name });
+    : yield* stepTuneSteps(project, path, { amplitude: opts.amplitude, du: opts.du, simc: opts.simc, name });
   if (!res.ok) return { ...res, ...head, before };
   const after = variantCost(ctx, res.variant, g, scales);
   yield { partial: true, phase: 'score' };
-  return { ...res, ...head, before, after, better: after.J < before.cost.J };
+  if (res.model === 'integrating' && res.variant.params.Ki && !res.variant.params.Tr && after.overshoot > g.overshoot) {
+    const Tr = res.gains.tauI, pre = variantCost(ctx, { ...res.variant, params: { ...res.variant.params, Tr } }, g, scales);
+    yield { partial: true, phase: 'score' };
+    res.notes = [...res.notes, `plant and controller both integrate, so y overshoots a step in r (${fmtN(after.overshoot)} %); with a prefilter on r of Tr = τI = ${fmtN(Tr)} s it would overshoot ${fmtN(pre.overshoot)} %, at the price of a slower response to r: cost ×${fmtN(pre.J / before.cost.J)} of ${ctx.variant.name}, against ×${fmtN(after.J / before.cost.J)} without the prefilter`];
+  }
+  const out = { ...res, ...head, before, after, better: after.J < before.cost.J };
+  if (!out.better) out.worse = whyWorse(out, ctx);
+  return out;
 }
 
 const autotune = (project, path, opts) => drain(autotuneSteps(project, path, opts));
 
+function measurement(ctx) {
+  const { level } = locate(ctx.diagram, ctx.path);
+  const w = wireTo(level, ctx.block.id, 1);
+  if (!w) return { name: '', unit: '' };
+  const from = parseEnd(w.from);
+  const byId = (id) => level.blocks.find((b) => b.id === id);
+  const src = byId(from.id);
+  if (src?.type === 'source') return { name: src.params.signal, unit: src.params.unit ?? '' };
+  const sink = level.wires.map((x) => ({ x, to: byId(parseEnd(x.to).id) })).find(({ x, to }) => to?.type === 'sink' && parseEnd(x.from).id === from.id && parseEnd(x.from).port === from.port)?.to;
+  return sink ? { name: sink.params.name, unit: sink.params.unit && sink.params.unit !== '1' ? sink.params.unit : '' } : { name: '', unit: '' };
+}
+
+function whyWorse(res, ctx) {
+  const was = res.before.variant, now = res.variant, a = res.before.cost, b = res.after, goal = res.goal;
+  const y = measurement(ctx), yName = y.name || 'y', at = (v) => `${yName} = ${fmtN(v)}${y.unit ? ` ${y.unit}` : ''}`;
+  const kind = (v) => (v.type === 'gainScheduled' ? 'gain-scheduled PI' : v.params.Kd ? 'PID' : v.params.Ki ? 'PI' : 'P controller');
+  const out = [];
+  if (was.type === 'gainScheduled' && now.type !== 'gainScheduled') {
+    const kp = was.params.Kp.map(Math.abs), lo = Math.min(...kp), hi = Math.max(...kp);
+    const test = res.method === 'relay' ? 'a relay test' : 'a step test';
+    if (hi > 1.5 * lo) out.push(`one ${kind(now)} from ${test} at ${at(res.r0)}; ${was.name} changes its gains with ${yName} (Kp ${fmtN(lo)} … ${fmtN(hi)}), which a single ${kind(now)} cannot`);
+  } else if (was.type === 'pid' && was.params.Kd && now.type === 'pid' && !now.params.Kd) {
+    out.push(`the result is a PI: SIMC from a first order plus dead time has no derivative action, and ${was.name} uses one`);
+  }
+  if (res.notes?.some((n) => /estimate is rough/.test(n))) out.push('the experiment\'s estimate is rough (see the notes)');
+  const { lo, hi } = limitsOf(was), kp = Math.abs(now.params.Kp ?? 0);
+  if (res.ripple && !Array.isArray(now.params.Kp) && Number.isFinite(hi - lo) && kp * res.ripple >= 0.05 * (hi - lo)) {
+    out.push(`${yName} ripples by ±${fmtN(res.ripple)}${y.unit ? ` ${y.unit}` : ''}, and its Kp passes ±${fmtN(kp * res.ripple)} of that to u (${fmtN((100 * kp * res.ripple) / (hi - lo))} % of u's range)`);
+  }
+  if (b.diverged) out.push('the loop diverges with it');
+  else {
+    const [part] = Object.keys(b.parts).map((k) => [k, b.parts[k] - (a.parts?.[k] ?? 0)]).sort((p, q) => q[1] - p[1])[0];
+    const x = (k) => (a.parts?.[k] > 0 ? `×${fmtN(b.parts[k] / a.parts[k])}` : `${fmtN(b.parts[k])}, was 0`);
+    if (part === 'overshoot') out.push(`it overshoots ${fmtN(b.overshoot)} % (the goal allows ${fmtN(goal.overshoot)} %; ${was.name}: ${fmtN(a.overshoot)} %)`);
+    else if (part === 'error') out.push(`r − y is larger (${goal.cost} ${x('error')})`);
+    else if (part === 'effort') out.push(`u swings more (effort ${x('effort')})`);
+    else out.push(`u sits at a limit ${fmtN(100 * b.saturated)} % of the time (${was.name}: ${fmtN(100 * a.saturated)} %)`);
+  }
+  return out.join('; ');
+}
+
 function tuneReport(res) {
   const cost = (c) => c && { J: c.J, overshoot: c.overshoot, saturated: c.saturated, diverged: c.diverged, parts: c.parts };
   const out = { ok: res.ok, method: res.method, block: res.key, where: res.where, goal: res.goal };
+  const model = (m) => (m.model === 'integrating' ? { model: m.model, kp: m.kp, L: m.L, tau2: m.tau2, theta: m.theta, tEnd: m.tEnd, faded: m.faded } : { model: m.model, K: m.K, tau: m.tau, theta: m.theta });
   if (!res.ok) Object.assign(out, { why: res.why, notes: res.notes ?? [] });
   else {
     Object.assign(out, { better: res.better, before: { variant: res.before.variant, cost: cost(res.before.cost) }, after: { variant: res.variant, cost: cost(res.after) }, notes: res.notes });
+    if (!res.better) out.worse = res.worse;
     if (res.method === 'iterate') Object.assign(out, { iterations: res.iterations, evals: res.evals, tuned: res.names });
     if (res.method === 'relay') Object.assign(out, { Ku: res.Ku, Pu: res.Pu, amplitude: res.a, r0: res.r0, u0: res.u0, d: res.d, rule: res.rule, gains: res.gains });
-    if (res.method === 'step') Object.assign(out, { K: res.K, tau: res.tau, theta: res.theta, r0: res.r0, u0: res.u0, du: res.du, gains: res.gains });
+    if (res.method === 'step') {
+      Object.assign(out, { simc: res.simc, r0: res.r0, u0: res.u0, du: res.du, tHold: res.tHold });
+      if (res.model === 'schedule') {
+        Object.assign(out, { model: 'schedule', trim: res.trim, points: res.points.map((p) => ({ at: p.at, ok: p.ok, ...(p.ok ? { ...model(p), u0: p.u0, du: p.du, notes: p.notes } : { why: p.why }), ...(p.from !== undefined ? { gainsFrom: p.from } : {}), gains: p.gains })) });
+      } else Object.assign(out, { ...model(res), gains: res.gains });
+    }
   }
   return JSON.parse(JSON.stringify(out));
 }
 
 
 function baseName(name) {
-  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC)( \d+)?)+$/, '');
+  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?)( \d+)?)+$/, '');
 }
 
-function resultName(block, method, rule = 'tl') {
+function resultName(block, method, rule = 'tl', simc = 'tight') {
   const running = block.variants[block.variant ?? 0];
   const base = baseName(running.name);
-  const suffix = method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule]?.short ?? rule}` : ' · SIMC';
+  const suffix = method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`;
   const named = (s) => `${base.slice(0, Math.max(0, 40 - s.length))}${s}`;
   const plain = named(suffix);
   if (running.name === plain || (running.name.startsWith(plain) && /^ \d+$/.test(running.name.slice(plain.length)))) return running.name;
@@ -5679,12 +6120,14 @@ function placeVariant(project, path, variant, { run = true } = {}) {
   return i;
 }
 
+const derivativeFilter = (Td, Ts) => Math.max(Ts, Td / 10);
+
 function pidVariant(from, g, name, Ts) {
   const p = from.params ?? {};
   const pid = from.type === 'pid';
   return normalizeVariant({
     name: name.slice(0, 40), type: 'pid',
-    params: { Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, Tf: g.Kd ? Math.max(Ts, (g.Td ?? 0) / 10) : (pid ? p.Tf : 0.01), b: pid ? p.b : 1, Tr: p.Tr ?? 0, u0: p.u0 ?? 0, umin: p.umin ?? -Infinity, umax: p.umax ?? Infinity },
+    params: { Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, Tf: g.Kd ? (g.Tf ?? derivativeFilter(g.Td ?? 0, Ts)) : (pid ? p.Tf : 0.01), b: pid ? p.b : 1, Tr: p.Tr ?? 0, u0: p.u0 ?? 0, umin: p.umin ?? -Infinity, umax: p.umax ?? Infinity },
   });
 }
 
@@ -5693,7 +6136,7 @@ function fmtN(v) {
   return String(Number(v.toPrecision(3)));
 }
 
-return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, stepExperimentSteps, stepExperiment, simcGains, stepTuneSteps, stepTune, METHODS, autotuneSteps, autotune, tuneReport, baseName, resultName, placeVariant, pidVariant };
+return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, ripplePeriod, settledLevel, settledSlope, fitFopdt, fitIntegrating, stepExperimentSteps, stepExperiment, SIMC, tauCSource, tauCShort, simcGains, simcIntegrating, stepTuneSteps, stepTune, METHODS, autotuneSteps, autotune, measurement, whyWorse, tuneReport, baseName, resultName, placeVariant, derivativeFilter, pidVariant };
 })();
 // ---- core/live.js
 __mods['core/live.js'] = (() => {
@@ -9398,7 +9841,7 @@ return { createControllerTab };
 // ---- ui/autotune.js
 __mods['ui/autotune.js'] = (() => {
 
-const { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, COSTS, GOAL } = __mods['core/autotune.js'];
+const { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, SIMC, COSTS, GOAL, tauCSource, tauCShort } = __mods['core/autotune.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
 const { num, parseSI } = __mods['ui/units.js'];
 const METHODS = {
@@ -9411,8 +9854,8 @@ const METHODS = {
     about: 'A relay replaces the controller around the middle of r, so the loop oscillates at its ultimate period Pu; the amplitude gives the ultimate gain Ku (Åström & Hägglund 1984, as industrial auto-tuners do). A rule turns Ku and Pu into a PID.',
   },
   step: {
-    label: 'Step response', sub: 'FOPDT fit → SIMC PI',
-    about: 'Opens the loop and steps u. The reaction curve gives a gain K, a lag τ and a dead time θ, and SIMC (Skogestad 2003) a PI with closed-loop time τc = θ. For plants that settle on their own.',
+    label: 'Step response', sub: 'model fit → SIMC',
+    about: 'The running controller holds r at the middle of its range until y has settled within 2 % (of how far it moved, or of r\'s span; a steady ripple averaged out); then u is held and stepped. A controller that keeps swinging there hands over at the start instead. A response that settles gives a gain K, a lag τ and a dead time θ; one that ramps (an integrating plant, such as a motor\'s angle) gives a slope k′, a lag τ2 and a dead time θ, and the test ends once the slope is steady and the lag has faded. SIMC (Skogestad 2003) turns the model into a PI, or a PID when the lag of an integrating plant outlasts its dead time; a PID\'s derivative filter counts as dead time. A gain-scheduled PI is tested at each point of its table and gets SIMC gains there.',
   },
 };
 const PACE = 1000 / 6;  
@@ -9420,7 +9863,7 @@ const SLICE = 30;
 const GOAL_ABOUT = 'The cost of one run: the error r − y (IAE, ITAE or ISE), plus the effort (the swing of u), the overshoot beyond the bound, and the time u sits at a limit. Over one period of the input, the disturbance d included.';
 
 function createAutotuneTab(host, app, display) {
-  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', amplitude: 0.1, maxIter: 60, fast: false };
+  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', simc: 'tight', amplitude: 0.1, maxIter: 60, fast: false };
   let job = null;   
   let shown = null; 
 
@@ -9495,7 +9938,7 @@ function createAutotuneTab(host, app, display) {
       + tunedValues(v).map(([k, x]) => `<li class="turow"><span>${esc(k)}</span><span>${show(x)}</span></li>`).join('');
     const { ctx, why: noCtx } = context();
     const why = noCtx ?? whyNot(ctx, st.method);
-    const into = job ? job.name : resultName(c.block, st.method, st.rule);
+    const into = job ? job.name : resultName(c.block, st.method, st.rule, st.simc);
     const target = $('#tu-target');
     if (job) { target.innerHTML = `Into <b>${esc(into)}</b>`; target.title = `${shown.before?.variant.name ?? v.name} stays as it was.`; }
     else if (why) { target.innerHTML = `<span class="tuwhy">${esc(why)}</span>`; target.title = ''; }
@@ -9510,6 +9953,7 @@ function createAutotuneTab(host, app, display) {
       const opts = [];
       if (st.method === 'iterate') opts.push(field('maxIter', 'Iterations', st.maxIter, 'at most; stops when the cost stops falling'));
       if (st.method === 'relay') opts.push(`<label class="pf"><span class="pfl">Rule</span><select class="field" id="tu-rule" ${job ? 'disabled' : ''}>${Object.entries(RULES).map(([k, r]) => `<option value="${k}" ${k === st.rule ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(RULES[st.rule].about)}</span></label>`);
+      if (st.method === 'step') opts.push(`<label class="pf"><span class="pfl">SIMC τc</span><select class="field" id="tu-simc" ${job ? 'disabled' : ''}>${Object.entries(SIMC).map(([k, r]) => `<option value="${k}" ${k === st.simc ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(SIMC[st.simc].about)}</span></label>`);
       if (st.method !== 'iterate') opts.push(field('amplitude', st.method === 'relay' ? 'Relay ±d' : 'Step Δu', num(100 * st.amplitude, 3), '% of the actuator range'));
       $('#tu-opts').innerHTML = opts.join('');
     }
@@ -9529,6 +9973,8 @@ function createAutotuneTab(host, app, display) {
     host.querySelectorAll('[data-cost]').forEach((el) => { el.onclick = () => { if (job) return; st.goal.cost = el.dataset.cost; renderSetup(); }; });
     const rule = $('#tu-rule');
     if (rule) rule.onchange = () => { if (job) return; st.rule = rule.value; rule.blur(); renderSetup(); };
+    const simc = $('#tu-simc');
+    if (simc) simc.onchange = () => { if (job) return; st.simc = simc.value; simc.blur(); renderSetup(); };
     host.querySelectorAll('input[data-k]').forEach((inp) => {
       inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } };
       inp.onblur = () => {
@@ -9568,9 +10014,9 @@ function createAutotuneTab(host, app, display) {
     const why = noCtx ?? whyNot(ctx, st.method);
     if (!c || why) { app.toast(why ?? 'There is no Controller block to tune.'); return; }
     const goal = { ...st.goal };
-    const name = resultName(c.block, st.method, st.rule);
-    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, amplitude: st.amplitude, maxIter: st.maxIter, name });
-    shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null };
+    const name = resultName(c.block, st.method, st.rule, st.simc);
+    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, simc: st.simc, amplitude: st.amplitude, maxIter: st.maxIter, name });
+    shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null, unit: unitY() };
     job = { gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, mode: display.mode, startData: display.data, timer: 0, edit: false, ran: false, swept: false, applied: Infinity, runs: 0 };
     if (st.method === 'iterate') { app.setRunMode('stop'); display.clearRuns(); }
     renderAll();
@@ -9629,14 +10075,16 @@ function createAutotuneTab(host, app, display) {
     job.swept = true;
     app.setRunMode(st.fast ? 'stop' : 'single');
     display.clearRuns();
-    display.setData(res.method === 'relay' ? lastPeriod(res.run, res.ctx.sim.duration) : { t: res.run.t, signals: res.run.signals });
-    const u = (x) => num(Math.abs(x) < 1e-6 * Math.abs(res.d ?? res.du ?? 1) ? 0 : x, 3);
+    const T = res.ctx.sim.duration;
+    display.setData(res.method === 'relay' ? lastPeriod(res.run, T) : aroundStep(res.run, res.tHold ?? 0, T));
+    const u = (x) => num(Math.abs(x) < 1e-4 * Math.abs(res.d ?? res.du ?? 1) ? 0 : x, 3);
     shown.status = (res.method === 'relay'
       ? `On the display: the relay experiment, u = ${u(res.u0)} ± ${u(res.d)} around r0 = ${u(res.r0)}, other inputs at 0.`
-      : `On the display: the step test, u held at ${u(res.u0)}, then at ${u(res.u0 + (res.du ?? 0))}; r0 = ${u(res.r0)}, other inputs at 0.`)
+      : stepStatus(res, u))
       + (res.ok ? '' : ` It gives no result: ${res.why}.`);
     renderAll();
-    const sweep = 10 * app.project.scope.timebase.scale;
+    const tb = app.project.scope.timebase, w0 = Math.max(0, tb.position), shownData = display.data;
+    const sweep = Math.max(0, Math.min(tb.position + 10 * tb.scale, shownData.t.at(-1) ?? 0) - w0);
     job.timer = setTimeout(() => {
       if (!job) return;
       if (replaced()) { end('Stopped: the plant changed during the experiment.', { gone: true }); return; }
@@ -9650,7 +10098,20 @@ function createAutotuneTab(host, app, display) {
     const notes = res.notes?.length ? ` Note: ${res.notes.join('; ')}.` : '';
     if (res.better) { place(res.variant, true); end(`Done.${notes}`); return; }
     place(res.variant, false);
-    end(`The result scores worse than ${res.before.variant.name} (cost ×${num(res.after.J / res.before.cost.J, 2)}): it was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
+    end(`The result scores worse than ${res.before.variant.name} (cost ×${num(res.after.J / res.before.cost.J, 2)})${res.worse ? `: ${res.worse}` : ''}. It was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
+  }
+
+  function stepStatus(res, u) {
+    const T = res.ctx.sim.duration, shift = Math.max(0, (res.tHold ?? 0) - 0.1 * T);
+    const unit = shown.unit ? ` ${shown.unit}` : '';
+    const where = res.model === 'schedule' ? `the step test at y = ${u(res.shownAt)}${unit} (one of ${res.points.length}, one per point of the table)` : 'the step test';
+    const held = res.tHold > 0
+      ? `${res.before?.variant.name ?? 'the running variant'} held r0 = ${u(res.r0)}${unit}, then u was set to ${u(res.u0 + res.du)} at t = ${num(res.tHold - shift, 3)} s, against a second run that held it at ${u(res.u0)}`
+      : `u was held at ${u(res.u0 + res.du)} from the start, against a second run that held it at ${u(res.u0)} (r0 = ${u(res.r0)}${unit})`;
+    const ended = res.model === 'integrating' ? `; y ramps, so the test ended ${num(res.tEnd, 3)} s later, once its slope was steady${res.faded ? ' and its lag had faded' : ''}` : '';
+    const vm = app.project.scope.view?.mode ?? 'time';
+    const view = vm === 'time' ? '' : ` The display is in ${vm === 'xy' ? 'XY' : vm === 'fft' ? 'FFT' : 'Spectrogram'} mode${vm === 'xy' ? ', channel 1 across' : ''}; Time shows the test over time.`;
+    return `On the display: ${where}: ${held}${ended}. Other inputs at 0.${view}`;
   }
 
   function end(status = '', { gone = false } = {}) {
@@ -9706,9 +10167,23 @@ function createAutotuneTab(host, app, display) {
       rows.push(row('Rule', RULES[res.rule].label, ''));
     }
     if (s.method === 'step' && res?.ok) {
-      rows.push(row('K', num(res.K, 4), 'y per u'));
-      rows.push(row('τ, θ', `${num(res.tau, 3)} s, ${num(res.theta, 3)} s`, 'lag, dead time'));
-      rows.push(row('τc', `${num(res.gains.tauC, 3)} s`, 'closed-loop time'));
+      const fit = (m) => (m.model === 'integrating'
+        ? { gain: ['k′', num(m.kp, 3), 'slope of y per unit of u (it ramps)'], lag: ['τ2, θ', `${num(m.tau2, 3)} s, ${num(m.theta, 3)} s`] }
+        : { gain: ['K', num(m.K, 3), 'y per u'], lag: ['τ, θ', `${num(m.tau, 3)} s, ${num(m.theta, 3)} s`] });
+      if (res.model === 'schedule') {
+        for (const p of res.points) {
+          if (!p.ok) { rows.push(row(`at ${num(p.at, 3)}`, `gains of ${num(p.from, 3)}`, 'no result: see the status')); continue; }
+          const { gain, lag } = fit(p);
+          rows.push(row(`at ${num(p.at, 3)}`, `${gain[0]} ${gain[1]}; ${lag[0]} ${lag[1]}`, `Kp ${num(p.gains.Kp, 3)}, Ki ${num(p.gains.Ki, 3)}, τc ${num(p.gains.tauC, 3)} s = ${tauCShort(p.gains, res.simc)}`, '', `τc = ${tauCSource(p.gains, res.simc)}`));
+        }
+        rows.push(row('u0', num(res.trim, 3), 'balances the start level'));
+        rows.push(row('SIMC', SIMC[res.simc].label, 'τc at each point: in its row', '', SIMC[res.simc].about));
+      } else {
+        const { gain, lag } = fit(res);
+        rows.push(row(...gain));
+        rows.push(row(...lag, 'lag, dead time'));
+        rows.push(row('τc', `${num(res.gains.tauC, 3)} s`, `${SIMC[res.simc].label}: = ${tauCShort(res.gains, res.simc)}`, '', `τc = ${tauCSource(res.gains, res.simc)}`));
+      }
     }
     if (s.before) {
       rows.push(row('Cost', costAfter ? `${num(s.before.cost.J, 3)} → ${num(costAfter.J, 3)}` : num(s.before.cost.J, 3), costAfter ? `×${num(costAfter.J / s.before.cost.J, 2)}` : 'at the start', costAfter && costAfter.J > s.before.cost.J ? 'tuworse' : 'tucost'));
@@ -9727,7 +10202,7 @@ function createAutotuneTab(host, app, display) {
     drawPlot(s.method === 'iterate' ? s.history : null);
   }
 
-  const row = (k, v, hint, cls = '') => `<li class="turow ${cls}"><span>${esc(k)}</span><span>${esc(v)}</span><em>${esc(hint)}</em></li>`;
+  const row = (k, v, hint, cls = '', title = hint) => `<li class="turow ${cls}"${title ? ` title="${esc(title)}"` : ''}><span>${esc(k)}</span><span>${esc(v)}</span><em>${esc(hint)}</em></li>`;
   const pct = (v) => (Number.isFinite(v) ? `${num(v, 3)} %` : '—');
 
   function drawPlot(history) {
@@ -9789,6 +10264,16 @@ function lastPeriod(run, T) {
   if (end <= T * 1.001) return { t: run.t, signals: run.signals };
   let k0 = 0;
   while (k0 < n - 1 && run.t[k0] < end - T) k0++;
+  const signals = {};
+  for (const [k, v] of Object.entries(run.signals)) signals[k] = v.subarray(k0);
+  return { t: run.t.subarray(k0).map((x) => x - run.t[k0]), signals };
+}
+
+function aroundStep(run, tHold, T) {
+  const t0 = Math.max(0, tHold - 0.1 * T);
+  if (!(t0 > 0)) return { t: run.t, signals: run.signals };
+  let k0 = 0;
+  while (k0 < run.t.length - 1 && run.t[k0] < t0 - 1e-9) k0++;
   const signals = {};
   for (const [k, v] of Object.entries(run.signals)) signals[k] = v.subarray(k0);
   return { t: run.t.subarray(k0).map((x) => x - run.t[k0]), signals };
