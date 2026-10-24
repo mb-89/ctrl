@@ -5,6 +5,7 @@
 import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } from '../core/project.js';
 import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
+import { isDelta } from './xyview.js';
 import { createControllerTab } from './controller.js';
 import { createAutotuneTab } from './autotune.js';
 import { loopOverlays, autotune, placeVariant, tuneReport } from '../core/autotune.js';
@@ -248,16 +249,20 @@ function startApp() {
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
     const data = acquire();
-    for (const ch of app.project.scope.channels) {
-      const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
+    const sc = app.project.scope, x = data.signals[sc.channels[0].source];
+    sc.channels.forEach((ch, i) => {
+      let v = data.signals[ch.source];
+      // XY with Δ: the channels draw channel 1 minus themselves; fit that.
+      if (v && x && sc.view?.mode === 'xy' && isDelta(sc, i, app.unitOf)) v = v.map((y, j) => x[j] - y);
+      const fit = v && fitChannel(v);
       if (fit) Object.assign(ch, fit);
-    }
+    });
     // A Controller block's r and the y it compares with r share one scale and
-    // offset, so they overlay (src/core/autotune.js loopOverlays).
-    const chs = app.project.scope.channels;
-    for (const g of loopOverlays(chs, data.signals, app.unitOf)) {
-      const fit = fitChannel(g.flatMap((i) => Array.from(data.signals[chs[i].source])));
-      if (fit) for (const i of g) Object.assign(chs[i], fit);
+    // offset, so they overlay (src/core/autotune.js loopOverlays); not in XY,
+    // where channel 1 is the beam's x.
+    if (sc.view?.mode !== 'xy') for (const g of loopOverlays(sc.channels, data.signals, app.unitOf)) {
+      const fit = fitChannel(g.flatMap((i) => Array.from(data.signals[sc.channels[i].source])));
+      if (fit) for (const i of g) Object.assign(sc.channels[i], fit);
     }
   }
   app.autoScale = () => {
@@ -370,19 +375,37 @@ function startApp() {
     const json = exportJson().replace(/</g, '\\u003c');
     return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n</script>\n<script id="lt-script">${$('lt-script').textContent}</script>\n</body>\n</html>\n`;
   }
-  function download(name, text, type) {
+  // Saving a file. In a claude.ai page, through its downloads capability (the
+  // viewer confirms each save); in a plain browser, through a download link.
+  // Resolves true once the file is on its way. Framed without the capability,
+  // only the Copy buttons are offered.
+  let saver = null;
+  window.claude?.use?.('downloads').then((d) => {
+    saver = d;
+    if (d && framed) document.querySelectorAll('[data-standalone]').forEach((el) => { el.hidden = false; });
+  }).catch(() => {});
+  async function download(name, data, type) {
+    if (saver) {
+      try { await saver.save({ filename: name, data }); return true; } catch (err) {
+        if (err?.code !== 'declined') toast(`Could not save ${name}: ${err?.message ?? err?.code ?? err}`);
+        return false;
+      }
+    }
+    if (framed) { toast('Saving files is not available here; use Copy JSON or Copy HTML.'); return false; }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
     a.download = name;
     document.body.append(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    return true;
   }
+  app.download = download;
   const stem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
-  $('save').addEventListener('click', () => { download(`${stem()}.json`, exportJson(), 'application/json'); toast('Saved the project as JSON'); });
-  $('export').addEventListener('click', () => { download(`${stem()}.html`, exportHtml(), 'text/html'); toast('Exported a standalone page with this project inside'); });
+  $('save').addEventListener('click', async () => { if (await download(`${stem()}.json`, exportJson(), 'application/json')) toast('Saved the project as JSON'); });
+  $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
   $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
   $('open').addEventListener('click', () => $('file').click());
@@ -420,7 +443,8 @@ function startApp() {
   const pop = $('syslib-pop');
   const PART_LABEL = { input: 'Input', plant: 'Plant', controller: 'Controller' };
   pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
-    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => `<span class="tag tag-${t.kind}">${esc(t.label)}</span>`).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
+    + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
+    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => `<span class="tag tag-${t.kind} tone-${t.tone}">${esc(t.label)}</span>`).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
       <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>`).join('');
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
   $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });
@@ -447,7 +471,7 @@ function startApp() {
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
     if (mod && e.key.toLowerCase() === 'y' && !inField) { e.preventDefault(); app.redo(); return; }
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed && !saver ? 'copy' : 'save').click(); return; }
     if (!inField && app.tab === 'plant' && $('help-dlg').hidden && plantEditor.handleKey(e)) { e.preventDefault(); return; }
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }

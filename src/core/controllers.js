@@ -7,6 +7,12 @@
 //
 // Each runs digitally at the block's sample time Ts. make(params, Ts) returns
 // { step(inputs) -> u }, called once per sample with the inputs at that instant.
+//
+// A law that is linear about an operating point also has linear(params, Ts, at)
+// for the Analysis tab: its discrete state space { A, B, C, D } (arrays of
+// rows) from [r, y1 … ym] to u at Ts, valid while u is inside its limits.
+// at.y holds the measurements at the operating point. The prefilter on r lies
+// outside the loop and is left out. It throws when the law is not linear there.
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
@@ -49,10 +55,31 @@ function pidCore(Ts, u0 = 0) {
   };
 }
 
+// pidCore's linear model with the gains g, for m measurements (only y1 is
+// used). States: the integral I (when Ki ≠ 0); the filtered derivative D and
+// the previous measurement (when Kd ≠ 0).
+function pidLinear(g, Ts, m = 1) {
+  const pad = (row) => [...row, ...new Array(m + 1 - row.length).fill(0)];
+  const A = [], B = [], C = [], D = [pad([g.Kp * g.b, -g.Kp])];
+  if (g.Ki) { A.push([1]); B.push(pad([g.Ki * Ts, -g.Ki * Ts])); C.push(1); }
+  if (g.Kd) {
+    const c = 1 / (g.Tf + Ts), i = A.length;
+    for (const row of A) row.push(0, 0);
+    A.push([...new Array(i).fill(0), g.Tf * c, g.Kd * c], new Array(i + 2).fill(0));
+    B.push(pad([0, -g.Kd * c]), pad([0, 1]));
+    C.push(g.Tf * c, g.Kd * c);
+    D[0][1] -= g.Kd * c;
+  }
+  return { A, B, C: [C], D };
+}
+// A static law u = kr r − K · y.
+const staticLinear = (kr, K) => ({ A: [], B: [], C: [[]], D: [[kr, ...K.map((k) => -k)]] });
+
 export const CONTROLLERS = {
   off: {
     label: 'Off', summary: 'u = 0', params: [],
     make: () => ({ step: () => 0 }),
+    linear: (p, Ts, at) => staticLinear(0, new Array(at?.y?.length || 1).fill(0)),
   },
   pid: {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
@@ -61,6 +88,7 @@ export const CONTROLLERS = {
       const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
       return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
     },
+    linear: (p, Ts, at) => pidLinear(p, Ts, at?.y?.length || 1),
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
@@ -75,6 +103,7 @@ export const CONTROLLERS = {
         },
       };
     },
+    linear: (p) => staticLinear(p.kr, p.K),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -90,6 +119,12 @@ export const CONTROLLERS = {
           return core(pre(x[0]), y, g);
         },
       };
+    },
+    // At rest (r = y) the slope of the schedule multiplies a zero error, so the
+    // loop sees a PI with the gains at y.
+    linear(p, Ts, at) {
+      const y = at?.y?.[0] ?? p.at[0];
+      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1 }, Ts, at?.y?.length || 1);
     },
   },
   swingUp: {
@@ -121,6 +156,12 @@ export const CONTROLLERS = {
         },
       };
     },
+    // Linear only where it catches: state feedback on [x, θ, v, ω].
+    linear(p, Ts, at) {
+      const th = wrap(at?.y?.[1] ?? 0);
+      if (Math.abs(th) >= p.thetaS) throw new Error(`the swing-up pumps energy at θ = ${th.toFixed(2)} rad; it is a linear loop only where it catches (|θ| < ${p.thetaS} rad)`);
+      return staticLinear(p.kr, p.K);
+    },
   },
   relay: {
     // On/off control: u0 + d while the error is positive, u0 − d while it is
@@ -142,6 +183,7 @@ export const CONTROLLERS = {
         },
       };
     },
+    linear() { throw new Error('a relay switches between two outputs: it has no linear model'); },
   },
 };
 

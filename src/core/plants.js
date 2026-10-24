@@ -15,6 +15,61 @@ const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: '
 const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
 const PERIOD = 5;
 
+// The DC motor with its angle, shared by the systems built on it: a
+// Controller (variants given) sets the voltage V, the load torque d brakes it.
+const motorDiagram = (variants) => ({
+      blocks: [
+        src('r', 30, 112, 'rad'),
+        src('d', 180, 230, 'N·m'),
+        ctrl(130, 90, 2, 0.01, variants),
+        {
+          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
+          diagram: {
+            blocks: [
+              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 300, y: 220 },
+              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
+              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 360, y: 100 },
+              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
+              { id: 'mech', type: 'firstOrder', name: 'load', params: { K: 10, tau: 0.2 }, x: 510, y: 96 },
+              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
+              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 360, y: 280, flip: true },
+            ],
+            wires: [
+              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
+              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+            ],
+          },
+        },
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        sink('angle', 690, 106, 'rad'),
+        sink('speed', 690, 30, 'rad/s'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
+        { from: 'motor', to: 'speed' }, { from: 'int', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
+      ],
+    });
+const motorViews = () => ([{
+      // The rotor turns with angle (counter-clockwise positive) inside a fixed
+      // dial; the yellow mark on the dial is the reference r.
+      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+      shapes: [
+        { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        ...ticks(0.62),
+        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: 0.66, x2: 0, y2: 0.8, stroke: 'ch1', lineWidth: 5 }] },
+        { type: 'group', angle: 'angle', shapes: [
+          { type: 'circle', cx: 0, cy: 0, r: 0.5, fill: 'ink' },
+          { type: 'circle', cx: 0, cy: 0.27, r: 0.15, fill: 'ch2' },
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
+        ] },
+        { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
+      ],
+    }]);
+
 // A fixed dial: twelve ticks every 30°, the quarter ones longer.
 const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
   type: 'group', angle: (i * Math.PI) / 6, shapes: [{ type: 'line', x1: 0, y1: r, x2: 0, y2: r + (i % 3 ? 0.06 : 0.12), stroke: 'muted', lineWidth: i % 3 ? 1.5 : 3 }],
@@ -23,7 +78,7 @@ const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
 // A cart on a track carrying a chain of rods (angles from upright), with the
 // control force F and the disturbance d as arrows on the cart, and the
 // reference r as a mark on the track.
-function cartView(name, track, rods, caption, box) {
+function cartView(name, rods, caption, box) {
   let chain = [];
   for (let i = rods.length - 1; i >= 0; i--) {
     const { len, angle } = rods[i];
@@ -36,9 +91,10 @@ function cartView(name, track, rods, caption, box) {
   return {
     name, kind: '2d', view: box,
     shapes: [
-      { type: 'line', x1: -track, y1: -0.065, x2: track, y2: -0.065, stroke: 'muted', lineWidth: 3 },
+      // The rail has no end, as in the model: a cart pushed away leaves the picture.
+      { type: 'line', x1: -1e3, y1: -0.065, x2: 1e3, y2: -0.065, stroke: 'muted', lineWidth: 3 },
       { type: 'line', x1: 'r', y1: -0.16, x2: 'r', y2: -0.08, stroke: 'ch1', lineWidth: 3 },
-      { type: 'group', x: `clamp(x, ${-track + 0.16}, ${track - 0.16})`, y: 0, shapes: [
+      { type: 'group', x: 'x', y: 0, shapes: [
         { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
         { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
         { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
@@ -116,63 +172,30 @@ export const EXAMPLE_PLANTS = [
     },
     scope: { channels: channels('r', 'angle', 'V', 'd') },
     ui: ui('Motor shaft'),
-    diagram: {
-      blocks: [
-        src('r', 30, 112, 'rad'),
-        src('d', 180, 230, 'N·m'),
-        ctrl(130, 90, 2, 0.01, [
+    diagram: motorDiagram([
+
           { name: 'P, too aggressive', type: 'pid', params: { Kp: 30, umin: -12, umax: 12 } },
           { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
           { name: 'PID with prefilter', type: 'pid', params: { Kp: 20, Ki: 10, Kd: 1.5, Tf: 0.01, Tr: 0.1, umin: -12, umax: 12 } },
           { name: 'Off', type: 'off', params: {} },
-        ]),
-        {
-          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
-          diagram: {
-            blocks: [
-              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
-              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 300, y: 220 },
-              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
-              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 360, y: 100 },
-              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
-              { id: 'mech', type: 'firstOrder', name: 'load', params: { K: 10, tau: 0.2 }, x: 510, y: 96 },
-              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 360, y: 280, flip: true },
-            ],
-            wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
-              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
-            ],
-          },
-        },
-        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
-        sink('angle', 690, 106, 'rad'),
-        sink('speed', 690, 30, 'rad/s'),
-        sink('V', 330, 20, 'V'),
-      ],
-      wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
-        { from: 'motor', to: 'speed' }, { from: 'int', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
-      ],
+    ]),
+    views: motorViews(),
+  },
+  {
+    name: 'Following a sine (XY)',
+    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'sine', params: { amplitude: 1, frequency: 0.2 } }] },
+      d: { period: PERIOD, components: [] },
     },
-    views: [{
-      // The rotor turns with angle (counter-clockwise positive) inside a fixed
-      // dial; the yellow mark on the dial is the reference r.
-      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
-      shapes: [
-        { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
-        ...ticks(0.62),
-        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: 0.66, x2: 0, y2: 0.8, stroke: 'ch1', lineWidth: 5 }] },
-        { type: 'group', angle: 'angle', shapes: [
-          { type: 'circle', cx: 0, cy: 0, r: 0.5, fill: 'ink' },
-          { type: 'circle', cx: 0, cy: 0.27, r: 0.15, fill: 'ch2' },
-          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
-        ] },
-        { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
-      ],
-    }],
+    scope: { channels: channels('r', 'angle'), view: { mode: 'xy', delta: true } },
+    ui: ui('Motor shaft'),
+    diagram: motorDiagram([
+      { name: 'P', type: 'pid', params: { Kp: 3, umin: -12, umax: 12 } },
+      { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
+      { name: 'PID', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, umin: -12, umax: 12 } },
+    ]),
+    views: motorViews(),
   },
   {
     name: 'Encoder errors and torque ripple',
@@ -262,7 +285,7 @@ export const EXAMPLE_PLANTS = [
     views: [{
       name: 'Tank', kind: '2d', view: [-1, -0.25, 1, 1.3],
       shapes: [
-        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)'], ['-0.05 - 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)']], fill: 'ch3', stroke: 'none' },
+        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*h', 'h'], ['-0.05 - 0.45*h', 'h']], fill: 'ch3', stroke: 'none' },
         { type: 'line', x1: -0.05, y1: 0, x2: -0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
         { type: 'line', x1: 0.05, y1: 0, x2: 0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
         { type: 'line', x1: '-0.05 - 0.45*r', y1: 'r', x2: '0.05 + 0.45*r', y2: 'r', stroke: 'ch1', lineWidth: 2 },
@@ -304,7 +327,7 @@ export const EXAMPLE_PLANTS = [
         { from: 'cart', to: 'ctrl:1' }, { from: 'cart:1', to: 'ctrl:2' }, { from: 'cart:2', to: 'ctrl:3' }, { from: 'cart:3', to: 'ctrl:4' },
       ],
     },
-    views: [cartView('Cart and pole', 1.8, [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
+    views: [cartView('Cart and pole', [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
   },
   {
     name: 'Triple pendulum',
@@ -335,7 +358,7 @@ export const EXAMPLE_PLANTS = [
         ...Array.from({ length: 8 }, (_, i) => ({ from: i ? `cart:${i}` : 'cart', to: `ctrl:${i + 1}` })),
       ],
     },
-    views: [cartView('Cart and triple pendulum', 1.2, [
+    views: [cartView('Cart and triple pendulum', [
       { len: 0.25, angle: '-theta1' },
       { len: 0.25, angle: '-(theta2 - theta1)' },
       { len: 0.25, angle: '-(theta3 - theta2)' },
@@ -376,19 +399,21 @@ export const EXAMPLE_PLANTS = [
     },
     views: [{
       // The oven with its heating element (lit along its length by the
-      // power P), a thermometer column for T with the setpoint r marked, and
-      // the door, which opens while heat is lost (d).
+      // power P, which the controller keeps within 0–100 %), a thermometer
+      // column for T (0–100 °C; an overshoot past that leaves the tube, as
+      // nothing is clamped) with the setpoint r marked, and the door, which
+      // opens while heat is lost (d).
       name: 'Oven', kind: '2d', view: [-1.2, -0.75, 1.2, 0.95],
       shapes: [
         { type: 'rect', x: -0.75, y: -0.45, w: 1.1, h: 1.1, fill: 'panel', stroke: 'ink', lineWidth: 3 },
         { type: 'rect', x: -0.65, y: -0.35, w: 0.9, h: 0.9, fill: 'muted' },
         { type: 'line', x1: -0.6, y1: -0.28, x2: 0.2, y2: -0.28, stroke: 'ink', lineWidth: 6 },
-        { type: 'line', x1: -0.6, y1: -0.28, x2: '-0.6 + 0.008*clamp(P, 0, 100)', y2: -0.28, stroke: 'ch3', lineWidth: 6 },
-        { type: 'group', x: 0.35, y: -0.45, angle: '-0.012*clamp(d, 0, 100)', shapes: [{ type: 'rect', x: -0.05, y: 0, w: 0.05, h: 1.1, fill: 'ink' }] },
+        { type: 'line', x1: -0.6, y1: -0.28, x2: '-0.6 + 0.008*P', y2: -0.28, stroke: 'ch3', lineWidth: 6 },
+        { type: 'group', x: 0.35, y: -0.45, angle: '-0.012*d', shapes: [{ type: 'rect', x: -0.05, y: 0, w: 0.05, h: 1.1, fill: 'ink' }] },
         { type: 'rect', x: 0.7, y: -0.45, w: 0.12, h: 1.1, fill: 'panel', stroke: 'muted', lineWidth: 2 },
-        { type: 'rect', x: 0.72, y: -0.45, w: 0.08, h: '0.0137*clamp(T, 0, 80)', fill: 'ch2' },
-        { type: 'line', x1: 0.66, y1: '-0.45 + 0.0137*clamp(r, 0, 80)', x2: 0.86, y2: '-0.45 + 0.0137*clamp(r, 0, 80)', stroke: 'ch1', lineWidth: 3 },
-        { type: 'text', x: 0.92, y: '-0.45 + 0.0137*clamp(r, 0, 80)', text: 'r', size: 12, fill: 'ch1', anchor: 'start' },
+        { type: 'rect', x: 0.72, y: -0.45, w: 0.08, h: '0.011*T', fill: 'ch2' },
+        { type: 'line', x1: 0.66, y1: '-0.45 + 0.011*r', x2: 0.86, y2: '-0.45 + 0.011*r', stroke: 'ch1', lineWidth: 3 },
+        { type: 'text', x: 0.92, y: '-0.45 + 0.011*r', text: 'r', size: 12, fill: 'ch1', anchor: 'start' },
         { type: 'text', x: 0, y: 0.82, text: 'T {T:5.1} °C   r {r:4.0} °C   heater {P:5.1} %   door loss {d:4.0} %', size: 13 },
       ],
     }],

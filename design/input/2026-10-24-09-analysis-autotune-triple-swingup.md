@@ -53,3 +53,17 @@
 ## Added while this was being built: a resonance in the encoder example
 
 > Man, this is crazy good. Cool. Maybe add a resonance to the encoder error and torque ripple. Also add a resonance. So we see what happens if you run through the resonance. Damn, this is crazy.
+
+## Added while this was being built: the single pendulum on state feedback only looks physically impossible
+
+> I want you to check the behavior of the single pendulum card when you switch to state feedback only. It gets locked into the position and the pendulum swings in a way that's physically not possible. What's up with that?
+
+> I see that you have, it seems to me like you do checks against the simulation, so they actually simulate physically plausible behavior, right? That me, like, we need to do that. That's important.
+
+> I mean, having the car just shooting into the distance is kind of funny. If that's the result of a bad control loop, I feel like we can leave it in. But I still... What, did you then simulate like drag of the air, and that is why the pendulum swings up and down? That would be understandable. Crass, but understandable, I guess.
+
+> I mean, it's okay if we implement a control loop that's bad, then the behavior can be weird. I actually don't mind that, on the opposite. But yeah, the physics can't be wrong. The control loops can be stupid, but the physics can't be wrong.
+
+## Added while this was being built: tag colours that differ at a glance
+
+> And then about the colors of the tags. I don't think it makes sense that linear and non-linear have the same color, or controller and not controller. Like, really, values that are different should show up different at first glance and not similar. So maybe work over that.

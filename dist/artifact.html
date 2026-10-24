@@ -379,7 +379,8 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 
 /* Display modes and display filters (scope, Run Control and Vertical) */
 .viewkeys { margin-top: 2px; gap: 4px; }
-.viewkeys .key { flex: 1; min-height: 24px; }
+.viewkeys .key { flex: 1 1 auto; min-width: 0; min-height: 24px; padding-left: 5px; padding-right: 5px; }
+.viewkeys #k-delta { flex: 0 0 28px; }
 .key.lit-view { background: var(--lcd); color: #f2c718; border-color: #f2c718; }
 .st-view { background: #2a3540; color: #f2c718; }
 .srcrow .axbtn { flex: none; padding: 1px 6px; }
@@ -388,14 +389,32 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .filtparams .field { width: 0; flex: 1 1 52px; min-width: 44px; font-family: var(--mono); font-size: 12px; padding: 1px 4px; }
 .filtparams select.field { flex: 0 1 46px; }
 
-/* System library tags: one colour per kind */
+/* System library tags. The style says what a tag is about (plant: filled;
+   controller: a bar; observer: an outline; feature: a dot; none: dashed), the
+   tone which value it is. Tones: a categorical palette validated for colour-
+   vision deficiency on each theme's panel; the dark steps are its own. */
+.tone-blue { --tone: #2a78d6; } .tone-orange { --tone: #eb6834; } .tone-aqua { --tone: #1baf7a; } .tone-yellow { --tone: #eda100; }
+.tone-magenta { --tone: #e87ba4; } .tone-green { --tone: #008300; } .tone-violet { --tone: #6250d6; } .tone-red { --tone: #e34948; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tone-blue { --tone: #3987e5; } :root:not([data-theme="light"]) .tone-orange { --tone: #d95926; }
+  :root:not([data-theme="light"]) .tone-aqua { --tone: #199e70; } :root:not([data-theme="light"]) .tone-yellow { --tone: #c98500; }
+  :root:not([data-theme="light"]) .tone-magenta { --tone: #d55181; } :root:not([data-theme="light"]) .tone-violet { --tone: #9085e9; }
+  :root:not([data-theme="light"]) .tone-red { --tone: #e66767; }
+}
+:root[data-theme="dark"] .tone-blue { --tone: #3987e5; } :root[data-theme="dark"] .tone-orange { --tone: #d95926; }
+:root[data-theme="dark"] .tone-aqua { --tone: #199e70; } :root[data-theme="dark"] .tone-yellow { --tone: #c98500; }
+:root[data-theme="dark"] .tone-magenta { --tone: #d55181; } :root[data-theme="dark"] .tone-violet { --tone: #9085e9; }
+:root[data-theme="dark"] .tone-red { --tone: #e66767; }
 .systags { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 2px; }
-.tag { font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; padding: 1px 7px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
-.tag-plant { color: #2ea8a0; border-color: #2ea8a066; background: #2ea8a014; }
-.tag-controller { color: #4e8fe6; border-color: #4e8fe666; background: #4e8fe614; }
-.tag-observer { color: #a77be0; border-color: #a77be066; background: #a77be014; }
-.tag-signal { color: #e0569a; border-color: #e0569a66; background: #e0569a14; }
-.tag-feature { color: #c79a12; border-color: #c79a1266; background: #c79a1214; }
+.tag { font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; line-height: 15px; padding: 0 7px; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; color: var(--ink); }
+.tag-plant { background: var(--tone); color: #fff; }
+.tag-controller { border-radius: 3px; border-color: color-mix(in srgb, var(--tone) 45%, transparent); border-left: 4px solid var(--tone); background: color-mix(in srgb, var(--tone) 16%, transparent); padding-left: 5px; }
+.tag-observer { border: 1.5px solid var(--tone); }
+.tag-feature { background: var(--panel-2); color: var(--ink-2); }
+.tag-feature::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); margin-right: 5px; vertical-align: 0; }
+.tag-none { border: 1px dashed var(--muted); color: var(--muted); background: transparent; font-weight: 500; }
+.taglegend { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 2px 6px 6px; color: var(--muted); font-size: 11px; }
+.taglegend .tag { --tone: var(--muted); }
 
 .ctable { grid-column: 2; font-family: var(--mono); }
 
@@ -1098,7 +1117,8 @@ function siso(sys, who) {
 }
 
 // Solves (Mr + j·Mi) x = br + j·bi by Gaussian elimination with partial
-// pivoting, in place. null if the matrix is exactly singular.
+// pivoting, in place (the arguments are overwritten). null if the matrix is
+// exactly singular. Returns { xr, xi }.
 function csolve(Mr, Mi, br, bi) {
   const n = Mr.length;
   for (let k = 0; k < n; k++) {
@@ -1393,7 +1413,7 @@ function rank(M, tol) {
   return diag.filter((x) => x > t).length;
 }
 
-return { zeros, eye, mul, add, scale, transpose, solve, inv, det, expm, c2d, eig, dare, dlqr, dlqe, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank };
+return { zeros, eye, mul, add, scale, transpose, solve, inv, det, expm, c2d, eig, dare, dlqr, dlqe, csolve, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank };
 })();
 // ---- core/scale.js
 __mods['core/scale.js'] = (() => {
@@ -2208,6 +2228,12 @@ __mods['core/controllers.js'] = (() => {
 //
 // Each runs digitally at the block's sample time Ts. make(params, Ts) returns
 // { step(inputs) -> u }, called once per sample with the inputs at that instant.
+//
+// A law that is linear about an operating point also has linear(params, Ts, at)
+// for the Analysis tab: its discrete state space { A, B, C, D } (arrays of
+// rows) from [r, y1 … ym] to u at Ts, valid while u is inside its limits.
+// at.y holds the measurements at the operating point. The prefilter on r lies
+// outside the loop and is left out. It throws when the law is not linear there.
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
@@ -2250,10 +2276,31 @@ function pidCore(Ts, u0 = 0) {
   };
 }
 
+// pidCore's linear model with the gains g, for m measurements (only y1 is
+// used). States: the integral I (when Ki ≠ 0); the filtered derivative D and
+// the previous measurement (when Kd ≠ 0).
+function pidLinear(g, Ts, m = 1) {
+  const pad = (row) => [...row, ...new Array(m + 1 - row.length).fill(0)];
+  const A = [], B = [], C = [], D = [pad([g.Kp * g.b, -g.Kp])];
+  if (g.Ki) { A.push([1]); B.push(pad([g.Ki * Ts, -g.Ki * Ts])); C.push(1); }
+  if (g.Kd) {
+    const c = 1 / (g.Tf + Ts), i = A.length;
+    for (const row of A) row.push(0, 0);
+    A.push([...new Array(i).fill(0), g.Tf * c, g.Kd * c], new Array(i + 2).fill(0));
+    B.push(pad([0, -g.Kd * c]), pad([0, 1]));
+    C.push(g.Tf * c, g.Kd * c);
+    D[0][1] -= g.Kd * c;
+  }
+  return { A, B, C: [C], D };
+}
+// A static law u = kr r − K · y.
+const staticLinear = (kr, K) => ({ A: [], B: [], C: [[]], D: [[kr, ...K.map((k) => -k)]] });
+
 const CONTROLLERS = {
   off: {
     label: 'Off', summary: 'u = 0', params: [],
     make: () => ({ step: () => 0 }),
+    linear: (p, Ts, at) => staticLinear(0, new Array(at?.y?.length || 1).fill(0)),
   },
   pid: {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
@@ -2262,6 +2309,7 @@ const CONTROLLERS = {
       const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
       return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
     },
+    linear: (p, Ts, at) => pidLinear(p, Ts, at?.y?.length || 1),
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
@@ -2276,6 +2324,7 @@ const CONTROLLERS = {
         },
       };
     },
+    linear: (p) => staticLinear(p.kr, p.K),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -2291,6 +2340,12 @@ const CONTROLLERS = {
           return core(pre(x[0]), y, g);
         },
       };
+    },
+    // At rest (r = y) the slope of the schedule multiplies a zero error, so the
+    // loop sees a PI with the gains at y.
+    linear(p, Ts, at) {
+      const y = at?.y?.[0] ?? p.at[0];
+      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1 }, Ts, at?.y?.length || 1);
     },
   },
   swingUp: {
@@ -2322,6 +2377,12 @@ const CONTROLLERS = {
         },
       };
     },
+    // Linear only where it catches: state feedback on [x, θ, v, ω].
+    linear(p, Ts, at) {
+      const th = wrap(at?.y?.[1] ?? 0);
+      if (Math.abs(th) >= p.thetaS) throw new Error(`the swing-up pumps energy at θ = ${th.toFixed(2)} rad; it is a linear loop only where it catches (|θ| < ${p.thetaS} rad)`);
+      return staticLinear(p.kr, p.K);
+    },
   },
   relay: {
     // On/off control: u0 + d while the error is positive, u0 − d while it is
@@ -2343,6 +2404,7 @@ const CONTROLLERS = {
         },
       };
     },
+    linear() { throw new Error('a relay switches between two outputs: it has no linear model'); },
   },
 };
 
@@ -2577,18 +2639,19 @@ const ELEMENTS = {
   conicalTank: {
     // A tank that widens upwards (radius r0 at the bottom, R at height H),
     // filled at q and draining through an outlet of area a (Torricelli). Its
-    // dynamics are fast when nearly empty and slow when full.
+    // dynamics are fast when nearly empty and slow when full. It cannot run
+    // dry below 0 or hold more than H: what comes in beyond that overflows.
     label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
     params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
     ode: {
       n: 1,
-      init: (p) => [p.h0],
-      out: (X, o, p, y) => { y[0] = X[o]; },
+      init: (p) => [Math.min(p.H, p.h0)],
+      out: (X, o, p, y) => { y[0] = Math.min(p.H, Math.max(0, X[o])); },
       f: (X, o, u, p, dX) => {
-        const h = Math.max(0, X[o]);
-        const r = p.r0 + ((p.R - p.r0) * Math.min(h, p.H)) / p.H;
+        const h = Math.min(p.H, Math.max(0, X[o]));
+        const r = p.r0 + ((p.R - p.r0) * h) / p.H;
         const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
-        dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+        dX[o] = (h <= 0 && flow < 0) || (h >= p.H && flow > 0) ? 0 : flow / (Math.PI * r * r);
       },
       bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
     },
@@ -3313,6 +3376,61 @@ const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: '
 const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
 const PERIOD = 5;
 
+// The DC motor with its angle, shared by the systems built on it: a
+// Controller (variants given) sets the voltage V, the load torque d brakes it.
+const motorDiagram = (variants) => ({
+      blocks: [
+        src('r', 30, 112, 'rad'),
+        src('d', 180, 230, 'N·m'),
+        ctrl(130, 90, 2, 0.01, variants),
+        {
+          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
+          diagram: {
+            blocks: [
+              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 300, y: 220 },
+              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
+              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 360, y: 100 },
+              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
+              { id: 'mech', type: 'firstOrder', name: 'load', params: { K: 10, tau: 0.2 }, x: 510, y: 96 },
+              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
+              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 360, y: 280, flip: true },
+            ],
+            wires: [
+              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
+              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+            ],
+          },
+        },
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        sink('angle', 690, 106, 'rad'),
+        sink('speed', 690, 30, 'rad/s'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
+        { from: 'motor', to: 'speed' }, { from: 'int', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
+      ],
+    });
+const motorViews = () => ([{
+      // The rotor turns with angle (counter-clockwise positive) inside a fixed
+      // dial; the yellow mark on the dial is the reference r.
+      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+      shapes: [
+        { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        ...ticks(0.62),
+        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: 0.66, x2: 0, y2: 0.8, stroke: 'ch1', lineWidth: 5 }] },
+        { type: 'group', angle: 'angle', shapes: [
+          { type: 'circle', cx: 0, cy: 0, r: 0.5, fill: 'ink' },
+          { type: 'circle', cx: 0, cy: 0.27, r: 0.15, fill: 'ch2' },
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
+        ] },
+        { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
+      ],
+    }]);
+
 // A fixed dial: twelve ticks every 30°, the quarter ones longer.
 const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
   type: 'group', angle: (i * Math.PI) / 6, shapes: [{ type: 'line', x1: 0, y1: r, x2: 0, y2: r + (i % 3 ? 0.06 : 0.12), stroke: 'muted', lineWidth: i % 3 ? 1.5 : 3 }],
@@ -3321,7 +3439,7 @@ const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
 // A cart on a track carrying a chain of rods (angles from upright), with the
 // control force F and the disturbance d as arrows on the cart, and the
 // reference r as a mark on the track.
-function cartView(name, track, rods, caption, box) {
+function cartView(name, rods, caption, box) {
   let chain = [];
   for (let i = rods.length - 1; i >= 0; i--) {
     const { len, angle } = rods[i];
@@ -3334,9 +3452,10 @@ function cartView(name, track, rods, caption, box) {
   return {
     name, kind: '2d', view: box,
     shapes: [
-      { type: 'line', x1: -track, y1: -0.065, x2: track, y2: -0.065, stroke: 'muted', lineWidth: 3 },
+      // The rail has no end, as in the model: a cart pushed away leaves the picture.
+      { type: 'line', x1: -1e3, y1: -0.065, x2: 1e3, y2: -0.065, stroke: 'muted', lineWidth: 3 },
       { type: 'line', x1: 'r', y1: -0.16, x2: 'r', y2: -0.08, stroke: 'ch1', lineWidth: 3 },
-      { type: 'group', x: `clamp(x, ${-track + 0.16}, ${track - 0.16})`, y: 0, shapes: [
+      { type: 'group', x: 'x', y: 0, shapes: [
         { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
         { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
         { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
@@ -3414,63 +3533,30 @@ const EXAMPLE_PLANTS = [
     },
     scope: { channels: channels('r', 'angle', 'V', 'd') },
     ui: ui('Motor shaft'),
-    diagram: {
-      blocks: [
-        src('r', 30, 112, 'rad'),
-        src('d', 180, 230, 'N·m'),
-        ctrl(130, 90, 2, 0.01, [
+    diagram: motorDiagram([
+
           { name: 'P, too aggressive', type: 'pid', params: { Kp: 30, umin: -12, umax: 12 } },
           { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
           { name: 'PID with prefilter', type: 'pid', params: { Kp: 20, Ki: 10, Kd: 1.5, Tf: 0.01, Tr: 0.1, umin: -12, umax: 12 } },
           { name: 'Off', type: 'off', params: {} },
-        ]),
-        {
-          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
-          diagram: {
-            blocks: [
-              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
-              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 300, y: 220 },
-              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
-              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 360, y: 100 },
-              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
-              { id: 'mech', type: 'firstOrder', name: 'load', params: { K: 10, tau: 0.2 }, x: 510, y: 96 },
-              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 360, y: 280, flip: true },
-            ],
-            wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
-              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
-            ],
-          },
-        },
-        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
-        sink('angle', 690, 106, 'rad'),
-        sink('speed', 690, 30, 'rad/s'),
-        sink('V', 330, 20, 'V'),
-      ],
-      wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
-        { from: 'motor', to: 'speed' }, { from: 'int', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
-      ],
+    ]),
+    views: motorViews(),
+  },
+  {
+    name: 'Following a sine (XY)',
+    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'sine', params: { amplitude: 1, frequency: 0.2 } }] },
+      d: { period: PERIOD, components: [] },
     },
-    views: [{
-      // The rotor turns with angle (counter-clockwise positive) inside a fixed
-      // dial; the yellow mark on the dial is the reference r.
-      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
-      shapes: [
-        { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
-        ...ticks(0.62),
-        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: 0.66, x2: 0, y2: 0.8, stroke: 'ch1', lineWidth: 5 }] },
-        { type: 'group', angle: 'angle', shapes: [
-          { type: 'circle', cx: 0, cy: 0, r: 0.5, fill: 'ink' },
-          { type: 'circle', cx: 0, cy: 0.27, r: 0.15, fill: 'ch2' },
-          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
-        ] },
-        { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
-      ],
-    }],
+    scope: { channels: channels('r', 'angle'), view: { mode: 'xy', delta: true } },
+    ui: ui('Motor shaft'),
+    diagram: motorDiagram([
+      { name: 'P', type: 'pid', params: { Kp: 3, umin: -12, umax: 12 } },
+      { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
+      { name: 'PID', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, umin: -12, umax: 12 } },
+    ]),
+    views: motorViews(),
   },
   {
     name: 'Encoder errors and torque ripple',
@@ -3560,7 +3646,7 @@ const EXAMPLE_PLANTS = [
     views: [{
       name: 'Tank', kind: '2d', view: [-1, -0.25, 1, 1.3],
       shapes: [
-        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)'], ['-0.05 - 0.45*clamp(h, 0, 1)', 'clamp(h, 0, 1)']], fill: 'ch3', stroke: 'none' },
+        { type: 'polygon', points: [[-0.05, 0], [0.05, 0], ['0.05 + 0.45*h', 'h'], ['-0.05 - 0.45*h', 'h']], fill: 'ch3', stroke: 'none' },
         { type: 'line', x1: -0.05, y1: 0, x2: -0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
         { type: 'line', x1: 0.05, y1: 0, x2: 0.5, y2: 1, stroke: 'ink', lineWidth: 3 },
         { type: 'line', x1: '-0.05 - 0.45*r', y1: 'r', x2: '0.05 + 0.45*r', y2: 'r', stroke: 'ch1', lineWidth: 2 },
@@ -3602,7 +3688,7 @@ const EXAMPLE_PLANTS = [
         { from: 'cart', to: 'ctrl:1' }, { from: 'cart:1', to: 'ctrl:2' }, { from: 'cart:2', to: 'ctrl:3' }, { from: 'cart:3', to: 'ctrl:4' },
       ],
     },
-    views: [cartView('Cart and pole', 1.8, [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
+    views: [cartView('Cart and pole', [{ len: 0.5, angle: '-theta' }], 'x {x:5.2} m   θ {theta*180/pi:6.1}°   F {F:5.1} N   push {d:3.1} N', [-1.9, -0.75, 1.9, 0.8])],
   },
   {
     name: 'Triple pendulum',
@@ -3633,7 +3719,7 @@ const EXAMPLE_PLANTS = [
         ...Array.from({ length: 8 }, (_, i) => ({ from: i ? `cart:${i}` : 'cart', to: `ctrl:${i + 1}` })),
       ],
     },
-    views: [cartView('Cart and triple pendulum', 1.2, [
+    views: [cartView('Cart and triple pendulum', [
       { len: 0.25, angle: '-theta1' },
       { len: 0.25, angle: '-(theta2 - theta1)' },
       { len: 0.25, angle: '-(theta3 - theta2)' },
@@ -3674,19 +3760,21 @@ const EXAMPLE_PLANTS = [
     },
     views: [{
       // The oven with its heating element (lit along its length by the
-      // power P), a thermometer column for T with the setpoint r marked, and
-      // the door, which opens while heat is lost (d).
+      // power P, which the controller keeps within 0–100 %), a thermometer
+      // column for T (0–100 °C; an overshoot past that leaves the tube, as
+      // nothing is clamped) with the setpoint r marked, and the door, which
+      // opens while heat is lost (d).
       name: 'Oven', kind: '2d', view: [-1.2, -0.75, 1.2, 0.95],
       shapes: [
         { type: 'rect', x: -0.75, y: -0.45, w: 1.1, h: 1.1, fill: 'panel', stroke: 'ink', lineWidth: 3 },
         { type: 'rect', x: -0.65, y: -0.35, w: 0.9, h: 0.9, fill: 'muted' },
         { type: 'line', x1: -0.6, y1: -0.28, x2: 0.2, y2: -0.28, stroke: 'ink', lineWidth: 6 },
-        { type: 'line', x1: -0.6, y1: -0.28, x2: '-0.6 + 0.008*clamp(P, 0, 100)', y2: -0.28, stroke: 'ch3', lineWidth: 6 },
-        { type: 'group', x: 0.35, y: -0.45, angle: '-0.012*clamp(d, 0, 100)', shapes: [{ type: 'rect', x: -0.05, y: 0, w: 0.05, h: 1.1, fill: 'ink' }] },
+        { type: 'line', x1: -0.6, y1: -0.28, x2: '-0.6 + 0.008*P', y2: -0.28, stroke: 'ch3', lineWidth: 6 },
+        { type: 'group', x: 0.35, y: -0.45, angle: '-0.012*d', shapes: [{ type: 'rect', x: -0.05, y: 0, w: 0.05, h: 1.1, fill: 'ink' }] },
         { type: 'rect', x: 0.7, y: -0.45, w: 0.12, h: 1.1, fill: 'panel', stroke: 'muted', lineWidth: 2 },
-        { type: 'rect', x: 0.72, y: -0.45, w: 0.08, h: '0.0137*clamp(T, 0, 80)', fill: 'ch2' },
-        { type: 'line', x1: 0.66, y1: '-0.45 + 0.0137*clamp(r, 0, 80)', x2: 0.86, y2: '-0.45 + 0.0137*clamp(r, 0, 80)', stroke: 'ch1', lineWidth: 3 },
-        { type: 'text', x: 0.92, y: '-0.45 + 0.0137*clamp(r, 0, 80)', text: 'r', size: 12, fill: 'ch1', anchor: 'start' },
+        { type: 'rect', x: 0.72, y: -0.45, w: 0.08, h: '0.011*T', fill: 'ch2' },
+        { type: 'line', x1: 0.66, y1: '-0.45 + 0.011*r', x2: 0.86, y2: '-0.45 + 0.011*r', stroke: 'ch1', lineWidth: 3 },
+        { type: 'text', x: 0.92, y: '-0.45 + 0.011*r', text: 'r', size: 12, fill: 'ch1', anchor: 'start' },
         { type: 'text', x: 0, y: 0.82, text: 'T {T:5.1} °C   r {r:4.0} °C   heater {P:5.1} %   door loss {d:4.0} %', size: 13 },
       ],
     }],
@@ -4106,9 +4194,10 @@ function normalizeFilter(f, where) {
 }
 
 // How the screen shows the channels: in time (the default), as amplitude
-// spectra (FFT) or as one channel's spectrogram; and which channel, if any,
-// has its values on a second axis at the right.
-const VIEW_MODES = ['time', 'fft', 'spectrogram'];
+// spectra (FFT), as one channel's spectrogram, or XY (channel 1 across, the
+// others against it; delta: they draw channel 1 minus themselves); and which
+// channel, if any, has its values on a second axis at the right.
+const VIEW_MODES = ['time', 'fft', 'spectrogram', 'xy'];
 function normalizeScopeView(v) {
   if (!v || typeof v !== 'object') return null;
   const out = {};
@@ -4117,6 +4206,7 @@ function normalizeScopeView(v) {
   const fmin = Number(v.fmin), fmax = Number(v.fmax);
   if (fmin >= 0 && fmax > fmin) { out.fmin = fmin; out.fmax = fmax; }
   if (v.db === false) out.db = false;
+  if (v.delta === true) out.delta = true;
   if ([64, 128, 256, 512, 1024].includes(Number(v.size))) out.size = Number(v.size);
   return Object.keys(out).length ? out : null;
 }
@@ -4516,10 +4606,25 @@ function fromPlant(e) {
 // What a system shows, as tags for the library overview (the person,
 // 2026-10-24: "is it linear, non-linear, what kind of controllers, has it
 // observers, what are the features"). Derived from the system itself, plus
-// any the entry adds by hand ({ label, kind }). kind picks the colour:
-// plant, controller, observer, signal, feature.
+// any the entry adds by hand ({ label, kind }).
+//
+// Values that differ look different at a glance (the person, same day): the
+// kind sets the chip's style (plant: filled; controller: a coloured bar;
+// observer: an outline; feature: a dot; none: an empty dashed chip) and each
+// value has its own tone, the same on every card. The opposites Linear and
+// Nonlinear take the warm and cool poles. Tones are the eight slots of a
+// palette validated for colour-vision deficiency; the label is always shown.
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
-const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', kalman: 'Kalman filter', luenberger: 'Luenberger observer' };
+const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
+const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
+const TONE = {
+  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'green',
+  PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
+  'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  Disturbance: 'red', FFT: 'blue', Spectrogram: 'magenta', XY: 'violet', 'Auto-tune': 'green', HIL: 'orange',
+};
+// A value without its own tone gets one from its label, so it stays put.
+const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
 function systemTags(e) {
   const blocks = [];
   let nonlinear = false;
@@ -4535,16 +4640,16 @@ function systemTags(e) {
   };
   walk(e.diagram);
   const tags = [];
-  const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind }); };
+  const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind, tone: toneOf(label) }); };
   add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
   if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
-  if (!ctrls.length) add('No controller', 'controller');
+  if (!ctrls.length) add('No controller', 'none');
   for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
   for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
-  if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd')) add('Disturbance', 'signal');
-  if (e.scope?.view?.mode) add(e.scope.view.mode === 'fft' ? 'FFT' : 'Spectrogram', 'feature');
+  if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd')) add('Disturbance', 'feature');
+  if (e.scope?.view?.mode) add({ fft: 'FFT', spectrogram: 'Spectrogram', xy: 'XY' }[e.scope.view.mode], 'feature');
   if (e.ui?.tab === 'tune') add('Auto-tune', 'feature');
   for (const t of e.tags ?? []) add(t.label, t.kind ?? 'feature');
   return tags;
@@ -4583,7 +4688,7 @@ function applySystem(project, entry, parts) {
   return p;
 }
 
-return { SYSTEM_PARTS, systemTags, SYSTEM_LIBRARY, applySystem };
+return { SYSTEM_PARTS, TAG_TONES, systemTags, SYSTEM_LIBRARY, applySystem };
 })();
 // ---- core/spectrum.js
 __mods['core/spectrum.js'] = (() => {
@@ -6186,6 +6291,151 @@ function readout(g, P, x, rows) {
 
 return { channelSignal, dtOf, nyquist, freqRange, drawFrequency };
 })();
+// ---- ui/xyview.js
+__mods['ui/xyview.js'] = (() => {
+// The scope's XY mode (the person, 2026-10-24: "the x-axis is the reference
+// value and the y-axis is the delta … ideally a line … usually an ellipse").
+// As on a real oscilloscope, channel 1 drives the beam horizontally at its
+// own scale and every other visible channel draws against it vertically.
+// With Δ on, a channel in channel 1's unit draws X − Y instead: r on 1 and y on 2
+// give the error e = r − y over r, so perfect tracking is a flat line, a gain
+// error a tilted line, and a lag an ellipse (a Lissajous figure).
+//
+// The beam draws the samples inside the timebase window, up to the sweep, so
+// moving the window past the start-up leaves the settled figure. Each channel
+// reads out the straight line that fits it best, Y ≈ a·X + b, and the spread
+// σ of the figure around that line: a line has σ ≈ 0, an ellipse does not.
+
+const { channelSignal } = __mods['ui/freqview.js'];
+const { num } = __mods['ui/units.js'];
+const DIVX = 10, DIVY = 8, MAX_POINTS = 6000;
+const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+
+const xOf = (P, ch, v) => P.l + P.w / 2 + ((v + ch.offset) / ch.scale) * P.dx;
+const vOfX = (P, ch, x) => ((x - P.l - P.w / 2) / P.dx) * ch.scale - ch.offset;
+
+// Whether channel i draws X − Y: Δ is on and it has channel 1's unit (r − V
+// would mean nothing).
+const isDelta = (scope, i, unitOf) => !!scope.view?.delta && i > 0 && unitOf(scope.channels[i].source) === unitOf(scope.channels[0].source);
+// The values a Y channel draws: its signal, or X − Y.
+function ySignal(d, scope, i, unitOf) {
+  const y = channelSignal(d, scope.channels[i]);
+  if (!y || !isDelta(scope, i, unitOf)) return y;
+  const x = channelSignal(d, scope.channels[0]);
+  if (!x) return y;
+  const out = new Float64Array(y.length);
+  for (let j = 0; j < y.length; j++) out[j] = x[j] - y[j];
+  return out;
+}
+
+// Least-squares line through (x, y) over samples [j0, j1], and the spread
+// (rms distance in y) of the points around it.
+function lineFit(x, y, j0, j1) {
+  let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let j = j0; j <= j1; j++) {
+    if (!Number.isFinite(x[j]) || !Number.isFinite(y[j])) continue;
+    n++; sx += x[j]; sy += y[j]; sxx += x[j] * x[j]; sxy += x[j] * y[j];
+  }
+  if (n < 3) return null;
+  const vx = sxx - (sx * sx) / n;
+  const a = vx > 1e-300 ? (sxy - (sx * sy) / n) / vx : 0, b = (sy - a * sx) / n;
+  let r = 0;
+  for (let j = j0; j <= j1; j++) if (Number.isFinite(x[j]) && Number.isFinite(y[j])) r += (y[j] - a * x[j] - b) ** 2;
+  return { a, b, sigma: Math.sqrt(r / n), n };
+}
+
+// v: { g, P, data, past, scope, k, axis, line, colors, drawGrid, unitLabel, vy, win, runs }
+function drawXY(v) {
+  const { g, P, data, scope, colors, vy } = v;
+  v.drawGrid(g);
+  const cx = scope.channels[0], X = channelSignal(data, cx);
+  g.font = `10.5px ${MONO}`;
+  if (!cx.on || !X) {
+    g.fillStyle = 'rgba(200, 210, 218, 0.75)'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('XY: channel 1 drives the beam across. Give it a source (the reference r, say).', P.l + P.w / 2, P.t + P.h / 2);
+    return;
+  }
+  const ys = [1, 2, 3].filter((i) => scope.channels[i].on && channelSignal(data, scope.channels[i]));
+  const t = data.t, [w0, w1] = v.win();
+  const dt = t.length > 1 ? t[1] - t[0] : 1;
+  const j0 = Math.max(0, Math.ceil(w0 / dt - 1e-9)), j1 = Math.min(v.k, Math.floor(w1 / dt + 1e-9), t.length - 1);
+  const stride = Math.max(1, Math.ceil((j1 - j0) / MAX_POINTS));
+
+  // Axes: channel 1's values below, the axis channel's at the left.
+  g.fillStyle = colors[0]; g.textBaseline = 'top';
+  for (let i = 0; i <= DIVX; i++) {
+    const x = P.l + i * P.dx, val = vOfX(P, cx, x);
+    g.textAlign = i === 0 ? 'left' : i === DIVX ? 'right' : 'center';
+    g.fillText(num(Math.abs(val) < cx.scale * 1e-9 ? 0 : val, 3), x, P.b + 5);
+  }
+  const ai = ys.includes(v.axis) ? v.axis : ys[0];
+  if (ai !== undefined) {
+    const ch = scope.channels[ai];
+    g.fillStyle = colors[ai]; g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (let j = 0; j <= DIVY; j++) {
+      const val = (DIVY / 2 - j) * ch.scale - ch.offset;
+      g.fillText(num(Math.abs(val) < ch.scale * 1e-9 ? 0 : val, 3), P.l - 22, Math.min(P.b - 5, Math.max(P.t + 5, P.t + j * P.dy)));
+    }
+  }
+
+  g.save();
+  g.beginPath(); g.rect(P.l, P.t, P.w, P.h); g.clip();
+  g.lineJoin = 'round';
+  const path = (d, i, from, to, ch) => {
+    const x = channelSignal(d, cx), y = ySignal(d, scope, i, v.unitLabel);
+    if (!x || !y) return;
+    g.beginPath();
+    let pen = false;
+    for (let j = from; j <= to; j += stride) {
+      if (!Number.isFinite(x[j]) || !Number.isFinite(y[j])) { pen = false; continue; }
+      const px = xOf(P, cx, x[j]), py = vy(ch, y[j]);
+      if (pen) g.lineTo(px, py); else { g.moveTo(px, py); pen = true; }
+    }
+    g.stroke();
+  };
+  // Earlier runs, faded, over the same window.
+  const seen = new Set();
+  (v.past ?? []).forEach((d, age) => {
+    if (seen.has(d) || d.t.length !== t.length) return;
+    seen.add(d);
+    g.globalAlpha = 0.5 * (1 - (age + 1) / v.runs);
+    g.lineWidth = 1.2;
+    for (const i of ys) { g.strokeStyle = colors[i]; path(d, i, j0, Math.min(t.length - 1, Math.floor(w1 / dt + 1e-9)), scope.channels[i]); }
+  });
+  g.globalAlpha = 1;
+  for (const i of ys) {
+    const ch = scope.channels[i], sel = i === v.line;
+    g.strokeStyle = colors[i]; g.lineWidth = sel ? 2.6 : 1.6; g.shadowColor = colors[i]; g.shadowBlur = sel ? 9 : 5;
+    g.globalAlpha = v.line !== null && !sel ? 0.55 : 1;
+    path(data, i, j0, j1, ch);
+    // The beam: a bright dot where the figure is now.
+    const y = ySignal(data, scope, i, v.unitLabel);
+    if (j1 >= j0 && Number.isFinite(X[j1]) && Number.isFinite(y[j1])) {
+      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(xOf(P, cx, X[j1]), vy(ch, y[j1]), 3, 0, 2 * Math.PI); g.fill();
+    }
+  }
+  g.shadowBlur = 0; g.globalAlpha = 1;
+  g.restore();
+
+  // Labels: what X and Y are, and each channel's best line and spread.
+  const unit = (ch) => v.unitLabel(ch.source);
+  const ux = unit(cx) === '1' ? '' : ` ${unit(cx)}`;
+  g.textBaseline = 'bottom'; g.textAlign = 'right'; g.fillStyle = colors[0];
+  g.fillText(`X = ${cx.source}${ux ? ` (${ux.trim()})` : ''}`, P.r - 6, P.b - 4);
+  g.textAlign = 'left'; g.textBaseline = 'top';
+  ys.forEach((i, row) => {
+    const ch = scope.channels[i], y = ySignal(data, scope, i, v.unitLabel);
+    const fit = lineFit(X, y, j0, j1);
+    const name = isDelta(scope, i, v.unitLabel) ? `${cx.source} − ${ch.source}` : ch.source;
+    const text = fit ? `${name}  ≈ ${num(fit.a, 3)}·${cx.source} ${fit.b < 0 ? '−' : '+'} ${num(Math.abs(fit.b), 3)}   σ ${num(fit.sigma, 3)}${unit(ch) === '1' ? '' : ` ${unit(ch)}`}` : name;
+    const w = g.measureText(text).width;
+    g.fillStyle = 'rgba(10, 13, 16, 0.7)'; g.fillRect(P.l + 4, P.t + 4 + row * 16, w + 8, 15);
+    g.fillStyle = colors[i]; g.fillText(text, P.l + 8, P.t + 6 + row * 16);
+  });
+}
+
+return { xOf, vOfX, isDelta, ySignal, lineFit, drawXY };
+})();
 // ---- ui/display.js
 __mods['ui/display.js'] = (() => {
 // The scope display: a 10 × 8 division graticule with time labels below and
@@ -6203,6 +6453,7 @@ __mods['ui/display.js'] = (() => {
 const { siUnit, num } = __mods['ui/units.js'];
 const { step125 } = __mods['core/scale.js'];
 const { channelSignal, drawFrequency, freqRange } = __mods['ui/freqview.js'];
+const { drawXY, vOfX } = __mods['ui/xyview.js'];
 const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
@@ -6357,6 +6608,11 @@ function createDisplay(root, handlers) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
     layout();
+    if (viewMode() === 'xy') {
+      drawXY({ g: ctx, P, data, past, scope, k: mode !== 'stop' ? indexAt(tScan) : data.t.length - 1, axis: axisChannel(), line, colors: CHANNEL_COLORS, drawGrid, unitLabel, vy, win, runs: RUNS });
+      renderStatus();
+      return;
+    }
     if (viewMode() !== 'time') {
       const n = data.t.length - 1;
       drawFrequency({ g: ctx, P, W, H, data, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
@@ -6483,9 +6739,10 @@ function createDisplay(root, handlers) {
     if (!scope || !data) return;
     const state = { run: ['run', 'Run'], stop: ['stop', 'Stop'], single: ['single', 'Single'] }[mode];
     const tb = scope.timebase;
-    const vm = viewMode(), fr = vm !== 'time' ? freqRange(scope, data) : null;
+    const vm = viewMode(), fr = vm === 'fft' || vm === 'spectrogram' ? freqRange(scope, data) : null;
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
-      ${vm !== 'time' ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
+      ${fr ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
+      ${vm === 'xy' ? `<span class="st st-view">XY${scope.view?.delta ? ' · Δ X − Y' : ''}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
       ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
@@ -6560,7 +6817,14 @@ function createDisplay(root, handlers) {
 
   // The channels a vertical gesture acts on: the selected line, or every
   // channel that shows a signal.
-  const targets = () => (line !== null ? [line] : [0, 1, 2, 3].filter(visible));
+  // In XY mode channel 1 is the horizontal axis, so not among them.
+  const targets = () => (line !== null ? [line] : [0, 1, 2, 3].filter((i) => visible(i) && !(i === 0 && viewMode() === 'xy')));
+  // XY mode: channel 1's scale and position, around a screen column.
+  function zoomX(sc, x, dir) {
+    const ch = sc.channels[0], vc = vOfX(P, ch, x), kx = (x - P.l - P.w / 2) / P.dx;
+    ch.scale = step125(ch.scale, dir);
+    ch.offset = Number((kx * ch.scale - vc).toPrecision(6));
+  }
 
   let wheelAcc = 0, wheelTimer = null;
   canvas.addEventListener('wheel', (e) => {
@@ -6579,6 +6843,20 @@ function createDisplay(root, handlers) {
       const fc = f0 + Math.max(0, Math.min(1, a)) * (f1 - f0), span = Math.min(fn, (f1 - f0) * 1.25 ** steps);
       const nf0 = Math.max(0, Math.min(fn - span, fc - a * span));
       handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(nf0.toPrecision(5)), fmax: Number((nf0 + span).toPrecision(5)) }; });
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => handlers.endEdit(), 400);
+      return;
+    }
+    if (viewMode() === 'xy') {
+      // Below the screen: X (channel 1); on it or at the left: the Y channels.
+      const dir = Math.sign(steps);
+      handlers.edit((sc) => {
+        for (let s = 0; s < Math.abs(steps); s++) {
+          if (where === 'xaxis') { zoomX(sc, x, dir); continue; }
+          const k = divsAt(y);
+          for (const i of targets()) { const ch = sc.channels[i], vc = k * ch.scale - ch.offset; ch.scale = step125(ch.scale, dir); ch.offset = Number((k * ch.scale - vc).toPrecision(6)); }
+        }
+      });
       clearTimeout(wheelTimer);
       wheelTimer = setTimeout(() => handlers.endEdit(), 400);
       return;
@@ -6635,6 +6913,13 @@ function createDisplay(root, handlers) {
         if (dx) handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(nf0.toPrecision(5)), fmax: Number((nf0 + f1 - f0).toPrecision(5)) }; });
         return;
       }
+      if (viewMode() === 'xy') {
+        handlers.edit((sc) => {
+          if (gesture.time && dx) { const ch = sc.channels[0]; ch.offset = Number((ch.offset + (dx / P.dx) * ch.scale).toPrecision(6)); }
+          if (gesture.values && dy) for (const i of targets()) { const ch = sc.channels[i]; ch.offset = Number((ch.offset - (dy / P.dy) * ch.scale).toPrecision(6)); }
+        });
+        return;
+      }
       handlers.edit((sc) => {
         if (gesture.time && dx) sc.timebase.position = Number((sc.timebase.position - (dx / P.dx) * sc.timebase.scale).toPrecision(6));
         if (gesture.values && dy) for (const i of targets()) { const ch = sc.channels[i]; ch.offset = Number((ch.offset - (dy / P.dy) * ch.scale).toPrecision(6)); }
@@ -6673,8 +6958,12 @@ function createDisplay(root, handlers) {
       return;
     }
     const t0 = xt(x0), t1 = xt(x1), k0 = divsAt(y0), k1 = divsAt(y1);
+    const xy = viewMode() === 'xy';
     handlers.edit((sc) => {
-      if (time) sc.timebase = { scale: Number(((t1 - t0) / DIVX).toPrecision(4)), position: Number(t0.toPrecision(6)) };
+      if (time && xy) {
+        const ch = sc.channels[0], va = vOfX(P, ch, x0), vb = vOfX(P, ch, x1);
+        ch.scale = Number(((vb - va) / DIVX).toPrecision(4)); ch.offset = Number((-(va + vb) / 2).toPrecision(6));
+      } else if (time) sc.timebase = { scale: Number(((t1 - t0) / DIVX).toPrecision(4)), position: Number(t0.toPrecision(6)) };
       if (values) for (const i of targets()) {
         const ch = sc.channels[i];
         const top = k0 * ch.scale - ch.offset, bot = k1 * ch.scale - ch.offset;
@@ -6740,6 +7029,8 @@ function createControls(root, app) {
         <button class="key small" data-view="time" title="Signals over time">Time</button>
         <button class="key small" data-view="fft" title="Amplitude spectrum of every channel (what has run so far)">FFT</button>
         <button class="key small" data-view="spectrogram" title="The selected channel's spectrum over time, its trace on the right axis">Spectrogram</button>
+        <button class="key small" data-view="xy" title="XY: channel 1 across, the other channels against it (a Lissajous figure)">XY</button>
+        <button class="key small" id="k-delta" title="XY: draw channel 1 minus each channel (r on 1 and y on 2: the error e = r − y over r)">Δ</button>
       </div>
     </section>
     <section class="group">
@@ -6850,6 +7141,12 @@ function createControls(root, app) {
     if (b.dataset.view === 'time') delete view.mode; else view.mode = b.dataset.view;
     sc.view = view;
   })));
+  // XY: the channels draw channel 1 minus themselves (the error, for r and y).
+  $('#k-delta').addEventListener('click', () => setScope((sc) => {
+    const view = { ...(sc.view ?? {}) };
+    if (view.delta) delete view.delta; else view.delta = true;
+    sc.view = view;
+  }));
   // The selected channel's display filter.
   const filt = $('#ch-filt');
   filt.addEventListener('change', () => setScope((sc) => {
@@ -6906,6 +7203,9 @@ function createControls(root, app) {
     src.dataset.names = names.join(',') + '|' + names.map(app.unitOf).join(',');
     const vm = sc.view?.mode ?? 'time';
     root.querySelectorAll('[data-view]').forEach((b) => { b.classList.toggle('lit-view', b.dataset.view === vm); b.setAttribute('aria-pressed', String(b.dataset.view === vm)); });
+    $('#k-delta').hidden = vm !== 'xy';
+    $('#k-delta').classList.toggle('lit-view', !!sc.view?.delta);
+    $('#k-delta').setAttribute('aria-pressed', String(!!sc.view?.delta));
     const f = ch().filter;
     filt.value = f?.type ?? '';
     const fsig = f ? `${f.type}|${f.f0}|${f.order}|${f.q}` : '';
@@ -8836,6 +9136,7 @@ __mods['ui/app.js'] = (() => {
 const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } = __mods['core/project.js'];
 const { diagramNames } = __mods['core/diagram.js'];
 const { createPlantEditor } = __mods['ui/plant.js'];
+const { isDelta } = __mods['ui/xyview.js'];
 const { createControllerTab } = __mods['ui/controller.js'];
 const { createAutotuneTab } = __mods['ui/autotune.js'];
 const { loopOverlays, autotune, placeVariant, tuneReport } = __mods['core/autotune.js'];
@@ -9078,16 +9379,20 @@ function startApp() {
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
     const data = acquire();
-    for (const ch of app.project.scope.channels) {
-      const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
+    const sc = app.project.scope, x = data.signals[sc.channels[0].source];
+    sc.channels.forEach((ch, i) => {
+      let v = data.signals[ch.source];
+      // XY with Δ: the channels draw channel 1 minus themselves; fit that.
+      if (v && x && sc.view?.mode === 'xy' && isDelta(sc, i, app.unitOf)) v = v.map((y, j) => x[j] - y);
+      const fit = v && fitChannel(v);
       if (fit) Object.assign(ch, fit);
-    }
+    });
     // A Controller block's r and the y it compares with r share one scale and
-    // offset, so they overlay (src/core/autotune.js loopOverlays).
-    const chs = app.project.scope.channels;
-    for (const g of loopOverlays(chs, data.signals, app.unitOf)) {
-      const fit = fitChannel(g.flatMap((i) => Array.from(data.signals[chs[i].source])));
-      if (fit) for (const i of g) Object.assign(chs[i], fit);
+    // offset, so they overlay (src/core/autotune.js loopOverlays); not in XY,
+    // where channel 1 is the beam's x.
+    if (sc.view?.mode !== 'xy') for (const g of loopOverlays(sc.channels, data.signals, app.unitOf)) {
+      const fit = fitChannel(g.flatMap((i) => Array.from(data.signals[sc.channels[i].source])));
+      if (fit) for (const i of g) Object.assign(sc.channels[i], fit);
     }
   }
   app.autoScale = () => {
@@ -9200,19 +9505,37 @@ function startApp() {
     const json = exportJson().replace(/</g, '\\u003c');
     return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n<\/script>\n<script id="lt-script">${$('lt-script').textContent}<\/script>\n</body>\n</html>\n`;
   }
-  function download(name, text, type) {
+  // Saving a file. In a claude.ai page, through its downloads capability (the
+  // viewer confirms each save); in a plain browser, through a download link.
+  // Resolves true once the file is on its way. Framed without the capability,
+  // only the Copy buttons are offered.
+  let saver = null;
+  window.claude?.use?.('downloads').then((d) => {
+    saver = d;
+    if (d && framed) document.querySelectorAll('[data-standalone]').forEach((el) => { el.hidden = false; });
+  }).catch(() => {});
+  async function download(name, data, type) {
+    if (saver) {
+      try { await saver.save({ filename: name, data }); return true; } catch (err) {
+        if (err?.code !== 'declined') toast(`Could not save ${name}: ${err?.message ?? err?.code ?? err}`);
+        return false;
+      }
+    }
+    if (framed) { toast('Saving files is not available here; use Copy JSON or Copy HTML.'); return false; }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
     a.download = name;
     document.body.append(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    return true;
   }
+  app.download = download;
   const stem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
-  $('save').addEventListener('click', () => { download(`${stem()}.json`, exportJson(), 'application/json'); toast('Saved the project as JSON'); });
-  $('export').addEventListener('click', () => { download(`${stem()}.html`, exportHtml(), 'text/html'); toast('Exported a standalone page with this project inside'); });
+  $('save').addEventListener('click', async () => { if (await download(`${stem()}.json`, exportJson(), 'application/json')) toast('Saved the project as JSON'); });
+  $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
   $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
   $('open').addEventListener('click', () => $('file').click());
@@ -9250,7 +9573,8 @@ function startApp() {
   const pop = $('syslib-pop');
   const PART_LABEL = { input: 'Input', plant: 'Plant', controller: 'Controller' };
   pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
-    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => `<span class="tag tag-${t.kind}">${esc(t.label)}</span>`).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
+    + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
+    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => `<span class="tag tag-${t.kind} tone-${t.tone}">${esc(t.label)}</span>`).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
       <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>`).join('');
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
   $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });
@@ -9277,7 +9601,7 @@ function startApp() {
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
     if (mod && e.key.toLowerCase() === 'y' && !inField) { e.preventDefault(); app.redo(); return; }
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed && !saver ? 'copy' : 'save').click(); return; }
     if (!inField && app.tab === 'plant' && $('help-dlg').hidden && plantEditor.handleKey(e)) { e.preventDefault(); return; }
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }

@@ -22,10 +22,25 @@ function fromPlant(e) {
 // What a system shows, as tags for the library overview (the person,
 // 2026-10-24: "is it linear, non-linear, what kind of controllers, has it
 // observers, what are the features"). Derived from the system itself, plus
-// any the entry adds by hand ({ label, kind }). kind picks the colour:
-// plant, controller, observer, signal, feature.
+// any the entry adds by hand ({ label, kind }).
+//
+// Values that differ look different at a glance (the person, same day): the
+// kind sets the chip's style (plant: filled; controller: a coloured bar;
+// observer: an outline; feature: a dot; none: an empty dashed chip) and each
+// value has its own tone, the same on every card. The opposites Linear and
+// Nonlinear take the warm and cool poles. Tones are the eight slots of a
+// palette validated for colour-vision deficiency; the label is always shown.
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
-const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', kalman: 'Kalman filter', luenberger: 'Luenberger observer' };
+const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
+export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
+const TONE = {
+  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'green',
+  PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
+  'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  Disturbance: 'red', FFT: 'blue', Spectrogram: 'magenta', XY: 'violet', 'Auto-tune': 'green', HIL: 'orange',
+};
+// A value without its own tone gets one from its label, so it stays put.
+const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
 export function systemTags(e) {
   const blocks = [];
   let nonlinear = false;
@@ -41,16 +56,16 @@ export function systemTags(e) {
   };
   walk(e.diagram);
   const tags = [];
-  const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind }); };
+  const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind, tone: toneOf(label) }); };
   add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
   if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
-  if (!ctrls.length) add('No controller', 'controller');
+  if (!ctrls.length) add('No controller', 'none');
   for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
   for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
-  if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd')) add('Disturbance', 'signal');
-  if (e.scope?.view?.mode) add(e.scope.view.mode === 'fft' ? 'FFT' : 'Spectrogram', 'feature');
+  if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd')) add('Disturbance', 'feature');
+  if (e.scope?.view?.mode) add({ fft: 'FFT', spectrogram: 'Spectrogram', xy: 'XY' }[e.scope.view.mode], 'feature');
   if (e.ui?.tab === 'tune') add('Auto-tune', 'feature');
   for (const t of e.tags ?? []) add(t.label, t.kind ?? 'feature');
   return tags;

@@ -502,8 +502,9 @@ function siso(sys, who) {
 }
 
 // Solves (Mr + j·Mi) x = br + j·bi by Gaussian elimination with partial
-// pivoting, in place. null if the matrix is exactly singular.
-function csolve(Mr, Mi, br, bi) {
+// pivoting, in place (the arguments are overwritten). null if the matrix is
+// exactly singular. Returns { xr, xi }.
+export function csolve(Mr, Mi, br, bi) {
   const n = Mr.length;
   for (let k = 0; k < n; k++) {
     let p = k, best = -1;

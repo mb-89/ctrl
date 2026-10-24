@@ -13,6 +13,7 @@
 import { siUnit, num } from './units.js';
 import { step125 } from '../core/scale.js';
 import { channelSignal, drawFrequency, freqRange } from './freqview.js';
+import { drawXY, vOfX } from './xyview.js';
 
 export const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
@@ -168,6 +169,11 @@ export function createDisplay(root, handlers) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
     layout();
+    if (viewMode() === 'xy') {
+      drawXY({ g: ctx, P, data, past, scope, k: mode !== 'stop' ? indexAt(tScan) : data.t.length - 1, axis: axisChannel(), line, colors: CHANNEL_COLORS, drawGrid, unitLabel, vy, win, runs: RUNS });
+      renderStatus();
+      return;
+    }
     if (viewMode() !== 'time') {
       const n = data.t.length - 1;
       drawFrequency({ g: ctx, P, W, H, data, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
@@ -294,9 +300,10 @@ export function createDisplay(root, handlers) {
     if (!scope || !data) return;
     const state = { run: ['run', 'Run'], stop: ['stop', 'Stop'], single: ['single', 'Single'] }[mode];
     const tb = scope.timebase;
-    const vm = viewMode(), fr = vm !== 'time' ? freqRange(scope, data) : null;
+    const vm = viewMode(), fr = vm === 'fft' || vm === 'spectrogram' ? freqRange(scope, data) : null;
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
-      ${vm !== 'time' ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
+      ${fr ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
+      ${vm === 'xy' ? `<span class="st st-view">XY${scope.view?.delta ? ' · Δ X − Y' : ''}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
       ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
@@ -371,7 +378,14 @@ export function createDisplay(root, handlers) {
 
   // The channels a vertical gesture acts on: the selected line, or every
   // channel that shows a signal.
-  const targets = () => (line !== null ? [line] : [0, 1, 2, 3].filter(visible));
+  // In XY mode channel 1 is the horizontal axis, so not among them.
+  const targets = () => (line !== null ? [line] : [0, 1, 2, 3].filter((i) => visible(i) && !(i === 0 && viewMode() === 'xy')));
+  // XY mode: channel 1's scale and position, around a screen column.
+  function zoomX(sc, x, dir) {
+    const ch = sc.channels[0], vc = vOfX(P, ch, x), kx = (x - P.l - P.w / 2) / P.dx;
+    ch.scale = step125(ch.scale, dir);
+    ch.offset = Number((kx * ch.scale - vc).toPrecision(6));
+  }
 
   let wheelAcc = 0, wheelTimer = null;
   canvas.addEventListener('wheel', (e) => {
@@ -390,6 +404,20 @@ export function createDisplay(root, handlers) {
       const fc = f0 + Math.max(0, Math.min(1, a)) * (f1 - f0), span = Math.min(fn, (f1 - f0) * 1.25 ** steps);
       const nf0 = Math.max(0, Math.min(fn - span, fc - a * span));
       handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(nf0.toPrecision(5)), fmax: Number((nf0 + span).toPrecision(5)) }; });
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => handlers.endEdit(), 400);
+      return;
+    }
+    if (viewMode() === 'xy') {
+      // Below the screen: X (channel 1); on it or at the left: the Y channels.
+      const dir = Math.sign(steps);
+      handlers.edit((sc) => {
+        for (let s = 0; s < Math.abs(steps); s++) {
+          if (where === 'xaxis') { zoomX(sc, x, dir); continue; }
+          const k = divsAt(y);
+          for (const i of targets()) { const ch = sc.channels[i], vc = k * ch.scale - ch.offset; ch.scale = step125(ch.scale, dir); ch.offset = Number((k * ch.scale - vc).toPrecision(6)); }
+        }
+      });
       clearTimeout(wheelTimer);
       wheelTimer = setTimeout(() => handlers.endEdit(), 400);
       return;
@@ -446,6 +474,13 @@ export function createDisplay(root, handlers) {
         if (dx) handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(nf0.toPrecision(5)), fmax: Number((nf0 + f1 - f0).toPrecision(5)) }; });
         return;
       }
+      if (viewMode() === 'xy') {
+        handlers.edit((sc) => {
+          if (gesture.time && dx) { const ch = sc.channels[0]; ch.offset = Number((ch.offset + (dx / P.dx) * ch.scale).toPrecision(6)); }
+          if (gesture.values && dy) for (const i of targets()) { const ch = sc.channels[i]; ch.offset = Number((ch.offset - (dy / P.dy) * ch.scale).toPrecision(6)); }
+        });
+        return;
+      }
       handlers.edit((sc) => {
         if (gesture.time && dx) sc.timebase.position = Number((sc.timebase.position - (dx / P.dx) * sc.timebase.scale).toPrecision(6));
         if (gesture.values && dy) for (const i of targets()) { const ch = sc.channels[i]; ch.offset = Number((ch.offset - (dy / P.dy) * ch.scale).toPrecision(6)); }
@@ -484,8 +519,12 @@ export function createDisplay(root, handlers) {
       return;
     }
     const t0 = xt(x0), t1 = xt(x1), k0 = divsAt(y0), k1 = divsAt(y1);
+    const xy = viewMode() === 'xy';
     handlers.edit((sc) => {
-      if (time) sc.timebase = { scale: Number(((t1 - t0) / DIVX).toPrecision(4)), position: Number(t0.toPrecision(6)) };
+      if (time && xy) {
+        const ch = sc.channels[0], va = vOfX(P, ch, x0), vb = vOfX(P, ch, x1);
+        ch.scale = Number(((vb - va) / DIVX).toPrecision(4)); ch.offset = Number((-(va + vb) / 2).toPrecision(6));
+      } else if (time) sc.timebase = { scale: Number(((t1 - t0) / DIVX).toPrecision(4)), position: Number(t0.toPrecision(6)) };
       if (values) for (const i of targets()) {
         const ch = sc.channels[i];
         const top = k0 * ch.scale - ch.offset, bot = k1 * ch.scale - ch.offset;

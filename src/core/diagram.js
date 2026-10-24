@@ -82,18 +82,19 @@ export const ELEMENTS = {
   conicalTank: {
     // A tank that widens upwards (radius r0 at the bottom, R at height H),
     // filled at q and draining through an outlet of area a (Torricelli). Its
-    // dynamics are fast when nearly empty and slow when full.
+    // dynamics are fast when nearly empty and slow when full. It cannot run
+    // dry below 0 or hold more than H: what comes in beyond that overflows.
     label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
     params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
     ode: {
       n: 1,
-      init: (p) => [p.h0],
-      out: (X, o, p, y) => { y[0] = X[o]; },
+      init: (p) => [Math.min(p.H, p.h0)],
+      out: (X, o, p, y) => { y[0] = Math.min(p.H, Math.max(0, X[o])); },
       f: (X, o, u, p, dX) => {
-        const h = Math.max(0, X[o]);
-        const r = p.r0 + ((p.R - p.r0) * Math.min(h, p.H)) / p.H;
+        const h = Math.min(p.H, Math.max(0, X[o]));
+        const r = p.r0 + ((p.R - p.r0) * h) / p.H;
         const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
-        dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+        dX[o] = (h <= 0 && flow < 0) || (h >= p.H && flow > 0) ? 0 : flow / (Math.PI * r * r);
       },
       bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
     },
