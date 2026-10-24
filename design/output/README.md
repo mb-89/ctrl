@@ -14,6 +14,7 @@ The person's raw words are in [../input](../input/README.md). This folder is wha
 | [plant-views.md](plant-views.md) | 2D views of a plant, configured in its JSON (shapes, or SVG with bindings) |
 | [system-library.md](system-library.md) | Complete example systems, loaded whole or by part |
 | [controller-proposal.md](controller-proposal.md) | Tab 3, the Controller: blocks with variants, the controller library |
+| [designs.md](designs.md) | Designs computed in the page from the plant (nothing plant-specific stored): the plant a block sees, model mode, designed variants, the swing-up plan; build status ([full plan](designs-in-the-page.md)) |
 | [project-format.md](project-format.md) | The project file (JSON), version 2 |
 | [decisions.md](decisions.md) | Dated log of decisions, including the interpretations we made |
 | [roadmap.md](roadmap.md) | What is built, what is next, and open questions |

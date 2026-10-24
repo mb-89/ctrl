@@ -2,6 +2,27 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.7: designs are computed in the page ([input](../input/2026-10-24-09-analysis-autotune-triple-swingup.md))
+
+The person: "I really don't want you to store stuff that is specific to any plant into the HTML … It should be computable in principle … the optimizer, it should be part of the package that we deliver, not something that you bake in." The architecture is in [designs.md](designs.md) (condensed) and [designs-in-the-page.md](designs-in-the-page.md) (the full plan from a three-proposal, three-judge panel). It is built in steps; the status is in designs.md.
+
+Rules:
+- **Inputs only, in the file and in the library.** A project, `plants.js` and the HTML hold design inputs (weights, times, levels, limits, names), physics parameters, and hand gains a person chose (PID gains, energy swing-up gains). Never stored: gains computed from the plant, tables, trim values (u0, a pipe's start flow), models, plans. (Person.) "Copy as numbers" is the person's explicit way to turn a design into hand numbers; it is offered for LQR, PI and Kalman, never for plans.
+- **Same inputs, same numbers.** A computed number depends only on the diagram, the variant's parameters and Ts, and is computed by bundled code; Node and the page give the same numbers. No wall-clock stopping criteria (iteration caps only), no warm starts across edits, no randomness.
+- **Caches are memory-only and invisible.** Dropping one changes timing, never results. No plan is kept in localStorage.
+- **Laws know nothing of plants.** A law is made from plain data (`make(p, Ts, values)`); only `design(p, ctx)` sees the plant.
+- **A failed design never breaks the display.** With no values a Controller puts out u = 0 (an Observer: zero estimates), and the status says why, naming states and measurements by their labels.
+- **One plant, one evaluation.** A design sees the plant through the same compiled diagram that is simulated (a `model` compile mode), never through a second copy of the physics, so a design can never be made for a different plant from the one that runs.
+- **Dead time's start value may be empty** ("its input at t = 0": the pipe was already flowing), so the tank's pipe no longer carries a baked start flow.
+
+Interpretations:
+- "Computed" covers everything derived from the plant: gains, tables, trim values (u0, a pipe's start flow), models and plans. Hand gains, energy-pump gains and physics are inputs.
+- A design sees the plant with other Controllers holding their output, so cascades are designed with the inner loop open (the status says so). It sees through Kalman observers (estimate k counts as the true state k) and holds hand observers.
+- Dead time is left out of state-space designs and reported. Quantisers and noise are left out of LQR and used for the Kalman R.
+- Plans are computed when a system loads (2–4 s, visible) and are not kept across page loads. A plan that failed still runs, so the attempt can be seen.
+- Hand types stay for people who want numbers. "Copy as numbers" is the bridge, offered for LQR, PI and Kalman, never for plans.
+- The heavy job (the triple-pendulum swing-up plan) runs on the main thread in short slices, not in a Web Worker: the sandboxed page would likely refuse a worker, and two code paths for one job are not worth it until a design passes about 10 s.
+
 ## 2026-10-24 · v2.6: controllers ([input](../input/2026-10-24-08-controllers-and-5-seconds.md))
 
 - **Demos run 5 s**, and the mass–spring–damper moves slower (k 25 N/m, 0.8 Hz). (Person.)
