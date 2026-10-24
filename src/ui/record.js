@@ -153,7 +153,7 @@ export function createRecord(app, display) {
   function closePop() { if (!pop.hidden) { pop.hidden = true; $('rc-save').setAttribute('aria-expanded', 'false'); } }
   $('rc-save').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (pop.hidden) renderPop();
+    if (pop.hidden) { document.dispatchEvent(new MouseEvent('click')); renderPop(); }  // one menu open at a time: the others close
     pop.hidden = !pop.hidden;
     $('rc-save').setAttribute('aria-expanded', String(!pop.hidden));
   });

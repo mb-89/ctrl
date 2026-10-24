@@ -18,7 +18,10 @@
 // the probes compileDiagram adds under "<block path>.r", ".y", ".u".
 // Every strategy is a generator that yields after each run of the loop, so
 // the page can keep drawing while it works (a run of a large plant takes tens
-// of milliseconds); drain() runs one to its end (tests, the command line).
+// of milliseconds) and pace the runs at its speed; a yield after a run says
+// how much time it simulated (seconds), and Iterate's carry the run itself
+// (run), which the page sweeps across the display. drain() runs one to its
+// end (tests, the command line).
 // autotune() is the one entry for the page, the command line and agents.
 
 import { simulateSystem } from './sim.js';
@@ -445,6 +448,7 @@ export function* iterate(project, path, goal = {}, opts = {}) {
   const scales = costScales(startRun, ctx.key, ctx.variant);
   const detail = runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others });
   const start = { cost: detail.J, detail, variant: ctx.variant };
+  const seconds = ctx.sim.duration;
   const ffStart = opts.feedforward && ['pid', 'gainScheduled'].includes(ctx.variant.type) ? feedforwardStart(startRun, ctx.key, ctx.variant, ctx.others) : null;
   const whole = tuningSpace(ctx.variant, { start: ffStart });
   const ffNames = whole.names.filter((k) => FF_KEYS.includes(k)), quiet = !disturbed(startRun, ctx.others);
@@ -461,15 +465,18 @@ export function* iterate(project, path, goal = {}, opts = {}) {
   // One run of the loop with the gains at x.
   function* f(x) {
     const variant = space.apply(x);
-    let cost;
-    try { cost = variantCost(ctx, variant, g, scales); } catch { cost = { J: 2 * DIVERGED, diverged: true, parts: {} }; }
+    let cost, run = null;
+    try {
+      run = runVariant(ctx, variant);
+      cost = runCost(run, ctx.key, g, { scales, variant, others: ctx.others });
+    } catch { cost = { J: 2 * DIVERGED, diverged: true, parts: {} }; }
     evals++;
     tried.push(cost.J);
     if (cost.J < best.cost.J) best = { variant, cost, x: x.slice() };
-    yield report(true);
+    yield { ...report(true), seconds, run };
     return cost.J;
   }
-  yield report(true);
+  yield { ...report(true), seconds, run: startRun };
   for (const [i, part] of stages.entries()) {
     if (part === 'feedback' && quiet && FF_KEYS.some((k) => isOn(best.variant.params[k]))) {
       names = ffNames;
@@ -551,7 +558,7 @@ const NO_RANGE = 'there is no scale for the test signal: the running variant has
 // running variant holds r0 first; the u it needs there is the bias u0.
 function* operatingPoint(ctx) {
   const ownRun = runVariant(ctx, ctx.variant);
-  yield { partial: true, phase: 'operating point' };
+  yield { partial: true, phase: 'operating point', seconds: ctx.sim.duration };
   const own = loopSignals(ownRun, ctx.key);
   const rr = finiteRange(own.r);
   const name = ctx.source, notes = [];
@@ -563,7 +570,7 @@ function* operatingPoint(ctx) {
   } else notes.push('input 1 is not fed by a Source (through gains, lags or subsystem ports), so r cannot be held: the experiment runs with the inputs as they are, and the estimate is rough');
   const sim = { ...ctx.sim };
   const holdRun = runVariant(ctx, ctx.variant, signals, sim);
-  yield { partial: true, phase: 'operating point' };
+  yield { partial: true, phase: 'operating point', seconds: sim.duration };
   const hold = loopSignals(holdRun, ctx.key);
   const k0 = Math.floor(0.75 * hold.u.length);
   const r0 = name ? mean(hold.r, k0) : (rr.lo + rr.hi) / 2;
@@ -601,9 +608,9 @@ const constantU = (u, lo, hi) => normalizeVariant({ name: 'Step test', type: 'pi
 function* openLoopStep(ctx, op, du, sim) {
   const { lo, hi } = limitsOf(ctx.variant);
   const runA = runVariant(ctx, constantU(op.u0, lo, hi), op.signals, sim);
-  yield { partial: true, phase: 'open loop' };
+  yield { partial: true, phase: 'open loop', seconds: sim.duration };
   const runB = runVariant(ctx, constantU(op.u0 + du, lo, hi), op.signals, sim);
-  yield { partial: true, phase: 'open loop' };
+  yield { partial: true, phase: 'open loop', seconds: sim.duration };
   const yA = loopSignals(runA, ctx.key).y, yB = loopSignals(runB, ctx.key).y;
   return { runA, runB, dy: yB.map((v, k) => v - yA[k]) };
 }
@@ -713,7 +720,7 @@ export function* relayExperimentSteps(project, path, opts = {}) {
     if (!(d > 0.1 * want)) return { ...base, ok: false, u0, d, run, sign, why: `the bias u0 = ${fmtN(u0)} needed to hold r0 = ${fmtN(op.r0)} sits at an actuator limit (${fmtN(lo)} … ${fmtN(hi)}): no room for the relay to swing` };
     const relay = normalizeVariant({ name: 'Relay experiment', type: 'relay', params: { d: sign * d, eps, u0, umin: lo, umax: hi } });
     run = runVariant(ctx, relay, op.signals, sim);
-    yield { partial: true, phase: 'relay', run };
+    yield { partial: true, phase: 'relay', run, seconds: sim.duration };
     osc = readOscillation(run, ctx.key, u0, eps);
     if (osc.diverged) return { ...base, ok: false, u0, d, run, sign, why: 'the relay run diverged: the plant may be unstable without its controller' };
     if (!osc.switched) {
@@ -995,9 +1002,9 @@ function* stepAt(ctx, point, du, bound = Infinity) {
   for (let tries = 0; tries < 2; tries++, W *= 4) {
     const sim = { duration: tHold + W, sampleTime: ctx.sim.sampleTime };
     const runA = runVariant(ctx, holdThen(ctx.variant, tHold, point.u0, lo, hi), point.signals, sim);
-    yield { partial: true, phase: 'step test' };
+    yield { partial: true, phase: 'step test', seconds: sim.duration };
     runB = runVariant(ctx, holdThen(ctx.variant, tHold, point.u0 + du, lo, hi), point.signals, sim);
-    yield { partial: true, phase: 'step test' };
+    yield { partial: true, phase: 'step test', seconds: sim.duration };
     const yA = loopSignals(runA, ctx.key).y, { t: tB, y: yB } = loopSignals(runB, ctx.key);
     let k0 = 0;
     while (k0 < tB.length - 1 && tB[k0] < tHold - 1e-9) k0++;
@@ -1098,7 +1105,7 @@ function* holdAt(ctx, op, target, scale) {
   for (let i = 0; i < 3; i++) {
     signals = holding(ctx, level);
     run = runVariant(ctx, ctx.variant, signals, sim);
-    yield { partial: true, phase: 'hold' };
+    yield { partial: true, phase: 'hold', seconds: sim.duration };
     const s = loopSignals(run, ctx.key), k0 = Math.floor(0.75 * s.t.length);
     r = mean(s.r, k0); y = mean(s.y, k0); u = mean(s.u, k0);
     if (Math.abs(r - target) > 1e-3 * scale && Math.abs(op.r0 - r) > 1e-12 && level !== op.level && i === 0) {
@@ -1352,19 +1359,19 @@ export function* autotuneSteps(project, path, opts = {}) {
   const startRun = runVariant(ctx, ctx.variant);
   const scales = costScales(startRun, ctx.key, ctx.variant);
   const before = { variant: ctx.variant, cost: runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others }) };
-  yield { partial: true, phase: 'start', before };
+  yield { partial: true, phase: 'start', before, seconds: ctx.sim.duration };
   const res = method === 'relay'
     ? yield* relayTuneSteps(project, path, opts.rule ?? 'tl', { amplitude: opts.amplitude, d: opts.d, name })
     : yield* stepTuneSteps(project, path, { amplitude: opts.amplitude, du: opts.du, simc: opts.simc, name });
   if (!res.ok) return { ...res, ...head, before };
   const after = variantCost(ctx, res.variant, g, scales);
-  yield { partial: true, phase: 'score' };
+  yield { partial: true, phase: 'score', seconds: ctx.sim.duration };
   // Two integrators in the loop: the integral of r − y after a step in r
   // must come back to 0, so y overshoots. A prefilter on r with Tr = τI
   // cancels the PI's zero; one more run says what it would do here.
   if (res.model === 'integrating' && res.variant.params.Ki && !res.variant.params.Tr && after.overshoot > g.overshoot) {
     const Tr = res.gains.tauI, pre = variantCost(ctx, { ...res.variant, params: { ...res.variant.params, Tr } }, g, scales);
-    yield { partial: true, phase: 'score' };
+    yield { partial: true, phase: 'score', seconds: ctx.sim.duration };
     res.notes = [...res.notes, `plant and controller both integrate, so y overshoots a step in r (${fmtN(after.overshoot)} %); with a prefilter on r of Tr = τI = ${fmtN(Tr)} s it would overshoot ${fmtN(pre.overshoot)} %, at the price of a slower response to r: cost ×${fmtN(pre.J / before.cost.J)} of ${ctx.variant.name}, against ×${fmtN(after.J / before.cost.J)} without the prefilter`];
   }
   const out = { ...res, ...head, before, after, better: after.J < before.cost.J };
