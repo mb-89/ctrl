@@ -1,0 +1,2900 @@
+<title>Loop Tuner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link id="lt-fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@400;600&display=swap">
+<style id="lt-style">/* Layout: an instrument. The scope screen is the one bold surface; the panel
+   around it stays monochrome so colour belongs to the candidates alone.
+   Scope + side column (goal, candidates) on top, the rack of modules below. */
+:root {
+  --panel: #e4e7ea;
+  --panel-2: #eef0f2;
+  --module: #f6f7f8;
+  --screen: #fcfcfb;
+  --ink: #14181c;
+  --ink-2: #4b535b;
+  --muted: #7c858d;
+  --line: rgba(20, 24, 28, 0.13);
+  --line-strong: rgba(20, 24, 28, 0.28);
+  --grid: #e6e8ea;
+  --axis: #c3c7cb;
+  --knob: #d9dde1;
+  --knob-cap: #fbfbfb;
+  --hover: rgba(20, 24, 28, 0.05);
+  --select: rgba(20, 24, 28, 0.08);
+  --good: #0a7d0a;
+  --bad: #c62f2f;
+  --bad-wash: rgba(198, 47, 47, 0.10);
+  --scan: #14181c;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  --ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --panel: #16191c; --panel-2: #1c2024; --module: #20242a; --screen: #0e1114;
+    --ink: #eef0f1; --ink-2: #b9c0c6; --muted: #848d95;
+    --line: rgba(255, 255, 255, 0.10); --line-strong: rgba(255, 255, 255, 0.24);
+    --grid: #1d2226; --axis: #3a4147; --knob: #31373d; --knob-cap: #2a2f35;
+    --hover: rgba(255, 255, 255, 0.05); --select: rgba(255, 255, 255, 0.09);
+    --good: #2fbf2f; --bad: #ef6464; --bad-wash: rgba(239, 100, 100, 0.13); --scan: #eef0f1;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --panel: #16191c; --panel-2: #1c2024; --module: #20242a; --screen: #0e1114;
+  --ink: #eef0f1; --ink-2: #b9c0c6; --muted: #848d95;
+  --line: rgba(255, 255, 255, 0.10); --line-strong: rgba(255, 255, 255, 0.24);
+  --grid: #1d2226; --axis: #3a4147; --knob: #31373d; --knob-cap: #2a2f35;
+  --hover: rgba(255, 255, 255, 0.05); --select: rgba(255, 255, 255, 0.09);
+  --good: #2fbf2f; --bad: #ef6464; --bad-wash: rgba(239, 100, 100, 0.13); --scan: #eef0f1;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  color-scheme: dark;
+}
+
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body { background: var(--panel); color: var(--ink); font-family: var(--ui); font-size: 14px; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.app {
+  height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 12px;
+}
+
+/* Header */
+.bar { display: flex; align-items: center; gap: 12px; padding-block: 10px; min-width: 0; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
+.brand svg { width: 22px; height: 22px; }
+.title { flex: 1 1 200px; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: var(--radius); padding: 4px 8px; font-size: 17px; font-weight: 600; }
+.title:hover { border-color: var(--line); }
+.title:focus { border-color: var(--line-strong); background: var(--module); outline: none; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: var(--radius);
+  border: 1px solid var(--line-strong); background: var(--module); cursor: pointer; white-space: nowrap; font-size: 13px;
+}
+.btn:hover { background: var(--panel-2); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.btn.primary:hover { opacity: 0.9; }
+.btn.icon { width: 30px; padding: 0; justify-content: center; }
+.btn svg { width: 15px; height: 15px; }
+.btn.small { height: 24px; font-size: 12px; padding: 0 8px; }
+select.btn { padding-right: 6px; }
+.sep { width: 1px; height: 20px; background: var(--line-strong); }
+
+/* Main grid */
+.main {
+  min-height: 0; display: grid; gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(330px, 410px);
+  grid-template-rows: minmax(260px, 1fr) auto;
+  grid-template-areas: "scope side" "rack rack";
+}
+.panel { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.label { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+
+/* Scope */
+.scope-panel { grid-area: scope; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
+.scope-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px 6px; flex-wrap: wrap; }
+.scope-head .label { margin-right: auto; }
+.transport { display: flex; align-items: center; gap: 6px; }
+.scope-wrap { position: relative; min-height: 0; margin: 0 10px; border-radius: 6px; overflow: hidden; background: var(--screen); border: 1px solid var(--line); }
+.scope-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+.readout { display: flex; flex-wrap: wrap; gap: 1px; margin: 8px 10px 10px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.cell { flex: 1 1 96px; background: var(--module); padding: 5px 8px; min-width: 0; }
+.cell .k { font-size: 10.5px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell .v { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cell.bad { background: var(--bad-wash); }
+.cell.bad .v { color: var(--bad); }
+.cell .v .lim { color: var(--muted); font-size: 11px; }
+.cell.obj .k::after { content: " · min"; color: var(--ink-2); }
+
+/* Side column */
+.side { grid-area: side; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.goal { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.goal-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.goal-row .word { color: var(--ink-2); font-size: 13px; min-width: 64px; }
+.field { height: 26px; border-radius: 5px; border: 1px solid var(--line-strong); background: var(--module); padding: 0 6px; font-size: 13px; min-width: 0; }
+input.field { width: 64px; font-family: var(--mono); }
+select.field { max-width: 170px; }
+.x { width: 22px; height: 22px; border: 0; background: transparent; color: var(--muted); cursor: pointer; border-radius: 4px; font-size: 14px; line-height: 1; }
+.x:hover { background: var(--hover); color: var(--ink); }
+.link { border: 0; background: transparent; color: var(--ink-2); cursor: pointer; padding: 2px 0; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+.link:hover { color: var(--ink); }
+
+.cands { flex: 1 1 auto; min-height: 200px; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+.cands-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 6px; }
+.cands-head .label { margin-right: auto; }
+.table-wrap { overflow: auto; min-height: 0; }
+table.ct { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.ct th { position: sticky; top: 0; background: var(--panel-2); text-align: right; font-weight: 600; font-size: 11px; color: var(--muted); padding: 4px 8px; white-space: nowrap; letter-spacing: 0.04em; border-bottom: 1px solid var(--line); z-index: 1; }
+.ct th.l { text-align: left; }
+.ct th .lim { font-weight: 400; }
+.ct td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; font-family: var(--mono); font-size: 12.5px; white-space: nowrap; vertical-align: middle; }
+.ct tr { cursor: pointer; }
+.ct tbody tr:hover { background: var(--hover); }
+.ct tbody tr.sel { background: var(--select); box-shadow: inset 3px 0 0 var(--c); }
+.ct td.chk { width: 26px; padding-right: 0; text-align: left; }
+.ct td.name { text-align: left; font-family: var(--ui); font-size: 13.5px; max-width: 170px; }
+.ct .nm { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.ct .nm span { overflow: hidden; text-overflow: ellipsis; }
+.ct .sum { font-family: var(--mono); font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.swatch { flex: none; width: 14px; height: 3px; border-radius: 2px; background: var(--c); }
+tr.off .swatch { opacity: 0.35; }
+tr.off td.name, tr.off td:not(.chk) { color: var(--muted); }
+.ct td.bad { color: var(--bad); }
+.ct td.score { font-weight: 600; }
+.ok-i { color: var(--good); font-family: var(--ui); }
+.bad-i { color: var(--bad); font-family: var(--ui); }
+.star { font-family: var(--ui); font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 3px; padding: 0 3px; margin-right: 4px; }
+input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--ink); cursor: pointer; margin: 0; }
+.rename { width: 100%; height: 24px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--module); padding: 0 4px; }
+.empty { padding: 16px 12px; color: var(--ink-2); font-size: 13px; }
+
+/* Rack */
+.rack { grid-area: rack; padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+.diagram-wrap { overflow-x: auto; }
+.diagram { display: block; height: 110px; width: auto; aspect-ratio: 1000 / 158; margin: 0 auto; }
+.diagram .blk { cursor: pointer; }
+.diagram .blk rect { fill: var(--module); stroke: var(--line-strong); stroke-width: 1; }
+.diagram .blk:hover rect, .diagram .blk.hl rect { stroke: var(--ink); stroke-width: 1.5; }
+.diagram .wire { stroke: var(--ink-2); stroke-width: 1.2; fill: none; }
+.diagram .sum { fill: var(--module); stroke: var(--ink-2); stroke-width: 1.2; }
+.diagram text { fill: var(--ink); font-family: var(--ui); }
+.diagram .t-slot { fill: var(--muted); font-size: 9.5px; letter-spacing: 0.1em; font-weight: 600; }
+.diagram .t-type { font-size: 13px; font-weight: 600; }
+.diagram .t-par { fill: var(--ink-2); font-family: var(--mono); font-size: 9.5px; }
+.diagram .t-sig { fill: var(--ink-2); font-family: var(--mono); font-size: 11px; font-style: italic; }
+.diagram .arrow { fill: var(--ink-2); }
+
+.modules { display: flex; gap: 8px; align-items: stretch; overflow-x: auto; padding-bottom: 2px; }
+.module { background: var(--module); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; transition: box-shadow 0.25s; }
+.module.flash { box-shadow: 0 0 0 2px var(--ink); }
+.module.hl { border-color: var(--line-strong); }
+.module.cand { border-color: var(--c); box-shadow: inset 0 3px 0 var(--c); }
+.mod-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 22px; }
+.mod-head .btn { margin-left: auto; }
+.mod-head .label { white-space: nowrap; }
+.mod-type { order: 3; flex: 1 0 100%; width: 0; min-width: 100%; height: 24px; border-radius: 5px; border: 1px solid var(--line-strong); background: var(--panel-2); font-size: 12.5px; padding: 0 4px; }
+.mod-formula { width: 0; min-width: 100%; font-family: var(--mono); font-size: 11px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mod-cand { width: 0; min-width: 100%; font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; }
+.module { flex: none; min-width: 128px; }
+.knobs { display: flex; gap: 4px; flex-wrap: wrap; }
+.vec { display: flex; flex-direction: column; gap: 2px; }
+.vec input { width: 130px; }
+.vec input.err { border-color: var(--bad); }
+
+/* Knob */
+.knob { width: 58px; display: flex; flex-direction: column; align-items: center; gap: 1px; user-select: none; -webkit-user-select: none; }
+.knob .kl { font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
+.knob svg { width: 44px; height: 44px; cursor: ns-resize; touch-action: none; border-radius: 50%; }
+.knob svg:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.knob .track { stroke: var(--knob); stroke-width: 4; fill: none; stroke-linecap: round; }
+.knob .val { stroke: var(--kc, var(--ink)); stroke-width: 4; fill: none; stroke-linecap: round; }
+.knob .cap { fill: var(--knob-cap); stroke: var(--line-strong); }
+.knob .ptr { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; }
+.knob .kv { font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums; border: 1px solid transparent; border-radius: 3px; background: transparent; width: 58px; text-align: center; padding: 0; height: 18px; cursor: text; }
+.knob .kv:hover { border-color: var(--line); }
+.knob .kv:focus { border-color: var(--line-strong); background: var(--panel-2); outline: none; }
+.knob.active .kl { color: var(--ink); }
+
+/* Toast, help */
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: 6px; font-size: 13px; z-index: 20; max-width: min(560px, calc(100% - 32px)); }
+.overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: grid; place-items: center; z-index: 30; padding: 16px; }
+.dialog { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 10px; max-width: 680px; width: 100%; max-height: 85vh; overflow: auto; padding: 18px 20px; }
+.dialog h2 { margin: 0 0 4px; font-size: 18px; }
+.dialog h3 { margin: 16px 0 6px; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.dialog p, .dialog li { line-height: 1.5; color: var(--ink-2); max-width: 65ch; }
+.dialog code, .dialog pre { font-family: var(--mono); font-size: 12px; }
+.dialog pre { background: var(--module); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; overflow-x: auto; color: var(--ink); }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--module); white-space: nowrap; }
+.drop { position: fixed; inset: 10px; border: 2px dashed var(--ink); border-radius: 12px; display: grid; place-items: center; background: var(--hover); z-index: 40; font-size: 18px; pointer-events: none; }
+
+@media (max-width: 980px) {
+  .app { height: auto; display: block; }
+  .main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "scope" "side" "rack"; }
+  .scope-panel { grid-template-rows: auto 380px auto; }
+  .cands { max-height: none; }
+}
+@media (max-width: 520px) {
+  .scope-panel { grid-template-rows: auto 300px auto; }
+  .knob { width: 52px; }
+  .knob .kv { width: 52px; }
+}
+@media (prefers-reduced-motion: reduce) { .module { transition: none; } }
+.warn { font-size: 12px; color: var(--bad); }
+@media (max-width: 520px) {
+  .goal-row .word:empty { display: none; }
+  .goal-row .word { min-width: 0; }
+  select.field { max-width: 150px; }
+}
+</style>
+<div id="lt-shell" class="app">
+<header class="bar">
+  <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4 17 H8 V7 H20" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.45"/><path d="M4 17 H8 C10 4 12 4.5 14 8.2 C15.5 11 17 6.5 20 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Loop Tuner</div>
+  <input id="title" class="title" aria-label="Project title" spellcheck="false">
+  <div class="actions">
+    <select id="examples" class="btn" aria-label="Load an example"><option value="">Examples…</option></select>
+    <span class="sep"></span>
+    <button id="undo" class="btn icon" title="Undo (Ctrl+Z)" aria-label="Undo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3 L2.5 6.5 L6 10 M2.5 6.5 H10 a3.5 3.5 0 0 1 0 7 H7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button id="redo" class="btn icon" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 L13.5 6.5 L10 10 M13.5 6.5 H6 a3.5 3.5 0 0 0 0 7 H9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <span class="sep"></span>
+    <button id="open" class="btn" title="Open a project (.json, or an exported .html)">Open…</button>
+    <button id="save" class="btn" data-standalone title="Download the project as JSON (Ctrl+S)">Save JSON</button>
+    <button id="export" class="btn" data-standalone title="Download this page with the project inside, to send to someone">Export HTML</button>
+    <button id="copy" class="btn" title="Copy the project JSON">Copy JSON</button>
+    <button id="copy-html" class="btn" data-framed title="Copy a standalone HTML page with the project inside">Copy HTML</button>
+    <button id="help" class="btn icon" title="Help and keyboard shortcuts (?)" aria-label="Help">?</button>
+    <input type="file" id="file" accept=".json,.html,application/json,text/html" hidden>
+  </div>
+</header>
+<main class="main">
+  <section class="panel scope-panel" aria-label="Scope">
+    <div class="scope-head">
+      <span class="label">Response</span>
+      <span id="warn" class="warn" hidden></span>
+      <div class="transport">
+        <button id="play" class="btn icon"></button>
+        <select id="speed" class="btn" aria-label="Sweep speed"><option value="1.5">Sweep 1.5 s</option><option value="3" selected>Sweep 3 s</option><option value="6">Sweep 6 s</option><option value="12">Sweep 12 s</option></select>
+      </div>
+    </div>
+    <div class="scope-wrap" id="scope"></div>
+    <div class="readout" id="readout"></div>
+  </section>
+  <aside class="side">
+    <section class="panel goal" id="goal" aria-label="Goal"></section>
+    <section class="panel cands" id="cands" aria-label="Candidates"></section>
+  </aside>
+  <section class="panel rack" id="rack" aria-label="Loop"></section>
+</main>
+<div id="toast" class="toast" role="status" hidden></div>
+<div id="drop" class="drop" hidden>Drop a project file (.json or .html)</div>
+<div id="help-dlg" class="overlay" hidden><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
+<h2 id="help-title">Loop Tuner</h2>
+<p>Tune a feedback loop by trying controller settings side by side. Each row in <b>Candidates</b> is one controller; its response is drawn on the scope in the same colour. The hatched areas are the limits from your <b>Goal</b>: a candidate that stays out of them is feasible (✓), and the feasible one with the lowest score is marked BEST.</p>
+<h3>Working with it</h3>
+<div class="keys">
+  <span><kbd>↑</kbd> <kbd>↓</kbd></span><span>Step through the candidates</span>
+  <span><kbd>Space</kbd></span><span>Show or hide the selected candidate on the scope</span>
+  <span><kbd>N</kbd></span><span>Duplicate the selected candidate, to try a variation</span>
+  <span><kbd>Del</kbd></span><span>Delete the selected candidate</span>
+  <span><kbd>T</kbd></span><span>Auto-tune: search the gains for the best feasible score</span>
+  <span><kbd>1</kbd> … <kbd>7</kbd></span><span>Jump to a module: reference, controller, actuator, disturbance, plant, sensor, noise</span>
+  <span><kbd>P</kbd></span><span>Play or pause the scan sweep</span>
+  <span><kbd>Ctrl</kbd> <kbd>Z</kbd> / <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd></span><span>Undo / redo</span>
+</div>
+<p>Knobs: drag up or down (hold <kbd>Shift</kbd> for fine steps), scroll, or use the arrow keys. Double-click a knob to reset it; click its value to type one. Gains that can be switched off read “off” at the bottom of their travel.</p>
+<p>The controller module edits the selected candidate. Every other module is shared by all candidates, so changing the plant shows how every controller copes with it. Changing a block’s type keeps the parameters both types share, and switching back restores the rest.</p>
+<h3>Files</h3>
+<p>The whole project is one JSON document. <b>Save JSON</b> and <b>Open</b> read and write it; you can also drop a file on the page or paste JSON. <b>Export HTML</b> writes this page with the project inside, ready to send to someone.</p>
+<h3>For agents</h3>
+<p>The same simulation runs in Node. With the project file (or an exported HTML file):</p>
+<pre>node cli.mjs eval project.json          # metrics, score and feasibility of every candidate
+node cli.mjs try project.json --type PID --set Kp=2 --set Ki=0.8 --set Kd=1 --save
+node cli.mjs tune project.json --from "Z–N PID" --save
+node cli.mjs html project.json -o shared.html</pre>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>evaluate()</code>, <code>select(name)</code> and <code>addCandidate(c)</code>.</p>
+<p><button class="btn primary" id="help-close">Close</button></p></div></div>
+</div>
+<script type="application/json" id="loop-tuner-project"></script>
+<script id="lt-script">(() => {
+'use strict';
+const __mods = {};
+// ---- core/poly.js
+__mods['core/poly.js'] = (() => {
+// Polynomials (coefficients highest power first) and transfer-function to
+// state-space conversion. Pure functions, no DOM: shared by browser and Node.
+
+function polyTrim(p) {
+  let i = 0;
+  while (i < p.length - 1 && p[i] === 0) i++;
+  return p.slice(i);
+}
+
+function polyMul(a, b) {
+  const out = new Array(a.length + b.length - 1).fill(0);
+  for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) out[i + j] += a[i] * b[j];
+  return out;
+}
+
+function polyPow(p, n) {
+  let out = [1];
+  for (let i = 0; i < n; i++) out = polyMul(out, p);
+  return out;
+}
+
+// Controllable canonical form of num(s)/den(s). Requires a proper transfer
+// function (deg num <= deg den). Returns flat row-major A.
+function tf2ss(numIn, denIn) {
+  const den = polyTrim(denIn.map(Number));
+  let num = polyTrim(numIn.map(Number));
+  if (den.length === 0 || den[0] === 0) throw new Error('denominator must be non-zero');
+  if (num.length > den.length) throw new Error(`improper transfer function: deg num ${num.length - 1} > deg den ${den.length - 1}`);
+  const n = den.length - 1;
+  const a0 = den[0];
+  const a = den.map((c) => c / a0);
+  const b = new Array(n + 1 - num.length).fill(0).concat(num.map((c) => c / a0));
+  const D = b[0];
+  const A = new Float64Array(n * n);
+  const B = new Float64Array(n);
+  const C = new Float64Array(n);
+  for (let j = 0; j < n; j++) A[j] = -a[j + 1];
+  for (let i = 1; i < n; i++) A[i * n + i - 1] = 1;
+  if (n > 0) B[0] = 1;
+  for (let j = 0; j < n; j++) C[j] = b[j + 1] - a[j + 1] * D;
+  return { n, A, B, C, D };
+}
+
+// Upper bound on the magnitude of the roots of den (Fujiwara). Used to pick a
+// stable integration step without solving for the poles.
+function rootBound(denIn) {
+  const den = polyTrim(denIn.map(Number));
+  const n = den.length - 1;
+  if (n <= 0) return 0;
+  let m = 0;
+  for (let i = 1; i <= n; i++) {
+    let c = Math.abs(den[i] / den[0]);
+    if (i === n) c /= 2;
+    m = Math.max(m, Math.pow(c, 1 / i));
+  }
+  return 2 * m;
+}
+
+// Steady-state gain num(0)/den(0); Infinity for an integrator.
+function dcGain(num, den) {
+  const n0 = num[num.length - 1] ?? 0;
+  const d0 = den[den.length - 1] ?? 0;
+  return d0 === 0 ? (n0 === 0 ? NaN : Infinity) : n0 / d0;
+}
+
+return { polyTrim, polyMul, polyPow, tf2ss, rootBound, dcGain };
+})();
+// ---- core/blocks.js
+__mods['core/blocks.js'] = (() => {
+// The block library. Every block type registers here with the slot it fits,
+// its parameters (with ranges the UI and the tuner use) and its behaviour:
+//   tf(p)     -> { num, den, delay }   linear SISO element (actuator, plant, sensor, controller)
+//   pid       -> true                  discrete PID (controller slot)
+//   signal(p) -> t => value            signal source (reference, disturbance)
+//   limits(p) -> { min, max }          actuator saturation
+//   noise(p)  -> { std, seed }         measurement noise
+// Blocks in one slot are interchangeable: parameters with the same key carry
+// over when the type changes (Kp from P to PID, K from one plant to another).
+
+const { polyMul, polyPow } = __mods['core/poly.js'];
+const SLOTS = [
+  { key: 'reference', label: 'Reference', symbol: 'r', scope: 'system' },
+  { key: 'controller', label: 'Controller', symbol: 'C', scope: 'candidate' },
+  { key: 'actuator', label: 'Actuator', symbol: 'A', scope: 'system' },
+  { key: 'disturbance', label: 'Disturbance', symbol: 'd', scope: 'system' },
+  { key: 'plant', label: 'Plant', symbol: 'P', scope: 'system' },
+  { key: 'sensor', label: 'Sensor', symbol: 'S', scope: 'system' },
+  { key: 'noise', label: 'Noise', symbol: 'n', scope: 'system' },
+];
+
+// Parameter helpers. scale: 'lin' | 'log' | 'log0' (log with an off position at 0).
+// max: 'duration' resolves to the simulation duration.
+const num = (key, label, def, min, max, scale = 'lin', extra = {}) => ({ key, label, default: def, min, max, scale, ...extra });
+const gain = (key, label, def, extra) => num(key, label, def, 0.01, 100, 'log', extra);
+const tau = (key, label, def, extra) => num(key, label, def, 0.001, 1000, 'log', { unit: 's', ...extra });
+const time = (key, label, def) => num(key, label, def, 0, 'duration', 'lin', { unit: 's' });
+const amp = (key, label, def) => num(key, label, def, -10, 10, 'lin');
+const vec = (key, label, def) => ({ key, label, default: def, kind: 'vector' });
+
+const lag = (t) => [t, 1];
+
+const BLOCK_LIST = [
+  // Reference and disturbance sources
+  {
+    type: 'step', slots: ['reference', 'disturbance'], label: 'Step', formula: 'A · 1(t − t₀)',
+    params: [amp('amplitude', 'A', 1), time('time', 't₀', 1)],
+    signal: (p) => (t) => (t >= p.time ? p.amplitude : 0),
+  },
+  {
+    type: 'square', slots: ['reference', 'disturbance'], label: 'Square', formula: 'A · square(t − t₀, T)',
+    params: [amp('amplitude', 'A', 1), time('time', 't₀', 1), num('period', 'T', 10, 0.01, 1000, 'log', { unit: 's' }), num('duty', 'duty', 0.5, 0.05, 0.95)],
+    signal: (p) => (t) => (t >= p.time && ((t - p.time) % p.period) < p.duty * p.period ? p.amplitude : 0),
+  },
+  {
+    type: 'pulse', slots: ['reference', 'disturbance'], label: 'Pulse', formula: 'A for t₀ ≤ t < t₀ + w',
+    params: [amp('amplitude', 'A', 1), time('time', 't₀', 1), num('width', 'w', 1, 0.001, 1000, 'log', { unit: 's' })],
+    signal: (p) => (t) => (t >= p.time && t < p.time + p.width ? p.amplitude : 0),
+  },
+  {
+    type: 'ramp', slots: ['reference', 'disturbance'], label: 'Ramp', formula: 'k · (t − t₀) · 1(t − t₀)',
+    params: [amp('slope', 'k', 0.1), time('time', 't₀', 1)],
+    signal: (p) => (t) => (t >= p.time ? p.slope * (t - p.time) : 0),
+  },
+  {
+    type: 'sine', slots: ['reference', 'disturbance'], label: 'Sine', formula: 'A · sin(2πf (t − t₀))',
+    params: [amp('amplitude', 'A', 1), time('time', 't₀', 0), num('frequency', 'f', 0.1, 0.001, 100, 'log', { unit: 'Hz' })],
+    signal: (p) => (t) => (t >= p.time ? p.amplitude * Math.sin(2 * Math.PI * p.frequency * (t - p.time)) : 0),
+  },
+  {
+    type: 'staircase', slots: ['reference'], label: 'Staircase', formula: 'h · ⌊(t − t₀)/T + 1⌋',
+    params: [amp('height', 'h', 0.5), time('time', 't₀', 1), num('interval', 'T', 5, 0.01, 1000, 'log', { unit: 's' })],
+    signal: (p) => (t) => (t >= p.time ? p.height * Math.floor((t - p.time) / p.interval + 1) : 0),
+  },
+  {
+    type: 'none', slots: ['disturbance'], label: 'None', formula: '0',
+    params: [], signal: () => () => 0,
+  },
+
+  // Controllers (per candidate)
+  {
+    type: 'P', slots: ['controller'], label: 'P', formula: 'Kp · e',
+    params: [gain('Kp', 'Kp', 1, { tunable: true })], pid: true,
+  },
+  {
+    type: 'PI', slots: ['controller'], label: 'PI', formula: 'Kp (b·r − y) + Ki ∫e',
+    params: [gain('Kp', 'Kp', 1, { tunable: true }), num('Ki', 'Ki', 0.5, 0.001, 100, 'log0', { tunable: true }), num('b', 'b', 1, 0, 1)],
+    pid: true,
+  },
+  {
+    type: 'PD', slots: ['controller'], label: 'PD', formula: 'Kp e + Kd s/(Tf s + 1) (c·r − y)',
+    params: [gain('Kp', 'Kp', 1, { tunable: true }), num('Kd', 'Kd', 0.5, 0.001, 100, 'log0', { tunable: true }), tau('Tf', 'Tf', 0.05), num('c', 'c', 0, 0, 1)],
+    pid: true,
+  },
+  {
+    type: 'PID', slots: ['controller'], label: 'PID', formula: 'Kp (b·r − y) + Ki ∫e + Kd s/(Tf s + 1) (c·r − y)',
+    params: [
+      gain('Kp', 'Kp', 1, { tunable: true }), num('Ki', 'Ki', 0.5, 0.001, 100, 'log0', { tunable: true }),
+      num('Kd', 'Kd', 0.5, 0.001, 100, 'log0', { tunable: true }), tau('Tf', 'Tf', 0.05),
+      num('b', 'b', 1, 0, 1), num('c', 'c', 0, 0, 1),
+    ],
+    pid: true,
+  },
+  {
+    type: 'leadLag', slots: ['controller'], label: 'Lead / lag', formula: 'K (Tz s + 1) / (Tp s + 1)',
+    params: [gain('K', 'K', 1, { tunable: true }), tau('Tz', 'Tz', 1, { tunable: true }), tau('Tp', 'Tp', 0.1, { tunable: true })],
+    tf: (p) => ({ num: [p.K * p.Tz, p.K], den: [p.Tp, 1], delay: 0 }),
+  },
+  {
+    type: 'tf', slots: ['controller', 'actuator', 'plant', 'sensor'], label: 'Transfer function', formula: 'num(s) / den(s) · e^(−Ls)',
+    params: [vec('num', 'num', [1]), vec('den', 'den', [1, 1]), num('delay', 'L', 0, 0.001, 100, 'log0', { unit: 's' })],
+    tf: (p) => ({ num: p.num, den: p.den, delay: p.delay }),
+  },
+
+  // Actuators
+  {
+    type: 'ideal', slots: ['actuator', 'sensor'], label: 'Ideal', formula: '1',
+    params: [], tf: () => ({ num: [1], den: [1], delay: 0 }),
+  },
+  {
+    type: 'saturation', slots: ['actuator'], label: 'Saturation', formula: 'clamp(u, u_min, u_max)',
+    params: [amp('uMin', 'u min', -2), amp('uMax', 'u max', 2)],
+    tf: () => ({ num: [1], den: [1], delay: 0 }), limits: (p) => ({ min: p.uMin, max: p.uMax }),
+  },
+  {
+    type: 'lag', slots: ['actuator', 'sensor'], label: 'First-order lag', formula: '1 / (τ s + 1)',
+    params: [tau('tau', 'τ', 0.1)], tf: (p) => ({ num: [1], den: lag(p.tau), delay: 0 }),
+  },
+  {
+    type: 'lagSaturation', slots: ['actuator'], label: 'Lag + saturation', formula: 'clamp(u) → 1 / (τ s + 1)',
+    params: [tau('tau', 'τ', 0.1), amp('uMin', 'u min', -2), amp('uMax', 'u max', 2)],
+    tf: (p) => ({ num: [1], den: lag(p.tau), delay: 0 }), limits: (p) => ({ min: p.uMin, max: p.uMax }),
+  },
+
+  // Plants
+  {
+    type: 'firstOrder', slots: ['plant'], label: 'First order', formula: 'K / (τ s + 1)',
+    params: [gain('K', 'K', 1), tau('tau', 'τ', 1)], tf: (p) => ({ num: [p.K], den: lag(p.tau), delay: 0 }),
+  },
+  {
+    type: 'fopdt', slots: ['plant'], label: 'First order + dead time', formula: 'K e^(−Ls) / (τ s + 1)',
+    params: [gain('K', 'K', 1), tau('tau', 'τ', 1), num('delay', 'L', 0.5, 0.001, 100, 'log0', { unit: 's' })],
+    tf: (p) => ({ num: [p.K], den: lag(p.tau), delay: p.delay }),
+  },
+  {
+    type: 'secondOrder', slots: ['plant'], label: 'Second order', formula: 'K ωn² / (s² + 2ζωn s + ωn²)',
+    params: [gain('K', 'K', 1), num('wn', 'ωn', 1, 0.01, 1000, 'log', { unit: 'rad/s' }), num('zeta', 'ζ', 0.3, 0.001, 10, 'log0')],
+    tf: (p) => ({ num: [p.K * p.wn * p.wn], den: [1, 2 * p.zeta * p.wn, p.wn * p.wn], delay: 0 }),
+  },
+  {
+    type: 'lagChain', slots: ['plant'], label: 'n equal lags', formula: 'K / (τ s + 1)ⁿ',
+    params: [gain('K', 'K', 1), tau('tau', 'τ', 1), num('n', 'n', 3, 1, 8, 'lin', { int: true })],
+    tf: (p) => ({ num: [p.K], den: polyPow(lag(p.tau), Math.round(p.n)), delay: 0 }),
+  },
+  {
+    type: 'integratorLag', slots: ['plant'], label: 'Integrator + lag', formula: 'K / (s (τ s + 1))',
+    params: [gain('K', 'K', 1), tau('tau', 'τ', 0.5)], tf: (p) => ({ num: [p.K], den: [p.tau, 1, 0], delay: 0 }),
+  },
+  {
+    type: 'doubleIntegrator', slots: ['plant'], label: 'Double integrator', formula: 'K / s²',
+    params: [gain('K', 'K', 1)], tf: (p) => ({ num: [p.K], den: [1, 0, 0], delay: 0 }),
+  },
+  {
+    type: 'inverseResponse', slots: ['plant'], label: 'Inverse response', formula: 'K (1 − Tz s) / ((τ₁ s + 1)(τ₂ s + 1))',
+    params: [gain('K', 'K', 1), tau('Tz', 'Tz', 0.5), tau('tau1', 'τ₁', 1), tau('tau2', 'τ₂', 2)],
+    tf: (p) => ({ num: [-p.K * p.Tz, p.K], den: polyMul(lag(p.tau1), lag(p.tau2)), delay: 0 }),
+  },
+
+  // Sensors
+  {
+    type: 'gain', slots: ['sensor'], label: 'Gain', formula: 'K',
+    params: [gain('K', 'K', 1)], tf: (p) => ({ num: [p.K], den: [1], delay: 0 }),
+  },
+  {
+    type: 'delay', slots: ['sensor'], label: 'Dead time', formula: 'e^(−Ls)',
+    params: [num('delay', 'L', 0.1, 0.001, 100, 'log0', { unit: 's' })], tf: (p) => ({ num: [1], den: [1], delay: p.delay }),
+  },
+  {
+    type: 'lagDelay', slots: ['sensor'], label: 'Lag + dead time', formula: 'e^(−Ls) / (τ s + 1)',
+    params: [tau('tau', 'τ', 0.1), num('delay', 'L', 0.1, 0.001, 100, 'log0', { unit: 's' })],
+    tf: (p) => ({ num: [1], den: lag(p.tau), delay: p.delay }),
+  },
+
+  // Measurement noise
+  { type: 'none', slots: ['noise'], label: 'None', formula: '0', params: [], noise: () => ({ std: 0, seed: 1 }) },
+  {
+    type: 'white', slots: ['noise'], label: 'White noise', formula: 'n ~ N(0, σ²)',
+    params: [num('std', 'σ', 0.01, 0.0001, 1, 'log'), num('seed', 'seed', 1, 1, 999, 'lin', { int: true })],
+    noise: (p) => ({ std: p.std, seed: p.seed }),
+  },
+];
+
+// Registry keyed by slot, then type. A type name may appear in several slots.
+const BLOCKS = {};
+for (const s of SLOTS) BLOCKS[s.key] = {};
+for (const b of BLOCK_LIST) for (const s of b.slots) BLOCKS[s][b.type] = b;
+
+function blockDef(slot, type) {
+  const bySlot = BLOCKS[slot];
+  if (!bySlot) throw new Error(`unknown slot "${slot}"; slots: ${SLOTS.map((s) => s.key).join(', ')}`);
+  const def = bySlot[type];
+  if (!def) throw new Error(`unknown ${slot} type "${type}"; types: ${Object.keys(bySlot).join(', ')}`);
+  return def;
+}
+
+function paramMax(param, ctx) {
+  return param.max === 'duration' ? ctx.duration : param.max;
+}
+
+// Fill missing params with defaults and drop unknown ones. Fails fast on an
+// unknown type, a non-finite number or a malformed vector.
+function normalizeBlock(slot, block) {
+  if (!block || typeof block.type !== 'string') throw new Error(`${slot}: block needs a "type"`);
+  const def = blockDef(slot, block.type);
+  const params = {};
+  for (const p of def.params) {
+    let v = block.params?.[p.key];
+    if (v === undefined || v === null) v = p.default;
+    if (p.kind === 'vector') {
+      if (!Array.isArray(v) || v.length === 0 || !v.every((x) => Number.isFinite(Number(x)))) throw new Error(`${slot}.${p.key}: expected a list of numbers`);
+      v = v.map(Number);
+    } else {
+      v = Number(v);
+      if (!Number.isFinite(v)) throw new Error(`${slot}.${p.key}: expected a number`);
+      if (p.int) v = Math.round(v);
+    }
+    params[p.key] = v;
+  }
+  return { type: block.type, params };
+}
+
+// Switch a block to another type, carrying over parameters that share a key.
+// stash holds parameters the slot had under earlier types, so switching back
+// restores them.
+function retypeBlock(slot, block, newType, stash = {}) {
+  const def = blockDef(slot, newType);
+  const params = {};
+  for (const p of def.params) {
+    if (block.params && p.key in block.params) params[p.key] = block.params[p.key];
+    else if (stash[newType] && p.key in stash[newType]) params[p.key] = stash[newType][p.key];
+  }
+  return normalizeBlock(slot, { type: newType, params });
+}
+
+return { SLOTS, BLOCKS, blockDef, paramMax, normalizeBlock, retypeBlock };
+})();
+// ---- core/metrics.js
+__mods['core/metrics.js'] = (() => {
+// Response metrics. Step metrics are measured on the first reference step, in
+// the window up to the next reference change or disturbance onset. Integral
+// metrics cover the whole run; ITAE weights the error by the time since the
+// latest event (reference change or disturbance), so it generalises to square
+// waves and load steps.
+
+const METRICS = [
+  { key: 'riseTime', label: 'Rise time', short: 'Rise', unit: 's', desc: '10 % → 90 % of the first reference step' },
+  { key: 'overshoot', label: 'Overshoot', short: 'OS', unit: '%', desc: 'peak beyond the new setpoint, % of the step', scale: 1 },
+  { key: 'undershoot', label: 'Undershoot', short: 'US', unit: '%', desc: 'initial move in the wrong direction, % of the step', scale: 1 },
+  { key: 'settlingTime', label: 'Settling time', short: 'Settle', unit: 's', desc: 'time after the step until y stays inside the settling band' },
+  { key: 'peakTime', label: 'Peak time', short: 'Peak', unit: 's', desc: 'time after the step to the largest output' },
+  { key: 'steadyStateError', label: 'Steady-state error', short: 'SSE', unit: '%', desc: 'remaining error at the end of the step window, % of the step', scale: 1 },
+  { key: 'iae', label: 'IAE', short: 'IAE', unit: '', desc: '∫|e| dt over the run' },
+  { key: 'ise', label: 'ISE', short: 'ISE', unit: '', desc: '∫e² dt over the run' },
+  { key: 'itae', label: 'ITAE', short: 'ITAE', unit: '', desc: '∫ (t − t_event)|e| dt: penalises slow, lingering error' },
+  { key: 'uPeak', label: 'Peak effort', short: 'u pk', unit: '', desc: 'max |u| applied to the actuator' },
+  { key: 'uTV', label: 'Effort variation', short: 'u TV', unit: '', desc: 'Σ|Δu|, total variation of u: low means smooth' },
+  { key: 'uEnergy', label: 'Effort energy', short: '∫u²', unit: '', desc: '∫u² dt' },
+  { key: 'saturation', label: 'Time saturated', short: 'Sat', unit: '%', desc: 'share of samples where the actuator limits u', scale: 1 },
+  { key: 'distPeak', label: 'Disturbance peak', short: 'd pk', unit: '', desc: 'max |r − y| after the disturbance starts' },
+  { key: 'distIAE', label: 'Disturbance IAE', short: 'd IAE', unit: '', desc: '∫|e| dt after the disturbance starts' },
+];
+
+const METRIC = Object.fromEntries(METRICS.map((m) => [m.key, m]));
+
+// Indices where x jumps. The loop starts at rest, so the value before t = 0 is 0.
+function jumps(x, rel) {
+  let lo = 0, hi = 0;
+  for (const v of x) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const range = hi - lo;
+  const out = [];
+  if (!(range > 0)) return out;
+  for (let k = 0; k < x.length; k++) if (Math.abs(x[k] - (k ? x[k - 1] : 0)) > rel * range) out.push(k);
+  return out;
+}
+
+function computeMetrics(res, opts = {}) {
+  const band = opts.settlingBand ?? 0.02;
+  const { t, r, y, u, v, e, d } = res;
+  const K = t.length - 1;
+  const m = Object.fromEntries(METRICS.map((x) => [x.key, NaN]));
+  const events = { step: null, disturbance: null };
+  if (res.info.unstable) {
+    for (const k in m) m[k] = Infinity;
+    // blowup: share of the run completed before the output diverged.
+    return { ...m, unstable: true, blowup: res.info.blowup, events };
+  }
+  const dt = K > 0 ? t[1] - t[0] : 0;
+
+  const refJumps = jumps(r, 0.01);
+  let distJumps = [];
+  const kdOnset = d.findIndex((x) => Math.abs(x) > 1e-12);
+  if (kdOnset >= 0) distJumps = [...new Set([kdOnset, ...jumps(d, 0.01)])].sort((a, b) => a - b);
+  const allEvents = [...new Set([...refJumps, ...distJumps])].sort((a, b) => a - b);
+  const nextEvent = (k) => allEvents.find((j) => j > k) ?? K + 1;
+
+  // Step metrics
+  if (refJumps.length) {
+    const ks = refJumps[0];
+    const kend = nextEvent(ks);
+    const r0 = ks ? r[ks - 1] : 0, r1 = r[ks], D = r1 - r0, ts = t[ks];
+    events.step = { time: ts, from: r0, to: r1, end: t[Math.min(kend, K)] };
+    const yn = (k) => (y[k] - r0) / D;
+    const cross = (level) => {
+      for (let k = ks; k < kend; k++) {
+        if (yn(k) >= level) {
+          if (k === ks) return t[k];
+          const a = yn(k - 1), b = yn(k);
+          return t[k - 1] + (dt * (level - a)) / (b - a);
+        }
+      }
+      return Infinity;
+    };
+    const t10 = cross(0.1), t90 = cross(0.9);
+    m.riseTime = t90 - t10;
+    let ymax = -Infinity, ymin = Infinity, kmax = ks;
+    for (let k = ks; k < kend; k++) {
+      const q = yn(k);
+      if (q > ymax) { ymax = q; kmax = k; }
+      if (q < ymin) ymin = q;
+    }
+    m.overshoot = Math.max(0, ymax - 1) * 100;
+    m.undershoot = Math.max(0, -ymin) * 100;
+    m.peakTime = t[kmax] - ts;
+    let last = -1;
+    for (let k = kend - 1; k >= ks; k--) if (Math.abs(yn(k) - 1) > band) { last = k; break; }
+    if (last < 0) m.settlingTime = 0;
+    else if (last >= kend - 1) m.settlingTime = Infinity;
+    else {
+      const a = Math.abs(yn(last) - 1) - band, b = Math.abs(yn(last + 1) - 1) - band;
+      m.settlingTime = t[last] + (dt * a) / (a - b) - ts;
+    }
+    const tail = Math.max(1, Math.round((kend - ks) * 0.05));
+    let s = 0;
+    for (let k = kend - tail; k < kend; k++) s += Math.abs(yn(k) - 1);
+    m.steadyStateError = (s / tail) * 100;
+  }
+
+  // Integral metrics
+  let iae = 0, ise = 0, itae = 0, tEvent = 0, ei = 0;
+  for (let k = 0; k <= K; k++) {
+    if (ei < allEvents.length && allEvents[ei] === k) { tEvent = t[k]; ei++; }
+    const a = Math.abs(e[k]);
+    iae += a * dt; ise += a * a * dt; itae += (t[k] - tEvent) * a * dt;
+  }
+  m.iae = iae; m.ise = ise; m.itae = itae;
+
+  // Effort
+  let uPeak = 0, uTV = Math.abs(u[0]), uEnergy = 0, sat = 0;
+  for (let k = 0; k <= K; k++) {
+    uPeak = Math.max(uPeak, Math.abs(u[k]));
+    if (k > 0) uTV += Math.abs(u[k] - u[k - 1]);
+    uEnergy += u[k] * u[k] * dt;
+    if (Math.abs(v[k] - u[k]) > 1e-12) sat++;
+  }
+  m.uPeak = uPeak; m.uTV = uTV; m.uEnergy = uEnergy; m.saturation = (sat / (K + 1)) * 100;
+
+  // Disturbance rejection
+  if (distJumps.length) {
+    const kd = distJumps[0];
+    const kend = nextEvent(kd);
+    events.disturbance = { time: t[kd], end: t[Math.min(kend, K)] };
+    let pk = 0, ia = 0;
+    for (let k = kd; k < kend; k++) { pk = Math.max(pk, Math.abs(e[k])); ia += Math.abs(e[k]) * dt; }
+    m.distPeak = pk; m.distIAE = ia;
+  }
+  return { ...m, unstable: false, events };
+}
+
+return { METRICS, METRIC, computeMetrics };
+})();
+// ---- core/goal.js
+__mods['core/goal.js'] = (() => {
+// The goal: minimise a weighted sum of metrics subject to bounds on metrics.
+//   { "minimize": { "itae": 1 }, "subjectTo": { "overshoot": { "max": 5 } }, "settlingBand": 0.02 }
+// A candidate's score is the weighted sum (lower is better); it is feasible
+// when it is stable and meets every bound.
+
+const { METRIC } = __mods['core/metrics.js'];
+const DEFAULT_GOAL = { minimize: { itae: 1 }, subjectTo: { overshoot: { max: 10 } }, settlingBand: 0.02 };
+
+function normalizeGoal(g = {}) {
+  const minimize = {};
+  for (const [k, w] of Object.entries(g.minimize ?? DEFAULT_GOAL.minimize)) {
+    if (!METRIC[k]) throw new Error(`goal.minimize: unknown metric "${k}"; metrics: ${Object.keys(METRIC).join(', ')}`);
+    if (!Number.isFinite(Number(w))) throw new Error(`goal.minimize.${k}: weight must be a number`);
+    minimize[k] = Number(w);
+  }
+  const subjectTo = {};
+  for (const [k, c] of Object.entries(g.subjectTo ?? {})) {
+    if (!METRIC[k]) throw new Error(`goal.subjectTo: unknown metric "${k}"; metrics: ${Object.keys(METRIC).join(', ')}`);
+    const b = {};
+    if (c?.max !== undefined && c.max !== null) b.max = Number(c.max);
+    if (c?.min !== undefined && c.min !== null) b.min = Number(c.min);
+    if (!('max' in b) && !('min' in b)) throw new Error(`goal.subjectTo.${k}: needs "max" or "min"`);
+    subjectTo[k] = b;
+  }
+  const settlingBand = g.settlingBand === undefined ? DEFAULT_GOAL.settlingBand : Number(g.settlingBand);
+  return { minimize, subjectTo, settlingBand };
+}
+
+const CAP = 1e3;
+
+function evaluateGoal(metrics, goal) {
+  let score = 0;
+  for (const [k, w] of Object.entries(goal.minimize)) {
+    const v = metrics[k];
+    score += Number.isFinite(v) ? w * v : (w === 0 ? 0 : Infinity);
+  }
+  if (Object.keys(goal.minimize).length === 0) score = 0;
+  const checks = [];
+  let violation = metrics.unstable ? CAP : 0;
+  for (const [k, b] of Object.entries(goal.subjectTo)) {
+    const v = metrics[k];
+    const scale = METRIC[k].scale ?? 1e-6;
+    let over = 0;
+    if (!Number.isFinite(v)) over = CAP;
+    else {
+      if ('max' in b && v > b.max) over += (v - b.max) / Math.max(Math.abs(b.max), scale);
+      if ('min' in b && v < b.min) over += (b.min - v) / Math.max(Math.abs(b.min), scale);
+    }
+    violation += Math.min(over, CAP);
+    checks.push({ metric: k, value: v, ...b, ok: over === 0 });
+  }
+  const feasible = !metrics.unstable && violation === 0;
+  return { score, feasible, violation, checks, unstable: !!metrics.unstable, ...(metrics.unstable ? { blowup: metrics.blowup ?? 0 } : {}) };
+}
+
+// Lower is better; feasible candidates always beat infeasible ones.
+function compareEvals(a, b) {
+  if (a.feasible !== b.feasible) return a.feasible ? -1 : 1;
+  if (!a.feasible && a.violation !== b.violation) return a.violation - b.violation;
+  const sa = Number.isFinite(a.score) ? a.score : Number.MAX_VALUE;
+  const sb = Number.isFinite(b.score) ? b.score : Number.MAX_VALUE;
+  return sa - sb;
+}
+
+// One number for an optimiser: the score, raised for infeasible candidates
+// so that every feasible point wins against a nearby infeasible one. Unstable
+// runs rank by how long they lasted, so a search can climb out of instability.
+function penalized(ev) {
+  if (ev.unstable) return 1e12 * (2 - (ev.blowup ?? 0));
+  const J = Number.isFinite(ev.score) ? ev.score : 1e9;
+  return ev.feasible ? J : J + (Math.abs(J) + 1) * (1 + 100 * ev.violation);
+}
+
+return { DEFAULT_GOAL, normalizeGoal, evaluateGoal, compareEvals, penalized };
+})();
+// ---- core/sim.js
+__mods['core/sim.js'] = (() => {
+// Closed-loop simulation of one SISO loop:
+//
+//   r ─►(Σ)─► C ─► sat ─► A ─►(Σ)─► P ─┬─► y
+//        ▲−                    ▲ d     │
+//        └──── (+n) ◄── S ◄────────────┘
+//
+// The controller is digital: it samples the measurement every sampleTime and
+// holds its output (zero-order hold). Actuator, plant and sensor are continuous
+// and integrated with fixed-step RK4 between samples. Because the measurement is
+// taken before the new control value is applied, the loop has no algebraic loop.
+
+const { blockDef, SLOTS } = __mods['core/blocks.js'];
+const { tf2ss, rootBound } = __mods['core/poly.js'];
+const MAX_SAMPLES = 200000;
+const MAX_STEPS = 400000;
+const BLOWUP = 1e8;
+
+function simulate(loop, sim) {
+  const duration = Number(sim.duration);
+  const Ts = Number(sim.sampleTime);
+  if (!(duration > 0)) throw new Error('sim.duration must be > 0');
+  if (!(Ts > 0)) throw new Error('sim.sampleTime must be > 0');
+  for (const s of SLOTS) if (!loop[s.key]) throw new Error(`loop is missing slot "${s.key}"`);
+
+  const warnings = [];
+  const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
+  if (K < Math.round(duration / Ts)) warnings.push(`sample count capped at ${MAX_SAMPLES}; increase sampleTime`);
+
+  const refFn = blockDef('reference', loop.reference.type).signal(loop.reference.params);
+  const distFn = blockDef('disturbance', loop.disturbance.type).signal(loop.disturbance.params);
+  const actDef = blockDef('actuator', loop.actuator.type);
+  const limits = actDef.limits ? actDef.limits(loop.actuator.params) : null;
+  const noise = blockDef('noise', loop.noise.type).noise(loop.noise.params);
+
+  // Continuous chain: actuator, plant, sensor.
+  const chainTfs = ['actuator', 'plant', 'sensor'].map((slot) => blockDef(slot, loop[slot].type).tf(loop[slot].params));
+  let bound = 0;
+  for (const tf of chainTfs) bound = Math.max(bound, rootBound(tf.den));
+  const hmax = bound > 0 ? 0.5 / bound : Ts;
+  let m = Math.max(1, Math.ceil(Ts / hmax - 1e-9));
+  if (K * m > MAX_STEPS) {
+    m = Math.max(1, Math.floor(MAX_STEPS / K));
+    warnings.push('stiff system: integration step limited for speed; results may be inaccurate');
+  }
+  const h = Ts / m;
+  const totalSteps = K * m;
+
+  const elems = [];
+  let N = 0;
+  for (const tf of chainTfs) {
+    const ss = tf2ss(tf.num, tf.den);
+    const delay = Number(tf.delay) || 0;
+    elems.push({ ss, off: N, delay, hist: delay > 0 ? new Float64Array(totalSteps + 1) : null });
+    N += ss.n;
+  }
+  let histCount = 0;
+  const rawIn = new Float64Array(3);
+  const sig = new Float64Array(3);
+
+  function histAt(hist, tau) {
+    if (tau < 0) return 0;
+    const f = tau / h;
+    const i = Math.floor(f);
+    if (i >= histCount - 1) return hist[histCount - 1];
+    const w = f - i;
+    return hist[i] * (1 - w) + hist[i + 1] * w;
+  }
+
+  // Evaluates the chain at time t: fills dX (if given), sig (element outputs)
+  // and rawIn (undelayed element inputs).
+  function chainEval(t, X, u, dX) {
+    let input = u;
+    for (let e = 0; e < 3; e++) {
+      if (e === 1) input += distFn(t);
+      const el = elems[e];
+      rawIn[e] = input;
+      const inp = el.delay > 0 ? histAt(el.hist, t - el.delay) : input;
+      const { n, A, B, C, D } = el.ss;
+      const o = el.off;
+      let out = D * inp;
+      for (let i = 0; i < n; i++) out += C[i] * X[o + i];
+      if (dX) {
+        for (let i = 0; i < n; i++) {
+          let s = B[i] * inp;
+          for (let j = 0; j < n; j++) s += A[i * n + j] * X[o + j];
+          dX[o + i] = s;
+        }
+      }
+      sig[e] = out;
+      input = out;
+    }
+  }
+
+  function record() {
+    for (let e = 0; e < 3; e++) if (elems[e].hist) elems[e].hist[histCount] = rawIn[e];
+    histCount++;
+  }
+
+  const ctrl = makeController(loop.controller, Ts, warnings);
+  const rand = gaussian(noise.seed);
+
+  const X = new Float64Array(N);
+  const Xt = new Float64Array(N);
+  const k1 = new Float64Array(N), k2 = new Float64Array(N), k3 = new Float64Array(N), k4 = new Float64Array(N);
+
+  const out = {
+    t: new Float64Array(K + 1), r: new Float64Array(K + 1), y: new Float64Array(K + 1), u: new Float64Array(K + 1),
+    v: new Float64Array(K + 1), ym: new Float64Array(K + 1), d: new Float64Array(K + 1), e: new Float64Array(K + 1),
+  };
+
+  let unstable = false;
+  let blowup = 1;
+  chainEval(0, X, 0, null);
+  record();
+
+  for (let k = 0; k <= K; k++) {
+    const t = k * Ts;
+    const y = sig[1];
+    const ym = sig[2] + (noise.std > 0 ? noise.std * rand() : 0);
+    const r = refFn(t);
+    const v = ctrl.step(r, ym);
+    let u = v;
+    if (limits) u = Math.min(limits.max, Math.max(limits.min, v));
+    ctrl.track(u, v);
+
+    out.t[k] = t; out.r[k] = r; out.y[k] = y; out.u[k] = u; out.v[k] = v; out.ym[k] = ym; out.d[k] = distFn(t); out.e[k] = r - y;
+    if (!Number.isFinite(y) || Math.abs(y) > BLOWUP || !Number.isFinite(u)) {
+      unstable = true;
+      blowup = k / K;
+      for (const key in out) if (key !== 't') out[key].fill(NaN, k);
+      for (let j = k; j <= K; j++) out.t[j] = j * Ts;
+      break;
+    }
+    if (k === K) break;
+
+    // Integrate one sample interval with u held.
+    for (let s = 0; s < m; s++) {
+      const ts = t + s * h;
+      chainEval(ts, X, u, k1);
+      for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k1[i];
+      chainEval(ts + 0.5 * h, Xt, u, k2);
+      for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k2[i];
+      chainEval(ts + 0.5 * h, Xt, u, k3);
+      for (let i = 0; i < N; i++) Xt[i] = X[i] + h * k3[i];
+      chainEval(ts + h, Xt, u, k4);
+      for (let i = 0; i < N; i++) X[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+      chainEval(ts + h, X, u, null);
+      record();
+    }
+  }
+
+  return { ...out, info: { h, substeps: m, samples: K + 1, unstable, blowup, limits, warnings } };
+}
+
+// Controllers. PID types run a discrete PID with a filtered derivative and
+// back-calculation anti-windup; the others run their transfer function on the
+// error e = r − y, integrated over each sample with the error held.
+function makeController(block, Ts, warnings) {
+  const def = blockDef('controller', block.type);
+  return def.pid ? makePid(block.params, Ts) : makeTfController(def.tf(block.params), Ts, warnings);
+}
+
+function makePid(p, Ts) {
+  const Kp = p.Kp ?? 0, Ki = p.Ki ?? 0, Kd = p.Kd ?? 0;
+  const Tf = Math.max(p.Tf ?? 0, 0);
+  const b = p.b ?? 1, c = p.c ?? 0;
+  const Ti = Ki > 0 ? (Kp > 0 ? Kp / Ki : 1 / Ki) : Infinity;
+  const Td = Kp > 0 ? Kd / Kp : 0;
+  const Tt = Math.max(Ts, Td > 0 ? Math.sqrt(Ti * Td) : 0.5 * Ti);
+  let I = 0, D = 0, prevDin = null, lastE = 0;
+  return {
+    step(r, y) {
+      const din = c * r - y;
+      if (prevDin === null) prevDin = din;
+      D = (Tf * D + Kd * (din - prevDin)) / (Tf + Ts);
+      prevDin = din;
+      lastE = r - y;
+      return Kp * (b * r - y) + I + D;
+    },
+    track(u, v) {
+      if (Ki > 0) I += Ki * Ts * lastE + (Number.isFinite(Tt) ? (Ts / Tt) * (u - v) : 0);
+    },
+  };
+}
+
+function makeTfController(tf, Ts, warnings) {
+  const ss = tf2ss(tf.num, tf.den);
+  const bound = rootBound(tf.den);
+  const m = Math.max(1, Math.ceil(Ts * bound / 0.5));
+  const h = Ts / m;
+  const n = ss.n;
+  const x = new Float64Array(n), xt = new Float64Array(n);
+  const k1 = new Float64Array(n), k2 = new Float64Array(n), k3 = new Float64Array(n), k4 = new Float64Array(n);
+  const lag = Math.round((Number(tf.delay) || 0) / Ts);
+  if (tf.delay > 0 && lag === 0) warnings.push('controller delay is below one sample and was ignored');
+  const queue = new Array(lag).fill(0);
+  let e = 0;
+  const deriv = (xs, dx) => {
+    for (let i = 0; i < n; i++) {
+      let s = ss.B[i] * e;
+      for (let j = 0; j < n; j++) s += ss.A[i * n + j] * xs[j];
+      dx[i] = s;
+    }
+  };
+  return {
+    step(r, y) {
+      e = r - y;
+      let v = ss.D * e;
+      for (let i = 0; i < n; i++) v += ss.C[i] * x[i];
+      for (let s = 0; s < m; s++) {
+        deriv(x, k1);
+        for (let i = 0; i < n; i++) xt[i] = x[i] + 0.5 * h * k1[i];
+        deriv(xt, k2);
+        for (let i = 0; i < n; i++) xt[i] = x[i] + 0.5 * h * k2[i];
+        deriv(xt, k3);
+        for (let i = 0; i < n; i++) xt[i] = x[i] + h * k3[i];
+        deriv(xt, k4);
+        for (let i = 0; i < n; i++) x[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+      }
+      if (lag > 0) { queue.push(v); v = queue.shift(); }
+      return v;
+    },
+    track() {},
+  };
+}
+
+// Seeded standard-normal generator (mulberry32 + Box–Muller), so a run with
+// noise is reproducible.
+function gaussian(seed) {
+  let a = (Number(seed) >>> 0) || 1;
+  const uni = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  let spare = null;
+  return () => {
+    if (spare !== null) { const s = spare; spare = null; return s; }
+    const u1 = Math.max(uni(), 1e-12), u2 = uni();
+    const rr = Math.sqrt(-2 * Math.log(u1));
+    spare = rr * Math.sin(2 * Math.PI * u2);
+    return rr * Math.cos(2 * Math.PI * u2);
+  };
+}
+
+return { simulate };
+})();
+// ---- core/project.js
+__mods['core/project.js'] = (() => {
+// The project file: one human-editable JSON document holding the system (every
+// slot but the controller), the goal, and the candidates. Each candidate holds
+// its own controller and may override any other slot.
+
+const { SLOTS, normalizeBlock } = __mods['core/blocks.js'];
+const { simulate } = __mods['core/sim.js'];
+const { computeMetrics } = __mods['core/metrics.js'];
+const { normalizeGoal, evaluateGoal, compareEvals } = __mods['core/goal.js'];
+const FORMAT = 'loop-tuner/1';
+const PALETTE_SIZE = 8;
+
+const SYSTEM_DEFAULTS = {
+  reference: { type: 'step' },
+  actuator: { type: 'ideal' },
+  disturbance: { type: 'none' },
+  plant: { type: 'firstOrder' },
+  sensor: { type: 'ideal' },
+  noise: { type: 'none' },
+};
+const CANDIDATE_KEYS = new Set(['name', 'checked', 'color', 'note', 'controller', ...SLOTS.map((s) => s.key)]);
+
+function normalizeProject(p) {
+  if (!p || typeof p !== 'object') throw new Error('project must be a JSON object');
+  const sim = { duration: Number(p.sim?.duration ?? 20), sampleTime: Number(p.sim?.sampleTime ?? 0.01) };
+  if (!(sim.duration > 0)) throw new Error('sim.duration must be > 0');
+  if (!(sim.sampleTime > 0) || sim.sampleTime > sim.duration) throw new Error('sim.sampleTime must be > 0 and below the duration');
+  const system = {};
+  for (const [slot, def] of Object.entries(SYSTEM_DEFAULTS)) system[slot] = normalizeBlock(slot, p.system?.[slot] ?? def);
+  const goal = normalizeGoal(p.goal);
+  const raw = Array.isArray(p.candidates) ? p.candidates : [];
+  const candidates = raw.map((c, i) => {
+    for (const k of Object.keys(c)) if (!CANDIDATE_KEYS.has(k)) throw new Error(`candidates[${i}]: unknown key "${k}"`);
+    const out = {
+      name: String(c.name ?? `#${i + 1}`),
+      checked: c.checked !== false,
+      color: Number.isInteger(c.color) ? c.color % PALETTE_SIZE : null,
+      controller: normalizeBlock('controller', c.controller ?? { type: 'PID' }),
+    };
+    if (c.note) out.note = String(c.note);
+    for (const s of SLOTS) if (s.key !== 'controller' && c[s.key]) out[s.key] = normalizeBlock(s.key, c[s.key]);
+    return out;
+  });
+  for (const c of candidates) if (c.color === null) c.color = nextColor(candidates);
+  return {
+    format: FORMAT,
+    title: String(p.title ?? 'Untitled loop'),
+    ...(p.notes ? { notes: String(p.notes) } : {}),
+    sim, system, goal, candidates,
+    ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
+  };
+}
+
+// The least-used palette slot, earliest first, so a colour follows its
+// candidate and is never reassigned when others are added or removed.
+function nextColor(candidates) {
+  const count = new Array(PALETTE_SIZE).fill(0);
+  for (const c of candidates) if (Number.isInteger(c.color)) count[c.color]++;
+  let best = 0;
+  for (let i = 1; i < PALETTE_SIZE; i++) if (count[i] < count[best]) best = i;
+  return best;
+}
+
+function resolveLoop(project, cand) {
+  const loop = {};
+  for (const s of SLOTS) loop[s.key] = s.key === 'controller' ? cand.controller : (cand[s.key] ?? project.system[s.key]);
+  return loop;
+}
+
+function evaluateCandidate(project, cand) {
+  const result = simulate(resolveLoop(project, cand), project.sim);
+  const metrics = computeMetrics(result, { settlingBand: project.goal.settlingBand });
+  const evaluation = evaluateGoal(metrics, project.goal);
+  return { result, metrics, evaluation };
+}
+
+// Evaluates every candidate; rank lists candidate indices best first.
+function evaluateProject(project) {
+  const runs = project.candidates.map((c) => evaluateCandidate(project, c));
+  const rank = runs.map((_, i) => i).sort((a, b) => compareEvals(runs[a].evaluation, runs[b].evaluation));
+  return { runs, rank };
+}
+
+function findCandidate(project, ref) {
+  if (ref === undefined || ref === null) return project.candidates.length - 1;
+  const byName = project.candidates.findIndex((c) => c.name === String(ref));
+  if (byName >= 0) return byName;
+  const i = Number(ref);
+  if (Number.isInteger(i) && i >= 0 && i < project.candidates.length) return i;
+  throw new Error(`no candidate "${ref}"; candidates: ${project.candidates.map((c) => c.name).join(', ')}`);
+}
+
+function uniqueName(project, base) {
+  const names = new Set(project.candidates.map((c) => c.name));
+  if (!names.has(base)) return base;
+  const stem = base.replace(/ \d+$/, '');
+  for (let i = 2; ; i++) if (!names.has(`${stem} ${i}`)) return `${stem} ${i}`;
+}
+
+// Parameters left out of a one-line summary while they hold their usual value.
+const QUIET_DEFAULTS = { b: 1, c: 0, Tf: 0.05 };
+
+function describeController(block) {
+  const ps = Object.entries(block.params)
+    .filter(([k, v]) => !(k in QUIET_DEFAULTS) || v !== QUIET_DEFAULTS[k])
+    .map(([k, v]) => `${k} ${Array.isArray(v) ? `[${v.join(', ')}]` : fmt(v)}`);
+  return `${block.type}${ps.length ? ' · ' + ps.join(' · ') : ''}`;
+}
+
+function fmt(v, digits = 3) {
+  if (v === Infinity) return '∞';
+  if (v === -Infinity) return '−∞';
+  if (!Number.isFinite(v)) return '—';
+  if (v === 0) return '0';
+  const a = Math.abs(v);
+  if (a >= 1e4 || a < 1e-3) return v.toExponential(2);
+  return String(Number(v.toPrecision(digits)));
+}
+
+return { FORMAT, PALETTE_SIZE, normalizeProject, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+})();
+// ---- core/tune.js
+__mods['core/tune.js'] = (() => {
+// Auto-tuning: Nelder–Mead over chosen controller parameters, minimising the
+// goal's penalised score. Positive (log-scale) parameters are searched in log
+// space. Written as a generator that yields after every evaluation, so the UI
+// can run it a slice per frame and the CLI can run it to the end.
+
+const { blockDef, paramMax } = __mods['core/blocks.js'];
+const { evaluateCandidate } = __mods['core/project.js'];
+const { penalized } = __mods['core/goal.js'];
+function tunableParams(block) {
+  return blockDef('controller', block.type).params.filter((p) => p.tunable).map((p) => p.key);
+}
+
+function* tuneCandidate(project, cand, opts = {}) {
+  const def = blockDef('controller', cand.controller.type);
+  const keys = opts.params?.length ? opts.params : tunableParams(cand.controller);
+  const ctx = { duration: project.sim.duration };
+  const specs = keys.map((k) => {
+    const p = def.params.find((q) => q.key === k);
+    if (!p || p.kind === 'vector') throw new Error(`cannot tune "${k}" of ${cand.controller.type}; tunable: ${tunableParams(cand.controller).join(', ')}`);
+    const lo = p.min, hi = paramMax(p, ctx);
+    const log = p.scale !== 'lin' && lo > 0;
+    const enc = (v) => (log ? Math.log(Math.min(hi, Math.max(lo, v > 0 ? v : (p.default > 0 ? p.default : lo * 10)))) : v);
+    const dec = (x) => { const v = log ? Math.exp(x) : x; return Math.min(hi, Math.max(lo, v)); };
+    return { key: k, enc, dec, step: log ? 0.7 : 0.2 * (hi - lo) };
+  });
+  const maxEvals = opts.maxEvals ?? 300;
+
+  const paramsAt = (x) => {
+    const params = { ...cand.controller.params };
+    specs.forEach((s, i) => { params[s.key] = s.dec(x[i]); });
+    return params;
+  };
+  let evals = 0;
+  let best = null;
+  const f = (x) => {
+    const params = paramsAt(x);
+    const trial = { ...cand, controller: { type: cand.controller.type, params } };
+    const { evaluation } = evaluateCandidate(project, trial);
+    const val = penalized(evaluation);
+    evals++;
+    if (!best || val < best.f) best = { f: val, x: x.slice(), params, evaluation };
+    return val;
+  };
+
+  // Coarse scan around the start (seeded, so runs are reproducible), then
+  // Nelder–Mead from the best point found, with shrinking restarts.
+  let x0 = specs.map((s) => s.enc(cand.controller.params[s.key]));
+  f(x0);
+  yield { evals, best };
+  const rand = lcg(opts.seed ?? 1);
+  const scan = Math.min(opts.scan ?? 40, Math.floor(maxEvals / 4));
+  for (let i = 0; i < scan; i++) {
+    f(x0.map((v, j) => v + (rand() * 2 - 1) * specs[j].step * 4));
+    yield { evals, best };
+  }
+  x0 = best.x;
+  const restarts = opts.restarts ?? 2;
+  for (let round = 0; round <= restarts && evals < maxEvals; round++) {
+    const budget = Math.floor((maxEvals - evals) / (restarts - round + 1));
+    yield* nelderMead(f, x0, specs.map((s) => s.step / (round + 1)), budget, () => ({ evals, best }));
+    x0 = best.x;
+  }
+  return { evals, best, keys };
+}
+
+function* nelderMead(f, x0, steps, maxEvals, progress) {
+  const n = x0.length;
+  let simplex = [x0.slice()];
+  for (let i = 0; i < n; i++) { const x = x0.slice(); x[i] += steps[i]; simplex.push(x); }
+  let fs = [];
+  let used = 0;
+  const ev = function* (x) { const v = f(x); used++; yield progress(); return v; };
+  for (const x of simplex) fs.push(yield* ev(x));
+  while (used < maxEvals) {
+    const order = fs.map((_, i) => i).sort((a, b) => fs[a] - fs[b]);
+    simplex = order.map((i) => simplex[i]); fs = order.map((i) => fs[i]);
+    if (Math.abs(fs[n] - fs[0]) <= 1e-9 * (Math.abs(fs[0]) + 1e-12) && spread(simplex) < 1e-6) break;
+    const c = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) c[j] += simplex[i][j] / n;
+    const at = (t) => c.map((cj, j) => cj + t * (simplex[n][j] - cj));
+    const xr = at(-1); const fr = yield* ev(xr);
+    if (fr < fs[0]) {
+      const xe = at(-2); const fe = yield* ev(xe);
+      if (fe < fr) { simplex[n] = xe; fs[n] = fe; } else { simplex[n] = xr; fs[n] = fr; }
+    } else if (fr < fs[n - 1]) {
+      simplex[n] = xr; fs[n] = fr;
+    } else {
+      const xc = fr < fs[n] ? at(-0.5) : at(0.5);
+      const fc = yield* ev(xc);
+      if (fc < Math.min(fr, fs[n])) { simplex[n] = xc; fs[n] = fc; } else {
+        for (let i = 1; i <= n; i++) {
+          simplex[i] = simplex[i].map((v, j) => simplex[0][j] + 0.5 * (v - simplex[0][j]));
+          fs[i] = yield* ev(simplex[i]);
+        }
+      }
+    }
+  }
+}
+
+function lcg(seed) {
+  let a = (seed >>> 0) || 1;
+  return () => { a = (Math.imul(a, 1664525) + 1013904223) >>> 0; return a / 4294967296; };
+}
+
+function spread(simplex) {
+  let s = 0;
+  for (let i = 1; i < simplex.length; i++) for (let j = 0; j < simplex[0].length; j++) s = Math.max(s, Math.abs(simplex[i][j] - simplex[0][j]));
+  return s;
+}
+
+function runTune(project, cand, opts) {
+  const it = tuneCandidate(project, cand, opts);
+  for (;;) { const s = it.next(); if (s.done) return s.value; }
+}
+
+return { tunableParams, tuneCandidate, runTune };
+})();
+// ---- core/examples.js
+__mods['core/examples.js'] = (() => {
+// Textbook example projects. The first one is what a fresh page opens with.
+
+const EXAMPLES = [
+  {
+    format: 'loop-tuner/1',
+    title: 'Third-order lag',
+    notes: 'Åström & Hägglund\'s classic test process 1/(s+1)³ with a load step at t = 16 s. Goal: fast with little overshoot, effort kept below 4. The Ziegler–Nichols settings are the textbook starting point (Ku = 8, Pu = 3.63 s).',
+    sim: { duration: 30, sampleTime: 0.01 },
+    system: {
+      reference: { type: 'step', params: { amplitude: 1, time: 1 } },
+      actuator: { type: 'ideal' },
+      disturbance: { type: 'step', params: { amplitude: 0.5, time: 16 } },
+      plant: { type: 'lagChain', params: { K: 1, tau: 1, n: 3 } },
+      sensor: { type: 'ideal' },
+      noise: { type: 'none' },
+    },
+    goal: { minimize: { itae: 1 }, subjectTo: { overshoot: { max: 5 }, uPeak: { max: 4 } }, settlingBand: 0.02 },
+    candidates: [
+      { name: 'P only', color: 0, controller: { type: 'P', params: { Kp: 1 } } },
+      { name: 'Z–N PI', color: 1, controller: { type: 'PI', params: { Kp: 3.6, Ki: 1.19, b: 1 } } },
+      { name: 'Z–N PID', color: 2, controller: { type: 'PID', params: { Kp: 4.8, Ki: 2.65, Kd: 2.18, Tf: 0.05, b: 1, c: 0 } } },
+      { name: 'Detuned PID', color: 3, controller: { type: 'PID', params: { Kp: 1.5, Ki: 0.6, Kd: 1, Tf: 0.05, b: 1, c: 0 } } },
+    ],
+    selected: 'Detuned PID',
+  },
+  {
+    format: 'loop-tuner/1',
+    title: 'Process with dead time',
+    notes: 'First order plus dead time, K = 2, τ = 5 s, L = 1 s, with measurement noise. SIMC rule (τc = L): Kp = τ / (K (τc + L)) = 1.25, Ti = τ = 5 s.',
+    sim: { duration: 40, sampleTime: 0.02 },
+    system: {
+      reference: { type: 'step', params: { amplitude: 1, time: 2 } },
+      actuator: { type: 'ideal' },
+      disturbance: { type: 'step', params: { amplitude: -0.3, time: 22 } },
+      plant: { type: 'fopdt', params: { K: 2, tau: 5, delay: 1 } },
+      sensor: { type: 'ideal' },
+      noise: { type: 'white', params: { std: 0.005, seed: 7 } },
+    },
+    goal: { minimize: { iae: 1 }, subjectTo: { overshoot: { max: 10 }, uTV: { max: 6 } }, settlingBand: 0.05 },
+    candidates: [
+      { name: 'SIMC PI', color: 0, controller: { type: 'PI', params: { Kp: 1.25, Ki: 0.25, b: 1 } } },
+      { name: 'Aggressive PI', color: 1, controller: { type: 'PI', params: { Kp: 2.2, Ki: 0.5, b: 1 } } },
+      { name: 'PID, noisy D', color: 2, controller: { type: 'PID', params: { Kp: 1.8, Ki: 0.3, Kd: 1.2, Tf: 0.02, b: 1, c: 0 } } },
+    ],
+  },
+  {
+    format: 'loop-tuner/1',
+    title: 'Motor position',
+    notes: 'DC motor shaft angle: integrator plus a 0.5 s mechanical lag, voltage limited to ±2. Goal: settle fast with almost no overshoot.',
+    sim: { duration: 12, sampleTime: 0.005 },
+    system: {
+      reference: { type: 'step', params: { amplitude: 1, time: 0.5 } },
+      actuator: { type: 'saturation', params: { uMin: -2, uMax: 2 } },
+      disturbance: { type: 'none' },
+      plant: { type: 'integratorLag', params: { K: 1, tau: 0.5 } },
+      sensor: { type: 'ideal' },
+      noise: { type: 'none' },
+    },
+    goal: { minimize: { settlingTime: 1 }, subjectTo: { overshoot: { max: 2 } }, settlingBand: 0.02 },
+    candidates: [
+      { name: 'P', color: 0, controller: { type: 'P', params: { Kp: 1 } } },
+      { name: 'P, high gain', color: 1, controller: { type: 'P', params: { Kp: 4 } } },
+      { name: 'PD', color: 2, controller: { type: 'PD', params: { Kp: 4, Kd: 0.8, Tf: 0.02, c: 0 } } },
+    ],
+  },
+  {
+    format: 'loop-tuner/1',
+    title: 'Lightly damped resonance',
+    notes: 'Second-order plant with ζ = 0.1. Goal: the smoothest control effort that still settles within 8 s with under 5 % overshoot.',
+    sim: { duration: 20, sampleTime: 0.01 },
+    system: {
+      reference: { type: 'step', params: { amplitude: 1, time: 1 } },
+      actuator: { type: 'ideal' },
+      disturbance: { type: 'none' },
+      plant: { type: 'secondOrder', params: { K: 1, wn: 2, zeta: 0.1 } },
+      sensor: { type: 'ideal' },
+      noise: { type: 'none' },
+    },
+    goal: { minimize: { uTV: 1 }, subjectTo: { settlingTime: { max: 8 }, overshoot: { max: 5 } }, settlingBand: 0.02 },
+    candidates: [
+      { name: 'Integral only', color: 0, controller: { type: 'PI', params: { Kp: 0.01, Ki: 0.3, b: 1 } } },
+      { name: 'PI', color: 1, controller: { type: 'PI', params: { Kp: 0.3, Ki: 0.6, b: 1 } } },
+      { name: 'PID', color: 2, controller: { type: 'PID', params: { Kp: 0.5, Ki: 0.8, Kd: 0.3, Tf: 0.05, b: 1, c: 0 } } },
+    ],
+  },
+  {
+    format: 'loop-tuner/1',
+    title: 'Inverse response',
+    notes: 'Non-minimum-phase plant K (1 − 0.5 s) / ((s + 1)(2 s + 1)): the output first moves the wrong way. Pushing for speed increases the undershoot.',
+    sim: { duration: 30, sampleTime: 0.01 },
+    system: {
+      reference: { type: 'step', params: { amplitude: 1, time: 1 } },
+      actuator: { type: 'ideal' },
+      disturbance: { type: 'none' },
+      plant: { type: 'inverseResponse', params: { K: 1, Tz: 0.5, tau1: 1, tau2: 2 } },
+      sensor: { type: 'ideal' },
+      noise: { type: 'none' },
+    },
+    goal: { minimize: { itae: 1 }, subjectTo: { undershoot: { max: 20 }, overshoot: { max: 5 } }, settlingBand: 0.02 },
+    candidates: [
+      { name: 'Slow PI', color: 0, controller: { type: 'PI', params: { Kp: 0.5, Ki: 0.25, b: 1 } } },
+      { name: 'Fast PI', color: 1, controller: { type: 'PI', params: { Kp: 1.5, Ki: 0.6, b: 1 } } },
+    ],
+  },
+];
+
+return { EXAMPLES };
+})();
+// ---- ui/knob.js
+__mods['ui/knob.js'] = (() => {
+// A rotary knob for one block parameter. Drag up/down (Shift: fine), scroll,
+// arrow keys, double-click to reset, click the value to type one.
+
+const { fmt } = __mods['core/project.js'];
+const SWEEP = 270;
+const OFF = 0.04; // log0: the bottom of the travel is "off" (0)
+
+function knobPos(param, value, max) {
+  const { min, scale } = param;
+  if (scale === 'lin') return clamp01((value - min) / (max - min));
+  if (scale === 'log0' && !(value > 0)) return 0;
+  const p = Math.log(Math.max(value, min) / min) / Math.log(max / min);
+  return scale === 'log0' ? OFF + (1 - OFF) * clamp01(p) : clamp01(p);
+}
+
+function knobValue(param, pos, max) {
+  const { min, scale } = param;
+  let v;
+  if (scale === 'lin') v = min + pos * (max - min);
+  else if (scale === 'log0') v = pos < OFF ? 0 : min * Math.pow(max / min, (pos - OFF) / (1 - OFF));
+  else v = min * Math.pow(max / min, pos);
+  if (param.int) v = Math.round(v);
+  else if (v !== 0) v = Number(v.toPrecision(4));
+  return v;
+}
+
+function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+
+const NS = 'http://www.w3.org/2000/svg';
+function arcPath(a0, a1, r = 17) {
+  const p = (a) => [22 + r * Math.sin(a), 22 - r * Math.cos(a)];
+  const [x0, y0] = p(a0), [x1, y1] = p(a1);
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`;
+}
+
+// opts: { param, value, max, color, onInput(v), onCommit(v), onStart() }
+function createKnob(opts) {
+  const { param } = opts;
+  let value = opts.value;
+  const max = opts.max;
+  const root = document.createElement('div');
+  root.className = 'knob';
+  const unit = param.unit ? ` ${param.unit}` : '';
+  root.title = `${param.label}${unit ? ` (${param.unit})` : ''} · drag, scroll or use arrow keys · Shift for fine · double-click to reset`;
+  const label = document.createElement('div');
+  label.className = 'kl';
+  label.textContent = param.label;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 44 44');
+  svg.setAttribute('tabindex', '0');
+  svg.setAttribute('role', 'slider');
+  svg.setAttribute('aria-label', param.label);
+  if (opts.color) svg.style.setProperty('--kc', opts.color);
+  const a0 = (-SWEEP / 2) * Math.PI / 180, a1 = (SWEEP / 2) * Math.PI / 180;
+  const track = document.createElementNS(NS, 'path');
+  track.setAttribute('class', 'track');
+  track.setAttribute('d', arcPath(a0, a1));
+  const arc = document.createElementNS(NS, 'path');
+  arc.setAttribute('class', 'val');
+  const cap = document.createElementNS(NS, 'circle');
+  cap.setAttribute('class', 'cap');
+  cap.setAttribute('cx', 22); cap.setAttribute('cy', 22); cap.setAttribute('r', 11.5);
+  const ptr = document.createElementNS(NS, 'line');
+  ptr.setAttribute('class', 'ptr');
+  svg.append(track, arc, cap, ptr);
+  const input = document.createElement('input');
+  input.className = 'kv';
+  input.setAttribute('aria-label', `${param.label} value`);
+  input.spellcheck = false;
+  root.append(label, svg, input);
+
+  function show() {
+    const pos = knobPos(param, value, max);
+    const a = a0 + pos * (a1 - a0);
+    // Lin knobs that span zero draw their arc from the centre.
+    const zeroPos = param.scale === 'lin' && param.min < 0 && max > 0 ? knobPos(param, 0, max) : 0;
+    const az = a0 + zeroPos * (a1 - a0);
+    const lo = Math.min(a, az), hi = Math.max(a, az);
+    arc.setAttribute('d', hi - lo > 0.01 ? arcPath(lo, hi) : '');
+    ptr.setAttribute('x1', 22 + 4 * Math.sin(a)); ptr.setAttribute('y1', 22 - 4 * Math.cos(a));
+    ptr.setAttribute('x2', 22 + 10 * Math.sin(a)); ptr.setAttribute('y2', 22 - 10 * Math.cos(a));
+    const text = param.scale === 'log0' && value === 0 ? 'off' : fmt(value);
+    if (document.activeElement !== input) input.value = text;
+    svg.setAttribute('aria-valuenow', String(value));
+    svg.setAttribute('aria-valuetext', `${text}${unit}`);
+  }
+
+  function setFromPos(pos, commit) {
+    const v = knobValue(param, clamp01(pos), max);
+    if (v !== value) { value = v; show(); opts.onInput(v); }
+    if (commit) opts.onCommit(value);
+  }
+
+  let drag = null;
+  svg.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    svg.focus();
+    svg.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY, pos: knobPos(param, value, max) };
+    root.classList.add('active');
+    opts.onStart?.();
+  });
+  svg.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const k = e.shiftKey ? 1 / 3000 : 1 / 320;
+    drag.pos = clamp01(drag.pos + (drag.y - e.clientY + (e.clientX - drag.x)) * k);
+    drag.x = e.clientX; drag.y = e.clientY;
+    setFromPos(drag.pos, false);
+  });
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    root.classList.remove('active');
+    opts.onCommit(value);
+  };
+  svg.addEventListener('pointerup', end);
+  svg.addEventListener('pointercancel', end);
+  svg.addEventListener('dblclick', () => { opts.onStart?.(); value = param.default; show(); opts.onInput(value); opts.onCommit(value); });
+
+  let wheelTimer = null;
+  svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (!wheelTimer) opts.onStart?.();
+    clearTimeout(wheelTimer);
+    const step = (e.shiftKey ? 0.002 : 0.015) * (e.deltaY < 0 ? 1 : -1);
+    setFromPos(knobPos(param, value, max) + step, false);
+    wheelTimer = setTimeout(() => { wheelTimer = null; opts.onCommit(value); }, 350);
+  }, { passive: false });
+
+  svg.addEventListener('keydown', (e) => {
+    const steps = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 10, PageDown: -10 };
+    let pos = null;
+    if (e.key in steps) pos = knobPos(param, value, max) + steps[e.key] * (e.shiftKey ? 0.002 : 0.01);
+    else if (e.key === 'Home') pos = 0;
+    else if (e.key === 'End') pos = 1;
+    if (pos === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    opts.onStart?.();
+    if (param.int) {
+      const dir = Math.sign(pos - knobPos(param, value, max));
+      const v = Math.min(max, Math.max(param.min, value + dir));
+      if (v !== value) { value = v; show(); opts.onInput(v); }
+      opts.onCommit(value);
+    } else setFromPos(pos, true);
+  });
+
+  input.addEventListener('focus', () => { input.select(); });
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') input.blur();
+    if (e.key === 'Escape') { show(); input.dataset.cancel = '1'; input.blur(); }
+  });
+  input.addEventListener('blur', () => {
+    if (input.dataset.cancel) { delete input.dataset.cancel; show(); return; }
+    const txt = input.value.trim().toLowerCase();
+    const v = txt === 'off' ? 0 : Number(txt.replace(',', '.').replace('−', '-'));
+    if (!Number.isFinite(v)) { show(); return; }
+    if (v !== value) { opts.onStart?.(); value = param.int ? Math.round(v) : v; opts.onInput(value); opts.onCommit(value); }
+    show();
+  });
+
+  show();
+  return { el: root, set(v) { value = v; show(); } };
+}
+
+return { knobPos, knobValue, createKnob };
+})();
+// ---- ui/scope.js
+__mods['ui/scope.js'] = (() => {
+// The scope: output y(t) over the reference r(t), and effort u(t) below, for
+// every checked candidate. A scan line sweeps the period like an oscilloscope:
+// left of it the selected trace is drawn bright, right of it as the fading
+// previous sweep. Hovering moves the scan line; clicking a trace selects it.
+
+const { fmt } = __mods['core/project.js'];
+const PAD = { l: 50, r: 14, t: 22, b: 24, gap: 26 };
+const SPLIT = 0.64;
+
+function createScope(wrap, handlers) {
+  const canvas = document.createElement('canvas');
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute('aria-label', 'Step response scope: output and control effort over time');
+  wrap.append(canvas);
+  const ctx = canvas.getContext('2d');
+  const layer = document.createElement('canvas');
+  const lctx = layer.getContext('2d');
+  let W = 0, H = 0, dpr = 1;
+  let data = null;
+  let colors = {};
+  let geo = null;
+  let dirty = true;
+  let playing = false, sweepSeconds = 3, phase = 1;
+  let hoverT = null, lastFrame = 0, raf = 0;
+
+  function readColors() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (n) => cs.getPropertyValue(n).trim();
+    colors = { screen: v('--screen'), ink: v('--ink'), ink2: v('--ink-2'), muted: v('--muted'), grid: v('--grid'), axis: v('--axis'), bad: v('--bad'), scan: v('--scan'), mono: v('--mono') };
+    dirty = true;
+  }
+
+  function resize() {
+    const rect = wrap.getBoundingClientRect();
+    dpr = window.devicePixelRatio || 1;
+    W = Math.max(10, rect.width); H = Math.max(10, rect.height);
+    for (const c of [canvas, layer]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+    dirty = true;
+    draw();
+  }
+
+  function niceTicks(lo, hi, n) {
+    const span = hi - lo;
+    if (!(span > 0)) return [lo];
+    const raw = span / n;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((s) => s * mag).find((s) => s >= raw) ?? 10 * mag;
+    const out = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-6; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+    return out;
+  }
+
+  function range(arrays, extra) {
+    let lo = Infinity, hi = -Infinity;
+    for (const a of arrays) for (let i = 0; i < a.length; i++) { const v = a[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+    for (const v of extra) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    if (!Number.isFinite(lo)) { lo = -1; hi = 1; }
+    if (hi - lo < 1e-9) { lo -= 0.5; hi += 0.5; }
+    const pad = (hi - lo) * 0.08;
+    return [lo - pad, hi + pad];
+  }
+
+  function computeGeo() {
+    const x0 = PAD.l, x1 = W - PAD.r;
+    const usable = H - PAD.t - PAD.b - PAD.gap;
+    const yTop = PAD.t, yMid = PAD.t + usable * SPLIT, yBot = yMid + PAD.gap, yEnd = H - PAD.b;
+    const { duration, ref, traces, spec } = data;
+    const extra = [];
+    if (spec.step) {
+      const D = spec.step.to - spec.step.from;
+      if (spec.overshootMax !== undefined) extra.push(spec.step.to + (spec.overshootMax / 100) * D);
+    }
+    // Ranges come from the reference and the selected trace; other traces may
+    // widen them by at most their own span again, so one diverging run cannot
+    // flatten the rest.
+    const sel = traces.find((t) => t.selected) ?? traces[0];
+    const clipTo = (base, all) => {
+      const span = base[1] - base[0];
+      return [Math.max(all[0], base[0] - span), Math.min(all[1], base[1] + span)];
+    };
+    const uLim = [0, spec.uMax, spec.uMin !== undefined ? spec.uMin : (spec.uMax !== undefined ? -spec.uMax : undefined)];
+    const [ylo, yhi] = clipTo(range([ref, ...(sel ? [sel.y] : [])], extra), range([ref, ...traces.map((t) => t.y)], extra));
+    const [ulo, uhi] = clipTo(range(sel ? [sel.u] : [], uLim), range(traces.map((t) => t.u), uLim));
+    geo = {
+      x0, x1, duration,
+      sx: (t) => x0 + (t / duration) * (x1 - x0),
+      tx: (x) => ((x - x0) / (x1 - x0)) * duration,
+      out: { top: yTop, bot: yMid, lo: ylo, hi: yhi, sy: (v) => yMid - ((v - ylo) / (yhi - ylo)) * (yMid - yTop) },
+      eff: { top: yBot, bot: yEnd, lo: ulo, hi: uhi, sy: (v) => yEnd - ((v - ulo) / (uhi - ulo)) * (yEnd - yBot) },
+    };
+  }
+
+  function hatch(c) {
+    const p = document.createElement('canvas');
+    p.width = p.height = 8 * dpr;
+    const q = p.getContext('2d');
+    q.strokeStyle = colors.bad; q.globalAlpha = 0.35; q.lineWidth = dpr;
+    q.beginPath(); q.moveTo(0, 8 * dpr); q.lineTo(8 * dpr, 0); q.stroke();
+    const pat = c.createPattern(p, 'repeat');
+    pat.setTransform?.(new DOMMatrix().scale(1 / dpr));
+    return pat;
+  }
+
+  // Draws t/v as a polyline, collapsing points that share a pixel column to
+  // their min and max so long runs stay fast.
+  function series(c, t, v, pane, from = 0, to = t.length - 1) {
+    const { sx } = geo, sy = pane.sy;
+    c.beginPath();
+    let started = false, col = -1, mn = 0, mx = 0, last = 0;
+    const flush = () => {
+      if (col < 0) return;
+      if (mn !== mx) { c.lineTo(col, sy(mn)); c.lineTo(col, sy(mx)); }
+      c.lineTo(col, sy(last));
+    };
+    for (let i = from; i <= to; i++) {
+      const y = v[i];
+      if (!Number.isFinite(y)) break;
+      const x = Math.round(sx(t[i]) * 2) / 2;
+      if (!started) { c.moveTo(x, sy(y)); started = true; col = x; mn = mx = last = y; continue; }
+      if (x === col) { mn = Math.min(mn, y); mx = Math.max(mx, y); last = y; continue; }
+      flush();
+      col = x; mn = mx = last = y;
+    }
+    flush();
+    c.stroke();
+  }
+
+  function clipPane(c, pane) {
+    c.save();
+    c.beginPath();
+    c.rect(geo.x0, pane.top, geo.x1 - geo.x0, pane.bot - pane.top);
+    c.clip();
+  }
+
+  function drawStatic() {
+    const c = lctx;
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, W, H);
+    c.fillStyle = colors.screen;
+    c.fillRect(0, 0, W, H);
+    if (!data) return;
+    computeGeo();
+    const { x0, x1, sx } = geo;
+    c.font = `10.5px ${colors.mono}`;
+    c.lineWidth = 1;
+
+    for (const [pane, name] of [[geo.out, 'OUTPUT  y'], [geo.eff, 'EFFORT  u']]) {
+      c.strokeStyle = colors.grid;
+      c.fillStyle = colors.muted;
+      c.textAlign = 'right'; c.textBaseline = 'middle';
+      for (const v of niceTicks(pane.lo, pane.hi, pane === geo.out ? 6 : 3)) {
+        const y = Math.round(pane.sy(v)) + 0.5;
+        c.beginPath(); c.moveTo(x0, y); c.lineTo(x1, y); c.stroke();
+        c.fillText(fmt(v), x0 - 6, y);
+      }
+      for (const t of niceTicks(0, data.duration, Math.max(2, Math.floor((x1 - x0) / 80)))) {
+        const x = Math.round(sx(t)) + 0.5;
+        c.beginPath(); c.moveTo(x, pane.top); c.lineTo(x, pane.bot); c.stroke();
+      }
+      if (pane.lo < 0 && pane.hi > 0) {
+        c.strokeStyle = colors.axis;
+        const y = Math.round(pane.sy(0)) + 0.5;
+        c.beginPath(); c.moveTo(x0, y); c.lineTo(x1, y); c.stroke();
+      }
+      c.strokeStyle = colors.axis;
+      c.strokeRect(x0 + 0.5, pane.top + 0.5, x1 - x0 - 1, pane.bot - pane.top - 1);
+      c.fillStyle = colors.muted;
+      c.textAlign = 'left'; c.textBaseline = 'bottom';
+      c.font = `600 10px ${colors.mono}`;
+      c.fillText(name, x0, pane.top - 5);
+      c.font = `10.5px ${colors.mono}`;
+    }
+    c.fillStyle = colors.muted;
+    c.textAlign = 'center'; c.textBaseline = 'top';
+    const xt = niceTicks(0, data.duration, Math.max(2, Math.floor((x1 - x0) / 80)));
+    xt.forEach((t, i) => {
+      const last = i === xt.length - 1;
+      c.textAlign = last && sx(t) > x1 - 20 ? 'right' : 'center';
+      c.fillText(last ? `${fmt(t)} s` : fmt(t), last && sx(t) > x1 - 20 ? x1 : sx(t), geo.eff.bot + 5);
+    });
+
+    drawSpec(c);
+
+    // Reference
+    clipPane(c, geo.out);
+    c.strokeStyle = colors.ink; c.lineWidth = 1.5; c.globalAlpha = 0.85;
+    c.setLineDash([]);
+    series(c, data.t, data.ref, geo.out);
+    c.restore();
+    c.globalAlpha = 1;
+
+    // Unselected traces, then the hovered one on top
+    const order = data.traces.filter((t) => !t.selected).sort((a, b) => (a.hot === b.hot ? 0 : a.hot ? 1 : -1));
+    for (const tr of order) {
+      c.strokeStyle = tr.color;
+      c.lineWidth = tr.hot ? 2 : 1.3;
+      c.globalAlpha = tr.hot ? 1 : 0.55;
+      clipPane(c, geo.out); series(c, tr.t, tr.y, geo.out); c.restore();
+      clipPane(c, geo.eff); series(c, tr.t, tr.u, geo.eff); c.restore();
+    }
+    c.globalAlpha = 1;
+    dirty = false;
+  }
+
+  function drawSpec(c) {
+    const { spec } = data;
+    const { sx, x0, x1 } = geo;
+    const pat = hatch(c);
+    const P = geo.out;
+    const region = (pane, t0, t1, v0, v1) => {
+      const xa = Math.max(x0, sx(t0)), xb = Math.min(x1, sx(t1));
+      const ya = Math.max(pane.top, Math.min(pane.bot, pane.sy(v0))), yb = Math.max(pane.top, Math.min(pane.bot, pane.sy(v1)));
+      if (xb <= xa || Math.abs(yb - ya) < 0.5) return;
+      c.fillStyle = pat;
+      c.fillRect(xa, Math.min(ya, yb), xb - xa, Math.abs(yb - ya));
+    };
+    const edge = (pane, t0, t1, v) => {
+      const y = pane.sy(v);
+      if (y < pane.top || y > pane.bot) return;
+      c.strokeStyle = colors.bad; c.globalAlpha = 0.8; c.lineWidth = 1; c.setLineDash([4, 3]);
+      c.beginPath(); c.moveTo(Math.max(x0, sx(t0)), y); c.lineTo(Math.min(x1, sx(t1)), y); c.stroke();
+      c.setLineDash([]); c.globalAlpha = 1;
+    };
+    if (spec.step) {
+      const { time, from, to, end } = spec.step;
+      const D = to - from, s = Math.sign(D) || 1;
+      const far = (dir) => (dir > 0 ? P.hi : P.lo);
+      // settling band (always shown, faint)
+      c.strokeStyle = colors.muted; c.globalAlpha = 0.5; c.setLineDash([2, 3]); c.lineWidth = 1;
+      for (const v of [to + spec.band * Math.abs(D), to - spec.band * Math.abs(D)]) {
+        const y = P.sy(v);
+        c.beginPath(); c.moveTo(sx(time), y); c.lineTo(sx(end), y); c.stroke();
+      }
+      c.setLineDash([]); c.globalAlpha = 1;
+      if (spec.overshootMax !== undefined) {
+        const lim = to + s * (spec.overshootMax / 100) * Math.abs(D);
+        region(P, time, end, lim, far(s)); edge(P, time, end, lim);
+      }
+      if (spec.undershootMax !== undefined) {
+        const lim = from - s * (spec.undershootMax / 100) * Math.abs(D);
+        region(P, time, end, lim, far(-s)); edge(P, time, end, lim);
+      }
+      if (spec.settleMax !== undefined && Number.isFinite(spec.settleMax)) {
+        const ts = time + spec.settleMax;
+        if (ts < end) {
+          const hi = to + spec.band * Math.abs(D), lo = to - spec.band * Math.abs(D);
+          region(P, ts, end, hi, P.hi); region(P, ts, end, lo, P.lo);
+          c.strokeStyle = colors.bad; c.globalAlpha = 0.8; c.setLineDash([4, 3]);
+          c.beginPath(); c.moveTo(sx(ts) + 0.5, P.top); c.lineTo(sx(ts) + 0.5, P.bot); c.stroke();
+          c.setLineDash([]); c.globalAlpha = 1;
+        }
+      }
+    }
+    const E = geo.eff;
+    if (spec.uMax !== undefined) {
+      const lo = spec.uMin ?? -spec.uMax;
+      region(E, 0, data.duration, spec.uMax, E.hi); edge(E, 0, data.duration, spec.uMax);
+      region(E, 0, data.duration, lo, E.lo); edge(E, 0, data.duration, lo);
+    }
+    // Markers for events
+    c.fillStyle = colors.ink2; c.font = `10px ${colors.mono}`; c.textAlign = 'center'; c.textBaseline = 'bottom';
+    const mark = (t, text) => {
+      const x = sx(t);
+      c.beginPath(); c.moveTo(x - 4, P.bot); c.lineTo(x + 4, P.bot); c.lineTo(x, P.bot - 6); c.closePath(); c.fill();
+      c.fillText(text, x, P.bot - 8);
+    };
+    if (spec.dist) mark(spec.dist.time, 'd');
+  }
+
+  function indexAt(t) {
+    const tt = data.t;
+    if (tt.length < 2) return 0;
+    const dt = tt[1] - tt[0];
+    return Math.max(0, Math.min(tt.length - 1, Math.round(t / dt)));
+  }
+
+  function draw() {
+    if (!W) return;
+    if (dirty) drawStatic();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(layer, 0, 0);
+    if (!data || !geo) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const sel = data.traces.find((t) => t.selected);
+    const scanT = hoverT ?? (playing ? phase * data.duration : null);
+    if (sel) {
+      const k = scanT === null ? sel.t.length - 1 : indexAt(scanT);
+      ctx.strokeStyle = sel.color; ctx.lineWidth = 2.25;
+      for (const pane of [geo.out, geo.eff]) {
+        const v = pane === geo.out ? sel.y : sel.u;
+        clipPane(ctx, pane);
+        ctx.globalAlpha = 1; series(ctx, sel.t, v, pane, 0, k);
+        if (k < sel.t.length - 1) { ctx.globalAlpha = 0.28; series(ctx, sel.t, v, pane, k, sel.t.length - 1); }
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (scanT !== null) {
+      const x = Math.round(geo.sx(scanT)) + 0.5;
+      ctx.strokeStyle = colors.scan; ctx.globalAlpha = 0.45; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, geo.out.top); ctx.lineTo(x, geo.out.bot); ctx.moveTo(x, geo.eff.top); ctx.lineTo(x, geo.eff.bot); ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (sel) {
+        const k = indexAt(scanT);
+        const dot = (pane, v) => {
+          if (!Number.isFinite(v)) return;
+          const y = pane.sy(v);
+          if (y < pane.top || y > pane.bot) return;
+          ctx.fillStyle = colors.screen; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
+          ctx.fillStyle = sel.color; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.fill();
+        };
+        dot(geo.out, sel.y[k]); dot(geo.eff, sel.u[k]);
+        const text = `t ${fmt(data.t[k])} s   r ${fmt(data.ref[k])}   y ${fmt(sel.y[k])}   u ${fmt(sel.u[k])}`;
+        ctx.font = `11px ${colors.mono}`;
+        const w = ctx.measureText(text).width + 12;
+        const bx = geo.x1 - w - 4, by = geo.out.top + 4;
+        ctx.fillStyle = colors.screen; ctx.globalAlpha = 0.9; ctx.fillRect(bx, by, w, 18); ctx.globalAlpha = 1;
+        ctx.fillStyle = colors.ink; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(text, bx + 6, by + 9);
+      }
+    }
+  }
+
+  function loop(now) {
+    raf = 0;
+    const dt = lastFrame ? Math.min(0.1, (now - lastFrame) / 1000) : 0;
+    lastFrame = now;
+    if (playing && hoverT === null) { phase += dt / sweepSeconds; if (phase > 1) phase -= 1; }
+    draw();
+    if (playing) raf = requestAnimationFrame(loop);
+    else lastFrame = 0;
+  }
+  function kick() { if (!raf) raf = requestAnimationFrame(loop); }
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!geo) return;
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    hoverT = x >= geo.x0 && x <= geo.x1 ? geo.tx(x) : null;
+    kick();
+  });
+  canvas.addEventListener('pointerleave', () => { hoverT = null; kick(); });
+  canvas.addEventListener('click', (e) => {
+    if (!geo || !data) return;
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    if (x < geo.x0 || x > geo.x1) return;
+    const k = indexAt(geo.tx(x));
+    let best = null;
+    for (const tr of data.traces) {
+      for (const [pane, v] of [[geo.out, tr.y], [geo.eff, tr.u]]) {
+        if (y < pane.top || y > pane.bot || !Number.isFinite(v[k])) continue;
+        const d = Math.abs(pane.sy(v[k]) - y);
+        if (d < 12 && (!best || d < best.d)) best = { d, idx: tr.idx };
+      }
+    }
+    if (best) handlers.onPick(best.idx);
+  });
+
+  new ResizeObserver(resize).observe(wrap);
+  readColors();
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  mq.addEventListener?.('change', () => { readColors(); draw(); });
+  new MutationObserver(() => { readColors(); draw(); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  document.fonts?.ready.then(() => { dirty = true; draw(); });
+
+  return {
+    setData(d) { data = d; dirty = true; draw(); },
+    setSweep(opts) {
+      if ('seconds' in opts) sweepSeconds = opts.seconds;
+      if ('playing' in opts) { playing = opts.playing; if (!playing) phase = 1; }
+      kick();
+    },
+    get playing() { return playing; },
+  };
+}
+
+return { createScope };
+})();
+// ---- ui/rack.js
+__mods['ui/rack.js'] = (() => {
+// The rack: the block diagram of the loop, and below it one module per slot
+// with its type selector and knobs. The controller module edits the selected
+// candidate; every other module edits the shared system (or the candidate's
+// own override of that slot, if it has one).
+
+const { SLOTS, BLOCKS, blockDef, paramMax } = __mods['core/blocks.js'];
+const { fmt } = __mods['core/project.js'];
+const { createKnob } = __mods['ui/knob.js'];
+const SIM_PARAMS = [
+  { key: 'duration', label: 'length', default: 20, min: 0.1, max: 1000, scale: 'log', unit: 's' },
+  { key: 'sampleTime', label: 'Ts', default: 0.01, min: 0.0001, max: 1, scale: 'log', unit: 's' },
+];
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function summary(block, n = 3) {
+  const def = blockDef(block.slot, block.type);
+  return def.params.filter((p) => p.kind !== 'vector').slice(0, n)
+    .map((p) => `${p.label} ${def.params.length && p.scale === 'log0' && block.params[p.key] === 0 ? 'off' : fmt(block.params[p.key])}`).join(' · ');
+}
+
+function createRack(root, app) {
+  const diagramWrap = document.createElement('div');
+  diagramWrap.className = 'diagram-wrap';
+  const modules = document.createElement('div');
+  modules.className = 'modules';
+  root.append(diagramWrap, modules);
+  const moduleEls = {};
+
+  function blockFor(slot) {
+    const p = app.project, c = app.candidate;
+    if (slot === 'controller') return c ? { ...c.controller, slot } : null;
+    return { ...(c?.[slot] ?? p.system[slot]), slot };
+  }
+
+  function drawDiagram() {
+    const c = app.candidate;
+    const b = Object.fromEntries(SLOTS.map((s) => [s.key, blockFor(s.key)]));
+    const box = (slot, x, y, w, h) => {
+      const blk = b[slot];
+      const def = blk ? blockDef(slot, blk.type) : null;
+      const color = slot === 'controller' && c ? app.colorOf(c) : null;
+      const label = SLOTS.find((s) => s.key === slot).label.toUpperCase();
+      return `<g class="blk" data-slot="${slot}" tabindex="0" role="button" aria-label="${label}: ${esc(def ? def.label : 'none')}">
+        <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="5" ${color ? `style="stroke:${color};stroke-width:2"` : ''}></rect>
+        <text class="t-slot" x="${x + 8}" y="${y + 13}">${label}</text>
+        <text class="t-type" x="${x + 8}" y="${y + 29}">${esc(def ? def.label : '—')}</text>
+        <text class="t-par" x="${x + 8}" y="${y + h - 7}">${esc(blk ? summary(blk, slot === 'controller' ? 3 : 2) : '')}</text>
+      </g>`;
+    };
+    const arrow = (x, y, dir = 'r') => {
+      const p = { r: `${x},${y} ${x - 7},${y - 4} ${x - 7},${y + 4}`, d: `${x},${y} ${x - 4},${y - 7} ${x + 4},${y - 7}`, u: `${x},${y} ${x - 4},${y + 7} ${x + 4},${y + 7}` }[dir];
+      return `<polygon class="arrow" points="${p}"></polygon>`;
+    };
+    const wire = (d) => `<path class="wire" d="${d}"></path>`;
+    const sum = (x, y) => `<circle class="sum" cx="${x}" cy="${y}" r="10"></circle><path class="wire" d="M${x - 5},${y} H${x + 5} M${x},${y - 5} V${y + 5}"></path>`;
+    const t = (x, y, s, cls = 't-sig', anchor = 'middle') => `<text class="${cls}" x="${x}" y="${y}" text-anchor="${anchor}">${s}</text>`;
+    const Y = 82, FB = 138;
+    const noiseOn = b.noise.type !== 'none';
+    const svg = `<svg class="diagram" viewBox="0 0 1000 164" role="group" aria-label="Block diagram of the control loop">
+      ${box('reference', 6, Y - 25, 128, 50)}
+      ${wire(`M134,${Y} H150`)}${arrow(150, Y)}
+      ${sum(160, Y)}
+      ${t(150, Y + 22, '−')}
+      ${wire(`M170,${Y} H203`)}${arrow(203, Y)}${t(186, Y - 6, 'e')}
+      ${box('controller', 203, Y - 30, 176, 60)}
+      ${wire(`M379,${Y} H407`)}${arrow(407, Y)}${t(393, Y - 6, 'u')}
+      ${box('actuator', 407, Y - 25, 130, 50)}
+      ${wire(`M537,${Y} H565`)}${arrow(565, Y)}
+      ${sum(575, Y)}
+      ${box('disturbance', 515, 1, 120, 46)}
+      ${wire(`M575,47 V${Y - 10}`)}${arrow(575, Y - 10, 'd')}${t(583, Y - 16, 'd', 't-sig', 'start')}
+      ${wire(`M585,${Y} H613`)}${arrow(613, Y)}
+      ${box('plant', 613, Y - 25, 160, 50)}
+      ${wire(`M773,${Y} H850`)}${arrow(850, Y)}
+      <circle cx="812" cy="${Y}" r="2.6" class="arrow"></circle>
+      ${t(864, Y + 4, 'y', 't-sig', 'start')}
+      ${wire(`M812,${Y} V${FB} H735`)}<polygon class="arrow" points="728,${FB} 735,${FB - 4} 735,${FB + 4}"></polygon>
+      ${box('sensor', 600, FB - 22, 128, 44)}
+      ${wire(`M600,${FB} H160 V${Y + 10}`)}${arrow(160, Y + 10, 'u')}
+      ${t(330, FB - 6, 'y<tspan baseline-shift="sub" font-size="8">m</tspan>')}
+      ${noiseOn ? `${sum(470, FB)}${wire(`M470,${FB + 24} V${FB + 10}`)}<polygon class="arrow" points="470,${FB + 10} 466,${FB + 17} 474,${FB + 17}"></polygon>
+        <g class="blk lite" data-slot="noise" tabindex="0" role="button" aria-label="Noise: ${esc(blockDef('noise', b.noise.type).label)}">
+          <rect x="480" y="${FB + 8}" width="110" height="18" rx="3" style="fill:transparent;stroke:none"></rect>
+          ${t(484, FB + 21, `n · ${esc(summary(b.noise, 1))}`, 't-par', 'start')}
+        </g>` : ''}
+    </svg>`;
+    diagramWrap.innerHTML = svg;
+    diagramWrap.querySelectorAll('.blk').forEach((g) => {
+      const slot = g.dataset.slot;
+      const go = () => focusModule(slot);
+      g.addEventListener('click', go);
+      g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+      g.addEventListener('pointerenter', () => moduleEls[slot]?.classList.add('hl'));
+      g.addEventListener('pointerleave', () => moduleEls[slot]?.classList.remove('hl'));
+    });
+  }
+
+  function focusModule(slot) {
+    const m = moduleEls[slot];
+    if (!m) return;
+    m.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    m.classList.add('flash');
+    setTimeout(() => m.classList.remove('flash'), 600);
+    m.querySelector('svg[role="slider"], select')?.focus({ preventScroll: true });
+  }
+
+  function makeModule(slot) {
+    const meta = SLOTS.find((s) => s.key === slot);
+    const blk = blockFor(slot);
+    const el = document.createElement('div');
+    el.className = 'module';
+    el.dataset.slot = slot;
+    if (!blk) { el.innerHTML = `<div class="mod-head"><span class="label">${meta.label}</span></div><div class="empty">Add a candidate first.</div>`; return el; }
+    const def = blockDef(slot, blk.type);
+    const cand = app.candidate;
+    const color = slot === 'controller' ? app.colorOf(cand) : null;
+    if (color) { el.classList.add('cand'); el.style.setProperty('--c', color); }
+
+    const head = document.createElement('div');
+    head.className = 'mod-head';
+    const lab = document.createElement('span');
+    lab.className = 'label';
+    lab.textContent = meta.label;
+    if (slot === 'controller') lab.title = `Edits the selected candidate, ${cand.name}`;
+    const sel = document.createElement('select');
+    sel.className = 'mod-type';
+    sel.id = `type-${slot}`;
+    sel.setAttribute('aria-label', `${meta.label} type`);
+    for (const [type, d] of Object.entries(BLOCKS[slot])) {
+      const o = document.createElement('option');
+      o.value = type; o.textContent = d.label;
+      sel.append(o);
+    }
+    sel.value = blk.type;
+    sel.addEventListener('change', () => app.retype(slot, sel.value));
+    head.append(lab, sel);
+    if (slot === 'controller') {
+      const tune = document.createElement('button');
+      tune.className = 'btn small';
+      tune.id = 'tune-btn';
+      tune.textContent = app.tuning ? 'Stop' : 'Auto-tune';
+      tune.title = 'Search the tunable gains for the best score under the goal; the result becomes a new candidate (T)';
+      tune.addEventListener('click', () => app.toggleTune());
+      head.append(tune);
+    }
+    el.append(head);
+
+    if (slot !== 'controller' && cand?.[slot]) {
+      const who = document.createElement('div');
+      who.className = 'mod-cand';
+      who.textContent = `Only for ${cand.name}`;
+      el.append(who);
+    }
+    const f = document.createElement('div');
+    f.className = 'mod-formula';
+    f.textContent = def.formula;
+    f.title = def.formula;
+    el.append(f);
+
+    const knobs = document.createElement('div');
+    knobs.className = 'knobs';
+    const ctx = { duration: app.project.sim.duration };
+    for (const p of def.params) {
+      if (p.kind === 'vector') knobs.append(vectorField(slot, p, blk.params[p.key]));
+      else {
+        const k = createKnob({
+          param: p, value: blk.params[p.key], max: paramMax(p, ctx), color,
+          onStart: () => app.beginEdit(),
+          onInput: (v) => app.setParam(slot, p.key, v, true),
+          onCommit: (v) => app.setParam(slot, p.key, v, false),
+        });
+        knobs.append(k.el);
+      }
+    }
+    el.append(knobs);
+    el.addEventListener('pointerenter', () => diagramWrap.querySelector(`.blk[data-slot="${slot}"]`)?.classList.add('hl'));
+    el.addEventListener('pointerleave', () => diagramWrap.querySelector(`.blk[data-slot="${slot}"]`)?.classList.remove('hl'));
+    return el;
+  }
+
+  function vectorField(slot, p, value) {
+    const wrap = document.createElement('label');
+    wrap.className = 'vec';
+    const lab = document.createElement('span');
+    lab.className = 'kl';
+    lab.style.fontSize = '11.5px';
+    lab.style.color = 'var(--ink-2)';
+    lab.textContent = `${p.label} (highest power first)`;
+    const input = document.createElement('input');
+    input.className = 'field';
+    input.id = `vec-${slot}-${p.key}`;
+    input.value = value.join(', ');
+    input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); });
+    input.addEventListener('change', () => {
+      const parts = input.value.split(/[\s,;]+/).filter(Boolean).map((x) => Number(x.replace('−', '-')));
+      if (!parts.length || !parts.every(Number.isFinite)) { input.classList.add('err'); app.toast('Enter numbers separated by commas, highest power of s first.'); return; }
+      input.classList.remove('err');
+      app.beginEdit();
+      if (!app.setParam(slot, p.key, parts, false)) input.classList.add('err');
+    });
+    wrap.append(lab, input);
+    return wrap;
+  }
+
+  function simModule() {
+    const el = document.createElement('div');
+    el.className = 'module';
+    el.innerHTML = '<div class="mod-head"><span class="label">Simulation</span></div><div class="mod-formula">window and controller sample time</div>';
+    const knobs = document.createElement('div');
+    knobs.className = 'knobs';
+    for (const p of SIM_PARAMS) {
+      const k = createKnob({
+        param: p, value: app.project.sim[p.key], max: p.max,
+        onStart: () => app.beginEdit(),
+        onInput: (v) => app.setSim(p.key, v, true),
+        onCommit: (v) => app.setSim(p.key, v, false),
+      });
+      knobs.append(k.el);
+    }
+    el.append(knobs);
+    return el;
+  }
+
+  function render() {
+    drawDiagram();
+    const focused = document.activeElement;
+    const focusId = focused && modules.contains(focused) ? focused.id : null;
+    modules.textContent = '';
+    for (const s of SLOTS) {
+      const el = makeModule(s.key);
+      moduleEls[s.key] = el;
+      modules.append(el);
+    }
+    modules.append(simModule());
+    if (focusId) document.getElementById(focusId)?.focus();
+  }
+
+  return { render, refresh: drawDiagram, focusModule };
+}
+
+return { createRack };
+})();
+// ---- ui/candidates.js
+__mods['ui/candidates.js'] = (() => {
+// The side column: the goal editor and the candidate table.
+
+const { METRICS, METRIC } = __mods['core/metrics.js'];
+const { fmt, describeController } = __mods['core/project.js'];
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const unitOf = (k) => (METRIC[k].unit ? ` ${METRIC[k].unit}` : '');
+
+function metricSelect(id, value, exclude = []) {
+  const opts = METRICS.filter((m) => m.key === value || !exclude.includes(m.key))
+    .map((m) => `<option value="${m.key}" ${m.key === value ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
+  return `<select class="field" id="${id}" aria-label="Metric">${opts}</select>`;
+}
+
+function createGoalPanel(root, app) {
+  function render() {
+    const g = app.project.goal;
+    const min = Object.entries(g.minimize);
+    const cons = Object.entries(g.subjectTo);
+    let html = '<div class="label">Goal</div>';
+    min.forEach(([k, w], i) => {
+      html += `<div class="goal-row">
+        <span class="word">${i === 0 ? 'Minimize' : '+'}</span>
+        ${metricSelect(`gm-${i}`, k, min.map(([q]) => q))}
+        <span class="word" style="min-width:0">×</span>
+        <input class="field" id="gw-${i}" value="${fmt(w)}" aria-label="Weight" title="Weight of this metric in the score">
+        ${min.length > 1 ? `<button class="x" data-rm-min="${k}" aria-label="Remove term" title="Remove term">✕</button>` : ''}
+      </div>`;
+    });
+    html += '<div class="goal-row"><span class="word">subject to</span>';
+    if (!cons.length) html += '<span class="word" style="color:var(--muted)">no constraints</span>';
+    html += '</div>';
+    cons.forEach(([k, b], i) => {
+      const op = 'max' in b ? 'max' : 'min';
+      html += `<div class="goal-row">
+        <span class="word"></span>
+        ${metricSelect(`gc-${i}`, k, cons.map(([q]) => q))}
+        <select class="field" id="go-${i}" aria-label="Bound"><option value="max" ${op === 'max' ? 'selected' : ''}>≤</option><option value="min" ${op === 'min' ? 'selected' : ''}>≥</option></select>
+        <input class="field" id="gv-${i}" value="${fmt(b[op])}" aria-label="Limit">
+        <span class="word" style="min-width:0;color:var(--muted)">${esc(METRIC[k].unit)}</span>
+        <button class="x" data-rm-con="${k}" aria-label="Remove constraint" title="Remove constraint">✕</button>
+      </div>`;
+    });
+    html += `<div class="goal-row"><span class="word"></span>
+      <button class="link" id="add-con">Add constraint</button>
+      <button class="link" id="add-term">Add objective term</button>
+      <span style="margin-left:auto" class="word" title="Settling band, % of the step">band ±<input class="field" id="gband" style="width:44px" value="${fmt(g.settlingBand * 100)}" aria-label="Settling band in percent"> %</span>
+    </div>`;
+    root.innerHTML = html;
+
+    const keys = min.map(([k]) => k);
+    min.forEach(([k], i) => {
+      root.querySelector(`#gm-${i}`).addEventListener('change', (e) => app.editGoal((goal) => {
+        const entries = Object.entries(goal.minimize).map(([q, w]) => (q === k ? [e.target.value, w] : [q, w]));
+        goal.minimize = Object.fromEntries(entries);
+      }));
+      numberInput(`#gw-${i}`, (v) => app.editGoal((goal) => { goal.minimize[k] = v; }));
+    });
+    cons.forEach(([k, b], i) => {
+      root.querySelector(`#gc-${i}`).addEventListener('change', (e) => app.editGoal((goal) => {
+        goal.subjectTo = Object.fromEntries(Object.entries(goal.subjectTo).map(([q, c]) => (q === k ? [e.target.value, c] : [q, c])));
+      }));
+      root.querySelector(`#go-${i}`).addEventListener('change', (e) => app.editGoal((goal) => {
+        const v = b.max ?? b.min;
+        goal.subjectTo[k] = { [e.target.value]: v };
+      }));
+      numberInput(`#gv-${i}`, (v) => app.editGoal((goal) => { goal.subjectTo[k] = { ['max' in b ? 'max' : 'min']: v }; }));
+    });
+    root.querySelectorAll('[data-rm-min]').forEach((btn) => btn.addEventListener('click', () => app.editGoal((goal) => { delete goal.minimize[btn.dataset.rmMin]; })));
+    root.querySelectorAll('[data-rm-con]').forEach((btn) => btn.addEventListener('click', () => app.editGoal((goal) => { delete goal.subjectTo[btn.dataset.rmCon]; })));
+    root.querySelector('#add-con').addEventListener('click', () => app.editGoal((goal) => {
+      const free = ['overshoot', 'settlingTime', 'uPeak', 'riseTime', 'uTV', ...METRICS.map((m) => m.key)].find((q) => !(q in goal.subjectTo));
+      if (free) goal.subjectTo[free] = { max: defaultLimit(free, app) };
+    }));
+    root.querySelector('#add-term').addEventListener('click', () => app.editGoal((goal) => {
+      const free = ['uTV', 'iae', 'settlingTime', ...METRICS.map((m) => m.key)].find((q) => !keys.includes(q));
+      if (free) goal.minimize[free] = 0.1;
+    }));
+    numberInput('#gband', (v) => app.editGoal((goal) => { goal.settlingBand = Math.max(0.0001, v / 100); }));
+  }
+
+  function numberInput(sel, apply) {
+    const el = root.querySelector(sel);
+    el.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') el.blur(); });
+    el.addEventListener('change', () => {
+      const v = Number(el.value.replace(',', '.').replace('−', '-'));
+      if (!Number.isFinite(v)) { app.toast('Enter a number.'); render(); return; }
+      apply(v);
+    });
+  }
+
+  return { render };
+}
+
+// A starting limit near what the selected candidate achieves, so a new
+// constraint is meaningful straight away.
+function defaultLimit(key, app) {
+  const v = app.runOf(app.candidate)?.metrics[key];
+  if (Number.isFinite(v) && v > 0) return Number(v.toPrecision(2));
+  return { overshoot: 5, settlingTime: 5, uPeak: 5 }[key] ?? 1;
+}
+
+function createCandidateTable(root, app) {
+  const head = document.createElement('div');
+  head.className = 'cands-head';
+  head.innerHTML = `<span class="label">Candidates</span>
+    <button class="btn small" id="c-sort" title="Order the list best first">Sort by score</button>
+    <button class="btn small primary" id="c-new" title="Duplicate the selected candidate (N)">Duplicate</button>`;
+  const wrap = document.createElement('div');
+  wrap.className = 'table-wrap';
+  root.append(head, wrap);
+  head.querySelector('#c-new').addEventListener('click', () => app.duplicate());
+  head.querySelector('#c-sort').addEventListener('click', () => app.sortByScore());
+
+  let renaming = null;
+
+  function render() {
+    const p = app.project;
+    if (!p.candidates.length) {
+      wrap.innerHTML = '<div class="empty">No candidates yet. Press <kbd>N</kbd> or Duplicate to add one.</div>';
+      return;
+    }
+    const cons = Object.entries(p.goal.subjectTo);
+    const objLabel = Object.keys(p.goal.minimize).length === 1 ? METRIC[Object.keys(p.goal.minimize)[0]].short : 'Score';
+    const best = app.bestIndex();
+    let html = `<table class="ct"><thead><tr><th class="l" title="Show in the scope"></th><th class="l">Name</th><th title="Objective value; lower is better">${esc(objLabel)}</th>`;
+    for (const [k, b] of cons) html += `<th title="${esc(METRIC[k].label)}">${esc(METRIC[k].short)} <span class="lim">${'max' in b ? '≤' : '≥'}${fmt(b.max ?? b.min)}</span></th>`;
+    html += '<th class="l"></th></tr></thead><tbody>';
+    p.candidates.forEach((c, i) => {
+      const run = app.runOf(c);
+      const ev = run?.evaluation;
+      const color = app.colorOf(c);
+      const sel = i === app.sel;
+      html += `<tr data-i="${i}" class="${sel ? 'sel' : ''} ${c.checked ? '' : 'off'}" style="--c:${color}">
+        <td class="chk"><input type="checkbox" ${c.checked ? 'checked' : ''} data-chk="${i}" aria-label="Show ${esc(c.name)} in the scope"></td>
+        <td class="name">${renaming === i ? `<input class="rename" id="rename" value="${esc(c.name)}" aria-label="Candidate name">` : `<div class="nm"><span class="swatch"></span><span title="Double-click to rename">${esc(c.name)}</span></div>`}
+          <div class="sum">${esc(describeController(c.controller))}</div></td>
+        <td class="score">${ev ? scoreCell(ev, i === best) : '…'}</td>`;
+      for (const [k] of cons) {
+        const chk = ev?.checks.find((x) => x.metric === k);
+        html += `<td class="${chk && !chk.ok ? 'bad' : ''}">${chk ? fmt(chk.value) : '…'}</td>`;
+      }
+      html += `<td class="l"><button class="x" data-del="${i}" aria-label="Delete ${esc(c.name)}" title="Delete (Del)">✕</button></td></tr>`;
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+
+    wrap.querySelectorAll('tbody tr').forEach((tr) => {
+      const i = Number(tr.dataset.i);
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('input, button')) return;
+        app.select(i);
+      });
+      tr.addEventListener('dblclick', (e) => {
+        if (!e.target.closest('td.name')) return;
+        renaming = i; render();
+        const inp = wrap.querySelector('#rename');
+        inp.focus(); inp.select();
+      });
+      tr.addEventListener('pointerenter', () => app.setHot(i));
+      tr.addEventListener('pointerleave', () => app.setHot(null));
+    });
+    wrap.querySelectorAll('[data-chk]').forEach((cb) => cb.addEventListener('change', () => app.toggleChecked(Number(cb.dataset.chk))));
+    wrap.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => app.remove(Number(b.dataset.del))));
+    const inp = wrap.querySelector('#rename');
+    if (inp) {
+      const done = (save) => {
+        const i = renaming;
+        renaming = null;
+        if (save && inp.value.trim()) app.rename(i, inp.value.trim()); else render();
+      };
+      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); });
+      inp.addEventListener('blur', () => { if (renaming !== null) done(true); });
+    }
+    wrap.querySelector('tr.sel')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function scoreCell(ev, isBest) {
+    if (ev.unstable) return '<span class="bad-i">unstable ✕</span>';
+    const icon = ev.feasible ? '<span class="ok-i" title="Meets every constraint">✓</span>' : '<span class="bad-i" title="Violates a constraint">✕</span>';
+    return `${isBest ? '<span class="star" title="Best feasible candidate">BEST</span>' : ''}${fmt(ev.score)} ${icon}`;
+  }
+
+  return { render };
+}
+
+function renderReadout(root, app) {
+  const c = app.candidate;
+  const run = c && app.runOf(c);
+  if (!run) { root.innerHTML = ''; return; }
+  const g = app.project.goal;
+  const shown = ['riseTime', 'overshoot', 'settlingTime', 'steadyStateError', 'itae', 'iae', 'uPeak', 'uTV'];
+  for (const k of [...Object.keys(g.minimize), ...Object.keys(g.subjectTo)]) if (!shown.includes(k)) shown.push(k);
+  root.innerHTML = shown.map((k) => {
+    const m = METRIC[k];
+    const v = run.metrics[k];
+    const chk = run.evaluation.checks.find((x) => x.metric === k);
+    const lim = chk ? ` <span class="lim">${'max' in chk ? '≤' : '≥'}${fmt(chk.max ?? chk.min)}</span>` : '';
+    const cls = ['cell', chk && !chk.ok ? 'bad' : '', k in g.minimize ? 'obj' : ''].join(' ');
+    return `<div class="${cls}" title="${esc(m.label)}: ${esc(m.desc)}"><div class="k">${esc(m.label)}</div><div class="v">${fmt(v)}${esc(unitOf(k))}${lim}</div></div>`;
+  }).join('');
+}
+
+return { createGoalPanel, createCandidateTable, renderReadout };
+})();
+// ---- ui/app.js
+__mods['ui/app.js'] = (() => {
+// The app: state, history, persistence, and wiring between the panels.
+// window.loopTuner is the browser API for agents driving the page.
+
+const { SLOTS, retypeBlock, normalizeBlock, blockDef } = __mods['core/blocks.js'];
+const { tf2ss } = __mods['core/poly.js'];
+const { simulate } = __mods['core/sim.js'];
+const { computeMetrics, METRICS } = __mods['core/metrics.js'];
+const { normalizeProject, evaluateCandidate, nextColor, uniqueName, fmt, describeController, findCandidate } = __mods['core/project.js'];
+const { compareEvals } = __mods['core/goal.js'];
+const { tuneCandidate } = __mods['core/tune.js'];
+const { EXAMPLES } = __mods['core/examples.js'];
+const { createScope } = __mods['ui/scope.js'];
+const { createRack } = __mods['ui/rack.js'];
+const { createGoalPanel, createCandidateTable, renderReadout } = __mods['ui/candidates.js'];
+const STORE_KEY = 'loop-tuner:autosave';
+const SERIES = ['--s1', '--s2', '--s3', '--s4', '--s5', '--s6', '--s7', '--s8'];
+
+function startApp() {
+  const $ = (id) => document.getElementById(id);
+  const embeddedEl = $('loop-tuner-project');
+  const embeddedText = embeddedEl?.textContent.trim() || '';
+  const shellTemplate = $('lt-shell').outerHTML;
+  // Inside a frame (an embedded preview) downloads are often blocked: offer copying instead.
+  const framed = window.self !== window.top;
+  document.querySelectorAll(framed ? '[data-standalone]' : '[data-framed]').forEach((el) => { el.hidden = true; });
+
+  const app = {
+    project: null,
+    sel: 0,
+    hot: null,
+    tuning: null,
+    stash: {},
+    get candidate() { return this.project.candidates[this.sel] ?? null; },
+  };
+
+  // Evaluation cache keyed by everything a run depends on.
+  const cache = new Map();
+  function keyOf(c) {
+    const loop = {};
+    for (const s of SLOTS) loop[s.key] = s.key === 'controller' ? c.controller : (c[s.key] ?? app.project.system[s.key]);
+    return JSON.stringify([loop, app.project.sim, app.project.goal]);
+  }
+  app.runOf = (c) => {
+    if (!c) return null;
+    const k = keyOf(c);
+    let run = cache.get(k);
+    if (!run) {
+      try { run = evaluateCandidate(app.project, c); } catch (err) { run = { error: err.message }; }
+      cache.set(k, run);
+      if (cache.size > 300) cache.delete(cache.keys().next().value);
+    }
+    return run.error ? null : run;
+  };
+  app.colorOf = (c) => getComputedStyle(document.documentElement).getPropertyValue(SERIES[(c?.color ?? 0) % SERIES.length]).trim() || '#2a78d6';
+  app.bestIndex = () => {
+    let best = -1;
+    app.project.candidates.forEach((c, i) => {
+      const ev = app.runOf(c)?.evaluation;
+      if (!ev?.feasible) return;
+      if (best < 0 || compareEvals(ev, app.runOf(app.project.candidates[best]).evaluation) < 0) best = i;
+    });
+    return best;
+  };
+
+  // History: snapshots of the project, taken before each edit.
+  const undoStack = [], redoStack = [];
+  const snap = () => JSON.stringify({ project: app.project, sel: app.sel });
+  let editOpen = false;
+  app.beginEdit = () => {
+    if (editOpen) return;
+    undoStack.push(snap());
+    if (undoStack.length > 200) undoStack.shift();
+    redoStack.length = 0;
+    editOpen = true;
+  };
+  const endEdit = () => { editOpen = false; };
+  function restore(s) {
+    const o = JSON.parse(s);
+    app.project = o.project; app.sel = Math.min(o.sel, app.project.candidates.length - 1);
+    renderAll();
+  }
+  app.undo = () => { if (!undoStack.length) return; redoStack.push(snap()); restore(undoStack.pop()); toast('Undone'); };
+  app.redo = () => { if (!redoStack.length) return; undoStack.push(snap()); restore(redoStack.pop()); toast('Redone'); };
+
+  // Persistence: the page remembers the working project per embedded project.
+  let saveTimer = null;
+  function autosave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try { localStorage.setItem(STORE_KEY, JSON.stringify({ base: embeddedText.length + ':' + hash(embeddedText), project: app.project, sel: app.sel })); } catch { /* storage unavailable */ }
+    }, 300);
+  }
+  function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+
+  // Mutations
+  function targetBlock(slot) {
+    const c = app.candidate;
+    if (slot === 'controller') return c ? ['candidate', c, 'controller'] : null;
+    if (c?.[slot]) return ['candidate', c, slot];
+    return ['system', app.project.system, slot];
+  }
+  app.setParam = (slot, key, value, live) => {
+    const t = targetBlock(slot);
+    if (!t) return false;
+    const [, owner, k] = t;
+    const next = { type: owner[k].type, params: { ...owner[k].params, [key]: value } };
+    try {
+      const block = normalizeBlock(slot, next);
+      const def = blockDef(slot, block.type);
+      if (def.tf) { const tf = def.tf(block.params); tf2ss(tf.num, tf.den); }
+      owner[k] = block;
+    } catch (err) { toast(err.message); return false; }
+    if (!live) endEdit();
+    update({ structure: false });
+    return true;
+  };
+  app.setSim = (key, value, live) => {
+    const sim = { ...app.project.sim, [key]: value };
+    if (!(sim.sampleTime > 0) || sim.sampleTime >= sim.duration) { if (!live) toast('The sample time must be shorter than the simulation length.'); return; }
+    if (sim.duration / sim.sampleTime > 200000) { if (!live) toast('Too many samples: raise Ts or shorten the window.'); return; }
+    app.project.sim = sim;
+    if (!live) { endEdit(); update({ structure: true }); } else update({ structure: false });
+  };
+  app.retype = (slot, type) => {
+    const t = targetBlock(slot);
+    if (!t) return;
+    const [, owner, k] = t;
+    app.beginEdit();
+    const old = owner[k];
+    app.stash[slot] = { ...(app.stash[slot] ?? {}), [old.type]: old.params };
+    owner[k] = retypeBlock(slot, old, type, app.stash[slot]);
+    endEdit();
+    update({ structure: true });
+  };
+  app.editGoal = (fn) => {
+    app.beginEdit();
+    const goal = structuredClone(app.project.goal);
+    fn(goal);
+    try { app.project = normalizeProject({ ...app.project, goal }); } catch (err) { toast(err.message); }
+    endEdit();
+    update({ structure: true, goal: true });
+  };
+  app.select = (i) => {
+    if (i < 0 || i >= app.project.candidates.length || i === app.sel) return;
+    app.sel = i;
+    app.project.selected = app.candidate.name;
+    update({ structure: true });
+  };
+  app.setHot = (i) => { if (app.hot === i) return; app.hot = i; drawScope(); };
+  app.toggleChecked = (i) => {
+    app.beginEdit();
+    const c = app.project.candidates[i];
+    c.checked = !c.checked;
+    endEdit();
+    update({ structure: false });
+  };
+  app.duplicate = (from = app.candidate, patch = {}) => {
+    app.beginEdit();
+    const p = app.project;
+    const base = from ? structuredClone(from) : { controller: normalizeBlock('controller', { type: 'PID' }) };
+    const c = { ...base, name: uniqueName(p, patch.name ?? (from ? from.name : 'Candidate')), checked: true, color: nextColor(p.candidates), ...patch };
+    delete c.note;
+    const at = from ? p.candidates.indexOf(from) + 1 : p.candidates.length;
+    p.candidates.splice(at, 0, c);
+    app.sel = at;
+    endEdit();
+    update({ structure: true });
+    return c;
+  };
+  app.remove = (i) => {
+    const p = app.project;
+    if (i < 0 || i >= p.candidates.length) return;
+    app.beginEdit();
+    const [gone] = p.candidates.splice(i, 1);
+    if (app.sel >= p.candidates.length) app.sel = p.candidates.length - 1;
+    endEdit();
+    update({ structure: true });
+    toast(`Deleted ${gone.name}. Ctrl+Z brings it back.`);
+  };
+  app.rename = (i, name) => {
+    app.beginEdit();
+    const c = app.project.candidates[i];
+    c.name = uniqueName({ candidates: app.project.candidates.filter((x) => x !== c) }, name);
+    endEdit();
+    update({ structure: true });
+  };
+  app.sortByScore = () => {
+    app.beginEdit();
+    const cur = app.candidate;
+    const p = app.project;
+    p.candidates = p.candidates.map((c) => [c, app.runOf(c)?.evaluation]).sort((a, b) => (a[1] && b[1] ? compareEvals(a[1], b[1]) : 0)).map(([c]) => c);
+    app.sel = Math.max(0, p.candidates.indexOf(cur));
+    endEdit();
+    update({ structure: true });
+  };
+
+  // Auto-tune runs as a slice of evaluations per frame, so the page stays live
+  // and the scope shows the search converging.
+  app.toggleTune = () => {
+    if (app.tuning) { stopTune(true); return; }
+    const c = app.candidate;
+    if (!c) return;
+    let gen;
+    try { gen = tuneCandidate(app.project, c, { maxEvals: 300 }); } catch (err) { toast(err.message); return; }
+    const preview = app.duplicate(c, { name: `${c.name} tuned` });
+    app.tuning = { gen, preview, evals: 0 };
+    renderRack();
+    const step = () => {
+      if (!app.tuning) return;
+      const t0 = performance.now();
+      let s;
+      do { s = app.tuning.gen.next(); } while (!s.done && performance.now() - t0 < 14);
+      const prog = s.value;
+      if (prog?.best) {
+        preview.controller = { type: preview.controller.type, params: { ...prog.best.params } };
+        app.tuning.evals = prog.evals;
+        update({ structure: false });
+        $('tune-btn').textContent = s.done ? 'Auto-tune' : `Stop · ${prog.evals}`;
+      }
+      if (s.done) stopTune(false);
+      else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  };
+  function stopTune(cancelled) {
+    const t = app.tuning;
+    app.tuning = null;
+    update({ structure: true });
+    const ev = app.runOf(t.preview)?.evaluation;
+    toast(`${cancelled ? 'Stopped' : 'Tuned'} after ${t.evals} runs: ${describeController(t.preview.controller)} · score ${fmt(ev?.score)} ${ev?.feasible ? '✓' : '(infeasible)'}`);
+  }
+
+  // Rendering
+  const scope = createScope($('scope'), { onPick: (i) => app.select(i) });
+  const rack = createRack($('rack'), app);
+  const goalPanel = createGoalPanel($('goal'), app);
+  const table = createCandidateTable($('cands'), app);
+  const renderRack = () => rack.render();
+
+  function drawScope() {
+    const p = app.project;
+    const traces = [];
+    p.candidates.forEach((c, i) => {
+      if (!c.checked && i !== app.sel) return;
+      const run = app.runOf(c);
+      if (!run) return;
+      traces.push({ idx: i, color: app.colorOf(c), t: run.result.t, y: run.result.y, u: run.result.u, selected: i === app.sel, hot: i === app.hot });
+    });
+    const selRun = app.runOf(app.candidate) ?? (traces[0] && app.runOf(p.candidates[traces[0].idx]));
+    const g = p.goal.subjectTo;
+    const spec = { band: p.goal.settlingBand, step: selRun?.metrics.events.step ?? null, dist: selRun?.metrics.events.disturbance ?? null };
+    if (g.overshoot?.max !== undefined) spec.overshootMax = g.overshoot.max;
+    if (g.undershoot?.max !== undefined) spec.undershootMax = g.undershoot.max;
+    if (g.settlingTime?.max !== undefined) spec.settleMax = g.settlingTime.max;
+    if (g.uPeak?.max !== undefined) spec.uMax = g.uPeak.max;
+    if (!selRun) { scope.setData(null); return; }
+    scope.setData({ duration: p.sim.duration, t: selRun.result.t, ref: selRun.result.r, traces, spec });
+  }
+
+  function update({ structure }) {
+    $('title').value = app.project.title;
+    if (structure) rack.render(); else rack.refresh();
+    if (structure) goalPanel.render();
+    table.render();
+    renderReadout($('readout'), app);
+    drawScope();
+    const run = app.runOf(app.candidate);
+    const warn = run?.result.info.warnings ?? [];
+    $('warn').textContent = warn.join(' · ');
+    $('warn').hidden = !warn.length;
+    $('undo').disabled = !undoStack.length;
+    $('redo').disabled = !redoStack.length;
+    autosave();
+  }
+  function renderAll() { update({ structure: true }); }
+
+  // Loading
+  function load(raw, { keepHistory = true, quiet = false } = {}) {
+    const p = normalizeProject(typeof raw === 'string' ? JSON.parse(raw) : raw);
+    if (keepHistory && app.project) app.beginEdit();
+    app.project = p;
+    app.sel = Math.max(0, p.selected ? p.candidates.findIndex((c) => c.name === p.selected) : 0);
+    if (app.sel < 0) app.sel = 0;
+    endEdit();
+    renderAll();
+    if (!quiet) toast(`Loaded “${p.title}”`);
+  }
+
+  // Files and sharing
+  const exportJson = () => JSON.stringify(app.project, null, 2);
+  function exportHtml() {
+    const style = $('lt-style').textContent;
+    const script = $('lt-script').textContent;
+    const fonts = $('lt-fonts')?.outerHTML ?? '';
+    const json = exportJson().replace(/</g, '\\u003c');
+    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${escapeHtml(app.project.title)} · Loop Tuner</title>\n${fonts}\n<style id="lt-style">${style}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n<\/script>\n<script id="lt-script">${script}<\/script>\n</body>\n</html>\n`;
+  }
+  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+  function download(name, text, type) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = name;
+    document.body.append(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  const fileStem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
+  async function copy(text, what) {
+    try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser. Use Save instead.'); }
+  }
+
+  $('save').addEventListener('click', () => { download(`${fileStem()}.json`, exportJson(), 'application/json'); toast('Saved the project as JSON'); });
+  $('export').addEventListener('click', () => { download(`${fileStem()}.html`, exportHtml(), 'text/html'); toast('Exported a standalone HTML file with this project inside'); });
+  $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
+  $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
+  $('open').addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (f) await openFile(f);
+    e.target.value = '';
+  });
+  async function openFile(f) {
+    const text = await f.text();
+    try {
+      if (/^\s*</.test(text)) {
+        const m = text.match(/<script type="application\/json" id="loop-tuner-project">([\s\S]*?)<\/script>/);
+        if (!m) throw new Error('This HTML file has no Loop Tuner project inside.');
+        load(m[1]);
+      } else load(text);
+    } catch (err) { toast(`Could not open ${f.name}: ${err.message}`); }
+  }
+  let dragDepth = 0;
+  window.addEventListener('dragenter', (e) => { if (e.dataTransfer?.types.includes('Files')) { dragDepth++; $('drop').hidden = false; } });
+  window.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('drop').hidden = true; });
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => {
+    e.preventDefault(); dragDepth = 0; $('drop').hidden = true;
+    const f = e.dataTransfer.files[0];
+    if (f) openFile(f);
+  });
+  window.addEventListener('paste', (e) => {
+    if (e.target.closest?.('input, textarea')) return;
+    const text = e.clipboardData?.getData('text') ?? '';
+    if (!/^\s*\{/.test(text)) return;
+    try { load(text); } catch (err) { toast(`Pasted text is not a project: ${err.message}`); }
+  });
+
+  const ex = $('examples');
+  EXAMPLES.forEach((x, i) => { const o = document.createElement('option'); o.value = i; o.textContent = x.title; ex.append(o); });
+  ex.addEventListener('change', () => { if (ex.value !== '') load(structuredClone(EXAMPLES[Number(ex.value)])); ex.value = ''; });
+
+  $('title').addEventListener('change', () => { app.beginEdit(); app.project.title = $('title').value.trim() || 'Untitled loop'; endEdit(); update({ structure: false }); });
+  $('title').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); });
+  $('undo').addEventListener('click', app.undo);
+  $('redo').addEventListener('click', app.redo);
+
+  // Sweep transport
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const playBtn = $('play');
+  function setPlaying(on) {
+    scope.setSweep({ playing: on });
+    playBtn.innerHTML = on ? '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="2" width="3.5" height="12" fill="currentColor"/><rect x="9.5" y="2" width="3.5" height="12" fill="currentColor"/></svg>' : '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2 L14 8 L4 14 Z" fill="currentColor"/></svg>';
+    playBtn.setAttribute('aria-label', on ? 'Pause sweep' : 'Play sweep');
+    playBtn.title = `${on ? 'Pause' : 'Play'} the scan sweep (P)`;
+  }
+  playBtn.addEventListener('click', () => setPlaying(!scope.playing));
+  $('speed').addEventListener('change', (e) => scope.setSweep({ seconds: Number(e.target.value) }));
+  scope.setSweep({ seconds: Number($('speed').value) });
+
+  // Help
+  $('help').addEventListener('click', () => { $('help-dlg').hidden = false; $('help-close').focus(); });
+  $('help-close').addEventListener('click', () => { $('help-dlg').hidden = true; });
+  $('help-dlg').addEventListener('click', (e) => { if (e.target === $('help-dlg')) $('help-dlg').hidden = true; });
+
+  // Keyboard
+  window.addEventListener('keydown', (e) => {
+    const inField = e.target.closest?.('input, select, textarea');
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 'z') { if (inField) return; e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
+    if (mod && e.key.toLowerCase() === 'y') { if (inField) return; e.preventDefault(); app.redo(); return; }
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $('save').click(); return; }
+    if (inField || mod || e.altKey) return;
+    if (e.key === 'Escape' && !$('help-dlg').hidden) { $('help-dlg').hidden = true; return; }
+    if (e.target.closest?.('[role="slider"]') && e.key.startsWith('Arrow')) return;
+    const n = app.project.candidates.length;
+    switch (e.key) {
+      case 'ArrowDown': case 'j': e.preventDefault(); app.select(Math.min(n - 1, app.sel + 1)); break;
+      case 'ArrowUp': case 'k': e.preventDefault(); app.select(Math.max(0, app.sel - 1)); break;
+      case ' ': case 'x': if (e.target.closest?.('button')) return; e.preventDefault(); app.toggleChecked(app.sel); break;
+      case 'n': case 'd': app.duplicate(); break;
+      case 'Delete': case 'Backspace': app.remove(app.sel); break;
+      case 't': app.toggleTune(); break;
+      case 'p': setPlaying(!scope.playing); break;
+      case '?': $('help').click(); break;
+      default: {
+        const slot = { 1: 'reference', 2: 'controller', 3: 'actuator', 4: 'disturbance', 5: 'plant', 6: 'sensor', 7: 'noise' }[e.key];
+        if (slot) rack.focusModule(slot);
+      }
+    }
+  });
+
+  // Toast
+  let toastTimer = null;
+  function toast(msg) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 3200);
+  }
+  app.toast = toast;
+
+  // Browser API for agents (Playwright and the like). Every call takes and
+  // returns plain JSON, the same shapes as the project file and the CLI.
+  window.loopTuner = {
+    version: 1,
+    getProject: () => structuredClone(app.project),
+    setProject: (p) => { load(p, { quiet: true }); return structuredClone(app.project); },
+    evaluate: () => app.project.candidates.map((c) => {
+      const run = app.runOf(c);
+      return { name: c.name, controller: c.controller, metrics: run && strip(run.metrics), score: run?.evaluation.score ?? null, feasible: run?.evaluation.feasible ?? false, checks: run?.evaluation.checks ?? [] };
+    }),
+    select: (ref) => { app.select(findCandidate(app.project, ref)); return app.candidate.name; },
+    addCandidate: (c) => {
+      const p = normalizeProject({ ...app.project, candidates: [...app.project.candidates, c] });
+      app.beginEdit();
+      app.project.candidates.push(p.candidates[p.candidates.length - 1]);
+      app.sel = app.project.candidates.length - 1;
+      endEdit(); update({ structure: true });
+      return app.candidate.name;
+    },
+    metrics: () => METRICS.map(({ key, label, unit, desc }) => ({ key, label, unit, desc })),
+    simulate: (loop, sim) => { const r = simulate(loop, sim); return strip(computeMetrics(r)); },
+  };
+  function strip(m) {
+    const o = {};
+    for (const [k, v] of Object.entries(m)) o[k] = typeof v === 'number' && !Number.isFinite(v) ? null : v;
+    return o;
+  }
+
+  // Boot: embedded project, unless this browser has newer work on it.
+  let initial = null;
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+    if (saved && saved.base === embeddedText.length + ':' + hash(embeddedText)) initial = saved;
+  } catch { /* storage unavailable */ }
+  try {
+    if (initial) { app.project = normalizeProject(initial.project); app.sel = Math.min(initial.sel ?? 0, app.project.candidates.length - 1); }
+    else load(embeddedText ? JSON.parse(embeddedText) : structuredClone(EXAMPLES[0]), { keepHistory: false, quiet: true });
+  } catch (err) {
+    load(structuredClone(EXAMPLES[0]), { keepHistory: false, quiet: true });
+    toast(`The embedded project could not be read (${err.message}); opened the example instead.`);
+  }
+  renderAll();
+  setPlaying(!reduced);
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startApp);
+else startApp();
+
+return {  };
+})();
+})();
+</script>
