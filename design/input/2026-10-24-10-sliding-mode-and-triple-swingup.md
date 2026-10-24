@@ -57,3 +57,9 @@
 ## Added while this was being built: both HIL modes, settled
 
 > Okay, maybe I have to revise myself again about the reference mode. If we want to be tuning the controllers, then obviously we are always going to be sending the control effort, but that's not all we want to do. We may just want to use that thing to log data, and then we would send reference values. So we need both modes. It's just like the reference mode, obviously, I feel like we should then display something in the controllers, that the controllers are not in the loop. And also the auto-tuning is not in the loop. And yeah, I guess we can identify to some extent with a reference mode. So yeah, it should be in. The hill mode should support it. Write that down so we find it later, so we don't make that same mistake again of going back and forward on this.
+
+## Added while this was being built: Live controls in the plant panel; a clear plant download
+
+> Okay, I feel like for the hill example, the plant script is not clear enough. I'm not sure if I want the hill stuff in the Ostsee controls. Just put them in the plant controls in the bottom right corner. And make it clear, like, yeah, that's too small, the download button for the script. I guess I'm not gonna test it today. But yeah, you can still fix that.
+
+(Transcription: "Ostsee controls" is "oscilloscope controls", the Run Control panel; "hill" is HIL.)
