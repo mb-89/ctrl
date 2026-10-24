@@ -5,8 +5,7 @@
 export const DEFAULT_PROJECT = {
   format: 'loop-tuner/2',
   title: 'New loop',
-  sim: { duration: 1, sampleTime: 0.0005 },
-  system: { reference: { components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] }, plant: null },
+  system: { reference: { period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] }, plant: null },
   scope: {
     timebase: { scale: 0.1, position: 0 },
     channels: [

@@ -11,8 +11,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MODULES = [
-  'core/poly.js', 'core/blocks.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/sim.js', 'core/project.js', 'core/tune.js', 'core/examples.js',
-  'ui/units.js', 'ui/dial.js', 'ui/display.js', 'ui/controls.js', 'ui/generator.js', 'ui/app.js',
+  'core/poly.js', 'core/scale.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/sim.js', 'core/project.js', 'core/tune.js', 'core/examples.js',
+  'ui/units.js', 'ui/dial.js', 'ui/display.js', 'ui/controls.js', 'ui/generator.js', 'ui/layout.js', 'ui/app.js',
 ];
 
 // Each module runs in its own function scope; its exports go into a registry
@@ -51,11 +51,16 @@ const HELP = `
   <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record in real time, over and over.</span>
   <span><kbd>S</kbd></span><span>Single: one sweep, then stop</span>
   <span><kbd>A</kbd></span><span>Auto Scale: fit the timebase and every channel to the data</span>
-  <span>Knobs</span><span>Drag, scroll, or focus and use the arrow keys. Double-click a Position knob to zero it.</span>
+  <span>Knobs</span><span>Drag, scroll, or focus and use the arrow keys. Double-click a Position knob to zero it. Click a readout to type a value (20m, 100 ms).</span>
   <span>Channel keys</span><span>Select a channel for the Vertical knobs; press again to turn it off</span>
+  <span>Wheel</span><span>On the plot: zoom time and values around the cursor. On the time axis or the value axis: that axis only.</span>
+  <span>Drag</span><span>Pan. Click a trace or its marker first to move and zoom that line alone; <kbd>Esc</kbd> releases it.</span>
+  <span><kbd>Shift</kbd> + drag</span><span>Zoom to the marked box; a flat band zooms time only, a narrow band values only</span>
+  <span>Separators</span><span>Drag the gaps between display, controls and tabs to resize; double-click to reset</span>
 </div>
+<p>The screen is the record: what you see is simulated and swept, in real time.</p>
 <h3>Signal generator</h3>
-<p>Press a waveform key to draft a component: the display shows it dashed on its own and added to r(t). Adjust it, then <b>Add</b>. Click a component in the stack to edit it.</p>
+<p>Press a waveform key to draft a component: the display shows it dashed on its own and added to r(t). Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
 <div class="keys">
   <span><kbd>0</kbd>–<kbd>9</kbd> <kbd>.</kbd> <kbd>-</kbd></span><span>Type a value for the active field; <kbd>Enter</kbd> sets it</span>
   <span><kbd>Enter</kbd></span><span>With nothing typed: add (or apply) the draft</span>
@@ -98,8 +103,10 @@ const SHELL = `<div id="lt-shell" class="app">
     <div class="screen"></div>
     <div class="badges"></div>
   </section>
+  <div class="split split-v" id="split-v" role="separator" aria-orientation="vertical" aria-label="Resize the controls" tabindex="0" title="Drag to resize · double-click to reset"></div>
   <aside class="controls" id="controls" aria-label="Controls"></aside>
 </main>
+<div class="split split-h" id="split-h" role="separator" aria-orientation="horizontal" aria-label="Resize the setup area" tabindex="0" title="Drag to resize · double-click to reset"></div>
 <section class="setup" aria-label="Setup">
   <div class="tabbar" id="tabbar" role="tablist"></div>
   <div class="tabpanel">

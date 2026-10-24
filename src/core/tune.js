@@ -4,7 +4,7 @@
 // can run it a slice per frame and the CLI can run it to the end.
 
 import { blockDef, paramMax } from './blocks.js';
-import { evaluateCandidate } from './project.js';
+import { evaluateCandidate, simOf } from './project.js';
 import { penalized } from './goal.js';
 
 export function tunableParams(block) {
@@ -14,7 +14,7 @@ export function tunableParams(block) {
 export function* tuneCandidate(project, cand, opts = {}) {
   const def = blockDef('controller', cand.controller.type);
   const keys = opts.params?.length ? opts.params : tunableParams(cand.controller);
-  const ctx = { duration: project.sim.duration };
+  const ctx = { duration: simOf(project).duration };
   const specs = keys.map((k) => {
     const p = def.params.find((q) => q.key === k);
     if (!p || p.kind === 'vector') throw new Error(`cannot tune "${k}" of ${cand.controller.type}; tunable: ${tunableParams(cand.controller).join(', ')}`);

@@ -6,8 +6,8 @@ Reader: whoever picks the next piece of work.
 
 - Simulation core: blocks, closed-loop simulation, metrics, goal score, auto-tune (`src/core/`), with tests.
 - Agent CLI (`cli.mjs`) and agent playbook (`AGENTS.md`).
-- v2 instrument: display, Run Control, Horizontal, Vertical, Auto ([instrument.md](instrument.md)).
-- Tab 1, Input: the signal generator ([signal-generator.md](signal-generator.md)).
+- v2 instrument: display with axis labels and direct manipulation, Run Control, Horizontal, Vertical with editable readouts, Auto Scale, draggable separators ([instrument.md](instrument.md)).
+- Tab 1, Input: the signal generator with Period, Square with count, Function formulas ([signal-generator.md](signal-generator.md)).
 
 ## Next, in order
 
@@ -23,5 +23,7 @@ Reader: whoever picks the next piece of work.
 ## Open questions
 
 - Header bar: move the file actions into a menu? (Person raised it, 2026-10-24.)
-- Sweep speed: real time is the rule for now; long records (minutes) may want a faster mode.
+- Sweep speed: real time is the rule for now; long windows (minutes) may want a faster mode.
+- Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
+- Should the input repeat with its period, or stop after one? Repeating is built; see decisions.md.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?

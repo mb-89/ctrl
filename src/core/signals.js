@@ -1,8 +1,11 @@
 // The signal generator's primitives. The reference r(t) is the sum of a list
-// of components, each one primitive with its parameters:
-//   { "components": [ { "type": "step", "params": { "amplitude": 1, "time": 0.1 } } ] }
+// of components, each one primitive with its parameters, repeated with the
+// signal's period, as a function generator repeats its waveform:
+//   { "period": 1, "components": [ { "type": "step", "params": { "amplitude": 1, "time": 0.1 } } ] }
 // A component may be switched off with "enabled": false; an Arb component
 // carries its samples in "points": [[t, v], ...].
+
+import { compileExpr } from './expr.js';
 
 const p = (key, label, def, unit, extra = {}) => ({ key, label, default: def, unit, ...extra });
 
@@ -22,15 +25,16 @@ export const SIGNALS = {
     fn: (q) => (t) => (t < q.time ? 0 : t >= q.time + q.rise ? q.amplitude : (q.amplitude * (t - q.time)) / q.rise),
     describe: (q) => `${q.amplitude} over ${q.rise} s from ${q.time} s`,
   },
-  pulse: {
-    label: 'Pulse', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0.1, 's', { min: 0 }), p('width', 'Width', 0.1, 's', { min: 1e-9 })],
-    fn: (q) => (t) => (t >= q.time && t < q.time + q.width ? q.amplitude : 0),
-    describe: (q) => `${q.amplitude} for ${q.width} s at ${q.time} s`,
-  },
   square: {
-    label: 'Square', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('period', 'Period', 0.2, 's', { min: 1e-9 }), p('duty', 'Duty', 50, '%', { min: 0, max: 100 })],
-    fn: (q) => (t) => (t >= q.time && ((t - q.time) % q.period) < (q.duty / 100) * q.period ? q.amplitude : 0),
-    describe: (q) => `${q.amplitude}, period ${q.period} s, duty ${q.duty} %`,
+    // A pulse train; count 1 is a single pulse, count 0 repeats without end.
+    label: 'Square', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0.1, 's', { min: 0 }), p('width', 'High time', 0.1, 's', { min: 0 }), p('period', 'Period', 0.2, 's', { min: 1e-9 }), p('count', 'Count', 0, '', { min: 0, int: true, zero: '∞' })],
+    fn: (q) => (t) => {
+      if (t < q.time) return 0;
+      const k = Math.floor((t - q.time) / q.period);
+      if (q.count > 0 && k >= q.count) return 0;
+      return t - q.time - k * q.period < q.width ? q.amplitude : 0;
+    },
+    describe: (q) => (q.count === 1 ? `pulse ${q.amplitude} for ${q.width} s at ${q.time} s` : `${q.amplitude}, ${q.width}/${q.period} s${q.count ? `, ${q.count}×` : ''}`),
   },
   sine: {
     label: 'Sine', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('frequency', 'Frequency', 5, 'Hz', { min: 0 }), p('phase', 'Phase', 0, '°')],
@@ -45,6 +49,11 @@ export const SIGNALS = {
       return q.amplitude * Math.sin(2 * Math.PI * (q.f0 * s + ((q.f1 - q.f0) * s * s) / (2 * q.duration)));
     },
     describe: (q) => `${q.amplitude}, ${q.f0} → ${q.f1} Hz over ${q.duration} s`,
+  },
+  fn: {
+    label: 'Function', params: [],
+    fn: (q, ctx, comp) => compileExpr(comp.expr),
+    describe: (q, comp) => `y = ${comp.expr}`,
   },
   noise: {
     label: 'Noise', params: [p('std', 'σ', 0.05, '', { min: 0 }), p('seed', 'Seed', 1, '', { min: 0, int: true })],
@@ -85,7 +94,16 @@ function gaussAt(seed, k) {
   return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 }
 
-export function normalizeComponent(c, i = 0) {
+// Earlier files had a separate pulse, and a square with a duty cycle.
+function legacy(c) {
+  const q = c.params ?? {};
+  if (c.type === 'pulse') return { ...c, type: 'square', params: { amplitude: q.amplitude, time: q.time, width: q.width ?? 0.1, period: (q.width ?? 0.1) * 2, count: 1 } };
+  if (c.type === 'square' && q.duty !== undefined && q.width === undefined) return { ...c, params: { ...q, width: ((q.duty ?? 50) / 100) * (q.period ?? 0.2) } };
+  return c;
+}
+
+export function normalizeComponent(cIn, i = 0) {
+  const c = cIn ? legacy(cIn) : cIn;
   const def = SIGNALS[c?.type];
   if (!def) throw new Error(`reference.components[${i}]: unknown type "${c?.type}"; types: ${Object.keys(SIGNALS).join(', ')}`);
   const params = {};
@@ -98,6 +116,10 @@ export function normalizeComponent(c, i = 0) {
   }
   const out = { type: c.type, params };
   if (c.enabled === false) out.enabled = false;
+  if (c.type === 'fn') {
+    out.expr = String(c.expr ?? '').trim();
+    try { compileExpr(out.expr); } catch (e) { throw new Error(`reference.components[${i}].expr: ${e.message}`); }
+  }
   if (c.type === 'arb') {
     const pts = (c.points ?? []).map((pt) => [Number(pt[0]), Number(pt[1])]);
     if (!pts.every((pt) => pt.every(Number.isFinite))) throw new Error(`reference.components[${i}].points: expected [[t, v], ...]`);
@@ -108,20 +130,33 @@ export function normalizeComponent(c, i = 0) {
   return out;
 }
 
+export const DEFAULT_PERIOD = 1;
+
 export function normalizeReference(ref) {
-  if (!ref) return { components: [] };
-  if (!Array.isArray(ref.components)) throw new Error('reference: expected { "components": [...] }');
-  return { components: ref.components.map(normalizeComponent) };
+  if (!ref) return { period: DEFAULT_PERIOD, components: [] };
+  if (!Array.isArray(ref.components)) throw new Error('reference: expected { "period": …, "components": [...] }');
+  const period = Number(ref.period ?? DEFAULT_PERIOD);
+  if (!(period > 0)) throw new Error('reference.period must be > 0');
+  return { period, components: ref.components.map(normalizeComponent) };
 }
 
 export function componentFn(comp, ctx) {
   return SIGNALS[comp.type].fn(comp.params, ctx, comp);
 }
 
-// r(t): the sum of the enabled components.
+// r(t): the sum of the enabled components, repeated every period. Each
+// repetition covers (k·T, (k+1)·T], so a screen that shows exactly one period
+// ends on the last value of that period rather than the first of the next.
 export function referenceFn(ref, ctx) {
   const fns = ref.components.filter((c) => c.enabled !== false).map((c) => componentFn(c, ctx));
-  return (t) => { let s = 0; for (const f of fns) s += f(t); return s; };
+  const T = ref.period ?? Infinity;
+  return (t) => {
+    let tp = t;
+    if (Number.isFinite(T) && t > T * (1 + 1e-12)) tp = t - Math.ceil(t / T - 1 - 1e-9) * T;
+    let s = 0;
+    for (const f of fns) s += f(tp);
+    return s;
+  };
 }
 
 export function describeComponent(comp) {
@@ -150,8 +185,13 @@ export function parseWaveform(text) {
   return pts.sort((a, b) => a[0] - b[0]);
 }
 
-// v1 projects had one reference block; it becomes one component.
-export function migrateReferenceBlock(block, duration) {
+// v1 projects had one reference block; it becomes one component, with a
+// period no shorter than the v1 run so nothing repeats inside it.
+export function migrateReferenceBlock(block, duration, period) {
+  return { period, ...migrateComponents(block, duration) };
+}
+
+function migrateComponents(block, duration) {
   if (!block) return { components: [] };
   const q = block.params ?? {};
   switch (block.type) {
@@ -159,7 +199,7 @@ export function migrateReferenceBlock(block, duration) {
       const rise = Math.max(1e-9, duration - (q.time ?? 1));
       return { components: [{ type: 'ramp', params: { amplitude: (q.slope ?? 0.1) * rise, time: q.time ?? 1, rise } }] };
     }
-    case 'square': return { components: [{ type: 'square', params: { ...q, duty: (q.duty ?? 0.5) * 100 } }] };
+    case 'square': return { components: [{ type: 'square', params: { amplitude: q.amplitude, time: q.time, period: q.period, width: (q.duty ?? 0.5) * (q.period ?? 10), count: 0 } }] };
     case 'sine': return { components: [{ type: 'sine', params: { amplitude: q.amplitude, time: q.time, frequency: q.frequency } }] };
     case 'staircase': {
       const comps = [];

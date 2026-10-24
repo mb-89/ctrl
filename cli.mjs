@@ -212,9 +212,9 @@ switch (cmd) {
     }
     if (opt.save) writeProject(pos[1], project);
     const { t, r } = referenceTrace(project);
-    if (opt.json) console.log(JSON.stringify({ duration: project.sim.duration, components: comps, min: Math.min(...r), max: Math.max(...r), final: r[r.length - 1] }, null, 2));
+    if (opt.json) console.log(JSON.stringify({ period: project.system.reference.period, components: comps, min: Math.min(...r), max: Math.max(...r), final: r[r.length - 1] }, null, 2));
     else {
-      console.log(`r(t) over ${fmt(project.sim.duration)} s = sum of:`);
+      console.log(`r(t), period ${fmt(project.system.reference.period)} s, = sum of:`);
       comps.forEach((c, i) => console.log(`  ${i + 1}  ${describeComponent(c)}${c.enabled === false ? '  (off)' : ''}`));
       if (!comps.length) console.log('  nothing (r = 0)');
       console.log(`range ${fmt(Math.min(...r))} … ${fmt(Math.max(...r))}, final ${fmt(r[r.length - 1])} at t = ${fmt(t[t.length - 1])} s`);

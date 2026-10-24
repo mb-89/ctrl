@@ -1,8 +1,11 @@
 // The control panel right of the display: Run Control, Horizontal, Vertical.
+// Every knob has a readout below it; click the readout to type a value
+// ("20m", "100 ms", "-0.4").
 
 import { createDial } from './dial.js';
 import { CHANNEL_COLORS, SOURCE_LABEL } from './display.js';
-import { siUnit, step125, num } from './units.js';
+import { siUnit, num, parseSI } from './units.js';
+import { step125 } from '../core/scale.js';
 import { CHANNEL_SOURCES } from '../core/project.js';
 
 export function createControls(root, app) {
@@ -12,7 +15,7 @@ export function createControls(root, app) {
       <div class="row">
         <button class="key runstop" id="k-run" title="Run / Stop (R)">Run<br>Stop</button>
         <button class="key single" id="k-single" title="One sweep, then stop (S)">Single</button>
-        <button class="key auto" id="k-auto" title="Fit the display to the data (A)">Auto<br>Scale</button>
+        <button class="key auto" id="k-auto" title="Fit the display to one period of the input (A)">Auto<br>Scale</button>
       </div>
     </section>
     <section class="group">
@@ -31,42 +34,78 @@ export function createControls(root, app) {
   $('#k-single').addEventListener('click', () => app.single());
   $('#k-auto').addEventListener('click', () => app.autoScale());
 
-  const readout = (dial, cls) => {
-    const wrap = document.createElement('div');
-    wrap.className = `dialbox ${cls ?? ''}`;
-    const lab = document.createElement('div'); lab.className = 'dlabel';
-    const val = document.createElement('div'); val.className = 'dval';
-    wrap.append(lab, dial.el, val);
-    return { wrap, lab, val };
-  };
+  const tb = () => app.project.scope.timebase;
+  const ch = () => app.project.scope.channels[app.channel];
+  const round = (v) => Number(v.toPrecision(6));
+  const setScope = (fn) => { const ok = app.editScope(fn); app.endEdit(); return ok; };
 
-  const hScale = createDial({
-    size: 64, label: 'Horizontal scale', title: 'Seconds per division · drag, scroll or arrow keys',
-    onTurn: (s) => app.editScope((sc) => { for (let i = 0; i < Math.abs(s); i++) sc.timebase.scale = step125(sc.timebase.scale, -Math.sign(s)); }),
-    onRelease: () => app.endEdit(),
-  });
-  const hPos = createDial({
-    size: 44, label: 'Horizontal position', title: 'Time at the left edge · double-click to zero',
-    onTurn: (s, fine) => app.editScope((sc) => { sc.timebase.position = round(sc.timebase.position + s * sc.timebase.scale * (fine ? 0.02 : 0.1)); }),
-    onPush: () => { app.editScope((sc) => { sc.timebase.position = 0; }); app.endEdit(); },
-    onRelease: () => app.endEdit(),
-  });
-  const vScale = createDial({
-    size: 64, label: 'Vertical scale', title: 'Units per division of the selected channel',
-    onTurn: (s) => app.editScope((sc) => { const ch = sc.channels[app.channel]; for (let i = 0; i < Math.abs(s); i++) ch.scale = step125(ch.scale, -Math.sign(s)); }),
-    onRelease: () => app.endEdit(),
-  });
-  const vPos = createDial({
-    size: 44, label: 'Vertical position', title: 'Offset of the selected channel · double-click to zero',
-    onTurn: (s, fine) => app.editScope((sc) => { const ch = sc.channels[app.channel]; ch.offset = round(ch.offset + s * ch.scale * (fine ? 0.02 : 0.1)); }),
-    onPush: () => { app.editScope((sc) => { sc.channels[app.channel].offset = 0; }); app.endEdit(); },
-    onRelease: () => app.endEdit(),
-  });
-  const hs = readout(hScale), hp = readout(hPos, 'small'), vs = readout(vScale), vp = readout(vPos, 'small');
-  hs.lab.textContent = 'Scale'; hp.lab.textContent = 'Position';
-  vs.lab.textContent = 'Scale'; vp.lab.textContent = 'Position';
-  $('#h-dials').append(hs.wrap, hp.wrap);
-  $('#v-dials').append(vs.wrap, vp.wrap);
+  // One knob with its label and an editable readout.
+  function knob({ id, label, size, title, turn, push, read, write, unit = '' }) {
+    const dial = createDial({
+      size, label, title,
+      onTurn: (s, fine) => app.editScope((sc) => turn(sc, s, fine)),
+      onPush: push && (() => setScope(push)),
+      onRelease: () => app.endEdit(),
+    });
+    const wrap = document.createElement('div');
+    wrap.className = 'dialbox';
+    const lab = document.createElement('div');
+    lab.className = 'dlabel';
+    lab.textContent = label;
+    const val = document.createElement('input');
+    val.className = 'dval';
+    val.id = id;
+    val.spellcheck = false;
+    val.setAttribute('aria-label', `${label} value`);
+    val.title = 'Click to type a value';
+    val.addEventListener('focus', () => val.select());
+    val.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') val.blur();
+      if (e.key === 'Escape') { val.dataset.cancel = '1'; val.blur(); }
+    });
+    val.addEventListener('blur', () => {
+      if (val.dataset.cancel) { delete val.dataset.cancel; render(); return; }
+      const v = parseSI(val.value, unit);
+      if (!Number.isFinite(v)) { app.toast(`Type a number, optionally with a prefix: 20m, 100 m${unit}, 2u`); render(); return; }
+      write(v);
+      render();
+    });
+    wrap.append(lab, dial.el, val);
+    return { wrap, lab, val, read };
+  }
+
+  const positive = (fn) => (v) => (v > 0 ? setScope((sc) => fn(sc, v)) : app.toast('The scale must be above 0.'));
+  const knobs = {
+    hScale: knob({
+      id: 'v-hscale', label: 'Scale', size: 48, unit: 's', title: 'Seconds per division · drag, scroll or arrow keys',
+      turn: (sc, s) => { for (let i = 0; i < Math.abs(s); i++) sc.timebase.scale = step125(sc.timebase.scale, -Math.sign(s)); },
+      read: () => `${siUnit(tb().scale, 's')}/div`,
+      write: positive((sc, v) => { sc.timebase.scale = v; }),
+    }),
+    hPos: knob({
+      id: 'v-hpos', label: 'Position', size: 36, unit: 's', title: 'Time at the left edge · double-click to zero',
+      turn: (sc, s, fine) => { sc.timebase.position = round(sc.timebase.position + s * sc.timebase.scale * (fine ? 0.02 : 0.1)); },
+      push: (sc) => { sc.timebase.position = 0; },
+      read: () => siUnit(tb().position, 's', 4),
+      write: (v) => setScope((sc) => { sc.timebase.position = v; }),
+    }),
+    vScale: knob({
+      id: 'v-vscale', label: 'Scale', size: 48, title: 'Units per division of the selected channel',
+      turn: (sc, s) => { const c = sc.channels[app.channel]; for (let i = 0; i < Math.abs(s); i++) c.scale = step125(c.scale, -Math.sign(s)); },
+      read: () => `${num(ch().scale)}/div`,
+      write: positive((sc, v) => { sc.channels[app.channel].scale = v; }),
+    }),
+    vPos: knob({
+      id: 'v-vpos', label: 'Position', size: 36, title: 'Offset of the selected channel · double-click to zero',
+      turn: (sc, s, fine) => { const c = sc.channels[app.channel]; c.offset = round(c.offset + s * c.scale * (fine ? 0.02 : 0.1)); },
+      push: (sc) => { sc.channels[app.channel].offset = 0; },
+      read: () => num(ch().offset),
+      write: (v) => setScope((sc) => { sc.channels[app.channel].offset = v; }),
+    }),
+  };
+  $('#h-dials').append(knobs.hScale.wrap, knobs.hPos.wrap);
+  $('#v-dials').append(knobs.vScale.wrap, knobs.vPos.wrap);
 
   const keys = $('#ch-keys');
   CHANNEL_COLORS.forEach((c, i) => {
@@ -80,29 +119,25 @@ export function createControls(root, app) {
   });
   const src = $('#ch-src');
   for (const s of CHANNEL_SOURCES) { const o = document.createElement('option'); o.value = s; o.textContent = SOURCE_LABEL[s]; src.append(o); }
-  src.addEventListener('change', () => { app.editScope((sc) => { sc.channels[app.channel].source = src.value; }); app.endEdit(); });
+  src.addEventListener('change', () => setScope((sc) => { sc.channels[app.channel].source = src.value; }));
 
-  function render(mode) {
+  let mode = 'stop';
+  function render(m = mode) {
+    mode = m;
     const sc = app.project.scope;
-    const ch = sc.channels[app.channel];
     $('#k-run').className = `key runstop ${mode === 'stop' ? 'lit-red' : 'lit-green'}`;
     $('#k-single').className = `key single ${mode === 'single' ? 'lit-amber' : ''}`;
-    hs.val.textContent = `${siUnit(sc.timebase.scale, 's')}/div`;
-    hp.val.textContent = siUnit(sc.timebase.position, 's', 4);
-    vs.val.textContent = `${num(ch.scale)}/div`;
-    vp.val.textContent = num(ch.offset);
+    for (const k of Object.values(knobs)) if (document.activeElement !== k.val) k.val.value = k.read();
     root.style.setProperty('--sel', CHANNEL_COLORS[app.channel]);
     [...keys.children].forEach((b, i) => {
       b.classList.toggle('lit', sc.channels[i].on);
       b.classList.toggle('sel', i === app.channel);
       b.setAttribute('aria-pressed', String(sc.channels[i].on));
     });
-    src.value = ch.source;
-    vs.lab.textContent = `Scale · ${app.channel + 1}`;
-    vp.lab.textContent = `Position · ${app.channel + 1}`;
+    src.value = ch().source;
+    knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
+    knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
   }
 
   return { render };
 }
-
-function round(v) { return Number(v.toPrecision(6)); }

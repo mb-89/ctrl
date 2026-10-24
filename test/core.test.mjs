@@ -10,7 +10,7 @@ import { runTune } from '../src/core/tune.js';
 import { EXAMPLES } from '../src/core/examples.js';
 import { buildHtml, bundleScript } from '../build.mjs';
 import { referenceFn, normalizeReference, parseWaveform } from '../src/core/signals.js';
-import { referenceTrace } from '../src/core/project.js';
+import { referenceTrace, autoTimebase, simOf, fitChannel } from '../src/core/project.js';
 import { DEFAULT_PROJECT } from '../src/core/examples.js';
 
 const loopProject = (system, controller, sim = { duration: 10, sampleTime: 0.01 }, goal) =>
@@ -101,7 +101,7 @@ test('the bundle parses and the CLI round-trips a project through HTML', () => {
 });
 
 test('the reference is the sum of its enabled components', () => {
-  const ref = normalizeReference({ components: [
+  const ref = normalizeReference({ period: 10, components: [
     { type: 'step', params: { amplitude: 1, time: 0.1 } },
     { type: 'ramp', params: { amplitude: 0.5, time: 0.4, rise: 0.5 } },
     { type: 'dc', params: { level: 9 }, enabled: false },
@@ -119,7 +119,7 @@ test('noise is reproducible and an arbitrary waveform interpolates its points', 
   assert.equal(a(0.537), b(0.537));
   assert.equal(a(0.531), a(0.539));
   const pts = parseWaveform('time,value\n0,0\n1,2\n2,2\n');
-  const arb = referenceFn(normalizeReference({ components: [{ type: 'arb', params: { gain: 2, shift: 0 }, points: pts }] }), { sampleTime: 0.01 });
+  const arb = referenceFn(normalizeReference({ period: 10, components: [{ type: 'arb', params: { gain: 2, shift: 0 }, points: pts }] }), { sampleTime: 0.01 });
   assert.equal(arb(0.5), 2);
   assert.equal(arb(5), 4);
 });
@@ -135,4 +135,32 @@ test('a new project is the reference alone; a v1 file still loads with its loop'
   assert.equal(v1.system.reference.components[0].type, 'step');
   assert.equal(v1.system.plant.type, 'lagChain');
   assert.equal(v1.scope.channels[0].source, 'r');
+});
+
+test('the reference repeats with its period; Auto Scale shows one period', () => {
+  const ref = normalizeReference({ period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] });
+  const r = referenceFn(ref, { sampleTime: 0.001 });
+  assert.equal(r(1), 1);
+  assert.equal(r(1.05), 0);
+  assert.equal(r(1.15), 1);
+  const p = normalizeProject({ system: { reference: { period: 3.2, components: [] } } });
+  assert.deepEqual(autoTimebase(p), { scale: 0.5, position: 0 });
+  assert.equal(simOf(p).duration, 5);
+  assert.deepEqual(fitChannel([0, 1]), { scale: 0.2, offset: -0.6 });
+});
+
+test('square counts its pulses; a formula is parsed, never evaluated as code', async () => {
+  const { compileExpr } = await import('../src/core/expr.js');
+  const sq = referenceFn(normalizeReference({ period: 10, components: [{ type: 'square', params: { amplitude: 2, time: 1, width: 0.5, period: 1, count: 2 } }] }), { sampleTime: 0.01 });
+  assert.deepEqual([0.5, 1.2, 1.7, 2.2, 3.2].map(sq), [0, 2, 0, 2, 0]);
+  const legacyPulse = normalizeReference({ period: 10, components: [{ type: 'pulse', params: { amplitude: 1, time: 0.1, width: 0.2 } }] });
+  assert.equal(legacyPulse.components[0].type, 'square');
+  assert.equal(compileExpr('2t + 3(t-1)^2')(2), 7);
+  assert.equal(compileExpr('0.5*sin(2*pi*t)')(0.25), 0.5);
+  assert.throws(() => compileExpr('process.exit(1)'), /unexpected|unknown name/);
+  assert.throws(() => compileExpr('constructor'), /unknown name/);
+  assert.throws(() => compileExpr('sin(t'), /expected "\)"/);
+  const fn = referenceFn(normalizeReference({ period: 10, components: [{ type: 'fn', params: {}, expr: 'step(t-1)*t' }] }), { sampleTime: 0.01 });
+  assert.equal(fn(0.5), 0);
+  assert.equal(fn(2), 2);
 });

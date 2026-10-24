@@ -5,6 +5,7 @@
 
 import { SLOTS, normalizeBlock } from './blocks.js';
 import { normalizeReference, migrateReferenceBlock, referenceFn, sampleSignal } from './signals.js';
+import { ceil125 } from './scale.js';
 import { simulate } from './sim.js';
 import { computeMetrics } from './metrics.js';
 import { normalizeGoal, evaluateGoal, compareEvals } from './goal.js';
@@ -27,13 +28,19 @@ const CANDIDATE_KEYS = new Set(['name', 'checked', 'color', 'note', 'controller'
 export function normalizeProject(p) {
   if (!p || typeof p !== 'object') throw new Error('project must be a JSON object');
   const v1 = p.format === 'loop-tuner/1' || (p.system?.reference && typeof p.system.reference.type === 'string');
-  const sim = { duration: Number(p.sim?.duration ?? (v1 ? 20 : 1)), sampleTime: Number(p.sim?.sampleTime ?? (v1 ? 0.01 : NaN)) };
-  if (!(sim.duration > 0)) throw new Error('sim.duration must be > 0');
-  if (!Number.isFinite(sim.sampleTime)) sim.sampleTime = defaultSampleTime(sim.duration);
-  if (!(sim.sampleTime > 0) || sim.sampleTime > sim.duration) throw new Error('sim.sampleTime must be > 0 and below the duration');
+  // The simulated window is the screen (scope.timebase); sim holds only the
+  // controller's sample time, when one is set.
+  const sim = {};
+  if (p.sim?.sampleTime !== undefined) {
+    sim.sampleTime = Number(p.sim.sampleTime);
+    if (!(sim.sampleTime > 0)) throw new Error('sim.sampleTime must be > 0');
+  } else if (v1) sim.sampleTime = 0.01;
+  const v1Duration = Number(p.sim?.duration ?? 20);
+  const v1Period = 10 * ceil125(v1Duration / 10);
   const system = {
-    reference: v1 ? normalizeReference(migrateReferenceBlock(p.system?.reference ?? { type: 'step' }, sim.duration)) : normalizeReference(p.system?.reference),
+    reference: v1 ? normalizeReference(migrateReferenceBlock(p.system?.reference ?? { type: 'step' }, v1Duration, v1Period)) : normalizeReference(p.system?.reference),
   };
+  if (!v1 && p.system?.reference && p.system.reference.period === undefined && p.sim?.duration) system.reference.period = Number(p.sim.duration);
   for (const [slot, def] of Object.entries(SYSTEM_DEFAULTS)) system[slot] = normalizeBlock(slot, p.system?.[slot] ?? def);
   const plant = p.system?.plant ?? (v1 ? { type: 'firstOrder' } : null);
   system.plant = plant ? normalizeBlock('plant', plant) : null;
@@ -56,13 +63,41 @@ export function normalizeProject(p) {
     format: FORMAT,
     title: String(p.title ?? 'Untitled loop'),
     ...(p.notes ? { notes: String(p.notes) } : {}),
-    sim, system, scope: normalizeScope(p.scope, sim), goal, candidates,
+    sim, system, scope: normalizeScope(p.scope, system.reference.period), goal, candidates,
     ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
   };
 }
 
 export function defaultSampleTime(duration) {
   return Number((duration / 2000).toPrecision(2));
+}
+
+export const MAX_SAMPLES = 200000;
+
+// The simulation window: from 0 to the right edge of the screen, sampled at
+// the controller's sample time, or finely enough to draw when there is none.
+export function simOf(project) {
+  const tb = project.scope.timebase;
+  const duration = Math.max(tb.position + 10 * tb.scale, tb.scale);
+  return { duration, sampleTime: project.sim.sampleTime ?? defaultSampleTime(duration) };
+}
+
+// Auto Scale's timebase: one period of the input on the screen, at the
+// smallest 1-2-5 step that fits it.
+export function autoTimebase(project) {
+  return { scale: ceil125(project.system.reference.period / 10), position: 0 };
+}
+
+// Auto Scale for one channel: the signal spans about six divisions, centred
+// on a whole division so the axis labels are round numbers.
+export function fitChannel(values) {
+  let lo = Infinity, hi = -Infinity;
+  for (const x of values) if (Number.isFinite(x)) { lo = Math.min(lo, x); hi = Math.max(hi, x); }
+  if (!Number.isFinite(lo)) return null;
+  const span = hi - lo || Math.abs(hi) || 1;
+  const scale = ceil125(span / 6);
+  const offset = Number((-Math.round((hi + lo) / 2 / scale) * scale).toPrecision(6)) || 0;
+  return { scale, offset };
 }
 
 const DEFAULT_CHANNELS = [
@@ -74,9 +109,9 @@ const DEFAULT_CHANNELS = [
 
 // How the display is set: timebase (s/div, time at the left edge) and four
 // channels (source, on, units/div, offset in units).
-export function normalizeScope(scope = {}, sim) {
+export function normalizeScope(scope = {}, period) {
   const tb = scope.timebase ?? {};
-  const timebase = { scale: Number(tb.scale ?? sim.duration / 10), position: Number(tb.position ?? 0) };
+  const timebase = { scale: Number(tb.scale ?? ceil125(period / 10)), position: Number(tb.position ?? 0) };
   if (!(timebase.scale > 0)) throw new Error('scope.timebase.scale must be > 0');
   const channels = DEFAULT_CHANNELS.map((d, i) => {
     const c = scope.channels?.[i] ?? {};
@@ -96,7 +131,8 @@ export function loopReady(project) {
 
 // r(t) on the simulation grid, whether or not a loop exists.
 export function referenceTrace(project) {
-  const { t, v } = sampleSignal(referenceFn(project.system.reference, project.sim), project.sim);
+  const sim = simOf(project);
+  const { t, v } = sampleSignal(referenceFn(project.system.reference, sim), sim);
   return { t, r: v };
 }
 
@@ -118,7 +154,7 @@ export function resolveLoop(project, cand) {
 
 export function evaluateCandidate(project, cand) {
   if (!project.system.plant) throw new Error('the loop has no plant yet; add one in the Plant tab or set system.plant');
-  const result = simulate(resolveLoop(project, cand), project.sim);
+  const result = simulate(resolveLoop(project, cand), simOf(project));
   const metrics = computeMetrics(result, { settlingBand: project.goal.settlingBand });
   const evaluation = evaluateGoal(metrics, project.goal);
   return { result, metrics, evaluation };

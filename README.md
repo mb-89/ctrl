@@ -8,9 +8,9 @@ Tune a feedback loop's step response in the browser, side by side, like patches 
 
 Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control loop:
 
-- **Display**: four channels (r, y, u, e) on a 10 × 8 graticule, swept in real time over the record. Hover for a cursor readout.
-- **Controls** to the right, as on a bench scope: Run/Stop, Single, Auto Scale; Horizontal scale and position; Vertical channel keys, scale and position.
-- **Tabs** below set the loop up one step at a time. **Input** is built: a signal generator that sums primitives (step, ramp, pulse, square, sine, chirp, noise, DC, or a waveform loaded from a CSV file) into the reference r(t), with a dashed preview before each one is added. Plant, Controller, Auto-tune and Analysis come next.
+- **Display**: four channels (r, y, u, e) on a 10 × 8 graticule; the screen is the record, swept in real time. Wheel to zoom (over an axis: that axis only), drag to pan, click a trace to work on it alone, Shift-drag to zoom to a box.
+- **Controls** to the right, as on a bench scope: Run/Stop, Single, Auto Scale; Horizontal and Vertical knobs whose readouts you can also type into.
+- **Tabs** below set the loop up one step at a time. **Input** is built: a signal generator that sums primitives (DC, step, ramp, square/pulse train, sine, chirp, noise, a typed formula y(t), or a waveform loaded from a CSV file) into the reference r(t), repeated with its period, with a dashed preview before each one is added. Plant, Controller, Auto-tune and Analysis come next.
 
 Projects are plain JSON, including how the display is set. Save, open, drop or paste them; **Export HTML** writes a copy of the page with the project inside, to send to someone.
 

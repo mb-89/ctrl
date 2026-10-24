@@ -2,13 +2,13 @@
 // shows, and wiring between display, controls and tabs. window.loopTuner is
 // the browser API for agents driving the page.
 
-import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, defaultSampleTime, findCandidate } from '../core/project.js';
-import { SIGNALS, normalizeComponent, componentFn, referenceFn, sampleSignal } from '../core/signals.js';
+import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES } from '../core/project.js';
+import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { EXAMPLES, DEFAULT_PROJECT } from '../core/examples.js';
 import { createDisplay } from './display.js';
 import { createControls } from './controls.js';
 import { createGenerator } from './generator.js';
-import { ceil125 } from './units.js';
+import { createSplitters } from './layout.js';
 
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
@@ -55,7 +55,7 @@ function startApp() {
   let acqKey = '', acq = null, loopNote = '';
   function acquire() {
     const p = app.project;
-    const key = JSON.stringify([p.sim, p.system, p.candidates, p.selected, p.goal]);
+    const key = JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal]);
     if (key === acqKey) return acq;
     acqKey = key;
     const { t, r } = referenceTrace(p);
@@ -74,7 +74,23 @@ function startApp() {
   }
 
   // Mutations
-  app.editScope = (fn) => { app.beginEdit(); fn(app.project.scope); display.setScope(app.project.scope, app.channel); controls.render(display.mode); autosave(); };
+  // Scope edits. The timebase sets the simulated window, so changing it
+  // re-acquires; a window with too many controller samples is refused.
+  app.editScope = (fn) => {
+    const before = JSON.stringify(app.project.scope);
+    app.beginEdit();
+    fn(app.project.scope);
+    const sim = simOf(app.project);
+    if (sim.duration / sim.sampleTime > MAX_SAMPLES) {
+      app.project.scope = JSON.parse(before);
+      toast(`That window needs over ${MAX_SAMPLES / 1000}k controller samples at ${sim.sampleTime} s; zoom in instead.`);
+      changed({ data: false });
+      return false;
+    }
+    const tbChanged = JSON.stringify(app.project.scope.timebase) !== JSON.stringify(JSON.parse(before).timebase);
+    changed({ data: tbChanged });
+    return true;
+  };
   app.channelKey = (i) => {
     const ch = app.project.scope.channels[i];
     app.beginEdit();
@@ -95,15 +111,9 @@ function startApp() {
     if (c.enabled === false) delete c.enabled; else c.enabled = false;
     app.endEdit(); changed();
   };
-  app.setLength = (v, live) => {
-    const p = app.project;
-    const old = p.sim.duration;
+  app.setPeriod = (v, live) => {
     if (!(v > 0)) return;
-    if (v / defaultSampleTime(v) > 200000) return;
-    p.sim = { duration: v, sampleTime: defaultSampleTime(v) };
-    // A timebase that showed the whole old record keeps showing the whole record.
-    const tb = p.scope.timebase;
-    if (tb.position === 0 && Math.abs(tb.scale - ceil125(old / 10)) < 1e-12) tb.scale = ceil125(v / 10);
+    app.project.system.reference.period = v;
     if (!live) app.endEdit();
     changed();
   };
@@ -115,13 +125,15 @@ function startApp() {
   function showPreview() {
     if (!previewReq) { display.setPreview(null); return; }
     const p = app.project;
+    const sim = simOf(p);
     const comps = p.system.reference.components.slice();
     if (previewReq.replace !== null && previewReq.replace !== undefined) comps[previewReq.replace] = previewReq.comp;
     else comps.push(previewReq.comp);
     let alone, sum;
     try {
-      alone = sampleSignal(componentFn(normalizeComponent(previewReq.comp), p.sim), p.sim).v;
-      sum = sampleSignal(referenceFn({ components: comps.map((c, i) => normalizeComponent(c, i)) }, p.sim), p.sim).v;
+      const period = p.system.reference.period;
+      alone = sampleSignal(referenceFn({ period, components: [normalizeComponent(previewReq.comp)] }, sim), sim).v;
+      sum = sampleSignal(referenceFn({ period, components: comps.map((c, i) => normalizeComponent(c, i)) }, sim), sim).v;
     } catch { display.setPreview(null); return; }
     const channel = Math.max(0, p.scope.channels.findIndex((c) => c.source === 'r'));
     display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase() });
@@ -130,29 +142,29 @@ function startApp() {
   // Run control
   app.toggleRun = () => { display.setMode(display.mode === 'stop' ? 'run' : 'stop'); controls.render(display.mode); };
   app.single = () => { display.setMode('single'); controls.render(display.mode); };
+  // Auto Scale: one period of the input across the screen, then every
+  // channel with a signal fitted to about six divisions.
   app.autoScale = () => {
-    const data = acquire();
     app.beginEdit();
-    const sc = app.project.scope;
-    sc.timebase = { scale: ceil125(app.project.sim.duration / 10), position: 0 };
-    sc.channels.forEach((ch) => {
-      const v = data.signals[ch.source];
-      if (!v) return;
-      let lo = Infinity, hi = -Infinity;
-      for (const x of v) if (Number.isFinite(x)) { lo = Math.min(lo, x); hi = Math.max(hi, x); }
-      if (!Number.isFinite(lo)) return;
-      const span = hi - lo || Math.abs(hi) || 1;
-      ch.scale = ceil125(span / 6);
-      ch.offset = -Number((((hi + lo) / 2) / (ch.scale / 10)).toFixed(0)) * (ch.scale / 10);
-      ch.offset = Number(ch.offset.toPrecision(6)) || 0;
-    });
+    app.project.scope.timebase = autoTimebase(app.project);
+    const data = acquire();
+    for (const ch of app.project.scope.channels) {
+      const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
+      if (fit) Object.assign(ch, fit);
+    }
     app.endEdit();
-    changed({ data: false });
-    toast('Auto Scale: display fitted to the data');
+    changed();
+    toast('Auto Scale: one period of the input, every channel fitted');
   };
 
   // Rendering
-  const display = createDisplay($('display'), { onSelectChannel: (i) => app.selectChannel(i), onStopped: () => controls.render(display.mode) });
+  const display = createDisplay($('display'), {
+    onSelectChannel: (i) => app.selectChannel(i),
+    onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
+    onStopped: () => controls.render(display.mode),
+    edit: (fn) => app.editScope(fn),
+    endEdit: () => app.endEdit(),
+  });
   const controls = createControls($('controls'), app);
   const generator = createGenerator($('tab-input'), app);
 
@@ -269,6 +281,7 @@ function startApp() {
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
+    if (e.key === 'Escape' && display.releaseLine()) return;
     const onControl = e.target.closest?.('button, [role="slider"], a');
     if (app.tab === 'input' && !(onControl && ['Enter', ' ', 'Tab'].includes(e.key)) && generator.handleKey(e)) { e.preventDefault(); return; }
     const k = e.key.toLowerCase();
@@ -312,6 +325,7 @@ function startApp() {
   }
   renderTabs();
   changed();
+  createSplitters($('lt-shell'));
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   display.setMode(reduced ? 'stop' : 'run');
   controls.render(display.mode);

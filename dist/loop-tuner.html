@@ -61,17 +61,17 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
 [hidden] { display: none !important; }
-body { background: var(--panel); color: var(--ink); font-family: var(--ui); font-size: 14px; }
+body { margin: 0; background: var(--panel); color: var(--ink); font-family: var(--ui); font-size: 14px; }
 button, input, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
 .app {
-  height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px;
+  height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) 12px var(--setup-h, auto);
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 12px;
 }
 
 /* Header */
-.bar { display: flex; align-items: center; gap: 12px; padding-top: 10px; flex-wrap: wrap; min-width: 0; }
+.bar { display: flex; align-items: center; gap: 12px; padding-block: 10px; flex-wrap: wrap; min-width: 0; }
 .brand { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
 .brand svg { width: 22px; height: 22px; }
 .title { flex: 1 1 180px; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; font-size: 17px; font-weight: 600; }
@@ -104,11 +104,22 @@ button, input, select { font: inherit; color: inherit; }
 .key.primary:not(:disabled) { background: linear-gradient(180deg, #a9f5c4, var(--lit-green)); color: #062a14; }
 
 /* Instrument: display + controls */
-.instrument { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 286px; gap: 12px; }
+.instrument { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 12px var(--controls-w, 286px); }
+
+/* Separators */
+.split { position: relative; touch-action: none; }
+.split::after { content: ""; position: absolute; border-radius: 2px; background: var(--line-strong); opacity: 0; transition: opacity 0.15s; }
+.split:hover::after, .split:focus-visible::after, .split.active::after { opacity: 1; }
+.split:focus-visible { outline: none; }
+.split-h { cursor: row-resize; }
+.split-h::after { left: 50%; top: 50%; width: 48px; height: 4px; transform: translate(-50%, -50%); }
+.split-v { cursor: col-resize; }
+.split-v::after { top: 50%; left: 50%; width: 4px; height: 48px; transform: translate(-50%, -50%); }
 .display { min-height: 0; background: var(--bezel); border-radius: 12px; padding: 8px 10px; display: grid; grid-template-rows: 22px minmax(0, 1fr) 30px; gap: 6px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), 0 1px 0 var(--line); }
 .status { display: flex; align-items: center; gap: 14px; font-family: var(--mono); font-size: 12px; color: #c9d3da; white-space: nowrap; overflow: hidden; }
 .status .dim { color: #7f8c96; }
 .status .grow { flex: 1; }
+.status .selline { color: var(--cc); }
 .st { font-weight: 600; padding: 1px 7px; border-radius: 3px; font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; }
 .st-run { background: var(--lit-green); color: #062a14; }
 .st-stop { background: var(--lit-red); color: #3a0606; }
@@ -124,17 +135,19 @@ button, input, select { font: inherit; color: inherit; }
 .badge.nosig .val { color: #7f8c96; font-style: italic; }
 .badge.sel { border-color: var(--cc); box-shadow: 0 0 0 1px var(--cc); }
 
-.controls { min-height: 0; overflow: auto; background: var(--panel-2); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); }
-.group { display: flex; flex-direction: column; gap: 8px; }
-.group + .group { border-top: 1px solid var(--line); padding-top: 10px; }
+.controls { min-height: 0; overflow: auto; background: var(--panel-2); border-radius: 12px; padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); }
+.group { display: flex; flex-direction: column; gap: 6px; }
+.group + .group { border-top: 1px solid var(--line); padding-top: 8px; }
 .glabel { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 .row { display: flex; gap: 8px; align-items: center; }
-.row .key { flex: 1; min-height: 42px; font-size: 12.5px; text-align: center; }
+.row .key { flex: 1; min-height: 36px; font-size: 12.5px; text-align: center; }
 .dials { justify-content: space-around; align-items: flex-end; }
-.dialbox { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.dialbox { display: flex; flex-direction: column; align-items: center; gap: 3px; }
 .dlabel { font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
-.dval { font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; background: var(--lcd); color: var(--lcd-ink); border-radius: 4px; padding: 1px 7px; min-width: 76px; text-align: center; }
-.chkeys .key.ch { min-height: 34px; border-color: var(--cc); box-shadow: 0 2px 0 var(--key-edge), inset 0 0 0 1px var(--cc); }
+.dval { width: 100px; height: 20px; font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; background: var(--lcd); color: var(--lcd-ink); border: 1px solid transparent; border-radius: 4px; padding: 0 6px; text-align: center; cursor: text; }
+.dval:hover { border-color: #3e5764; }
+.dval:focus { outline: none; border-color: var(--lcd-ink); }
+.chkeys .key.ch { min-height: 28px; border-color: var(--cc); box-shadow: 0 2px 0 var(--key-edge), inset 0 0 0 1px var(--cc); }
 .chkeys .key.ch.lit { background: linear-gradient(180deg, color-mix(in srgb, var(--cc) 55%, white), var(--cc)); color: #0a0d10; box-shadow: 0 2px 0 var(--key-edge), 0 0 10px color-mix(in srgb, var(--cc) 70%, transparent); }
 .chkeys .key.ch.sel { outline: 2px solid var(--ink); outline-offset: 2px; }
 .srcrow { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); }
@@ -151,29 +164,35 @@ button, input, select { font: inherit; color: inherit; }
 .dial svg:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 
 /* Setup tabs */
-.setup { display: flex; flex-direction: column; min-width: 0; }
-.tabbar { display: flex; gap: 4px; overflow-x: auto; padding-inline: 4px; }
+.setup { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; }
+.tabbar { display: flex; flex-wrap: wrap; gap: 4px; padding-inline: 4px; }
 .tab { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px 8px; border: 1px solid var(--line); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--panel); color: var(--ink-2); cursor: pointer; font-weight: 600; font-size: 13.5px; white-space: nowrap; }
 .tab .tn { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .tab .soon { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 3px; padding: 0 4px; }
-.tab.on { background: var(--panel-2); color: var(--ink); position: relative; top: 1px; }
+.tab.on { background: var(--panel-2); color: var(--ink); position: relative; z-index: 1; box-shadow: 0 1px 0 var(--panel-2); }
 .tab.later:not(.on) { opacity: 0.75; }
-.tabpanel { background: var(--panel-2); border: 1px solid var(--line); border-radius: 0 10px 10px 10px; padding: 10px 12px; min-height: 0; }
+.tabpanel { background: var(--panel-2); border: 1px solid var(--line); border-radius: 0 10px 10px 10px; padding: 10px 12px; min-height: 0; overflow: auto; }
 
-/* Generator */
-.gen { display: grid; grid-template-columns: 216px minmax(240px, 1fr) 236px minmax(260px, 1.2fr); gap: 14px; align-items: stretch; }
-.gcol { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.wkeys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
-.wkey { flex-direction: column; gap: 3px; min-height: 44px; padding: 5px 4px; font-size: 12px; }
-.wkey svg { width: 26px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+/* Generator: Waveform | Parameters | Signal | Entry, one row */
+.gen { display: grid; grid-template-columns: 204px minmax(220px, 300px) minmax(220px, 1fr) auto; gap: 14px; align-items: stretch; }
+.gcol { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.wkeys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.wkey { flex-direction: column; gap: 2px; min-height: 40px; padding: 4px; font-size: 11.5px; }
+.wkey svg { width: 24px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.ghead { display: flex; align-items: center; gap: 6px; min-height: 18px; }
+.ghead .glabel { margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.key.small { min-height: 22px; padding: 1px 10px; font-size: 12px; border-radius: 6px; }
+.entry { display: flex; gap: 12px; align-items: center; }
+.dialcol { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.arrows { display: flex; gap: 6px; }
 .plist, .slist { background: var(--lcd); color: var(--lcd-ink); border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 2px; box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5); }
-.plist { flex: 1; min-height: 112px; }
-.pfield { display: grid; grid-template-columns: minmax(70px, 1fr) auto 34px; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 4px 8px; cursor: pointer; color: var(--lcd-ink); }
+.plist { flex: 1; min-height: 0; overflow: auto; }
+.pfield { display: grid; grid-template-columns: minmax(64px, 1fr) auto 30px; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 2px 8px; cursor: pointer; color: var(--lcd-ink); }
 .pfield:hover { background: rgba(255, 255, 255, 0.04); }
 .pfield.active { background: var(--lcd-sel); border-color: #3e5764; }
 .pfield .pl { font-size: 13px; color: var(--lcd-dim); }
 .pfield.active .pl { color: var(--lcd-ink); }
-.pfield .pv { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.pfield .pv { font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .pfield .pu { font-family: var(--mono); font-size: 12px; color: var(--lcd-dim); }
 .pv .cur { background: var(--lcd-ink); color: var(--lcd); border-radius: 2px; }
 .pv .buf { color: #ffd77e; }
@@ -181,15 +200,17 @@ button, input, select { font: inherit; color: inherit; }
 @keyframes blink { 50% { opacity: 0; } }
 .hint { font-size: 12.5px; color: var(--lcd-dim); padding: 6px 8px; line-height: 1.45; }
 .hint b { color: var(--lcd-ink); }
-.pact { display: flex; gap: 8px; }
-.pact .key { flex: 1; min-height: 34px; }
-.dialrow { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.fnrow { display: flex; align-items: center; gap: 8px; padding: 2px 8px; }
+.fnrow .pl { font-size: 13px; color: var(--lcd-ink); white-space: nowrap; }
+.fnin { flex: 1; min-width: 0; height: 26px; background: var(--lcd-sel); color: var(--lcd-ink); border: 1px solid #3e5764; border-radius: 5px; padding: 0 8px; font-family: var(--mono); font-size: 13.5px; }
+.fnin:focus { outline: none; border-color: var(--lcd-ink); }
+.fnin.err { border-color: var(--lit-red); }
 .key.arrow { width: 38px; min-height: 30px; padding: 0; font-size: 12px; }
-.keypad { display: grid; grid-template-columns: repeat(3, 1fr) 1.25fr; gap: 5px; }
-.keypad .pk { min-height: 26px; padding: 2px; font-family: var(--mono); font-size: 14px; }
+.keypad { display: grid; grid-template-columns: repeat(3, 38px) 54px; gap: 5px; }
+.keypad .pk { min-height: 25px; padding: 2px; font-family: var(--mono); font-size: 14px; }
 .keypad .pk.fn { font-family: var(--ui); font-size: 12px; }
-.slist { list-style: none; margin: 0; flex: 1; min-height: 100px; overflow: auto; max-height: 170px; }
-.srow { display: grid; grid-template-columns: 18px 26px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 5px; cursor: pointer; }
+.slist { list-style: none; margin: 0; flex: 1; min-height: 0; overflow: auto; }
+.srow { display: grid; grid-template-columns: 18px 26px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 2px 6px; border-radius: 5px; cursor: pointer; }
 .srow:hover { background: rgba(255, 255, 255, 0.04); }
 .srow.editing { background: var(--lcd-sel); }
 .srow.off .sd, .srow.off svg { opacity: 0.4; }
@@ -204,9 +225,8 @@ button, input, select { font: inherit; color: inherit; }
 .x { width: 22px; height: 22px; border: 0; background: transparent; color: var(--lcd-dim); cursor: pointer; border-radius: 4px; font-size: 13px; }
 .x:hover { color: var(--lcd-ink); background: rgba(255, 255, 255, 0.07); }
 .eq { font-family: var(--mono); font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink-2); margin-left: 4px; }
-.lenrow { display: flex; align-items: center; gap: 8px; background: var(--lcd); border-radius: 8px; padding: 4px; }
+.lenrow { display: flex; background: var(--lcd); border-radius: 8px; padding: 3px; margin-top: 2px; }
 .lenrow .pfield { flex: 1; }
-.lenrow .hint { padding: 0 6px; white-space: nowrap; }
 .later-box { max-width: 70ch; padding: 6px 4px; }
 .later-box p { color: var(--ink-2); line-height: 1.5; margin: 8px 0 0; }
 .later-box .dim { color: var(--muted); }
@@ -223,13 +243,15 @@ button, input, select { font: inherit; color: inherit; }
 kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--panel); white-space: nowrap; }
 .drop { position: fixed; inset: 10px; border: 2px dashed var(--ink); border-radius: 12px; display: grid; place-items: center; background: rgba(0, 0, 0, 0.05); z-index: 40; font-size: 18px; pointer-events: none; }
 
-@media (max-width: 1240px) {
-  .gen { grid-template-columns: 216px minmax(0, 1fr) 236px; }
-  .gstack { grid-column: 1 / -1; }
+@media (max-width: 1180px) {
+  .gen { grid-template-columns: 180px minmax(190px, 260px) minmax(170px, 1fr) auto; gap: 10px; }
+  .keypad { grid-template-columns: repeat(3, 32px) 50px; }
 }
 @media (max-width: 900px) {
-  .app { height: auto; display: flex; flex-direction: column; }
-  .instrument { grid-template-columns: minmax(0, 1fr); }
+  .app { height: auto; display: flex; flex-direction: column; gap: 10px; }
+  .split { display: none; }
+  .setup { height: auto; }
+  .instrument { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .display { height: 380px; }
   .controls { flex-direction: row; flex-wrap: wrap; }
   .controls .group { flex: 1 1 240px; }
@@ -271,8 +293,10 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
     <div class="screen"></div>
     <div class="badges"></div>
   </section>
+  <div class="split split-v" id="split-v" role="separator" aria-orientation="vertical" aria-label="Resize the controls" tabindex="0" title="Drag to resize · double-click to reset"></div>
   <aside class="controls" id="controls" aria-label="Controls"></aside>
 </main>
+<div class="split split-h" id="split-h" role="separator" aria-orientation="horizontal" aria-label="Resize the setup area" tabindex="0" title="Drag to resize · double-click to reset"></div>
 <section class="setup" aria-label="Setup">
   <div class="tabbar" id="tabbar" role="tablist"></div>
   <div class="tabpanel">
@@ -290,11 +314,16 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
   <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record in real time, over and over.</span>
   <span><kbd>S</kbd></span><span>Single: one sweep, then stop</span>
   <span><kbd>A</kbd></span><span>Auto Scale: fit the timebase and every channel to the data</span>
-  <span>Knobs</span><span>Drag, scroll, or focus and use the arrow keys. Double-click a Position knob to zero it.</span>
+  <span>Knobs</span><span>Drag, scroll, or focus and use the arrow keys. Double-click a Position knob to zero it. Click a readout to type a value (20m, 100 ms).</span>
   <span>Channel keys</span><span>Select a channel for the Vertical knobs; press again to turn it off</span>
+  <span>Wheel</span><span>On the plot: zoom time and values around the cursor. On the time axis or the value axis: that axis only.</span>
+  <span>Drag</span><span>Pan. Click a trace or its marker first to move and zoom that line alone; <kbd>Esc</kbd> releases it.</span>
+  <span><kbd>Shift</kbd> + drag</span><span>Zoom to the marked box; a flat band zooms time only, a narrow band values only</span>
+  <span>Separators</span><span>Drag the gaps between display, controls and tabs to resize; double-click to reset</span>
 </div>
+<p>The screen is the record: what you see is simulated and swept, in real time.</p>
 <h3>Signal generator</h3>
-<p>Press a waveform key to draft a component: the display shows it dashed on its own and added to r(t). Adjust it, then <b>Add</b>. Click a component in the stack to edit it.</p>
+<p>Press a waveform key to draft a component: the display shows it dashed on its own and added to r(t). Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
 <div class="keys">
   <span><kbd>0</kbd>–<kbd>9</kbd> <kbd>.</kbd> <kbd>-</kbd></span><span>Type a value for the active field; <kbd>Enter</kbd> sets it</span>
   <span><kbd>Enter</kbd></span><span>With nothing typed: add (or apply) the draft</span>
@@ -383,6 +412,29 @@ function dcGain(num, den) {
 }
 
 return { polyTrim, polyMul, polyPow, tf2ss, rootBound, dcGain };
+})();
+// ---- core/scale.js
+__mods['core/scale.js'] = (() => {
+// 1-2-5 sequences, as on a scope's scale knobs.
+
+// The smallest 1-2-5 value that is >= v.
+function ceil125(v) {
+  const e = Math.floor(Math.log10(v));
+  for (let k = e; k <= e + 1; k++) for (const m of [1, 2, 5]) { const c = Number((m * 10 ** k).toPrecision(3)); if (c >= v * (1 - 1e-9)) return c; }
+  return 10 ** (e + 1);
+}
+
+// The 1-2-5 step nearest to v, moved dir steps up or down.
+function step125(v, dir) {
+  const e = Math.floor(Math.log10(v));
+  const ladder = [];
+  for (let k = e - 1; k <= e + 1; k++) for (const m of [1, 2, 5]) ladder.push(Number((m * 10 ** k).toPrecision(3)));
+  let i = 0;
+  for (let j = 0; j < ladder.length; j++) if (Math.abs(Math.log(ladder[j] / v)) < Math.abs(Math.log(ladder[i] / v))) i = j;
+  return ladder[Math.max(0, Math.min(ladder.length - 1, i + dir))];
+}
+
+return { ceil125, step125 };
 })();
 // ---- core/blocks.js
 __mods['core/blocks.js'] = (() => {
@@ -617,14 +669,129 @@ function retypeBlock(slot, block, newType, stash = {}) {
 
 return { SLOTS, BLOCKS, blockDef, paramMax, normalizeBlock, retypeBlock };
 })();
+// ---- core/expr.js
+__mods['core/expr.js'] = (() => {
+// A small formula language for y(t), compiled to a function without eval, so
+// the page and Node compute the same values and nothing typed can run code.
+//   numbers, t, pi, e;  + - * / ^ (power), unary minus, parentheses;
+//   sin cos tan asin acos atan exp log ln log10 sqrt abs floor ceil round sign
+//   min(a, b) max(a, b) pow(a, b) mod(a, b), step(x) (1 for x >= 0), clamp(x, lo, hi)
+// Example: 0.5*sin(2*pi*3*t) + step(t - 0.2)
+
+const FN1 = {
+  sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan,
+  exp: Math.exp, log: Math.log, ln: Math.log, log10: Math.log10, sqrt: Math.sqrt, abs: Math.abs,
+  floor: Math.floor, ceil: Math.ceil, round: Math.round, sign: Math.sign, step: (x) => (x >= 0 ? 1 : 0),
+};
+const FN2 = { min: Math.min, max: Math.max, pow: Math.pow, mod: (a, b) => a - b * Math.floor(a / b), atan2: Math.atan2 };
+const FN3 = { clamp: (x, lo, hi) => Math.min(hi, Math.max(lo, x)) };
+const CONST = { pi: Math.PI, e: Math.E };
+
+const EXPR_HELP = 'numbers, t, pi, e; + − * / ^; sin cos tan exp log sqrt abs min max pow mod step clamp …';
+
+function tokenize(src) {
+  const toks = [];
+  const re = /\s*(?:(\d+\.?\d*(?:e[-+]?\d+)?|\.\d+(?:e[-+]?\d+)?)|([A-Za-z_]\w*)|(\*\*|[-+*/^(),]))/gy;
+  let m;
+  re.lastIndex = 0;
+  while (re.lastIndex < src.length) {
+    const at = re.lastIndex;
+    if (/^\s*$/.test(src.slice(at))) break;
+    m = re.exec(src);
+    if (!m) throw new Error(`unexpected "${src.slice(at).trim()[0]}" at ${at + 1}`);
+    if (m[1] !== undefined) toks.push({ k: 'num', v: Number(m[1]) });
+    else if (m[2] !== undefined) toks.push({ k: 'id', v: m[2] });
+    else toks.push({ k: 'op', v: m[3] === '**' ? '^' : m[3] });
+  }
+  return toks;
+}
+
+// Compiles src to t => value. Throws with a readable message on bad input.
+function compileExpr(src) {
+  const toks = tokenize(String(src));
+  let i = 0;
+  const peek = () => toks[i];
+  const take = (v) => { const tk = toks[i]; if (!tk || (v && tk.v !== v)) throw new Error(tk ? `expected "${v}" near "${tk.v}"` : `expected "${v}" at the end`); i++; return tk; };
+
+  // expr := term (('+'|'-') term)*
+  function expr() {
+    let a = term();
+    while (peek()?.k === 'op' && (peek().v === '+' || peek().v === '-')) {
+      const op = take().v, b = term(), l = a;
+      a = op === '+' ? (t) => l(t) + b(t) : (t) => l(t) - b(t);
+    }
+    return a;
+  }
+  // term := unary (('*'|'/')? unary)*   (a missing operator multiplies: 2t, 3(t+1))
+  function term() {
+    let a = unary();
+    for (;;) {
+      const tk = peek();
+      const explicit = tk?.k === 'op' && (tk.v === '*' || tk.v === '/');
+      const implicit = tk && (tk.k === 'num' || tk.k === 'id' || (tk.k === 'op' && tk.v === '('));
+      if (!explicit && !implicit) return a;
+      const op = explicit ? take().v : '*';
+      const b = unary(), l = a;
+      a = op === '*' ? (t) => l(t) * b(t) : (t) => l(t) / b(t);
+    }
+  }
+  // unary := '-' unary | power
+  function unary() {
+    if (peek()?.k === 'op' && (peek().v === '-' || peek().v === '+')) {
+      const neg = take().v === '-', a = unary();
+      return neg ? (t) => -a(t) : a;
+    }
+    return power();
+  }
+  // power := atom ('^' unary)?   (right-associative)
+  function power() {
+    const a = atom();
+    if (peek()?.k === 'op' && peek().v === '^') { take(); const b = unary(); return (t) => Math.pow(a(t), b(t)); }
+    return a;
+  }
+  function atom() {
+    const tk = peek();
+    if (!tk) throw new Error('the formula ends too early');
+    if (tk.k === 'num') { take(); const v = tk.v; return () => v; }
+    if (tk.k === 'op' && tk.v === '(') { take(); const a = expr(); take(')'); return a; }
+    if (tk.k === 'id') {
+      take();
+      const name = tk.v.toLowerCase();
+      if (name === 't') return (t) => t;
+      // Own properties only: names such as "constructor" must not resolve.
+      if (Object.hasOwn(CONST, name)) { const v = CONST[name]; return () => v; }
+      const arity = Object.hasOwn(FN1, name) ? 1 : Object.hasOwn(FN2, name) ? 2 : Object.hasOwn(FN3, name) ? 3 : 0;
+      if (!arity) throw new Error(`unknown name "${tk.v}"; use t, pi, e or a function such as sin, exp, step`);
+      take('(');
+      const args = [expr()];
+      while (args.length < arity) { take(','); args.push(expr()); }
+      take(')');
+      const [a, b, c] = args;
+      if (arity === 1) { const f = FN1[name]; return (t) => f(a(t)); }
+      if (arity === 2) { const f = FN2[name]; return (t) => f(a(t), b(t)); }
+      const f = FN3[name]; return (t) => f(a(t), b(t), c(t));
+    }
+    throw new Error(`unexpected "${tk.v}"`);
+  }
+
+  if (!toks.length) throw new Error('enter a formula in t, for example 0.5*sin(2*pi*t)');
+  const f = expr();
+  if (i < toks.length) throw new Error(`unexpected "${toks[i].v}"`);
+  return (t) => { const v = f(t); return Number.isFinite(v) ? v : 0; };
+}
+
+return { EXPR_HELP, compileExpr };
+})();
 // ---- core/signals.js
 __mods['core/signals.js'] = (() => {
 // The signal generator's primitives. The reference r(t) is the sum of a list
-// of components, each one primitive with its parameters:
-//   { "components": [ { "type": "step", "params": { "amplitude": 1, "time": 0.1 } } ] }
+// of components, each one primitive with its parameters, repeated with the
+// signal's period, as a function generator repeats its waveform:
+//   { "period": 1, "components": [ { "type": "step", "params": { "amplitude": 1, "time": 0.1 } } ] }
 // A component may be switched off with "enabled": false; an Arb component
 // carries its samples in "points": [[t, v], ...].
 
+const { compileExpr } = __mods['core/expr.js'];
 const p = (key, label, def, unit, extra = {}) => ({ key, label, default: def, unit, ...extra });
 
 const SIGNALS = {
@@ -643,15 +810,16 @@ const SIGNALS = {
     fn: (q) => (t) => (t < q.time ? 0 : t >= q.time + q.rise ? q.amplitude : (q.amplitude * (t - q.time)) / q.rise),
     describe: (q) => `${q.amplitude} over ${q.rise} s from ${q.time} s`,
   },
-  pulse: {
-    label: 'Pulse', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0.1, 's', { min: 0 }), p('width', 'Width', 0.1, 's', { min: 1e-9 })],
-    fn: (q) => (t) => (t >= q.time && t < q.time + q.width ? q.amplitude : 0),
-    describe: (q) => `${q.amplitude} for ${q.width} s at ${q.time} s`,
-  },
   square: {
-    label: 'Square', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('period', 'Period', 0.2, 's', { min: 1e-9 }), p('duty', 'Duty', 50, '%', { min: 0, max: 100 })],
-    fn: (q) => (t) => (t >= q.time && ((t - q.time) % q.period) < (q.duty / 100) * q.period ? q.amplitude : 0),
-    describe: (q) => `${q.amplitude}, period ${q.period} s, duty ${q.duty} %`,
+    // A pulse train; count 1 is a single pulse, count 0 repeats without end.
+    label: 'Square', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0.1, 's', { min: 0 }), p('width', 'High time', 0.1, 's', { min: 0 }), p('period', 'Period', 0.2, 's', { min: 1e-9 }), p('count', 'Count', 0, '', { min: 0, int: true, zero: '∞' })],
+    fn: (q) => (t) => {
+      if (t < q.time) return 0;
+      const k = Math.floor((t - q.time) / q.period);
+      if (q.count > 0 && k >= q.count) return 0;
+      return t - q.time - k * q.period < q.width ? q.amplitude : 0;
+    },
+    describe: (q) => (q.count === 1 ? `pulse ${q.amplitude} for ${q.width} s at ${q.time} s` : `${q.amplitude}, ${q.width}/${q.period} s${q.count ? `, ${q.count}×` : ''}`),
   },
   sine: {
     label: 'Sine', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('frequency', 'Frequency', 5, 'Hz', { min: 0 }), p('phase', 'Phase', 0, '°')],
@@ -666,6 +834,11 @@ const SIGNALS = {
       return q.amplitude * Math.sin(2 * Math.PI * (q.f0 * s + ((q.f1 - q.f0) * s * s) / (2 * q.duration)));
     },
     describe: (q) => `${q.amplitude}, ${q.f0} → ${q.f1} Hz over ${q.duration} s`,
+  },
+  fn: {
+    label: 'Function', params: [],
+    fn: (q, ctx, comp) => compileExpr(comp.expr),
+    describe: (q, comp) => `y = ${comp.expr}`,
   },
   noise: {
     label: 'Noise', params: [p('std', 'σ', 0.05, '', { min: 0 }), p('seed', 'Seed', 1, '', { min: 0, int: true })],
@@ -706,7 +879,16 @@ function gaussAt(seed, k) {
   return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 }
 
-function normalizeComponent(c, i = 0) {
+// Earlier files had a separate pulse, and a square with a duty cycle.
+function legacy(c) {
+  const q = c.params ?? {};
+  if (c.type === 'pulse') return { ...c, type: 'square', params: { amplitude: q.amplitude, time: q.time, width: q.width ?? 0.1, period: (q.width ?? 0.1) * 2, count: 1 } };
+  if (c.type === 'square' && q.duty !== undefined && q.width === undefined) return { ...c, params: { ...q, width: ((q.duty ?? 50) / 100) * (q.period ?? 0.2) } };
+  return c;
+}
+
+function normalizeComponent(cIn, i = 0) {
+  const c = cIn ? legacy(cIn) : cIn;
   const def = SIGNALS[c?.type];
   if (!def) throw new Error(`reference.components[${i}]: unknown type "${c?.type}"; types: ${Object.keys(SIGNALS).join(', ')}`);
   const params = {};
@@ -719,6 +901,10 @@ function normalizeComponent(c, i = 0) {
   }
   const out = { type: c.type, params };
   if (c.enabled === false) out.enabled = false;
+  if (c.type === 'fn') {
+    out.expr = String(c.expr ?? '').trim();
+    try { compileExpr(out.expr); } catch (e) { throw new Error(`reference.components[${i}].expr: ${e.message}`); }
+  }
   if (c.type === 'arb') {
     const pts = (c.points ?? []).map((pt) => [Number(pt[0]), Number(pt[1])]);
     if (!pts.every((pt) => pt.every(Number.isFinite))) throw new Error(`reference.components[${i}].points: expected [[t, v], ...]`);
@@ -729,20 +915,33 @@ function normalizeComponent(c, i = 0) {
   return out;
 }
 
+const DEFAULT_PERIOD = 1;
+
 function normalizeReference(ref) {
-  if (!ref) return { components: [] };
-  if (!Array.isArray(ref.components)) throw new Error('reference: expected { "components": [...] }');
-  return { components: ref.components.map(normalizeComponent) };
+  if (!ref) return { period: DEFAULT_PERIOD, components: [] };
+  if (!Array.isArray(ref.components)) throw new Error('reference: expected { "period": …, "components": [...] }');
+  const period = Number(ref.period ?? DEFAULT_PERIOD);
+  if (!(period > 0)) throw new Error('reference.period must be > 0');
+  return { period, components: ref.components.map(normalizeComponent) };
 }
 
 function componentFn(comp, ctx) {
   return SIGNALS[comp.type].fn(comp.params, ctx, comp);
 }
 
-// r(t): the sum of the enabled components.
+// r(t): the sum of the enabled components, repeated every period. Each
+// repetition covers (k·T, (k+1)·T], so a screen that shows exactly one period
+// ends on the last value of that period rather than the first of the next.
 function referenceFn(ref, ctx) {
   const fns = ref.components.filter((c) => c.enabled !== false).map((c) => componentFn(c, ctx));
-  return (t) => { let s = 0; for (const f of fns) s += f(t); return s; };
+  const T = ref.period ?? Infinity;
+  return (t) => {
+    let tp = t;
+    if (Number.isFinite(T) && t > T * (1 + 1e-12)) tp = t - Math.ceil(t / T - 1 - 1e-9) * T;
+    let s = 0;
+    for (const f of fns) s += f(tp);
+    return s;
+  };
 }
 
 function describeComponent(comp) {
@@ -771,8 +970,13 @@ function parseWaveform(text) {
   return pts.sort((a, b) => a[0] - b[0]);
 }
 
-// v1 projects had one reference block; it becomes one component.
-function migrateReferenceBlock(block, duration) {
+// v1 projects had one reference block; it becomes one component, with a
+// period no shorter than the v1 run so nothing repeats inside it.
+function migrateReferenceBlock(block, duration, period) {
+  return { period, ...migrateComponents(block, duration) };
+}
+
+function migrateComponents(block, duration) {
   if (!block) return { components: [] };
   const q = block.params ?? {};
   switch (block.type) {
@@ -780,7 +984,7 @@ function migrateReferenceBlock(block, duration) {
       const rise = Math.max(1e-9, duration - (q.time ?? 1));
       return { components: [{ type: 'ramp', params: { amplitude: (q.slope ?? 0.1) * rise, time: q.time ?? 1, rise } }] };
     }
-    case 'square': return { components: [{ type: 'square', params: { ...q, duty: (q.duty ?? 0.5) * 100 } }] };
+    case 'square': return { components: [{ type: 'square', params: { amplitude: q.amplitude, time: q.time, period: q.period, width: (q.duty ?? 0.5) * (q.period ?? 10), count: 0 } }] };
     case 'sine': return { components: [{ type: 'sine', params: { amplitude: q.amplitude, time: q.time, frequency: q.frequency } }] };
     case 'staircase': {
       const comps = [];
@@ -791,7 +995,7 @@ function migrateReferenceBlock(block, duration) {
   }
 }
 
-return { SIGNALS, normalizeComponent, normalizeReference, componentFn, referenceFn, describeComponent, sampleSignal, parseWaveform, migrateReferenceBlock };
+return { SIGNALS, normalizeComponent, DEFAULT_PERIOD, normalizeReference, componentFn, referenceFn, describeComponent, sampleSignal, parseWaveform, migrateReferenceBlock };
 })();
 // ---- core/metrics.js
 __mods['core/metrics.js'] = (() => {
@@ -1265,6 +1469,7 @@ __mods['core/project.js'] = (() => {
 
 const { SLOTS, normalizeBlock } = __mods['core/blocks.js'];
 const { normalizeReference, migrateReferenceBlock, referenceFn, sampleSignal } = __mods['core/signals.js'];
+const { ceil125 } = __mods['core/scale.js'];
 const { simulate } = __mods['core/sim.js'];
 const { computeMetrics } = __mods['core/metrics.js'];
 const { normalizeGoal, evaluateGoal, compareEvals } = __mods['core/goal.js'];
@@ -1286,13 +1491,19 @@ const CANDIDATE_KEYS = new Set(['name', 'checked', 'color', 'note', 'controller'
 function normalizeProject(p) {
   if (!p || typeof p !== 'object') throw new Error('project must be a JSON object');
   const v1 = p.format === 'loop-tuner/1' || (p.system?.reference && typeof p.system.reference.type === 'string');
-  const sim = { duration: Number(p.sim?.duration ?? (v1 ? 20 : 1)), sampleTime: Number(p.sim?.sampleTime ?? (v1 ? 0.01 : NaN)) };
-  if (!(sim.duration > 0)) throw new Error('sim.duration must be > 0');
-  if (!Number.isFinite(sim.sampleTime)) sim.sampleTime = defaultSampleTime(sim.duration);
-  if (!(sim.sampleTime > 0) || sim.sampleTime > sim.duration) throw new Error('sim.sampleTime must be > 0 and below the duration');
+  // The simulated window is the screen (scope.timebase); sim holds only the
+  // controller's sample time, when one is set.
+  const sim = {};
+  if (p.sim?.sampleTime !== undefined) {
+    sim.sampleTime = Number(p.sim.sampleTime);
+    if (!(sim.sampleTime > 0)) throw new Error('sim.sampleTime must be > 0');
+  } else if (v1) sim.sampleTime = 0.01;
+  const v1Duration = Number(p.sim?.duration ?? 20);
+  const v1Period = 10 * ceil125(v1Duration / 10);
   const system = {
-    reference: v1 ? normalizeReference(migrateReferenceBlock(p.system?.reference ?? { type: 'step' }, sim.duration)) : normalizeReference(p.system?.reference),
+    reference: v1 ? normalizeReference(migrateReferenceBlock(p.system?.reference ?? { type: 'step' }, v1Duration, v1Period)) : normalizeReference(p.system?.reference),
   };
+  if (!v1 && p.system?.reference && p.system.reference.period === undefined && p.sim?.duration) system.reference.period = Number(p.sim.duration);
   for (const [slot, def] of Object.entries(SYSTEM_DEFAULTS)) system[slot] = normalizeBlock(slot, p.system?.[slot] ?? def);
   const plant = p.system?.plant ?? (v1 ? { type: 'firstOrder' } : null);
   system.plant = plant ? normalizeBlock('plant', plant) : null;
@@ -1315,13 +1526,41 @@ function normalizeProject(p) {
     format: FORMAT,
     title: String(p.title ?? 'Untitled loop'),
     ...(p.notes ? { notes: String(p.notes) } : {}),
-    sim, system, scope: normalizeScope(p.scope, sim), goal, candidates,
+    sim, system, scope: normalizeScope(p.scope, system.reference.period), goal, candidates,
     ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
   };
 }
 
 function defaultSampleTime(duration) {
   return Number((duration / 2000).toPrecision(2));
+}
+
+const MAX_SAMPLES = 200000;
+
+// The simulation window: from 0 to the right edge of the screen, sampled at
+// the controller's sample time, or finely enough to draw when there is none.
+function simOf(project) {
+  const tb = project.scope.timebase;
+  const duration = Math.max(tb.position + 10 * tb.scale, tb.scale);
+  return { duration, sampleTime: project.sim.sampleTime ?? defaultSampleTime(duration) };
+}
+
+// Auto Scale's timebase: one period of the input on the screen, at the
+// smallest 1-2-5 step that fits it.
+function autoTimebase(project) {
+  return { scale: ceil125(project.system.reference.period / 10), position: 0 };
+}
+
+// Auto Scale for one channel: the signal spans about six divisions, centred
+// on a whole division so the axis labels are round numbers.
+function fitChannel(values) {
+  let lo = Infinity, hi = -Infinity;
+  for (const x of values) if (Number.isFinite(x)) { lo = Math.min(lo, x); hi = Math.max(hi, x); }
+  if (!Number.isFinite(lo)) return null;
+  const span = hi - lo || Math.abs(hi) || 1;
+  const scale = ceil125(span / 6);
+  const offset = Number((-Math.round((hi + lo) / 2 / scale) * scale).toPrecision(6)) || 0;
+  return { scale, offset };
 }
 
 const DEFAULT_CHANNELS = [
@@ -1333,9 +1572,9 @@ const DEFAULT_CHANNELS = [
 
 // How the display is set: timebase (s/div, time at the left edge) and four
 // channels (source, on, units/div, offset in units).
-function normalizeScope(scope = {}, sim) {
+function normalizeScope(scope = {}, period) {
   const tb = scope.timebase ?? {};
-  const timebase = { scale: Number(tb.scale ?? sim.duration / 10), position: Number(tb.position ?? 0) };
+  const timebase = { scale: Number(tb.scale ?? ceil125(period / 10)), position: Number(tb.position ?? 0) };
   if (!(timebase.scale > 0)) throw new Error('scope.timebase.scale must be > 0');
   const channels = DEFAULT_CHANNELS.map((d, i) => {
     const c = scope.channels?.[i] ?? {};
@@ -1355,7 +1594,8 @@ function loopReady(project) {
 
 // r(t) on the simulation grid, whether or not a loop exists.
 function referenceTrace(project) {
-  const { t, v } = sampleSignal(referenceFn(project.system.reference, project.sim), project.sim);
+  const sim = simOf(project);
+  const { t, v } = sampleSignal(referenceFn(project.system.reference, sim), sim);
   return { t, r: v };
 }
 
@@ -1377,7 +1617,7 @@ function resolveLoop(project, cand) {
 
 function evaluateCandidate(project, cand) {
   if (!project.system.plant) throw new Error('the loop has no plant yet; add one in the Plant tab or set system.plant');
-  const result = simulate(resolveLoop(project, cand), project.sim);
+  const result = simulate(resolveLoop(project, cand), simOf(project));
   const metrics = computeMetrics(result, { settlingBand: project.goal.settlingBand });
   const evaluation = evaluateGoal(metrics, project.goal);
   return { result, metrics, evaluation };
@@ -1426,7 +1666,7 @@ function fmt(v, digits = 3) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { FORMAT, PALETTE_SIZE, CHANNEL_SOURCES, normalizeProject, defaultSampleTime, normalizeScope, loopReady, referenceTrace, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+return { FORMAT, PALETTE_SIZE, CHANNEL_SOURCES, normalizeProject, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, normalizeScope, loopReady, referenceTrace, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
 })();
 // ---- core/tune.js
 __mods['core/tune.js'] = (() => {
@@ -1436,7 +1676,7 @@ __mods['core/tune.js'] = (() => {
 // can run it a slice per frame and the CLI can run it to the end.
 
 const { blockDef, paramMax } = __mods['core/blocks.js'];
-const { evaluateCandidate } = __mods['core/project.js'];
+const { evaluateCandidate, simOf } = __mods['core/project.js'];
 const { penalized } = __mods['core/goal.js'];
 function tunableParams(block) {
   return blockDef('controller', block.type).params.filter((p) => p.tunable).map((p) => p.key);
@@ -1445,7 +1685,7 @@ function tunableParams(block) {
 function* tuneCandidate(project, cand, opts = {}) {
   const def = blockDef('controller', cand.controller.type);
   const keys = opts.params?.length ? opts.params : tunableParams(cand.controller);
-  const ctx = { duration: project.sim.duration };
+  const ctx = { duration: simOf(project).duration };
   const specs = keys.map((k) => {
     const p = def.params.find((q) => q.key === k);
     if (!p || p.kind === 'vector') throw new Error(`cannot tune "${k}" of ${cand.controller.type}; tunable: ${tunableParams(cand.controller).join(', ')}`);
@@ -1556,8 +1796,7 @@ __mods['core/examples.js'] = (() => {
 const DEFAULT_PROJECT = {
   format: 'loop-tuner/2',
   title: 'New loop',
-  sim: { duration: 1, sampleTime: 0.0005 },
-  system: { reference: { components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] }, plant: null },
+  system: { reference: { period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] }, plant: null },
   scope: {
     timebase: { scale: 0.1, position: 0 },
     channels: [
@@ -1678,7 +1917,8 @@ return { DEFAULT_PROJECT, EXAMPLES };
 })();
 // ---- ui/units.js
 __mods['ui/units.js'] = (() => {
-// Engineering units for the instrument: SI prefixes and 1-2-5 sequences.
+// Engineering units for the instrument: SI prefixes and plain readouts.
+// The 1-2-5 sequences live in core/scale.js.
 
 const PREFIXES = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n']];
 
@@ -1695,23 +1935,6 @@ function siUnit(v, unit, digits) {
   return `${si(v, digits)}${unit}`.replace(/ $/, '');
 }
 
-// The 1-2-5 step nearest to v, and the next one up or down.
-function step125(v, dir) {
-  const e = Math.floor(Math.log10(v));
-  const ladder = [];
-  for (let k = e - 1; k <= e + 1; k++) for (const m of [1, 2, 5]) ladder.push(Number((m * 10 ** k).toPrecision(3)));
-  let i = 0;
-  for (let j = 0; j < ladder.length; j++) if (Math.abs(Math.log(ladder[j] / v)) < Math.abs(Math.log(ladder[i] / v))) i = j;
-  return ladder[Math.max(0, Math.min(ladder.length - 1, i + dir))];
-}
-
-// The smallest 1-2-5 value that is >= v.
-function ceil125(v) {
-  const e = Math.floor(Math.log10(v));
-  for (let k = e; k <= e + 1; k++) for (const m of [1, 2, 5]) { const c = Number((m * 10 ** k).toPrecision(3)); if (c >= v * (1 - 1e-9)) return c; }
-  return 10 ** (e + 1);
-}
-
 // A plain number for readouts: up to 4 significant digits, no exponent noise.
 function num(v, digits = 4) {
   if (!Number.isFinite(v)) return '—';
@@ -1721,7 +1944,18 @@ function num(v, digits = 4) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { si, siUnit, step125, ceil125, num };
+// Reads a typed value with an optional SI prefix and unit: "20m", "100 ms",
+// "2u", "-0.4", "1.5k". Returns NaN when it is not a number.
+function parseSI(text, unit = '') {
+  let s = String(text).trim().replace(/,/g, '.').replace(/−/g, '-').replace(/\/div$/, '').trim();
+  if (unit && s.endsWith(unit)) s = s.slice(0, -unit.length).trim();
+  const m = s.match(/^([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*([GMkmuµn]?)$/i);
+  if (!m) return NaN;
+  const f = { G: 1e9, M: 1e6, k: 1e3, K: 1e3, m: 1e-3, u: 1e-6, U: 1e-6, 'µ': 1e-6, n: 1e-9, N: 1e-9, '': 1 }[m[2]];
+  return Number(m[1]) * f;
+}
+
+return { si, siUnit, num, parseSI };
 })();
 // ---- ui/dial.js
 __mods['ui/dial.js'] = (() => {
@@ -1803,14 +2037,26 @@ return { createDial };
 })();
 // ---- ui/display.js
 __mods['ui/display.js'] = (() => {
-// The scope display: a 10 × 8 division graticule, four channels, a real-time
-// sweep, the generator's dashed preview, and a hover cursor. See
-// design/output/instrument.md.
+// The scope display: a 10 × 8 division graticule with time labels below and
+// the active channel's values to the left, four channels, a sweep that crosses
+// the screen in real time (the screen is the record), the generator's dashed
+// preview, a hover cursor, and direct manipulation:
+//   wheel on the plot     zoom time and values around the cursor
+//   wheel on an axis      zoom that axis only
+//   drag                  pan (time sideways; values up and down)
+//   click a trace/marker  select that line: drag and wheel then act on it alone
+//   Shift + drag          zoom to the marked box (or band)
+// Every gesture sets the same scope settings as the knobs.
+// See design/output/instrument.md.
 
 const { siUnit, num } = __mods['ui/units.js'];
+const { step125 } = __mods['core/scale.js'];
 const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const SOURCE_LABEL = { r: 'r  reference', y: 'y  output', u: 'u  effort', e: 'e  error', ym: 'ym measured', d: 'd  disturbance' };
 const DIVX = 10, DIVY = 8;
+const PAD = { l: 58, t: 6, r: 8, b: 22 };
+const BG = '#0a0d10';
+const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
 function createDisplay(root, handlers) {
   const status = root.querySelector('.status');
@@ -1818,49 +2064,74 @@ function createDisplay(root, handlers) {
   const badges = root.querySelector('.badges');
   const canvas = document.createElement('canvas');
   canvas.setAttribute('role', 'img');
-  canvas.setAttribute('aria-label', 'Oscilloscope display');
+  canvas.setAttribute('aria-label', 'Oscilloscope display. Wheel to zoom, drag to pan, click a trace to select it, Shift-drag to zoom to a box.');
   screen.append(canvas);
   const ctx = canvas.getContext('2d');
-  const grid = document.createElement('canvas');
-  const gctx = grid.getContext('2d');
 
   let W = 0, H = 0, dpr = 1;
-  let data = null, scope = null, preview = null, selected = 0;
-  let mode = 'stop', tScan = 0, last = 0, raf = 0, hover = null;
+  let data = null, scope = null, preview = null, selected = 0, line = null;
+  let mode = 'stop', tScan = 0, last = 0, raf = 0, hover = null, box = null;
+  const P = { l: 0, t: 0, r: 0, b: 0, w: 0, h: 0, dx: 0, dy: 0 };
 
   function resize() {
     const r = screen.getBoundingClientRect();
     dpr = window.devicePixelRatio || 1;
-    W = Math.max(20, r.width); H = Math.max(20, r.height);
-    for (const c of [canvas, grid]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
-    drawGrid();
+    W = Math.max(40, r.width); H = Math.max(40, r.height);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    Object.assign(P, { l: PAD.l, t: PAD.t, r: W - PAD.r, b: H - PAD.b });
+    P.w = P.r - P.l; P.h = P.b - P.t; P.dx = P.w / DIVX; P.dy = P.h / DIVY;
     draw();
   }
 
-  function drawGrid() {
-    const g = gctx;
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.fillStyle = '#0a0d10';
+  // Coordinates
+  const tx = (t) => P.l + ((t - scope.timebase.position) / scope.timebase.scale) * P.dx;
+  const xt = (x) => scope.timebase.position + ((x - P.l) / P.dx) * scope.timebase.scale;
+  const vy = (ch, v) => P.t + P.h / 2 - ((v + ch.offset) / ch.scale) * P.dy;
+  const divsAt = (y) => (P.t + P.h / 2 - y) / P.dy;
+  const win = () => [Math.max(0, scope.timebase.position), scope.timebase.position + DIVX * scope.timebase.scale];
+  const region = (x, y) => (x < P.l ? 'yaxis' : y > P.b ? 'xaxis' : 'plot');
+  const visible = (i) => scope.channels[i].on && !!data?.signals[scope.channels[i].source];
+  const axisChannel = () => (line !== null ? line : selected);
+
+  function drawGrid(g) {
+    g.fillStyle = BG;
     g.fillRect(0, 0, W, H);
-    const dx = W / DIVX, dy = H / DIVY;
     g.fillStyle = 'rgba(160, 175, 190, 0.32)';
-    for (let i = 0; i <= DIVX; i++) for (let j = 0; j <= DIVY * 5; j++) g.fillRect(Math.round(i * dx) - 0.5, j * dy / 5 - 0.5, 1, 1);
-    for (let j = 0; j <= DIVY; j++) for (let i = 0; i <= DIVX * 5; i++) g.fillRect(i * dx / 5 - 0.5, Math.round(j * dy) - 0.5, 1, 1);
+    for (let i = 0; i <= DIVX; i++) for (let j = 0; j <= DIVY * 5; j++) g.fillRect(Math.round(P.l + i * P.dx) - 0.5, P.t + (j * P.dy) / 5 - 0.5, 1, 1);
+    for (let j = 0; j <= DIVY; j++) for (let i = 0; i <= DIVX * 5; i++) g.fillRect(P.l + (i * P.dx) / 5 - 0.5, Math.round(P.t + j * P.dy) - 0.5, 1, 1);
     g.strokeStyle = 'rgba(160, 175, 190, 0.38)';
     g.lineWidth = 1;
     g.beginPath();
-    g.moveTo(0, Math.round(H / 2) + 0.5); g.lineTo(W, Math.round(H / 2) + 0.5);
-    g.moveTo(Math.round(W / 2) + 0.5, 0); g.lineTo(Math.round(W / 2) + 0.5, H);
-    for (let i = 0; i <= DIVX * 5; i++) { const x = Math.round(i * dx / 5) + 0.5; g.moveTo(x, H / 2 - 3); g.lineTo(x, H / 2 + 3); }
-    for (let j = 0; j <= DIVY * 5; j++) { const y = Math.round(j * dy / 5) + 0.5; g.moveTo(W / 2 - 3, y); g.lineTo(W / 2 + 3, y); }
+    const cy = Math.round(P.t + P.h / 2) + 0.5, cx = Math.round(P.l + P.w / 2) + 0.5;
+    g.moveTo(P.l, cy); g.lineTo(P.r, cy);
+    g.moveTo(cx, P.t); g.lineTo(cx, P.b);
+    for (let i = 0; i <= DIVX * 5; i++) { const x = Math.round(P.l + (i * P.dx) / 5) + 0.5; g.moveTo(x, cy - 3); g.lineTo(x, cy + 3); }
+    for (let j = 0; j <= DIVY * 5; j++) { const y = Math.round(P.t + (j * P.dy) / 5) + 0.5; g.moveTo(cx - 3, y); g.lineTo(cx + 3, y); }
     g.stroke();
     g.strokeStyle = 'rgba(160, 175, 190, 0.5)';
-    g.strokeRect(0.5, 0.5, W - 1, H - 1);
+    g.strokeRect(P.l + 0.5, P.t + 0.5, P.w - 1, P.h - 1);
   }
 
-  const tx = (t) => ((t - scope.timebase.position) / scope.timebase.scale) * (W / DIVX);
-  const xt = (x) => scope.timebase.position + (x / (W / DIVX)) * scope.timebase.scale;
-  const vy = (ch, v) => H / 2 - ((v + ch.offset) / ch.scale) * (H / DIVY);
+  function drawAxes(g) {
+    g.font = `10.5px ${MONO}`;
+    g.fillStyle = 'rgba(200, 210, 218, 0.75)';
+    g.textBaseline = 'top';
+    for (let i = 0; i <= DIVX; i++) {
+      const x = P.l + i * P.dx;
+      g.textAlign = i === 0 ? 'left' : i === DIVX ? 'right' : 'center';
+      g.fillText(siUnit(Number(xt(x).toPrecision(6)), 's', 4), x, P.b + 5);
+    }
+    const ci = axisChannel();
+    const ch = scope.channels[ci];
+    if (!visible(ci)) return;
+    g.fillStyle = CHANNEL_COLORS[ci];
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (let j = 0; j <= DIVY; j++) {
+      const y = P.t + j * P.dy;
+      const v = (DIVY / 2 - j) * ch.scale - ch.offset;
+      g.fillText(num(Math.abs(v) < ch.scale * 1e-9 ? 0 : v, 3), P.l - 22, Math.min(P.b - 5, Math.max(P.t + 5, y)));
+    }
+  }
 
   // Polyline of v over t for samples [from, to], collapsing samples that share
   // a pixel column into their min/max, skipping what is off screen.
@@ -1876,11 +2147,11 @@ function createDisplay(root, handlers) {
       const y = v[i];
       if (!Number.isFinite(y)) break;
       const x = Math.round(tx(t[i]));
-      if (x < -2 && i < to && tx(t[i + 1]) < -2) continue;
+      if (x < P.l - 2 && i < to && tx(t[i + 1]) < P.l - 2) continue;
       if (!started) { c.moveTo(x, vy(ch, y)); started = true; col = x; mn = mx = lastV = y; continue; }
       if (x === col) { mn = Math.min(mn, y); mx = Math.max(mx, y); lastV = y; continue; }
       flush();
-      if (x > W + 2) { col = null; break; }
+      if (x > P.r + 2) { col = null; break; }
       col = x; mn = mx = lastV = y;
     }
     flush();
@@ -1893,30 +2164,38 @@ function createDisplay(root, handlers) {
     return Math.max(0, Math.min(tt.length - 1, Math.round(t / (tt[1] - tt[0]))));
   }
 
+  function markerY(i) {
+    const y0 = vy(scope.channels[i], 0);
+    return [Math.max(P.t + 7, Math.min(P.b - 7, y0)), y0];
+  }
+
   function draw() {
     if (!W) return;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(grid, 0, 0);
-    if (!data || !scope) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
+    drawGrid(ctx);
+    drawAxes(ctx);
     ctx.save();
-    ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
+    ctx.beginPath(); ctx.rect(P.l, P.t, P.w, P.h); ctx.clip();
     ctx.lineJoin = 'round';
     const n = data.t.length - 1;
     const sweeping = mode !== 'stop';
     const k = sweeping ? indexAt(tScan) : n;
 
-    scope.channels.forEach((ch, i) => {
+    const order = [0, 1, 2, 3].sort((a, b) => (a === line) - (b === line));
+    for (const i of order) {
+      const ch = scope.channels[i];
       const v = data.signals[ch.source];
-      if (!ch.on || !v) return;
+      if (!ch.on || !v) continue;
+      const sel = i === line;
       ctx.strokeStyle = CHANNEL_COLORS[i];
-      ctx.lineWidth = 1.6;
+      ctx.lineWidth = sel ? 2.6 : 1.6;
       ctx.shadowColor = CHANNEL_COLORS[i];
-      ctx.shadowBlur = 5;
-      ctx.globalAlpha = 1;
+      ctx.shadowBlur = sel ? 9 : 5;
+      ctx.globalAlpha = line !== null && !sel ? 0.55 : 1;
       trace(ctx, data.t, v, ch, 0, k);
       if (k < n) { ctx.shadowBlur = 0; ctx.globalAlpha = 0.28; trace(ctx, data.t, v, ch, k, n); }
-    });
+    }
     ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
 
@@ -1927,15 +2206,16 @@ function createDisplay(root, handlers) {
       ctx.setLineDash([7, 5]); ctx.lineWidth = 2; ctx.strokeStyle = CHANNEL_COLORS[preview.channel];
       trace(ctx, data.t, preview.sum, ch, 0, n);
       ctx.setLineDash([]);
-      ctx.font = '11px "IBM Plex Mono", ui-monospace, monospace';
+      ctx.font = `11px ${MONO}`;
       ctx.textBaseline = 'bottom';
       const tag = (v, text, color) => {
-        const tEnd = Math.min(data.t[n], xt(W - 8));
+        const tEnd = Math.min(data.t[n], xt(P.r - 8));
         const j = indexAt(tEnd);
-        const y = Math.max(14, Math.min(H - 4, vy(ch, v[j]) - 4));
+        const y = Math.max(P.t + 14, Math.min(P.b - 4, vy(ch, v[j]) - 4));
+        const x = Math.min(tx(tEnd), P.r - 6);
         const w = ctx.measureText(text).width;
-        ctx.fillStyle = 'rgba(10, 13, 16, 0.75)'; ctx.fillRect(Math.min(tx(tEnd), W - 6) - w - 6, y - 13, w + 6, 14);
-        ctx.fillStyle = color; ctx.textAlign = 'right'; ctx.fillText(text, Math.min(tx(tEnd), W - 6) - 3, y);
+        ctx.fillStyle = 'rgba(10, 13, 16, 0.75)'; ctx.fillRect(x - w - 6, y - 13, w + 6, 14);
+        ctx.fillStyle = color; ctx.textAlign = 'right'; ctx.fillText(text, x - 3, y);
       };
       tag(preview.sum, `r + ${preview.label}`, CHANNEL_COLORS[preview.channel]);
       tag(preview.alone, preview.label, 'rgba(235, 240, 245, 0.85)');
@@ -1943,49 +2223,54 @@ function createDisplay(root, handlers) {
 
     if (sweeping) {
       const x = Math.round(tx(tScan)) + 0.5;
-      if (x >= 0 && x <= W) {
-        ctx.strokeStyle = 'rgba(235, 240, 245, 0.35)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      }
+      ctx.strokeStyle = 'rgba(235, 240, 245, 0.35)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, P.t); ctx.lineTo(x, P.b); ctx.stroke();
     }
 
-    // Ground markers: each channel's zero level on the left edge.
-    ctx.font = '600 10px "IBM Plex Mono", ui-monospace, monospace';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    scope.channels.forEach((ch, i) => {
-      if (!ch.on || !data.signals[ch.source]) return;
-      const y0 = vy(ch, 0);
-      const y = Math.max(8, Math.min(H - 8, y0));
-      ctx.fillStyle = CHANNEL_COLORS[i];
-      ctx.beginPath();
-      ctx.moveTo(0, y - 7); ctx.lineTo(11, y - 7); ctx.lineTo(17, y); ctx.lineTo(11, y + 7); ctx.lineTo(0, y + 7); ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#0a0d10';
-      ctx.fillText(y0 < 8 ? '↑' : y0 > H - 8 ? '↓' : String(i + 1), 7, y + 0.5);
-    });
+    if (box) {
+      const x0 = Math.min(box.x0, box.x1), y0 = Math.min(box.y0, box.y1);
+      const w = Math.abs(box.x1 - box.x0), h = Math.abs(box.y1 - box.y0);
+      const tOnly = h < 8, vOnly = w < 8;
+      const rx = vOnly ? P.l : x0, rw = vOnly ? P.w : w, ry = tOnly ? P.t : y0, rh = tOnly ? P.h : h;
+      ctx.fillStyle = 'rgba(235, 240, 245, 0.08)'; ctx.fillRect(rx, ry, rw, rh);
+      ctx.strokeStyle = 'rgba(235, 240, 245, 0.8)'; ctx.setLineDash([4, 3]); ctx.strokeRect(rx + 0.5, ry + 0.5, rw, rh); ctx.setLineDash([]);
+    }
 
-    if (hover !== null) {
-      const x = Math.round(hover) + 0.5;
-      const t = xt(hover);
-      ctx.strokeStyle = 'rgba(235, 240, 245, 0.55)'; ctx.setLineDash([2, 3]);
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); ctx.setLineDash([]);
+    if (hover && !box && region(hover.x, hover.y) === 'plot') {
+      const x = Math.round(hover.x) + 0.5;
+      const t = xt(hover.x);
+      ctx.strokeStyle = 'rgba(235, 240, 245, 0.5)'; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(x, P.t); ctx.lineTo(x, P.b); ctx.stroke(); ctx.setLineDash([]);
       const rows = [[`t  ${siUnit(t, 's', 4)}`, 'rgba(235, 240, 245, 0.9)']];
       if (t >= 0 && t <= data.t[n]) {
         const j = indexAt(t);
-        scope.channels.forEach((ch, i) => {
-          const v = data.signals[ch.source];
-          if (ch.on && v) rows.push([`${i + 1} ${ch.source.padEnd(2)} ${num(v[j])}`, CHANNEL_COLORS[i]]);
-        });
+        scope.channels.forEach((ch, i) => { const v = data.signals[ch.source]; if (ch.on && v) rows.push([`${i + 1} ${ch.source.padEnd(2)} ${num(v[j])}`, CHANNEL_COLORS[i]]); });
       }
-      ctx.font = '11.5px "IBM Plex Mono", ui-monospace, monospace';
+      ctx.font = `11.5px ${MONO}`;
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
       const w = Math.max(...rows.map(([s]) => ctx.measureText(s).width)) + 14;
-      const bx = hover + 10 + w > W ? hover - 10 - w : hover + 10;
-      ctx.fillStyle = 'rgba(10, 13, 16, 0.85)'; ctx.fillRect(bx, 8, w, rows.length * 16 + 8);
-      ctx.strokeStyle = 'rgba(160, 175, 190, 0.4)'; ctx.strokeRect(bx + 0.5, 8.5, w - 1, rows.length * 16 + 7);
-      rows.forEach(([s, c], i) => { ctx.fillStyle = c; ctx.fillText(s, bx + 7, 13 + i * 16); });
+      const bx = hover.x + 10 + w > P.r ? hover.x - 10 - w : hover.x + 10;
+      ctx.fillStyle = 'rgba(10, 13, 16, 0.85)'; ctx.fillRect(bx, P.t + 6, w, rows.length * 16 + 8);
+      ctx.strokeStyle = 'rgba(160, 175, 190, 0.4)'; ctx.strokeRect(bx + 0.5, P.t + 6.5, w - 1, rows.length * 16 + 7);
+      rows.forEach(([s, c], i) => { ctx.fillStyle = c; ctx.fillText(s, bx + 7, P.t + 11 + i * 16); });
     }
     ctx.restore();
+
+    // Ground markers in the left margin: each channel's zero level.
+    ctx.font = `600 10px ${MONO}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    scope.channels.forEach((ch, i) => {
+      if (!visible(i)) return;
+      const [y, y0] = markerY(i);
+      const x = P.l - 18;
+      ctx.fillStyle = CHANNEL_COLORS[i];
+      ctx.beginPath();
+      ctx.moveTo(x, y - 7); ctx.lineTo(x + 11, y - 7); ctx.lineTo(x + 17, y); ctx.lineTo(x + 11, y + 7); ctx.lineTo(x, y + 7); ctx.closePath();
+      ctx.fill();
+      if (i === line) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke(); }
+      ctx.fillStyle = BG;
+      ctx.fillText(y0 < P.t + 7 ? '↑' : y0 > P.b - 7 ? '↓' : String(i + 1), x + 7, y + 0.5);
+    });
     renderStatus();
   }
 
@@ -1993,11 +2278,10 @@ function createDisplay(root, handlers) {
     if (!scope || !data) return;
     const state = { run: ['run', 'Run'], stop: ['stop', 'Stop'], single: ['single', 'Single'] }[mode];
     const tb = scope.timebase;
-    const rec = data.t[data.t.length - 1];
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
-      <span class="dim">record ${siUnit(rec, 's', 4)}</span>
+      ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
       <span class="grow"></span>
       ${mode !== 'stop' ? `<span class="dim">t ${siUnit(tScan, 's', 3)}</span>` : ''}`;
   }
@@ -2014,16 +2298,18 @@ function createDisplay(root, handlers) {
     badges.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => handlers.onSelectChannel(Number(b.dataset.ch))));
   }
 
+  // Sweep
   function frame(now) {
     raf = 0;
     const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
     last = now;
-    if (mode !== 'stop' && data) {
+    if (mode !== 'stop' && data && scope) {
+      const [w0, w1] = win();
+      if (tScan < w0 || tScan > w1) tScan = w0;
       tScan += dt;
-      const rec = data.t[data.t.length - 1];
-      if (tScan >= rec) {
-        if (mode === 'single') { tScan = rec; mode = 'stop'; handlers.onStopped?.(); }
-        else tScan %= rec;
+      if (tScan >= w1) {
+        if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); }
+        else tScan = w0 + ((tScan - w0) % (w1 - w0));
       }
     }
     draw();
@@ -2031,24 +2317,158 @@ function createDisplay(root, handlers) {
     else last = 0;
   }
   const kick = () => { if (!raf) raf = requestAnimationFrame(frame); };
+  const redraw = () => { if (mode === 'stop') draw(); };
 
-  canvas.addEventListener('pointermove', (e) => { const r = canvas.getBoundingClientRect(); hover = e.clientX - r.left; if (mode === 'stop') draw(); });
-  canvas.addEventListener('pointerleave', () => { hover = null; if (mode === 'stop') draw(); });
+  // Direct manipulation
+  function selectLine(i) {
+    if (line === i) return;
+    line = i;
+    handlers.onSelectLine(i);
+    redraw();
+  }
+
+  // The line under the pointer: a ground marker in the margin, or a trace
+  // within a few pixels in the plot.
+  function hitLine(x, y) {
+    if (!data || !scope) return null;
+    if (x < P.l && x > P.l - 22) {
+      for (const i of [3, 2, 1, 0]) if (visible(i) && Math.abs(markerY(i)[0] - y) <= 8) return i;
+      return null;
+    }
+    if (region(x, y) !== 'plot') return null;
+    const t = xt(x);
+    if (t < 0 || t > data.t[data.t.length - 1]) return null;
+    const j = indexAt(t), j0 = Math.max(0, j - 2), j1 = Math.min(data.t.length - 1, j + 2);
+    let best = null, bd = 7;
+    for (const i of [line, 0, 1, 2, 3]) {
+      if (i === null || !visible(i)) continue;
+      const ch = scope.channels[i], v = data.signals[ch.source];
+      for (let q = j0; q <= j1; q++) {
+        const d = Math.abs(vy(ch, v[q]) - y);
+        if (d < bd) { bd = d; best = i; }
+      }
+    }
+    return best;
+  }
+
+  // The channels a vertical gesture acts on: the selected line, or every
+  // channel that shows a signal.
+  const targets = () => (line !== null ? [line] : [0, 1, 2, 3].filter(visible));
+
+  let wheelAcc = 0, wheelTimer = null;
+  canvas.addEventListener('wheel', (e) => {
+    if (!scope || !data) return;
+    e.preventDefault();
+    wheelAcc += e.deltaY * (e.deltaMode === 1 ? 20 : 1);
+    const steps = Math.trunc(wheelAcc / 60);
+    if (!steps) return;
+    wheelAcc -= steps * 60;
+    const { x, y } = pos(e);
+    const where = region(x, y);
+    const zoomTime = where === 'xaxis' || (where === 'plot' && line === null);
+    const zoomValues = where === 'yaxis' || where === 'plot';
+    const dir = Math.sign(steps);
+    handlers.edit((sc) => {
+      for (let s = 0; s < Math.abs(steps); s++) {
+        if (zoomTime) {
+          const tb = sc.timebase, tc = xt(x);
+          tb.scale = step125(tb.scale, dir);
+          tb.position = Number((tc - ((x - P.l) / P.dx) * tb.scale).toPrecision(6));
+        }
+        if (zoomValues) {
+          const k = divsAt(y);
+          for (const i of targets()) {
+            const ch = sc.channels[i], vc = k * ch.scale - ch.offset;
+            ch.scale = step125(ch.scale, dir);
+            ch.offset = Number((k * ch.scale - vc).toPrecision(6));
+          }
+        }
+      }
+    });
+    clearTimeout(wheelTimer);
+    wheelTimer = setTimeout(() => handlers.endEdit(), 400);
+  }, { passive: false });
+
+  let gesture = null;
+  const pos = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !scope || !data) return;
+    const { x, y } = pos(e);
+    canvas.setPointerCapture(e.pointerId);
+    if (e.shiftKey && region(x, y) === 'plot') { box = { x0: x, y0: y, x1: x, y1: y }; gesture = { kind: 'box' }; return; }
+    const hit = hitLine(x, y);
+    if (hit !== null) selectLine(hit);
+    const where = region(x, y);
+    gesture = { kind: 'pan', x, y, moved: false, hit, time: where !== 'yaxis', values: where !== 'xaxis' };
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = pos(e);
+    hover = p;
+    if (gesture?.kind === 'box') { box.x1 = Math.max(P.l, Math.min(P.r, p.x)); box.y1 = Math.max(P.t, Math.min(P.b, p.y)); draw(); return; }
+    if (gesture?.kind === 'pan') {
+      const dx = p.x - gesture.x, dy = p.y - gesture.y;
+      if (!gesture.moved && Math.hypot(dx, dy) < 3) return;
+      gesture.moved = true;
+      gesture.x = p.x; gesture.y = p.y;
+      canvas.style.cursor = 'grabbing';
+      handlers.edit((sc) => {
+        if (gesture.time && dx) sc.timebase.position = Number((sc.timebase.position - (dx / P.dx) * sc.timebase.scale).toPrecision(6));
+        if (gesture.values && dy) for (const i of targets()) { const ch = sc.channels[i]; ch.offset = Number((ch.offset - (dy / P.dy) * ch.scale).toPrecision(6)); }
+      });
+      return;
+    }
+    const where = region(p.x, p.y);
+    canvas.style.cursor = hitLine(p.x, p.y) !== null ? 'grab' : where === 'xaxis' ? 'ew-resize' : where === 'yaxis' ? 'ns-resize' : 'crosshair';
+    redraw();
+  });
+  const finish = () => {
+    if (!gesture) return;
+    if (gesture.kind === 'box') applyBox();
+    else if (gesture.moved) handlers.endEdit();
+    else if (gesture.hit === null && line !== null) selectLine(null);
+    gesture = null;
+    canvas.style.cursor = 'crosshair';
+  };
+  canvas.addEventListener('pointerup', finish);
+  canvas.addEventListener('pointercancel', () => { box = null; gesture = null; draw(); });
+  canvas.addEventListener('pointerleave', () => { if (!gesture) { hover = null; redraw(); } });
+
+  // Shift-drag: show exactly the marked box. A flat box zooms time only, a
+  // narrow one values only.
+  function applyBox() {
+    const b = box;
+    box = null;
+    const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
+    const time = x1 - x0 >= 8, values = y1 - y0 >= 8;
+    if (!time && !values) { draw(); return; }
+    const t0 = xt(x0), t1 = xt(x1), k0 = divsAt(y0), k1 = divsAt(y1);
+    handlers.edit((sc) => {
+      if (time) sc.timebase = { scale: Number(((t1 - t0) / DIVX).toPrecision(4)), position: Number(t0.toPrecision(6)) };
+      if (values) for (const i of targets()) {
+        const ch = sc.channels[i];
+        const top = k0 * ch.scale - ch.offset, bot = k1 * ch.scale - ch.offset;
+        ch.scale = Number(((top - bot) / DIVY).toPrecision(4));
+        ch.offset = Number((-(top + bot) / 2).toPrecision(6));
+      }
+    });
+    handlers.endEdit();
+  }
 
   new ResizeObserver(resize).observe(screen);
   document.fonts?.ready.then(() => draw());
 
   return {
-    setData(d) { data = d; if (data && tScan > data.t[data.t.length - 1]) tScan = 0; renderBadges(); draw(); },
-    setScope(s, sel) { scope = s; selected = sel; renderBadges(); draw(); },
+    setData(d) { data = d; if (line !== null && !visible(line)) line = null; renderBadges(); draw(); },
+    setScope(s, sel) { scope = s; selected = sel; if (line !== null && line !== sel) line = null; renderBadges(); draw(); },
     setPreview(p) { preview = p; draw(); },
     setMode(m) {
-      if (m === 'single') tScan = 0;
+      if (m === 'single' && scope) tScan = win()[0];
       mode = m;
       last = 0;
       kick();
       draw();
     },
+    releaseLine() { if (line === null) return false; selectLine(null); return true; },
     get mode() { return mode; },
   };
 }
@@ -2058,10 +2478,13 @@ return { CHANNEL_COLORS, SOURCE_LABEL, createDisplay };
 // ---- ui/controls.js
 __mods['ui/controls.js'] = (() => {
 // The control panel right of the display: Run Control, Horizontal, Vertical.
+// Every knob has a readout below it; click the readout to type a value
+// ("20m", "100 ms", "-0.4").
 
 const { createDial } = __mods['ui/dial.js'];
 const { CHANNEL_COLORS, SOURCE_LABEL } = __mods['ui/display.js'];
-const { siUnit, step125, num } = __mods['ui/units.js'];
+const { siUnit, num, parseSI } = __mods['ui/units.js'];
+const { step125 } = __mods['core/scale.js'];
 const { CHANNEL_SOURCES } = __mods['core/project.js'];
 function createControls(root, app) {
   root.innerHTML = `
@@ -2070,7 +2493,7 @@ function createControls(root, app) {
       <div class="row">
         <button class="key runstop" id="k-run" title="Run / Stop (R)">Run<br>Stop</button>
         <button class="key single" id="k-single" title="One sweep, then stop (S)">Single</button>
-        <button class="key auto" id="k-auto" title="Fit the display to the data (A)">Auto<br>Scale</button>
+        <button class="key auto" id="k-auto" title="Fit the display to one period of the input (A)">Auto<br>Scale</button>
       </div>
     </section>
     <section class="group">
@@ -2089,42 +2512,78 @@ function createControls(root, app) {
   $('#k-single').addEventListener('click', () => app.single());
   $('#k-auto').addEventListener('click', () => app.autoScale());
 
-  const readout = (dial, cls) => {
-    const wrap = document.createElement('div');
-    wrap.className = `dialbox ${cls ?? ''}`;
-    const lab = document.createElement('div'); lab.className = 'dlabel';
-    const val = document.createElement('div'); val.className = 'dval';
-    wrap.append(lab, dial.el, val);
-    return { wrap, lab, val };
-  };
+  const tb = () => app.project.scope.timebase;
+  const ch = () => app.project.scope.channels[app.channel];
+  const round = (v) => Number(v.toPrecision(6));
+  const setScope = (fn) => { const ok = app.editScope(fn); app.endEdit(); return ok; };
 
-  const hScale = createDial({
-    size: 64, label: 'Horizontal scale', title: 'Seconds per division · drag, scroll or arrow keys',
-    onTurn: (s) => app.editScope((sc) => { for (let i = 0; i < Math.abs(s); i++) sc.timebase.scale = step125(sc.timebase.scale, -Math.sign(s)); }),
-    onRelease: () => app.endEdit(),
-  });
-  const hPos = createDial({
-    size: 44, label: 'Horizontal position', title: 'Time at the left edge · double-click to zero',
-    onTurn: (s, fine) => app.editScope((sc) => { sc.timebase.position = round(sc.timebase.position + s * sc.timebase.scale * (fine ? 0.02 : 0.1)); }),
-    onPush: () => { app.editScope((sc) => { sc.timebase.position = 0; }); app.endEdit(); },
-    onRelease: () => app.endEdit(),
-  });
-  const vScale = createDial({
-    size: 64, label: 'Vertical scale', title: 'Units per division of the selected channel',
-    onTurn: (s) => app.editScope((sc) => { const ch = sc.channels[app.channel]; for (let i = 0; i < Math.abs(s); i++) ch.scale = step125(ch.scale, -Math.sign(s)); }),
-    onRelease: () => app.endEdit(),
-  });
-  const vPos = createDial({
-    size: 44, label: 'Vertical position', title: 'Offset of the selected channel · double-click to zero',
-    onTurn: (s, fine) => app.editScope((sc) => { const ch = sc.channels[app.channel]; ch.offset = round(ch.offset + s * ch.scale * (fine ? 0.02 : 0.1)); }),
-    onPush: () => { app.editScope((sc) => { sc.channels[app.channel].offset = 0; }); app.endEdit(); },
-    onRelease: () => app.endEdit(),
-  });
-  const hs = readout(hScale), hp = readout(hPos, 'small'), vs = readout(vScale), vp = readout(vPos, 'small');
-  hs.lab.textContent = 'Scale'; hp.lab.textContent = 'Position';
-  vs.lab.textContent = 'Scale'; vp.lab.textContent = 'Position';
-  $('#h-dials').append(hs.wrap, hp.wrap);
-  $('#v-dials').append(vs.wrap, vp.wrap);
+  // One knob with its label and an editable readout.
+  function knob({ id, label, size, title, turn, push, read, write, unit = '' }) {
+    const dial = createDial({
+      size, label, title,
+      onTurn: (s, fine) => app.editScope((sc) => turn(sc, s, fine)),
+      onPush: push && (() => setScope(push)),
+      onRelease: () => app.endEdit(),
+    });
+    const wrap = document.createElement('div');
+    wrap.className = 'dialbox';
+    const lab = document.createElement('div');
+    lab.className = 'dlabel';
+    lab.textContent = label;
+    const val = document.createElement('input');
+    val.className = 'dval';
+    val.id = id;
+    val.spellcheck = false;
+    val.setAttribute('aria-label', `${label} value`);
+    val.title = 'Click to type a value';
+    val.addEventListener('focus', () => val.select());
+    val.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') val.blur();
+      if (e.key === 'Escape') { val.dataset.cancel = '1'; val.blur(); }
+    });
+    val.addEventListener('blur', () => {
+      if (val.dataset.cancel) { delete val.dataset.cancel; render(); return; }
+      const v = parseSI(val.value, unit);
+      if (!Number.isFinite(v)) { app.toast(`Type a number, optionally with a prefix: 20m, 100 m${unit}, 2u`); render(); return; }
+      write(v);
+      render();
+    });
+    wrap.append(lab, dial.el, val);
+    return { wrap, lab, val, read };
+  }
+
+  const positive = (fn) => (v) => (v > 0 ? setScope((sc) => fn(sc, v)) : app.toast('The scale must be above 0.'));
+  const knobs = {
+    hScale: knob({
+      id: 'v-hscale', label: 'Scale', size: 48, unit: 's', title: 'Seconds per division · drag, scroll or arrow keys',
+      turn: (sc, s) => { for (let i = 0; i < Math.abs(s); i++) sc.timebase.scale = step125(sc.timebase.scale, -Math.sign(s)); },
+      read: () => `${siUnit(tb().scale, 's')}/div`,
+      write: positive((sc, v) => { sc.timebase.scale = v; }),
+    }),
+    hPos: knob({
+      id: 'v-hpos', label: 'Position', size: 36, unit: 's', title: 'Time at the left edge · double-click to zero',
+      turn: (sc, s, fine) => { sc.timebase.position = round(sc.timebase.position + s * sc.timebase.scale * (fine ? 0.02 : 0.1)); },
+      push: (sc) => { sc.timebase.position = 0; },
+      read: () => siUnit(tb().position, 's', 4),
+      write: (v) => setScope((sc) => { sc.timebase.position = v; }),
+    }),
+    vScale: knob({
+      id: 'v-vscale', label: 'Scale', size: 48, title: 'Units per division of the selected channel',
+      turn: (sc, s) => { const c = sc.channels[app.channel]; for (let i = 0; i < Math.abs(s); i++) c.scale = step125(c.scale, -Math.sign(s)); },
+      read: () => `${num(ch().scale)}/div`,
+      write: positive((sc, v) => { sc.channels[app.channel].scale = v; }),
+    }),
+    vPos: knob({
+      id: 'v-vpos', label: 'Position', size: 36, title: 'Offset of the selected channel · double-click to zero',
+      turn: (sc, s, fine) => { const c = sc.channels[app.channel]; c.offset = round(c.offset + s * c.scale * (fine ? 0.02 : 0.1)); },
+      push: (sc) => { sc.channels[app.channel].offset = 0; },
+      read: () => num(ch().offset),
+      write: (v) => setScope((sc) => { sc.channels[app.channel].offset = v; }),
+    }),
+  };
+  $('#h-dials').append(knobs.hScale.wrap, knobs.hPos.wrap);
+  $('#v-dials').append(knobs.vScale.wrap, knobs.vPos.wrap);
 
   const keys = $('#ch-keys');
   CHANNEL_COLORS.forEach((c, i) => {
@@ -2138,32 +2597,28 @@ function createControls(root, app) {
   });
   const src = $('#ch-src');
   for (const s of CHANNEL_SOURCES) { const o = document.createElement('option'); o.value = s; o.textContent = SOURCE_LABEL[s]; src.append(o); }
-  src.addEventListener('change', () => { app.editScope((sc) => { sc.channels[app.channel].source = src.value; }); app.endEdit(); });
+  src.addEventListener('change', () => setScope((sc) => { sc.channels[app.channel].source = src.value; }));
 
-  function render(mode) {
+  let mode = 'stop';
+  function render(m = mode) {
+    mode = m;
     const sc = app.project.scope;
-    const ch = sc.channels[app.channel];
     $('#k-run').className = `key runstop ${mode === 'stop' ? 'lit-red' : 'lit-green'}`;
     $('#k-single').className = `key single ${mode === 'single' ? 'lit-amber' : ''}`;
-    hs.val.textContent = `${siUnit(sc.timebase.scale, 's')}/div`;
-    hp.val.textContent = siUnit(sc.timebase.position, 's', 4);
-    vs.val.textContent = `${num(ch.scale)}/div`;
-    vp.val.textContent = num(ch.offset);
+    for (const k of Object.values(knobs)) if (document.activeElement !== k.val) k.val.value = k.read();
     root.style.setProperty('--sel', CHANNEL_COLORS[app.channel]);
     [...keys.children].forEach((b, i) => {
       b.classList.toggle('lit', sc.channels[i].on);
       b.classList.toggle('sel', i === app.channel);
       b.setAttribute('aria-pressed', String(sc.channels[i].on));
     });
-    src.value = ch.source;
-    vs.lab.textContent = `Scale · ${app.channel + 1}`;
-    vp.lab.textContent = `Position · ${app.channel + 1}`;
+    src.value = ch().source;
+    knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
+    knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
   }
 
   return { render };
 }
-
-function round(v) { return Number(v.toPrecision(6)); }
 
 return { createControls };
 })();
@@ -2175,64 +2630,69 @@ __mods['ui/generator.js'] = (() => {
 // joins the signal on Add. See design/output/signal-generator.md.
 
 const { SIGNALS, normalizeComponent, describeComponent, parseWaveform } = __mods['core/signals.js'];
+const { compileExpr, EXPR_HELP } = __mods['core/expr.js'];
 const { createDial } = __mods['ui/dial.js'];
 const ICONS = {
   dc: 'M2 7 H22',
   step: 'M2 11 H9 V3 H22',
   ramp: 'M2 11 H7 L15 3 H22',
-  pulse: 'M2 11 H8 V3 H13 V11 H22',
   square: 'M2 11 H5 V3 H9 V11 H13 V3 H17 V11 H21',
   sine: 'M2 7 C4.5 -1 7.5 -1 10 7 S15.5 15 18 7 S20.5 1 22 3',
   chirp: 'M2 7 C3.5 1 5.5 1 7 7 S10 13 11 7 S13 1 14 7 S15.5 13 16 7 S17.5 1 18 7 S19 12 19.5 7 S20.5 2 21 7',
+  fn: 'M2 12 C6 12 7 3 11 6 S16 11 22 2',
   noise: 'M2 8 L4 5 L5 10 L7 4 L8 9 L10 6 L11 11 L13 3 L14 8 L16 6 L17 10 L19 5 L20 8 L22 7',
   arb: 'M2 11 L6 9 L9 4 L12 8 L15 6 L18 10 L22 3',
 };
-const ORDER = ['dc', 'step', 'ramp', 'pulse', 'square', 'sine', 'chirp', 'noise', 'arb'];
+const ORDER = ['dc', 'step', 'ramp', 'square', 'sine', 'chirp', 'noise', 'fn', 'arb'];
+const DEFAULT_EXPR = '0.2*sin(2*pi*5*t)';
+const KEY_TITLE = { square: 'Square / pulse train: Count 1 is a single pulse, 0 repeats without end', fn: 'Function: type y(t) as a formula', arb: 'Arb: load t, value rows from a CSV file' };
 const icon = (type) => `<svg viewBox="0 0 24 14" aria-hidden="true"><path d="${ICONS[type]}"/></svg>`;
-const LENGTH = { key: 'length', label: 'Length', unit: 's', min: 1e-6 };
+const PERIOD = { key: 'period', label: 'Period', unit: 's', min: 1e-6 };
 
 function createGenerator(root, app) {
   root.innerHTML = `
     <div class="gen">
       <section class="gcol gwave" aria-label="Waveform">
         <h3 class="glabel">Waveform</h3>
-        <div class="wkeys">${ORDER.map((t) => `<button class="key wkey" data-type="${t}" title="${SIGNALS[t].label}${t === 'arb' ? ': load t, value rows from a CSV file' : ''}">${icon(t)}<span>${SIGNALS[t].label}</span></button>`).join('')}</div>
+        <div class="wkeys">${ORDER.map((t) => `<button class="key wkey" data-type="${t}" title="${KEY_TITLE[t] ?? SIGNALS[t].label}">${icon(t)}<span>${SIGNALS[t].label}</span></button>`).join('')}</div>
+        <div class="lenrow" id="g-period" title="The input repeats with this period; Auto Scale shows one period"></div>
         <input type="file" id="arb-file" accept=".csv,.tsv,.txt,text/csv,text/plain" hidden>
       </section>
       <section class="gcol gparams" aria-label="Parameters">
-        <h3 class="glabel" id="g-mode"></h3>
+        <div class="ghead"><h3 class="glabel" id="g-mode"></h3>
+          <button class="key small primary" id="g-add">Add</button>
+          <button class="key small" id="g-cancel">Cancel</button></div>
         <div class="plist" id="g-plist"></div>
-        <div class="pact">
-          <button class="key wide primary" id="g-add">Add</button>
-          <button class="key wide" id="g-cancel">Cancel</button>
-        </div>
-      </section>
-      <section class="gcol gentry" aria-label="Entry">
-        <h3 class="glabel">Entry</h3>
-        <div class="dialrow">
-          <button class="key arrow" id="g-left" title="Move the digit cursor left (←)" aria-label="Cursor left">◀</button>
-          <span id="g-dial"></span>
-          <button class="key arrow" id="g-right" title="Move the digit cursor right (→)" aria-label="Cursor right">▶</button>
-        </div>
-        <div class="keypad" id="g-keypad"></div>
       </section>
       <section class="gcol gstack" aria-label="Signal">
         <h3 class="glabel">Signal <span class="eq">r(t) = Σ</span></h3>
         <ol class="slist" id="g-stack"></ol>
-        <div class="lenrow" id="g-len"></div>
+      </section>
+      <section class="gcol gentry" aria-label="Entry">
+        <h3 class="glabel">Entry</h3>
+        <div class="entry">
+          <div class="keypad" id="g-keypad"></div>
+          <div class="dialcol">
+            <span id="g-dial"></span>
+            <div class="arrows">
+              <button class="key arrow" id="g-left" title="Move the digit cursor left (←)" aria-label="Cursor left">◀</button>
+              <button class="key arrow" id="g-right" title="Move the digit cursor right (→)" aria-label="Cursor right">▶</button>
+            </div>
+          </div>
+        </div>
       </section>
     </div>`;
   const $ = (s) => root.querySelector(s);
 
   // Editor state. The draft is not part of the project until it is added.
   let draft = null; // { mode: 'new' | 'edit', index, comp }
-  let active = 'length';
+  let active = null;
   let buffer = '';
   const cursors = {};
 
-  const fields = () => (draft ? SIGNALS[draft.comp.type].params : []).concat([LENGTH]);
-  const fieldDef = (key) => fields().find((f) => f.key === key) ?? LENGTH;
-  const getValue = (key) => (key === 'length' ? app.project.sim.duration : draft.comp.params[key]);
+  const fields = () => (draft ? SIGNALS[draft.comp.type].params : []).concat([PERIOD]);
+  const fieldDef = (key) => fields().find((f) => f.key === key) ?? PERIOD;
+  const getValue = (key) => (key === 'period' ? app.project.system.reference.period : draft.comp.params[key]);
   const cursorOf = (key) => {
     if (cursors[key] === undefined) {
       const v = Math.abs(getValue(key));
@@ -2247,7 +2707,7 @@ function createGenerator(root, app) {
     if (f.min !== undefined) v = Math.max(f.min, v);
     if (f.max !== undefined) v = Math.min(f.max, v);
     v = Number(v.toPrecision(10));
-    if (key === 'length') { app.setLength(v, live); }
+    if (key === 'period') { app.setPeriod(v, live); }
     else { draft.comp.params[key] = v; preview(); }
     render();
   }
@@ -2258,10 +2718,11 @@ function createGenerator(root, app) {
     const def = SIGNALS[type];
     const params = {};
     for (const p of def.params) params[p.key] = draft?.comp.params[p.key] ?? p.default;
-    draft = { mode: draft?.mode ?? 'new', index: draft?.index, comp: normalizeComponent({ type, params }) };
-    if (type === 'step' && draft.mode === 'new' && !app.project.system.reference.components.length) draft.comp.params.time = Math.min(0.1, app.project.sim.duration / 2);
-    for (const k of Object.keys(cursors)) if (k !== 'length') delete cursors[k];
-    active = def.params[0]?.key ?? 'length';
+    const extra = type === 'fn' ? { expr: draft?.comp.expr ?? DEFAULT_EXPR } : {};
+    draft = { mode: draft?.mode ?? 'new', index: draft?.index, comp: normalizeComponent({ type, params, ...extra }) };
+    if (type === 'step' && draft.mode === 'new' && !app.project.system.reference.components.length) draft.comp.params.time = Math.min(0.1, app.project.system.reference.period / 2);
+    for (const k of Object.keys(cursors)) if (k !== 'period') delete cursors[k];
+    active = def.params[0]?.key ?? null;
     buffer = '';
     preview();
     render();
@@ -2270,8 +2731,8 @@ function createGenerator(root, app) {
   function editComponent(i) {
     const comp = structuredClone(app.project.system.reference.components[i]);
     draft = { mode: 'edit', index: i, comp };
-    for (const k of Object.keys(cursors)) if (k !== 'length') delete cursors[k];
-    active = SIGNALS[comp.type].params[0]?.key ?? 'length';
+    for (const k of Object.keys(cursors)) if (k !== 'period') delete cursors[k];
+    active = SIGNALS[comp.type].params[0]?.key ?? null;
     buffer = '';
     preview();
     render();
@@ -2279,26 +2740,28 @@ function createGenerator(root, app) {
 
   function commitDraft() {
     if (!draft) return;
+    try { normalizeComponent(draft.comp); } catch (err) { app.toast(err.message.replace(/^reference\.components\[\d+\]\.\w+: /, 'Formula: ')); return; }
     if (draft.mode === 'edit') app.replaceComponent(draft.index, draft.comp);
     else app.addComponent(draft.comp);
-    draft = null; active = 'length'; buffer = '';
+    draft = null; active = null; buffer = '';
     preview();
     render();
   }
-  function cancelDraft() { draft = null; active = 'length'; buffer = ''; preview(); render(); }
+  function cancelDraft() { draft = null; active = null; buffer = ''; preview(); render(); }
 
   // Entry: dial, cursor keys, keypad.
   const dial = createDial({
-    size: 70, label: 'Entry dial', title: 'Changes the digit under the cursor',
+    size: 64, label: 'Entry dial', title: 'Changes the digit under the cursor',
     onTurn: (s) => {
-      if (active === 'length') app.beginEdit();
+      if (!active) return;
+      if (active === 'period') app.beginEdit();
       buffer = '';
       setValue(active, getValue(active) + s * 10 ** cursorOf(active), true);
     },
-    onRelease: () => { if (active === 'length') app.endEdit(); },
+    onRelease: () => { if (active === 'period') app.endEdit(); },
   });
   $('#g-dial').append(dial.el);
-  const moveCursor = (d) => { if (fieldDef(active).int) return; cursors[active] = Math.max(-6, Math.min(6, cursorOf(active) + d)); render(); };
+  const moveCursor = (d) => { if (!active || fieldDef(active).int) return; cursors[active] = Math.max(-6, Math.min(6, cursorOf(active) + d)); render(); };
   $('#g-left').addEventListener('click', () => moveCursor(1));
   $('#g-right').addEventListener('click', () => moveCursor(-1));
 
@@ -2307,11 +2770,12 @@ function createGenerator(root, app) {
   $('#g-keypad').querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => press(b.dataset.k)));
 
   function press(k) {
+    if (!active && !['Enter', 'Cancel', 'Del'].includes(k)) return;
     if (/^\d$/.test(k)) buffer += k;
     else if (k === '.') { if (!buffer.includes('.')) buffer += buffer ? '.' : '0.'; }
     else if (k === '±') {
       if (buffer) buffer = buffer.startsWith('-') ? buffer.slice(1) : `-${buffer}`;
-      else { if (active === 'length') { app.beginEdit(); setValue(active, -getValue(active)); app.endEdit(); } else setValue(active, -getValue(active)); }
+      else if (active !== 'period') setValue(active, -getValue(active));
     } else if (k === 'Del') buffer = buffer.slice(0, -1);
     else if (k === 'Cancel') { if (buffer) buffer = ''; else cancelDraft(); }
     else if (k === 'Enter') {
@@ -2319,7 +2783,7 @@ function createGenerator(root, app) {
         const v = Number(buffer);
         buffer = '';
         if (Number.isFinite(v)) {
-          if (active === 'length') { app.beginEdit(); setValue(active, v); app.endEdit(); } else setValue(active, v);
+          if (active === 'period') { app.beginEdit(); setValue(active, v); app.endEdit(); } else setValue(active, v);
           delete cursors[active];
         }
       } else commitDraft();
@@ -2356,6 +2820,7 @@ function createGenerator(root, app) {
     const f = fieldDef(key);
     if (key === active && buffer) return `<span class="buf">${buffer}</span><span class="caret"></span>`;
     const v = getValue(key);
+    if (f.zero && v === 0) return f.zero;
     const c = f.int ? 0 : cursorOf(key);
     let natural = 0;
     while (natural < 6 && Number(v.toFixed(natural)) !== v) natural++;
@@ -2378,8 +2843,11 @@ function createGenerator(root, app) {
     root.querySelectorAll('.wkey').forEach((b) => b.classList.toggle('lit', draft?.comp.type === b.dataset.type));
     $('#g-mode').textContent = !draft ? 'Parameters' : draft.mode === 'edit' ? `Edit ${draft.index + 1} · ${SIGNALS[draft.comp.type].label}` : `New ${SIGNALS[draft.comp.type].label} · preview`;
     $('#g-plist').innerHTML = draft
-      ? SIGNALS[draft.comp.type].params.map(fieldRow).join('') + (draft.comp.type === 'arb' ? `<div class="hint">${(draft.comp.points ?? []).length} points${draft.comp.name ? ` from ${draft.comp.name}` : ''}</div>` : '')
+      ? SIGNALS[draft.comp.type].params.map(fieldRow).join('')
+        + (draft.comp.type === 'arb' ? `<div class="hint">${(draft.comp.points ?? []).length} points${draft.comp.name ? ` from ${draft.comp.name}` : ''}</div>` : '')
+        + (draft.comp.type === 'fn' ? `<label class="fnrow"><span class="pl">y(t) =</span><input class="fnin" id="g-expr" spellcheck="false" autocomplete="off" value="${draft.comp.expr.replace(/"/g, '&quot;')}"></label><div class="hint" id="g-expr-msg">${EXPR_HELP}</div>` : '')
       : `<div class="hint">Press a waveform key to draft a component. The display previews it dashed, alone and added to r(t); <b>Add</b> puts it into the signal.</div>`;
+    $('#g-mode').title = draft ? '' : 'Parameters of the component being drafted or edited';
     $('#g-add').textContent = draft?.mode === 'edit' ? 'Apply' : 'Add';
     $('#g-add').disabled = !draft;
     $('#g-cancel').disabled = !draft && !buffer;
@@ -2389,7 +2857,17 @@ function createGenerator(root, app) {
           <button class="sw ${c.enabled === false ? '' : 'on'}" data-tog="${i}" role="switch" aria-checked="${c.enabled !== false}" aria-label="Component ${i + 1} on"></button>
           <button class="x" data-del="${i}" aria-label="Remove component ${i + 1}" title="Remove">✕</button></li>`).join('')
       : '<li class="empty">No components yet: r(t) = 0.</li>';
-    $('#g-len').innerHTML = `${fieldRow(LENGTH)}<span class="hint">record and sweep time</span>`;
+    $('#g-period').innerHTML = fieldRow(PERIOD);
+    const exprIn = $('#g-expr');
+    if (exprIn) {
+      const check = () => {
+        try { compileExpr(exprIn.value); exprIn.classList.remove('err'); $('#g-expr-msg').textContent = EXPR_HELP; return true; }
+        catch (err) { exprIn.classList.add('err'); $('#g-expr-msg').textContent = err.message; return false; }
+      };
+      exprIn.addEventListener('input', () => { draft.comp.expr = exprIn.value; if (check()) preview(); });
+      exprIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); exprIn.blur(); commitDraft(); } if (e.key === 'Escape') { exprIn.blur(); cancelDraft(); } });
+      check();
+    }
     root.querySelectorAll('.pfield').forEach((b) => b.addEventListener('click', () => { if (buffer) press('Enter'); active = b.dataset.key; render(); }));
     root.querySelectorAll('.srow').forEach((li) => li.addEventListener('click', (e) => { if (!e.target.closest('button')) editComponent(Number(li.dataset.i)); }));
     root.querySelectorAll('[data-tog]').forEach((b) => b.addEventListener('click', () => app.toggleComponent(Number(b.dataset.tog))));
@@ -2411,16 +2889,16 @@ function createGenerator(root, app) {
     if (e.key === 'Escape') { press('Cancel'); return true; }
     if (e.key === 'ArrowLeft') { moveCursor(1); return true; }
     if (e.key === 'ArrowRight') { moveCursor(-1); return true; }
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && active) {
       const s = e.key === 'ArrowUp' ? 1 : -1;
-      if (active === 'length') { app.beginEdit(); setValue(active, getValue(active) + s * 10 ** cursorOf(active)); app.endEdit(); }
+      if (active === 'period') { app.beginEdit(); setValue(active, getValue(active) + s * 10 ** cursorOf(active)); app.endEdit(); }
       else setValue(active, getValue(active) + s * 10 ** cursorOf(active));
       return true;
     }
     if (e.key === 'Tab') {
       const keys = fields().map((f) => f.key);
       if (buffer) press('Enter');
-      active = keys[(keys.indexOf(active) + (e.shiftKey ? keys.length - 1 : 1)) % keys.length];
+      active = keys[(Math.max(0, keys.indexOf(active)) + (active === null ? 0 : e.shiftKey ? keys.length - 1 : 1)) % keys.length];
       render();
       return true;
     }
@@ -2432,19 +2910,93 @@ function createGenerator(root, app) {
 
 return { createGenerator };
 })();
+// ---- ui/layout.js
+__mods['ui/layout.js'] = (() => {
+// Draggable separators: between the display and the setup tabs, and between
+// the display and its controls. The sizes belong to the viewer, not the
+// project: they live in this browser and do not change when a tab changes.
+
+const KEY = 'loop-tuner:layout';
+const MIN_SETUP = 110, MIN_TOP = 240, MIN_CONTROLS = 220, MAX_CONTROLS = 560, MIN_DISPLAY = 320;
+
+function createSplitters(shell) {
+  const setup = shell.querySelector('.setup');
+  const instrument = shell.querySelector('.instrument');
+  const splitH = shell.querySelector('#split-h');
+  const splitV = shell.querySelector('#split-v');
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') ?? {}; } catch { /* storage unavailable */ }
+  const store = () => { try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch { /* storage unavailable */ } };
+
+  // The setup height defaults to what the Input tab needs, measured once.
+  function naturalSetup() {
+    shell.style.removeProperty('--setup-h');
+    setup.style.height = 'auto';
+    const h = setup.getBoundingClientRect().height;
+    setup.style.height = '';
+    return Math.ceil(h);
+  }
+  let defaultSetup = naturalSetup();
+  const maxSetup = () => Math.max(MIN_SETUP, shell.getBoundingClientRect().height - MIN_TOP);
+  const maxControls = () => Math.min(MAX_CONTROLS, instrument.getBoundingClientRect().width - MIN_DISPLAY);
+
+  function apply() {
+    const h = Math.round(Math.min(maxSetup(), Math.max(MIN_SETUP, saved.setupH ?? defaultSetup)));
+    shell.style.setProperty('--setup-h', `${h}px`);
+    if (saved.controlsW) shell.style.setProperty('--controls-w', `${Math.round(Math.min(maxControls(), Math.max(MIN_CONTROLS, saved.controlsW)))}px`);
+    else shell.style.removeProperty('--controls-w');
+    splitH.setAttribute('aria-valuenow', String(h));
+  }
+
+  function drag(el, axis, onMove) {
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      el.classList.add('active');
+      const start = axis === 'y' ? e.clientY : e.clientX;
+      const base = axis === 'y' ? setup.getBoundingClientRect().height : shell.querySelector('.controls').getBoundingClientRect().width;
+      const move = (ev) => { onMove(base - ((axis === 'y' ? ev.clientY : ev.clientX) - start)); apply(); };
+      const up = () => { el.classList.remove('active'); el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); store(); };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+    });
+  }
+  drag(splitH, 'y', (v) => { saved.setupH = v; });
+  drag(splitV, 'x', (v) => { saved.controlsW = v; });
+
+  const keys = (el, prop, cur) => el.addEventListener('keydown', (e) => {
+    const d = { ArrowUp: 16, ArrowLeft: 16, ArrowDown: -16, ArrowRight: -16 }[e.key];
+    if (!d) return;
+    e.preventDefault(); e.stopPropagation();
+    saved[prop] = cur() + d;
+    apply(); store();
+  });
+  keys(splitH, 'setupH', () => setup.getBoundingClientRect().height);
+  keys(splitV, 'controlsW', () => shell.querySelector('.controls').getBoundingClientRect().width);
+  splitH.addEventListener('dblclick', () => { delete saved.setupH; apply(); store(); });
+  splitV.addEventListener('dblclick', () => { delete saved.controlsW; apply(); store(); });
+
+  apply();
+  document.fonts?.ready.then(() => { defaultSetup = naturalSetup(); apply(); });
+  window.addEventListener('resize', apply);
+}
+
+return { createSplitters };
+})();
 // ---- ui/app.js
 __mods['ui/app.js'] = (() => {
 // The app: project state, history, persistence, the acquisition the display
 // shows, and wiring between display, controls and tabs. window.loopTuner is
 // the browser API for agents driving the page.
 
-const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, defaultSampleTime, findCandidate } = __mods['core/project.js'];
-const { SIGNALS, normalizeComponent, componentFn, referenceFn, sampleSignal } = __mods['core/signals.js'];
+const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES } = __mods['core/project.js'];
+const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { EXAMPLES, DEFAULT_PROJECT } = __mods['core/examples.js'];
 const { createDisplay } = __mods['ui/display.js'];
 const { createControls } = __mods['ui/controls.js'];
 const { createGenerator } = __mods['ui/generator.js'];
-const { ceil125 } = __mods['ui/units.js'];
+const { createSplitters } = __mods['ui/layout.js'];
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
   { key: 'input', label: 'Input' },
@@ -2490,7 +3042,7 @@ function startApp() {
   let acqKey = '', acq = null, loopNote = '';
   function acquire() {
     const p = app.project;
-    const key = JSON.stringify([p.sim, p.system, p.candidates, p.selected, p.goal]);
+    const key = JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal]);
     if (key === acqKey) return acq;
     acqKey = key;
     const { t, r } = referenceTrace(p);
@@ -2509,7 +3061,23 @@ function startApp() {
   }
 
   // Mutations
-  app.editScope = (fn) => { app.beginEdit(); fn(app.project.scope); display.setScope(app.project.scope, app.channel); controls.render(display.mode); autosave(); };
+  // Scope edits. The timebase sets the simulated window, so changing it
+  // re-acquires; a window with too many controller samples is refused.
+  app.editScope = (fn) => {
+    const before = JSON.stringify(app.project.scope);
+    app.beginEdit();
+    fn(app.project.scope);
+    const sim = simOf(app.project);
+    if (sim.duration / sim.sampleTime > MAX_SAMPLES) {
+      app.project.scope = JSON.parse(before);
+      toast(`That window needs over ${MAX_SAMPLES / 1000}k controller samples at ${sim.sampleTime} s; zoom in instead.`);
+      changed({ data: false });
+      return false;
+    }
+    const tbChanged = JSON.stringify(app.project.scope.timebase) !== JSON.stringify(JSON.parse(before).timebase);
+    changed({ data: tbChanged });
+    return true;
+  };
   app.channelKey = (i) => {
     const ch = app.project.scope.channels[i];
     app.beginEdit();
@@ -2530,15 +3098,9 @@ function startApp() {
     if (c.enabled === false) delete c.enabled; else c.enabled = false;
     app.endEdit(); changed();
   };
-  app.setLength = (v, live) => {
-    const p = app.project;
-    const old = p.sim.duration;
+  app.setPeriod = (v, live) => {
     if (!(v > 0)) return;
-    if (v / defaultSampleTime(v) > 200000) return;
-    p.sim = { duration: v, sampleTime: defaultSampleTime(v) };
-    // A timebase that showed the whole old record keeps showing the whole record.
-    const tb = p.scope.timebase;
-    if (tb.position === 0 && Math.abs(tb.scale - ceil125(old / 10)) < 1e-12) tb.scale = ceil125(v / 10);
+    app.project.system.reference.period = v;
     if (!live) app.endEdit();
     changed();
   };
@@ -2550,13 +3112,15 @@ function startApp() {
   function showPreview() {
     if (!previewReq) { display.setPreview(null); return; }
     const p = app.project;
+    const sim = simOf(p);
     const comps = p.system.reference.components.slice();
     if (previewReq.replace !== null && previewReq.replace !== undefined) comps[previewReq.replace] = previewReq.comp;
     else comps.push(previewReq.comp);
     let alone, sum;
     try {
-      alone = sampleSignal(componentFn(normalizeComponent(previewReq.comp), p.sim), p.sim).v;
-      sum = sampleSignal(referenceFn({ components: comps.map((c, i) => normalizeComponent(c, i)) }, p.sim), p.sim).v;
+      const period = p.system.reference.period;
+      alone = sampleSignal(referenceFn({ period, components: [normalizeComponent(previewReq.comp)] }, sim), sim).v;
+      sum = sampleSignal(referenceFn({ period, components: comps.map((c, i) => normalizeComponent(c, i)) }, sim), sim).v;
     } catch { display.setPreview(null); return; }
     const channel = Math.max(0, p.scope.channels.findIndex((c) => c.source === 'r'));
     display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase() });
@@ -2565,29 +3129,29 @@ function startApp() {
   // Run control
   app.toggleRun = () => { display.setMode(display.mode === 'stop' ? 'run' : 'stop'); controls.render(display.mode); };
   app.single = () => { display.setMode('single'); controls.render(display.mode); };
+  // Auto Scale: one period of the input across the screen, then every
+  // channel with a signal fitted to about six divisions.
   app.autoScale = () => {
-    const data = acquire();
     app.beginEdit();
-    const sc = app.project.scope;
-    sc.timebase = { scale: ceil125(app.project.sim.duration / 10), position: 0 };
-    sc.channels.forEach((ch) => {
-      const v = data.signals[ch.source];
-      if (!v) return;
-      let lo = Infinity, hi = -Infinity;
-      for (const x of v) if (Number.isFinite(x)) { lo = Math.min(lo, x); hi = Math.max(hi, x); }
-      if (!Number.isFinite(lo)) return;
-      const span = hi - lo || Math.abs(hi) || 1;
-      ch.scale = ceil125(span / 6);
-      ch.offset = -Number((((hi + lo) / 2) / (ch.scale / 10)).toFixed(0)) * (ch.scale / 10);
-      ch.offset = Number(ch.offset.toPrecision(6)) || 0;
-    });
+    app.project.scope.timebase = autoTimebase(app.project);
+    const data = acquire();
+    for (const ch of app.project.scope.channels) {
+      const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
+      if (fit) Object.assign(ch, fit);
+    }
     app.endEdit();
-    changed({ data: false });
-    toast('Auto Scale: display fitted to the data');
+    changed();
+    toast('Auto Scale: one period of the input, every channel fitted');
   };
 
   // Rendering
-  const display = createDisplay($('display'), { onSelectChannel: (i) => app.selectChannel(i), onStopped: () => controls.render(display.mode) });
+  const display = createDisplay($('display'), {
+    onSelectChannel: (i) => app.selectChannel(i),
+    onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
+    onStopped: () => controls.render(display.mode),
+    edit: (fn) => app.editScope(fn),
+    endEdit: () => app.endEdit(),
+  });
   const controls = createControls($('controls'), app);
   const generator = createGenerator($('tab-input'), app);
 
@@ -2704,6 +3268,7 @@ function startApp() {
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
+    if (e.key === 'Escape' && display.releaseLine()) return;
     const onControl = e.target.closest?.('button, [role="slider"], a');
     if (app.tab === 'input' && !(onControl && ['Enter', ' ', 'Tab'].includes(e.key)) && generator.handleKey(e)) { e.preventDefault(); return; }
     const k = e.key.toLowerCase();
@@ -2747,6 +3312,7 @@ function startApp() {
   }
   renderTabs();
   changed();
+  createSplitters($('lt-shell'));
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   display.setMode(reduced ? 'stop' : 'run');
   controls.render(display.mode);

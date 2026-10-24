@@ -17,5 +17,5 @@ The person's raw words are in [../input](../input/README.md). This folder is wha
 ## Status (2026-10-24)
 
 - **v1** (git tag `v1`): everything on one screen: scope, goal, candidates, a rack of knobs, auto-tune. It works, but the person found it overloaded; it is superseded by v2.
-- **v2, in progress**: the oscilloscope layout, with the Input tab (signal generator) built. With only the reference defined, the display sweeps the reference alone. Plant, Controller, Auto-tune and Analysis tabs come next, one at a time (see [roadmap.md](roadmap.md)).
+- **v2, in progress**: the oscilloscope layout, with the Input tab (signal generator) built. The screen is the record; the display can be zoomed and panned directly. With only the reference defined, the display sweeps the reference alone. Plant, Controller, Auto-tune and Analysis tabs come next, one at a time (see [roadmap.md](roadmap.md)).
 - The simulation core (`src/core/`) and the agent CLI (`cli.mjs`, see `AGENTS.md`) carry over from v1.

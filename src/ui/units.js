@@ -1,4 +1,5 @@
-// Engineering units for the instrument: SI prefixes and 1-2-5 sequences.
+// Engineering units for the instrument: SI prefixes and plain readouts.
+// The 1-2-5 sequences live in core/scale.js.
 
 const PREFIXES = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n']];
 
@@ -15,23 +16,6 @@ export function siUnit(v, unit, digits) {
   return `${si(v, digits)}${unit}`.replace(/ $/, '');
 }
 
-// The 1-2-5 step nearest to v, and the next one up or down.
-export function step125(v, dir) {
-  const e = Math.floor(Math.log10(v));
-  const ladder = [];
-  for (let k = e - 1; k <= e + 1; k++) for (const m of [1, 2, 5]) ladder.push(Number((m * 10 ** k).toPrecision(3)));
-  let i = 0;
-  for (let j = 0; j < ladder.length; j++) if (Math.abs(Math.log(ladder[j] / v)) < Math.abs(Math.log(ladder[i] / v))) i = j;
-  return ladder[Math.max(0, Math.min(ladder.length - 1, i + dir))];
-}
-
-// The smallest 1-2-5 value that is >= v.
-export function ceil125(v) {
-  const e = Math.floor(Math.log10(v));
-  for (let k = e; k <= e + 1; k++) for (const m of [1, 2, 5]) { const c = Number((m * 10 ** k).toPrecision(3)); if (c >= v * (1 - 1e-9)) return c; }
-  return 10 ** (e + 1);
-}
-
 // A plain number for readouts: up to 4 significant digits, no exponent noise.
 export function num(v, digits = 4) {
   if (!Number.isFinite(v)) return '—';
@@ -39,4 +23,15 @@ export function num(v, digits = 4) {
   const a = Math.abs(v);
   if (a >= 1e5 || a < 1e-4) return v.toExponential(2);
   return String(Number(v.toPrecision(digits)));
+}
+
+// Reads a typed value with an optional SI prefix and unit: "20m", "100 ms",
+// "2u", "-0.4", "1.5k". Returns NaN when it is not a number.
+export function parseSI(text, unit = '') {
+  let s = String(text).trim().replace(/,/g, '.').replace(/−/g, '-').replace(/\/div$/, '').trim();
+  if (unit && s.endsWith(unit)) s = s.slice(0, -unit.length).trim();
+  const m = s.match(/^([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*([GMkmuµn]?)$/i);
+  if (!m) return NaN;
+  const f = { G: 1e9, M: 1e6, k: 1e3, K: 1e3, m: 1e-3, u: 1e-6, U: 1e-6, 'µ': 1e-6, n: 1e-9, N: 1e-9, '': 1 }[m[2]];
+  return Number(m[1]) * f;
 }
