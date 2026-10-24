@@ -139,3 +139,22 @@ test("the System library's pictures draw the state as it is (no clamped position
     assert.ok(!/clamp\(/.test(text), `${e.name}: a view clamps a position, so it can show what the model does not do`);
   }
 });
+
+test("the mass–spring–damper's energies on the scope balance the work done and the damper's loss", async () => {
+  const { SYSTEM_PARTS, applySystem } = await import('../src/core/systems.js');
+  const { normalizeProject, evaluateSystem, autoTimebase } = await import('../src/core/project.js');
+  const { DEFAULT_PROJECT } = await import('../src/core/examples.js');
+  const entry = SYSTEM_LIBRARY.find((e) => e.name.startsWith('Mass–spring–damper'));
+  const p = normalizeProject(applySystem(DEFAULT_PROJECT, entry, SYSTEM_PARTS));
+  p.scope.timebase = autoTimebase(p);
+  const { t, signals: s } = evaluateSystem(p);
+  const c = 0.5, dt = t[1] - t[0];
+  let work = 0;
+  for (let k = 1; k < t.length; k++) {
+    const pw = (j) => s.F[j] * s.v[j] - c * s.v[j] ** 2;
+    work += 0.5 * dt * (pw(k - 1) + pw(k));
+    const E = s.Ekin[k] + s.Epot[k], E0 = s.Ekin[0] + s.Epot[0];
+    assert.ok(Math.abs(E - E0 - work) < 2e-4 * Math.max(1e-3, Math.abs(E)) + 1e-6, `t ${t[k]}: E ${E} vs work ${work}`);
+  }
+  assert.ok(Math.abs(s.Ekin[100] - 0.5 * s.v[100] ** 2) < 1e-12 && Math.abs(s.Epot[100] - 0.5 * 25 * s.x[100] ** 2) < 1e-12);
+});
