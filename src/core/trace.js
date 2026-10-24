@@ -146,7 +146,7 @@ export const traceToJson = (trace, meta) => traceToJsonParts(trace, meta).join('
 // Reads a trace saved by traceToCsv or traceToJson (or any CSV whose first
 // column is time): { title, t, signals, units }. Empty cells are NaN.
 export function parseTrace(text) {
-  const s = String(text).replace(/^﻿/, '');
+  const s = String(text).replace(/^\uFEFF/, '');
   if (/^\s*\{/.test(s)) {
     const j = JSON.parse(s);
     if (!Array.isArray(j.t) || !j.signals || typeof j.signals !== 'object') throw new Error('a trace needs "t" and "signals"');

@@ -19,7 +19,7 @@ Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control lo
   - The **System library** in the header holds complete systems, from a mass–spring–damper to a triple pendulum on a cart; load one whole, or only its input or plant.
   - Auto-tune and Analysis come next.
 
-Projects are plain JSON, including how the display is set. Save, open, drop or paste them; **Export HTML** writes a copy of the page with the project inside, to send to someone.
+Projects are plain JSON, including how the display is set. Save, open, drop or paste them; **Export HTML** writes a copy of the page with the project inside, to send to someone. Published as a claude.ai page, saving goes through the viewer's download confirmation (the page declares the `downloads` capability); where that is unavailable, Copy JSON and Copy HTML remain.
 
 The design, its decisions and what comes next are in [design/output](design/output/README.md); the person's original words are in [design/input](design/input/README.md).
 

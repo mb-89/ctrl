@@ -91,7 +91,7 @@ export function normalizeProject(p) {
 // representation shown, and the setup area's share of the page height.
 // Unknown values are dropped.
 export const UI_RUN = ['run', 'stop', 'single'];
-export const UI_TABS = ['input', 'plant', 'controller'];
+export const UI_TABS = ['input', 'plant', 'controller', 'analysis'];
 export function normalizeUi(ui) {
   if (!ui || typeof ui !== 'object') return null;
   const out = {};
@@ -203,9 +203,10 @@ function normalizeFilter(f, where) {
 }
 
 // How the screen shows the channels: in time (the default), as amplitude
-// spectra (FFT) or as one channel's spectrogram; and which channel, if any,
-// has its values on a second axis at the right.
-export const VIEW_MODES = ['time', 'fft', 'spectrogram'];
+// spectra (FFT), as one channel's spectrogram, or XY (channel 1 across, the
+// others against it; delta: they draw channel 1 minus themselves); and which
+// channel, if any, has its values on a second axis at the right.
+export const VIEW_MODES = ['time', 'fft', 'spectrogram', 'xy'];
 function normalizeScopeView(v) {
   if (!v || typeof v !== 'object') return null;
   const out = {};
@@ -214,6 +215,7 @@ function normalizeScopeView(v) {
   const fmin = Number(v.fmin), fmax = Number(v.fmax);
   if (fmin >= 0 && fmax > fmin) { out.fmin = fmin; out.fmax = fmax; }
   if (v.db === false) out.db = false;
+  if (v.delta === true) out.delta = true;
   if ([64, 128, 256, 512, 1024].includes(Number(v.size))) out.size = Number(v.size);
   return Object.keys(out).length ? out : null;
 }

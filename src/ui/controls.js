@@ -20,6 +20,8 @@ export function createControls(root, app) {
         <button class="key small" data-view="time" title="Signals over time">Time</button>
         <button class="key small" data-view="fft" title="Amplitude spectrum of every channel (what has run so far)">FFT</button>
         <button class="key small" data-view="spectrogram" title="The selected channel's spectrum over time, its trace on the right axis">Spectrogram</button>
+        <button class="key small" data-view="xy" title="XY: channel 1 across, the other channels against it (a Lissajous figure)">XY</button>
+        <button class="key small" id="k-delta" title="XY: draw channel 1 minus each channel (r on 1 and y on 2: the error e = r − y over r)">Δ</button>
       </div>
     </section>
     <section class="group">
@@ -130,6 +132,12 @@ export function createControls(root, app) {
     if (b.dataset.view === 'time') delete view.mode; else view.mode = b.dataset.view;
     sc.view = view;
   })));
+  // XY: the channels draw channel 1 minus themselves (the error, for r and y).
+  $('#k-delta').addEventListener('click', () => setScope((sc) => {
+    const view = { ...(sc.view ?? {}) };
+    if (view.delta) delete view.delta; else view.delta = true;
+    sc.view = view;
+  }));
   // The selected channel's display filter.
   const filt = $('#ch-filt');
   filt.addEventListener('change', () => setScope((sc) => {
@@ -186,6 +194,9 @@ export function createControls(root, app) {
     src.dataset.names = names.join(',') + '|' + names.map(app.unitOf).join(',');
     const vm = sc.view?.mode ?? 'time';
     root.querySelectorAll('[data-view]').forEach((b) => { b.classList.toggle('lit-view', b.dataset.view === vm); b.setAttribute('aria-pressed', String(b.dataset.view === vm)); });
+    $('#k-delta').hidden = vm !== 'xy';
+    $('#k-delta').classList.toggle('lit-view', !!sc.view?.delta);
+    $('#k-delta').setAttribute('aria-pressed', String(!!sc.view?.delta));
     const f = ch().filter;
     filt.value = f?.type ?? '';
     const fsig = f ? `${f.type}|${f.f0}|${f.order}|${f.q}` : '';

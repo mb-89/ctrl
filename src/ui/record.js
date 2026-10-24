@@ -9,7 +9,8 @@
 //   Open         a saved trace, drawn dashed on the channels with the same
 //                names until cleared; ◀ ▶ step it through a trace longer
 //                than the screen.
-// Where downloads are blocked (the claude.ai viewer) the keys copy CSV.
+// Files leave through app.download (in the claude.ai viewer, its downloads
+// capability); where there is none, the keys copy CSV.
 // See design/output/instrument.md and design/output/hil.md.
 
 import { findExternal } from '../core/hil.js';
@@ -35,7 +36,6 @@ const span = (tr) => (tr.t.length > 1 ? tr.t[tr.t.length - 1] - tr.t[0] : 0);
 const listed = (names) => (names.length > 6 ? `${names.slice(0, 6).join(', ')} and ${names.length - 6} more` : names.join(', '));
 
 export function createRecord(app, display) {
-  const framed = window.self !== window.top;
   const bar = document.createElement('div');
   bar.className = 'recbar';
   bar.setAttribute('aria-label', 'Save and references');
@@ -93,16 +93,16 @@ export function createRecord(app, display) {
   const stem = (what) => `${app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'trace'}-${what === 'screen' ? 'screen' : 'record'}-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}`;
   async function save(what, kind) {
     closePop();
-    if (kind === 'png') { const blob = await screenshot(); app.download(`${stem('screen')}.png`, [blob], 'image/png'); app.toast('Saved a picture of the screen (PNG)'); return; }
+    if (kind === 'png') { if (await app.download(`${stem('screen')}.png`, await screenshot(), 'image/png')) app.toast('Saved a picture of the screen (PNG)'); return; }
     const x = what === 'screen' ? screenTrace() : recordTrace();
     if (!x) { app.toast(what === 'screen' ? 'Nothing on the screen yet.' : 'The live record is empty: connect a plant and Run.'); return; }
     const meta = { title: app.project.title, source: x.source };
     const names = Object.keys(x.trace.signals), n = x.trace.t.length;
     if (kind === 'copy') { app.copy(traceToCsv(x.trace, meta), `The ${x.what} (${n} samples of ${names.length} signals, CSV)`); return; }
-    // A UTF-8 mark first, so spreadsheets read units such as N·m right.
-    if (kind === 'json') app.download(`${stem(what)}.json`, traceToJsonParts(x.trace, meta), 'application/json');
-    else app.download(`${stem(what)}.csv`, ['﻿', ...traceToCsvParts(x.trace, meta)], 'text/csv');
-    app.toast(`Saved ${duration(span(x.trace))} of ${listed(names)} (${x.what}, ${kind.toUpperCase()})`);
+    // Built in parts, as a Blob; CSV with a UTF-8 mark first, so spreadsheets
+    // read units such as N·m right.
+    const file = kind === 'json' ? new Blob(traceToJsonParts(x.trace, meta), { type: 'application/json' }) : new Blob(['\uFEFF', ...traceToCsvParts(x.trace, meta)], { type: 'text/csv' });
+    if (await app.download(`${stem(what)}.${kind}`, file, file.type)) app.toast(`Saved ${duration(span(x.trace))} of ${listed(names)} (${x.what}, ${kind.toUpperCase()})`);
   }
   // A picture of the screen as it is, with the title, the status line and
   // the channels' scales.
@@ -139,7 +139,7 @@ export function createRecord(app, display) {
   function renderPop() {
     const scr = screenTrace(), lr = rec.length > 1;
     const key = (what, kind, text, title) => `<button class="rkey" role="menuitem" data-save="${what}:${kind}" title="${esc(title)}">${text}</button>`;
-    const keys = (what, png) => (framed ? key(what, 'copy', 'Copy CSV', 'CSV to the clipboard (downloads are blocked here)')
+    const keys = (what, png) => (!app.canDownload() ? key(what, 'copy', 'Copy CSV', 'CSV to the clipboard (files cannot be saved here)')
       : key(what, 'csv', 'CSV', 't and every signal, units in the header: for spreadsheets') + key(what, 'json', 'JSON', 'the same as JSON: for scripts')
         + (png ? key(what, 'png', 'PNG', 'a picture of the screen as it is') : '') + key(what, 'copy', 'Copy', 'CSV to the clipboard'));
     const row = (label, note, body) => `<div class="rc-row"><span class="rc-what">${label}<span class="rc-note">${esc(note)}</span></span><span class="rc-keys">${body}</span></div>`;

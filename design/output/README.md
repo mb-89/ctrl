@@ -14,6 +14,7 @@ The person's raw words are in [../input](../input/README.md). This folder is wha
 | [plant-views.md](plant-views.md) | 2D views of a plant, configured in its JSON (shapes, or SVG with bindings) |
 | [system-library.md](system-library.md) | Complete example systems, loaded whole or by part |
 | [controller-proposal.md](controller-proposal.md) | Tab 3, the Controller: blocks with variants, the controller library |
+| [analysis.md](analysis.md) | Tab 5, Analysis: key numbers, root locus, Bode, Nyquist, linear step; how the loop is cut and discretised |
 | [hil.md](hil.md) | Live (HIL) mode: an external plant over WebSocket, its protocol, watchdogs and E-stop, the plant script; Record |
 | [project-format.md](project-format.md) | The project file (JSON), version 2 |
 | [decisions.md](decisions.md) | Dated log of decisions, including the interpretations we made |

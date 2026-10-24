@@ -5,7 +5,9 @@
 import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } from '../core/project.js';
 import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
+import { isDelta } from './xyview.js';
 import { createControllerTab } from './controller.js';
+import { createAnalysisTab } from './analysis.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
 import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../core/systems.js';
@@ -14,6 +16,7 @@ import { createControls } from './controls.js';
 import { createGenerator } from './generator.js';
 import { createSplitters } from './layout.js';
 import { createLive } from './live.js';
+import { createRecord } from './record.js';
 
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
@@ -21,7 +24,7 @@ const TABS = [
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
   { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
-  { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
+  { key: 'analysis', label: 'Analysis' },
 ];
 
 function startApp() {
@@ -239,18 +242,23 @@ function startApp() {
     display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase(), signal: app.signal });
   }
 
-  // Run control
-  app.toggleRun = () => { display.setMode(display.mode === 'stop' ? 'run' : 'stop'); controls.render(display.mode); };
-  app.single = () => { display.setMode('single'); controls.render(display.mode); };
+  // Run control. In Live mode Run and Stop go through the plant (ui/live.js).
+  app.setMode = (m) => { display.setMode(m); controls.render(display.mode); live?.mode(m); };
+  app.toggleRun = () => app.setMode(display.mode === 'stop' ? 'run' : 'stop');
+  app.single = () => app.setMode('single');
   // Auto Scale: one period of the input across the screen, then every
   // channel with a signal fitted to about six divisions.
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
-    const data = live?.data() ?? acquire();
-    for (const ch of app.project.scope.channels) {
-      const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
+    const data = live?.data() ?? acquire();  // live: the sweep on the screen
+    const sc = app.project.scope, x = data.signals[sc.channels[0].source];
+    sc.channels.forEach((ch, i) => {
+      let v = data.signals[ch.source];
+      // XY with Δ: the channels draw channel 1 minus themselves; fit that.
+      if (v && x && sc.view?.mode === 'xy' && isDelta(sc, i, app.unitOf)) v = v.map((y, j) => x[j] - y);
+      const fit = v && fitChannel(v);
       if (fit) Object.assign(ch, fit);
-    }
+    });
   }
   app.autoScale = () => {
     app.beginEdit();
@@ -261,24 +269,29 @@ function startApp() {
   };
 
   // Rendering
-  let live = null;  // Live mode and Record (ui/live.js), made below
+  let live = null;  // Live mode (ui/live.js), made below
   const display = createDisplay($('display'), {
     onSelectChannel: (i) => app.selectChannel(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
-    onStopped: () => controls.render(display.mode),
+    onStopped: () => { controls.render(display.mode); live?.mode('stop'); },  // a Single ended
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
-    onSweep: (d, w0, w1) => live?.sweep(d, w0, w1),
     liveTag: () => live?.tag(),
   });
   const controls = createControls($('controls'), app);
-  live = createLive(app, display, $('controls'));
+  // Save and references under the screen (ui/record.js); Live in Run Control.
+  const record = createRecord(app, display);
+  live = createLive(app, display, $('controls'), record);
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
   const controllerTab = createControllerTab($('tab-controller'), app);
   // Opens the Controller tab on one Controller block (path of block ids).
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
+  // The Analysis tab; the scope's time (cursor, sweep or right edge) is its
+  // "Scope time" operating point.
+  const analysisTab = createAnalysisTab($('tab-analysis'), app);
+  app.scopeTime = () => display.time();
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -289,6 +302,8 @@ function startApp() {
     $('tab-plant').hidden = app.tab !== 'plant';
     $('tab-controller').hidden = app.tab !== 'controller';
     if (app.tab === 'controller') controllerTab.shown();
+    $('tab-analysis').hidden = app.tab !== 'analysis';
+    if (app.tab === 'analysis') analysisTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
@@ -312,7 +327,9 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    if (app.tab === 'analysis') analysisTab.render();
     live.changed();  // a running loop takes the edit at its next cycle
+    record.changed();  // references follow the window
     renderChrome();
     autosave();
   }
@@ -358,20 +375,39 @@ function startApp() {
     const json = exportJson().replace(/</g, '\\u003c');
     return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n</script>\n<script id="lt-script">${$('lt-script').textContent}</script>\n</body>\n</html>\n`;
   }
-  function download(name, text, type) {
+  // Saving a file. In a claude.ai page, through its downloads capability (the
+  // viewer confirms each save); in a plain browser, through a download link.
+  // Resolves true once the file is on its way. Framed without the capability,
+  // only the Copy buttons are offered.
+  let saver = null;
+  window.claude?.use?.('downloads').then((d) => {
+    saver = d;
+    if (d && framed) document.querySelectorAll('[data-standalone]').forEach((el) => { el.hidden = false; });
+  }).catch(() => {});
+  async function download(name, data, type) {
+    if (saver) {
+      try { await saver.save({ filename: name, data }); return true; } catch (err) {
+        if (err?.code !== 'declined') toast(`Could not save ${name}: ${err?.message ?? err?.code ?? err}`);
+        return false;
+      }
+    }
+    if (framed) { toast('Saving files is not available here; use Copy JSON or Copy HTML.'); return false; }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
     a.download = name;
     document.body.append(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    return true;
   }
+  app.download = download;
+  app.canDownload = () => !framed || !!saver;  // else Save offers Copy (ui/record.js)
   const stem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
-  Object.assign(app, { download, copy });  // for Record and the plant script (ui/live.js)
-  $('save').addEventListener('click', () => { download(`${stem()}.json`, exportJson(), 'application/json'); toast('Saved the project as JSON'); });
-  $('export').addEventListener('click', () => { download(`${stem()}.html`, exportHtml(), 'text/html'); toast('Exported a standalone page with this project inside'); });
+  app.copy = copy;  // for Save and the plant script (ui/record.js, ui/live.js)
+  $('save').addEventListener('click', async () => { if (await download(`${stem()}.json`, exportJson(), 'application/json')) toast('Saved the project as JSON'); });
+  $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
   $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
   $('open').addEventListener('click', () => $('file').click());
@@ -437,7 +473,7 @@ function startApp() {
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
     if (mod && e.key.toLowerCase() === 'y' && !inField) { e.preventDefault(); app.redo(); return; }
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed && !saver ? 'copy' : 'save').click(); return; }
     if (!inField && app.tab === 'plant' && $('help-dlg').hidden && plantEditor.handleKey(e)) { e.preventDefault(); return; }
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
@@ -468,10 +504,12 @@ function startApp() {
     addComponent: (c) => { app.addComponent(c); return structuredClone(refs()); },
     reference: () => { const { t, r } = referenceTrace(app.project); return { t: Array.from(t), r: Array.from(r) }; },
     autoScale: () => app.autoScale(),
-    run: () => { display.setMode('run'); controls.render('run'); },
-    stop: () => { display.setMode('stop'); controls.render('stop'); },
+    run: () => app.setMode('run'),
+    stop: () => app.setMode('stop'),
+    single: () => app.setMode('single'),
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
-    live: live.api,  // connect(), disconnect(), estop(), reset(), state(), csv(); design/output/hil.md
+    live: live.api,  // connect(url), disconnect(), estop(), reset(), state(): design/output/hil.md
+    record: record.api,  // screen(format), live(format), reference(text, name), clearReferences(), state()
   };
 
   // Boot: the embedded project, unless this browser has newer work on it.

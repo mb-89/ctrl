@@ -383,7 +383,8 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 
 /* Display modes and display filters (scope, Run Control and Vertical) */
 .viewkeys { margin-top: 2px; gap: 4px; }
-.viewkeys .key { flex: 1; min-height: 24px; }
+.viewkeys .key { flex: 1 1 auto; min-width: 0; min-height: 24px; padding-left: 5px; padding-right: 5px; }
+.viewkeys #k-delta { flex: 0 0 28px; }
 .key.lit-view { background: var(--lcd); color: #f2c718; border-color: #f2c718; }
 .st-view { background: #2a3540; color: #f2c718; }
 .srcrow .axbtn { flex: none; padding: 1px 6px; }
@@ -420,6 +421,27 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .taglegend .tag { --tone: var(--muted); }
 
 .ctable { grid-column: 2; font-family: var(--mono); }
+
+/* Analysis tab: key numbers at the left, four plots in the scope's style. */
+.an { display: grid; grid-template-columns: minmax(230px, 290px) 1fr; gap: 12px; height: 100%; min-height: 0; }
+.an-side { overflow: auto; min-height: 0; }
+.an-op { display: flex; gap: 4px; flex-wrap: wrap; }
+.an-op .key, .an-tg .key { min-height: 22px; padding: 0 7px; }
+.an-tg { display: flex; gap: 3px; }
+.an-verdict { font-size: 12.5px; line-height: 1.4; }
+.kw { border-collapse: collapse; font-size: 12px; width: 100%; }
+.kw th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 2px 8px 2px 0; white-space: nowrap; vertical-align: top; }
+.kw td { font-family: var(--mono); font-size: 11.5px; padding: 2px 6px 2px 0; color: var(--ink); vertical-align: top; }
+.grade { font-weight: 700; font-size: 11px; white-space: nowrap; }
+.grade-good { color: #0b8a0b; } .grade-fair { color: #a66f00; } .grade-poor { color: #c62f2f; }
+:root[data-theme="dark"] .grade-good { color: #2fd36f; } :root[data-theme="dark"] .grade-fair { color: #fab219; } :root[data-theme="dark"] .grade-poor { color: #ff6b6b; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .grade-good { color: #2fd36f; } :root:not([data-theme="light"]) .grade-fair { color: #fab219; } :root:not([data-theme="light"]) .grade-poor { color: #ff6b6b; } }
+.an-grid { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(190px, 1fr); gap: 8px; min-height: 0; overflow: auto; }
+.an-fig { margin: 0; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bezel); border-radius: 6px; padding: 4px; }
+.an-fig figcaption { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; color: var(--lcd-ink); padding: 0 4px 3px; font-family: var(--mono); white-space: nowrap; overflow: hidden; }
+.an-fig figcaption .dim { color: var(--lcd-dim); overflow: hidden; text-overflow: ellipsis; }
+.an-fig canvas { flex: 1 1 0; min-height: 0; width: 100%; display: block; }
+@media (max-width: 900px) { .an { grid-template-columns: 1fr; } .an-grid { grid-template-columns: 1fr; } }
 
 /* Live (HIL) and Record (ui/live.js). Live is a second row of Run Control;
    Record sits under the screen beside the channel badges, in the bezel's
@@ -503,6 +525,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
     <div id="tab-input" role="tabpanel"></div>
     <div id="tab-plant" role="tabpanel" hidden></div>
     <div id="tab-controller" role="tabpanel" hidden></div>
+    <div id="tab-analysis" role="tabpanel" hidden></div>
     <div id="tab-later" role="tabpanel" hidden></div>
   </div>
 </section>
@@ -2242,6 +2265,10 @@ __mods['core/controllers.js'] = (() => {
 //
 // Each runs digitally at the block's sample time Ts. make(params, Ts) returns
 // { step(inputs) -> u }, called once per sample with the inputs at that instant.
+// A law reads its parameters at every step, so an edit while running (Live
+// mode changes the params object in place) takes effect at the next sample
+// and the law keeps its state; only u0, the integral at the start, waits for
+// the next start.
 //
 // A law that is linear about an operating point also has linear(params, Ts, at)
 // for the Analysis tab: its discrete state space { A, B, C, D } (arrays of
@@ -2259,11 +2286,16 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
 
 // A first-order prefilter on the reference (Vorfilter), exact for a held input.
-function prefilter(Tr, Ts) {
-  if (!(Tr > 0)) return (r) => r;
-  const a = Math.exp(-Ts / Tr);
-  let rf = null;
-  return (r) => { rf = rf === null ? r : a * rf + (1 - a) * r; return rf; };
+// It reads p.Tr at every sample, so a change made while running (Live mode)
+// takes effect at the next one and the filtered value carries on.
+function prefilter(p, Ts) {
+  let rf = null, Tr = null, a = 0;
+  return (r) => {
+    if (!(p.Tr > 0)) { rf = r; return r; }
+    if (p.Tr !== Tr) { Tr = p.Tr; a = Math.exp(-Ts / Tr); }
+    rf = rf === null ? r : a * rf + (1 - a) * r;
+    return rf;
+  };
 }
 
 // Linear interpolation in a table, held flat beyond its ends.
@@ -2320,7 +2352,7 @@ const CONTROLLERS = {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
     params: [num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1), PREFILTER, START, ...LIMITS],
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
+      const pre = prefilter(p, Ts), core = pidCore(Ts, p.u0);
       return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
     },
     linear: (p, Ts, at) => pidLinear(p, Ts, at?.y?.length || 1),
@@ -2329,7 +2361,7 @@ const CONTROLLERS = {
     label: 'State feedback', summary: 'u = kr r − K · y',
     params: [vec('K', 'Gains K', [1]), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts);
+      const pre = prefilter(p, Ts);
       return {
         step(x) {
           let u = p.kr * pre(x[0]);
@@ -2345,12 +2377,13 @@ const CONTROLLERS = {
     params: [vec('at', 'At y =', [0, 1]), vec('Kp', 'Kp', [1, 1]), vec('Ki', 'Ki', [0, 0]), PREFILTER, START, ...LIMITS],
     check(p) { if (p.Kp.length !== p.at.length || p.Ki.length !== p.at.length) return 'At, Kp and Ki need the same number of values'; if (p.at.some((v, i) => i && v <= p.at[i - 1])) return 'the At values must increase'; return ''; },
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
+      const pre = prefilter(p, Ts), core = pidCore(Ts, p.u0);
       const g = { Kp: 0, Ki: 0, Kd: 0, Tf: 0, b: 1, umin: p.umin, umax: p.umax };
       return {
         step(x) {
           const y = x[1] ?? 0;
           g.Kp = lookup(p.at, p.Kp, y); g.Ki = lookup(p.at, p.Ki, y);
+          g.umin = p.umin; g.umax = p.umax;
           return core(pre(x[0]), y, g);
         },
       };
@@ -2472,12 +2505,24 @@ function checkModel(p) {
   return '';
 }
 
-// Predict with the model, then correct with gain L (filter form).
-function estimator({ n, m, Ad, Bd, C, L }) {
-  const x = new Float64Array(n), xp = new Float64Array(n), out = new Float64Array(n);
-  let first = true;
+// Predict with the model, then correct with gain L (filter form). The design
+// (Ad, Bd, C, L) is redone when one of the parameter lists `keys` is replaced
+// while running (Live mode edits the params object in place), and the
+// estimate carries on unless the number of states changes.
+function estimator(p, keys, design) {
+  let d = null, seen = [], x, xp, out, first = true;
+  const current = () => {
+    if (d && keys.every((k, i) => p[k] === seen[i])) return d;
+    seen = keys.map((k) => p[k]);
+    const next = design();
+    if (!d || next.n !== d.n) { x = new Float64Array(next.n); xp = new Float64Array(next.n); out = new Float64Array(next.n); first = true; }
+    d = next;
+    return d;
+  };
+  current();
   return {
     step(inp) {
+      const { n, m, Ad, Bd, C, L } = current();
       const u = inp[0] ?? 0;
       if (first) { first = false; } else {
         for (let i = 0; i < n; i++) { let s = Bd[i][0] * u; for (let j = 0; j < n; j++) s += Ad[i][j] * x[j]; xp[i] = s; }
@@ -2500,11 +2545,13 @@ const OBSERVERS = {
     params: [...MODEL, vec('Q', 'Process noise Q (diag)', [1, 1]), vec('R', 'Measurement noise R (diag)', [1])],
     check(p) { const bad = checkModel(p); if (bad) return bad; if (p.Q.length !== p.B.length) return 'Q needs one value per state'; if (p.R.length !== p.C.length / p.B.length) return 'R needs one value per measurement'; return ''; },
     make(p, Ts) {
-      const { n, m, A, B, C } = model(p);
-      const { Ad, Bd } = c2d(A, B, Ts);
-      const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
-      const { L } = dlqe(Ad, C, diag(p.Q), diag(p.R));
-      return estimator({ n, m, Ad, Bd, C, L });
+      return estimator(p, ['A', 'B', 'C', 'Q', 'R'], () => {
+        const { n, m, A, B, C } = model(p);
+        const { Ad, Bd } = c2d(A, B, Ts);
+        const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
+        const { L } = dlqe(Ad, C, diag(p.Q), diag(p.R));
+        return { n, m, Ad, Bd, C, L };
+      });
     },
   },
   luenberger: {
@@ -2512,10 +2559,12 @@ const OBSERVERS = {
     params: [...MODEL, vec('L', 'Gain L (rows)', [0.5, 10])],
     check(p) { const bad = checkModel(p); if (bad) return bad; if (p.L.length !== p.C.length) return 'L needs n × m values, row by row'; return ''; },
     make(p, Ts) {
-      const { n, m, A, B, C } = model(p);
-      const { Ad, Bd } = c2d(A, B, Ts);
-      const L = Array.from({ length: n }, (_, i) => p.L.slice(i * m, i * m + m));
-      return estimator({ n, m, Ad, Bd, C, L });
+      return estimator(p, ['A', 'B', 'C', 'L'], () => {
+        const { n, m, A, B, C } = model(p);
+        const { Ad, Bd } = c2d(A, B, Ts);
+        const L = Array.from({ length: n }, (_, i) => p.L.slice(i * m, i * m + m));
+        return { n, m, Ad, Bd, C, L };
+      });
     },
   },
   difference: {
@@ -2525,9 +2574,9 @@ const OBSERVERS = {
     params: [num('Tf', 'Rate filter Tf', 0, { unit: 's', min: 0 })],
     make(p, Ts) {
       let prev = null, rate = null, out = null;
-      const a = p.Tf > 0 ? Ts / (p.Tf + Ts) : 1;
       return {
         step(inp) {
+          const a = p.Tf > 0 ? Ts / (p.Tf + Ts) : 1;
           const y = Array.from(inp).slice(1);
           out ??= new Float64Array(2 * y.length);
           prev ??= y; rate ??= y.map(() => 0);
@@ -2599,8 +2648,9 @@ const checkUnit = (u, where) => {
   return s;
 };
 
-// The plant's answer to describe, checked: { name, rate_hz, inputs: [{ name,
-// unit, min, max, safe }], outputs: [{ name, unit }], watchdog, estop, running }.
+// The plant's answer to describe, checked: { protocol, name, rate_hz, inputs:
+// [{ name, unit, min, max, safe }], outputs: [{ name, unit }], watchdog, estop,
+// running }.
 function checkDescription(d) {
   if (!d || typeof d !== 'object') throw new Error('describe: expected an object');
   const rate = Number(d.rate_hz);
@@ -2620,6 +2670,8 @@ function checkDescription(d) {
     return { ...q, min, max, safe };
   });
   return {
+    // Which protocol the plant speaks; the page warns when it is not this one.
+    protocol: String(d.protocol ?? ''),
     name: String(d.name ?? 'external plant').slice(0, 80),
     rate_hz: rate,
     inputs,
@@ -2660,6 +2712,7 @@ const EXTERNAL_BLOCK = {
   ],
   ports: (p) => [p.inputs.length, p.outputs.length],
   outputs: (p) => p.outputs,
+  inputNames: (p) => p.inputs,  // labels on the canvas, as the outputs have
   summary: (p) => `${p.rate} Hz`,
   // Lists may be typed as "a, b" in the Plant tab or given as JSON arrays.
   normalize(params = {}, where = 'external') {
@@ -2697,6 +2750,20 @@ function externalParams(desc, url = HIL_URL) {
     outputs: desc.outputs.map((p) => p.name), outUnits: desc.outputs.map((p) => p.unit),
   });
 }
+
+// The External plant block of a diagram, at any depth, and the level it is
+// on: { block, level }, or null.
+function findExternal(d) {
+  for (const b of d?.blocks ?? []) {
+    if (b.type === 'external') return { block: b, level: d };
+    if (b.type === 'subsystem') { const hit = findExternal(b.diagram); if (hit) return hit; }
+  }
+  return null;
+}
+
+// Whether the block's ports carry the plant's names, in the plant's order:
+// what the loop relies on, since values travel by position.
+const samePorts = (params, desc) => params.inputs.join() === desc.inputs.map((p) => p.name).join() && params.outputs.join() === desc.outputs.map((p) => p.name).join();
 
 // Whether a block already matches a description (then connecting changes nothing).
 function sameDescription(params, desc) {
@@ -2737,7 +2804,7 @@ function createLinkStats(rateHz) {
   };
 }
 
-return { HIL_URL, HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, rpcNotice, uMessage, parseMessage, checkDescription, EXTERNAL_BLOCK, externalParams, sameDescription, pageWatchdog, createLinkStats };
+return { HIL_URL, HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, rpcNotice, uMessage, parseMessage, checkDescription, EXTERNAL_BLOCK, externalParams, findExternal, samePorts, sameDescription, pageWatchdog, createLinkStats };
 })();
 // ---- core/diagram.js
 __mods['core/diagram.js'] = (() => {
@@ -3269,8 +3336,14 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
     // External plants (Live mode): y is written by the caller, u() reads what
-    // the diagram feeds the block after the last eval.
-    externals: externals.map((k) => ({ name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])) })),
+    // the diagram feeds the block after the last eval, and shows[i] lists the
+    // probes (Sinks) on the same signal as input i, which show what the plant
+    // applies during a stop.
+    externals: externals.map((k) => {
+      const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
+      const shows = nodes[k].inputs.map((s) => (s < 0 ? [] : probeList.flatMap(([, pk], j) => (nodes[pk].kind === 'pass' && origin(pk) === origin(s) ? [j] : []))));
+      return { name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])), shows };
+    }),
   };
   return self;
 }
@@ -3569,6 +3642,61 @@ const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: '
 const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
 const PERIOD = 5;
 
+// The DC motor with its angle, shared by the systems built on it: a
+// Controller (variants given) sets the voltage V, the load torque d brakes it.
+const motorDiagram = (variants) => ({
+      blocks: [
+        src('r', 30, 112, 'rad'),
+        src('d', 180, 230, 'N·m'),
+        ctrl(130, 90, 2, 0.01, variants),
+        {
+          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
+          diagram: {
+            blocks: [
+              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 300, y: 220 },
+              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
+              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 360, y: 100 },
+              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
+              { id: 'mech', type: 'firstOrder', name: 'load', params: { K: 10, tau: 0.2 }, x: 510, y: 96 },
+              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
+              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 360, y: 280, flip: true },
+            ],
+            wires: [
+              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
+              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+            ],
+          },
+        },
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        sink('angle', 690, 106, 'rad'),
+        sink('speed', 690, 30, 'rad/s'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
+        { from: 'motor', to: 'speed' }, { from: 'int', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
+      ],
+    });
+const motorViews = () => ([{
+      // The rotor turns with angle (counter-clockwise positive) inside a fixed
+      // dial; the yellow mark on the dial is the reference r.
+      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+      shapes: [
+        { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        ...ticks(0.62),
+        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: 0.66, x2: 0, y2: 0.8, stroke: 'ch1', lineWidth: 5 }] },
+        { type: 'group', angle: 'angle', shapes: [
+          { type: 'circle', cx: 0, cy: 0, r: 0.5, fill: 'ink' },
+          { type: 'circle', cx: 0, cy: 0.27, r: 0.15, fill: 'ch2' },
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
+        ] },
+        { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
+      ],
+    }]);
+
 // A fixed dial: twelve ticks every 30°, the quarter ones longer.
 const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
   type: 'group', angle: (i * Math.PI) / 6, shapes: [{ type: 'line', x1: 0, y1: r, x2: 0, y2: r + (i % 3 ? 0.06 : 0.12), stroke: 'muted', lineWidth: i % 3 ? 1.5 : 3 }],
@@ -3671,63 +3799,30 @@ const EXAMPLE_PLANTS = [
     },
     scope: { channels: channels('r', 'angle', 'V', 'd') },
     ui: ui('Motor shaft'),
-    diagram: {
-      blocks: [
-        src('r', 30, 112, 'rad'),
-        src('d', 180, 230, 'N·m'),
-        ctrl(130, 90, 2, 0.01, [
+    diagram: motorDiagram([
+
           { name: 'P, too aggressive', type: 'pid', params: { Kp: 30, umin: -12, umax: 12 } },
           { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
           { name: 'PID with prefilter', type: 'pid', params: { Kp: 20, Ki: 10, Kd: 1.5, Tf: 0.01, Tr: 0.1, umin: -12, umax: 12 } },
           { name: 'Off', type: 'off', params: {} },
-        ]),
-        {
-          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
-          diagram: {
-            blocks: [
-              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
-              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 300, y: 220 },
-              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
-              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 360, y: 100 },
-              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
-              { id: 'mech', type: 'firstOrder', name: 'load', params: { K: 10, tau: 0.2 }, x: 510, y: 96 },
-              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 360, y: 280, flip: true },
-            ],
-            wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
-              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
-            ],
-          },
-        },
-        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
-        sink('angle', 690, 106, 'rad'),
-        sink('speed', 690, 30, 'rad/s'),
-        sink('V', 330, 20, 'V'),
-      ],
-      wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
-        { from: 'motor', to: 'speed' }, { from: 'int', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
-      ],
+    ]),
+    views: motorViews(),
+  },
+  {
+    name: 'Following a sine (XY)',
+    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'sine', params: { amplitude: 1, frequency: 0.2 } }] },
+      d: { period: PERIOD, components: [] },
     },
-    views: [{
-      // The rotor turns with angle (counter-clockwise positive) inside a fixed
-      // dial; the yellow mark on the dial is the reference r.
-      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
-      shapes: [
-        { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
-        ...ticks(0.62),
-        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: 0.66, x2: 0, y2: 0.8, stroke: 'ch1', lineWidth: 5 }] },
-        { type: 'group', angle: 'angle', shapes: [
-          { type: 'circle', cx: 0, cy: 0, r: 0.5, fill: 'ink' },
-          { type: 'circle', cx: 0, cy: 0.27, r: 0.15, fill: 'ch2' },
-          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
-        ] },
-        { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
-      ],
-    }],
+    scope: { channels: channels('r', 'angle'), view: { mode: 'xy', delta: true } },
+    ui: ui('Motor shaft'),
+    diagram: motorDiagram([
+      { name: 'P', type: 'pid', params: { Kp: 3, umin: -12, umax: 12 } },
+      { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
+      { name: 'PID', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, umin: -12, umax: 12 } },
+    ]),
+    views: motorViews(),
   },
   {
     name: 'Encoder errors and torque ripple',
@@ -4249,7 +4344,7 @@ function normalizeProject(p) {
 // representation shown, and the setup area's share of the page height.
 // Unknown values are dropped.
 const UI_RUN = ['run', 'stop', 'single'];
-const UI_TABS = ['input', 'plant', 'controller'];
+const UI_TABS = ['input', 'plant', 'controller', 'analysis'];
 function normalizeUi(ui) {
   if (!ui || typeof ui !== 'object') return null;
   const out = {};
@@ -4361,9 +4456,10 @@ function normalizeFilter(f, where) {
 }
 
 // How the screen shows the channels: in time (the default), as amplitude
-// spectra (FFT) or as one channel's spectrogram; and which channel, if any,
-// has its values on a second axis at the right.
-const VIEW_MODES = ['time', 'fft', 'spectrogram'];
+// spectra (FFT), as one channel's spectrogram, or XY (channel 1 across, the
+// others against it; delta: they draw channel 1 minus themselves); and which
+// channel, if any, has its values on a second axis at the right.
+const VIEW_MODES = ['time', 'fft', 'spectrogram', 'xy'];
 function normalizeScopeView(v) {
   if (!v || typeof v !== 'object') return null;
   const out = {};
@@ -4372,6 +4468,7 @@ function normalizeScopeView(v) {
   const fmin = Number(v.fmin), fmax = Number(v.fmax);
   if (fmin >= 0 && fmax > fmin) { out.fmin = fmin; out.fmax = fmax; }
   if (v.db === false) out.db = false;
+  if (v.delta === true) out.delta = true;
   if ([64, 128, 256, 512, 1024].includes(Number(v.size))) out.size = Number(v.size);
   return Object.keys(out).length ? out : null;
 }
@@ -4786,7 +4883,7 @@ const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'green',
   PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
   'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
-  Disturbance: 'red', FFT: 'blue', Spectrogram: 'magenta', 'Auto-tune': 'green', HIL: 'orange',
+  Disturbance: 'red', FFT: 'blue', Spectrogram: 'magenta', XY: 'violet', 'Auto-tune': 'green', HIL: 'orange',
 };
 // A value without its own tone gets one from its label, so it stays put.
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
@@ -4814,7 +4911,7 @@ function systemTags(e) {
   for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
   for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
   if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd')) add('Disturbance', 'feature');
-  if (e.scope?.view?.mode) add(e.scope.view.mode === 'fft' ? 'FFT' : 'Spectrogram', 'feature');
+  if (e.scope?.view?.mode) add({ fft: 'FFT', spectrogram: 'Spectrogram', xy: 'XY' }[e.scope.view.mode], 'feature');
   if (e.ui?.tab === 'tune') add('Auto-tune', 'feature');
   for (const t of e.tags ?? []) add(t.label, t.kind ?? 'feature');
   return tags;
@@ -5266,6 +5363,210 @@ function dbScale(amp, floorDb = -100) {
 
 return { nextPow2, fft, WINDOWS, coherentGain, amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale };
 })();
+// ---- core/analysis.js
+__mods['core/analysis.js'] = (() => {
+// Loop analysis for the Analysis tab: from the plant a Controller block sees
+// (linearised, continuous) and the controller's own discrete model, the open
+// loop L(z) cut at the actuator, and what control engineers read from it:
+// closed-loop poles (with ζ and ωn), the root locus, the frequency response
+// (Bode, Nyquist / Ortskurve), and the margins. Everything is discrete-time,
+// as the simulation samples (zero-order hold at the controller's Ts), so the
+// margins include the sampling delay. Research and sources:
+// design/research/analysis.md.
+//
+// Conventions: a state-space model is { A, B, C, D } with matrices as arrays
+// of rows. The plant has one input u and m outputs (the controller's
+// measurement inputs, in port order). The controller model has inputs
+// [r, y1 … ym] and one output u. L is SISO with negative feedback: the loop is
+// stable when 1 + L(z) has no zero on or outside the unit circle.
+
+const { c2d, eig, csolve } = __mods['core/linalg.js'];
+const zerosM = (r, c) => Array.from({ length: r }, () => new Array(c).fill(0));
+const col = (M, j) => M.map((row) => row[j]);
+
+// The plant as the controller samples it: discretised with a zero-order hold
+// at Ts, with each measurement's dead time (plant.delay[k], seconds) as a
+// chain of round(delay / Ts) unit delays, exact in discrete time.
+function discretePlant(plant, Ts) {
+  const { Ad, Bd } = c2d(plant.A, plant.B, Ts);
+  const n = Ad.length, m = plant.C.length, D0 = plant.D ?? zerosM(m, 1);
+  const d = Array.from({ length: m }, (_, k) => Math.max(0, Math.round((plant.delay?.[k] ?? 0) / Ts)));
+  const N = n + d.reduce((a, b) => a + b, 0);
+  const A = zerosM(N, N), B = zerosM(N, 1), C = zerosM(m, N), D = zerosM(m, 1);
+  for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) A[i][j] = Ad[i][j]; B[i][0] = Bd[i][0]; }
+  let o = n;
+  for (let k = 0; k < m; k++) {
+    if (!d[k]) { for (let j = 0; j < n; j++) C[k][j] = plant.C[k][j]; D[k][0] = D0[k][0]; continue; }
+    // The first delay state takes this sample's measurement, each next one the one before.
+    for (let j = 0; j < n; j++) A[o][j] = plant.C[k][j];
+    B[o][0] = D0[k][0];
+    for (let i = 1; i < d[k]; i++) A[o + i][o + i - 1] = 1;
+    C[k][o + d[k] - 1] = 1;
+    o += d[k];
+  }
+  return { A, B, C, D, delaySamples: d };
+}
+
+// The open loop cut at u (u_p = v, the controller output u_c read but not
+// applied): L(z) = −u_c / v with r = 0. Plant discretised with a ZOH at Ts.
+function openLoop(plant, ctrl, Ts) {
+  const P = discretePlant(plant, Ts);
+  const Ad = P.A, Bd = P.B, Cp = P.C, Dp = P.D;
+  const n = Ad.length, m = Cp.length, nc = ctrl.A.length;
+  // Controller columns that act on the measurements (inputs 1 … m); a law
+  // with fewer gains than measurements ignores the rest.
+  const cols = (row) => Array.from({ length: m }, (_, k) => row[1 + k] ?? 0);
+  const Bcy = ctrl.B.map(cols), Dcy = cols(ctrl.D[0]);
+  const N = n + nc;
+  const A = zerosM(N, N), B = zerosM(N, 1), C = [new Array(N).fill(0)];
+  for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) A[i][j] = Ad[i][j]; B[i][0] = Bd[i][0]; }
+  for (let i = 0; i < nc; i++) {
+    for (let j = 0; j < nc; j++) A[n + i][n + j] = ctrl.A[i][j];
+    for (let j = 0; j < n; j++) { let s = 0; for (let k = 0; k < m; k++) s += Bcy[i][k] * Cp[k][j]; A[n + i][j] = s; }
+    let s = 0; for (let k = 0; k < m; k++) s += Bcy[i][k] * Dp[k][0]; B[n + i][0] = s;
+  }
+  for (let j = 0; j < n; j++) { let s = 0; for (let k = 0; k < m; k++) s += Dcy[k] * Cp[k][j]; C[0][j] = -s; }
+  for (let j = 0; j < nc; j++) C[0][n + j] = -ctrl.C[0][j];
+  let D = 0; for (let k = 0; k < m; k++) D -= Dcy[k] * Dp[k][0];
+  return { A, B, C, D, Ts, n: N, delaySamples: P.delaySamples };
+}
+
+// Closed-loop poles in z for the loop gain multiplied by k (k = 1: as tuned).
+function closedLoop(L, k = 1) {
+  const den = 1 + k * L.D;
+  if (Math.abs(den) < 1e-12) return [];
+  return eig(L.A.map((row, i) => row.map((v, j) => v - (k * L.B[i][0] * L.C[0][j]) / den)));
+}
+
+// A z-plane pole as its continuous equivalent s = ln(z)/Ts, with ωn and ζ.
+function sOf(z, Ts) {
+  const r = Math.hypot(z.re, z.im);
+  if (r < 1e-300) return { re: -Infinity, im: 0, wn: Infinity, zeta: 1 };
+  const re = Math.log(r) / Ts, im = Math.atan2(z.im, z.re) / Ts, wn = Math.hypot(re, im);
+  return { re, im, wn, zeta: wn > 0 ? -re / wn : 1 };
+}
+
+// L(e^{jωTs}) at one angular frequency ω (rad/s).
+function respondAt(L, w) {
+  const N = L.A.length, zr = Math.cos(w * L.Ts), zi = Math.sin(w * L.Ts);
+  if (!N) return { re: L.D, im: 0 };
+  const Mr = L.A.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v));
+  const Mi = L.A.map((row, i) => row.map((_, j) => (i === j ? zi : 0)));
+  const x = csolve(Mr, Mi, col(L.B, 0), new Array(N).fill(0));
+  if (!x) return { re: NaN, im: NaN };
+  let re = L.D, im = 0;
+  for (let i = 0; i < N; i++) { re += L.C[0][i] * x.xr[i]; im += L.C[0][i] * x.xi[i]; }
+  return { re, im };
+}
+
+// Frequency response on a log grid up to just below Nyquist (π/Ts), with the
+// phase unwrapped along the grid (dense enough that it moves less than 180°
+// between points; refined where it moves fast).
+function frequencyData(L, { points = 400, wmin } = {}) {
+  const wN = Math.PI / L.Ts, lo = wmin ?? wN * 1e-4;
+  const w = [];
+  for (let i = 0; i < points; i++) w.push(lo * (0.999 * wN / lo) ** (i / (points - 1)));
+  const G = w.map((x) => respondAt(L, x));
+  const mag = G.map((g) => Math.hypot(g.re, g.im));
+  const phase = [];
+  for (let i = 0; i < G.length; i++) {
+    let ph = (Math.atan2(G[i].im, G[i].re) * 180) / Math.PI;
+    if (i) ph += 360 * Math.round((phase[i - 1] - ph) / 360);
+    else if (ph > 0) ph -= 360;   // start on the lagging branch, as an engineer reads it
+    phase.push(ph);
+  }
+  return { w, re: G.map((g) => g.re), im: G.map((g) => g.im), mag, phase };
+}
+
+// Margins from the frequency data. Gain crossings |L| = 1 give phase margins
+// and delay margins ((∠L + 180°) mod 360° / ωc, valid for unstable loops too);
+// phase crossings ∠L = −180° (mod 360°) give the gain factors at which the
+// loop would cross −1. Ms = max |S| = max 1/|1 + L|, Mt = max |T| = max |L/(1+L)|.
+function loopMargins(fd, Ts) {
+  const { w, mag, phase, re, im } = fd;
+  const lerp = (a, b, f) => a + (b - a) * f;
+  const gainCrossings = [], phaseCrossings = [];
+  for (let i = 1; i < w.length; i++) {
+    const a = Math.log(mag[i - 1]), b = Math.log(mag[i]);
+    if (Number.isFinite(a) && Number.isFinite(b) && a * b <= 0 && a !== b) {
+      const f = a / (a - b), wc = Math.exp(lerp(Math.log(w[i - 1]), Math.log(w[i]), f)), ph = lerp(phase[i - 1], phase[i], f);
+      const pm = ((((ph + 180) % 360) + 540) % 360) - 180;
+      const dm = ((((ph + 180) % 360) + 360) % 360) * (Math.PI / 180) / wc;
+      gainCrossings.push({ w: wc, pm, dm, dmSamples: dm / Ts });
+    }
+    const pa = phase[i - 1] + 180, pb = phase[i] + 180;
+    const ka = Math.floor(pa / 360), kb = Math.floor(pb / 360);
+    if (ka !== kb) {
+      const target = 360 * Math.max(ka, kb) - 180;
+      const f = (target - phase[i - 1]) / (phase[i] - phase[i - 1]);
+      const wx = Math.exp(lerp(Math.log(w[i - 1]), Math.log(w[i]), f)), mx = Math.exp(lerp(Math.log(mag[i - 1]), Math.log(mag[i]), f));
+      phaseCrossings.push({ w: wx, mag: mx, gm: 1 / mx, gmDb: -20 * Math.log10(mx) });
+    }
+  }
+  let ms = 0, wMs = NaN, mt = 0, wMt = NaN;
+  for (let i = 0; i < w.length; i++) {
+    const d = Math.hypot(1 + re[i], im[i]);
+    if (1 / d > ms) { ms = 1 / d; wMs = w[i]; }
+    if (mag[i] / d > mt) { mt = mag[i] / d; wMt = w[i]; }
+  }
+  // The gain interval that keeps the loop where it is: the nearest crossings
+  // of −1 above and below the present gain.
+  const up = phaseCrossings.filter((c) => c.gm > 1).map((c) => c.gm), down = phaseCrossings.filter((c) => c.gm < 1).map((c) => c.gm);
+  const main = gainCrossings.reduce((best, c) => (!best || Math.abs(c.pm) < Math.abs(best.pm) ? c : best), null);
+  return {
+    gainCrossings, phaseCrossings,
+    wc: main?.w ?? NaN, pm: main?.pm ?? Infinity, dm: main ? Math.min(...gainCrossings.map((c) => c.dm)) : Infinity,
+    get dmSamples() { return this.dm / Ts; },
+    gmUp: up.length ? Math.min(...up) : Infinity, gmDown: down.length ? Math.max(...down) : 0,
+    ms, wMs, mt, wMt,
+  };
+}
+
+// The closed loop's response to a unit step in r (prefilter left out): the
+// first measurement y and the controller output u at each sample, for K
+// samples. The plant must not pass u straight to a measurement (D = 0), as
+// physical plants do not.
+function stepResponse(plant, ctrl, Ts, K = 200) {
+  const P = discretePlant(plant, Ts), n = P.A.length, m = P.C.length, nc = ctrl.A.length;
+  const col = (row, j) => row[j] ?? 0;
+  let xp = new Array(n).fill(0), xc = new Array(nc).fill(0);
+  const t = [], y = [], u = [];
+  for (let k = 0; k <= K; k++) {
+    const ym = P.C.map((row) => row.reduce((s, c, j) => s + c * xp[j], 0));
+    let uk = col(ctrl.D[0], 0);
+    for (let j = 0; j < m; j++) uk += col(ctrl.D[0], 1 + j) * ym[j];
+    for (let j = 0; j < nc; j++) uk += ctrl.C[0][j] * xc[j];
+    t.push(k * Ts); y.push(ym[0]); u.push(uk);
+    xp = P.A.map((row, i) => row.reduce((s, a, j) => s + a * xp[j], 0) + P.B[i][0] * uk);
+    xc = ctrl.A.map((row, i) => row.reduce((s, a, j) => s + a * xc[j], 0) + col(ctrl.B[i], 0) + ym.reduce((s, v, j) => s + col(ctrl.B[i], 1 + j) * v, 0));
+  }
+  return { t, y, u };
+}
+
+// Root locus: closed-loop poles for the loop gain scaled by each k.
+function locus(L, ks) { return ks.map((k) => ({ k, poles: closedLoop(L, k) })); }
+
+// Everything the tab shows, from the plant and controller models.
+function analyzeLoop(plant, ctrl, Ts, { points = 400 } = {}) {
+  const L = openLoop(plant, ctrl, Ts);
+  const olPoles = eig(L.A), clPoles = closedLoop(L, 1);
+  const outside = (ps) => ps.filter((p) => Math.hypot(p.re, p.im) > 1 + 1e-9).length;
+  const P = outside(olPoles), Z = outside(clPoles);
+  const fd = frequencyData(L, { points });
+  const margins = loopMargins(fd, Ts);
+  const cl = clPoles.map((z) => ({ z, s: sOf(z, Ts) }));
+  const oscillating = cl.filter((p) => Math.abs(p.s.im) > 1e-6);
+  const zetaMin = oscillating.length ? Math.min(...oscillating.map((p) => p.s.zeta)) : 1;
+  const slowest = cl.filter((p) => Number.isFinite(p.s.re)).reduce((a, p) => (!a || p.s.re > a.s.re ? p : a), null);
+  const ks = Array.from({ length: 121 }, (_, i) => 10 ** (-2 + (4 * i) / 120));
+  return {
+    L, Ts, olPoles, clPoles: cl, stable: Z === 0, P, Z, N: Z - P, zetaMin, slowest,
+    fd, margins, locus: locus(L, ks),
+  };
+}
+
+return { discretePlant, openLoop, closedLoop, sOf, respondAt, frequencyData, loopMargins, stepResponse, locus, analyzeLoop };
+})();
 // ---- core/live.js
 __mods['core/live.js'] = (() => {
 // Live (HIL) mode, the loop: a diagram stepped one plant cycle at a time
@@ -5281,25 +5582,26 @@ __mods['core/live.js'] = (() => {
 
 const { compileDiagram } = __mods['core/diagram.js'];
 const { referenceFn } = __mods['core/signals.js'];
-const { CONTROLLER_TYPES } = __mods['core/controllers.js'];
 const { HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, uMessage, parseMessage, checkDescription, pageWatchdog, createLinkStats } = __mods['core/hil.js'];
 // What a running loop cannot take over in place: everything but block
-// positions and the parameters of controller variants. A prefilter Tr is
-// fixed when a law is made, so a change of it restarts the controllers.
+// positions and the names and parameters of controller and observer variants
+// (their laws read the parameters at every sample: controllers.js).
+const SAMPLED = ['controller', 'observer'];
 function structureKey(diagram) {
   return JSON.stringify(diagram, function (k, v) {
     if ((k === 'x' || k === 'y') && typeof v === 'number' && this.id !== undefined) return undefined;
-    if (k === 'params' && CONTROLLER_TYPES.includes(this.type) && this.id === undefined) return { Tr: v.Tr };
+    if (k === 'variants' && SAMPLED.includes(this.type) && Array.isArray(v)) return v.map((x) => x.type);
     return v;
   });
 }
 
 // Copies the running variants' parameters into the ones the laws hold, so the
-// next sample uses them and the controllers keep their state (integral, filters).
+// next sample uses them and the blocks keep their state (integral, filters,
+// estimates).
 function copyParams(own, next) {
   own.blocks.forEach((b, i) => {
     const n = next.blocks[i];
-    if (b.type === 'controller') Object.assign(b.variants[b.variant].params, n.variants[n.variant].params);
+    if (SAMPLED.includes(b.type)) Object.assign(b.variants[b.variant].params, n.variants[n.variant].params);
     if (b.type === 'subsystem') copyParams(b.diagram, n.diagram);
   });
 }
@@ -5357,7 +5659,9 @@ function createLiveRunner(diagram, signals) {
     // One cycle: the plant's outputs y at its time t. Returns u, clamped to the
     // plant's limits (a value that is not a number becomes the safe one), and
     // the values of every Source and Sink at t, in the order of names().
-    step(t, y) {
+    // held: an E-stop is latched, so the plant applies its safe inputs: u is
+    // the safe values, and so are the Sinks that show the block's inputs.
+    step(t, y, held = false) {
       if (tPrev !== null && t > tPrev) {
         // Between cycles the plant's outputs hold their last value.
         const m = Math.max(1, Math.round((t - tPrev) / h));
@@ -5374,8 +5678,13 @@ function createLiveRunner(diagram, signals) {
       el.record();
       tPrev = t;
       const p = ext.params;
+      const values = el.probes().map(([, v]) => v);
+      if (held) {
+        ext.shows.forEach((js, i) => { for (const j of js) values[j] = p.safe[i]; });
+        return { u: [...p.safe], values };
+      }
       const u = ext.u().map((v, i) => (Number.isFinite(v) ? Math.min(p.max[i], Math.max(p.min[i], v)) : p.safe[i]));
-      return { u, values: el.probes().map(([, v]) => v) };
+      return { u, values };
     },
     // A new version of the diagram or the signals while running: parameters
     // of controller variants take effect at the next cycle, keeping the
@@ -5394,10 +5703,13 @@ function createLiveRunner(diagram, signals) {
 
 // The connection: one WebSocket to the plant, the runner, both watchdogs'
 // page side, and statistics. It talks to the page through post(msg):
-//   in:  connect { url }, program { diagram, signals }, start, stop, estop,
-//        reset, disconnect
+//   in:  connect { url }, program { diagram, signals }, start (a fresh run,
+//        restarting the plant if it runs), stop, estop, reset { start },
+//        disconnect
 //   out: state { state, detail }, described { desc }, estop { by, reason },
-//        samples { names, t, values }, stats { link, plant }, error { message }
+//        run (a new run begins), samples { names, t, values },
+//        stats { link, plant }, error { message }
+// States: connecting, open (connected, the plant not running), running, closed.
 // The same object runs in a worker (liveWorker) or on the page.
 function createLiveLoop(post, env = globalThis) {
   const now = () => env.performance.now();
@@ -5458,14 +5770,14 @@ function createLiveLoop(post, env = globalThis) {
     lastY = at;
     if (!runner) return;
     let res;
-    try { res = runner.step(m.t, m.y); } catch (err) { latch('page', `the diagram failed: ${err.message}`); return; }
+    try { res = runner.step(m.t, m.y, !!latched); } catch (err) { latch('page', `the diagram failed: ${err.message}`); return; }
     // The answer goes out first; everything else can wait.
     if (running && !latched && ws?.readyState === 1) ws.send(uMessage(m.seq, res.u));
     stats?.add(at, m.seq, now() - at);
     batch.t.push(m.t);
     batch.values.push(res.values);
     if (at - lastFlush >= 33) { lastFlush = at; flush(); }
-    if (at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
+    if (stats && at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
   }
 
   function onText(text) {
@@ -5480,13 +5792,19 @@ function createLiveLoop(post, env = globalThis) {
     else fail(`the plant sent something unexpected: ${m.error}`);
   }
 
+  // A fresh run: the plant restarts its clock (stopped first if it runs) and
+  // the controllers start afresh, as a simulated run starts from t = 0.
   async function start() {
     if (!desc) throw new Error('not connected');
+    if (running) { running = false; stopWatchdog(); flush(); await call('stop'); }
     makeRunner();
-    await call('start');
-    running = true;
+    post({ type: 'run' });  // what follows is a new run: its time starts again
+    // y may come before start's answer: they are answered and counted.
     stats = createLinkStats(desc.rate_hz);
+    lastStats = now();
+    running = true;
     startWatchdog();
+    try { await call('start'); } catch (err) { running = false; stopWatchdog(); throw err; }
     say('running', desc.name);
   }
 
@@ -5502,6 +5820,7 @@ function createLiveLoop(post, env = globalThis) {
         try {
           desc = checkDescription(await call('describe'));
           latched = desc.estop ? { by: 'plant', reason: desc.estop } : null;
+          if (desc.protocol !== HIL_PROTOCOL) fail(`the plant speaks ${desc.protocol || 'an unnamed protocol'}, this page ${HIL_PROTOCOL}: it may not work`);
           post({ type: 'described', desc });
           if (latched) post({ type: 'estop', by: 'plant', reason: desc.estop });
         } catch (err) { fail(`describe: ${err.message}`); ws?.close(); }
@@ -5537,12 +5856,13 @@ function createLiveLoop(post, env = globalThis) {
       latch('page', 'E-STOP pressed');
       try { await call('estop', { reason: 'E-STOP pressed on the page' }); } catch { /* the plant's watchdog trips anyway */ }
     },
-    // Reset clears both latches and starts again, the controllers afresh.
-    async reset() {
+    // Reset clears both latches and goes on, the controllers afresh: a plant
+    // still running keeps its clock; a stopped one starts when asked to.
+    async reset({ start: go = true } = {}) {
       try {
         await call('reset');
         latched = null;
-        if (running) { runner?.restart(); startWatchdog(); say('running', desc.name); } else await start();
+        if (running) { runner?.restart(); startWatchdog(); say('running', desc.name); } else if (go) await start(); else say('open', 'reset');
       } catch (err) { fail(`reset: ${err.message}`); }
     },
     async disconnect() {
@@ -5570,54 +5890,103 @@ return { createLiveRunner, createLiveLoop, liveWorker };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {
-// Traces: the scope's deep memory. A recorder keeps the last N seconds of every
-// signal the scope acquires (live cycles, or simulated sweeps one after the
-// other), in a ring buffer; a trace is saved as CSV (t and every signal, units
-// in the header) or JSON, and read back to show as a reference on the scope.
-// See design/output/instrument.md (Record) and design/output/hil.md.
+// Traces: what the scope stores. Where live and recorded time lands on the
+// screen (sweepStart, refShift); the live record, the last N seconds of every
+// signal in a ring buffer (createRecorder); a trace saved as CSV (t and every
+// signal, units in the header) or JSON, and read back to be shown as a
+// reference on the scope (parseTrace).
+// See design/output/instrument.md (Save and references) and design/output/hil.md.
 
 const TRACE_FORMAT = 'loop-tuner-trace/1';
-const MAX_RECORD_SAMPLES = 2e6;
+// The live record's memory, all columns together: 2^24 numbers, 128 MB.
+const MAX_RECORD_VALUES = 2 ** 24;
 
-// A ring buffer of samples: t and one column per name. Its capacity follows
-// the record length and the sample rate; a change of the names or of the
-// rate starts a new recording (reset).
+// ---- Time on the screen. The window shows [w0, w0 + W). A live sweep covers
+// one screen width of plant time and starts where the plant's time, counted
+// in screen widths from w0, begins a new one; its samples are drawn at
+// w0 + (t − start). So at position w0 the screen shows plant time w0 … w0 + W
+// the first time round, as a simulated run does, and an input whose period
+// is the screen width lines up sweep after sweep.
+const sweepStart = (t, w0, W) => w0 + W * Math.floor((t - w0) / W + 1e-9);
+
+// Where a reference trace [t0, t1] is drawn: the shift added to its time. A
+// trace with any part in the window stays at its own time (one saved from the
+// same screen lines up exactly); one outside it is folded in like a live
+// sweep, its first sample in the window. step moves it on by whole screen
+// widths, through a trace longer than the screen; steps gives their range.
+function refShift(t0, t1, w0, W, step = 0) {
+  const base = t1 >= w0 && t0 < w0 + W ? 0 : w0 - sweepStart(t0, w0, W);
+  return base - step * W;
+}
+function refSteps(t0, t1, w0, W) {
+  const base = refShift(t0, t1, w0, W);
+  return { min: Math.floor((t0 + base - w0 - W) / W + 1e-9) + 1, max: Math.max(0, Math.ceil((t1 + base - w0) / W - 1e-9) - 1) };
+}
+
+// ---- The live record: the last `seconds` of samples, one column per signal
+// name. Columns are added when a new name comes (earlier samples read NaN), so
+// adding a Sink while live keeps what was recorded. The buffers grow as the
+// samples come, up to MAX_RECORD_VALUES numbers; beyond that the oldest go
+// first, and longest() says how long that holds at the current rate. Times
+// must not decrease.
 function createRecorder(seconds = 300) {
-  let names = [], units = {}, rate = 0, cap = 0, n = 0, head = 0, t = null, cols = [];
+  let names = [], units = {}, cap = 0, n = 0, head = 0, t = new Float64Array(0), cols = [];
+  let lastIn = null, map = [];
+  const limit = () => Math.floor(MAX_RECORD_VALUES / (names.length + 1));
+  const oldest = () => (head - n + cap) % cap;
+  // New buffers of size c holding the newest samples, in time order from 0.
+  function relayout(c) {
+    const keep = Math.min(n, c), from = (head - keep + cap) % (cap || 1);
+    const move = (src) => { const dst = new Float64Array(c).fill(NaN); for (let i = 0; i < keep; i++) dst[i] = src[(from + i) % cap]; return dst; };
+    t = move(t); cols = cols.map(move);
+    cap = c; n = keep; head = keep % c;
+  }
+  function column(name) {
+    let j = names.indexOf(name);
+    if (j >= 0) return j;
+    names.push(name);
+    cols.push(new Float64Array(cap).fill(NaN));
+    if (cap > limit()) relayout(limit());
+    j = names.length - 1;
+    return j;
+  }
+  // Drops samples older than the record length before `now`.
+  function evict(now) { while (n && t[oldest()] < now - seconds - 1e-9) n--; }
   const self = {
     get seconds() { return seconds; },
     get names() { return names; },
     get length() { return n; },
-    // Seconds held now.
-    span() { return n > 1 ? t[(head - 1 + cap) % cap] - t[(head - n + cap) % cap] : 0; },
-    // Starts afresh for these signals at this sample rate (Hz).
-    reset(nextNames = names, nextUnits = units, nextRate = rate) {
-      names = [...nextNames]; units = { ...nextUnits }; rate = nextRate;
-      cap = rate > 0 ? Math.min(MAX_RECORD_SAMPLES, Math.ceil(seconds * rate) + 1) : 0;
-      t = new Float64Array(cap); cols = names.map(() => new Float64Array(cap));
-      n = 0; head = 0;
+    // Seconds held now, and the newest time.
+    span() { return n > 1 ? t[(head - 1 + cap) % cap] - t[oldest()] : 0; },
+    last() { return n ? t[(head - 1 + cap) % cap] : null; },
+    // How long the memory holds at the rate the record is filling.
+    longest() {
+      const s = self.span();
+      return n > 1 && s > 0 ? (limit() * s) / (n - 1) : Infinity;
     },
-    setLength(s) {
-      const keep = self.snapshot();
-      seconds = s;
-      self.reset(names, units, rate);
-      const from = Math.max(0, keep.t.length - cap);
-      for (let i = from; i < keep.t.length; i++) self.push(keep.t[i], names.map((nm) => keep.signals[nm][i]));
-    },
-    // Whether samples with these names at this rate can follow the ones held.
-    fits(nextNames, nextRate) { return cap > 0 && Math.abs(nextRate - rate) <= 1e-6 * rate && nextNames.length === names.length && nextNames.every((x, i) => x === names[i]); },
-    push(time, values) {
-      if (!cap) return;
+    setUnits(u) { Object.assign(units, u); },
+    setLength(s) { seconds = s; const now = self.last(); if (now !== null) evict(now); },
+    clear() { names = []; units = {}; cap = 0; n = 0; head = 0; t = new Float64Array(0); cols = []; lastIn = null; map = []; },
+    // One sample: its time, the names of its values (the same array object
+    // each time is cheapest), and the values.
+    push(time, nms, values) {
+      if (nms !== lastIn) { map = nms.map(column); lastIn = nms; }
+      evict(time);
+      if (n === cap) {
+        if (cap < limit()) relayout(Math.min(limit(), Math.max(1024, 2 * cap)));
+        else n--;  // full: the oldest goes
+      }
       t[head] = time;
-      for (let j = 0; j < cols.length; j++) cols[j][head] = values[j];
+      for (let j = 0; j < cols.length; j++) cols[j][head] = NaN;
+      for (let i = 0; i < map.length; i++) cols[map[i]][head] = values[i];
       head = (head + 1) % cap;
-      n = Math.min(cap, n + 1);
+      n++;
     },
     // In time order: { t, signals: { name: Float64Array }, units }.
     snapshot() {
-      const out = { t: new Float64Array(n), signals: {}, units: { ...units } };
-      const start = (head - n + cap) % (cap || 1);
-      const copy = (src, dst) => { for (let i = 0; i < n; i++) dst[i] = src[(start + i) % cap]; };
+      const out = { t: new Float64Array(n), signals: {}, units: Object.fromEntries(names.map((nm) => [nm, units[nm] ?? '1'])) };
+      const from = oldest();
+      const copy = (src, dst) => { for (let i = 0; i < n; i++) dst[i] = src[(from + i) % cap]; };
       if (n) copy(t, out.t);
       names.forEach((nm, j) => { out.signals[nm] = new Float64Array(n); if (n) copy(cols[j], out.signals[nm]); });
       return out;
@@ -5626,30 +5995,50 @@ function createRecorder(seconds = 300) {
   return self;
 }
 
-const cell = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(9))) : '');
+// The samples of a trace within [a, b], as a trace of their own.
+function traceWindow(trace, a, b) {
+  let i0 = 0, i1 = trace.t.length;
+  while (i0 < i1 && trace.t[i0] < a - 1e-9) i0++;
+  while (i1 > i0 && trace.t[i1 - 1] > b + 1e-9) i1--;
+  return { t: trace.t.slice(i0, i1), signals: Object.fromEntries(Object.entries(trace.signals).map(([nm, v]) => [nm, v.slice(i0, i1)])), units: { ...trace.units } };
+}
 
-// CSV: comment lines (#) say what it is; the header is "name [unit]".
-function traceToCsv(trace, { title = '', source = '' } = {}) {
+const cell = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(9))) : '');
+const ROWS = 20000;  // per part: a long record is written piece by piece (Blob parts)
+
+// CSV: comment lines (#) say what it is; the header is "name [unit]". In
+// parts, so a long record never has to be one string.
+function traceToCsvParts(trace, { title = '', source = '' } = {}) {
   const names = Object.keys(trace.signals);
   const unit = (nm) => trace.units?.[nm] ?? '1';
-  const lines = [`# ${TRACE_FORMAT}${title ? ` · ${title}` : ''}${source ? ` · ${source}` : ''} · ${trace.t.length} samples`];
-  lines.push(['t [s]', ...names.map((nm) => `${nm} [${unit(nm)}]`)].join(','));
-  for (let i = 0; i < trace.t.length; i++) lines.push([cell(trace.t[i]), ...names.map((nm) => cell(trace.signals[nm][i]))].join(','));
-  return `${lines.join('\n')}\n`;
+  const head = `# ${TRACE_FORMAT}${title ? ` · ${title}` : ''}${source ? ` · ${source}` : ''} · ${trace.t.length} samples\n${['t [s]', ...names.map((nm) => `${nm} [${unit(nm)}]`)].join(',')}\n`;
+  const parts = [head], cs = names.map((nm) => trace.signals[nm]);
+  for (let a = 0; a < trace.t.length; a += ROWS) {
+    const lines = [];
+    for (let i = a; i < Math.min(trace.t.length, a + ROWS); i++) lines.push(`${cell(trace.t[i])}${cs.map((v) => `,${cell(v[i])}`).join('')}`);
+    parts.push(`${lines.join('\n')}\n`);
+  }
+  return parts;
 }
+const traceToCsv = (trace, meta) => traceToCsvParts(trace, meta).join('');
 
-function traceToJson(trace, { title = '', source = '' } = {}) {
-  const arr = (a) => Array.from(a, (v) => (Number.isFinite(v) ? Number(v.toPrecision(9)) : null));
-  return JSON.stringify({
-    format: TRACE_FORMAT, title, source, units: { t: 's', ...trace.units },
-    t: arr(trace.t), signals: Object.fromEntries(Object.entries(trace.signals).map(([nm, v]) => [nm, arr(v)])),
-  });
+function traceToJsonParts(trace, { title = '', source = '' } = {}) {
+  const arr = (a) => {
+    const out = [];
+    for (let i = 0; i < a.length; i += ROWS) out.push(Array.from(a.subarray ? a.subarray(i, i + ROWS) : a.slice(i, i + ROWS), (v) => (Number.isFinite(v) ? Number(v.toPrecision(9)) : 'null')).join(','));
+    return `[${out.join(',')}]`;
+  };
+  const parts = [`{"format":${JSON.stringify(TRACE_FORMAT)},"title":${JSON.stringify(title)},"source":${JSON.stringify(source)},"units":${JSON.stringify({ t: 's', ...trace.units })},"t":${arr(trace.t)},"signals":{`];
+  Object.entries(trace.signals).forEach(([nm, v], i) => parts.push(`${i ? ',' : ''}${JSON.stringify(nm)}:${arr(v)}`));
+  parts.push('}}');
+  return parts;
 }
+const traceToJson = (trace, meta) => traceToJsonParts(trace, meta).join('');
 
 // Reads a trace saved by traceToCsv or traceToJson (or any CSV whose first
 // column is time): { title, t, signals, units }. Empty cells are NaN.
 function parseTrace(text) {
-  const s = String(text).replace(/^﻿/, '');
+  const s = String(text).replace(/^\uFEFF/, '');
   if (/^\s*\{/.test(s)) {
     const j = JSON.parse(s);
     if (!Array.isArray(j.t) || !j.signals || typeof j.signals !== 'object') throw new Error('a trace needs "t" and "signals"');
@@ -5680,7 +6069,7 @@ function parseTrace(text) {
   return { title: '', t, signals, units };
 }
 
-return { TRACE_FORMAT, MAX_RECORD_SAMPLES, createRecorder, traceToCsv, traceToJson, parseTrace };
+return { TRACE_FORMAT, MAX_RECORD_VALUES, sweepStart, refShift, refSteps, createRecorder, traceWindow, traceToCsvParts, traceToCsv, traceToJsonParts, traceToJson, parseTrace };
 })();
 // ---- ui/units.js
 __mods['ui/units.js'] = (() => {
@@ -6073,6 +6462,151 @@ function readout(g, P, x, rows) {
 
 return { channelSignal, dtOf, nyquist, freqRange, drawFrequency };
 })();
+// ---- ui/xyview.js
+__mods['ui/xyview.js'] = (() => {
+// The scope's XY mode (the person, 2026-10-24: "the x-axis is the reference
+// value and the y-axis is the delta … ideally a line … usually an ellipse").
+// As on a real oscilloscope, channel 1 drives the beam horizontally at its
+// own scale and every other visible channel draws against it vertically.
+// With Δ on, a channel in channel 1's unit draws X − Y instead: r on 1 and y on 2
+// give the error e = r − y over r, so perfect tracking is a flat line, a gain
+// error a tilted line, and a lag an ellipse (a Lissajous figure).
+//
+// The beam draws the samples inside the timebase window, up to the sweep, so
+// moving the window past the start-up leaves the settled figure. Each channel
+// reads out the straight line that fits it best, Y ≈ a·X + b, and the spread
+// σ of the figure around that line: a line has σ ≈ 0, an ellipse does not.
+
+const { channelSignal } = __mods['ui/freqview.js'];
+const { num } = __mods['ui/units.js'];
+const DIVX = 10, DIVY = 8, MAX_POINTS = 6000;
+const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+
+const xOf = (P, ch, v) => P.l + P.w / 2 + ((v + ch.offset) / ch.scale) * P.dx;
+const vOfX = (P, ch, x) => ((x - P.l - P.w / 2) / P.dx) * ch.scale - ch.offset;
+
+// Whether channel i draws X − Y: Δ is on and it has channel 1's unit (r − V
+// would mean nothing).
+const isDelta = (scope, i, unitOf) => !!scope.view?.delta && i > 0 && unitOf(scope.channels[i].source) === unitOf(scope.channels[0].source);
+// The values a Y channel draws: its signal, or X − Y.
+function ySignal(d, scope, i, unitOf) {
+  const y = channelSignal(d, scope.channels[i]);
+  if (!y || !isDelta(scope, i, unitOf)) return y;
+  const x = channelSignal(d, scope.channels[0]);
+  if (!x) return y;
+  const out = new Float64Array(y.length);
+  for (let j = 0; j < y.length; j++) out[j] = x[j] - y[j];
+  return out;
+}
+
+// Least-squares line through (x, y) over samples [j0, j1], and the spread
+// (rms distance in y) of the points around it.
+function lineFit(x, y, j0, j1) {
+  let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let j = j0; j <= j1; j++) {
+    if (!Number.isFinite(x[j]) || !Number.isFinite(y[j])) continue;
+    n++; sx += x[j]; sy += y[j]; sxx += x[j] * x[j]; sxy += x[j] * y[j];
+  }
+  if (n < 3) return null;
+  const vx = sxx - (sx * sx) / n;
+  const a = vx > 1e-300 ? (sxy - (sx * sy) / n) / vx : 0, b = (sy - a * sx) / n;
+  let r = 0;
+  for (let j = j0; j <= j1; j++) if (Number.isFinite(x[j]) && Number.isFinite(y[j])) r += (y[j] - a * x[j] - b) ** 2;
+  return { a, b, sigma: Math.sqrt(r / n), n };
+}
+
+// v: { g, P, data, past, scope, k, axis, line, colors, drawGrid, unitLabel, vy, win, runs }
+function drawXY(v) {
+  const { g, P, data, scope, colors, vy } = v;
+  v.drawGrid(g);
+  const cx = scope.channels[0], X = channelSignal(data, cx);
+  g.font = `10.5px ${MONO}`;
+  if (!cx.on || !X) {
+    g.fillStyle = 'rgba(200, 210, 218, 0.75)'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('XY: channel 1 drives the beam across. Give it a source (the reference r, say).', P.l + P.w / 2, P.t + P.h / 2);
+    return;
+  }
+  const ys = [1, 2, 3].filter((i) => scope.channels[i].on && channelSignal(data, scope.channels[i]));
+  const t = data.t, [w0, w1] = v.win();
+  const dt = t.length > 1 ? t[1] - t[0] : 1;
+  const j0 = Math.max(0, Math.ceil(w0 / dt - 1e-9)), j1 = Math.min(v.k, Math.floor(w1 / dt + 1e-9), t.length - 1);
+  const stride = Math.max(1, Math.ceil((j1 - j0) / MAX_POINTS));
+
+  // Axes: channel 1's values below, the axis channel's at the left.
+  g.fillStyle = colors[0]; g.textBaseline = 'top';
+  for (let i = 0; i <= DIVX; i++) {
+    const x = P.l + i * P.dx, val = vOfX(P, cx, x);
+    g.textAlign = i === 0 ? 'left' : i === DIVX ? 'right' : 'center';
+    g.fillText(num(Math.abs(val) < cx.scale * 1e-9 ? 0 : val, 3), x, P.b + 5);
+  }
+  const ai = ys.includes(v.axis) ? v.axis : ys[0];
+  if (ai !== undefined) {
+    const ch = scope.channels[ai];
+    g.fillStyle = colors[ai]; g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (let j = 0; j <= DIVY; j++) {
+      const val = (DIVY / 2 - j) * ch.scale - ch.offset;
+      g.fillText(num(Math.abs(val) < ch.scale * 1e-9 ? 0 : val, 3), P.l - 22, Math.min(P.b - 5, Math.max(P.t + 5, P.t + j * P.dy)));
+    }
+  }
+
+  g.save();
+  g.beginPath(); g.rect(P.l, P.t, P.w, P.h); g.clip();
+  g.lineJoin = 'round';
+  const path = (d, i, from, to, ch) => {
+    const x = channelSignal(d, cx), y = ySignal(d, scope, i, v.unitLabel);
+    if (!x || !y) return;
+    g.beginPath();
+    let pen = false;
+    for (let j = from; j <= to; j += stride) {
+      if (!Number.isFinite(x[j]) || !Number.isFinite(y[j])) { pen = false; continue; }
+      const px = xOf(P, cx, x[j]), py = vy(ch, y[j]);
+      if (pen) g.lineTo(px, py); else { g.moveTo(px, py); pen = true; }
+    }
+    g.stroke();
+  };
+  // Earlier runs, faded, over the same window.
+  const seen = new Set();
+  (v.past ?? []).forEach((d, age) => {
+    if (seen.has(d) || d.t.length !== t.length) return;
+    seen.add(d);
+    g.globalAlpha = 0.5 * (1 - (age + 1) / v.runs);
+    g.lineWidth = 1.2;
+    for (const i of ys) { g.strokeStyle = colors[i]; path(d, i, j0, Math.min(t.length - 1, Math.floor(w1 / dt + 1e-9)), scope.channels[i]); }
+  });
+  g.globalAlpha = 1;
+  for (const i of ys) {
+    const ch = scope.channels[i], sel = i === v.line;
+    g.strokeStyle = colors[i]; g.lineWidth = sel ? 2.6 : 1.6; g.shadowColor = colors[i]; g.shadowBlur = sel ? 9 : 5;
+    g.globalAlpha = v.line !== null && !sel ? 0.55 : 1;
+    path(data, i, j0, j1, ch);
+    // The beam: a bright dot where the figure is now.
+    const y = ySignal(data, scope, i, v.unitLabel);
+    if (j1 >= j0 && Number.isFinite(X[j1]) && Number.isFinite(y[j1])) {
+      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(xOf(P, cx, X[j1]), vy(ch, y[j1]), 3, 0, 2 * Math.PI); g.fill();
+    }
+  }
+  g.shadowBlur = 0; g.globalAlpha = 1;
+  g.restore();
+
+  // Labels: what X and Y are, and each channel's best line and spread.
+  const unit = (ch) => v.unitLabel(ch.source);
+  const ux = unit(cx) === '1' ? '' : ` ${unit(cx)}`;
+  g.textBaseline = 'bottom'; g.textAlign = 'right'; g.fillStyle = colors[0];
+  g.fillText(`X = ${cx.source}${ux ? ` (${ux.trim()})` : ''}`, P.r - 6, P.b - 4);
+  g.textAlign = 'left'; g.textBaseline = 'top';
+  ys.forEach((i, row) => {
+    const ch = scope.channels[i], y = ySignal(data, scope, i, v.unitLabel);
+    const fit = lineFit(X, y, j0, j1);
+    const name = isDelta(scope, i, v.unitLabel) ? `${cx.source} − ${ch.source}` : ch.source;
+    const text = fit ? `${name}  ≈ ${num(fit.a, 3)}·${cx.source} ${fit.b < 0 ? '−' : '+'} ${num(Math.abs(fit.b), 3)}   σ ${num(fit.sigma, 3)}${unit(ch) === '1' ? '' : ` ${unit(ch)}`}` : name;
+    const w = g.measureText(text).width;
+    g.fillStyle = 'rgba(10, 13, 16, 0.7)'; g.fillRect(P.l + 4, P.t + 4 + row * 16, w + 8, 15);
+    g.fillStyle = colors[i]; g.fillText(text, P.l + 8, P.t + 6 + row * 16);
+  });
+}
+
+return { xOf, vOfX, isDelta, ySignal, lineFit, drawXY };
+})();
 // ---- ui/display.js
 __mods['ui/display.js'] = (() => {
 // The scope display: a 10 × 8 division graticule with time labels below and
@@ -6090,6 +6624,7 @@ __mods['ui/display.js'] = (() => {
 const { siUnit, num } = __mods['ui/units.js'];
 const { step125 } = __mods['core/scale.js'];
 const { channelSignal, drawFrequency, freqRange } = __mods['ui/freqview.js'];
+const { drawXY, vOfX } = __mods['ui/xyview.js'];
 const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
@@ -6248,6 +6783,11 @@ function createDisplay(root, handlers) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
     layout();
+    if (viewMode() === 'xy') {
+      drawXY({ g: ctx, P, data, past, scope, k: mode !== 'stop' ? indexAt(tScan) : data.t.length - 1, axis: axisChannel(), line, colors: CHANNEL_COLORS, drawGrid, unitLabel, vy, win, runs: RUNS });
+      renderStatus();
+      return;
+    }
     if (viewMode() !== 'time') {
       const n = data.t.length - 1;
       drawFrequency({ g: ctx, P, W, H, data, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
@@ -6392,10 +6932,11 @@ function createDisplay(root, handlers) {
     // Live mode's state (Live, E-STOP, Offline) and what goes with it.
     const live = handlers.liveTag?.();
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    const vm = viewMode(), fr = vm !== 'time' ? freqRange(scope, data) : null;
+    const vm = viewMode(), fr = vm === 'fft' || vm === 'spectrogram' ? freqRange(scope, data) : null;
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
       ${live ? `<span class="st ${live.cls}">${esc(live.text)}</span>${live.note ? `<span class="dim">${esc(live.note)}</span>` : ''}` : ''}
-      ${vm !== 'time' ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
+      ${fr ? `<span class="st st-view">${vm === 'fft' ? 'FFT' : 'Spectrogram'}</span><span>${siUnit(Number(fr[0].toPrecision(3)), 'Hz', 3)} … ${siUnit(Number(fr[1].toPrecision(3)), 'Hz', 3)}</span>` : ''}
+      ${vm === 'xy' ? `<span class="st st-view">XY${scope.view?.delta ? ' · Δ X − Y' : ''}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
       ${line !== null ? `<span class="selline" style="--cc:${CHANNEL_COLORS[line]}">line ${line + 1} selected · Esc to release</span>` : ''}
@@ -6422,8 +6963,9 @@ function createDisplay(root, handlers) {
     last = now;
     if (mode !== 'stop' && data && scope && feed) {
       // Live: data and scan line come from the plant; a finished sweep becomes
-      // an earlier run, or ends a Single.
+      // an earlier run, or ends a Single; past is a run cut short by a new one.
       const s = feed(), names = Object.keys(data.signals).join();
+      if (s.past) past = [s.past, ...past].slice(0, RUNS - 1);
       if (s.done && mode === 'single') { data = s.done; tScan = win()[1]; mode = 'stop'; handlers.onStopped?.(); }
       else { if (s.done) past = [s.done, ...past].slice(0, RUNS - 1); data = s.data; tScan = s.scan; }
       if (Object.keys(data.signals).join() !== names) renderBadges();
@@ -6432,9 +6974,8 @@ function createDisplay(root, handlers) {
       if (tScan < w0 || tScan > w1) tScan = w0;
       tScan += dt;
       if (tScan >= w1) {
-        // A completed sweep goes to the recorder (ui/live.js) as well.
-        if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); handlers.onSweep?.(data, w0, w1); }
-        else { tScan = w0 + ((tScan - w0) % (w1 - w0)); handlers.onSweep?.(data, w0, w1); keepRun(); }
+        if (mode === 'single') { tScan = w1; mode = 'stop'; handlers.onStopped?.(); }
+        else { tScan = w0 + ((tScan - w0) % (w1 - w0)); keepRun(); }
       }
     }
     draw();
@@ -6478,7 +7019,14 @@ function createDisplay(root, handlers) {
 
   // The channels a vertical gesture acts on: the selected line, or every
   // channel that shows a signal.
-  const targets = () => (line !== null ? [line] : [0, 1, 2, 3].filter(visible));
+  // In XY mode channel 1 is the horizontal axis, so not among them.
+  const targets = () => (line !== null ? [line] : [0, 1, 2, 3].filter((i) => visible(i) && !(i === 0 && viewMode() === 'xy')));
+  // XY mode: channel 1's scale and position, around a screen column.
+  function zoomX(sc, x, dir) {
+    const ch = sc.channels[0], vc = vOfX(P, ch, x), kx = (x - P.l - P.w / 2) / P.dx;
+    ch.scale = step125(ch.scale, dir);
+    ch.offset = Number((kx * ch.scale - vc).toPrecision(6));
+  }
 
   let wheelAcc = 0, wheelTimer = null;
   canvas.addEventListener('wheel', (e) => {
@@ -6497,6 +7045,20 @@ function createDisplay(root, handlers) {
       const fc = f0 + Math.max(0, Math.min(1, a)) * (f1 - f0), span = Math.min(fn, (f1 - f0) * 1.25 ** steps);
       const nf0 = Math.max(0, Math.min(fn - span, fc - a * span));
       handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(nf0.toPrecision(5)), fmax: Number((nf0 + span).toPrecision(5)) }; });
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => handlers.endEdit(), 400);
+      return;
+    }
+    if (viewMode() === 'xy') {
+      // Below the screen: X (channel 1); on it or at the left: the Y channels.
+      const dir = Math.sign(steps);
+      handlers.edit((sc) => {
+        for (let s = 0; s < Math.abs(steps); s++) {
+          if (where === 'xaxis') { zoomX(sc, x, dir); continue; }
+          const k = divsAt(y);
+          for (const i of targets()) { const ch = sc.channels[i], vc = k * ch.scale - ch.offset; ch.scale = step125(ch.scale, dir); ch.offset = Number((k * ch.scale - vc).toPrecision(6)); }
+        }
+      });
       clearTimeout(wheelTimer);
       wheelTimer = setTimeout(() => handlers.endEdit(), 400);
       return;
@@ -6553,6 +7115,13 @@ function createDisplay(root, handlers) {
         if (dx) handlers.edit((sc) => { sc.view = { ...(sc.view ?? {}), fmin: Number(nf0.toPrecision(5)), fmax: Number((nf0 + f1 - f0).toPrecision(5)) }; });
         return;
       }
+      if (viewMode() === 'xy') {
+        handlers.edit((sc) => {
+          if (gesture.time && dx) { const ch = sc.channels[0]; ch.offset = Number((ch.offset + (dx / P.dx) * ch.scale).toPrecision(6)); }
+          if (gesture.values && dy) for (const i of targets()) { const ch = sc.channels[i]; ch.offset = Number((ch.offset - (dy / P.dy) * ch.scale).toPrecision(6)); }
+        });
+        return;
+      }
       handlers.edit((sc) => {
         if (gesture.time && dx) sc.timebase.position = Number((sc.timebase.position - (dx / P.dx) * sc.timebase.scale).toPrecision(6));
         if (gesture.values && dy) for (const i of targets()) { const ch = sc.channels[i]; ch.offset = Number((ch.offset - (dy / P.dy) * ch.scale).toPrecision(6)); }
@@ -6591,8 +7160,12 @@ function createDisplay(root, handlers) {
       return;
     }
     const t0 = xt(x0), t1 = xt(x1), k0 = divsAt(y0), k1 = divsAt(y1);
+    const xy = viewMode() === 'xy';
     handlers.edit((sc) => {
-      if (time) sc.timebase = { scale: Number(((t1 - t0) / DIVX).toPrecision(4)), position: Number(t0.toPrecision(6)) };
+      if (time && xy) {
+        const ch = sc.channels[0], va = vOfX(P, ch, x0), vb = vOfX(P, ch, x1);
+        ch.scale = Number(((vb - va) / DIVX).toPrecision(4)); ch.offset = Number((-(va + vb) / 2).toPrecision(6));
+      } else if (time) sc.timebase = { scale: Number(((t1 - t0) / DIVX).toPrecision(4)), position: Number(t0.toPrecision(6)) };
       if (values) for (const i of targets()) {
         const ch = sc.channels[i];
         const top = k0 * ch.scale - ch.offset, bot = k1 * ch.scale - ch.offset;
@@ -6637,6 +7210,445 @@ function createDisplay(root, handlers) {
 
 return { CHANNEL_COLORS, createDisplay };
 })();
+// ---- ui/plots.js
+__mods['ui/plots.js'] = (() => {
+// Small plots in the scope's style (dark screen, dotted grid, mono labels)
+// for the Analysis tab: a frame with linear or logarithmic axes, and helpers
+// to draw curves, points and markers in data coordinates.
+
+const { siUnit, num } = __mods['ui/units.js'];
+const BG = '#0a0d10';
+const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+const PLOT_COLORS = { ink: 'rgba(235, 240, 245, 0.9)', dim: 'rgba(200, 210, 218, 0.7)', grid: 'rgba(160, 175, 190, 0.18)', axis: 'rgba(160, 175, 190, 0.45)' };
+
+// Ticks for a linear axis: about n steps of 1, 2 or 5 × 10^k.
+function niceTicks(lo, hi, n = 6) {
+  const span = hi - lo;
+  if (!(span > 0)) return [lo];
+  const raw = span / n, mag = 10 ** Math.floor(Math.log10(raw)), f = raw / mag;
+  const step = (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * mag;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  return out;
+}
+// Padded range of values, ignoring non-finite ones.
+function extent(values, pad = 0.08) {
+  let lo = Infinity, hi = -Infinity;
+  for (const v of values) if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (!Number.isFinite(lo)) return [-1, 1];
+  if (lo === hi) { const d = Math.abs(lo) || 1; return [lo - d / 2, hi + d / 2]; }
+  const d = (hi - lo) * pad;
+  return [lo - d, hi + d];
+}
+
+// A plot in a canvas: create once, then frame() and draw on each render.
+function createPlot(canvas) {
+  const g = canvas.getContext('2d');
+  let W = 0, H = 0, P = null, ax = null;
+  function size() {
+    const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    W = Math.max(60, r.width); H = Math.max(60, r.height);
+    if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  const X = (x) => P.l + (ax.xlog ? (Math.log10(x) - Math.log10(ax.x0)) / (Math.log10(ax.x1) - Math.log10(ax.x0)) : (x - ax.x0) / (ax.x1 - ax.x0)) * (P.r - P.l);
+  const Y = (y) => P.b - ((y - ax.y0) / (ax.y1 - ax.y0)) * (P.b - P.t);
+  return {
+    g,
+    get P() { return P; },
+    X, Y,
+    // axes: { x0, x1, y0, y1, xlog, title, xlabel, ylabel, xunit, yunit, equal }
+    frame(axes) {
+      size();
+      ax = { ...axes };
+      P = { l: 52, t: axes.title ? 20 : 8, r: W - 10, b: H - 24 };
+      if (ax.equal) {
+        // Same scale on both axes (pole maps, Nyquist): widen the shorter range.
+        const sx = (ax.x1 - ax.x0) / (P.r - P.l), sy = (ax.y1 - ax.y0) / (P.b - P.t);
+        if (sx > sy) { const c = (ax.y0 + ax.y1) / 2, h = (sx * (P.b - P.t)) / 2; ax.y0 = c - h; ax.y1 = c + h; } else { const c = (ax.x0 + ax.x1) / 2, h = (sy * (P.r - P.l)) / 2; ax.x0 = c - h; ax.x1 = c + h; }
+      }
+      g.fillStyle = BG; g.fillRect(0, 0, W, H);
+      g.font = `10.5px ${MONO}`;
+      if (axes.title) { g.fillStyle = PLOT_COLORS.ink; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(axes.title, P.l, 4); }
+      // Grid and tick labels.
+      g.lineWidth = 1;
+      const xt = ax.xlog ? decades(ax.x0, ax.x1) : niceTicks(ax.x0, ax.x1, Math.max(3, Math.floor((P.r - P.l) / 70)));
+      const yt = niceTicks(ax.y0, ax.y1, Math.max(3, Math.floor((P.b - P.t) / 34)));
+      g.strokeStyle = PLOT_COLORS.grid;
+      g.beginPath();
+      for (const v of xt) { const x = Math.round(X(v)) + 0.5; g.moveTo(x, P.t); g.lineTo(x, P.b); }
+      for (const v of yt) { const y = Math.round(Y(v)) + 0.5; g.moveTo(P.l, y); g.lineTo(P.r, y); }
+      g.stroke();
+      g.fillStyle = PLOT_COLORS.dim;
+      g.textAlign = 'center'; g.textBaseline = 'top';
+      for (const v of xt) g.fillText(ax.xunit ? siUnit(v, ax.xunit, 3) : num(v, 3), X(v), P.b + 5);
+      g.textAlign = 'right'; g.textBaseline = 'middle';
+      for (const v of yt) g.fillText(ax.yunit ? siUnit(v, ax.yunit, 3) : num(v, 3), P.l - 5, Y(v));
+      // Zero lines, if inside.
+      g.strokeStyle = PLOT_COLORS.axis;
+      g.beginPath();
+      if (!ax.xlog && ax.x0 < 0 && ax.x1 > 0) { const x = Math.round(X(0)) + 0.5; g.moveTo(x, P.t); g.lineTo(x, P.b); }
+      if (ax.y0 < 0 && ax.y1 > 0) { const y = Math.round(Y(0)) + 0.5; g.moveTo(P.l, y); g.lineTo(P.r, y); }
+      g.stroke();
+      g.strokeRect(P.l + 0.5, P.t + 0.5, P.r - P.l - 1, P.b - P.t - 1);
+      if (axes.xlabel) { g.textAlign = 'right'; g.textBaseline = 'bottom'; g.fillStyle = PLOT_COLORS.dim; g.fillText(axes.xlabel, P.r - 3, P.b - 3); }
+      if (axes.ylabel) { g.textAlign = 'left'; g.textBaseline = 'top'; g.fillStyle = PLOT_COLORS.dim; g.fillText(axes.ylabel, P.l + 4, P.t + 3); }
+      return ax;
+    },
+    // Clip to the plot area for the drawing in fn.
+    clip(fn) { g.save(); g.beginPath(); g.rect(P.l, P.t, P.r - P.l, P.b - P.t); g.clip(); fn(); g.restore(); },
+    line(xs, ys, { color = PLOT_COLORS.ink, width = 1.5, dash = null, alpha = 1 } = {}) {
+      g.strokeStyle = color; g.lineWidth = width; g.globalAlpha = alpha; if (dash) g.setLineDash(dash);
+      g.beginPath();
+      let pen = false;
+      for (let i = 0; i < xs.length; i++) {
+        const x = X(xs[i]), y = Y(ys[i]);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) { pen = false; continue; }
+        if (pen) g.lineTo(x, y); else { g.moveTo(x, y); pen = true; }
+      }
+      g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+    },
+    // Markers: 'x' (pole), 'o' (zero), 'dot', '+'.
+    mark(x, y, { shape = 'dot', color = PLOT_COLORS.ink, size = 4, width = 1.6 } = {}) {
+      const px = X(x), py = Y(y);
+      if (!Number.isFinite(px) || !Number.isFinite(py)) return;
+      g.strokeStyle = color; g.fillStyle = color; g.lineWidth = width;
+      g.beginPath();
+      if (shape === 'x') { g.moveTo(px - size, py - size); g.lineTo(px + size, py + size); g.moveTo(px + size, py - size); g.lineTo(px - size, py + size); g.stroke(); }
+      else if (shape === 'o') { g.arc(px, py, size, 0, 2 * Math.PI); g.stroke(); }
+      else if (shape === '+') { g.moveTo(px - size, py); g.lineTo(px + size, py); g.moveTo(px, py - size); g.lineTo(px, py + size); g.stroke(); }
+      else { g.arc(px, py, size / 2, 0, 2 * Math.PI); g.fill(); }
+    },
+    text(x, y, s, { color = PLOT_COLORS.dim, align = 'left', base = 'middle', dx = 0, dy = 0 } = {}) {
+      g.font = `10.5px ${MONO}`; g.fillStyle = color; g.textAlign = align; g.textBaseline = base;
+      g.fillText(s, X(x) + dx, Y(y) + dy);
+    },
+    note(s, color = PLOT_COLORS.dim) {
+      g.font = `11px ${MONO}`; g.fillStyle = color; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(s, (P.l + P.r) / 2, (P.t + P.b) / 2);
+    },
+  };
+}
+
+function decades(a, b) {
+  const out = [];
+  for (let e = Math.floor(Math.log10(a)); e <= Math.ceil(Math.log10(b)); e++) { const v = 10 ** e; if (v >= a * 0.999 && v <= b * 1.001) out.push(v); }
+  return out.length ? out : [a, b];
+}
+
+return { PLOT_COLORS, niceTicks, extent, createPlot };
+})();
+// ---- ui/analysis.js
+__mods['ui/analysis.js'] = (() => {
+// Tab 5, Analysis: what control engineers read from a loop, computed from the
+// plant a Controller block sees (linearised at an operating point) and the
+// controller's own linear law, discrete at its sample time Ts as the
+// simulation runs it (the person, 2026-10-24: root locus, Ortskurve, Bode,
+// stability diagrams). Key numbers at the left; root locus, Bode, Nyquist and
+// the linear step response at the right. Hovering the Bode plot marks the
+// same frequency on the Nyquist curve. The X–Y plot is the scope's XY mode.
+// Research and thresholds: design/research/analysis.md; core: core/analysis.js.
+
+const { analyzeLoop, stepResponse, sOf, respondAt } = __mods['core/analysis.js'];
+const { createPlot, extent, PLOT_COLORS } = __mods['ui/plots.js'];
+const { CHANNEL_COLORS } = __mods['ui/display.js'];
+const { num } = __mods['ui/units.js'];
+const OPS = [
+  { key: 'origin', label: 'At rest', title: 'All states and u at 0 (the pendulums upright)' },
+  { key: 'initial', label: 'Start', title: 'The state the run starts from' },
+  { key: 't', label: 'Scope time', title: 'The state at the time under the cursor, or at the end of the screen' },
+];
+const [C_L, C_CL, C_OL, C_U] = CHANNEL_COLORS;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const deg = (r) => (r * 180) / Math.PI;
+
+// Good / fair / poor against the usual ranges (Åström & Murray §9.3,
+// Skogestad §2.4.3), always with a word, never colour alone.
+const GRADES = { good: ['✓', 'good'], fair: ['!', 'fair'], poor: ['✕', 'poor'] };
+const grade = (g) => (g ? `<span class="grade grade-${g}" title="${GRADES[g][1]}">${GRADES[g][0]} ${GRADES[g][1]}</span>` : '');
+const gradeMs = (ms) => (ms <= 1.4 ? 'good' : ms <= 2 ? 'fair' : 'poor');
+const gradePm = (pm) => (pm >= 45 ? 'good' : pm >= 30 ? 'fair' : 'poor');
+const gradeGm = (gm) => (gm >= 2.5 ? 'good' : gm >= 1.7 ? 'fair' : 'poor');
+
+// Log-compressed radius for the Nyquist plot: unchanged up to 1, then
+// 1 + ln ρ, so integrators and large gains fit while −1 stays put.
+const squash = (re, im) => { const r = Math.hypot(re, im); if (!(r > 1)) return [re, im]; const k = (1 + Math.log(r)) / r; return [re * k, im * k]; };
+
+// Step metrics of the linear response: final value, overshoot, 2 % settling.
+function stepMetrics(st) {
+  const y = st.y, yf = y.at(-1);
+  if (!Number.isFinite(yf) || Math.abs(yf) < 1e-12) return { yf };
+  const peak = Math.max(...y.map((v) => v / yf));
+  let k = y.length - 1;
+  while (k > 0 && Math.abs(y[k - 1] / yf - 1) <= 0.02) k--;
+  return { yf, overshoot: Math.max(0, (peak - 1) * 100), settle: st.t[k] };
+}
+
+function createAnalysisTab(host, app) {
+  let target = null, op = 'origin', plane = 's', cursorW = null, last = null, lastKey = '';
+  // Wheel zoom of the locus and the Nyquist plot (1 = the automatic view).
+  const zoom = { locus: 1, nyq: 1 };
+
+  host.innerHTML = `
+    <div class="an">
+      <section class="gcol an-side" aria-label="Key numbers">
+        <div class="ghead"><h3 class="glabel">Analysis</h3></div>
+        <div id="an-blocks" class="ctblocks"></div>
+        <div class="an-op" role="group" aria-label="Operating point">${OPS.map((o) => `<button class="key small" data-op="${o.key}" title="${o.title}">${o.label}</button>`).join('')}</div>
+        <div id="an-verdict" class="an-verdict"></div>
+        <table class="kw" id="an-kw"></table>
+        <div id="an-notes" class="phelp"></div>
+      </section>
+      <div class="an-grid" id="an-grid">
+        <figure class="an-fig"><figcaption><span>Root locus · poles</span><span class="an-tg"><button class="key small" data-plane="s">s</button><button class="key small" data-plane="z">z</button></span></figcaption><canvas id="an-locus" aria-label="Root locus"></canvas></figure>
+        <figure class="an-fig"><figcaption><span>Bode · open loop L</span><span id="an-bode-read" class="dim"></span></figcaption><canvas id="an-mag" aria-label="Bode magnitude"></canvas><canvas id="an-phase" aria-label="Bode phase"></canvas></figure>
+        <figure class="an-fig"><figcaption><span>Nyquist · Ortskurve of L</span><span id="an-nyq-read" class="dim"></span></figcaption><canvas id="an-nyq" aria-label="Nyquist plot"></canvas></figure>
+        <figure class="an-fig"><figcaption><span>Step r → y · linear model</span><span id="an-step-read" class="dim"></span></figcaption><canvas id="an-step" aria-label="Step response"></canvas></figure>
+      </div>
+    </div>
+    <div class="ctempty" id="an-empty" hidden></div>`;
+  const $ = (s) => host.querySelector(s);
+  const plots = { locus: createPlot($('#an-locus')), mag: createPlot($('#an-mag')), phase: createPlot($('#an-phase')), nyq: createPlot($('#an-nyq')), step: createPlot($('#an-step')) };
+
+  // Every Controller block, at any depth.
+  function controllers() {
+    const out = [], d = app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null;
+    const walk = (dd, path, where) => {
+      for (const b of dd.blocks) {
+        if (b.type === 'controller') out.push({ path: [...path, b.id], block: b, where: [...where, b.name ?? b.id].join(' / ') });
+        if (b.type === 'subsystem') walk(b.diagram, [...path, b.id], [...where, b.name ?? b.id]);
+      }
+    };
+    if (d) walk(d, [], []);
+    return out;
+  }
+
+  host.querySelectorAll('[data-op]').forEach((b) => b.addEventListener('click', () => { op = b.dataset.op; render(); }));
+  host.querySelectorAll('[data-plane]').forEach((b) => b.addEventListener('click', () => { plane = b.dataset.plane; draw(); }));
+  for (const id of ['#an-mag', '#an-phase']) {
+    const c = $(id);
+    c.addEventListener('pointermove', (e) => {
+      const P = plots.mag.P;
+      if (!last?.res || !P) return;
+      const r = c.getBoundingClientRect(), x = e.clientX - r.left, w = last.res.fd.w;
+      const f = (x - P.l) / (P.r - P.l);
+      cursorW = f < 0 || f > 1 ? null : w[0] * (w.at(-1) / w[0]) ** f;
+      draw();
+    });
+    c.addEventListener('pointerleave', () => { cursorW = null; draw(); });
+  }
+
+  for (const [id, k] of [['#an-locus', 'locus'], ['#an-nyq', 'nyq']]) {
+    $(id).addEventListener('wheel', (e) => { e.preventDefault(); zoom[k] = Math.min(1e3, Math.max(1e-3, zoom[k] * 1.25 ** Math.sign(e.deltaY))); draw(); }, { passive: false });
+    $(id).addEventListener('dblclick', () => { zoom[k] = 1; draw(); });
+    $(id).title = 'Wheel to zoom, double-click for the automatic view';
+  }
+
+  // The operating point as the provider takes it.
+  const opSpec = () => (op === 't' ? { t: app.scopeTime?.() ?? 0 } : op);
+
+  function compute() {
+    const all = controllers();
+    const c = all.find((x) => target && x.path.join('/') === target.join('/')) ?? all[0];
+    if (!c) return { empty: 'This system has no Controller block. Add one in the Plant tab, wire the reference to its first input and the measurements to the others.' };
+    target = c.path;
+    if (!app.loopModel) return { c, all, error: 'The analysis needs the plant a block sees, linearised at an operating point. That comes with the design layer.' };
+    const spec = opSpec();
+    const key = JSON.stringify([app.project.system, c.path, spec]);
+    if (key === lastKey && last) return last;
+    lastKey = key;
+    try {
+      const m = app.loopModel(c.path, spec);
+      const res = analyzeLoop(m.plant, m.ctrl, m.Ts);
+      const T = Math.min(20, Math.max(2, 8 / Math.max(1e-3, ...res.clPoles.map((p) => -p.s.re).filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b).slice(0, 1))));
+      const st = res.stable ? stepResponse(m.plant, m.ctrl, m.Ts, Math.min(4000, Math.round(T / m.Ts))) : null;
+      last = { c, all, m, res, st, sm: st ? stepMetrics(st) : null };
+    } catch (err) {
+      last = { c, all, error: err.message };
+    }
+    return last;
+  }
+
+  function renderSide(v) {
+    $('#an-blocks').innerHTML = v.all?.length > 1
+      ? v.all.map((x) => `<button class="sigkey ${x === v.c ? 'on' : ''}" data-path="${esc(x.path.join('/'))}">${esc(x.where)}</button>`).join('')
+      : v.c ? `<div class="ctname">${esc(v.c.where)} · ${esc(v.c.block.variants?.[v.c.block.variant ?? 0]?.name ?? '')}</div>` : '';
+    $('#an-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
+    host.querySelectorAll('[data-op]').forEach((b) => { b.classList.toggle('lit-view', b.dataset.op === op); b.setAttribute('aria-pressed', String(b.dataset.op === op)); });
+    if (!v.res) {
+      $('#an-verdict').innerHTML = '';
+      $('#an-kw').innerHTML = '';
+      $('#an-notes').textContent = v.error ?? '';
+      return;
+    }
+    const { res, m, sm } = v, g = res.margins, Ts = m.Ts;
+    $('#an-verdict').innerHTML = res.stable
+      ? `<span class="grade grade-good">✓ stable</span> <span class="dim">every closed-loop pole inside the unit circle</span>`
+      : `<span class="grade grade-poor">✕ unstable</span> <span class="dim">${res.Z} closed-loop pole${res.Z > 1 ? 's' : ''} outside the unit circle</span>`;
+    const rows = [];
+    const row = (k, val, extra = '', title = '') => rows.push(`<tr title="${esc(title)}"><th>${k}</th><td>${val}</td><td>${extra}</td></tr>`);
+    const gm = Number.isFinite(g.gmUp) ? `×${num(g.gmUp, 3)} (${num(20 * Math.log10(g.gmUp), 3)} dB)` : '∞';
+    row('Gain margin', g.gmDown > 0 ? `×${num(g.gmDown, 3)} … ${gm}` : gm, Number.isFinite(g.gmUp) ? grade(gradeGm(g.gmUp)) : '', 'The loop gain may change by these factors before the loop crosses −1');
+    row('Phase margin', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° at ${num(g.wc, 3)} rad/s` : '—', Number.isFinite(g.pm) ? grade(gradePm(g.pm)) : '', 'At the crossover |L| = 1, the phase left before −180°');
+    row('Delay margin', Number.isFinite(g.dm) ? `${num(g.dm * 1000, 3)} ms (${num(g.dmSamples, 3)} Ts)` : '—', '', 'The extra dead time the loop tolerates');
+    row('Ms = max |S|', `${num(g.ms, 3)} at ${num(g.wMs, 3)} rad/s`, grade(gradeMs(g.ms)), 'Peak sensitivity; 1/Ms is the closest approach to −1');
+    row('Mt = max |T|', `${num(g.mt, 3)}`, '', 'Peak complementary sensitivity');
+    if (res.slowest) {
+      const s = res.slowest.s;
+      row('Slowest pole', `τ = ${num(-1 / s.re, 3)} s`, '', `s = ${num(s.re, 3)} ${s.im >= 0 ? '+' : '−'} ${num(Math.abs(s.im), 3)}j`);
+    }
+    row('Least damping', `ζ = ${num(res.zetaMin, 3)}`, res.zetaMin < 1 ? grade(res.zetaMin >= 0.5 ? 'good' : res.zetaMin >= 0.25 ? 'fair' : 'poor') : '', 'Smallest damping ratio of the oscillating closed-loop poles');
+    row('Nyquist', `P ${res.P} · N ${res.N} · Z ${res.Z}`, '', 'P open-loop poles outside the unit circle, N clockwise encirclements of −1, Z = N + P closed-loop poles outside');
+    if (sm?.overshoot !== undefined) row('Step (linear)', `${num(sm.overshoot, 3)} % overshoot, settles ${num(sm.settle, 3)} s`, '', `final value ${num(sm.yf, 4)}`);
+    $('#an-kw').innerHTML = rows.join('');
+    const notes = [
+      `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
+      ...(res.L.delaySamples?.some((d) => d) ? [`dead time: ${res.L.delaySamples.map((d) => `${d} Ts`).join(', ')}, exact in discrete time`] : []),
+      'Linear: u is assumed inside its limits; the prefilter on r is outside the loop.',
+      ...(m.warnings ?? []),
+    ];
+    $('#an-notes').innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join('');
+  }
+
+  // Root locus in the s-plane (s = ln z / Ts) or the z-plane.
+  function drawLocus(v) {
+    const p = plots.locus, { res, m } = v, Ts = m.Ts;
+    const map = plane === 's' ? (z) => { const s = sOf(z, Ts); return Number.isFinite(s.re) ? [s.re, s.im] : null; } : (z) => [z.re, z.im];
+    let ax, hidden = 0;
+    if (plane === 'z') ax = { x0: -1.25 / zoom.locus, x1: 1.25 / zoom.locus, y0: -1.25 / zoom.locus, y1: 1.25 / zoom.locus };
+    else {
+      // The region the loop works in: poles up to ten times the crossover
+      // (or the slowest pole); faster ones (an armature, a derivative filter)
+      // are counted, not drawn.
+      const pts = [...res.olPoles, ...res.clPoles.map((q) => q.z)].map(map).filter(Boolean);
+      const mags = res.clPoles.map((q) => Math.hypot(q.s.re, q.s.im)).filter((x) => Number.isFinite(x) && x > 1e-9).sort((a, b) => a - b);
+      const lim = 10 * Math.max(Number.isFinite(res.margins.wc) ? res.margins.wc : 0, mags[0] ?? 1);
+      const near = pts.filter((q) => Math.hypot(q[0], q[1]) <= lim);
+      hidden = res.clPoles.filter((q) => Math.hypot(q.s.re, q.s.im) > lim).length;
+      const R = (Math.max(1e-6, ...near.map((q) => Math.hypot(q[0], q[1]))) * 1.3) / zoom.locus;
+      ax = { x0: -R, x1: 0.35 * R, y0: -0.8 * R, y1: 0.8 * R };
+    }
+    p.frame({ ...ax, equal: true, xlabel: plane === 's' ? 'Re s' : 'Re z', ylabel: plane === 's' ? 'Im s' : 'Im z' });
+    p.clip(() => {
+      const g = p.g;
+      // Stability boundary and, in s, the band edges ±π/Ts.
+      if (plane === 'z') {
+        const th = Array.from({ length: 181 }, (_, i) => (i / 180) * 2 * Math.PI);
+        p.line(th.map(Math.cos), th.map(Math.sin), { color: PLOT_COLORS.axis, width: 1.2 });
+      } else {
+        // ζ = 0.7 rays.
+        const c = Math.cos(Math.acos(0.7)), s = Math.sin(Math.acos(0.7)), R = Math.max(Math.abs(ax.x0), Math.abs(ax.y1)) * 2;
+        p.line([0, -R * c], [0, R * s], { color: PLOT_COLORS.grid, width: 1, dash: [3, 4] });
+        p.line([0, -R * c], [0, -R * s], { color: PLOT_COLORS.grid, width: 1, dash: [3, 4] });
+      }
+      g.globalAlpha = 0.55;
+      for (const { poles } of res.locus) for (const z of poles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'dot', color: C_L, size: 2.4 }); }
+      g.globalAlpha = 1;
+      for (const z of res.olPoles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'x', color: C_U, size: 5 }); }
+      for (const { z } of res.clPoles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'dot', color: C_CL, size: 8 }); }
+    });
+    p.text(ax.x0, ax.y0, ` × open loop  ● closed loop  · gain ×0.01…×100${hidden ? `  · ${hidden} faster off the plot` : ''}`, { base: 'bottom', dy: -4, dx: 4 });
+  }
+
+  function drawBode(v) {
+    const { res, m } = v, fd = res.fd, g = res.margins;
+    const dB = fd.mag.map((x) => 20 * Math.log10(x));
+    const [d0, d1] = extent(dB.filter((x) => x > -200), 0.08);
+    const a = plots.mag.frame({ x0: fd.w[0], x1: fd.w.at(-1), xlog: true, y0: Math.max(d0, -120), y1: Math.min(d1, 160), ylabel: '|L| dB' });
+    plots.mag.clip(() => {
+      plots.mag.line([a.x0, a.x1], [0, 0], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
+      plots.mag.line(fd.w, dB, { color: C_L, width: 1.8 });
+      for (const c of g.gainCrossings) plots.mag.mark(c.w, 0, { shape: 'o', color: C_CL, size: 4 });
+      for (const c of g.phaseCrossings) {
+        plots.mag.line([c.w, c.w], [20 * Math.log10(c.mag), 0], { color: C_U, width: 1.5 });
+        // Only the crossings that bound the gain interval get a label.
+        if (c.gm === g.gmUp || c.gm === g.gmDown) plots.mag.text(c.w, 20 * Math.log10(c.mag) / 2, `GM ×${num(c.gm, 3)}`, { color: C_U, dx: 5 });
+      }
+      if (cursorW) plots.mag.line([cursorW, cursorW], [a.y0, a.y1], { color: PLOT_COLORS.ink, width: 1, alpha: 0.6 });
+    });
+    const [p0, p1] = extent(fd.phase, 0.08);
+    const b = plots.phase.frame({ x0: fd.w[0], x1: fd.w.at(-1), xlog: true, y0: Math.min(p0, -190), y1: Math.max(p1, -80), xlabel: `ω rad/s · Nyquist ${num(Math.PI / m.Ts, 3)}`, ylabel: '∠L °' });
+    plots.phase.clip(() => {
+      for (let k = Math.ceil((b.y0 + 180) / 360); k * 360 - 180 <= b.y1; k++) plots.phase.line([b.x0, b.x1], [k * 360 - 180, k * 360 - 180], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
+      plots.phase.line(fd.w, fd.phase, { color: C_L, width: 1.8 });
+      for (const c of g.gainCrossings) {
+        const ph = respondPhase(fd, c.w);
+        plots.phase.line([c.w, c.w], [ph, ph - c.pm], { color: C_CL, width: 1.5 });
+        plots.phase.text(c.w, ph - c.pm / 2, `PM ${num(c.pm, 3)}°`, { color: C_CL, dx: -5, align: 'right' });
+      }
+      if (cursorW) plots.phase.line([cursorW, cursorW], [b.y0, b.y1], { color: PLOT_COLORS.ink, width: 1, alpha: 0.6 });
+    });
+    const at = cursorW ? respondAt(res.L, cursorW) : null;
+    $('#an-bode-read').textContent = at ? `ω ${num(cursorW, 3)} rad/s · |L| ${num(20 * Math.log10(Math.hypot(at.re, at.im)), 3)} dB · ∠ ${num(deg(Math.atan2(at.im, at.re)), 3)}°` : 'hover for a frequency';
+  }
+  // The unwrapped phase at ω, interpolated on the grid.
+  function respondPhase(fd, w) {
+    const i = Math.max(1, fd.w.findIndex((x) => x >= w));
+    const f = (Math.log(w) - Math.log(fd.w[i - 1])) / (Math.log(fd.w[i]) - Math.log(fd.w[i - 1]));
+    return fd.phase[i - 1] + f * (fd.phase[i] - fd.phase[i - 1]);
+  }
+
+  function drawNyquist(v) {
+    const p = plots.nyq, { res } = v, fd = res.fd, g = res.margins;
+    const pts = fd.re.map((re, i) => squash(re, fd.im[i]));
+    const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+    // Around −1, where the margins are read; the wheel zooms out to the rest.
+    const z = zoom.nyq;
+    p.frame({ x0: -1 - 2.2 / z, x1: -1 + 2.6 / z, y0: -2 / z, y1: 2 / z, equal: true, xlabel: 'Re L', ylabel: 'Im L  (|L| > 1: 1 + ln|L|)' });
+    p.clip(() => {
+      const th = Array.from({ length: 181 }, (_, i) => (i / 180) * 2 * Math.PI);
+      p.line(th.map(Math.cos), th.map(Math.sin), { color: PLOT_COLORS.axis, width: 1 });
+      // The Ms circle: |1 + L| = 1/Ms, the closest approach to −1.
+      const ring = th.map((a) => squash(-1 + Math.cos(a) / g.ms, Math.sin(a) / g.ms));
+      p.line(ring.map((q) => q[0]), ring.map((q) => q[1]), { color: C_U, width: 1.2, dash: [4, 3] });
+      p.line(xs, ys.map((y) => -y), { color: C_L, width: 1.2, dash: [5, 4], alpha: 0.6 });
+      p.line(xs, ys, { color: C_L, width: 1.8 });
+      p.mark(-1, 0, { shape: '+', color: '#ffffff', size: 6, width: 2 });
+      if (cursorW) { const at = respondAt(res.L, cursorW), q = squash(at.re, at.im); p.mark(q[0], q[1], { shape: 'o', color: '#ffffff', size: 5 }); }
+    });
+    $('#an-nyq-read').textContent = `P ${res.P} · N ${res.N} · Z ${res.Z} · Ms ${num(g.ms, 3)}`;
+  }
+
+  function drawStep(v) {
+    const p = plots.step, { st, sm, res } = v;
+    if (!st) { p.frame({ x0: 0, x1: 1, y0: -1, y1: 1 }); p.note(res?.stable === false ? 'unstable: no step response' : ''); $('#an-step-read').textContent = ''; return; }
+    const [y0, y1] = extent([...st.y, 0, 1], 0.08);
+    p.frame({ x0: 0, x1: st.t.at(-1), y0, y1, xunit: 's', ylabel: 'y (r = 1)' });
+    p.clip(() => {
+      p.line([0, st.t.at(-1)], [1, 1], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
+      p.line(st.t, st.y, { color: C_CL, width: 1.8 });
+    });
+    $('#an-step-read').textContent = sm?.overshoot !== undefined ? `final ${num(sm.yf, 3)} · overshoot ${num(sm.overshoot, 3)} %` : '';
+  }
+
+  function draw() {
+    const v = last;
+    if (!v?.res || host.hidden || $('#an-grid').hidden) return;
+    host.querySelectorAll('[data-plane]').forEach((b) => b.classList.toggle('lit-view', b.dataset.plane === plane));
+    drawLocus(v); drawBode(v); drawNyquist(v); drawStep(v);
+  }
+
+  function render() {
+    const v = compute();
+    $('#an-empty').hidden = !v.empty;
+    host.querySelector('.an').hidden = !!v.empty;
+    if (v.empty) { $('#an-empty').textContent = v.empty; return; }
+    renderSide(v);
+    $('#an-grid').hidden = !v.res;
+    if (!v.res) return;
+    requestAnimationFrame(draw);
+  }
+
+  new ResizeObserver(() => { if (!host.hidden) draw(); }).observe(host);
+  return {
+    render,
+    shown() { lastKey = ''; render(); },
+    open(path) { target = path; },
+  };
+}
+
+return { createAnalysisTab };
+})();
 // ---- ui/controls.js
 __mods['ui/controls.js'] = (() => {
 // The control panel right of the display: Run Control, Horizontal, Vertical.
@@ -6660,6 +7672,8 @@ function createControls(root, app) {
         <button class="key small" data-view="time" title="Signals over time">Time</button>
         <button class="key small" data-view="fft" title="Amplitude spectrum of every channel (what has run so far)">FFT</button>
         <button class="key small" data-view="spectrogram" title="The selected channel's spectrum over time, its trace on the right axis">Spectrogram</button>
+        <button class="key small" data-view="xy" title="XY: channel 1 across, the other channels against it (a Lissajous figure)">XY</button>
+        <button class="key small" id="k-delta" title="XY: draw channel 1 minus each channel (r on 1 and y on 2: the error e = r − y over r)">Δ</button>
       </div>
     </section>
     <section class="group">
@@ -6770,6 +7784,12 @@ function createControls(root, app) {
     if (b.dataset.view === 'time') delete view.mode; else view.mode = b.dataset.view;
     sc.view = view;
   })));
+  // XY: the channels draw channel 1 minus themselves (the error, for r and y).
+  $('#k-delta').addEventListener('click', () => setScope((sc) => {
+    const view = { ...(sc.view ?? {}) };
+    if (view.delta) delete view.delta; else view.delta = true;
+    sc.view = view;
+  }));
   // The selected channel's display filter.
   const filt = $('#ch-filt');
   filt.addEventListener('change', () => setScope((sc) => {
@@ -6826,6 +7846,9 @@ function createControls(root, app) {
     src.dataset.names = names.join(',') + '|' + names.map(app.unitOf).join(',');
     const vm = sc.view?.mode ?? 'time';
     root.querySelectorAll('[data-view]').forEach((b) => { b.classList.toggle('lit-view', b.dataset.view === vm); b.setAttribute('aria-pressed', String(b.dataset.view === vm)); });
+    $('#k-delta').hidden = vm !== 'xy';
+    $('#k-delta').classList.toggle('lit-view', !!sc.view?.delta);
+    $('#k-delta').setAttribute('aria-pressed', String(!!sc.view?.delta));
     const f = ch().filter;
     filt.value = f?.type ?? '';
     const fsig = f ? `${f.type}|${f.f0}|${f.order}|${f.q}` : '';
@@ -8297,32 +9320,29 @@ function createSplitters(shell) {
 
 return { createSplitters };
 })();
-// ---- ui/live.js
-__mods['ui/live.js'] = (() => {
-// Live (HIL) mode and Record, in the controls column under Run Control.
-//
-// Live: a system with an External plant block runs against a plant outside
-// the page (hil_plant.py, or hardware behind the same protocol). The loop
-// (core/live.js) runs in a Web Worker made from this page's own script, so
-// drawing never delays an answer; where workers are blocked it runs here.
-// Its samples sweep the screen like a simulation: each sweep is one run and
-// earlier sweeps fade. Record keeps the last minutes of every signal, live or
-// simulated; Save writes them as CSV or JSON; Open shows a saved trace as a
-// dashed reference. See design/output/hil.md and instrument.md.
+// ---- ui/record.js
+__mods['ui/record.js'] = (() => {
+// Save and references, under the screen beside the channel badges, like a
+// scope's save keys (the person, 2026-10-24: store the traces "either as a
+// screenshot or as data … if there are 20, then we store all 20"):
+//   Screen       what the scope acquired over the screen's window, every
+//                signal (not only those on channels): a simulated run, or the
+//                live sweep. CSV, JSON, or a PNG picture of the screen.
+//   Live record  the last minutes of every live signal (Rec length), across
+//                runs, in real time (core/trace.js).
+//   Open         a saved trace, drawn dashed on the channels with the same
+//                names until cleared; ◀ ▶ step it through a trace longer
+//                than the screen.
+// Files leave through app.download (in the claude.ai viewer, its downloads
+// capability); where there is none, the keys copy CSV.
+// See design/output/instrument.md and design/output/hil.md.
 
-const { HIL_URL, externalParams, sameDescription } = __mods['core/hil.js'];
-const { createLiveLoop } = __mods['core/live.js'];
-const { normalizeDiagram, parseEnd } = __mods['core/diagram.js'];
-const { createRecorder, traceToCsv, traceToJson, parseTrace } = __mods['core/trace.js'];
-const { fitChannel } = __mods['core/project.js'];
+const { findExternal } = __mods['core/hil.js'];
+const { createRecorder, traceToCsv, traceToCsvParts, traceToJsonParts, parseTrace, traceWindow, refShift, refSteps } = __mods['core/trace.js'];
+const { CHANNEL_COLORS } = __mods['ui/display.js'];
+const { num } = __mods['ui/units.js'];
 const RECORD_KEY = 'loop-tuner:record-seconds';
-const MAX_SWEEP = 200000;
-// The plant script's text, put into the bundle by build.mjs.
-const PLANT_PY = typeof __HIL_PLANT_PY === 'string' ? __HIL_PLANT_PY : '';
-const RUN_PY = 'uv run hil_plant.py';
-
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const ms = (v) => (Number.isFinite(v) ? `${v < 10 ? v.toFixed(2) : v.toFixed(1)} ms` : '–');
 // Record lengths: "5 min", "30 s", "1 h"; a bare number is seconds, m is minutes.
 function parseDuration(text) {
   const m = /^\s*(\d+(?:\.\d+)?)\s*(h|min|m|s)?\s*$/i.exec(String(text).replace(',', '.'));
@@ -8330,55 +9350,281 @@ function parseDuration(text) {
   return Number(m[1]) * ({ h: 3600, min: 60, m: 60, s: 1 }[(m[2] ?? 's').toLowerCase()]);
 }
 function duration(s) {
+  if (!Number.isFinite(s)) return '–';
   if (s >= 3600 && s % 3600 === 0) return `${s / 3600} h`;
   if (s >= 60) return Number.isInteger(s / 60) ? `${s / 60} min` : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')} min`;
   return `${Number(s.toFixed(s < 10 ? 1 : 0))} s`;
 }
+const span = (tr) => (tr.t.length > 1 ? tr.t[tr.t.length - 1] - tr.t[0] : 0);
+const listed = (names) => (names.length > 6 ? `${names.slice(0, 6).join(', ')} and ${names.length - 6} more` : names.join(', '));
 
-function createLive(app, display, controlsRoot) {
+function createRecord(app, display) {
+  const bar = document.createElement('div');
+  bar.className = 'recbar';
+  bar.setAttribute('aria-label', 'Save and references');
+  bar.innerHTML = `
+    <span class="rc-rec" id="rc-rec" hidden><span class="rc-label" title="Rec: the last minutes of every live signal are kept, to be saved">Rec</span>
+      <span class="rc-state" id="rc-state"></span><input class="rc-len" id="rc-len" spellcheck="false" aria-label="Record length" title="How much live data is kept: 5 min, 30 s, 1 h"></span>
+    <span class="rc-menu"><button class="rkey" id="rc-save" aria-haspopup="true" aria-expanded="false" title="Save the screen (every signal, or a picture) or the live record">Save ▾</button><span class="rc-pop" id="rc-pop" role="menu" hidden></span></span>
+    <button class="rkey" id="rc-open" title="Open a saved trace (CSV or JSON): it is drawn dashed on the channels with the same names">Open…</button>
+    <span class="rc-refs" id="rc-refs" hidden></span>
+    <input type="file" id="rc-file" accept=".csv,.json,text/csv,application/json" hidden>`;
+  document.getElementById('display').append(bar);
+  const $ = (id) => document.getElementById(id);
+  const unitsOf = (list) => Object.fromEntries(list.map((nm) => [nm, app.unitOf(nm)]));
+  const windowOf = () => { const tb = app.project.scope.timebase; const w0 = Math.max(0, tb.position); return [w0, tb.position + 10 * tb.scale]; };
+
+  // ---- The screen: a simulated run over the window, or the live sweep.
+  let liveInfo = () => null;  // set by ui/live.js: { offset } while the screen shows a live sweep
+  function screenTrace() {
+    const d = display.data;
+    if (!(d?.t?.length > 1)) return null;
+    const lv = liveInfo();
+    const [w0, w1] = windowOf();
+    const tr = traceWindow(d, lv ? -Infinity : w0, lv ? Infinity : w1);
+    if (tr.t.length < 2) return null;
+    tr.units = unitsOf(Object.keys(tr.signals));
+    return { trace: tr, what: 'screen', source: lv ? `the screen: a live sweep, t is screen time (plant time = t + ${num(lv.offset, 6)} s)` : 'the screen: a simulated run' };
+  }
+
+  // ---- The live record: plant time, run after run, on one real-time axis.
+  let seconds = 300;
+  try { seconds = Number(localStorage.getItem(RECORD_KEY)) || 300; } catch { /* storage unavailable */ }
+  const rec = createRecorder(seconds);
+  let began = null, runOffset = null, lastPlantT = null, lastT = null, recKey = '', recNames = null;
+  const clock = () => performance.now() / 1000;
+  const recordTrace = () => (rec.length > 1 ? { trace: rec.snapshot(), what: 'live record', source: 'the live record: t in seconds from its first sample; each run is the plant\'s own time, placed when it started' } : null);
+  const live = {
+    // A new run starts: the plant's clock restarts at 0.
+    run() { runOffset = null; },
+    samples(names, ts, values) {
+      const key = names.join('\n');
+      if (key !== recKey) { recKey = key; recNames = names; rec.setUnits(unitsOf(names)); }
+      for (let i = 0; i < ts.length; i++) {
+        const t = ts[i];
+        if (runOffset === null || (lastPlantT !== null && t < lastPlantT)) {
+          began ??= clock() - t;
+          runOffset = Math.max(clock() - began - t, lastT === null ? -Infinity : lastT - t + 1e-6);
+        }
+        lastPlantT = t; lastT = t + runOffset;
+        rec.push(lastT, recNames, values[i]);
+      }
+    },
+  };
+
+  // ---- Saving
+  const stem = (what) => `${app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'trace'}-${what === 'screen' ? 'screen' : 'record'}-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}`;
+  async function save(what, kind) {
+    closePop();
+    if (kind === 'png') { if (await app.download(`${stem('screen')}.png`, await screenshot(), 'image/png')) app.toast('Saved a picture of the screen (PNG)'); return; }
+    const x = what === 'screen' ? screenTrace() : recordTrace();
+    if (!x) { app.toast(what === 'screen' ? 'Nothing on the screen yet.' : 'The live record is empty: connect a plant and Run.'); return; }
+    const meta = { title: app.project.title, source: x.source };
+    const names = Object.keys(x.trace.signals), n = x.trace.t.length;
+    if (kind === 'copy') { app.copy(traceToCsv(x.trace, meta), `The ${x.what} (${n} samples of ${names.length} signals, CSV)`); return; }
+    // Built in parts, as a Blob; CSV with a UTF-8 mark first, so spreadsheets
+    // read units such as N·m right.
+    const file = kind === 'json' ? new Blob(traceToJsonParts(x.trace, meta), { type: 'application/json' }) : new Blob(['\uFEFF', ...traceToCsvParts(x.trace, meta)], { type: 'text/csv' });
+    if (await app.download(`${stem(what)}.${kind}`, file, file.type)) app.toast(`Saved ${duration(span(x.trace))} of ${listed(names)} (${x.what}, ${kind.toUpperCase()})`);
+  }
+  // A picture of the screen as it is, with the title, the status line and
+  // the channels' scales.
+  function screenshot() {
+    const src = document.querySelector('#display .screen canvas');
+    const k = src.width / Math.max(1, src.getBoundingClientRect().width);
+    const pad = Math.round(10 * k), line = Math.round(20 * k);
+    const c = document.createElement('canvas');
+    c.width = src.width + 2 * pad; c.height = src.height + 2 * line + 2 * pad;
+    const g = c.getContext('2d');
+    g.fillStyle = '#0a0d10'; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(src, pad, pad + line);
+    g.font = `${Math.round(12 * k)}px "IBM Plex Mono", ui-monospace, monospace`;
+    g.textBaseline = 'middle';
+    g.fillStyle = '#c9d3da';
+    const status = document.querySelector('#display .status').textContent.replace(/\s+/g, ' ').trim();
+    g.fillText(`${app.project.title} · ${status}`, pad, pad + line / 2);
+    g.textAlign = 'right'; g.fillStyle = '#7f8c96';
+    g.fillText(new Date().toLocaleString(), c.width - pad, pad + line / 2);
+    g.textAlign = 'left';
+    let x = pad;
+    app.project.scope.channels.forEach((ch, i) => {
+      if (!ch.on || !ch.source) return;
+      const text = `${i + 1} ${ch.source}  ${num(ch.scale)} ${app.unitOf(ch.source)}/div`;
+      g.fillStyle = CHANNEL_COLORS[i];
+      g.fillText(text, x, c.height - pad - line / 2);
+      x += g.measureText(text).width + 22 * k;
+    });
+    return new Promise((resolve) => c.toBlob(resolve, 'image/png'));
+  }
+
+  // The menu: what there is to save, and how.
+  const pop = $('rc-pop');
+  function renderPop() {
+    const scr = screenTrace(), lr = rec.length > 1;
+    const key = (what, kind, text, title) => `<button class="rkey" role="menuitem" data-save="${what}:${kind}" title="${esc(title)}">${text}</button>`;
+    const keys = (what, png) => (!app.canDownload() ? key(what, 'copy', 'Copy CSV', 'CSV to the clipboard (files cannot be saved here)')
+      : key(what, 'csv', 'CSV', 't and every signal, units in the header: for spreadsheets') + key(what, 'json', 'JSON', 'the same as JSON: for scripts')
+        + (png ? key(what, 'png', 'PNG', 'a picture of the screen as it is') : '') + key(what, 'copy', 'Copy', 'CSV to the clipboard'));
+    const row = (label, note, body) => `<div class="rc-row"><span class="rc-what">${label}<span class="rc-note">${esc(note)}</span></span><span class="rc-keys">${body}</span></div>`;
+    pop.innerHTML = row('Screen', scr ? `${duration(span(scr.trace))} · ${Object.keys(scr.trace.signals).length} signals` : 'nothing yet', scr ? keys('screen', true) : '')
+      + (lr ? row('Live record', `${duration(rec.span())} · ${rec.names.length} signals`, keys('record', false)) : '');
+    pop.querySelectorAll('[data-save]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); const [what, kind] = b.dataset.save.split(':'); save(what, kind); }));
+  }
+  function closePop() { if (!pop.hidden) { pop.hidden = true; $('rc-save').setAttribute('aria-expanded', 'false'); } }
+  $('rc-save').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (pop.hidden) renderPop();
+    pop.hidden = !pop.hidden;
+    $('rc-save').setAttribute('aria-expanded', String(!pop.hidden));
+  });
+  document.addEventListener('click', closePop);
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) { closePop(); e.stopImmediatePropagation(); } }, true);
+
+  // ---- The record length, per viewer
+  const lenEl = $('rc-len');
+  lenEl.value = duration(seconds);
+  lenEl.addEventListener('focus', () => lenEl.select());
+  lenEl.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') lenEl.blur(); if (e.key === 'Escape') { lenEl.value = duration(seconds); lenEl.blur(); } });
+  lenEl.addEventListener('blur', () => {
+    const s = parseDuration(lenEl.value);
+    if (!(s >= 1 && s <= 24 * 3600)) { if (lenEl.value !== duration(seconds)) app.toast('A record length from 1 s to 24 h: 5 min, 30 s, 1 h.'); lenEl.value = duration(seconds); return; }
+    seconds = s;
+    rec.setLength(s);
+    lenEl.value = duration(s);
+    try { localStorage.setItem(RECORD_KEY, String(s)); } catch { /* storage unavailable */ }
+    const most = rec.longest();
+    if (most < s) app.toast(`At this rate the memory holds about ${duration(Math.floor(most))} of these signals; older samples go first.`);
+    renderRec();
+  });
+  function renderRec() {
+    const shown = !!findExternal(app.project.system.plant?.diagram) || rec.length > 0;
+    $('rc-rec').hidden = !shown;
+    if (!shown) return;
+    const st = $('rc-state'), most = rec.longest();
+    st.textContent = `${duration(rec.span())} /`;
+    st.title = rec.length > 1 ? `${duration(rec.span())} of live data kept, ${rec.names.length} signals; the last ${duration(seconds)} are kept${most < seconds ? ` (at this rate the memory holds ${duration(Math.floor(most))})` : ''}. Save ▾ › Live record.` : 'Nothing recorded yet: the record fills while a live plant runs';
+  }
+  setInterval(renderRec, 500);
+
+  // ---- References: saved traces, dashed, until cleared. Each is placed by
+  // refShift (core/trace.js); ◀ ▶ move them all by a screen width.
+  const refs = [];
+  function placeRefs() {
+    const [w0, w1] = windowOf(), W = Math.max(w1 - w0, 1e-9);
+    display.setRefs(refs.map((r) => {
+      const { min, max } = refSteps(r.t0, r.t1, w0, W);
+      r.step = Math.min(max, Math.max(min, r.step));
+      r.range = [min, max];
+      const shift = refShift(r.t0, r.t1, w0, W, r.step);
+      if (r.shift !== shift) { r.shift = shift; r.shown = { t: r.t.map((x) => x + shift), signals: r.signals }; }
+      r.part = [Math.max(r.t0, w0 - shift), Math.min(r.t1, w1 - shift)];
+      return r.shown;
+    }));
+    renderRefs();
+  }
+  const partText = (r) => (r.part[1] < r.part[0] ? 'nothing on the screen' : `${num(r.part[0], 5)}–${num(r.part[1], 5)} s of ${num(r.t0, 5)}–${num(r.t1, 5)} s`);
+  function renderRefs() {
+    const box = $('rc-refs');
+    box.hidden = !refs.length;
+    if (!refs.length) { box.innerHTML = ''; return; }
+    const lo = Math.max(...refs.map((r) => r.range[0])), hi = Math.min(...refs.map((r) => r.range[1]));
+    const stepping = refs.some((r) => r.range[0] < r.range[1]);
+    const at = refs[0].step;
+    box.innerHTML = `${stepping ? `<button class="rkey rc-step" id="rc-back" title="Show the screen width before" ${at <= lo ? 'disabled' : ''}>◀</button>` : ''}<button class="rkey rc-ref" id="rc-clear" title="References (dashed): ${esc(refs.map((r) => `${r.name}: ${partText(r)}`).join('; '))}. Click to clear them.">ref${refs.length > 1 ? ` ×${refs.length}` : ''} ✕</button>${stepping ? `<button class="rkey rc-step" id="rc-fwd" title="Show the next screen width" ${at >= hi ? 'disabled' : ''}>▶</button>` : ''}`;
+    $('rc-clear').addEventListener('click', () => { refs.length = 0; display.setRefs([]); renderRefs(); app.toast('References cleared'); });
+    const step = (d) => { for (const r of refs) r.step += d; placeRefs(); app.toast(`Reference: ${partText(refs[0])}`); };
+    $('rc-back')?.addEventListener('click', () => step(-1));
+    $('rc-fwd')?.addEventListener('click', () => step(1));
+  }
+  function addReference(text, name) {
+    const tr = parseTrace(text);
+    if (tr.t.length < 1) throw new Error('no samples');
+    const r = { name, ...tr, t0: tr.t[0], t1: tr.t[tr.t.length - 1], step: 0, shift: null };
+    refs.push(r);
+    placeRefs();
+    const all = Object.keys(tr.signals), shown = all.filter((nm) => app.project.scope.channels.some((c) => c.on && c.source === nm));
+    const where = r.part[1] < r.part[0] ? '' : `, ${partText(r)}${r.range[0] < r.range[1] ? ' (◀ ▶ move through it)' : ''}`;
+    app.toast(shown.length ? `Reference “${name}”: ${listed(shown)} dashed on the scope${where}${shown.length < all.length ? `; ${listed(all.filter((x) => !shown.includes(x)))} not on a channel` : ''}`
+      : `Reference “${name}” holds ${listed(all)}; none of them is on a channel.`);
+    return all;
+  }
+  $('rc-open').addEventListener('click', () => $('rc-file').click());
+  $('rc-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try { addReference(await f.text(), f.name.replace(/\.(csv|json)$/i, '')); } catch (err) { app.toast(`Could not read ${f.name}: ${err.message}`); }
+  });
+
+  renderRec();
+  return {
+    live,
+    // ui/live.js says when the screen shows a live sweep, and its offset.
+    bindLive(fn) { liveInfo = fn; },
+    // After every change of the project: references follow the window.
+    changed() { if (refs.length) placeRefs(); renderRec(); },
+    // For agents (window.loopTuner.record): the same as the keys.
+    api: {
+      screen: (format = 'csv') => { const x = screenTrace(); return x ? (format === 'json' ? traceToJsonParts : traceToCsvParts)(x.trace, { title: app.project.title, source: x.source }).join('') : ''; },
+      live: (format = 'csv') => { const x = recordTrace(); return x ? (format === 'json' ? traceToJsonParts : traceToCsvParts)(x.trace, { title: app.project.title, source: x.source }).join('') : ''; },
+      reference: (text, name = 'reference') => addReference(text, name),
+      clearReferences: () => { refs.length = 0; display.setRefs([]); renderRefs(); },
+      state: () => ({ recorded: rec.span(), seconds, signals: [...rec.names], references: refs.map((r) => ({ name: r.name, shown: r.part })) }),
+    },
+  };
+}
+
+return { createRecord };
+})();
+// ---- ui/live.js
+__mods['ui/live.js'] = (() => {
+// Live (HIL) mode, a second row of Run Control: a system with an External
+// plant block runs against a plant outside the page (hil_plant.py, or
+// hardware behind the same protocol). The loop (core/live.js) runs in a Web
+// Worker made from this page's own script, so drawing never delays an answer;
+// where workers are blocked it runs here.
+//
+// The scope's Run and Stop go through the plant (the person, 2026-10-24): Run
+// starts a fresh run (the plant's clock and the controllers from 0), Stop
+// stops it (safe inputs), Single runs one screen and stops. E-STOP and Reset
+// are their own keys. Live samples sweep the screen like a simulated run and
+// go to the live record (ui/record.js). See design/output/hil.md.
+
+const { HIL_URL, externalParams, sameDescription, samePorts, findExternal } = __mods['core/hil.js'];
+const { createLiveLoop } = __mods['core/live.js'];
+const { normalizeDiagram, parseEnd } = __mods['core/diagram.js'];
+const { sweepStart } = __mods['core/trace.js'];
+const { fitChannel } = __mods['core/project.js'];
+const MAX_SWEEP = 200000;
+// The plant script's text, put into the bundle by build.mjs.
+const PLANT_PY = typeof __HIL_PLANT_PY === 'string' ? __HIL_PLANT_PY : '';
+const RUN_PY = 'uv run hil_plant.py';
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ms = (v) => (Number.isFinite(v) ? `${v < 10 ? v.toFixed(2) : v.toFixed(1)} ms` : '–');
+
+function createLive(app, display, controlsRoot, record) {
   const framed = window.self !== window.top;
 
-  // ---- Controls. Live is a second row of Run Control, with the same keys,
-  // shown only for a system with an External plant; Record ends the column.
+  // ---- Controls: the same keys as Run Control, then two lines that keep
+  // their height: where the plant is and the state, or what the link does.
   const liveEl = document.createElement('div');
   liveEl.className = 'lv';
   liveEl.setAttribute('aria-label', 'Live: the external plant');
   liveEl.innerHTML = `
     <div class="row">
-      <button class="key" id="lv-connect" title="Connect to the external plant and run the loop against it">Connect</button>
+      <button class="key" id="lv-connect" title="Connect to the external plant; Run and Stop then start and stop it">Connect</button>
       <button class="key estop" id="lv-estop" title="Emergency stop: the plant applies its safe inputs until Reset">E-STOP</button>
-      <button class="key" id="lv-reset" title="Clear the E-stop and start again, the controllers afresh">Reset</button>
+      <button class="key" id="lv-reset" title="Clear the E-stop and go on, the controllers afresh">Reset</button>
     </div>
     <div class="lv-line" id="lv-where"><input class="lv-url" id="lv-url" spellcheck="false" aria-label="Where the plant listens" title="Where the plant listens: click to type (kept in the External plant block)"><button class="lv-link" id="lv-script" title="The external plant of HIL: external motor, a Python script for your computer">plant script…</button></div>
     <div class="lv-stats" id="lv-stats" aria-live="polite"></div>`;
-  // Record sits under the screen, beside the channel badges, like a scope's
-  // save keys: what it saves is what the screen shows, and more.
-  const recEl = document.createElement('div');
-  recEl.className = 'recbar';
-  recEl.setAttribute('aria-label', 'Record');
-  recEl.innerHTML = `
-    <span class="rc-label" title="Record: the last … of every signal, live or simulated, is kept to be saved">Rec</span>
-    <span class="rc-state" id="rc-state"></span><input class="rc-len" id="rc-len" spellcheck="false" aria-label="Record length" title="Record length: 5 min, 30 s, 1 h">
-    ${framed ? '<button class="rkey" id="rc-copy" title="Copy the record as CSV (downloads are blocked here)">Copy CSV</button>'
-      : `<span class="rc-menu"><button class="rkey" id="rc-save" aria-haspopup="true" aria-expanded="false" title="Save the record">Save ▾</button><span class="rc-pop" id="rc-pop" hidden>
-        <button class="rkey" id="rc-csv" title="t and every signal, units in the header: for spreadsheets">CSV file</button><button class="rkey" id="rc-json" title="The same as JSON: for scripts">JSON file</button><button class="rkey" id="rc-copy" title="CSV to the clipboard">Copy CSV</button></span></span>`}
-    <button class="rkey" id="rc-open" title="Open a saved trace (CSV or JSON): it is drawn dashed on the channels with the same names">Open…</button>
-    <span class="rc-refs" id="rc-refs" hidden></span>
-    <input type="file" id="rc-file" accept=".csv,.json,text/csv,application/json" hidden>`;
   controlsRoot.querySelector('.group').append(liveEl);
-  document.getElementById('display').append(recEl);
   const $ = (id) => document.getElementById(id);
 
   // ---- The External plant block, at any depth.
   const rootDiagram = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
-  function findExternal(d = rootDiagram()) {
-    if (!d) return null;
-    for (const b of d.blocks) {
-      if (b.type === 'external') return { block: b, level: d };
-      if (b.type === 'subsystem') { const hit = findExternal(b.diagram); if (hit) return hit; }
-    }
-    return null;
-  }
+  const external = () => findExternal(rootDiagram());
   // Edits it as one undo step, through the Plant tab's path.
   function editExternal(fn) {
     const next = structuredClone(rootDiagram());
@@ -8387,6 +9633,15 @@ function createLive(app, display, controlsRoot) {
     fn(hit.block, hit.level);
     try { app.setPlant(normalizeDiagram(next)); return true; } catch (err) { app.toast(err.message); return false; }
   }
+  // Gives the block the plant's ports; wires to ports that are gone go.
+  function takePorts(dsc) {
+    return editExternal((b, lv) => {
+      b.params = externalParams(dsc, b.params.url);
+      const nIn = b.params.inputs.length, nOut = b.params.outputs.length;
+      lv.wires = lv.wires.filter((w) => { const f = parseEnd(w.from), t = parseEnd(w.to); return !(t.id === b.id && t.port >= nIn) && !(f.id === b.id && f.port >= nOut); });
+    });
+  }
+  const portText = (dsc) => `in ${dsc.inputs.map((p) => p.name).join(', ')}; out ${dsc.outputs.map((p) => p.name).join(', ')}`;
 
   // ---- The loop: in a worker made from this page's own script (its core
   // modules), or on the page when workers are blocked (a strict host).
@@ -8430,7 +9685,8 @@ function createLive(app, display, controlsRoot) {
   function receive(m) {
     if (m.type === 'state') onState(m.state, m.detail);
     else if (m.type === 'described') onDescribed(m.desc);
-    else if (m.type === 'estop') { estop = { by: m.by, reason: m.reason }; app.toast(`E-STOP${m.by === 'plant' ? ' from the plant' : ''}: ${m.reason}. Reset starts again.`); render(); }
+    else if (m.type === 'estop') { estop = { by: m.by, reason: m.reason }; app.toast(`E-STOP${m.by === 'plant' ? ' from the plant' : ''}: ${m.reason}. Reset goes on.`); render(); }
+    else if (m.type === 'run') onRun();
     else if (m.type === 'samples') onSamples(m);
     else if (m.type === 'stats') { link = m.link; plantStatus = m.plant; renderStats(); }
     else if (m.type === 'programmed') {
@@ -8443,28 +9699,25 @@ function createLive(app, display, controlsRoot) {
   function onState(s, d) {
     const was = state;
     state = s; detail = d;
-    if (s === 'connecting') { estop = null; desc = null; link = null; plantStatus = null; sweep = null; lastT = null; recSource = ''; programKey = ''; }
+    if (s === 'connecting') { estop = null; desc = null; link = null; plantStatus = null; programKey = ''; }
     if (s === 'running') { estop = null; attach(); }
-    if (s === 'closed' && was !== 'closed') app.toast(was === 'connecting' ? `Could not connect: ${d}` : `Disconnected: ${d}`);
+    if (s === 'closed' && was !== 'closed') {
+      app.toast(was === 'connecting' ? `Could not connect: ${d}` : `Disconnected: ${d}`);
+      // The screen holds the last sweeps; Run goes back to the simulation.
+      if (feeding && display.mode !== 'stop') app.setMode('stop');
+    }
     render();
   }
 
   // The plant says what it is: the block takes its ports (if they differ),
-  // the loop gets the diagram, and it starts, unless an E-stop is latched.
+  // the loop gets the diagram, and the plant starts if the scope runs.
   function onDescribed(dsc) {
     desc = dsc;
-    const hit = findExternal();
-    if (hit && !sameDescription(hit.block.params, desc)) {
-      editExternal((b, lv) => {
-        b.params = externalParams(desc, b.params.url);
-        const nIn = b.params.inputs.length, nOut = b.params.outputs.length;
-        lv.wires = lv.wires.filter((w) => { const f = parseEnd(w.from), t = parseEnd(w.to); return !(t.id === b.id && t.port >= nIn) && !(f.id === b.id && f.port >= nOut); });
-      });
-      app.toast(`The External plant block took the plant's ports: in ${desc.inputs.map((p) => p.name).join(', ')}; out ${desc.outputs.map((p) => p.name).join(', ')}. Ctrl+Z goes back.`);
-    }
+    const hit = external();
+    if (hit && !sameDescription(hit.block.params, desc) && takePorts(desc)) app.toast(`The External plant block took the plant's ports: ${portText(desc)}. Ctrl+Z goes back.`);
     sendProgram();  // (the edit above may have sent it already)
-    if (desc.estop) render();
-    else host.post({ type: 'start' });
+    if (!desc.estop && display.mode !== 'stop') host.post({ type: 'start' });
+    render();
   }
 
   function sendProgram() {
@@ -8475,39 +9728,38 @@ function createLive(app, display, controlsRoot) {
     host.post({ type: 'program', diagram: structuredClone(d), signals: structuredClone(app.project.system.signals) });
   }
 
-  async function connect() {
-    const hit = findExternal();
+  async function connect(url) {
+    const hit = external();
     if (!hit) { app.toast('This system has no External plant block: add one from the Live group in the Plant tab, or load “HIL: external motor”.'); return; }
     if (!window.WebSocket) { app.toast('This browser has no WebSocket.'); return; }
+    if (url && url !== hit.block.params.url && !editExternal((b) => { b.params.url = url; })) return;
     state = 'connecting'; render();
     host ??= await openHost();
-    host.post({ type: 'connect', url: hit.block.params.url });
+    host.post({ type: 'connect', url: external().block.params.url });
   }
 
   // ---- The screen while live: sweeps of the scope's window, each one run.
-  let names = [], sweep = null, done = null, lastT = null, feeding = false;
+  let names = [], sweep = null, done = null, earlier = null, lastT = null, feeding = false;
   const empty = { t: new Float64Array(0), signals: {} };
   function windowOf() {
     const tb = app.project.scope.timebase;
     const w0 = Math.max(0, tb.position);
-    return [w0, tb.position + 10 * tb.scale];
+    return [w0, Math.max(tb.position + 10 * tb.scale - w0, 1e-6)];
   }
   const view = (s) => ({ t: s.t.subarray(0, s.n), signals: Object.fromEntries(names.map((nm, j) => [nm, s.cols[j].subarray(0, s.n)])) });
-  // A sweep starts at a multiple of the screen's width in plant time, so
-  // sweeps line up with an input whose period fits the screen, as the
-  // simulated runs do (they start at t = 0).
-  function newSweep(t) {
-    const [w0, w1] = windowOf();
-    const W = Math.max(w1 - w0, 1e-6), rate = desc?.rate_hz ?? 100;
+  // A sweep covers one screen width of plant time from sweepStart, drawn at
+  // w0 + (t − start): at position w0 the first sweep shows plant time
+  // w0 … w0 + W, as a simulated run does (core/trace.js).
+  function newSweep(t, w0, W) {
+    const rate = desc?.rate_hz ?? 100;
     const every = Math.max(1, Math.ceil((W * rate) / MAX_SWEEP));
     const cap = Math.ceil((W * rate) / every) + 2;
     if (sweep?.n) done = view(sweep);
-    const start = W * Math.floor(t / W + 1e-9);
-    sweep = { w0, W, key: `${w0}:${W}`, start, every, k: 0, n: 0, cap, t: new Float64Array(cap), cols: names.map(() => new Float64Array(cap)) };
+    sweep = { w0, W, start: sweepStart(t, w0, W), every, k: 0, n: 0, cap, t: new Float64Array(cap), cols: names.map(() => new Float64Array(cap)) };
   }
   function addSample(t, vals) {
-    const [w0, w1] = windowOf();
-    if (!sweep || sweep.key !== `${w0}:${Math.max(w1 - w0, 1e-6)}` || t < sweep.start || t - sweep.start >= sweep.W) newSweep(t);
+    const [w0, W] = windowOf();
+    if (!sweep || sweep.w0 !== w0 || sweep.W !== W || t < sweep.start - 1e-9 || t - sweep.start >= W - 1e-9) newSweep(t, w0, W);
     lastT = t;
     const s = sweep;
     if (s.k++ % s.every || s.n >= s.cap) return;
@@ -8515,11 +9767,19 @@ function createLive(app, display, controlsRoot) {
     for (let j = 0; j < names.length; j++) s.cols[j][s.n] = vals[j];
     s.n++;
   }
+  // A new run: the plant's clock restarts. The sweep under way becomes an
+  // earlier run (faded), so a change can be compared run against run.
+  function onRun() {
+    if (sweep?.n) earlier = view(sweep);
+    sweep = null; done = null; lastT = null;
+    record.live.run();
+    attach();
+  }
   // What the display draws each frame.
   function poll() {
-    const out = { data: sweep ? view(sweep) : empty, scan: sweep && lastT !== null ? sweep.w0 + (lastT - sweep.start) : windowOf()[0], done };
+    const out = { data: sweep ? view(sweep) : empty, scan: sweep && lastT !== null ? sweep.w0 + (lastT - sweep.start) : windowOf()[0], done, past: earlier };
     if (done && fitPending !== null) { const d = done, was = fitPending; fitPending = null; setTimeout(() => fitTo(d, was)); }
-    done = null;
+    done = null; earlier = null;
     return out;
   }
   // The channels were scaled offline, where the External plant reads 0: the
@@ -8537,118 +9797,21 @@ function createLive(app, display, controlsRoot) {
     fitPending = JSON.stringify(app.project.scope.channels);
     display.clearRuns();
     display.setFeed(poll);
-    if (display.mode === 'stop') app.toggleRun();
   }
   function detach() {
     if (!feeding) return;
     feeding = false;
+    sweep = null; done = null; earlier = null; lastT = null;
     display.setFeed(null);
     display.clearRuns();
   }
+  record.bindLive(() => (feeding && sweep ? { offset: sweep.start - sweep.w0 } : null));
 
   function onSamples(m) {
     if (m.names.join('\n') !== names.join('\n')) { names = m.names; sweep = null; }
-    for (let i = 0; i < m.t.length; i++) {
-      addSample(m.t[i], m.values[i]);
-      recordLive(m.t[i], m.values[i]);
-    }
+    for (let i = 0; i < m.t.length; i++) addSample(m.t[i], m.values[i]);
+    record.live.samples(m.names, m.t, m.values);
   }
-
-  // ---- Record: the scope's deep memory, live or simulated.
-  let seconds = 300;
-  try { seconds = Number(localStorage.getItem(RECORD_KEY)) || 300; } catch { /* storage unavailable */ }
-  const rec = createRecorder(seconds);
-  let recSource = '', simT = 0;
-  const unitsOf = (list) => Object.fromEntries(list.map((nm) => [nm, app.unitOf(nm)]));
-  function recordLive(t, vals) {
-    const rate = desc?.rate_hz ?? 100;
-    if (recSource !== 'live' || !rec.fits(names, rate)) { rec.reset(names, unitsOf(names), rate); recSource = 'live'; }
-    rec.push(t, vals);
-  }
-  // A simulated sweep the display finished: its window [w0, w1) follows the
-  // one before, so the record's time runs on.
-  function recordSweep(d, w0, w1) {
-    if (feeding || !(d?.t?.length > 1)) return;
-    const nms = Object.keys(d.signals), rate = 1 / (d.t[1] - d.t[0]);
-    if (recSource !== 'simulation' || !rec.fits(nms, rate)) { rec.reset(nms, unitsOf(nms), rate); recSource = 'simulation'; simT = 0; }
-    const cols = nms.map((nm) => d.signals[nm]), vals = new Array(nms.length);
-    for (let i = 0; i < d.t.length; i++) {
-      if (d.t[i] < w0 - 1e-9 || d.t[i] >= w1 - 1e-9) continue;
-      for (let j = 0; j < cols.length; j++) vals[j] = cols[j][i];
-      rec.push(simT + d.t[i] - w0, vals);
-    }
-    simT += w1 - w0;
-  }
-  // The record, or the screen if nothing is recorded yet.
-  function traceNow() {
-    if (rec.length > 1) return { trace: rec.snapshot(), source: recSource === 'live' ? `live: ${desc?.name ?? 'external plant'}` : 'simulation' };
-    const d = display.data;
-    if (!(d?.t?.length > 1)) return null;
-    const nms = Object.keys(d.signals);
-    return { trace: { t: d.t, signals: d.signals, units: unitsOf(nms) }, source: 'the screen' };
-  }
-  const stem = () => `${app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'trace'}-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}`;
-  function save(kind) {
-    const x = traceNow();
-    if (!x) { app.toast('Nothing recorded yet: let the scope run a sweep, or connect Live.'); return; }
-    const meta = { title: app.project.title, source: x.source };
-    const n = x.trace.t.length;
-    if (kind === 'copy') { app.copy(traceToCsv(x.trace, meta), `The record (${n} samples, CSV)`); return; }
-    if (kind === 'json') app.download(`${stem()}.json`, traceToJson(x.trace, meta), 'application/json');
-    else app.download(`${stem()}.csv`, traceToCsv(x.trace, meta), 'text/csv');
-    app.toast(`Saved ${duration(x.trace.t[n - 1] - x.trace.t[0])} of ${Object.keys(x.trace.signals).join(', ')} (${x.source})`);
-  }
-
-  // References: saved traces shown dashed on the channels with their names.
-  const refs = [];
-  function renderRefs() {
-    const box = $('rc-refs');
-    box.hidden = !refs.length;
-    box.innerHTML = refs.length ? `<button class="rkey rc-ref" id="rc-clear" title="References (dashed): ${esc(refs.map((r) => r.name).join(', '))}. Click to clear them.">ref${refs.length > 1 ? ` ×${refs.length}` : ''} ✕</button>` : '';
-    $('rc-clear')?.addEventListener('click', () => { refs.length = 0; display.setRefs(refs); renderRefs(); app.toast('References cleared'); });
-  }
-  $('rc-open').addEventListener('click', () => $('rc-file').click());
-  $('rc-file').addEventListener('change', async (e) => {
-    const f = e.target.files[0];
-    e.target.value = '';
-    if (!f) return;
-    try {
-      const tr = parseTrace(await f.text());
-      const name = f.name.replace(/\.(csv|json)$/i, '');
-      refs.push({ name, ...tr });
-      display.setRefs(refs);
-      renderRefs();
-      const all = Object.keys(tr.signals), shown = all.filter((nm) => app.project.scope.channels.some((c) => c.on && c.source === nm));
-      app.toast(shown.length ? `Reference “${name}”: ${shown.join(', ')} dashed on the scope${shown.length < all.length ? `; ${all.filter((x) => !shown.includes(x)).join(', ')} not on a channel` : ''}` : `Reference “${name}” holds ${all.join(', ')}; none of them is on a channel.`);
-    } catch (err) { app.toast(`Could not read ${f.name}: ${err.message}`); }
-  });
-  const pop = $('rc-pop');
-  const closePop = () => { if (pop && !pop.hidden) { pop.hidden = true; $('rc-save').setAttribute('aria-expanded', 'false'); } };
-  $('rc-save')?.addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('rc-save').setAttribute('aria-expanded', String(!pop.hidden)); });
-  document.addEventListener('click', closePop);
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && pop && !pop.hidden) { closePop(); e.stopImmediatePropagation(); } }, true);
-  $('rc-csv')?.addEventListener('click', () => save('csv'));
-  $('rc-json')?.addEventListener('click', () => save('json'));
-  $('rc-copy')?.addEventListener('click', () => save('copy'));
-  const lenEl = $('rc-len');
-  lenEl.value = duration(seconds);
-  lenEl.addEventListener('focus', () => lenEl.select());
-  lenEl.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') lenEl.blur(); if (e.key === 'Escape') { lenEl.value = duration(seconds); lenEl.blur(); } });
-  lenEl.addEventListener('blur', () => {
-    const s = parseDuration(lenEl.value);
-    if (!(s >= 1 && s <= 4 * 3600)) { if (lenEl.value !== duration(seconds)) app.toast('A record length from 1 s to 4 h: 5 min, 30 s, 1 h.'); lenEl.value = duration(seconds); return; }
-    seconds = s;
-    rec.setLength(s);
-    lenEl.value = duration(s);
-    try { localStorage.setItem(RECORD_KEY, String(s)); } catch { /* storage unavailable */ }
-    renderRecord();
-  });
-  function renderRecord() {
-    const st = $('rc-state');
-    st.textContent = `${duration(rec.length > 1 ? rec.span() : 0)} /`;
-    st.title = rec.length > 1 ? `${duration(rec.span())} recorded, ${recSource === 'live' ? 'live' : 'simulated'}; the last ${duration(seconds)} are kept` : 'Nothing recorded yet: the record fills while the scope runs';
-  }
-  setInterval(renderRecord, 500);
 
   // ---- The plant script: download or copy, with how to run it.
   const dlg = document.createElement('div');
@@ -8656,7 +9819,7 @@ function createLive(app, display, controlsRoot) {
   dlg.hidden = true;
   dlg.innerHTML = `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="lv-dlg-title">
     <h2 id="lv-dlg-title">The external plant</h2>
-    <p><code>hil_plant.py</code> is a DC motor swinging an unbalanced arm, simulated in real time at 100 Hz on your computer: the plant of <b>HIL: external motor</b>. It listens on <code>${HIL_URL}</code>, sends its outputs every cycle and applies the inputs this page sends back. If it hears nothing for 10 cycles it stops the motor (E-stop) until you press Reset.</p>
+    <p><code>hil_plant.py</code> is a DC motor swinging an unbalanced arm, simulated in real time at 100 Hz on your computer: the plant of <b>HIL: external motor</b>. It listens on <code>${HIL_URL}</code>, sends its outputs every cycle and applies the inputs this page sends back. The scope's Run and Stop start and stop it. If it hears nothing for 10 cycles it stops the motor (E-stop) until you press Reset; pressing Enter in its window stops it too.</p>
     <pre>${RUN_PY}</pre>
     <p>uv installs what it needs (the websockets package) by itself. Without uv: <code>pip install websockets</code>, then <code>python3 hil_plant.py</code>. <code>--help</code> lists its options (port, rate, watchdog).</p>
     <p class="dim">${framed ? 'This viewer may not let the page connect to your computer or download files: copy the script here, and use Copy HTML to open Loop Tuner from a file in your browser.' : 'To put real hardware behind Loop Tuner, keep the script\'s server, cycle and watchdog and replace its Motor with your device.'}</p>
@@ -8674,78 +9837,104 @@ function createLive(app, display, controlsRoot) {
 
   // ---- Live controls
   const on = () => ['connecting', 'open', 'running'].includes(state);
+  const connected = () => ['open', 'running'].includes(state);
   $('lv-connect').addEventListener('click', () => { if (on()) host?.post({ type: 'disconnect' }); else connect(); });
-  $('lv-estop').addEventListener('click', () => { if (on()) host.post({ type: 'estop' }); });
-  $('lv-reset').addEventListener('click', () => { if (on()) host.post({ type: 'reset' }); });
+  $('lv-estop').addEventListener('click', () => { if (connected()) host.post({ type: 'estop' }); });
+  $('lv-reset').addEventListener('click', () => { if (connected()) host.post({ type: 'reset', start: display.mode !== 'stop' }); });
   const urlEl = $('lv-url');
-  urlEl.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') urlEl.blur(); if (e.key === 'Escape') { urlEl.value = findExternal()?.block.params.url ?? ''; urlEl.blur(); } });
+  urlEl.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') urlEl.blur(); if (e.key === 'Escape') { urlEl.value = external()?.block.params.url ?? ''; urlEl.blur(); } });
   urlEl.addEventListener('blur', () => {
-    const v = urlEl.value.trim(), hit = findExternal();
+    const v = urlEl.value.trim(), hit = external();
     if (hit && v !== hit.block.params.url && !editExternal((b) => { b.params.url = v; })) urlEl.value = hit.block.params.url;
   });
 
   function render() {
-    const hit = findExternal();
+    const hit = external();
     liveEl.hidden = !hit;
     if (!hit) return;
     const k = $('lv-connect');
     k.textContent = on() ? 'Disconnect' : 'Connect';
     k.className = `key ${state === 'running' ? 'lit-green' : on() ? 'lit-amber' : ''}`;
     $('lv-estop').className = `key estop ${estop ? 'lit-red' : ''}`;
-    $('lv-estop').disabled = !on();
-    $('lv-reset').disabled = !(estop && on());
+    $('lv-estop').disabled = !connected();
+    $('lv-reset').disabled = !(estop && connected());
     if (document.activeElement !== urlEl) urlEl.value = hit.block.params.url;
     urlEl.disabled = on();
     renderStats();
   }
-  // Under the keys: where the plant is and the state, or while running what
-  // the link does.
+  // Under the keys, always two lines: the address and the state; or an
+  // E-stop and its cause; or, while running, what the link does.
   function renderStats() {
     const el = $('lv-stats');
     const running = state === 'running' && link && !estop;
-    $('lv-where').hidden = running;
+    $('lv-where').hidden = running || !!estop;
     el.title = '';
-    if (estop) { el.innerHTML = `<span class="bad">E-STOP: ${esc(estop.reason)}</span><br>${estop.by === 'plant' ? 'the plant stopped it' : 'the page stopped it'}: safe inputs until ${on() ? 'Reset' : 'you Connect and Reset'}`; return; }
+    const lines = (...ls) => { el.innerHTML = ls.map((l) => `<div>${l}</div>`).join(''); };
+    if (estop) {
+      lines(`<span class="bad">E-STOP: ${esc(estop.reason)}</span>`, `${estop.by === 'plant' ? 'by the plant' : 'by this page'} · safe inputs until ${connected() ? 'Reset' : 'Connect, Reset'}`);
+      el.title = `E-STOP: ${estop.reason}`;
+      return;
+    }
     if (!running) {
-      el.textContent = { idle: 'not connected: run the plant script, then Connect', connecting: 'connecting…', open: 'connected, starting…', running: 'running', closed: `not connected${detail ? `: ${detail}` : ''}` }[state];
+      lines(esc({
+        idle: 'not connected: run the plant script, then Connect',
+        connecting: 'connecting…',
+        open: detail === 'stopped' ? 'stopped · Run starts it again' : 'connected · Run starts the plant',
+        running: 'running',
+        closed: `not connected${detail ? `: ${detail}` : ''}`,
+      }[state]));
+      el.title = detail;
       return;
     }
     const p = plantStatus;
-    el.innerHTML = `<span class="ok">●</span> ${link.rate.toFixed(1)} Hz · jitter ${ms(link.jitter)} · ${host.kind === 'worker' ? 'worker' : 'page'}<br>round trip ${ms(p?.rtt_ms?.mean)} · missed ${link.missed} · late ${p?.late ?? '–'}`;
+    lines(`<span class="ok">●</span> ${link.rate.toFixed(1)} Hz · jitter ${ms(link.jitter)} · ${host.kind === 'worker' ? 'worker' : 'page'}`, `round trip ${ms(p?.rtt_ms?.mean)} · missed ${link.missed} · late ${p?.late ?? '–'}`);
     el.title = `Page: arrivals deviate up to ${ms(link.jitter)} from the cycle; ${ms(link.compute)} per cycle (at most ${ms(link.computeMax)}) to answer.\n`
       + (p ? `Plant: ${p.rate_hz} Hz, cycle start late by ${ms(p.jitter_ms?.mean)} on average (at most ${ms(p.jitter_ms?.max)}); round trip ${ms(p.rtt_ms?.mean)} (at most ${ms(p.rtt_ms?.max)}); ${p.late} cycles without a new u, ${p.overruns} skipped, ${p.dropped} y dropped.` : '');
   }
 
   const api = {
     worker: true,  // false: run the loop on the page (to compare)
-    connect: () => connect(),
+    connect: (url) => connect(url),
     disconnect: () => host?.post({ type: 'disconnect' }),
-    estop: () => host?.post({ type: 'estop' }),
-    reset: () => host?.post({ type: 'reset' }),
-    state: () => ({ state, detail, estop, where: host?.kind ?? null, link, plant: plantStatus, t: lastT, recorded: rec.span(), refs: refs.map((r) => r.name), updates: { ...updates } }),
-    csv: () => { const x = traceNow(); return x ? traceToCsv(x.trace, { title: app.project.title, source: x.source }) : ''; },
+    estop: () => { if (connected()) host.post({ type: 'estop' }); },
+    reset: () => { if (connected()) host.post({ type: 'reset', start: display.mode !== 'stop' }); },
+    state: () => ({ state, detail, run: display.mode, estop, plant: desc ? { name: desc.name, rate_hz: desc.rate_hz, inputs: desc.inputs, outputs: desc.outputs } : null, where: host?.kind ?? null, link, status: plantStatus, t: lastT, updates: { ...updates } }),
   };
 
   return {
     api,
+    // The scope's Run, Stop or Single (app.setMode), and the end of a Single.
+    // Offline, Run leaves the last live sweeps for the simulation.
+    mode(m) {
+      if (!connected()) { if (m !== 'stop' && feeding && !on()) detach(); return; }
+      if (m === 'stop') { if (state === 'running') host.post({ type: 'stop' }); return; }
+      if (estop) { app.toast('E-STOP is latched: Reset goes on.'); return; }
+      if (m === 'single' || state !== 'running') host.post({ type: 'start' });  // a fresh run from t = 0
+    },
     // After every change of the project: the panel follows, a running loop
     // gets the new diagram (it takes parameters at the next cycle), and a
-    // system without an External plant leaves Live.
+    // system without an External plant leaves Live. While connected the block
+    // keeps the plant's ports, which the values follow by position.
     changed() {
       render();
-      const hit = findExternal();
+      const hit = external();
       if (!hit && feeding) detach();
       if (!host || !on()) return;
       if (!hit) { app.toast('This system has no External plant block: Live disconnected.'); host.post({ type: 'disconnect' }); return; }
-      if (desc) sendProgram();
+      if (!desc) return;
+      if (!samePorts(hit.block.params, desc)) {
+        if (takePorts(desc)) app.toast(`While connected, the External plant block keeps the plant's ports (${portText(desc)}); Disconnect to change them.`);
+        return;
+      }
+      sendProgram();
     },
-    sweep: recordSweep,
     // The live sweep on the screen (for views and Auto Scale), or null.
     data: () => (feeding && sweep ? view(sweep) : null),
     tag() {
-      if (!findExternal()) return null;
+      if (!external()) return null;
       if (estop) return { cls: 'st-estop', text: 'E-STOP', note: estop.reason };
       if (state === 'running') return { cls: 'st-live', text: 'Live', note: `plant t ${lastT === null ? '–' : lastT.toFixed(2)} s` };
+      if (state === 'open') return { cls: 'st-wait', text: 'Connected', note: 'Run starts the plant' };
       if (on()) return { cls: 'st-wait', text: 'Connecting' };
       return { cls: 'st-offline', text: 'Offline', note: feeding ? 'the last live sweeps · Connect to go on' : 'external plant not connected: it reads 0 · Connect' };
     },
@@ -8763,7 +9952,9 @@ __mods['ui/app.js'] = (() => {
 const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } = __mods['core/project.js'];
 const { diagramNames } = __mods['core/diagram.js'];
 const { createPlantEditor } = __mods['ui/plant.js'];
+const { isDelta } = __mods['ui/xyview.js'];
 const { createControllerTab } = __mods['ui/controller.js'];
+const { createAnalysisTab } = __mods['ui/analysis.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { DEFAULT_PROJECT } = __mods['core/examples.js'];
 const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = __mods['core/systems.js'];
@@ -8772,13 +9963,14 @@ const { createControls } = __mods['ui/controls.js'];
 const { createGenerator } = __mods['ui/generator.js'];
 const { createSplitters } = __mods['ui/layout.js'];
 const { createLive } = __mods['ui/live.js'];
+const { createRecord } = __mods['ui/record.js'];
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
   { key: 'input', label: 'Input' },
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
   { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
-  { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
+  { key: 'analysis', label: 'Analysis' },
 ];
 
 function startApp() {
@@ -8996,18 +10188,23 @@ function startApp() {
     display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase(), signal: app.signal });
   }
 
-  // Run control
-  app.toggleRun = () => { display.setMode(display.mode === 'stop' ? 'run' : 'stop'); controls.render(display.mode); };
-  app.single = () => { display.setMode('single'); controls.render(display.mode); };
+  // Run control. In Live mode Run and Stop go through the plant (ui/live.js).
+  app.setMode = (m) => { display.setMode(m); controls.render(display.mode); live?.mode(m); };
+  app.toggleRun = () => app.setMode(display.mode === 'stop' ? 'run' : 'stop');
+  app.single = () => app.setMode('single');
   // Auto Scale: one period of the input across the screen, then every
   // channel with a signal fitted to about six divisions.
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
-    const data = live?.data() ?? acquire();
-    for (const ch of app.project.scope.channels) {
-      const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
+    const data = live?.data() ?? acquire();  // live: the sweep on the screen
+    const sc = app.project.scope, x = data.signals[sc.channels[0].source];
+    sc.channels.forEach((ch, i) => {
+      let v = data.signals[ch.source];
+      // XY with Δ: the channels draw channel 1 minus themselves; fit that.
+      if (v && x && sc.view?.mode === 'xy' && isDelta(sc, i, app.unitOf)) v = v.map((y, j) => x[j] - y);
+      const fit = v && fitChannel(v);
       if (fit) Object.assign(ch, fit);
-    }
+    });
   }
   app.autoScale = () => {
     app.beginEdit();
@@ -9018,24 +10215,29 @@ function startApp() {
   };
 
   // Rendering
-  let live = null;  // Live mode and Record (ui/live.js), made below
+  let live = null;  // Live mode (ui/live.js), made below
   const display = createDisplay($('display'), {
     onSelectChannel: (i) => app.selectChannel(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
-    onStopped: () => controls.render(display.mode),
+    onStopped: () => { controls.render(display.mode); live?.mode('stop'); },  // a Single ended
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
-    onSweep: (d, w0, w1) => live?.sweep(d, w0, w1),
     liveTag: () => live?.tag(),
   });
   const controls = createControls($('controls'), app);
-  live = createLive(app, display, $('controls'));
+  // Save and references under the screen (ui/record.js); Live in Run Control.
+  const record = createRecord(app, display);
+  live = createLive(app, display, $('controls'), record);
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
   const controllerTab = createControllerTab($('tab-controller'), app);
   // Opens the Controller tab on one Controller block (path of block ids).
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
+  // The Analysis tab; the scope's time (cursor, sweep or right edge) is its
+  // "Scope time" operating point.
+  const analysisTab = createAnalysisTab($('tab-analysis'), app);
+  app.scopeTime = () => display.time();
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -9046,6 +10248,8 @@ function startApp() {
     $('tab-plant').hidden = app.tab !== 'plant';
     $('tab-controller').hidden = app.tab !== 'controller';
     if (app.tab === 'controller') controllerTab.shown();
+    $('tab-analysis').hidden = app.tab !== 'analysis';
+    if (app.tab === 'analysis') analysisTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
@@ -9069,7 +10273,9 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    if (app.tab === 'analysis') analysisTab.render();
     live.changed();  // a running loop takes the edit at its next cycle
+    record.changed();  // references follow the window
     renderChrome();
     autosave();
   }
@@ -9115,20 +10321,39 @@ function startApp() {
     const json = exportJson().replace(/</g, '\\u003c');
     return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n<\/script>\n<script id="lt-script">${$('lt-script').textContent}<\/script>\n</body>\n</html>\n`;
   }
-  function download(name, text, type) {
+  // Saving a file. In a claude.ai page, through its downloads capability (the
+  // viewer confirms each save); in a plain browser, through a download link.
+  // Resolves true once the file is on its way. Framed without the capability,
+  // only the Copy buttons are offered.
+  let saver = null;
+  window.claude?.use?.('downloads').then((d) => {
+    saver = d;
+    if (d && framed) document.querySelectorAll('[data-standalone]').forEach((el) => { el.hidden = false; });
+  }).catch(() => {});
+  async function download(name, data, type) {
+    if (saver) {
+      try { await saver.save({ filename: name, data }); return true; } catch (err) {
+        if (err?.code !== 'declined') toast(`Could not save ${name}: ${err?.message ?? err?.code ?? err}`);
+        return false;
+      }
+    }
+    if (framed) { toast('Saving files is not available here; use Copy JSON or Copy HTML.'); return false; }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
     a.download = name;
     document.body.append(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    return true;
   }
+  app.download = download;
+  app.canDownload = () => !framed || !!saver;  // else Save offers Copy (ui/record.js)
   const stem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
-  Object.assign(app, { download, copy });  // for Record and the plant script (ui/live.js)
-  $('save').addEventListener('click', () => { download(`${stem()}.json`, exportJson(), 'application/json'); toast('Saved the project as JSON'); });
-  $('export').addEventListener('click', () => { download(`${stem()}.html`, exportHtml(), 'text/html'); toast('Exported a standalone page with this project inside'); });
+  app.copy = copy;  // for Save and the plant script (ui/record.js, ui/live.js)
+  $('save').addEventListener('click', async () => { if (await download(`${stem()}.json`, exportJson(), 'application/json')) toast('Saved the project as JSON'); });
+  $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
   $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
   $('open').addEventListener('click', () => $('file').click());
@@ -9194,7 +10419,7 @@ function startApp() {
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
     if (mod && e.key.toLowerCase() === 'y' && !inField) { e.preventDefault(); app.redo(); return; }
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed && !saver ? 'copy' : 'save').click(); return; }
     if (!inField && app.tab === 'plant' && $('help-dlg').hidden && plantEditor.handleKey(e)) { e.preventDefault(); return; }
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
@@ -9225,10 +10450,12 @@ function startApp() {
     addComponent: (c) => { app.addComponent(c); return structuredClone(refs()); },
     reference: () => { const { t, r } = referenceTrace(app.project); return { t: Array.from(t), r: Array.from(r) }; },
     autoScale: () => app.autoScale(),
-    run: () => { display.setMode('run'); controls.render('run'); },
-    stop: () => { display.setMode('stop'); controls.render('stop'); },
+    run: () => app.setMode('run'),
+    stop: () => app.setMode('stop'),
+    single: () => app.setMode('single'),
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
-    live: live.api,  // connect(), disconnect(), estop(), reset(), state(), csv(); design/output/hil.md
+    live: live.api,  // connect(url), disconnect(), estop(), reset(), state(): design/output/hil.md
+    record: record.api,  // screen(format), live(format), reference(text, name), clearReferences(), state()
   };
 
   // Boot: the embedded project, unless this browser has newer work on it.

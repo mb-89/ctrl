@@ -137,7 +137,8 @@ export function createLiveRunner(diagram, signals) {
 //        restarting the plant if it runs), stop, estop, reset { start },
 //        disconnect
 //   out: state { state, detail }, described { desc }, estop { by, reason },
-//        samples { names, t, values }, stats { link, plant }, error { message }
+//        run (a new run begins), samples { names, t, values },
+//        stats { link, plant }, error { message }
 // States: connecting, open (connected, the plant not running), running, closed.
 // The same object runs in a worker (liveWorker) or on the page.
 export function createLiveLoop(post, env = globalThis) {
@@ -227,6 +228,7 @@ export function createLiveLoop(post, env = globalThis) {
     if (!desc) throw new Error('not connected');
     if (running) { running = false; stopWatchdog(); flush(); await call('stop'); }
     makeRunner();
+    post({ type: 'run' });  // what follows is a new run: its time starts again
     // y may come before start's answer: they are answered and counted.
     stats = createLinkStats(desc.rate_hz);
     lastStats = now();
