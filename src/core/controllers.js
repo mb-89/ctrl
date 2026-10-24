@@ -141,9 +141,11 @@ function normalizeParam(spec, v, where) {
 
 // One variant: { name, type, params }. Unknown types and bad values fail with
 // the valid choices named.
-export function normalizeVariant(v, where = 'variant') {
-  const def = CONTROLLERS[v?.type];
-  if (!def) throw new Error(`${where}.type: one of ${CONTROLLER_TYPES.join(', ')}`);
+// lib: the library the variant comes from (CONTROLLERS, or OBSERVERS for an
+// Observer block); both share this format.
+export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
+  const def = lib[v?.type];
+  if (!def) throw new Error(`${where}.type: one of ${Object.keys(lib).join(', ')}`);
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
   if (params.umin > params.umax) [params.umin, params.umax] = [params.umax, params.umin];
@@ -152,8 +154,8 @@ export function normalizeVariant(v, where = 'variant') {
   return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
 }
 
-// The law of a Controller block's active variant.
-export function makeLaw(variant, Ts) {
-  return CONTROLLERS[variant.type].make(variant.params, Ts);
+// The law of a block's active variant.
+export function makeLaw(variant, Ts, lib = CONTROLLERS) {
+  return lib[variant.type].make(variant.params, Ts);
 }
 

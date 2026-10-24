@@ -4,7 +4,8 @@
 // faded on the display for comparison. The active variant's parameters are
 // edited here; the library adds new variants. See design/output/controller-proposal.md.
 
-import { CONTROLLERS, CONTROLLER_TYPES, normalizeVariant } from '../core/controllers.js';
+import { CONTROLLERS, normalizeVariant } from '../core/controllers.js';
+import { OBSERVERS } from '../core/observers.js';
 import { diagramBlockDef, normalizeDiagram, parseEnd, outputNames } from '../core/diagram.js';
 import { num, parseSI } from './units.js';
 
@@ -15,7 +16,11 @@ const ABOUT = {
   stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
+  kalman: 'Predicts the states with the model, then corrects with the measurements, weighing them by the noise you expect: a large R trusts the model, a large Q trusts the measurements. The gain is the steady-state Kalman gain.',
+  luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
+  difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
 };
+const LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
 
 export function createControllerTab(host, app) {
   let target = null;   // path of subsystem ids and the Controller block id
@@ -52,7 +57,7 @@ export function createControllerTab(host, app) {
     const out = [];
     const walk = (d, path, where) => {
       for (const b of d.blocks) {
-        if (b.type === 'controller') out.push({ path: [...path, b.id], block: b, where: [...where, b.name ?? b.id].join(' / ') });
+        if (b.type === 'controller' || b.type === 'observer') out.push({ path: [...path, b.id], block: b, where: [...where, b.name ?? b.id].join(' / ') });
         if (b.type === 'subsystem') walk(b.diagram, [...path, b.id], [...where, b.name ?? b.id]);
       }
     };
@@ -109,22 +114,26 @@ export function createControllerTab(host, app) {
     const b = c.block;
     $('#ct-blocks').innerHTML = all.length > 1 ? all.map((x) => `<button class="sigkey ${x === c ? 'on' : ''}" data-path="${esc(x.path.join('/'))}">${esc(x.where)}</button>`).join('') : `<div class="ctname">${esc(c.where)}</div>`;
     $('#ct-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
-    $('#ct-block').innerHTML = field('b:inputs', 'Inputs', b.params.inputs, 'r, then the measurements') + field('b:Ts', 'Sample time', num(b.params.Ts, 4), 'Ts, s; every variant runs at it');
+    const obs = b.type === 'observer', lib = LIBS[b.type];
+    $('#ct-block').innerHTML = field('b:inputs', 'Inputs', b.params.inputs, obs ? 'u, then the measurements' : 'r, then the measurements')
+      + (obs ? field('b:outputs', 'Estimates', b.params.outputs, 'states it puts out') : '')
+      + field('b:Ts', 'Sample time', num(b.params.Ts, 4), 'Ts, s; every variant runs at it');
     const names = inputNames(c);
     $('#ct-ports').innerHTML = `<b>In</b> ${names.map((n, k) => `<span class="ctport">${k + 1} ${esc(n)}</span>`).join(' ')}`;
 
     $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="srow vrow ${i === b.variant ? 'editing' : ''}" data-v="${i}" role="option" aria-selected="${i === b.variant}">
-        <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype">${esc(CONTROLLERS[v.type].label)}</span></li>`).join('');
+        <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype">${esc(lib[v.type].label)}</span></li>`).join('');
     $('#ct-del').disabled = b.variants.length < 2;
 
     const v = b.variants[b.variant];
-    const def = CONTROLLERS[v.type];
+    const def = lib[v.type];
     $('#ct-ptitle').textContent = `${v.name} · ${def.summary}`;
     $('#ct-params').innerHTML = def.params.length
-      ? def.params.map((p) => field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
+      ? def.params.map((p) => p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
       : '<p class="phelp">No parameters.</p>';
     $('#ct-about').textContent = ABOUT[v.type] ?? '';
-    $('#ct-lib').innerHTML = CONTROLLER_TYPES.map((t) => `<button class="ctlibitem" data-add="${t}" title="${esc(ABOUT[t] ?? '')}"><b>${esc(CONTROLLERS[t].label)}</b><span>${esc(CONTROLLERS[t].summary)}</span></button>`).join('');
+    // Planned trajectories are made offline, not added by hand.
+    $('#ct-lib').innerHTML = Object.keys(lib).filter((t) => t !== 'trajectory').map((t) => `<button class="ctlibitem" data-add="${t}" title="${esc(ABOUT[t] ?? '')}"><b>${esc(lib[t].label)}</b><span>${esc(lib[t].summary)}</span></button>`).join('');
     bind(c);
   }
 
@@ -191,6 +200,7 @@ export function createControllerTab(host, app) {
     });
     host.querySelectorAll('[data-add]').forEach((btn) => btn.addEventListener('click', () => edit((blk) => {
       const type = btn.dataset.add, prev = blk.variants[blk.variant].params;
+      if (blk.type === 'observer') { blk.variants.push(normalizeVariant({ type }, 'variant', OBSERVERS)); blk.variant = blk.variants.length - 1; return; }
       const v = normalizeVariant({ type });
       // A new variant drives the same actuator: it keeps the limits, and a
       // gain vector gets one entry per measurement.

@@ -16,6 +16,7 @@ import { tf2ss, rootBound } from './poly.js';
 import { gaussAt } from './signals.js';
 import { compileExpr } from './expr.js';
 import { normalizeVariant, makeLaw } from './controllers.js';
+import { OBSERVERS } from './observers.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -105,8 +106,18 @@ export const ELEMENTS = {
     params: [num('inputs', 'Inputs (r, y…)', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.01, { unit: 's', min: 1e-4 })],
     ports: (p) => [p.inputs, 1],
   },
+  // An observer: inputs u, y1, y2, …; outputs the estimated states, held
+  // between samples. Built like a controller, with variants from observers.js.
+  observer: {
+    label: 'Observer', group: 'Control', formula: 'x̂ = O(u, y)',
+    params: [num('inputs', 'Inputs (u, y…)', 2, { min: 2, int: true }), num('outputs', 'Estimates', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.001, { unit: 's', min: 1e-4 })],
+    ports: (p) => [p.inputs, p.outputs],
+    outputs: (p) => Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`),
+  },
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
+
+const VARIANT_LIBS = { controller: undefined, observer: OBSERVERS };
 
 const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
@@ -226,9 +237,10 @@ export function normalizeDiagram(d, path = 'plant') {
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
-    if (b.type === 'controller') {
-      const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: 'pid' }];
-      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`));
+    if (b.type === 'controller' || b.type === 'observer') {
+      const lib = VARIANT_LIBS[b.type];
+      const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
+      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib));
       out.variant = Math.min(Math.max(0, Math.round(Number(b.variant) || 0)), out.variants.length - 1);
     }
     return out;
@@ -351,10 +363,12 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       const def = diagramBlockDef(b.type);
       const [nIn, nOut] = blockPorts(b);
-      if (b.type === 'controller') {
-        const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: 'pid' });
-        const k = add({ kind: 'ctrl', name, ft: false, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts), next: 0, u: 0, x: new Float64Array(nIn) });
-        outs[b.id] = [k]; ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+      if (b.type === 'controller' || b.type === 'observer') {
+        const lib = VARIANT_LIBS[b.type];
+        const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
+        const k = add({ kind: 'ctrl', name, ft: false, observer: b.type === 'observer', inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts, lib), next: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
+        outs[b.id] = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j })) : [k];
+        ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
       if (def.ode) {
@@ -416,7 +430,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     if (nd.kind === 'ode') { nd.off = n; n += typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n; bound = Math.max(bound, nd.bound); }
   }
   const vals = new Float64Array(nodes.length);
-  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl');
+  // Sampled blocks; observers first, so a controller sampling at the same
+  // instant already sees the new estimate.
+  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl').sort((a, b) => b.observer - a.observer);
   const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
   let h = 0;
@@ -435,15 +451,14 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // sample is due reads its inputs and sets its held output; the outputs are
     // then evaluated again so what is recorded at t already sees it.
     sample(t, X, o, u) {
-      let due = false;
       for (const nd of ctrls) {
         if (t < nd.next - 1e-9) continue;
         for (let s = 0; s < nd.x.length; s++) nd.x[s] = inOf(nd, s);
-        nd.u = nd.law.step(nd.x);
+        const y = nd.law.step(nd.x);
+        if (nd.observer) nd.outv.set(y.subarray ? y.subarray(0, nd.outv.length) : y.slice(0, nd.outv.length)); else nd.u = y;
         while (nd.next <= t + 1e-9) nd.next += nd.Ts;
-        due = true;
+        self.eval(t, X, o, u, null);
       }
-      if (due) self.eval(t, X, o, u, null);
     },
     // Initial state: zero, except for physics blocks with initial conditions.
     init(X, o) { for (const nd of nodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
