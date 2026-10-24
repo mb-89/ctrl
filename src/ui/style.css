@@ -19,6 +19,9 @@
   --lcd-ink: #d5e3ea;
   --lcd-dim: #7f939d;
   --lcd-sel: #20323b;
+  /* Errors and warnings on an LCD readout (dark in both themes): the lit colours, dimmed. */
+  --lcd-err: #ff8f8f;
+  --lcd-warn: #d9bb72;
   --lit-green: #2fd36f;
   --lit-red: #ff4b4b;
   --lit-amber: #ffb21e;
@@ -406,9 +409,9 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .cbox .cspark { width: 180px; height: 28px; flex: none; align-self: center; }
 .cbox .cspark polyline { fill: none; stroke: var(--lcd-ink); stroke-width: 1.3; vector-effect: non-scaling-stroke; }
 .cbox .cspark line { stroke: var(--lcd-dim); stroke-width: 1; stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
-.cbox .cerr { color: #ff8f8f; }
+.cbox .cerr { color: var(--lcd-err); }
 .cbox .cmsg { color: var(--lcd-dim); }
-.cbox .cwarn { margin: 2px 0 0; padding-left: 14px; color: #d9bb72; }
+.cbox .cwarn { margin: 2px 0 0; padding-left: 14px; color: var(--lcd-warn); }
 .cbox .pbtns { margin: 4px 0 0; }
 .cbox .cprog { display: flex; flex-direction: column; gap: 3px; margin: 2px 0; }
 .cbox .cbar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06); overflow: hidden; }

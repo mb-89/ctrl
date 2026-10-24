@@ -47,9 +47,14 @@ export function createScene(host, app) {
     }
   }
 
-  function draw() {
+  // While the page makes a plan, at most 20 frames a second (app.frameMs).
+  let drawn = 0;
+  function draw(now = 0) {
     raf = 0;
     if (!view || host.hidden) return;
+    const every = app.frameMs?.() ?? 0;
+    if (every && now - drawn < every) { raf = requestAnimationFrame(draw); return; }
+    drawn = now;
     if (view.kind === 'svg') { try { drawSvg(); } catch { /* a bad selector draws nothing */ } raf = requestAnimationFrame(draw); return; }
     const [x0, y0, x1, y1] = view.view;
     const r = host.getBoundingClientRect();

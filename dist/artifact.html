@@ -22,6 +22,9 @@
   --lcd-ink: #d5e3ea;
   --lcd-dim: #7f939d;
   --lcd-sel: #20323b;
+  /* Errors and warnings on an LCD readout (dark in both themes): the lit colours, dimmed. */
+  --lcd-err: #ff8f8f;
+  --lcd-warn: #d9bb72;
   --lit-green: #2fd36f;
   --lit-red: #ff4b4b;
   --lit-amber: #ffb21e;
@@ -409,9 +412,9 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .cbox .cspark { width: 180px; height: 28px; flex: none; align-self: center; }
 .cbox .cspark polyline { fill: none; stroke: var(--lcd-ink); stroke-width: 1.3; vector-effect: non-scaling-stroke; }
 .cbox .cspark line { stroke: var(--lcd-dim); stroke-width: 1; stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
-.cbox .cerr { color: #ff8f8f; }
+.cbox .cerr { color: var(--lcd-err); }
 .cbox .cmsg { color: var(--lcd-dim); }
-.cbox .cwarn { margin: 2px 0 0; padding-left: 14px; color: #d9bb72; }
+.cbox .cwarn { margin: 2px 0 0; padding-left: 14px; color: var(--lcd-warn); }
 .cbox .pbtns { margin: 4px 0 0; }
 .cbox .cprog { display: flex; flex-direction: column; gap: 3px; margin: 2px 0; }
 .cbox .cbar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06); overflow: hidden; }
@@ -1370,6 +1373,88 @@ function ctrb(A, B) {
   return Bm.map((_, i) => blocks.flatMap((M) => M[i]));
 }
 
+// Row and column scales by powers of 2 (exact) so the largest entry of each
+// nonzero row and column of M lies in (1/2, 1]: a rank decided on the result
+// does not depend on the units of the rows and columns (a state in m beside
+// one in µm). Returns { M: diag(r)·M·diag(c), r, c }.
+function equilibrate(M) {
+  const m = M.length, n = m ? M[0].length : 0;
+  const S = M.map((row) => Array.from(row)), r = new Array(m).fill(1), c = new Array(n).fill(1);
+  const pow2 = (v) => 2 ** -Math.ceil(Math.log2(v));
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < m; i++) {
+      let a = 0;
+      for (let j = 0; j < n; j++) a = Math.max(a, Math.abs(S[i][j]));
+      if (!(a > 0 && Number.isFinite(a))) continue;
+      const f = pow2(a);
+      r[i] *= f;
+      for (let j = 0; j < n; j++) S[i][j] *= f;
+    }
+    for (let j = 0; j < n; j++) {
+      let a = 0;
+      for (let i = 0; i < m; i++) a = Math.max(a, Math.abs(S[i][j]));
+      if (!(a > 0 && Number.isFinite(a))) continue;
+      const f = pow2(a);
+      c[j] *= f;
+      for (let i = 0; i < m; i++) S[i][j] *= f;
+    }
+  }
+  return { M: S, r, c };
+}
+
+// An orthonormal basis of the Krylov space of v under M (v, M v, M² v, …),
+// by Arnoldi with the Gram–Schmidt step done twice. A new direction shorter
+// than tol·‖M‖ ends it.
+function krylov(M, v, tol) {
+  const n = M.length, Q = [];
+  const norm = (w) => Math.hypot(...w);
+  let size = 0;
+  for (const row of M) for (const x of row) size += x * x;
+  size = Math.sqrt(size);
+  const v0 = norm(v);
+  if (!(v0 > 0)) return Q;
+  Q.push(v.map((x) => x / v0));
+  while (Q.length < n) {
+    const q = Q.at(-1);
+    const w = M.map((row) => row.reduce((s, x, j) => s + x * q[j], 0));
+    for (let pass = 0; pass < 2; pass++) {
+      for (const b of Q) {
+        const s = b.reduce((t, x, i) => t + x * w[i], 0);
+        for (let i = 0; i < n; i++) w[i] -= s * b[i];
+      }
+    }
+    const h = norm(w);
+    if (!(h > tol * size)) break;
+    Q.push(w.map((x) => x / h));
+  }
+  return Q;
+}
+
+// A minimal realisation of the SISO model ẋ = A x + b u, y = c x: the part
+// of the state u reaches (controllable) that y sees (observable). A is
+// balanced first, then projected on orthonormal bases of the Krylov spaces
+// of b under A and of cᵀ under Aᵀ (Arnoldi); a direction weaker than
+// tol·‖A‖ counts as cut off (the default 1e-8 is above the error of slopes
+// taken by finite differences, so a pole and zero that cancel in the plant
+// cancel here). The transfer function c (sI − A)⁻¹ b is kept. b and c are
+// plain vectors. Returns { A, b, c } of order r ≤ n.
+function minreal(A, b, c, tol = 1e-8) {
+  const n = square(A, 'minreal');
+  if (!n) return { A: [], b: [], c: [] };
+  const a = A.map((row) => Array.from(row));
+  const d = balance(a);
+  const project = (M, v, w, Q) => ({
+    A: Q.map((p) => Q.map((q) => p.reduce((s, x, i) => s + x * M[i].reduce((t, y, j) => t + y * q[j], 0), 0))),
+    b: Q.map((p) => p.reduce((s, x, i) => s + x * v[i], 0)),
+    c: Q.map((q) => q.reduce((s, x, i) => s + x * w[i], 0)),
+  });
+  const ctl = project(a, b.map((v, i) => v / d[i]), c.map((v, i) => v * d[i]), krylov(a, b.map((v, i) => v / d[i]), tol));
+  const r = ctl.A.length;
+  if (!r) return ctl;
+  const At = ctl.A.map((_, i) => ctl.A.map((row) => row[i]));
+  return project(ctl.A, ctl.b, ctl.c, krylov(At, ctl.c, tol));
+}
+
 // Numerical rank: the number of diagonal entries of R above tol in a
 // Householder QR with column pivoting (each step takes the remaining column
 // of largest norm, so |R₁₁| ≥ |R₂₂| ≥ …). The default tol is
@@ -1404,7 +1489,7 @@ function rank(M, tol) {
   return diag.filter((x) => x > t).length;
 }
 
-return { zeros, eye, mul, add, scale, transpose, solve, inv, det, expm, c2d, eig, dare, dlqr, dlqe, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank };
+return { zeros, eye, mul, add, scale, transpose, solve, inv, det, expm, c2d, balance, eig, dare, dlqr, dlqe, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, equilibrate, minreal, rank };
 })();
 // ---- core/scale.js
 __mods['core/scale.js'] = (() => {
@@ -2219,10 +2304,11 @@ __mods['core/linearize.js'] = (() => {
 //   trim(model, targets)          an equilibrium where the measurements are at targets
 //   linearize(model, op)          → { A, B, C, D, states, outputs, op, delay, sensors, warnings }
 //   firstOrderFit(lin, k)         K, τ, θ of the path from u to measurement k
+//   refuseKinks(lin, what)        a design's refusal of a kink at its operating point
 //
 // Matrices are arrays of rows, as in linalg.js: A n×n, B n×1, C m×n, D m×1.
 
-const { solve, rank } = __mods['core/linalg.js'];
+const { solve, eig, minreal } = __mods['core/linalg.js'];
 // An error a design reports: a code, a sentence, and a hint. The status of a
 // failed design carries all three; nothing breaks (the law then puts out 0).
 class DesignError extends Error {
@@ -2311,6 +2397,16 @@ function operatingPoint(model, op, { umin = -Infinity, umax = Infinity } = {}) {
   return { kind: op.kind, op, x, u, y, drift, rest, label, warnings };
 }
 
+// A slope by finite differences from the values at v + h (p), v (c) and
+// v − h (q): central, unless one side is not finite or flat (it returns
+// exactly the value at v while the other side moves: a pump at zero flow,
+// a valve against its stop), then the other side alone.
+function slope(p, c, q, h) {
+  if (!Number.isFinite(q) || (q === c && p !== c)) return (p - c) / h;
+  if (!Number.isFinite(p) || (p === c && q !== c)) return (c - q) / h;
+  return (p - q) / (2 * h);
+}
+
 // The u that brings ẋ = f(x, u) closest to 0 at a fixed x (scalar
 // Gauss–Newton with halving steps), within [umin, umax].
 function restInput(model, x, umin, umax) {
@@ -2323,7 +2419,7 @@ function restInput(model, x, umin, umax) {
     model.f(x, u + h, fp); model.f(x, u - h, fm);
     cost(u);
     let gf = 0, gg = 0;
-    for (let i = 0; i < n; i++) { const g = (fp[i] - fm[i]) / (2 * h); gf += g * f0[i]; gg += g * g; }
+    for (let i = 0; i < n; i++) { const g = slope(fp[i], f0[i], fm[i], h); gf += g * f0[i]; gg += g * g; }
     if (!(gg > 0)) break;
     let du = -gf / gg, moved = false;
     for (let tries = 0; tries < 30; tries++, du /= 2) {
@@ -2338,11 +2434,17 @@ function restInput(model, x, umin, umax) {
 // An equilibrium f(x, u) = 0 with y_k(x, u) = targets[k] (null: free), over
 // the kept states and u. Damped Gauss–Newton with minimum-norm steps
 // Δ = −Jᵀ (J Jᵀ + λI)⁻¹ r, so coordinates the targets leave free (a cart's
-// position) stay where they start: at the start state x0, with the u that
-// comes closest to holding it. If the targets cannot be reached in one go
-// (a kink such as a pump that cannot run backwards), they are approached in
-// eight stages from where the start state is. Iteration caps only, no
-// randomness. Throws DesignError 'trim-failed' or 'u-limit'.
+// position) stay where they start. Each residual row is scaled by the size
+// of its Jacobian row, which leaves the minimum-norm step as it is but lets
+// a fast state's rate (10¹¹ per unit, a stiff filter) and a slow one's weigh
+// alike. Starts:
+//   1. from the targets: a measurement that reads one state alone (slope s)
+//      sets that state to its level, the rest stay at the start state, and
+//      u is the input that holds that (an empty tank trims at 0.1 m at once);
+//   2. from the start state x0, with the u that comes closest to holding it;
+//   3. from there in eight stages towards the levels (a kink such as a pump
+//      that cannot run backwards).
+// Iteration caps only, no randomness. Throws DesignError 'trim-failed' or 'u-limit'.
 function trim(model, targets, { umin = -Infinity, umax = Infinity } = {}) {
   const { n, m } = model, N = n + 1, uName = model.input?.label ?? 'u';
   const tg = Array.isArray(targets) ? targets : [targets];
@@ -2358,55 +2460,91 @@ function trim(model, targets, { umin = -Infinity, umax = Infinity } = {}) {
     model.y(x, u, y);
     for (let i = 0; i < n; i++) r[i] = f[i];
     for (let j = 0; j < free.length; j++) r[n + j] = y[free[j]] - goal[j];
-    return sumSq(r);
   };
   const zt = new Float64Array(N), r = new Float64Array(P), rt = new Float64Array(P), rp = new Float64Array(P), rm = new Float64Array(P);
-  const J = Array.from({ length: P }, () => new Array(N).fill(0));
-  // Gauss–Newton from z towards goal; returns the largest residual left.
+  const J = Array.from({ length: P }, () => new Array(N).fill(0)), rs = new Float64Array(P), tol = new Float64Array(P);
+  const scaledCost = (v) => { let s = 0; for (let i = 0; i < P; i++) s += (rs[i] * v[i]) ** 2; return s; };
+  // How far each residual may stay from 0: 1e-8, or what a relative error
+  // of 1e-12 in z leaves of it (a stiff state's rate cannot get closer).
+  const tolerances = (z) => { for (let i = 0; i < P; i++) { let s = 0; for (let j = 0; j < N; j++) s += Math.abs(J[i][j] * z[j]); tol[i] = 1e-8 + 1e-12 * s; } };
+  const worst = () => { let w = 0; for (let i = 0; i < P; i++) w = Math.max(w, Math.abs(r[i]) / tol[i]); return w; };
+  // Gauss–Newton from z towards goal; true when every residual is within its tolerance.
   const solveFrom = (z, iterations) => {
-    let cost = residual(z, r), lambda = 0;
-    for (let it = 0; it < iterations && maxAbs(r) > 1e-14; it++) {
+    residual(z, r);
+    let lambda = 0, jacobian = false;
+    for (let it = 0; it < iterations; it++) {
       for (let j = 0; j < N; j++) {
         const v = z[j], h = step(v);
         zt.set(z); zt[j] = v + h; residual(zt, rp);
         zt[j] = v - h; residual(zt, rm);
-        for (let i = 0; i < P; i++) J[i][j] = (rp[i] - rm[i]) / (2 * h);
+        // One side not finite, or flat for every row while the other moves: that side's slope is no slope.
+        let pBad = false, mBad = false, pFlat = true, mFlat = true;
+        for (let i = 0; i < P; i++) {
+          if (!Number.isFinite(rp[i])) pBad = true;
+          if (!Number.isFinite(rm[i])) mBad = true;
+          if (rp[i] !== r[i]) pFlat = false;
+          if (rm[i] !== r[i]) mFlat = false;
+        }
+        for (let i = 0; i < P; i++) J[i][j] = mBad || (mFlat && !pFlat) ? (rp[i] - r[i]) / h : pBad || (pFlat && !mFlat) ? (r[i] - rm[i]) / h : (rp[i] - rm[i]) / (2 * h);
       }
-      const JJ = J.map((a) => J.map((b) => a.reduce((s, x, k) => s + x * b[k], 0)));
+      jacobian = true;
+      tolerances(z);
+      if (worst() <= 1) return true;
+      for (let i = 0; i < P; i++) { let s = 0; for (let j = 0; j < N; j++) s += J[i][j] * J[i][j]; rs[i] = s > 0 && Number.isFinite(s) ? 1 / Math.sqrt(s) : 1; }
+      const Js = J.map((row, i) => row.map((v) => v * rs[i]));
+      const JJ = Js.map((a) => Js.map((b) => a.reduce((s, x, k) => s + x * b[k], 0)));
       const scale = Math.max(1e-300, ...JJ.map((row, i) => row[i]));
       lambda = lambda ? Math.max(lambda / 10, 1e-15 * scale) : 1e-12 * scale;
+      const cost = scaledCost(r), rsc = Array.from(r, (v, i) => v * rs[i]);
       let accepted = false;
       for (let tries = 0; tries < 12; tries++) {
         let w = null;
-        try { w = solve(JJ.map((row, i) => row.map((v, j) => v + (i === j ? lambda : 0))), Array.from(r)); } catch { /* singular: damp more */ }
+        try { w = solve(JJ.map((row, i) => row.map((v, j) => v + (i === j ? lambda : 0))), rsc); } catch { /* singular: damp more */ }
         if (w) {
-          for (let j = 0; j < N; j++) { let s = 0; for (let i = 0; i < P; i++) s += J[i][j] * w[i]; zt[j] = z[j] - s; }
-          const c = residual(zt, rt);
-          if (c < cost) { z.set(zt); r.set(rt); cost = c; accepted = true; break; }
+          for (let j = 0; j < N; j++) { let s = 0; for (let i = 0; i < P; i++) s += Js[i][j] * w[i]; zt[j] = z[j] - s; }
+          residual(zt, rt);
+          const c = scaledCost(rt);
+          if (c < cost) { z.set(zt); r.set(rt); accepted = true; break; }
         }
         lambda *= 10;
       }
       if (!accepted) break;
     }
-    residual(z, r);
-    return maxAbs(r);
+    if (!jacobian) return false;
+    return worst() <= 1;
   };
   const z0 = new Float64Array(N);
   z0.set(model.x0);
   z0[n] = restInput(model, model.x0, umin, umax);
   model.y(model.x0, z0[n], y);
   const y0 = free.map((k) => y[k]);
-  let z = Float64Array.from(z0);
   free.forEach((k, j) => { goal[j] = tg[k]; });
-  let res = solveFrom(z, 50);
-  if (!(res <= 1e-8)) {
+  // 1. From the targets, where a measurement reads one state alone.
+  const seed = Float64Array.from(z0);
+  let seeded = false;
+  free.forEach((k, j) => {
+    const o = model.outputs[k];
+    if (!(o && Number.isInteger(o.state) && Math.abs(o.slope) > 0)) return;
+    seed[o.state] = model.x0[o.state] + (tg[k] - y0[j]) / o.slope;
+    seeded = true;
+  });
+  let z = seed, ok = false;
+  if (seeded) {
+    seed[n] = restInput(model, seed.subarray(0, n), umin, umax);
+    ok = solveFrom(z, 50);
+  }
+  // 2. From the start state; 3. in stages from there.
+  if (!ok) { z = Float64Array.from(z0); ok = solveFrom(z, 50); }
+  if (!ok) {
     z = Float64Array.from(z0);
     for (let s = 1; s <= 8; s++) {
       free.forEach((k, j) => { goal[j] = y0[j] + ((tg[k] - y0[j]) * s) / 8; });
-      res = solveFrom(z, s < 8 ? 20 : 50);
+      ok = solveFrom(z, s < 8 ? 20 : 50);
     }
   }
-  if (!(res <= 1e-8)) throw new DesignError('trim-failed', `no equilibrium with ${label}: the best found leaves a residual of ${fmt(res)}`, `the level may be out of reach of ${uName}, or the levels contradict each other`);
+  residual(z, r);
+  const res = maxAbs(r);
+  if (!ok) throw new DesignError('trim-failed', `no equilibrium with ${label}: the best found leaves a residual of ${fmt(res)}`, `the level may be out of reach of ${uName}, or the levels contradict each other`);
   const u = z[n];
   if (u > umax + 1e-12) throw new DesignError('u-limit', `holding ${label} needs ${uName} = ${fmt(u)}, above u max ${fmt(umax)}`, 'choose a level the actuator can hold, or raise u max');
   if (u < umin - 1e-12) throw new DesignError('u-limit', `holding ${label} needs ${uName} = ${fmt(u)}, below u min ${fmt(umin)}`, 'choose a level the actuator can hold, or lower u min');
@@ -2414,38 +2552,82 @@ function trim(model, targets, { umin = -Infinity, umax = Infinity } = {}) {
 }
 
 // The linear model at an operating point (a spec, or what operatingPoint
-// returned), by central differences with steps 1e-6·max(1, |v|):
+// returned), by central differences with steps h = 1e-6·max(1, |v|):
 //   δẋ = A δx + B δu,  δy = C δx + D δu.
+// A kink at the point (a saturation at its limit, a pump at zero flow, a
+// square root at 0) makes the slope differ left and right, and the central
+// difference is then neither. So each slope is also taken one-sided; where
+// the two sides disagree beyond 10⁻³ (and beyond the curvature a smooth
+// function shows: the gap must not shrink with a 10× shorter step), lin.kinks
+// names the state or input and what it moves, and LQR, the Kalman filter and
+// the PI design refuse. Saturations at their limit are named there too.
 function linearize(model, op = 'origin') {
   const pt = op && op.x && 'u' in op ? op : operatingPoint(model, op);
-  const { n, m } = model, x = Float64Array.from(pt.x), u = pt.u;
-  const fp = new Float64Array(n), fm = new Float64Array(n), yp = new Float64Array(m), ym = new Float64Array(m);
-  const A = Array.from({ length: n }, () => new Array(n).fill(0)), C = Array.from({ length: m }, () => new Array(n).fill(0));
-  for (let j = 0; j < n; j++) {
-    const v = x[j], h = step(v);
-    x[j] = v + h; model.f(x, u, fp); model.y(x, u, yp);
-    x[j] = v - h; model.f(x, u, fm); model.y(x, u, ym);
-    x[j] = v;
-    for (let i = 0; i < n; i++) A[i][j] = (fp[i] - fm[i]) / (2 * h);
-    for (let k = 0; k < m; k++) C[k][j] = (yp[k] - ym[k]) / (2 * h);
+  const { n, m } = model, x = Float64Array.from(pt.x), u = pt.u, uName = model.input?.label ?? 'u';
+  const f0 = new Float64Array(n), y0 = new Float64Array(m);
+  model.f(x, u, f0); model.y(x, u, y0);
+  const c0 = Float64Array.from([...f0, ...y0]);
+  // The values of f and y (one vector) with coordinate j (n: u) moved by d.
+  const moved = (j, d) => {
+    const fv = new Float64Array(n), yv = new Float64Array(m);
+    if (j < n) { const v = x[j]; x[j] = v + d; model.f(x, u, fv); model.y(x, u, yv); x[j] = v; } else { model.f(x, u + d, fv); model.y(x, u + d, yv); }
+    return Float64Array.from([...fv, ...yv]);
+  };
+  const rows = n + m, cols = n + 1;
+  const S = Array.from({ length: rows }, () => new Array(cols).fill(0));
+  const side = [];
+  for (let j = 0; j < cols; j++) {
+    const v = j < n ? x[j] : u, h = step(v), p = moved(j, h), q = moved(j, -h);
+    for (let i = 0; i < rows; i++) S[i][j] = (p[i] - q[i]) / (2 * h);
+    side.push({ h, p, q });
   }
-  const h = step(u);
-  model.f(x, u + h, fp); model.y(x, u + h, yp);
-  model.f(x, u - h, fm); model.y(x, u - h, ym);
-  const B = Array.from({ length: n }, (_, i) => [(fp[i] - fm[i]) / (2 * h)]);
-  const D = Array.from({ length: m }, (_, k) => [(yp[k] - ym[k]) / (2 * h)]);
+  // One-sided slopes against the central ones; a suspect gap is checked with a 10× longer step.
+  const rowScale = S.map((row) => Math.max(0, ...row.map((v) => (Number.isFinite(v) ? Math.abs(v) : 0))));
+  const kinks = [];
+  const rowName = (i) => (i < n ? `the rate of ${model.states[i].label}` : model.outputs[i - n].label);
+  const colName = (j) => (j < n ? model.states[j].label : uName);
+  for (let j = 0; j < cols; j++) {
+    const { h, p, q } = side[j];
+    let far = null;
+    for (let i = 0; i < rows; i++) {
+      const fw = (p[i] - c0[i]) / h, bw = (c0[i] - q[i]) / h, gap = Math.abs(fw - bw);
+      const noise = (1e3 * Number.EPSILON * Math.max(Math.abs(c0[i]), Math.abs(p[i]), Math.abs(q[i]))) / h;
+      if (Number.isFinite(gap) && !(gap > 1e-3 * Math.max(Math.abs(fw), Math.abs(bw)) + 1e-6 * rowScale[i] + noise)) continue;
+      if (!far) far = { p: moved(j, 10 * h), q: moved(j, -10 * h) };
+      const gapFar = Math.abs((far.p[i] - c0[i]) / (10 * h) - (c0[i] - far.q[i]) / (10 * h));
+      if (Number.isFinite(gap) && Number.isFinite(gapFar) && !(gap > 0.5 * gapFar)) continue;
+      kinks.push(Number.isFinite(gap) ? `the slope of ${rowName(i)} along ${colName(j)} differs left and right (${fmt(bw)} and ${fmt(fw)})` : `${rowName(i)} has no slope along ${colName(j)} there`);
+      break;
+    }
+  }
+  const edges = (model.limits?.(x, u) ?? []).filter((s) => s.edge).map((s) => s.sentence);
+  const A = S.slice(0, n).map((row) => row.slice(0, n)), B = S.slice(0, n).map((row) => [row[n]]);
+  const C = S.slice(n).map((row) => row.slice(0, n)), D = S.slice(n).map((row) => [row[n]]);
   return {
     A, B, C, D, n, m,
     states: model.states, outputs: model.outputs, input: model.input ?? { label: 'u' },
     op: pt, delay: model.delay, sensors: model.sensors,
-    warnings: [...new Set([...model.warnings, ...pt.warnings])],
+    kinks: [...edges, ...kinks],
+    warnings: [...new Set([...model.warnings, ...pt.warnings, ...kinks.map((k) => `a kink at the operating point: ${k}`)])],
   };
+}
+
+// A design on a linear model refuses a kink at its operating point: the
+// slopes it would use are neither the left nor the right one.
+function refuseKinks(lin, what) {
+  if (!lin.kinks?.length) return;
+  throw new DesignError('kink', `${what} needs slopes, and the plant has a kink at ${lin.op.label}: ${lin.kinks[0]}`, 'choose an operating point away from the limit or kink, or move the limit');
 }
 
 // The path from u to measurement k as a first-order lag with dead time,
 // K e^(−θs) / (τs + 1): the static gain K = D − C A⁻¹ B, the mean residence
 // time τ = C A⁻² B / K (exact for one state), θ the dead time reported on
-// the way. Only the states on the path (moved by u, seen by y_k) count.
+// the way. Computed on a minimal realisation of the path (linalg.js
+// minreal: balanced, then only the modes u moves and y_k sees), so badly
+// scaled states (a stiff filter beside a slow motor) and a pole cancelled by
+// a zero (an angle, then its derivative) do not get in the way. Refusals:
+// 'integrating-plant' (a pole at 0 left), 'unstable-plant' (a pole in the
+// right half-plane), 'zero-gain', 'no-path'.
 function firstOrderFit(lin, k = 0) {
   if (!(k >= 0 && k < lin.m)) throw new DesignError('bad-output', `no measurement ${k + 1}; this block has ${lin.m}`);
   const label = lin.outputs[k].label, uName = lin.input.label;
@@ -2461,21 +2643,29 @@ function firstOrderFit(lin, k = 0) {
   const toY = reach(lin.C[k].map((c) => c !== 0), (i, j) => lin.A[i][j] !== 0);
   const path = [];
   for (let i = 0; i < n; i++) if (fromU[i] && toY[i]) path.push(i);
-  if (!path.length) {
-    if (d === 0) throw new DesignError('no-path', `${uName} does not reach ${label}`, 'check the wiring from the controller output to the plant and on to this measurement');
+  if (!path.length && d === 0) throw new DesignError('no-path', `${uName} does not reach ${label}`, 'check the wiring from the controller output to the plant and on to this measurement');
+  const mr = minreal(path.map((i) => path.map((j) => lin.A[i][j])), path.map((i) => lin.B[i][0]), path.map((j) => lin.C[k][j]));
+  const A = mr.A, B = mr.b, C = mr.c, r = A.length;
+  if (!r) {
+    if (d === 0) throw new DesignError('zero-gain', `${uName} has no static effect on ${label}`, 'pole cancellation needs a plant whose output settles away from 0');
     return { K: d, tau: 0, theta: lin.delay[k] ?? 0, label, warnings: [] };
   }
-  const A = path.map((i) => path.map((j) => lin.A[i][j])), B = path.map((i) => lin.B[i][0]), C = path.map((j) => lin.C[k][j]);
-  if (rank(A) < path.length) throw new DesignError('integrating-plant', `${label} integrates ${uName}: it has no static gain`, 'pole cancellation needs a self-regulating plant; measure a rate, or use another design');
+  let size = 0;
+  for (const row of A) for (const v of row) size += v * v;
+  size = Math.sqrt(size);
+  const poles = eig(A);
+  if (poles.some((p) => Math.hypot(p.re, p.im) <= 1e-9 * size)) throw new DesignError('integrating-plant', `${label} integrates ${uName}: it has no static gain`, 'pole cancellation needs a self-regulating plant; measure a rate, or use another design');
+  const rhp = poles.filter((p) => p.re > 1e-9 * size);
+  if (rhp.length) throw new DesignError('unstable-plant', `the path from ${uName} to ${label} is unstable: a pole at ${fmt(rhp[0].re)}${rhp[0].im ? ` ± ${fmt(Math.abs(rhp[0].im))}i` : ''} rad/s`, 'pole cancellation needs a stable plant; stabilise it first (an inner loop), or use LQR');
   const x1 = solve(A, B), x2 = solve(A, x1);
   const K = d - C.reduce((s, c, i) => s + c * x1[i], 0);
-  if (!(Math.abs(K) > 1e-12 * Math.max(1, Math.abs(d)))) throw new DesignError('zero-gain', `${uName} has no static effect on ${label}`, 'pole cancellation needs a plant whose output settles away from 0');
+  if (!(Math.abs(K) > 1e-9 * Math.max(Math.abs(d), Math.hypot(...C) * Math.hypot(...B) / size))) throw new DesignError('zero-gain', `${uName} has no static effect on ${label}`, 'pole cancellation needs a plant whose output settles away from 0');
   const tau = C.reduce((s, c, i) => s + c * x2[i], 0) / K;
   const warnings = tau > 0 ? [] : [`the step response of ${label} is not lag-like (τ = ${fmt(tau)} s): it overshoots or starts the wrong way`];
   return { K, tau, theta: lin.delay[k] ?? 0, label, warnings };
 }
 
-return { DesignError, parseOp, opLabel, operatingPoint, trim, linearize, firstOrderFit };
+return { DesignError, parseOp, opLabel, operatingPoint, trim, linearize, refuseKinks, firstOrderFit };
 })();
 // ---- core/planner.js
 __mods['core/planner.js'] = (() => {
@@ -2514,7 +2704,7 @@ __mods['core/planner.js'] = (() => {
 // for bit. No clock decides anything.
 
 const { inv } = __mods['core/linalg.js'];
-const PLAN_VERSION = 1;
+const PLAN_VERSION = 2;
 
 // Continuation: [effort weight λ, weight of the defects and the end,
 // iteration cap]. First a loose fit that keeps F small, then the jumps
@@ -2553,28 +2743,37 @@ function stepper(f, n, Ts, sub) {
 }
 
 // Substeps per sample: steps of at most 5 ms, and short against the fastest dynamics.
+// (Also per held force step of the plan: substeps(model, hold·Ts).)
 function substeps(model, Ts) {
   const hmax = Math.min(0.005, model.bound > 0 ? 0.5 / model.bound : Infinity);
   return Math.max(1, Math.ceil(Ts / hmax - 1e-9));
 }
 
 // model: a Model (n, x0, states, f, bound). opts: T (s; snapped to the sample
-// grid), Ts (the controller's sample time), segments, nodesPerSegment, Fmax
-// (the hinge; Infinity for none).
+// grid), Ts (the controller's sample time), segments, nodesPerSegment, Fmin
+// and Fmax (the hinge, each way; Fmin defaults to −Fmax; ±Infinity for none).
 // Yields null between short pieces of work and, per iteration,
-//   { stage, stages, iteration, cost, defect, terminal, fraction, start, starts }.
-// Returns { ok, code, message, hint, T, Ts, segments, perSegment, sub, z, F (per
-// sample), S (segment start states), iterations, start, starts, defect,
-// terminal (end error per state, angles wrapped), endError, Fpeak, Fmax }.
-function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax = Infinity } = {}) {
+//   { stage, stages, iteration, cost, defect, terminal, fraction, start, starts }
+// (fraction: of this start, from the stage and how far the defect and the
+// end have come towards feasible).
+// Returns { ok, code, message, hint, T, Ts, segments, perSegment (samples), hold,
+// sub, z, F (per sample), S (segment start states), iterations, start, starts,
+// defect, terminal (end error per state, angles wrapped), endError, Fpeak,
+// Flo, Fhi (the force's extremes), Fmin, Fmax }.
+// For a short Ts the force is held over hold = ⌈5 ms / Ts⌉ samples (a
+// zero-order hold on the controller's grid all the same), so the work grows
+// with T, not with T / Ts.
+function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax = Infinity, Fmin = -Fmax } = {}) {
   const n = model.n, M = Math.max(1, Math.round(segments)), nps = Math.max(1, Math.round(nodesPerSegment));
   if (!(Ts > 0) || !(T > 0)) throw new Error('planTransfer: T and Ts must be above 0');
   if (!n) throw new Error('planTransfer: the model has no states');
-  // The sample grid: perSegment samples per segment; T snapped to it.
-  const P = Math.max(4, Math.round(T / (Ts * M)));
-  const Tp = M * P * Ts, N = M * nps, K = M * P;
+  if (!(Fmin <= 0 && Fmax >= 0)) throw new Error('planTransfer: Fmin ≤ 0 ≤ Fmax');
+  // The sample grid: P held force steps of hold samples per segment; T snapped to it.
+  const hold = Math.max(1, Math.ceil(0.005 / Ts - 1e-9)), Th = hold * Ts;
+  const P = Math.max(4, Math.round(T / (Th * M)));
+  const Tp = M * P * Th, N = M * nps, K = M * P * hold;
   const sub = substeps(model, Ts);
-  const step = stepper(model.f, n, Ts, sub);
+  const step = stepper(model.f, n, Th, substeps(model, Th));
   const states = model.states, angle = states.map((s) => !!s.angle);
   const x0 = Float64Array.from(model.x0);
   // Sample i of a segment reads the nodes ia[i], ia[i] + 1 of it, weighted 1 − iw[i], iw[i].
@@ -2610,14 +2809,15 @@ function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax 
     for (let j = 0; j < M - 1; j++) { const s = v.subarray(sOff(j + 1), sOff(j + 1) + n); for (let i = 0; i < n; i++) res[q++] = w.wd * (en[j * n + i] - s[i]); }
     for (let i = 0; i < n; i++) { const d = en[(M - 1) * n + i]; res[q++] = w.wd * (angle[i] ? wrapAngle(d) : d); }
     for (let k = 0; k <= N; k++) res[q++] = w.lam * v[k];
-    for (let k = 0; k <= N; k++) res[q++] = Fmax < Infinity ? HINGE * Math.max(0, Math.abs(v[k]) - Fmax) : 0;
+    for (let k = 0; k <= N; k++) res[q++] = HINGE * ((Fmax < Infinity ? Math.max(0, v[k] - Fmax) : 0) + (Fmin > -Infinity ? Math.max(0, Fmin - v[k]) : 0));
     for (let k = 0; k < N; k++) res[q++] = w.lam * (v[k + 1] - v[k]);
   }
   const sumsq = (v) => { let s = 0; for (let i = 0; i < v.length; i++) s += v[i] * v[i]; return s; };
   const norm = (v, a, b) => { let s = 0; for (let i = a; i < b; i++) s += v[i] * v[i]; return Math.sqrt(s); };
   const defectOf = (res) => norm(res, 0, n * (M - 1)) / w.wd;
   const terminalOf = (res) => norm(res, n * (M - 1), n * M) / w.wd;
-  const peakOf = (v) => { let p = 0; for (let k = 0; k <= N; k++) p = Math.max(p, Math.abs(v[k])); return p; };
+  // How far the nodes go beyond the force allowed, as a share of it (≤ 1: within).
+  const reachOf = (v) => { let p = 0; for (let k = 0; k <= N; k++) p = Math.max(p, v[k] / Fmax, v[k] / Fmin); return p; };
 
   // The Jacobian of one segment's end: n rows, columns its nps + 1 nodes and
   // (from segment 1 on) its n start states, by forward differences. Each
@@ -2659,27 +2859,34 @@ function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax 
       }
     }
   }
-  // (H + μ(1 + diag H)) dz = g by Cholesky, in place on a preallocated copy.
-  const L = new Float64Array(nz * nz), dz = new Float64Array(nz);
+  // (H + μ(1 + diag H)) dz = g by a banded Cholesky. In the order ord (per
+  // segment its start state, from segment 1 on, then its nodes; the last
+  // node at the end) H is banded: a segment's block touches its start, its
+  // nodes, the next start and the next node, at most bw = 2n + nps apart.
+  // So a solve costs nz·bw², not nz³/6 (40 segments: 0.2 M, not 18 M).
+  const ord = new Int32Array(nz), bw = 2 * n + nps, W = bw + 1;
+  for (let j = 0, q = 0; j < M; j++) {
+    if (j > 0) for (let i = 0; i < n; i++) ord[q++] = sOff(j) + i;
+    for (let c = 0; c < nps; c++) ord[q++] = j * nps + c;
+    if (j === M - 1) ord[q] = N;
+  }
+  const Lb = new Float64Array(nz * W), yb = new Float64Array(nz), dz = new Float64Array(nz);
   function lmSolve(mu) {
-    L.set(H);
-    for (let i = 0; i < nz; i++) L[i * nz + i] += mu * (1 + H[i * nz + i]);
-    for (let j = 0; j < nz; j++) {
-      const rj = j * nz;
-      let d = L[rj + j];
-      for (let k = 0; k < j; k++) d -= L[rj + k] * L[rj + k];
-      if (!(d > 0)) return false;
-      d = Math.sqrt(d);
-      L[rj + j] = d;
-      for (let i = j + 1; i < nz; i++) {
-        const ri = i * nz;
-        let s = L[ri + j];
-        for (let k = 0; k < j; k++) s -= L[ri + k] * L[rj + k];
-        L[ri + j] = s / d;
+    for (let i = 0; i < nz; i++) {
+      const hi = ord[i] * nz, i0 = Math.max(0, i - bw), li = i * W + i;
+      for (let j = i0; j <= i; j++) {
+        let s = H[hi + ord[j]];
+        if (j === i) s += mu * (1 + s);
+        const lj = j * W + j;
+        for (let k = Math.max(i0, j - bw); k < j; k++) s -= Lb[li - k] * Lb[lj - k];
+        if (j < i) Lb[li - j] = s / Lb[j * W];
+        else if (s > 0) Lb[i * W] = Math.sqrt(s);
+        else return false;
       }
     }
-    for (let i = 0; i < nz; i++) { const ri = i * nz; let s = g[i]; for (let k = 0; k < i; k++) s -= L[ri + k] * dz[k]; dz[i] = s / L[ri + i]; }
-    for (let i = nz - 1; i >= 0; i--) { let s = dz[i]; for (let k = i + 1; k < nz; k++) s -= L[k * nz + i] * dz[k]; dz[i] = s / L[i * nz + i]; }
+    for (let i = 0; i < nz; i++) { const li = i * W + i; let s = g[ord[i]]; for (let k = Math.max(0, i - bw); k < i; k++) s -= Lb[li - k] * yb[k]; yb[i] = s / Lb[i * W]; }
+    for (let i = nz - 1; i >= 0; i--) { let s = yb[i]; for (let k = i + 1, e = Math.min(nz - 1, i + bw); k <= e; k++) s -= Lb[k * W + k - i] * yb[k]; yb[i] = s / Lb[i * W]; }
+    for (let i = 0; i < nz; i++) dz[ord[i]] = yb[i];
     return true;
   }
   function evaluate(v, St2, en, Ev, res) {
@@ -2700,7 +2907,7 @@ function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax 
   let gain = Infinity;
   for (let i = 0; i < n; i++) { const bi = Math.abs(b0[i] - b1[i]) / 2e-3; if (bi > 1e-9) gain = Math.min(gain, bi); }
   const Fchar = Number.isFinite(gain) ? (2 * span * (2 * Math.PI / Tp) ** 2) / gain : 1;
-  const amp = 0.5 * Math.min(Fmax, Fchar || 1);
+  const amp = 0.5 * Math.min(Fmax, -Fmin, Fchar || 1);
   function guess(k) {
     for (let i = 0; i <= N; i++) z[i] = amp * Math.sin((k * Math.PI * i) / N);
     for (let j = 1; j < M; j++) for (let i = 0; i < n; i++) z[sOff(j) + i] = x0[i] + (j / M) * dist[i];
@@ -2711,16 +2918,16 @@ function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax 
     const terminal = Float64Array.from(E[M - 1], (d, i) => (angle[i] ? wrapAngle(d) : d));
     let worst = 0, at = 0;
     terminal.forEach((d, i) => { const q = Math.abs(d) / planTol(states[i]); if (q > worst) { worst = q; at = i; } });
-    const defect = defectOf(r), Fpeak = peakOf(z);
-    const ok = defect < 1e-4 && worst < 1 && !(Fpeak > 1.05 * Fmax) && Number.isFinite(defect);
-    return { ok, terminal, defect, Fpeak, worst, at, badness: Number.isFinite(defect) ? worst + defect / 1e-4 + Math.max(0, Fpeak / Fmax - 1.05) * 10 : Infinity };
+    const defect = defectOf(r), reach = reachOf(z);
+    const ok = defect < 1e-4 && worst < 1 && !(reach > 1.05) && Number.isFinite(defect);
+    return { ok, terminal, defect, reach, worst, at, badness: Number.isFinite(defect) ? worst + defect / 1e-4 + Math.max(0, reach - 1.05) * 10 : Infinity };
   }
 
   let total = 0, best = null, tried = 0;
   for (let s = 0; s < STARTS.length && total < CAP; s++) {
     guess(STARTS[s]);
     tried++;
-    let mu = 1e-2, done = false, fraction = 0, spare = 0;
+    let mu = 1e-2, done = false, fraction = 0, spare = 0, far0 = 0;
     for (let st = 0; st < STAGES.length && !done && total < CAP; st++) {
       // A stage may use what the stages before it left of their caps.
       const [lam, wd, own] = STAGES[st], cap = own + spare, first = total;
@@ -2762,10 +2969,16 @@ function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax 
         }
         total++;
         const defect = defectOf(r), terminal = terminalOf(r);
-        fraction = Math.max(fraction, Math.min(1, (st + (it + 1) / cap) / STAGES.length));
+        // Progress of this start: the stage, and (in log) how far the defect
+        // and the end have come towards feasible; never back, never 100 %
+        // before the end (a stage that ends early would otherwise jump).
+        const far = Math.max(1, defect / 1e-6, terminal / 1e-3);
+        far0 ||= far;
+        const near = far0 > 1 ? Math.min(1, Math.max(0, Math.log(far0 / far) / Math.log(far0))) : 1;
+        fraction = Math.max(fraction, Math.min(0.99, 0.25 * (st + (it + 1) / cap) / STAGES.length + 0.75 * near));
         yield { stage: st + 1, stages: STAGES.length, iteration: total, cost, defect, terminal, fraction, start: s + 1, starts: STARTS.length };
         if (!accepted) break;   // stuck in this stage
-        if (defect < 1e-6 && terminal < 1e-3 && !(peakOf(z) > 1.05 * Fmax)) { done = true; break; }
+        if (defect < 1e-6 && terminal < 1e-3 && !(reachOf(z) > 1.05)) { done = true; break; }
         hist.push(cost);
         if (hist.length > STALL && hist[hist.length - 1 - STALL] - cost < 1e-3 * hist[hist.length - 1 - STALL]) break;
       }
@@ -2781,28 +2994,30 @@ function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax 
   evaluate(z, S, ends, E, r);
   const q = judge();
   const F = new Float64Array(K);
-  for (let j = 0; j < M; j++) for (let i = 0; i < P; i++) { const a = j * nps + ia[i]; F[j * P + i] = z[a] + (z[a + 1] - z[a]) * iw[i]; }
-  let Fpeak = 0;
-  for (let k = 0; k < K; k++) Fpeak = Math.max(Fpeak, Math.abs(F[k]));
+  for (let j = 0; j < M; j++) for (let i = 0; i < P; i++) { const a = j * nps + ia[i], k = (j * P + i) * hold; F.fill(z[a] + (z[a + 1] - z[a]) * iw[i], k, k + hold); }
+  let Fpeak = 0, Flo = 0, Fhi = 0;
+  for (let k = 0; k < K; k++) { Fpeak = Math.max(Fpeak, Math.abs(F[k])); Flo = Math.min(Flo, F[k]); Fhi = Math.max(Fhi, F[k]); }
   const worst = states[q.at];
   const endError = { label: worst.name ?? worst.label, value: q.terminal[q.at], unit: worst.unit ?? '' };
   const plan = {
     ok: q.ok, code: q.ok ? null : 'plan-not-converged', message: '', hint: '',
-    T: Tp, Ts, segments: M, perSegment: P, nodesPerSegment: nps, sub,
+    T: Tp, Ts, segments: M, perSegment: P * hold, hold, nodesPerSegment: nps, sub,
     z: Float64Array.from(z), F, S: S.map((v) => Float64Array.from(v)),
     iterations: total, start: best.s + 1, starts: STARTS.length,
-    defect: q.defect, terminal: q.terminal, endError, Fpeak, Fmax,
+    defect: q.defect, terminal: q.terminal, endError, Fpeak, Flo, Fhi, Fmin, Fmax,
   };
   // Not converged: a sentence from the numbers, and what to change.
   if (!q.ok) {
     const off = `${endError.label} ends ${fmt(Math.abs(endError.value))}${endError.unit ? ` ${endError.unit}` : ''} off`;
     const u = model.input?.label ?? 'u';
     const tries = `${total} iterations, ${tried} start${tried > 1 ? 's' : ''}`;
-    if (Fpeak > 1.05 * Fmax) {
-      plan.message = `no plan found within the limit: it needs ${u} up to ${fmt(Fpeak)}, of the ${fmt(Fmax)} it may use (${tries})`;
+    // The side it hits: up to Fmax, or down to Fmin.
+    const up = Fhi / Fmax >= Flo / Fmin, side = up ? `up to ${fmt(Fhi)}, of the ${fmt(Fmax)}` : `down to ${fmt(Flo)}, of the ${fmt(Fmin)}`;
+    if (q.reach > 1.05) {
+      plan.message = `no plan found within the limit: it needs ${u} ${side} it may use (${tries})`;
       plan.hint = `needs more force or a longer T (now ${fmt(Tp)} s)`;
-    } else if (q.worst >= 1 && Fpeak >= 0.95 * Fmax) {
-      plan.message = `no plan found: ${off} at T = ${fmt(Tp)} s with ${u} at its limit ${fmt(Fmax)} (${tries})`;
+    } else if (q.worst >= 1 && q.reach >= 0.95) {
+      plan.message = `no plan found: ${off} at T = ${fmt(Tp)} s with ${u} at its limit ${fmt(up ? Fmax : Fmin)} (${tries})`;
       plan.hint = `needs more force or a longer T (now ${fmt(Tp)} s)`;
     } else if (q.defect >= 1e-4) {
       plan.message = `no plan found: the segments do not join (defect ${fmt(q.defect)}, ${tries})`;
@@ -2829,18 +3044,20 @@ function runPlan(gen, onProgress) {
 // from the shooting starts (one long open-loop replay would blow the tiny
 // defects up), and the Jacobians Ad_k, Bd_k of the one-sample step map
 // there (sub RK4 substeps, the force held), by central differences: the
-// same discrete map the law lives on, so no c2d. Flat arrays: xs (K + 1)·n
-// (the last row is the plan's end), F K, Ad K·n·n, Bd K·n.
+// same discrete map the law lives on, so no c2d. Also Cy_k = ∂y/∂x there,
+// so a sensor whose slope changes along the way (an encoder's error) is
+// read with its own slope. Flat arrays: xs (K + 1)·n (the last row is the
+// plan's end), F K, Ad K·n·n, Bd K·n, Cy K·m·n.
 // alongPlanSteps is the same as a generator with a tick per segment, so it
 // can follow planTransfer in one sliced job (yield*).
 function alongPlan(model, plan) {
   return runPlan(alongPlanSteps(model, plan));
 }
 function* alongPlanSteps(model, plan) {
-  const n = model.n, { segments: M, perSegment: P, Ts, sub, F } = plan, K = M * P;
+  const n = model.n, m = model.m ?? 0, { segments: M, perSegment: P, Ts, sub, F } = plan, K = M * P;
   const step = stepper(model.f, n, Ts, sub);
-  const xs = new Float64Array((K + 1) * n), Ad = new Float64Array(K * n * n), Bd = new Float64Array(K * n);
-  const x = new Float64Array(n), xp = new Float64Array(n), xm = new Float64Array(n);
+  const xs = new Float64Array((K + 1) * n), Ad = new Float64Array(K * n * n), Bd = new Float64Array(K * n), Cy = new Float64Array(K * m * n);
+  const x = new Float64Array(n), xp = new Float64Array(n), xm = new Float64Array(n), yp = new Float64Array(m), ym = new Float64Array(m);
   for (let j = 0; j < M; j++) {
     x.set(plan.S[j]);
     for (let i = 0; i < P; i++) {
@@ -2851,6 +3068,11 @@ function* alongPlanSteps(model, plan) {
         xp.set(x); xp[c] += d; step(xp, u);
         xm.set(x); xm[c] -= d; step(xm, u);
         for (let r = 0; r < n; r++) Ad[k * n * n + r * n + c] = (xp[r] - xm[r]) / (2 * d);
+        if (m) {
+          xp.set(x); xp[c] += d; model.y(xp, u, yp);
+          xm.set(x); xm[c] -= d; model.y(xm, u, ym);
+          for (let r = 0; r < m; r++) Cy[k * m * n + r * n + c] = (yp[r] - ym[r]) / (2 * d);
+        }
       }
       const du = 1e-6 * Math.max(1, Math.abs(u));
       xp.set(x); step(xp, u + du);
@@ -2861,7 +3083,7 @@ function* alongPlanSteps(model, plan) {
     yield null;
   }
   xs.set(x, K * n);
-  return { n, K, Ts, sub, xs, F: Float64Array.from(F), Ad, Bd, angle: model.states.map((s) => !!s.angle) };
+  return { n, m, K, Ts, sub, xs, F: Float64Array.from(F), Ad, Bd, Cy, angle: model.states.map((s) => !!s.angle) };
 }
 
 // Time-varying LQR along a plan: the backward discrete Riccati recursion
@@ -2890,16 +3112,23 @@ function tvlqrGains(along, { Q, R, Pend }) {
 }
 
 // The plan in measurement order, for planLaw: Y_k = y(x*_k), the
-// measurements along the plan, and K_k = Kx_k C⁻¹, the gains (Kx from
-// tvlqrGains, K·n in state order). C is the measurement matrix of the
-// linearisation at the origin (square and invertible: every state measured,
-// D = 0); up: the upright LQR's { K, kr } in measurement order.
-function planValues(model, along, Kx, { C, K: Kup, kr }) {
-  const n = model.n, m = model.m, steps = along.K, Ci = inv(C);
+// measurements along the plan, and K_k = Kx_k C_k⁻¹, the gains (Kx from
+// tvlqrGains, K·n in state order), C_k = ∂y/∂x at x*_k (alongPlan's Cy:
+// square, every state measured). up: the upright LQR's { K, kr } in
+// measurement order. Throws (code 'states-not-measured') where some C_k is
+// singular: there the measurements do not tell the states apart.
+function planValues(model, along, Kx, { K: Kup, kr }) {
+  const n = model.n, m = model.m, steps = along.K;
   const Y = new Float64Array(steps * m), K = new Float64Array(steps * m), y = new Float64Array(m);
   for (let k = 0; k < steps; k++) {
     model.y(along.xs.subarray(k * n, (k + 1) * n), along.F[k], y);
     Y.set(y, k * m);
+    const Ck = Array.from({ length: m }, (_, r) => Array.from(along.Cy.subarray((k * m + r) * n, (k * m + r + 1) * n)));
+    let Ci;
+    try { Ci = inv(Ck); } catch { Ci = null; }
+    if (!Ci || !Ci.every((row) => row.every(Number.isFinite))) {
+      throw Object.assign(new Error(`the measurements do not tell the states apart at t = ${(k * along.Ts).toFixed(2)} s of the plan`), { code: 'states-not-measured', hint: 'measure each state with a sensor whose slope stays away from 0 along the swing' });
+    }
     for (let i = 0; i < m; i++) { let s = 0; for (let c = 0; c < n; c++) s += Kx[k * n + c] * Ci[c][i]; K[k * m + i] = s; }
   }
   return { F: Float64Array.from(along.F), Y, K, Kup: Array.from(Kup), kr, angle: model.outputs.map((o) => !!o.angle) };
@@ -2983,8 +3212,8 @@ __mods['core/design.js'] = (() => {
 //   trajectoryDesign(p, ctx)                       a swing-up plan with TV-LQR along it (planner.js)
 //   kalmanDesign(lin, { Q, R, Ts, outputs })       the steady-state Kalman filter of an Observer
 
-const { c2d, dlqr, dlqe, eig, solve, rank, mul, transpose } = __mods['core/linalg.js'];
-const { DesignError, operatingPoint, linearize, firstOrderFit } = __mods['core/linearize.js'];
+const { c2d, dlqr, dlqe, eig, solve, inv, rank, mul, transpose, equilibrate } = __mods['core/linalg.js'];
+const { DesignError, operatingPoint, linearize, firstOrderFit, refuseKinks } = __mods['core/linearize.js'];
 const { PLAN_VERSION, planTransfer, alongPlanSteps, tvlqrGains, planValues, planLaw, verifyLoop, runPlan } = __mods['core/planner.js'];
 const fmt = (v) => (Number.isFinite(v) ? String(Number(Number(v).toPrecision(4))) : String(v));
 const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
@@ -3080,7 +3309,7 @@ function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 } = {})
   // Runs one design; never throws. A DesignError becomes the status's error;
   // anything else is a bug, reported with code 'internal'. A design waiting
   // on a heavy job comes back { pending: true } and is not cached.
-  function run(def, p, block, compiled, seeThrough, plant, slot, asked) {
+  function run(def, p, block, compiled, seeThrough, plant, slot, asked, guest) {
     const used = { model: null, at: '', warnings: [], heavy: null };
     const lins = new Map();
     const ctx = {
@@ -3132,6 +3361,8 @@ function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 } = {})
         if (mark === key) { used.heavy.status = 'cancelled'; return { status: 'cancelled', key }; }
         if (mark) cancelled.delete(slot);
         let job = jobs.get(key);
+        // A guest compile (one the page made without naming its store) starts no plan of its own.
+        if (!job && guest) { used.heavy.status = 'pending'; return { status: 'pending', progress: null, key }; }
         if (!job) {
           job = { key, kind, title, path: block.idPath, block: block.name, variant: slot.split('#')[1], start, asked: now(), gen: null, started: 0, progress: null };
           jobs.set(key, job);
@@ -3175,7 +3406,10 @@ function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 } = {})
   const store = {
     mode,
     generation: 0,
-    begin(diagram, compileModel) {
+    // guest: a compile that did not name this store (the page's default,
+    // useDesigns): it reads what is cached and the plans being made, but
+    // starts no job and drops none.
+    begin(diagram, compileModel, { guest = false } = {}) {
       let pk = null, el = null;
       const plant = () => (pk ??= plantKey(diagram));
       // The model-mode compile, shared by every design of this diagram.
@@ -3199,7 +3433,7 @@ function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 } = {})
           const slot = `${block.idPath}#${variant.name}#${variant.type}`;
           let entry = designs.get(key), cached = !!entry;
           if (cached) counts.hits++;
-          else { counts.runs++; entry = run(def, variant.params, block, compiled, seeThrough, plant, slot, asked); }
+          else { counts.runs++; entry = run(def, variant.params, block, compiled, seeThrough, plant, slot, asked, guest); }
           let { status, values, rows } = entry;
           if (entry.pending) {
             // Waiting on a heavy job: the previous values of this slot run if
@@ -3226,7 +3460,7 @@ function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 } = {})
         },
         // The compile is done: jobs it did not ask for are dropped.
         end() {
-          if (mode !== 'async') return;
+          if (mode !== 'async' || guest) return;
           for (const k of [...jobs.keys()]) if (!asked.has(k)) jobs.delete(k);
           settleWaiters();
         },
@@ -3301,8 +3535,15 @@ function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 } = {})
   return store;
 }
 
-// The store compileDiagram uses when it is given none.
+// The store compileDiagram uses when it is given none: SYNC_DESIGNS (Node,
+// the CLI, tests), or the one the page names with useDesigns (its async
+// store), so a compile the page makes without naming a store (an analysis,
+// an auto-tune run) never plans on the main thread and shares the page's
+// plans and cache, as a guest.
 const SYNC_DESIGNS = createDesignStore();
+let fallback = null;
+function useDesigns(store) { fallback = store ?? null; }
+function defaultDesigns() { return fallback ?? SYNC_DESIGNS; }
 
 // ---- Design helpers
 
@@ -3323,10 +3564,11 @@ function lqrDesign(lin, { Q, R, track = 1, Ts }) {
   if (n > 40) throw new DesignError('too-many-states', `the plant this block sees has ${n} states; LQR here handles up to 40`);
   if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')})`, lin.warnings.join('; ') || 'wire the controller output to the plant, and the plant to the measurements');
   if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'LQR is designed at the origin, which must be an equilibrium with u = 0');
+  refuseKinks(lin, 'LQR');
   // Every state measured, and only states.
   const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
   if (direct.length) throw new DesignError('states-not-measured', `LQR needs measurements of states; ${direct.join(', ')} depends on ${lin.input.label} directly`, 'feed back states only (a Sink of u is fine, an input of the controller is not)');
-  if (m !== n || rank(lin.C) < n) {
+  if (m !== n || rank(equilibrate(lin.C).M) < n) {
     const sole = lin.C.map((row) => { const nz = row.flatMap((v, j) => (Math.abs(v) > 1e-9 ? [j] : [])); return nz.length === 1 ? nz[0] : -1; });
     const seen = [...new Set(sole.filter((j) => j >= 0))].map((j) => states[j]), missing = states.filter((_, j) => !sole.includes(j));
     if (missing.length && m <= n) {
@@ -3348,7 +3590,14 @@ function lqrDesign(lin, { Q, R, track = 1, Ts }) {
   const Acl = Ad.map((row, i) => row.map((v, j) => v - Bd[i][0] * Kx[j]));
   const poles = eig(Acl);
   const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
-  if (!converged || !(radius < 1)) throw new DesignError('not-stabilisable', `LQR finds no gain that holds this plant (a closed-loop pole stays at |z| = ${fmt(radius)})`, `${lin.input.label} may not reach every state; check the wiring`);
+  if (!converged || !(radius < 1)) {
+    // Why: a mode that does not decay by itself either cannot be moved by u
+    // (the wiring), or carries no weight in Q (PBH tests).
+    const mode = stuck(Ad, Bd, Qx);
+    const zero = labels.filter((_, k) => w[k] === 0);
+    if (mode && !mode.unreached && mode.unweighted && zero.length) throw new DesignError('not-stabilisable', `LQR finds no gain that holds this plant: Q gives no weight to ${and(zero)}, and a mode seen only there does not decay by itself (|z| = ${fmt(mode.radius)})`, `give ${and(zero)} a weight above 0`);
+    throw new DesignError('not-stabilisable', `LQR finds no gain that holds this plant (a closed-loop pole stays at |z| = ${fmt(radius)})`, `${lin.input.label} may not reach every state; check the wiring`);
+  }
   // K = Kx C⁻¹: Kᵀ solves Cᵀ Kᵀ = Kxᵀ.
   const K = solve(Ct, Kx);
   // kr: the static gain from r to the tracked measurement is 1.
@@ -3371,12 +3620,63 @@ function lqrDesign(lin, { Q, R, track = 1, Ts }) {
   return { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings };
 }
 
+// The pole of a pendulum on a cart, from the plant's linearisation at the
+// top, for the energy swing-up: measurements x, θ, v, ω (every state
+// measured, as lqrDesign checks). A rigid pendulum on a cart has
+// θ̈ = (g/l) θ − ẍ / l there, l its effective length (a bob's distance, ⅔ of
+// a uniform rod): the combination of the v̇ and ω̇ rows without u leaves
+// (g/l) θ alone. Returns { l, g } with the g of the pendulum's own swing,
+// so the pump's energy is zero exactly at the top. Throws 'swing-plant' when
+// the plant is not one such pendulum.
+function poleOf(lin) {
+  const Ci = inv(lin.C), A = mul(mul(lin.C, lin.A), Ci), B = mul(lin.C, lin.B).map((b) => b[0]);
+  const c = -B[3] / B[2], row = A[3].map((v, j) => v + c * A[2][j]), gl = row[1];
+  const size = Math.max(...row.map(Math.abs));
+  if (!(Number.isFinite(c) && c !== 0 && gl > 0 && [0, 2, 3].every((j) => Math.abs(row[j]) <= 1e-4 * size))) {
+    throw new DesignError('swing-plant', `the energy swing-up needs one pendulum on a cart, θ̈ = (g/l) θ − ẍ / l at the top; the plant this block sees is not one`, 'use LQR, or the planned swing-up');
+  }
+  const l = 1 / Math.abs(c);
+  return { l, g: gl * l };
+}
+
 // The slowest of discrete poles, as a continuous one (s = ln(z) / Ts): '1.9 rad/s, ζ 0.71'.
 function slowest(poles, Ts) {
   const slow = poles.reduce((a, z) => (Math.hypot(z.re, z.im) > Math.hypot(a.re, a.im) ? z : a));
   const s = { re: Math.log(Math.hypot(slow.re, slow.im)) / Ts, im: Math.atan2(slow.im, slow.re) / Ts };
   const wn = Math.hypot(s.re, s.im), zeta = wn > 0 ? -s.re / wn : 1;
   return `${fmt(wn)} rad/s, ζ ${fmt(zeta)}`;
+}
+
+// A mode of Ad that does not decay by itself (|z| ≥ 1) and that the loop
+// cannot hold, with the reason by PBH tests at its eigenvalue z:
+// unreached when rank [zI − Ad, B] < n (the input does not move it),
+// unweighted when rank [zI − Ad; W] < n (W, the weight, does not see it).
+// null when every such mode passes both. Complex z by its real 2n form.
+function stuck(Ad, B, W) {
+  const n = Ad.length;
+  const full = (M, size) => {
+    const { M: S } = equilibrate(M);
+    let big = 0;
+    for (let j = 0; j < S[0].length; j++) { let c = 0; for (const row of S) c += row[j] * row[j]; big = Math.max(big, Math.sqrt(c)); }
+    return rank(S, 1e-8 * big) >= size;
+  };
+  for (const z of eig(Ad)) {
+    const radius = Math.hypot(z.re, z.im);
+    if (radius < 1 - 1e-9) continue;
+    const cplx = Math.abs(z.im) > 1e-12, k = cplx ? 2 : 1;
+    // zI − Ad (real 2n form for complex z: [[aI − A, −bI], [bI, aI − A]]).
+    const Z = Array.from({ length: k * n }, (_, i) => Array.from({ length: k * n }, (__, j) => {
+      const bi = Math.floor(i / n), bj = Math.floor(j / n), ii = i % n, jj = j % n;
+      if (bi === bj) return (ii === jj ? z.re : 0) - Ad[ii][jj];
+      return ii === jj ? (bi === 0 ? -z.im : z.im) : 0;
+    }));
+    const side = (M) => Array.from({ length: k * n }, (_, i) => Array.from({ length: k * M[0].length }, (__, j) => (Math.floor(j / M[0].length) === Math.floor(i / n) ? M[i % n][j % M[0].length] : 0)));
+    const below = (M) => Array.from({ length: k * M.length }, (_, i) => Array.from({ length: k * n }, (__, j) => (Math.floor(j / n) === Math.floor(i / M.length) ? M[i % M.length][j % n] : 0)));
+    const unreached = !full(Z.map((row, i) => [...row, ...side(B)[i]]), k * n);
+    const unweighted = !full([...Z, ...below(W)], k * n);
+    if (unreached || unweighted) return { z, radius, unreached, unweighted };
+  }
+  return null;
 }
 
 // The steady-state Kalman filter of an Observer (designs-in-the-page.md
@@ -3402,6 +3702,7 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
   if (!m) throw new DesignError('no-measurement', 'this observer has no measurement to correct its estimate with', 'wire the measurements to inputs 2, 3, …');
   if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')}), so there is nothing to estimate`, lin.warnings.join('; ') || 'wire input 1 (u) to what drives the plant, and the plant to the measurements');
   if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'the filter is designed at the origin, which must be an equilibrium with u = 0');
+  refuseKinks(lin, 'the Kalman filter');
   const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
   if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; the filter needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
   const q = Array.isArray(Q) ? Q : [Q];
@@ -3413,6 +3714,7 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
 
   const warnings = [];
   // R: given, or what the noise and quantizer blocks on each measurement's way add.
+  const parts = given ? [] : lin.sensors.flatMap((s) => s.parts ?? []);
   const r = given ? (rv.length === 1 ? new Array(m).fill(rv[0]) : rv) : lin.sensors.map((s, k) => {
     const v = s.std ** 2 + s.q ** 2 / 12;
     if (v > 0) return v;
@@ -3427,7 +3729,13 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
   const ILC = L.map((row, i) => lin.C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * lin.C[k][j], 0)));
   const poles = eig(mul(ILC, Ad));
   const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
-  if (!converged || !(radius < 1)) throw new DesignError('not-detectable', `the estimate's error would not die out: a pole of the filter stays at |z| = ${fmt(radius)}`, `the measurements may not show every state (${names.join(', ')}); measure more, or raise Q`);
+  if (!converged || !(radius < 1)) {
+    // Why: a mode that does not decay by itself is either not seen by the
+    // measurements, or not driven by any process noise in Q (PBH tests).
+    const Ct = transpose(lin.C), mode = stuck(transpose(Ad), Ct, transpose(Qw));
+    if (mode && !mode.unreached && mode.unweighted) throw new DesignError('not-detectable', `the estimate's error would not die out: Q gives no process noise to a mode that does not decay by itself (|z| = ${fmt(mode.radius)}), so the filter would trust its model there for ever`, 'give Q a value above 0');
+    throw new DesignError('not-detectable', `the estimate's error would not die out: a pole of the filter stays at |z| = ${fmt(radius)}`, `the measurements may not show every state (${names.join(', ')}); measure more, or raise Q`);
+  }
 
   if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
   lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: the filter does not know that offset`); });
@@ -3436,7 +3744,7 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
   const rows = [
     { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
     { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
-    { label: 'R', value: r, labels, note: given ? '' : 'from the sensor blocks' },
+    { label: 'R', value: r, labels, note: given ? '' : parts.length ? `from ${and(parts)}` : 'none: no sensor blocks' },
     q.length === 1 ? { label: 'Q', value: q[0], note: `a push on ${lin.input.label}, per sample` } : { label: 'Q', value: q, labels: names },
     { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
   ];
@@ -3469,6 +3777,7 @@ function scheduledPIDesign(p, ctx) {
   const warnings = [];
   const pts = p.at.map((level) => {
     const lin = ctx.linearize({ y: [level] }, limits);
+    refuseKinks(lin, 'pole cancellation');
     const fit = firstOrderFit(lin, 0);
     warnings.push(...fit.warnings);
     return { level, u: lin.op.u, fit, ...piCancel(fit, p.Tcl) };
@@ -3480,6 +3789,18 @@ function scheduledPIDesign(p, ctx) {
   try { u0 = ctx.trim([y[0]], limits).u; } catch (err) { warnings.push(`u0 = 0: ${err.message}`); }
   const theta = pts[0].fit.theta;
   if (theta > 0) warnings.push(`dead time ${fmt(theta)} s on ${out.label} is not in this design: pole cancellation leaves it out`);
+  // Is the closed loop asked for reachable? Not faster than the dead time
+  // plus half a sample (the hold's own lag; SIMC: Tcl ≥ θ), nor with a
+  // sample time long against it.
+  const Ts = ctx.Ts, lag = theta + Ts / 2;
+  let ok = true;
+  if (p.Tcl < lag) {
+    ok = false;
+    warnings.push(`Tcl ${fmt(p.Tcl)} s is faster than the loop can be: the dead time ${fmt(theta)} s and half the sample time ${fmt(Ts)} s add ${fmt(lag)} s, and the loop will ring or cycle; make Tcl at least ${fmt(lag)} s`);
+  } else if (Ts > p.Tcl / 2) {
+    ok = false;
+    warnings.push(`the sample time ${fmt(Ts)} s is long against the closed loop Tcl ${fmt(p.Tcl)} s; make Ts at most Tcl / 4 (${fmt(p.Tcl / 4)} s)`);
+  } else if (Ts > p.Tcl / 4) warnings.push(`the sample time ${fmt(Ts)} s is long against the closed loop Tcl ${fmt(p.Tcl)} s; Ts ≤ Tcl / 4 (${fmt(p.Tcl / 4)} s) follows it closely`);
   // The dead time is the path's, the same at every level: a row of its own.
   const rows = [
     { label: 'gains', head: [`${out.label}${unit ? ` (${unit.trim()})` : ''}`, uName, 'K', 'τ (s)', 'Kp', 'Ki'], table: pts.map((q) => [q.level, q.u, q.fit.K, q.fit.tau, q.Kp, q.Ki]) },
@@ -3487,7 +3808,7 @@ function scheduledPIDesign(p, ctx) {
     { label: 'u0', value: u0, note: `holds ${out.label} = ${fmt(y[0])}${unit}, where it starts` },
   ];
   const at = p.at.length === 1 ? `${out.label} = ${fmt(p.at[0])}${unit}, ${uName} = ${fmt(pts[0].u)}` : `${out.label} = ${fmt(p.at[0])} … ${fmt(p.at.at(-1))}${unit} (${p.at.length} levels)`;
-  return { values: { at: [...p.at], Kp: pts.map((q) => q.Kp), Ki: pts.map((q) => q.Ki), u0 }, rows, warnings: [...new Set(warnings)], at };
+  return { values: { at: [...p.at], Kp: pts.map((q) => q.Kp), Ki: pts.map((q) => q.Ki), u0 }, rows, warnings: [...new Set(warnings)], quality: { ok }, at };
 }
 
 // The swing-up of a trajectory variant (designs-in-the-page.md §8.4): from
@@ -3496,10 +3817,11 @@ function scheduledPIDesign(p, ctx) {
 // time-varying LQR along the plan and the upright LQR after it.
 //   1. The upright LQR at the origin (lqrDesign: every state measured), x following r.
 //   2. The plan, a heavy entry keyed by T, segments and the force it may use
-//      (planShare of the smaller limit), not by Q, R, start or the limits:
+//      each way (planShare of u min and of u max), not by Q, R or start:
 //      tuning those re-runs steps 3 to 5 (a few ms), never the plan.
 //   3. TV-LQR along the plan, ending in the upright P; in measurement order.
-//   4. The closed loop on the nonlinear plant until 1 s after the plan.
+//   4. The closed loop on the nonlinear plant as it runs (u = 0 until start,
+//      then the plan) until 1 s after the plan.
 //   5. Rows: what was planned and checked, the end error, F(t), the upright gains.
 // A plan that did not converge, or a loop that does not hold, still runs
 // (status 'warn'), so the attempt can be seen.
@@ -3511,7 +3833,8 @@ function trajectoryDesign(p, ctx) {
   const up = lqrDesign(lin, { Q: p.Q, R: p.R, track: 1, Ts });
   const model = ctx.model();
   const labels = lin.outputs.map((o) => o.label), uName = lin.input.label;
-  const Fmax = p.planShare * Math.min(-p.umin, p.umax);
+  // The force the plan may use each way; the rest of each limit is the feedback's.
+  const Fmin = p.planShare * p.umin, Fmax = p.planShare * p.umax;
   // Where it starts, states with the same value grouped: 'θ1, θ2, θ3 = 3.142 rad → origin'.
   const groups = [];
   model.states.forEach((s, i) => {
@@ -3521,8 +3844,8 @@ function trajectoryDesign(p, ctx) {
     if (g && g.text === text) g.names.push(s.name); else groups.push({ names: [s.name], text });
   });
   const at = `${groups.length ? groups.map((g) => `${g.names.join(', ')} = ${g.text}`).join(', ') : 'rest'} → origin`;
-  const h = ctx.heavy('plan', { version: PLAN_VERSION, T: p.T, segments: p.segments, Fmax }, function* plan() {
-    const pl = yield* planTransfer(model, { T: p.T, Ts, segments: p.segments, Fmax });
+  const h = ctx.heavy('plan', { version: PLAN_VERSION, T: p.T, segments: p.segments, Fmin, Fmax }, function* plan() {
+    const pl = yield* planTransfer(model, { T: p.T, Ts, segments: p.segments, Fmin, Fmax });
     const along = yield* alongPlanSteps(model, pl);
     return { plan: pl, along };
   }, { title: 'Swing-up' });
@@ -3530,16 +3853,24 @@ function trajectoryDesign(p, ctx) {
   if (h.status !== 'ready') return { pending: h.progress ?? null, at, warnings: up.warnings };
   const { plan, along } = h.value;
   const Kx = tvlqrGains(along, { Q: up.Qx, R: p.R, Pend: up.P });
-  const values = planValues(model, along, Kx, { C: lin.C, K: up.K, kr: up.kr });
-  // The loop on the nonlinear plant, with the limits; the law unclamped, so the peak it asks for shows.
-  const check = verifyLoop(model, planLaw(values, Ts), { Ts, sub: plan.sub, duration: plan.T + 1, umin: p.umin, umax: p.umax });
-  const lim = Math.min(-p.umin, p.umax), limText = Number.isFinite(lim) ? ` of ${fmt(lim)}` : '';
+  const values = planValues(model, along, Kx, { K: up.K, kr: up.kr });
+  // The loop on the nonlinear plant as it runs, from t = 0 (u = 0 until
+  // start), with the limits; the law unclamped, so the peak it asks for shows.
+  const check = verifyLoop(model, planLaw(values, Ts, { start: p.start }), { Ts, sub: plan.sub, duration: p.start + plan.T + 1, umin: p.umin, umax: p.umax });
+  const limText = ` (limits ${fmt(p.umin)} to ${fmt(p.umax)})`;
   const end = check.endError, endText = `${end.label} is ${fmt(Math.abs(end.value))}${end.unit ? ` ${end.unit}` : ''} off`;
   const warnings = [...up.warnings];
+  // The plan starts from the start state: a plant that moves before start is not where it assumes.
+  if (p.start > 0) {
+    const f = new Float64Array(model.n);
+    model.f(model.x0, 0, f);
+    if (f.some((v) => Math.abs(v) > 1e-6)) warnings.push(`the plant does not rest at its start state, and the plan assumes it does until start (${fmt(p.start)} s): start at 0, or start the plant at rest`);
+  }
   if (!plan.ok) warnings.push(`${plan.message}: ${plan.hint}`);
-  if (!check.ok) warnings.push(`the loop does not hold: ${endText} 1 s after the plan; peak ${uName} ${fmt(check.Fpeak)}${Number.isFinite(lim) ? ` with a ${fmt(lim)} limit` : ''}: ${check.Fpeak > lim ? 'lengthen T or raise the limit' : 'lengthen T, or weigh the states more (Q)'}`);
+  const over = check.Fpeak > Math.min(-p.umin, p.umax);
+  if (!check.ok) warnings.push(`the loop does not hold: ${endText} 1 s after the plan; peak ${uName} ${fmt(check.Fpeak)}${limText}: ${over ? 'lengthen T or raise the limits' : 'lengthen T, or weigh the states more (Q)'}`);
   const planned = `${plan.ok ? 'Planned' : 'Not converged'} in ${(h.ms / 1000).toFixed(1)} s (${plan.iterations} iterations, start ${plan.start} of ${plan.starts}).`;
-  const held = check.ok ? `Verified: upright 1 s after T, peak ${uName} ${fmt(check.Fpeak)}${limText}.` : `The loop does not hold: ${endText} 1 s after T.`;
+  const held = check.ok ? `Verified: at rest at the origin 1 s after T, peak ${uName} ${fmt(check.Fpeak)}${limText}.` : `The loop does not hold: ${endText} 1 s after T.`;
   // F(t) for a sparkline, at most 120 points.
   const every = Math.max(1, Math.ceil(plan.F.length / 120));
   const spark = Array.from(plan.F).filter((_, i) => i % every === 0);
@@ -3547,16 +3878,16 @@ function trajectoryDesign(p, ctx) {
   const rows = [
     { label: 'plan', value: `${planned} ${held}`, sentence: true },
     { label: 'T', value: plan.T, note: `s, ${plan.segments} segments of ${plan.perSegment} samples` },
-    { label: `${uName}(t)`, spark, note: `peak ${fmt(plan.Fpeak)}${Number.isFinite(Fmax) ? ` of the ${fmt(Fmax)} it may use` : ''}` },
+    { label: `${uName}(t)`, spark, note: `${fmt(plan.Flo)} to ${fmt(plan.Fhi)}${Number.isFinite(Fmax) || Number.isFinite(Fmin) ? `, of ${fmt(Fmin)} to ${fmt(Fmax)} it may use` : ''}` },
     { label: 'end error', value: ends.map(([, v]) => v), labels: ends.map(([n]) => n) },
     { label: 'defect', value: plan.defect, note: 'between segments' },
-    { label: 'K upright', value: up.K, labels },
+    { label: 'K at the origin', value: up.K, labels },
     ...up.rows.slice(1),
   ];
   return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }
 
-return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, lqrDesign, kalmanDesign, piCancel, scheduledPIDesign, trajectoryDesign };
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, poleOf, kalmanDesign, piCancel, scheduledPIDesign, trajectoryDesign };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
@@ -3598,7 +3929,7 @@ __mods['core/controllers.js'] = (() => {
 // computation (a plan; the tab folds it away), `tune: false` one auto-tune
 // leaves alone.
 
-const { lqrDesign, scheduledPIDesign, trajectoryDesign } = __mods['core/design.js'];
+const { lqrDesign, scheduledPIDesign, trajectoryDesign, poleOf } = __mods['core/design.js'];
 const { DesignError } = __mods['core/linearize.js'];
 const { planLaw } = __mods['core/planner.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
@@ -3815,34 +4146,36 @@ const CONTROLLERS = {
     // The swing-up above, its catch designed by LQR at the upright rest (the
     // origin of the plant this block sees, which must be the cart–pole's
     // x, θ, v, ω on inputs 2 to 5); x follows r. The energy pump keeps its
-    // hand gains.
+    // hand gains; the pole's l and g it measures energy with come from the
+    // plant too (poleOf), so a longer pole is pumped to its own top.
     label: 'Swing-up + LQR catch', summary: 'energy pumping, then u = kr r − K · y, K from the plant',
-    designed: true, version: 1, computes: ['K', 'kr'], twin: 'swingUp',
-    params: [...SWING, ...WEIGHTS, ...LIMITS],
+    designed: true, version: 2, computes: ['K', 'kr', 'l', 'g'], twin: 'swingUp',
+    params: [...SWING.filter((s) => s.key !== 'l' && s.key !== 'g'), ...WEIGHTS, ...LIMITS],
     design(p, ctx) {
       const lin = ctx.linearize('origin');
       const labels = lin.outputs.map((o) => o.label);
       if (lin.m !== 4 || !lin.outputs[1].angle) throw new DesignError('swing-inputs', `the swing-up reads x, θ, v, ω (θ an angle) from inputs 2 to 5; this block has ${labels.length ? labels.join(', ') : 'no measurements'}`, 'wire the cart–pole\'s x, θ, v, ω to inputs 2 to 5, or use LQR');
       const d = lqrDesign(lin, { Q: p.Q, R: p.R, track: 1, Ts: ctx.Ts });
-      return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
+      const { l, g } = poleOf(lin);
+      return { values: { K: d.K, kr: d.kr, l, g }, rows: [...d.rows, { label: 'pole', value: [l, g], labels: ['l', 'g'], note: 'm, m/s²: what the pump measures energy with' }], warnings: d.warnings };
     },
     make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.swingUpLqr.manual(p, values), Ts) : OFF; },
-    manual: (p, values) => ({ type: 'swingUp', params: { kE: p.kE, kx: p.kx, kv: p.kv, l: p.l, g: p.g, thetaS: p.thetaS, K: [...values.K], kr: values.kr, umin: p.umin, umax: p.umax } }),
+    manual: (p, values) => ({ type: 'swingUp', params: { kE: p.kE, kx: p.kx, kv: p.kv, l: values.l, g: values.g, thetaS: p.thetaS, K: [...values.K], kr: values.kr, umin: p.umin, umax: p.umax } }),
     linear: twinLinear('swingUpLqr'),
   },
   trajectory: {
     // A swing-up planned in the page from the plant this block sees
     // (planner.js, design.js): the force per sample that takes it from where
     // it starts to rest at the origin, followed with time-varying LQR along
-    // the plan; then the upright LQR holds it, x following r. T, segments and
-    // planShare shape the plan (changing them plans again, a few seconds);
-    // Q, R, start and the limits only re-run the gains. There is no Copy as
+    // the plan; then the upright LQR holds it, x following r. T, segments,
+    // planShare and the limits shape the plan (changing them plans again,
+    // seconds); Q, R and start only re-run the gains. There is no Copy as
     // numbers: a plan is always computed.
     label: 'Planned swing-up + TV-LQR', summary: 'u = F(t) − K(t)·(y − y*(t)), then u = kr r − K·y',
     designed: true, version: 1, computes: ['F', 'Y', 'K', 'Kup', 'kr'],
     params: [
       num('T', 'Swing-up time T', 2.4, { unit: 's', positive: true, heavy: true, tune: false, help: 'how long the swing-up takes; rounded to whole samples' }),
-      num('segments', 'Segments', 12, { int: true, min: 2, max: 40, heavy: true, tune: false, help: 'pieces the plan is solved in (multiple shooting)' }),
+      num('segments', 'Segments', 12, { int: true, min: 2, max: 40, heavy: true, tune: false, help: 'pieces the plan is solved in (multiple shooting); more take longer' }),
       num('planShare', 'Plan may use', 0.75, { min: 0.05, max: 1, heavy: true, tune: false, help: 'the share of the force limit the plan may use; the rest is left for the feedback' }),
       num('start', 'Starts at', 0, { unit: 's', min: 0, help: 'until then u = 0' }),
       ...WEIGHTS, ...LIMITS,
@@ -3956,9 +4289,11 @@ function checkModel(p) {
   return '';
 }
 
-// Predict with the model, then correct with gain L (filter form).
+// Predict with the model, then correct with gain L (filter form):
+// x̂ = x̂⁻ + L (y − C x̂⁻), every innovation taken from the prediction before
+// any correction (the gain is designed for all measurements at once).
 function estimator({ n, m, Ad, Bd, C, L }) {
-  const x = new Float64Array(n), xp = new Float64Array(n), out = new Float64Array(n);
+  const x = new Float64Array(n), xp = new Float64Array(n), e = new Float64Array(m), out = new Float64Array(n);
   let first = true;
   return {
     step(inp) {
@@ -3968,10 +4303,11 @@ function estimator({ n, m, Ad, Bd, C, L }) {
         x.set(xp);
       }
       for (let k = 0; k < m; k++) {
-        let e = inp[k + 1] ?? 0;
-        for (let j = 0; j < n; j++) e -= C[k][j] * x[j];
-        for (let i = 0; i < n; i++) x[i] += L[i][k] * e;
+        let s = inp[k + 1] ?? 0;
+        for (let j = 0; j < n; j++) s -= C[k][j] * x[j];
+        e[k] = s;
       }
+      for (let i = 0; i < n; i++) { let s = 0; for (let k = 0; k < m; k++) s += L[i][k] * e[k]; x[i] += s; }
       out.set(x);
       return out;
     },
@@ -4060,7 +4396,7 @@ const { gaussAt } = __mods['core/signals.js'];
 const { compileExpr } = __mods['core/expr.js'];
 const { CONTROLLERS, normalizeVariant, makeLaw } = __mods['core/controllers.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
-const { SYNC_DESIGNS } = __mods['core/design.js'];
+const { SYNC_DESIGNS, defaultDesigns } = __mods['core/design.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
 // Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
@@ -4580,13 +4916,15 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     // not: in the page, background jobs this compile did not ask for (a plan
     // for a variant no longer running) are dropped then.
     // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
-    const job = (opts.designs ?? SYNC_DESIGNS).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }));
+    const job = (opts.designs ?? defaultDesigns()).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }), { guest: !opts.designs && defaultDesigns() !== SYNC_DESIGNS });
     for (const nd of ctrls) {
       if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
       const inputs = blockInputNames(diagram, nd.idPath);
-      // What u is called: the Sink that records a Controller's output, or what feeds an Observer's u.
-      const sink = nd.observer ? null : probeList.find(([, k]) => nodes[k].kind === 'pass' && nodes[k].inputs[0] === nd.i);
-      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: nd.observer ? inputs[0] : sink?.[0] ?? 'u', outputs: nd.outv.length };
+      // What u is called: the Sink that records a Controller's output (for an
+      // Observer, what feeds its u), else what the Controller tab calls it.
+      const fed = nd.observer ? nd.inputs[0] : nd.i;
+      const sink = fed >= 0 ? probeList.find(([, k]) => nodes[k].kind === 'pass' && nodes[k].inputs[0] === fed) : null;
+      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: sink?.[0] ?? (nd.observer ? inputs[0] : 'u'), outputs: nd.outv.length };
       const status = job.resolve(block, nd.variant, nd.lib);
       nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
       designs.push(status);
@@ -4790,23 +5128,16 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
     }
 
-    // Sensors: quantizers and noise between the plant and each measurement.
+    // Sensors: quantizers and noise between the plant and each measurement
+    // (sensors[k], filled in below, once the Model can be evaluated). One
+    // elsewhere (noise on a torque, say) is process noise, which no design
+    // here accounts for: a note.
     const sensorPath = meas.map((mk) => walk([mk], reads));
-    const sensors = sensorPath.map((on) => {
-      let std2 = 0, q2 = 0;
-      for (let i = 0; i < nodes.length; i++) {
-        if (!on[i]) continue;
-        if (nodes[i].kind === 'quant') q2 += nodes[i].q ** 2;
-        if (nodes[i].kind === 'noise') std2 += nodes[i].std ** 2;
-      }
-      return { std: Math.sqrt(std2), q: Math.sqrt(q2) };
-    });
+    const sensors = meas.map(() => ({ std: 0, q: 0, parts: [] }));
     for (const i of slice) {
       const nd = nodes[i];
-      if (nd.kind !== 'quant' && nd.kind !== 'noise') continue;
-      const on = labels.filter((_, k) => sensorPath[k][i]);
-      const where = on.length ? ` on ${on.join(', ')}` : '';
-      notes.push(nd.kind === 'quant' ? `quantizer '${nd.name}'${where} is the identity in the model (step ${fmt(nd.q)})` : `noise '${nd.name}'${where} adds 0 in the model (σ ${fmt(nd.std)})`);
+      if ((nd.kind !== 'quant' && nd.kind !== 'noise') || sensorPath.some((on) => on[i])) continue;
+      notes.push(nd.kind === 'quant' ? `quantizer '${nd.name}' is the identity in the model (step ${fmt(nd.q)})` : `noise '${nd.name}' adds 0 in the model (σ ${fmt(nd.std)}): it is on no measurement's way`);
     }
 
     // Dead time per measurement: the shortest and longest sums along the
@@ -4877,17 +5208,50 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         evaluate(x, u, slice);
         for (let k = 0; k < m; k++) out[k] = meas[k] < 0 ? 0 : vals[meas[k]];
       },
-      // Saturations outside their limits at (x, u): there the model has no slope.
-      atLimits(x, u) {
+      // Saturations outside their limits at (x, u), where the model sees no
+      // slope through them, or at a limit (within a difference step), where
+      // the slope differs left and right (edge).
+      limits(x, u) {
         mdl.y(x, u, yScratch);
         const out = [];
         for (const i of slice) {
-          const nd = nodes[i], v = inOf(nd);
-          if (nd.kind === 'sat' && (v < nd.lo || v > nd.hi)) out.push(`'${nd.name}' is saturated at the operating point (input ${fmt(v)}, limits ${fmt(nd.lo)} to ${fmt(nd.hi)}): the model sees no slope through it`);
+          const nd = nodes[i];
+          if (nd.kind !== 'sat') continue;
+          const v = inOf(nd), near = 1e-6 * Math.max(1, Math.abs(v)), lim = `(input ${fmt(v)}, limits ${fmt(nd.lo)} to ${fmt(nd.hi)})`;
+          if (v < nd.lo || v > nd.hi) out.push({ name: nd.name, edge: false, sentence: `'${nd.name}' is saturated at the operating point ${lim}: the model sees no slope through it` });
+          else if (v - nd.lo <= near || nd.hi - v <= near) out.push({ name: nd.name, edge: true, sentence: `'${nd.name}' is at its limit at the operating point ${lim}: the slope differs left and right` });
         }
         return out;
       },
+      atLimits: (x, u) => mdl.limits(x, u).map((s) => s.sentence),
     };
+    // The sensor blocks on each measurement's way, each weighed by how much
+    // of it reaches the measurement (a unit-conversion gain after a noise
+    // block multiplies its σ), at the origin, where a Kalman filter is
+    // designed: |∂y_k / ∂(the block's output)|.
+    const zx = new Float64Array(nk);
+    const gainTo = (i, k) => {
+      if (meas[k] === i) return 1;
+      const p = slice.indexOf(i);
+      if (p < 0 || meas[k] < 0) return 0;
+      const head = slice.subarray(0, p + 1), tail = slice.subarray(p + 1);
+      evaluate(zx, 0, head);
+      const d = 1e-6 * Math.max(1, Math.abs(vals[i]));
+      const at = (e) => { evaluate(zx, 0, head); vals[i] += e; outputs(tail, t0, Xf, 0, 0); return vals[meas[k]]; };
+      return Math.abs((at(d) - at(-d)) / (2 * d));
+    };
+    sensors.forEach((sn, k) => {
+      let std2 = 0, q2 = 0;
+      for (const i of slice) {
+        const nd = nodes[i];
+        if (!sensorPath[k][i] || (nd.kind !== 'quant' && nd.kind !== 'noise')) continue;
+        const g = gainTo(i, k), times = Math.abs(g - 1) > 1e-6 ? ` × ${fmt(g)}` : '';
+        if (nd.kind === 'quant') { q2 += (g * nd.q) ** 2; sn.parts.push(`quantizer '${nd.name}' step ${fmt(nd.q)}${times}`); }
+        else { std2 += (g * nd.std) ** 2; sn.parts.push(`noise '${nd.name}' σ ${fmt(nd.std)}${times}`); }
+      }
+      sn.std = Math.sqrt(std2);
+      sn.q = Math.sqrt(q2);
+    });
     // A measurement is an angle when it is exactly one angle state (slope 1).
     // Such a measurement also has the state's unit ('h = 0.45 m').
     const xs = Float64Array.from(mdl.x0), yp = new Float64Array(m), ym = new Float64Array(m);
@@ -4899,10 +5263,13 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       xs[i] = x;
       for (let k = 0; k < m; k++) { const d = (yp[k] - ym[k]) / (2 * dx); if (Math.abs(d) > 1e-9) slopes[k].push([i, d]); }
     }
+    // A measurement that reads one state alone, with any slope, gives trim
+    // a start: that state at the level (outputs[k].state, .slope).
     slopes.forEach((row, k) => {
       const one = row.length === 1 && Math.abs(row[0][1] - 1) < 1e-6;
       mdl.outputs[k].angle = one && mdl.states[row[0][0]].angle;
       mdl.outputs[k].unit = one ? mdl.states[row[0][0]].unit : '';
+      if (row.length === 1) Object.assign(mdl.outputs[k], { state: row[0][0], slope: row[0][1] });
     });
     return mdl;
   }
@@ -5510,7 +5877,7 @@ const EXAMPLE_PLANTS = [
         src('r', 30, 112, 'm'),
         src('d', 300, 200, 'N'),
         ctrl(130, 80, 5, 0.01, [
-          { name: 'Swing-up + LQR catch', type: 'swingUpLqr', params: { kE: 3, kx: 8, kv: 5, l: 0.5, g: 9.81, thetaS: 0.4, Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
+          { name: 'Swing-up + LQR catch', type: 'swingUpLqr', params: { kE: 3, kx: 8, kv: 5, thetaS: 0.4, Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
           { name: 'LQR only', type: 'lqr', params: { Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
@@ -5788,7 +6155,6 @@ const { normalizeGoal, evaluateGoal, compareEvals } = __mods['core/goal.js'];
 const { normalizeDiagram, diagramNames, compileDiagram } = __mods['core/diagram.js'];
 const { normalizeView } = __mods['core/views.js'];
 const { DesignError, parseOp, operatingPoint, linearize } = __mods['core/linearize.js'];
-const { SYNC_DESIGNS } = __mods['core/design.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
 const FORMAT = 'loop-tuner/2';
 const PALETTE_SIZE = 8;
@@ -6066,7 +6432,8 @@ function blockModel(project, idPath, at, { designs, limits } = {}) {
   const block = level?.blocks.find((b) => b.id === parts.at(-1));
   if (!block || (block.type !== 'controller' && block.type !== 'observer')) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl');
   const op = parseOp(at);
-  const store = designs ?? SYNC_DESIGNS;
+  // No store named: compileDiagram's default (Node: SYNC_DESIGNS; the page: its own, as a guest).
+  const store = designs;
   let statuses, snap = null;
   if (op.kind === 't') {
     const sim = simOf(project);
@@ -7679,6 +8046,9 @@ function createDisplay(root, handlers) {
   }
 
   // Sweep
+  // While the page makes a plan (handlers.frameMs() > 0) the sweep keeps
+  // real time but draws at most every frameMs, so the plan gets the thread.
+  let drawn = 0;
   function frame(now) {
     raf = 0;
     const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
@@ -7692,7 +8062,8 @@ function createDisplay(root, handlers) {
         else { tScan = w0 + ((tScan - w0) % (w1 - w0)); keepRun(); }
       }
     }
-    draw();
+    const every = mode === 'stop' ? 0 : handlers.frameMs?.() ?? 0;
+    if (!every || now - drawn >= every) { drawn = now; draw(); }
     if (mode !== 'stop') raf = requestAnimationFrame(frame);
     else last = 0;
   }
@@ -8458,9 +8829,14 @@ function createScene(host, app) {
     }
   }
 
-  function draw() {
+  // While the page makes a plan, at most 20 frames a second (app.frameMs).
+  let drawn = 0;
+  function draw(now = 0) {
     raf = 0;
     if (!view || host.hidden) return;
+    const every = app.frameMs?.() ?? 0;
+    if (every && now - drawn < every) { raf = requestAnimationFrame(draw); return; }
+    drawn = now;
     if (view.kind === 'svg') { try { drawSvg(); } catch { /* a bad selector draws nothing */ } raf = requestAnimationFrame(draw); return; }
     const [x0, y0, x1, y1] = view.view;
     const r = host.getBoundingClientRect();
@@ -9267,8 +9643,8 @@ const ABOUT = {
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
   scheduledPI: 'A PI computed from the plant: at each level of the measurement the page finds the input that holds it, linearises the plant there and fits a first-order lag; Kp and Ki then cancel that lag so the loop answers with the time constant Tcl. One level gives a fixed PI, several a gain-scheduled one. It starts with the input that holds the level the plant starts at.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
-  swingUpLqr: 'The energy swing-up (the pump gains are yours), with the catch near the top designed by LQR from the cart and pole as they are wired: Q weighs x, θ, v, ω, R the force. Change the pole and the catch follows.',
-  trajectory: 'A swing-up planned in the page from the plant as it is wired: a force F(t) that takes it from where it starts to rest at the top in T seconds, followed with time-varying LQR that corrects small errors along the way, then LQR holds it. The plan uses a share of the force limit and leaves the rest to the feedback. Changing T, the segments or that share plans again (a few seconds); Q, R and the start only recompute the gains.',
+  swingUpLqr: 'The energy swing-up (the pump gains are yours), with the catch near the top designed by LQR from the cart and pole as they are wired: Q weighs x, θ, v, ω, R the force. The pole length and g the pump measures energy with come from the plant too. Change the pole and both follow.',
+  trajectory: 'A swing-up planned in the page from the plant as it is wired: a force F(t) that takes it from where it starts to rest at the top in T seconds, followed with time-varying LQR that corrects small errors along the way, then LQR holds it. The plan uses a share of the force limit and leaves the rest to the feedback. Changing T, the segments, that share or a limit plans again (a few seconds); Q, R and the start only recompute the gains.',
   kalman: 'Predicts the states with a model of the plant as it is wired (linearised at its origin), then corrects with the measurements, weighing them by the noise: Q is a random push on u (or one value per state), R the noise on each measurement, taken from the noise and quantizer blocks on its way when left empty. A large R trusts the model, a large Q the measurements. The gain is the steady-state Kalman gain; its estimates are the states the observer can see, and a controller designed on them looks through to those states.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
@@ -9388,7 +9764,7 @@ function createControllerTab(host, app) {
     // are changed on purpose, not nudged by the way.
     const light = def.params.filter((p) => !p.heavy), heavy = def.params.filter((p) => p.heavy);
     $('#ct-params').innerHTML = def.params.length
-      ? light.map(one).join('') + (heavy.length ? `<details class="pfold" id="ct-plan" ${planOpen ? 'open' : ''}><summary>Plan</summary><p class="pfh">Changing these computes the plan again, which takes a few seconds.</p>${heavy.map(one).join('')}</details>` : '')
+      ? light.map(one).join('') + (heavy.length ? `<details class="pfold" id="ct-plan" ${planOpen ? 'open' : ''}><summary>Plan</summary><p class="pfh">Changing these (or a limit) computes the plan again, which takes a few seconds.</p>${heavy.map(one).join('')}</details>` : '')
       : '<p class="phelp">No parameters.</p>';
     $('#ct-plan')?.addEventListener('toggle', (e) => { planOpen = e.target.open; });
     $('#ct-about').textContent = ABOUT[v.type] ?? '';
@@ -9428,20 +9804,21 @@ function createControllerTab(host, app) {
       body += `<div class="cprog" data-key="${esc(st.key)}"><div class="cbar" role="progressbar" aria-label="Planning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(100 * (st.progress?.fraction ?? 0))}"><span style="width:${(100 * (st.progress?.fraction ?? 0)).toFixed(1)}%"></span></div>`
         + `<p class="cmsg cprogline">${esc(progressLine(st.progress))}</p></div>`
         + `<p class="cmsg">${st.status === 'stale' ? 'Meanwhile the block runs the previous plan; the display takes the new one from its start when it is ready.' : `Until it is ready the block puts out ${off}; the display then takes the new run from its start.`}</p>`
-        + '<div class="pbtns"><button class="key small" id="ct-cancel" title="Stop planning; the block keeps what it runs now">Cancel</button></div>';
+        + '<div class="pbtns"><button class="key small" data-act="cancel" title="Stop planning; the block keeps what it runs now">Cancel</button></div>';
     }
     if (st.status === 'cancelled') {
       body += `<p class="cmsg">Planning was cancelled. ${st.values ? 'The block runs the previous plan' : `The block puts out ${off}`} until you press Plan or change its inputs.</p>`
-        + '<div class="pbtns"><button class="key small primary" id="ct-plan" title="Plan again with these inputs">Plan</button></div>';
+        + '<div class="pbtns"><button class="key small primary" data-act="retry" title="Plan again with these inputs">Plan</button></div>';
     }
     if ((st.status === 'stale' || st.status === 'cancelled') && st.rows.length) body += '<p class="cmsg csub">The previous plan:</p>';
     body += st.rows.map(rowHtml).join('');
     if (st.warnings.length) body += `<ul class="cwarn">${st.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>`;
     box.innerHTML = `<div class="chead"><h4 class="glabel">Computed</h4><span class="cst cst-${esc(st.status)}">${esc(STATUS_WORD[st.status] ?? st.status)}</span><span class="cmeta" title="the design's key: the same inputs give the same numbers">${time ? `${time} · ` : ''}#${esc(st.key.slice(0, 6))}</span></div>${body}`
-      + (canCopy ? '<div class="pbtns"><button class="key small" id="ct-copy" title="Add a hand variant with these numbers after this one, and run it">Copy as numbers</button></div>' : '');
-    $('#ct-copy')?.addEventListener('click', () => copyAsNumbers(c, st));
-    $('#ct-cancel')?.addEventListener('click', () => app.cancelDesign(st.key));
-    $('#ct-plan')?.addEventListener('click', () => app.retryDesign(st.key));
+      + (canCopy ? '<div class="pbtns"><button class="key small" data-act="copy" title="Add a hand variant with these numbers after this one, and run it">Copy as numbers</button></div>' : '');
+    // Bound inside the box: the Plan fold of the inputs has an id of its own.
+    box.querySelector('[data-act="copy"]')?.addEventListener('click', () => copyAsNumbers(c, st));
+    box.querySelector('[data-act="cancel"]')?.addEventListener('click', () => app.cancelDesign(st.key));
+    box.querySelector('[data-act="retry"]')?.addEventListener('click', () => app.retryDesign(st.key));
   }
 
   // The variant glyphs: "computed", or how its design stands when it runs.
@@ -9736,7 +10113,7 @@ __mods['ui/app.js'] = (() => {
 
 const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS, loopModel } = __mods['core/project.js'];
 const { diagramNames } = __mods['core/diagram.js'];
-const { createDesignStore } = __mods['core/design.js'];
+const { createDesignStore, useDesigns } = __mods['core/design.js'];
 const { createPlantEditor } = __mods['ui/plant.js'];
 const { createControllerTab } = __mods['ui/controller.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
@@ -9798,6 +10175,11 @@ function startApp() {
   // u = 0 or its previous values. When it is done, the store's generation
   // goes up and the acquisition is made again.
   const designs = createDesignStore({ mode: 'async' });
+  // Every compile in the page uses it: one that names no store (an analysis,
+  // an auto-tune run) reads its designs and plans as a guest and never plans
+  // on the main thread. app.designs.generation goes up when a plan settles.
+  useDesigns(designs);
+  app.designs = designs;
 
   // The acquisition: every signal the display can show. Without a plant and a
   // controller there is only r(t).
@@ -9843,12 +10225,15 @@ function startApp() {
   // The pump: while the store has jobs, a slice of work per task. A
   // MessageChannel message starts the next slice at once (setTimeout would
   // wait at least 4 ms), and the browser draws frames between slices. A
-  // slice lasts as long as the browser was away since the last one (mostly
-  // drawing), between 8 and 16 ms: on a quick screen the display keeps its
-  // 60 frames a second, on a slow one the plan still gets about half the
-  // time. While a job waits out its debounce, a timer.
+  // slice lasts as long as the browser was away since the last one, between
+  // 24 and 40 ms, and meanwhile the display and the plant's view draw at most
+  // 20 frames a second (app.frameMs): what runs is u = 0 or the previous
+  // plan, so the plan gets most of the main thread (headless Chromium: the
+  // default plan in 5 to 6 s, Node 3 s). While a job waits out its
+  // debounce, a timer.
   const pumpChannel = new MessageChannel();
   let pumping = false, sliceEnd = 0;
+  app.frameMs = () => (pumping ? 50 : 0);
   function pumpDesigns() {
     if (pumping || !designs.busy()) return;
     pumping = true;
@@ -9857,7 +10242,7 @@ function startApp() {
   }
   pumpChannel.port1.onmessage = () => {
     const away = sliceEnd ? performance.now() - sliceEnd : 0;
-    const r = designs.runJobs(Math.min(16, Math.max(8, away)));
+    const r = designs.runJobs(Math.min(40, Math.max(24, away)));
     sliceEnd = performance.now();
     // The next slice is scheduled even if showing this one's result fails.
     try { if (r.finished.length) designsSettled(r.finished); } finally {
@@ -10075,6 +10460,7 @@ function startApp() {
     onSelectChannel: (i) => app.selectChannel(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
     onStopped: () => controls.render(display.mode),
+    frameMs: () => app.frameMs(),
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
@@ -10110,7 +10496,7 @@ function startApp() {
     const order = ['error', 'pending', 'stale', 'cancelled', 'warn'];
     const s = (app.designStatuses ?? []).filter((x) => order.includes(x.status)).sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status))[0];
     if (!s) return null;
-    const pct = `${Math.round(100 * (s.progress?.fraction ?? 0))} %`;
+    const pct = `${Math.round(100 * (s.progress?.fraction ?? 0))} %${s.progress?.start > 1 ? ` (start ${s.progress.start} of ${s.progress.starts})` : ''}`;
     const what = { error: 'no design', warn: 'check its design', pending: `planning ${pct}`, stale: `re-planning ${pct}`, cancelled: 'planning cancelled' }[s.status];
     return { text: `${s.block} · ${s.variant}: ${what}`, path: s.path };
   }

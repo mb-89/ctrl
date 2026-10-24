@@ -26,8 +26,8 @@ const ABOUT = {
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
   scheduledPI: 'A PI computed from the plant: at each level of the measurement the page finds the input that holds it, linearises the plant there and fits a first-order lag; Kp and Ki then cancel that lag so the loop answers with the time constant Tcl. One level gives a fixed PI, several a gain-scheduled one. It starts with the input that holds the level the plant starts at.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
-  swingUpLqr: 'The energy swing-up (the pump gains are yours), with the catch near the top designed by LQR from the cart and pole as they are wired: Q weighs x, θ, v, ω, R the force. Change the pole and the catch follows.',
-  trajectory: 'A swing-up planned in the page from the plant as it is wired: a force F(t) that takes it from where it starts to rest at the top in T seconds, followed with time-varying LQR that corrects small errors along the way, then LQR holds it. The plan uses a share of the force limit and leaves the rest to the feedback. Changing T, the segments or that share plans again (a few seconds); Q, R and the start only recompute the gains.',
+  swingUpLqr: 'The energy swing-up (the pump gains are yours), with the catch near the top designed by LQR from the cart and pole as they are wired: Q weighs x, θ, v, ω, R the force. The pole length and g the pump measures energy with come from the plant too. Change the pole and both follow.',
+  trajectory: 'A swing-up planned in the page from the plant as it is wired: a force F(t) that takes it from where it starts to rest at the top in T seconds, followed with time-varying LQR that corrects small errors along the way, then LQR holds it. The plan uses a share of the force limit and leaves the rest to the feedback. Changing T, the segments, that share or a limit plans again (a few seconds); Q, R and the start only recompute the gains.',
   kalman: 'Predicts the states with a model of the plant as it is wired (linearised at its origin), then corrects with the measurements, weighing them by the noise: Q is a random push on u (or one value per state), R the noise on each measurement, taken from the noise and quantizer blocks on its way when left empty. A large R trusts the model, a large Q the measurements. The gain is the steady-state Kalman gain; its estimates are the states the observer can see, and a controller designed on them looks through to those states.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
@@ -147,7 +147,7 @@ export function createControllerTab(host, app) {
     // are changed on purpose, not nudged by the way.
     const light = def.params.filter((p) => !p.heavy), heavy = def.params.filter((p) => p.heavy);
     $('#ct-params').innerHTML = def.params.length
-      ? light.map(one).join('') + (heavy.length ? `<details class="pfold" id="ct-plan" ${planOpen ? 'open' : ''}><summary>Plan</summary><p class="pfh">Changing these computes the plan again, which takes a few seconds.</p>${heavy.map(one).join('')}</details>` : '')
+      ? light.map(one).join('') + (heavy.length ? `<details class="pfold" id="ct-plan" ${planOpen ? 'open' : ''}><summary>Plan</summary><p class="pfh">Changing these (or a limit) computes the plan again, which takes a few seconds.</p>${heavy.map(one).join('')}</details>` : '')
       : '<p class="phelp">No parameters.</p>';
     $('#ct-plan')?.addEventListener('toggle', (e) => { planOpen = e.target.open; });
     $('#ct-about').textContent = ABOUT[v.type] ?? '';
@@ -187,20 +187,21 @@ export function createControllerTab(host, app) {
       body += `<div class="cprog" data-key="${esc(st.key)}"><div class="cbar" role="progressbar" aria-label="Planning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(100 * (st.progress?.fraction ?? 0))}"><span style="width:${(100 * (st.progress?.fraction ?? 0)).toFixed(1)}%"></span></div>`
         + `<p class="cmsg cprogline">${esc(progressLine(st.progress))}</p></div>`
         + `<p class="cmsg">${st.status === 'stale' ? 'Meanwhile the block runs the previous plan; the display takes the new one from its start when it is ready.' : `Until it is ready the block puts out ${off}; the display then takes the new run from its start.`}</p>`
-        + '<div class="pbtns"><button class="key small" id="ct-cancel" title="Stop planning; the block keeps what it runs now">Cancel</button></div>';
+        + '<div class="pbtns"><button class="key small" data-act="cancel" title="Stop planning; the block keeps what it runs now">Cancel</button></div>';
     }
     if (st.status === 'cancelled') {
       body += `<p class="cmsg">Planning was cancelled. ${st.values ? 'The block runs the previous plan' : `The block puts out ${off}`} until you press Plan or change its inputs.</p>`
-        + '<div class="pbtns"><button class="key small primary" id="ct-plan" title="Plan again with these inputs">Plan</button></div>';
+        + '<div class="pbtns"><button class="key small primary" data-act="retry" title="Plan again with these inputs">Plan</button></div>';
     }
     if ((st.status === 'stale' || st.status === 'cancelled') && st.rows.length) body += '<p class="cmsg csub">The previous plan:</p>';
     body += st.rows.map(rowHtml).join('');
     if (st.warnings.length) body += `<ul class="cwarn">${st.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>`;
     box.innerHTML = `<div class="chead"><h4 class="glabel">Computed</h4><span class="cst cst-${esc(st.status)}">${esc(STATUS_WORD[st.status] ?? st.status)}</span><span class="cmeta" title="the design's key: the same inputs give the same numbers">${time ? `${time} · ` : ''}#${esc(st.key.slice(0, 6))}</span></div>${body}`
-      + (canCopy ? '<div class="pbtns"><button class="key small" id="ct-copy" title="Add a hand variant with these numbers after this one, and run it">Copy as numbers</button></div>' : '');
-    $('#ct-copy')?.addEventListener('click', () => copyAsNumbers(c, st));
-    $('#ct-cancel')?.addEventListener('click', () => app.cancelDesign(st.key));
-    $('#ct-plan')?.addEventListener('click', () => app.retryDesign(st.key));
+      + (canCopy ? '<div class="pbtns"><button class="key small" data-act="copy" title="Add a hand variant with these numbers after this one, and run it">Copy as numbers</button></div>' : '');
+    // Bound inside the box: the Plan fold of the inputs has an id of its own.
+    box.querySelector('[data-act="copy"]')?.addEventListener('click', () => copyAsNumbers(c, st));
+    box.querySelector('[data-act="cancel"]')?.addEventListener('click', () => app.cancelDesign(st.key));
+    box.querySelector('[data-act="retry"]')?.addEventListener('click', () => app.retryDesign(st.key));
   }
 
   // The variant glyphs: "computed", or how its design stands when it runs.

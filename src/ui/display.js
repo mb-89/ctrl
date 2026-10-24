@@ -317,6 +317,9 @@ export function createDisplay(root, handlers) {
   }
 
   // Sweep
+  // While the page makes a plan (handlers.frameMs() > 0) the sweep keeps
+  // real time but draws at most every frameMs, so the plan gets the thread.
+  let drawn = 0;
   function frame(now) {
     raf = 0;
     const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
@@ -330,7 +333,8 @@ export function createDisplay(root, handlers) {
         else { tScan = w0 + ((tScan - w0) % (w1 - w0)); keepRun(); }
       }
     }
-    draw();
+    const every = mode === 'stop' ? 0 : handlers.frameMs?.() ?? 0;
+    if (!every || now - drawn >= every) { drawn = now; draw(); }
     if (mode !== 'stop') raf = requestAnimationFrame(frame);
     else last = 0;
   }

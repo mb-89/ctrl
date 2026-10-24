@@ -4,7 +4,7 @@
 
 import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS, loopModel } from '../core/project.js';
 import { diagramNames } from '../core/diagram.js';
-import { createDesignStore } from '../core/design.js';
+import { createDesignStore, useDesigns } from '../core/design.js';
 import { createPlantEditor } from './plant.js';
 import { createControllerTab } from './controller.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
@@ -67,6 +67,11 @@ function startApp() {
   // u = 0 or its previous values. When it is done, the store's generation
   // goes up and the acquisition is made again.
   const designs = createDesignStore({ mode: 'async' });
+  // Every compile in the page uses it: one that names no store (an analysis,
+  // an auto-tune run) reads its designs and plans as a guest and never plans
+  // on the main thread. app.designs.generation goes up when a plan settles.
+  useDesigns(designs);
+  app.designs = designs;
 
   // The acquisition: every signal the display can show. Without a plant and a
   // controller there is only r(t).
@@ -112,12 +117,15 @@ function startApp() {
   // The pump: while the store has jobs, a slice of work per task. A
   // MessageChannel message starts the next slice at once (setTimeout would
   // wait at least 4 ms), and the browser draws frames between slices. A
-  // slice lasts as long as the browser was away since the last one (mostly
-  // drawing), between 8 and 16 ms: on a quick screen the display keeps its
-  // 60 frames a second, on a slow one the plan still gets about half the
-  // time. While a job waits out its debounce, a timer.
+  // slice lasts as long as the browser was away since the last one, between
+  // 24 and 40 ms, and meanwhile the display and the plant's view draw at most
+  // 20 frames a second (app.frameMs): what runs is u = 0 or the previous
+  // plan, so the plan gets most of the main thread (headless Chromium: the
+  // default plan in 5 to 6 s, Node 3 s). While a job waits out its
+  // debounce, a timer.
   const pumpChannel = new MessageChannel();
   let pumping = false, sliceEnd = 0;
+  app.frameMs = () => (pumping ? 50 : 0);
   function pumpDesigns() {
     if (pumping || !designs.busy()) return;
     pumping = true;
@@ -126,7 +134,7 @@ function startApp() {
   }
   pumpChannel.port1.onmessage = () => {
     const away = sliceEnd ? performance.now() - sliceEnd : 0;
-    const r = designs.runJobs(Math.min(16, Math.max(8, away)));
+    const r = designs.runJobs(Math.min(40, Math.max(24, away)));
     sliceEnd = performance.now();
     // The next slice is scheduled even if showing this one's result fails.
     try { if (r.finished.length) designsSettled(r.finished); } finally {
@@ -344,6 +352,7 @@ function startApp() {
     onSelectChannel: (i) => app.selectChannel(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
     onStopped: () => controls.render(display.mode),
+    frameMs: () => app.frameMs(),
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
@@ -379,7 +388,7 @@ function startApp() {
     const order = ['error', 'pending', 'stale', 'cancelled', 'warn'];
     const s = (app.designStatuses ?? []).filter((x) => order.includes(x.status)).sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status))[0];
     if (!s) return null;
-    const pct = `${Math.round(100 * (s.progress?.fraction ?? 0))} %`;
+    const pct = `${Math.round(100 * (s.progress?.fraction ?? 0))} %${s.progress?.start > 1 ? ` (start ${s.progress.start} of ${s.progress.starts})` : ''}`;
     const what = { error: 'no design', warn: 'check its design', pending: `planning ${pct}`, stale: `re-planning ${pct}`, cancelled: 'planning cancelled' }[s.status];
     return { text: `${s.block} · ${s.variant}: ${what}`, path: s.path };
   }
