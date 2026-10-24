@@ -41,7 +41,7 @@ Reader: whoever picks the next piece of work.
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
 - Should the input repeat with its period, or stop after one? Repeating is built; see decisions.md.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?
-- Spectrogram levels by default: automatic (the floor 10 dB above the median, as built; on *Encoder errors and torque ripple* it hides the 6× line above about 100 Hz and its fold-back until the frequency is zoomed or the floor dragged) or the old fixed 80 dB below the largest amplitude (pyqtgraph's way: everything, noise included)? A third way would show every line there: a floor that follows the noise at each frequency, but a colour would then mean "dB above the local noise", not an amplitude. For the person.
+- ~~Spectrogram levels by default~~: answered (2026-10-24): the automatic floor stays the default, with a switch to dB above the local noise (decisions.md).
 
 ## Backlog, at the very end (the person, 2026-10-24)
 
