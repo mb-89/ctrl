@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fft, nextPow2, WINDOWS, coherentGain, amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, AUTO_LEVELS, spectrogramWindow, levelHistogram, quantileSorted, autoLevels, levelRange } from '../src/core/spectrum.js';
+import { fft, nextPow2, WINDOWS, coherentGain, amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, AUTO_LEVELS, spectrogramWindow, levelHistogram, quantileSorted, autoLevels, levelRange, noiseLevel, aboveNoise, NOISE_EST } from '../src/core/spectrum.js';
 
 const sine = (n, dt, f, a = 1, ph = 0) => Float64Array.from({ length: n }, (_, k) => a * Math.sin(2 * Math.PI * f * k * dt + ph));
 const near = (actual, expected, tol, what = '') => assert.ok(Math.abs(actual - expected) <= tol, `${what} ${actual} vs ${expected} ± ${tol}`);
@@ -402,4 +402,170 @@ test('scope.view.levels: per signal, [floor, ceiling] in dB, normalised; absent 
   assert.equal(levelsOf(v, 'constructor'), null, 'only the view\'s own names');
   v = withLevels(withLevels(v, 'u', null), 'speed_m', null);
   assert.deepEqual(v, { mode: 'spectrogram' }, 'no pair left: absent');
+});
+
+// ---- Colour as dB above the local noise (the switch Above noise)
+
+// Coloured noise: white noise through a 2nd-order Butterworth low-pass at
+// 20 Hz (−40 dB per decade above), on a white floor 80 dB down, so the noise
+// falls by about 80 dB from the lowest frequencies to the highest.
+function colouredNoise(n, dt, seed) {
+  const y = applyFilter(designFilter({ type: 'lowpass', f0: 20, order: 2, dt }), noise(n, 1, seed)), w = noise(n, 1e-4, seed + 1);
+  return y.map((v, k) => v + w[k]);
+}
+// Each frequency row's median over all frames.
+function rowMedians(sg, d) {
+  return Float32Array.from({ length: sg.bins }, (_, b) => quantileSorted(Float32Array.from({ length: sg.frames }, (_, i) => d[i * sg.bins + b]).sort(), 0.5));
+}
+
+test('above the noise: sines in coloured noise all stand above the floor; in Absolute the high ones do not', () => {
+  const dt = 1e-3, n = 8192, size = 256, df = 1 / (size * dt), opts = { size, overlap: 0.875, detrend: 'linear' };
+  const nz = colouredNoise(n, dt, 11);
+  const sgN = spectrogram(nz, dt, opts), med = rowMedians(sgN, dbScale(sgN.amp, DB_FLOOR));
+  assert.ok(med[3] - med[125] > 70, `the noise falls ${med[3] - med[125]} dB`);
+  // Six steady sines on bin centres from 23 to 488 Hz, each 25 dB above the noise at its frequency.
+  const rows = [6, 20, 40, 70, 100, 125], x = Float64Array.from(nz);
+  rows.forEach((b, j) => { const a = 10 ** ((med[b] + 25) / 20); for (let k = 0; k < n; k++) x[k] += a * Math.sin(2 * Math.PI * b * df * k * dt + j); });
+  const sg = spectrogram(x, dt, opts), d = dbScale(sg.amp, DB_FLOOR), bins = sg.bins;
+  // The estimate is the noise's, sines or not: within 2 dB of each row's
+  // median of the noise alone, the sines' rows included (the lowest rows
+  // and the Nyquist row aside: the ramp removed and the single-sided bin).
+  const est = noiseLevel(sg, d);
+  assert.equal(est.length, bins);
+  for (let b = 3; b < bins - 1; b++) near(est[b], med[b], 2, `row ${b}`);
+  const rel = aboveNoise(d, est, bins);
+  const above = autoLevels(rel, { noise: 0, margin: AUTO_LEVELS.noiseMargin }), abs = autoLevels(d);
+  assert.equal(above.rule, 'noise');
+  near(above.floor, AUTO_LEVELS.noiseMargin, 1e-9, 'the floor: 6 dB above the noise');
+  const peakAt = (v, i, b) => Math.max(v[i * bins + b - 1], v[i * bins + b], v[i * bins + b + 1]);
+  // Above the noise every sine stands about 25 dB over it on every frame …
+  for (const b of rows) for (let i = 0; i < sg.frames; i++) assert.ok(peakAt(rel, i, b) > above.floor + 12, `${b * df} Hz, frame ${i}: ${peakAt(rel, i, b)} dB above the noise`);
+  // … where Absolute, one floor for all, hides the two highest on every
+  // frame: they are weaker than the noise at low frequencies.
+  for (const b of [100, 125]) for (let i = 0; i < sg.frames; i++) assert.ok(peakAt(d, i, b) < abs.floor, `${b * df} Hz in Absolute, frame ${i}`);
+  // Away from the sines the noise stays black but for its tail: a bin of
+  // white noise lies 6 dB above its median 5 % of the time.
+  let lit = 0, count = 0;
+  for (let i = 0; i < sg.frames; i++) for (let b = 3; b < bins - 1; b++) {
+    if (rows.some((r) => Math.abs(b - r) < 3)) continue;
+    count++; if (rel[i * bins + b] > above.floor) lit++;
+  }
+  assert.ok(lit / count < 0.08, `${(100 * lit / count).toFixed(1)} % of the noise bins above the floor`);
+});
+
+test('noiseLevel: per row over the frames shown; steady and sweeping lines left out; zeros bridged', () => {
+  // A hand-made spectrogram: 40 frames 0.1 s apart, 32 rows of 1 Hz; the
+  // noise falls 2 dB per row (a steep slope), and every bin is it.
+  const F = 40, B = 32, sg = { frames: F, bins: B, t: Float64Array.from({ length: F }, (_, i) => 0.1 * i), f: Float64Array.from({ length: B }, (_, b) => b) };
+  const slope = (b) => -20 - 2 * b, v = new Float32Array(F * B);
+  for (let i = 0; i < F; i++) for (let b = 0; b < B; b++) v[i * B + b] = slope(b);
+  const exact = (est, what) => { for (let b = 1; b < B - 1; b++) near(est[b], slope(b), 1e-4, `${what}, row ${b}`); };
+  exact(noiseLevel(sg, v), 'the slope');
+  // A steady line, 3 rows wide, 30 dB up on every frame: the median over the
+  // frames is the line, the rows around are not; it is bridged.
+  const steady = Float32Array.from(v);
+  for (let i = 0; i < F; i++) for (const b of [14, 15, 16]) steady[i * B + b] += 30;
+  exact(noiseLevel(sg, steady), 'a steady line');
+  // A line that sweeps up a row per frame (it covers each row on 3 frames of 40).
+  const sweep = Float32Array.from(v);
+  for (let i = 0; i < F; i++) for (const o of [-1, 0, 1]) { const b = (i % B) + o; if (b >= 0 && b < B) sweep[i * B + b] += 40; }
+  exact(noiseLevel(sg, sweep), 'a sweeping line');
+  // The frames shown count: louder in the first half, quieter in the second.
+  const halves = Float32Array.from(v, (x, k) => x + (Math.floor(k / B) < F / 2 ? 20 : 0));
+  near(noiseLevel(sg, halves, { t0: 2.0, t1: 4.0 })[10], slope(10), 1e-4, 'the second half');
+  near(noiseLevel(sg, halves, { t0: 0, t1: 1.5 })[10], slope(10) + 20, 1e-4, 'the first half');
+  assert.equal(noiseLevel(sg, v, { t0: 10, t1: 11 }), null, 'no frame shown');
+  // Exact zeros say nothing about the noise: a row of them takes its
+  // neighbours' level; nothing but zeros has none.
+  const holes = Float32Array.from(v);
+  for (let i = 0; i < F; i++) holes[i * B + 9] = DB_FLOOR;
+  near(noiseLevel(sg, holes)[9], slope(9), 1.01, 'a row of zeros');
+  assert.equal(noiseLevel(sg, new Float32Array(F * B).fill(DB_FLOOR)), null);
+  assert.equal(noiseLevel({ frames: 0, bins: 3, t: new Float64Array(0), f: Float64Array.of(0, 1, 2) }, new Float32Array(0)), null);
+  assert.deepEqual(NOISE_EST, { reach: 4, line: 6 });
+});
+
+test('aboveNoise: dB above each row\'s noise; zeros stay zeros; auto levels count from 0 dB', () => {
+  const values = Float32Array.of(-10, -25, DB_FLOOR, 0, -40, -50);   // 2 frames × 3 rows
+  assert.deepEqual(Array.from(aboveNoise(values, Float32Array.of(-20, -30, -60), 3)), [10, 5, DB_FLOOR, 20, -10, 10]);
+  // White noise alone, against its own noise: about 0 dB, its tail some 12 dB up,
+  // so the floor goes 20 dB below the largest, as in Absolute: noise shows as noise.
+  const dt = 1e-3, sgW = spectrogram(noise(8192, 0.01, 5), dt, { size: 256, overlap: 0.875 }), dW = dbScale(sgW.amp, DB_FLOOR);
+  const a = autoLevels(aboveNoise(dW, noiseLevel(sgW, dW), sgW.bins), { noise: 0, margin: AUTO_LEVELS.noiseMargin });
+  near(a.median, 0, 0.5, 'the median of the noise against itself');
+  assert.equal(a.rule, 'span');
+  // With a line far above it, the floor is 6 dB above the noise and the ceiling the line.
+  const x = noise(8192, 0.01, 5);
+  for (let k = 0; k < x.length; k++) x[k] += Math.sin(2 * Math.PI * 125 * k * dt);
+  const sg = spectrogram(x, dt, { size: 256, overlap: 0.875 }), d = dbScale(sg.amp, DB_FLOOR);
+  const b = autoLevels(aboveNoise(d, noiseLevel(sg, d), sg.bins), { noise: 0, margin: AUTO_LEVELS.noiseMargin });
+  assert.equal(b.rule, 'noise');
+  assert.equal(b.floor, AUTO_LEVELS.noiseMargin);
+  assert.ok(b.ceiling > 50, `the line ${b.ceiling} dB above the noise`);
+  assert.equal(autoLevels(aboveNoise(new Float32Array(6).fill(DB_FLOOR), new Float32Array(3), 3), { noise: 0 }), null, 'nothing but zeros');
+});
+
+test('the encoder example above the noise: the whole 6× line and its fold-back show', async () => {
+  const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = await import('../src/core/systems.js');
+  const { normalizeProject, evaluateSystem, autoTimebase } = await import('../src/core/project.js');
+  const entry = SYSTEM_LIBRARY.find((e) => e.name === 'Encoder errors and torque ripple');
+  const p = normalizeProject(applySystem(normalizeProject({}), entry, SYSTEM_PARTS.filter((k) => entry[k])));
+  p.scope.timebase = autoTimebase(p);
+  const data = evaluateSystem(p), dt = data.t[1] - data.t[0], n = data.t.length - 1;
+  // As the scope computes it (src/ui/freqview.js): the noise from the frames on the screen.
+  const size = Math.max(64, Math.min(512, 2 ** Math.round(Math.log2(n / 16))));
+  const sg = spectrogram(data.signals.speed_m, dt, { size, overlap: 0.875, detrend: 'linear' });
+  const d = dbScale(sg.amp, DB_FLOOR), rel = aboveNoise(d, noiseLevel(sg, d), sg.bins);
+  const lv = autoLevels(spectrogramWindow(sg, rel), { noise: 0, margin: AUTO_LEVELS.noiseMargin }), abs = autoLevels(spectrogramWindow(sg, d));
+  assert.equal(lv.rule, 'noise');
+  const fn = 0.5 / dt, alias = (f) => { const m = f % (2 * fn); return m > fn ? 2 * fn - m : m; };
+  const at = (v, i, f) => { const b = Math.round(alias(f) / sg.f[1]); return Math.max(...[-1, 0, 1].map((o) => v[i * sg.bins + Math.min(sg.bins - 1, Math.max(0, b + o))])); };
+  const speed = (i) => data.signals.speed[Math.round(sg.t[i] / dt)];
+  // The frames where an order is at f (Hz) with f in [lo, hi), and how many of them show.
+  const shown = (v, floor, k, lo, hi) => {
+    let m = 0, s = 0;
+    for (let i = 0; i < sg.frames; i++) { const f = (k * speed(i)) / (2 * Math.PI); if (speed(i) <= 20 || f < lo || f >= hi) continue; m++; if (at(v, i, f) > floor) s++; }
+    return [s, m];
+  };
+  for (const k of [1, 2]) { const [s, m] = shown(rel, lv.floor, k, 0, Infinity); assert.equal(s, m, `${k}× on every frame: ${s} of ${m}`); }
+  // 6× on every frame up to the Nyquist frequency …
+  const [s6, m6] = shown(rel, lv.floor, 6, 0, fn);
+  assert.equal(s6, m6, `6× up to ${fn} Hz: ${s6} of ${m6}`);
+  // … and folded back down: on every frame down to 125 Hz, and all but a few
+  // where it ends between the 2× and 3× lines (115–121 Hz, 0.1 s, a few dB
+  // above their skirts).
+  const [sf, mf] = shown(rel, lv.floor, 6, fn, 2 * fn - 125);
+  assert.equal(sf, mf, `6× folded back to 125 Hz: ${sf} of ${mf}`);
+  const [sa, ma] = shown(rel, lv.floor, 6, fn, 2 * fn);
+  assert.ok(ma - sa <= 3 && ma > 30, `6× folded back: ${sa} of ${ma}`);
+  // In Absolute, one floor for all, the same line above 100 Hz shows on few frames.
+  const [sx, mx] = shown(d, abs.floor, 6, 100, 2 * fn);
+  assert.ok(sx / mx < 0.15, `Absolute: 6× above 100 Hz on ${sx} of ${mx} frames`);
+  // The 70 Hz resonance stands above its neighbours' noise on most frames.
+  let r = 0;
+  for (let i = 0; i < sg.frames; i++) if (at(rel, i, 70) > lv.floor) r++;
+  assert.ok(r / sg.frames >= 0.9, `the resonance on ${r} of ${sg.frames} frames`);
+});
+
+test('scope.view.aboveNoise: a switch for the whole view; levels above the noise kept apart, per signal', async () => {
+  const { normalizeScope, normalizeProject, withLevels, levelsOf, withAboveNoise } = await import('../src/core/project.js');
+  const view = (v) => normalizeScope({ view: v }, 1).view;
+  assert.deepEqual(view({ mode: 'spectrogram', aboveNoise: true }), { mode: 'spectrogram', aboveNoise: true });
+  for (const bad of [false, 'true', 1, null]) assert.deepEqual(view({ mode: 'spectrogram', aboveNoise: bad }), { mode: 'spectrogram' }, `aboveNoise ${JSON.stringify(bad)}: absolute`);
+  // Levels above the noise: the same rules as the absolute ones, in their own place.
+  assert.deepEqual(view({ noiseLevels: { speed_m: [40, 6.04], u: [0, 0.5], '': [1, 9] } }), { noiseLevels: { speed_m: [6, 40] } });
+  const p = normalizeProject({ scope: { view: { mode: 'spectrogram', aboveNoise: true, levels: { speed_m: [-60, 20] }, noiseLevels: { speed_m: [3, 30] } } } });
+  assert.deepEqual(normalizeProject(JSON.parse(JSON.stringify(p))).scope.view, { mode: 'spectrogram', aboveNoise: true, levels: { speed_m: [-60, 20] }, noiseLevels: { speed_m: [3, 30] } }, 'survives saving and opening');
+  // Which levels the strip sets and reads follows the switch; the others stay.
+  let v = withLevels({ mode: 'spectrogram' }, 'speed_m', [-60, 20]);
+  v = withAboveNoise(v, true);
+  assert.equal(levelsOf(v, 'speed_m'), null, 'above the noise: automatic until set');
+  v = withLevels(v, 'speed_m', [3, 30]);
+  assert.deepEqual(v, { mode: 'spectrogram', aboveNoise: true, levels: { speed_m: [-60, 20] }, noiseLevels: { speed_m: [3, 30] } });
+  assert.deepEqual(levelsOf(v, 'speed_m'), [3, 30]);
+  assert.deepEqual(levelsOf(v, 'speed_m', false), [-60, 20], 'the absolute ones, asked for');
+  v = withAboveNoise(v, false);
+  assert.deepEqual(levelsOf(v, 'speed_m'), [-60, 20], 'back to Absolute: its levels return');
+  assert.deepEqual(withLevels(v, 'speed_m', null, true), { mode: 'spectrogram', levels: { speed_m: [-60, 20] } }, 'auto above the noise, asked for');
+  assert.deepEqual(withAboveNoise({ aboveNoise: true }, false), {}, 'absolute: absent');
 });
