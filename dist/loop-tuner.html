@@ -436,7 +436,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 </div>
 <h3>Plant</h3>
 <p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (y1, y2, …) can be shown on any channel. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Double-click a Switch to move it to its next input. Wheel zooms the canvas; dragging the background pans.</p>
-<p>A plant can also have <b>2D views</b> (Diagram | views above the canvas): scenes configured in its JSON that move with the signals, following the scope's scan line or your cursor.</p>
+<p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>System library</h3>
 <p>Complete example systems: input, plant and, where there is one, controller. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
@@ -1342,8 +1342,8 @@ const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...ext
 // Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
 // are diagram blocks too: their transfer function becomes the block.
 const ELEMENTS = {
-  source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }], ports: () => [0, 1], formula: 'r(t)' },
-  sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }], ports: () => [1, 0], formula: 'y' },
+  source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: () => [0, 1], formula: 'r(t)' },
+  sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: () => [1, 0], formula: 'y' },
   terminator: { label: 'Terminator', group: 'Signals', params: [], ports: () => [1, 0], formula: 'ends a signal' },
   switch: {
     label: 'Switch', group: 'Math', formula: 'passes one input',
@@ -1411,7 +1411,10 @@ function normalizeParams(type, params = {}, where) {
   const out = {};
   for (const p of ELEMENTS[type].params) {
     let v = params[p.key] ?? p.default;
-    if (p.kind === 'name') {
+    if (p.kind === 'unit') {
+      v = String(v).trim() || '1';
+      if (v.length > 12 || /[<>"{}]/.test(v)) throw new Error(`${where}.${p.key}: a short unit such as m, N, rad/s, or 1`);
+    } else if (p.kind === 'name') {
       v = String(v);
       if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
     } else if (p.kind === 'signs') {
@@ -1479,18 +1482,19 @@ function plantDiagram(plant) {
   return plant.type === 'diagram' ? plant.diagram : wrapPlant(plant);
 }
 
-// Names of the Source signals and the Sinks anywhere in a diagram.
+// Names of the Source signals and the Sinks anywhere in a diagram, and the
+// unit each one is given ("1" when none).
 function diagramNames(diagram) {
-  const sources = new Set(), sinks = [];
+  const sources = new Set(), sinks = [], units = {};
   const walk = (d) => {
     for (const b of d.blocks) {
-      if (b.type === 'source') sources.add(b.params.signal);
-      if (b.type === 'sink') sinks.push(b.params.name);
+      if (b.type === 'source') { sources.add(b.params.signal); units[b.params.signal] ??= b.params.unit ?? '1'; }
+      if (b.type === 'sink') { sinks.push(b.params.name); units[b.params.name] = b.params.unit ?? '1'; }
       if (b.type === 'subsystem') walk(b.diagram);
     }
   };
   walk(diagram);
-  return { sources: [...sources], sinks };
+  return { sources: [...sources], sinks, units };
 }
 
 // Flattens and compiles a diagram into a simulation element:
@@ -1955,91 +1959,121 @@ return { simulate, simulateSystem };
 })();
 // ---- core/plants.js
 __mods['core/plants.js'] = (() => {
-// Example plants for the Plant tab's library. Each is a whole system: a
-// Source plays r, Sinks record what the scope can show.
+// The System library's systems. Few, and each one does something visible:
+// its input moves the plant, its Sinks are on the scope, and its view shows
+// the motion (design/output/system-library.md). Each opens running, on its
+// view in the Plant tab (ui). Closed-loop systems join once
+// the Controller tab exists.
 
-const src = (x, y, signal = 'r') => ({ id: signal, type: 'source', params: { signal }, x, y });
-const sink = (id, x, y) => ({ id, type: 'sink', params: { name: id }, x, y });
-const chain = (model, params, name) => ({
-  name,
-  diagram: {
-    blocks: [src(40, 104), { id: 'p', type: model, params, x: 170, y: 96 }, sink('y1', 360, 104)],
-    wires: [{ from: 'r', to: 'p' }, { from: 'p', to: 'y1' }],
-  },
-});
+const src = (x, y, unit, signal = 'r') => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
+const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
+const channels = (...sources) => [0, 1, 2, 3].map((i) => ({ source: sources[i] ?? '', on: !!sources[i], scale: 1, offset: 0 }));
 
 const EXAMPLE_PLANTS = [
-  chain('firstOrder', { K: 1, tau: 0.2 }, 'First order'),
-  chain('lagChain', { K: 1, tau: 0.1, n: 3 }, 'Third-order lag'),
-  chain('fopdt', { K: 2, tau: 0.3, delay: 0.1 }, 'Process with dead time'),
-  chain('inverseResponse', { K: 1, Tz: 0.05, tau1: 0.1, tau2: 0.2 }, 'Inverse response'),
   {
     name: 'Mass–spring–damper',
-    notes: 'm ẍ + c ẋ + k x = F, built from integrators: m = 1, c = 2, k = 400 (ωn = 20 rad/s, ζ = 0.05). Has a 2D view.',
-    views: [{
-      // Hanging: x (y1) is measured downwards, drawn ×40 so millimetres show.
-      name: 'Hanging mass', kind: '2d', view: [-0.75, -0.75, 0.75, 0.62],
-      shapes: [
-        { type: 'ground', x1: -0.35, x2: 0.35, y: 0.5, side: 'above' },
-        { type: 'spring', x1: -0.08, y1: 0.5, x2: -0.08, y2: '0.02 - 40*y1', width: 0.08, coils: 7 },
-        { type: 'damper', x1: 0.09, y1: 0.5, x2: 0.09, y2: '0.02 - 40*y1', width: 0.07 },
-        { type: 'rect', x: -0.17, y: '-0.2 - 40*y1', w: 0.34, h: 0.22, fill: 'ch2' },
-        { type: 'text', x: 0, y: '-0.09 - 40*y1', text: 'm', size: 16, fill: 'panel' },
-        { type: 'arrow', x1: 0, y1: '-0.22 - 40*y1', x2: 0, y2: '-0.22 - 40*y1 - 0.12*r', stroke: 'ch1', lineWidth: 3 },
-        { type: 'line', x1: -0.45, y1: -0.2, x2: -0.3, y2: -0.2, stroke: 'muted', lineWidth: 1 },
-        { type: 'text', x: -0.55, y: -0.2, text: 'rest', size: 11, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.68, text: 'x = {1000*y1} mm down (drawn ×40)   F = {r} N', size: 13 },
-      ],
-    }, {
-      // The same picture as a standard SVG drawing: element attributes are
-      // bound to formulas in the signal names. Any vector editor can make the drawing.
-      name: 'Hanging mass (SVG)', kind: 'svg',
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-160 -130 320 280">'
-        + '<rect x="-80" y="-118" width="160" height="10" fill="#8a929a"/>'
-        + '<line id="spring" x1="-22" y1="-108" x2="-22" y2="0" stroke="#4b535b" stroke-width="3" stroke-dasharray="7 4"/>'
-        + '<line id="damper" x1="22" y1="-108" x2="22" y2="0" stroke="#4b535b" stroke-width="6"/>'
-        + '<rect id="mass" x="-45" y="0" width="90" height="56" rx="4" fill="#33d17a" stroke="#12703c" stroke-width="2"/>'
-        + '<text id="label" x="0" y="130" text-anchor="middle" font-family="monospace" font-size="13" fill="#7c858d">x</text></svg>',
-      bind: [
-        { select: '#mass', attr: 'y', value: '{4000*y1}' },
-        { select: '#spring, #damper', attr: 'y2', value: '{4000*y1}' },
-        { select: '#label', attr: 'text', value: 'x = {1000*y1} mm (drawn ×4)' },
-      ],
-    }],
+    notes: 'A 1 kg mass hangs on a spring (100 N/m) and a damper (1 N·s/m). At 0.1 s a 1 N force pulls it down: it drops about 10 mm and rings at 1.6 Hz while it settles.',
+    signals: { r: { period: 2, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
+    scope: { channels: channels('r', 'y1') },
+    ui: { run: 'run', tab: 'plant', setup: 0.42, view: 'Hanging mass' },
     diagram: {
       blocks: [
-        src(30, 112),
+        src(30, 112, 'N'),
         { id: 'sum', type: 'sum', params: { signs: '+--' }, x: 130, y: 104 },
         { id: 'm', type: 'gain', name: '1/m', params: { K: 1 }, x: 210, y: 100 },
         { id: 'v', type: 'integrator', name: 'velocity', params: { K: 1 }, x: 330, y: 100 },
         { id: 'x', type: 'integrator', name: 'position', params: { K: 1 }, x: 470, y: 100 },
-        sink('y1', 620, 108),
-        { id: 'c', type: 'gain', name: 'damping c', params: { K: 2 }, x: 330, y: 190, flip: true },
-        { id: 'k', type: 'gain', name: 'spring k', params: { K: 400 }, x: 470, y: 260, flip: true },
+        sink('y1', 640, 108, 'm'),
+        { id: 'c', type: 'gain', name: 'damping c', params: { K: 1 }, x: 330, y: 190, flip: true },
+        { id: 'k', type: 'gain', name: 'spring k', params: { K: 100 }, x: 470, y: 260, flip: true },
       ],
       wires: [
         { from: 'r', to: 'sum' }, { from: 'sum', to: 'm' }, { from: 'm', to: 'v' }, { from: 'v', to: 'x' }, { from: 'x', to: 'y1' },
         { from: 'v', to: 'c' }, { from: 'c', to: 'sum:1' }, { from: 'x', to: 'k' }, { from: 'k', to: 'sum:2' },
       ],
     },
+    views: [{
+      // y1 is the displacement downwards, drawn ×20.
+      name: 'Hanging mass', kind: '2d', view: [-0.8, -0.95, 0.8, 0.62],
+      shapes: [
+        { type: 'ground', x1: -0.35, x2: 0.35, y: 0.5, side: 'above' },
+        { type: 'spring', x1: -0.08, y1: 0.5, x2: -0.08, y2: '0 - 20*y1', width: 0.09, coils: 8 },
+        { type: 'damper', x1: 0.09, y1: 0.5, x2: 0.09, y2: '0 - 20*y1', width: 0.08 },
+        { type: 'rect', x: -0.18, y: '-0.26 - 20*y1', w: 0.36, h: 0.26, fill: 'ch2' },
+        { type: 'text', x: 0, y: '-0.13 - 20*y1', text: 'm', size: 18, fill: 'panel' },
+        { type: 'arrow', x1: 0, y1: '-0.28 - 20*y1', x2: 0, y2: '-0.28 - 20*y1 - 0.25*r', stroke: 'ch1', lineWidth: 3 },
+        { type: 'line', x1: -0.5, y1: -0.26, x2: -0.3, y2: -0.26, stroke: 'muted', lineWidth: 1 },
+        { type: 'text', x: -0.6, y: -0.26, text: 'rest', size: 11, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.88, text: 'x = {1000*y1} mm down (drawn ×20)   F = {r} N', size: 13 },
+      ],
+    }, {
+      // The same picture as a standard SVG drawing with bindings.
+      name: 'Hanging mass (SVG)', kind: 'svg',
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-160 -130 320 300">'
+        + '<rect x="-80" y="-118" width="160" height="10" fill="#8a929a"/>'
+        + '<line id="spring" x1="-22" y1="-108" x2="-22" y2="0" stroke="#7c858d" stroke-width="3" stroke-dasharray="7 4"/>'
+        + '<line id="damper" x1="22" y1="-108" x2="22" y2="0" stroke="#7c858d" stroke-width="6"/>'
+        + '<rect id="mass" x="-45" y="0" width="90" height="56" rx="4" fill="#33d17a" stroke="#12703c" stroke-width="2"/>'
+        + '<text id="label" x="0" y="150" text-anchor="middle" font-family="monospace" font-size="13" fill="#7c858d">x</text></svg>',
+      bind: [
+        { select: '#mass', attr: 'y', value: '{2000*y1}' },
+        { select: '#spring, #damper', attr: 'y2', value: '{2000*y1}' },
+        { select: '#label', attr: 'text', value: 'x = {1000*y1} mm (drawn ×2)' },
+      ],
+    }],
+  },
+  {
+    name: 'Inverted pendulum',
+    notes: 'A pole balanced on a cart (nonlinear, the Cart–pole block). It starts tilted 1°; at 0.1 s a short push (2 N for 0.1 s) moves the cart. With no controller yet the pole falls over in about half a second.',
+    signals: { r: { period: 1.5, components: [{ type: 'square', params: { amplitude: 2, time: 0.1, width: 0.1, period: 1, count: 1 } }] } },
+    scope: { channels: channels('r', 'y1', 'y2') },
+    ui: { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' },
+    diagram: {
+      blocks: [
+        src(30, 124, 'N'),
+        { id: 'cart', type: 'cartPole', name: 'cart and pole', params: { M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: 0.0175 }, x: 160, y: 104 },
+        sink('y1', 380, 100, 'm'), sink('y2', 380, 160, 'rad'),
+      ],
+      wires: [{ from: 'r', to: 'cart' }, { from: 'cart', to: 'y1' }, { from: 'cart:1', to: 'y2' }],
+    },
+    views: [{
+      name: 'Cart and pole', kind: '2d', view: [-1.2, -0.62, 1.2, 0.85],
+      shapes: [
+        { type: 'line', x1: -1.2, y1: -0.065, x2: 1.2, y2: -0.065, stroke: 'muted', lineWidth: 3 },
+        { type: 'group', x: 'clamp(y1, -1.05, 1.05)', y: 0, shapes: [
+          { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
+          { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
+          { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
+          { type: 'group', y: 0.1, angle: '-y2', shapes: [
+            { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.5, lineWidth: 4 },
+            { type: 'circle', cx: 0, cy: 0.5, r: 0.045, fill: 'ch3' },
+          ] },
+          { type: 'arrow', x1: '-0.17 - 0.15*r', y1: 0.04, x2: -0.17, y2: 0.04, stroke: 'ch1', lineWidth: 3 },
+        ] },
+        { type: 'text', x: 0, y: 0.76, text: 'x = {y1} m   θ = {y2*180/pi}°   F = {r} N', size: 13 },
+      ],
+    }],
   },
   {
     name: 'DC motor',
-    notes: 'Voltage r drives a motor subsystem (armature lag, torque constant, mechanical lag, back-EMF feedback); y1 is the shaft angle, y2 the speed.',
+    notes: 'A 1 V step drives a motor (armature lag, torque constant, load inertia, back-EMF feedback inside a Motor subsystem). The speed y2 settles at 1.43 rad/s; the shaft angle y1 keeps turning.',
+    signals: { r: { period: 2, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
+    scope: { channels: channels('r', 'y1', 'y2') },
+    ui: { run: 'run', tab: 'plant', setup: 0.42, view: 'Motor shaft' },
     diagram: {
       blocks: [
-        src(30, 112),
+        src(30, 112, 'V'),
         {
           id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 150, y: 96,
           diagram: {
             blocks: [
               { id: 'V', type: 'inport', params: { port: 1 }, x: 30, y: 112 },
               { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'firstOrder', name: 'armature 1/(Ls+R)', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
-              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 350, y: 100 },
-              { id: 'mech', type: 'firstOrder', name: 'load 1/(Js+b)', params: { K: 10, tau: 0.2 }, x: 460, y: 96 },
-              { id: 'w', type: 'outport', params: { port: 1 }, x: 620, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 350, y: 200, flip: true },
+              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.01 }, x: 200, y: 96 },
+              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.5 }, x: 360, y: 100 },
+              { id: 'mech', type: 'firstOrder', name: 'load', params: { K: 10, tau: 0.2 }, x: 460, y: 96 },
+              { id: 'w', type: 'outport', params: { port: 1 }, x: 630, y: 112 },
+              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.5 }, x: 360, y: 200, flip: true },
             ],
             wires: [
               { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'mech' },
@@ -2048,48 +2082,28 @@ const EXAMPLE_PLANTS = [
           },
         },
         { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 340, y: 96 },
-        sink('y1', 540, 106),
-        sink('y2', 540, 200),
+        sink('y1', 540, 106, 'rad'),
+        sink('y2', 540, 200, 'rad/s'),
       ],
       wires: [{ from: 'r', to: 'motor' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'y1' }, { from: 'motor', to: 'y2' }],
     },
+    views: [{
+      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.8, 1.1, 0.8],
+      shapes: [
+        { type: 'circle', cx: 0, cy: 0, r: 0.6, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        { type: 'group', angle: '-y1', shapes: [
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.55, stroke: 'ch2', lineWidth: 6 },
+          { type: 'circle', cx: 0, cy: 0.42, r: 0.06, fill: 'ch2' },
+        ] },
+        { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'ink' },
+        { type: 'text', x: 0, y: -0.72, text: 'angle {y1} rad   speed {y2} rad/s   {r} V', size: 13 },
+      ],
+    }],
   },
 ];
 
-// The cart–pole: a nonlinear physics block, falling until a controller holds it.
-EXAMPLE_PLANTS.push({
-  name: 'Inverted pendulum',
-  notes: 'A pole balanced on a cart (nonlinear). r is the force on the cart: a short push. Without a controller the pole falls. Has a 2D view.',
-  signals: { r: { period: 1.5, components: [{ type: 'square', params: { amplitude: 2, time: 0.1, width: 0.1, period: 1, count: 1 } }] } },
-  diagram: {
-    blocks: [
-      src(30, 120),
-      { id: 'cart', type: 'cartPole', name: 'cart and pole', params: { M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: 0.02 }, x: 160, y: 100 },
-      sink('y1', 360, 96), sink('y2', 360, 150),
-    ],
-    wires: [{ from: 'r', to: 'cart' }, { from: 'cart', to: 'y1' }, { from: 'cart:1', to: 'y2' }],
-  },
-  views: [{
-    name: 'Cart and pole', kind: '2d', view: [-1.2, -0.55, 1.2, 0.85],
-    shapes: [
-      { type: 'line', x1: -1.2, y1: -0.065, x2: 1.2, y2: -0.065, stroke: 'muted', lineWidth: 3 },
-      { type: 'group', x: 'clamp(y1, -1.05, 1.05)', y: 0, shapes: [
-        { type: 'rect', x: -0.16, y: -0.02, w: 0.32, h: 0.12, fill: 'ch2' },
-        { type: 'circle', cx: -0.1, cy: -0.03, r: 0.03, fill: 'ink' },
-        { type: 'circle', cx: 0.1, cy: -0.03, r: 0.03, fill: 'ink' },
-        { type: 'group', y: 0.1, angle: '-y2', shapes: [
-          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.5, lineWidth: 4 },
-          { type: 'circle', cx: 0, cy: 0.5, r: 0.045, fill: 'ch3' },
-        ] },
-        { type: 'arrow', x1: '-0.16 - 0.15*r', y1: 0.04, x2: -0.17, y2: 0.04, stroke: 'ch1', lineWidth: 3 },
-      ] },
-      { type: 'text', x: 0, y: 0.75, text: 'x = {y1} m   θ = {y2*180/pi}°   F = {r} N', size: 13 },
-    ],
-  }],
-});
-
 // A new project's plant: the reference alone.
-const EMPTY_PLANT = { blocks: [src(60, 104)], wires: [] };
+const EMPTY_PLANT = { blocks: [src(60, 104, '1')], wires: [] };
 
 return { EXAMPLE_PLANTS, EMPTY_PLANT };
 })();
@@ -2330,8 +2344,13 @@ function normalizeProject(p) {
   for (const [slot, def] of Object.entries(SYSTEM_DEFAULTS)) system[slot] = normalizeBlock(slot, p.system?.[slot] ?? def);
   const plant = p.system?.plant ?? (v1 ? { type: 'firstOrder' } : null);
   system.plant = plant ? normalizePlant(plant) : null;
-  if (system.plant?.type === 'diagram') for (const name of diagramNames(system.plant.diagram).sources) signals[name] ??= normalizeReference({ period: 1, components: [] });
-  if (!Object.keys(signals).length) signals.r = normalizeReference({ period: 1, components: [] });
+  if (system.plant?.type === 'diagram') {
+    // Only what the diagram names exists: a signal per Source; r always.
+    const { sources } = diagramNames(system.plant.diagram);
+    for (const name of sources) signals[name] ??= normalizeReference({ period: 1, components: [] });
+    for (const name of Object.keys(signals)) if (name !== 'r' && !sources.includes(name)) delete signals[name];
+  }
+  if (!signals.r) signals.r = normalizeReference({ period: 1, components: [] });
   const goal = normalizeGoal(p.goal);
   const raw = Array.isArray(p.candidates) ? p.candidates : [];
   const candidates = raw.map((c, i) => {
@@ -2351,10 +2370,26 @@ function normalizeProject(p) {
     format: FORMAT,
     title: String(p.title ?? 'Untitled loop'),
     ...(p.notes ? { notes: String(p.notes) } : {}),
-    sim, system, scope: normalizeScope(p.scope, longestPeriod(signals), candidates.length > 0 && !!system.plant), goal, candidates,
+    sim, system, scope: pruneChannels(normalizeScope(p.scope, longestPeriod(signals), candidates.length > 0 && !!system.plant), { system, candidates }), goal, candidates,
     ...(Array.isArray(p.library) && p.library.length ? { library: p.library.map(normalizeLibraryEntry) } : {}),
     ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
+    ...(normalizeUi(p.ui) ? { ui: normalizeUi(p.ui) } : {}),
   };
+}
+
+// How the page opens: the run control, the open tab, in the Plant tab the
+// representation shown, and the setup area's share of the page height.
+// Unknown values are dropped.
+const UI_RUN = ['run', 'stop', 'single'];
+const UI_TABS = ['input', 'plant'];
+function normalizeUi(ui) {
+  if (!ui || typeof ui !== 'object') return null;
+  const out = {};
+  if (UI_RUN.includes(ui.run)) out.run = ui.run;
+  if (UI_TABS.includes(ui.tab)) out.tab = ui.tab;
+  if (typeof ui.view === 'string' && ui.view) out.view = ui.view;
+  if (Number.isFinite(ui.setup) && ui.setup > 0 && ui.setup < 1) out.setup = ui.setup;
+  return Object.keys(out).length ? out : null;
 }
 
 function checkName(name) {
@@ -2441,6 +2476,21 @@ function normalizeScope(scope = {}, period, loop = false) {
     return ch;
   });
   return { timebase, channels };
+}
+
+// Every name a scope channel can show: the diagram's Sources and Sinks (and
+// r); with a closed loop from an older file, also its y, u, e, ym, d.
+function channelNames(project) {
+  const plant = project.system.plant;
+  const n = plant?.type === 'diagram' ? diagramNames(plant.diagram) : { sources: [], sinks: [] };
+  return [...new Set(['r', ...n.sources, ...n.sinks, ...(loopReady(project) ? LOOP_SIGNALS : [])])];
+}
+
+// A channel showing a name that no longer exists goes back to no source.
+function pruneChannels(scope, project) {
+  const names = channelNames(project);
+  for (const ch of scope.channels) if (ch.source && !names.includes(ch.source)) { ch.source = ''; ch.on = false; }
+  return scope;
 }
 
 // With a plant but no controller yet, the plant runs open loop: u = r.
@@ -2541,7 +2591,7 @@ function fmt(v, digits = 3) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
 })();
 // ---- core/tune.js
 __mods['core/tune.js'] = (() => {
@@ -2795,57 +2845,47 @@ return { DEFAULT_PROJECT, EXAMPLES };
 })();
 // ---- core/systems.js
 __mods['core/systems.js'] = (() => {
-// The system library: complete systems (input signals, plant, controller and
-// its parameters) that load whole or by part, so the input of one system can
-// drive the plant of another. Built from the example plants (no controller
-// yet) and the closed-loop examples (plant with a tuned controller).
+// The system library: complete systems (input signals, plant with its views,
+// how the scope shows them and, once controllers exist, a controller and its
+// parameters) that load whole or by part, so the input of one system can
+// drive the plant of another. The systems are defined in plants.js.
 
 const { EXAMPLE_PLANTS } = __mods['core/plants.js'];
-const { EXAMPLES } = __mods['core/examples.js'];
-const { normalizeProject, LOOP_CHANNELS } = __mods['core/project.js'];
-const STEP = { r: { period: 1, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } };
-
 const SYSTEM_PARTS = ['input', 'plant', 'controller'];
 
 function fromPlant(e) {
   return {
     name: e.name, notes: e.notes ?? '',
-    input: { signals: structuredClone(e.signals ?? STEP) },
+    input: { signals: structuredClone(e.signals) },
     plant: { type: 'diagram', diagram: structuredClone(e.diagram), ...(e.views ? { views: structuredClone(e.views) } : {}) },
+    ...(e.scope ? { scope: structuredClone(e.scope) } : {}),
+    ...(e.ui ? { ui: structuredClone(e.ui) } : {}),
   };
 }
 
-function fromLoop(ex) {
-  const p = normalizeProject(structuredClone(ex));
-  return {
-    name: `${p.title} (closed loop)`, notes: p.notes ?? '',
-    input: { signals: p.system.signals },
-    plant: p.system.plant,
-    controller: {
-      candidates: p.candidates, goal: p.goal, sim: p.sim, selected: p.selected,
-      actuator: p.system.actuator, sensor: p.system.sensor, disturbance: p.system.disturbance, noise: p.system.noise,
-    },
-  };
-}
-
-const SYSTEM_LIBRARY = [...EXAMPLE_PLANTS.map(fromPlant), ...EXAMPLES.map(fromLoop)];
+const SYSTEM_LIBRARY = EXAMPLE_PLANTS.map(fromPlant);
 
 // Copies the chosen parts of a library entry into a raw project (before
-// normalisation). parts: any of 'input', 'plant', 'controller'.
+// normalisation). parts: any of 'input', 'plant', 'controller'. A whole load
+// also takes the system's title, its scope setup and how it opens (ui).
 function applySystem(project, entry, parts) {
   const p = structuredClone(project);
   p.system ??= {};
-  if (parts.includes('input') && entry.input) p.system.signals = structuredClone(entry.input.signals);
+  if (parts.includes('input') && entry.input) {
+    // Keep signals the current plant still plays; take the system's for the rest.
+    p.system.signals = { ...(p.system.signals ?? {}), ...structuredClone(entry.input.signals) };
+  }
   if (parts.includes('plant') && entry.plant) p.system.plant = structuredClone(entry.plant);
   if (parts.includes('controller') && entry.controller) {
     const c = structuredClone(entry.controller);
     Object.assign(p, { candidates: c.candidates, goal: c.goal, sim: c.sim });
-    if (c.selected) p.selected = c.selected; else delete p.selected;
-    for (const k of ['actuator', 'sensor', 'disturbance', 'noise']) p.system[k] = c[k];
-    // A closed loop shows its own signals: r, y, u, e.
-    if (p.scope?.channels) p.scope.channels.forEach((ch, i) => { ch.source = LOOP_CHANNELS[i]; ch.on = true; });
   }
-  if (SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k))) p.title = entry.name;
+  const whole = SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k));
+  if (whole) {
+    p.title = entry.name;
+    if (entry.scope) p.scope = { ...(p.scope ?? {}), channels: structuredClone(entry.scope.channels) };
+    if (entry.ui) p.ui = structuredClone(entry.ui);
+  }
   delete p.system.reference;
   return p;
 }
@@ -2989,7 +3029,6 @@ __mods['ui/display.js'] = (() => {
 const { siUnit, num } = __mods['ui/units.js'];
 const { step125 } = __mods['core/scale.js'];
 const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
-const SOURCE_LABEL = { r: 'r  reference', y: 'y  output', u: 'u  effort', e: 'e  error', ym: 'ym measured', d: 'd  disturbance' };
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
 const BG = '#0a0d10';
@@ -3029,6 +3068,7 @@ function createDisplay(root, handlers) {
   const region = (x, y) => (x < P.l ? 'yaxis' : y > P.b ? 'xaxis' : 'plot');
   const visible = (i) => scope.channels[i].on && !!data?.signals[scope.channels[i].source];
   const axisChannel = () => (line !== null ? line : selected);
+  const unitLabel = (name) => handlers.unitOf?.(name) ?? '1';
 
   function drawGrid(g) {
     g.fillStyle = BG;
@@ -3130,8 +3170,8 @@ function createDisplay(root, handlers) {
       ctx.shadowColor = CHANNEL_COLORS[i];
       ctx.shadowBlur = sel ? 9 : 5;
       ctx.globalAlpha = line !== null && !sel ? 0.55 : 1;
+      // While sweeping, only what has happened so far: nothing ahead of the scan line.
       trace(ctx, data.t, v, ch, 0, k);
-      if (k < n) { ctx.shadowBlur = 0; ctx.globalAlpha = 0.28; trace(ctx, data.t, v, ch, k, n); }
     }
     ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
@@ -3228,9 +3268,9 @@ function createDisplay(root, handlers) {
     badges.innerHTML = scope.channels.map((ch, i) => {
       const has = !!data.signals[ch.source];
       const cls = ['badge', ch.on ? 'on' : 'off', i === selected ? 'sel' : '', has ? '' : 'nosig'].join(' ');
-      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${ch.source ? SOURCE_LABEL[ch.source] ?? ch.source : 'no source; pick one under Vertical'}">
+      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${ch.source ? `${ch.source} in ${unitLabel(ch.source)}` : 'no source; pick one under Vertical'}">
         <span class="num">${i + 1}</span><span class="src">${ch.source || '—'}</span>
-        <span class="val">${has ? `${num(ch.scale)}/div` : ch.source ? 'no signal' : 'none'}</span></button>`;
+        <span class="val">${has ? `${num(ch.scale)} ${unitLabel(ch.source)}/div` : ch.source ? 'no signal' : 'none'}</span></button>`;
     }).join('');
     badges.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => handlers.onSelectChannel(Number(b.dataset.ch))));
   }
@@ -3398,8 +3438,8 @@ function createDisplay(root, handlers) {
     setData(d) { data = d; if (line !== null && !visible(line)) line = null; renderBadges(); draw(); },
     setScope(s, sel) { scope = s; selected = sel; if (line !== null && line !== sel) line = null; renderBadges(); draw(); },
     setPreview(p) { preview = p; draw(); },
-    setMode(m) {
-      if (m === 'single' && scope) tScan = win()[0];
+    setMode(m, { restart = false } = {}) {
+      if ((m === 'single' || restart) && scope) tScan = win()[0];
       mode = m;
       last = 0;
       kick();
@@ -3417,7 +3457,7 @@ function createDisplay(root, handlers) {
   };
 }
 
-return { CHANNEL_COLORS, SOURCE_LABEL, createDisplay };
+return { CHANNEL_COLORS, createDisplay };
 })();
 // ---- ui/controls.js
 __mods['ui/controls.js'] = (() => {
@@ -3426,7 +3466,7 @@ __mods['ui/controls.js'] = (() => {
 // ("20m", "100 ms", "-0.4").
 
 const { createDial } = __mods['ui/dial.js'];
-const { CHANNEL_COLORS, SOURCE_LABEL } = __mods['ui/display.js'];
+const { CHANNEL_COLORS } = __mods['ui/display.js'];
 const { siUnit, num, parseSI } = __mods['ui/units.js'];
 const { step125 } = __mods['core/scale.js'];
 function createControls(root, app) {
@@ -3514,14 +3554,14 @@ function createControls(root, app) {
     vScale: knob({
       id: 'v-vscale', label: 'Scale', size: 48, title: 'Units per division of the selected channel',
       turn: (sc, s) => { const c = sc.channels[app.channel]; for (let i = 0; i < Math.abs(s); i++) c.scale = step125(c.scale, -Math.sign(s)); },
-      read: () => `${num(ch().scale)}/div`,
+      read: () => `${num(ch().scale)} ${app.unitOf(ch().source)}/div`,
       write: positive((sc, v) => { sc.channels[app.channel].scale = v; }),
     }),
     vPos: knob({
       id: 'v-vpos', label: 'Position', size: 36, title: 'Offset of the selected channel · double-click to zero',
       turn: (sc, s, fine) => { const c = sc.channels[app.channel]; c.offset = round(c.offset + s * c.scale * (fine ? 0.02 : 0.1)); },
       push: (sc) => { sc.channels[app.channel].offset = 0; },
-      read: () => num(ch().offset),
+      read: () => `${num(ch().offset)} ${app.unitOf(ch().source)}`,
       write: (v) => setScope((sc) => { sc.channels[app.channel].offset = v; }),
     }),
   };
@@ -3556,11 +3596,12 @@ function createControls(root, app) {
       b.setAttribute('aria-pressed', String(sc.channels[i].on));
     });
     const names = [...new Set([...app.signalNames(), ch().source].filter(Boolean))];
-    if (src.dataset.names !== names.join(',')) {
-      src.innerHTML = '<option value="">— none</option>' + names.map((n) => `<option value="${n}">${SOURCE_LABEL[n] ?? n}</option>`).join('');
+    if (src.dataset.names !== names.join(',') + '|' + names.map(app.unitOf).join(',')) {
+      src.innerHTML = '<option value="">— none</option>' + names.map((n) => `<option value="${n}">${n}${app.unitOf(n) === '1' ? '' : ` (${app.unitOf(n)})`}</option>`).join('');
       src.dataset.names = names.join(',');
     }
     src.value = ch().source;
+    src.dataset.names = names.join(',') + '|' + names.map(app.unitOf).join(',');
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
   }
@@ -3792,8 +3833,8 @@ function createGenerator(root, app) {
   }
 
   function renderSignals() {
-    const names = Object.keys(app.project.system.signals);
-    $('#g-sigs').innerHTML = names.map((n) => `<button class="sigkey ${n === app.signal ? 'on' : ''}" data-sig="${n}" aria-pressed="${n === app.signal}" title="Edit the signal ${n}, played by the Source blocks named ${n}"><span class="sigsym">${n}</span>${n === 'r' ? 'Reference' : 'Signal'}</button>`).join('')
+    const names = app.sourceNames();
+    $('#g-sigs').innerHTML = names.map((n) => `<button class="sigkey ${n === app.signal ? 'on' : ''}" data-sig="${n}" aria-pressed="${n === app.signal}" title="Edit the signal ${n}, played by the Source blocks named ${n}"><span class="sigsym">${n}</span>${app.unitOf(n) === '1' ? '' : app.unitOf(n)}</button>`).join('')
       + '<p class="sighint">Add a Source block in the Plant tab for another signal.</p>';
     $('#g-sigs').querySelectorAll('[data-sig]').forEach((b) => b.addEventListener('click', () => app.selectSignal(b.dataset.sig)));
   }
@@ -3986,7 +4027,6 @@ __mods['ui/plant.js'] = (() => {
 
 const { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram } = __mods['core/diagram.js'];
 const { SYSTEM_LIBRARY } = __mods['core/systems.js'];
-const { normalizeView } = __mods['core/views.js'];
 const { num, parseSI } = __mods['ui/units.js'];
 const { createScene } = __mods['ui/scene.js'];
 const NS = 'http://www.w3.org/2000/svg';
@@ -4006,20 +4046,13 @@ const FOLD_KEY = 'loop-tuner:library-folded';
 const LAYOUT_KEY = 'loop-tuner:plant-layout';
 const loadJson = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } };
 const saveJson = (key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage unavailable */ } };
-const VIEW_TEMPLATE = {
-  name: '2D view', kind: '2d', view: [-1, -0.6, 1, 0.8],
-  shapes: [
-    { type: 'ground', x1: -1, x2: 1, y: -0.1 },
-    { type: 'circle', cx: 'clamp(y1, -0.9, 0.9)', cy: 0.05, r: 0.15, fill: 'ch2' },
-    { type: 'text', x: 0, y: 0.6, text: 'y1 = {y1}' },
-  ],
-};
 
 // Block geometry in canvas units.
 function size(b) {
   if (b.type === 'sum') return [34, 34];
   if (b.type === 'gain') return [58, 40];
   if (['source', 'sink', 'inport', 'outport'].includes(b.type)) return [70, 28];
+  if (diagramBlockDef(b.type).ode) return [150, 60];
   if (b.type === 'terminator') return [26, 26];
   if (b.type === 'switch') { const n = b.params.inputs; return [56, Math.max(40, 18 * n + 8)]; }
   const [ni, no] = blockPorts(b);
@@ -4081,7 +4114,6 @@ function createPlantEditor(root, app) {
   let lastClick = { id: null, t: 0 };
   let saveName = null;           // library name being typed for a subsystem
   let rep = -1;                  // -1: the block diagram; otherwise a 2D view index
-  let viewDraft = null;          // the view JSON being edited
   const folded = new Set(loadJson(FOLD_KEY, ['Models', 'Sensors', 'Physics', 'Nonlinear', 'Structure']));
   const scene = createScene($('#pl-scene'), app);
 
@@ -4271,9 +4303,13 @@ function createPlantEditor(root, app) {
     return `<g class="${cls}" data-block="${b.id}">${stack}${shape}${text}${ports}</g>`;
   }
 
+  // The line under a block's title: its formula for physics blocks (their
+  // parameters are on the right), else its first parameters, cut to fit.
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    return def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const text = def.ode ? def.formula : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
+    return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
 
   const plantViews = () => app.project.system.plant?.views ?? [];
@@ -4281,20 +4317,12 @@ function createPlantEditor(root, app) {
     const vs = plantViews();
     if (rep >= vs.length) rep = -1;
     $('#pl-reps').innerHTML = `<button class="rep ${rep < 0 ? 'on' : ''}" data-rep="-1" role="tab" aria-selected="${rep < 0}">Diagram</button>`
-      + vs.map((v, i) => `<button class="rep ${rep === i ? 'on' : ''}" data-rep="${i}" role="tab" aria-selected="${rep === i}" title="2D view">${esc(v.name)}</button>`).join('')
-      + `<button class="rep add" data-rep="new" title="Add a 2D view of this plant: a scene whose shapes move with the signals">+ 2D</button>`;
-    $('#pl-reps').querySelectorAll('[data-rep]').forEach((b) => b.addEventListener('click', () => {
-      if (b.dataset.rep === 'new') {
-        if (app.project.system.plant?.type !== 'diagram') app.setPlant(normalizeDiagram(rootDiagram()));
-        app.setViews([...plantViews(), normalizeView(VIEW_TEMPLATE)]);
-        showRep(plantViews().length - 1);
-      } else showRep(Number(b.dataset.rep));
-    }));
+      + vs.map((v, i) => `<button class="rep ${rep === i ? 'on' : ''}" data-rep="${i}" role="tab" aria-selected="${rep === i}" title="A view of this plant, from its JSON">${esc(v.name)}</button>`).join('');
+    $('#pl-reps').querySelectorAll('[data-rep]').forEach((b) => b.addEventListener('click', () => showRep(Number(b.dataset.rep))));
   }
 
   function showRep(i) {
     rep = i;
-    viewDraft = null;
     const inView = rep >= 0;
     viewEl.hidden = inView;
     $('#pl-scene').hidden = !inView;
@@ -4303,38 +4331,13 @@ function createPlantEditor(root, app) {
     render();
   }
 
+  // Views come from the project's JSON; the panel only says what is shown.
   function renderViewProps() {
     const v = plantViews()[rep];
-    const box = $('#pl-props');
-    box.innerHTML = `<h3 class="glabel">2D view</h3>
-      <p class="phelp">The scene follows the scope: the scan line while it runs, the cursor while you hover the plot. Numbers can be formulas in t and the signal names (${esc(Object.keys(app.sceneEnv()).filter((k) => k !== 't').join(', ') || 'none yet')}).</p>
-      <textarea class="vjson" id="pl-vjson" spellcheck="false" aria-label="The view as JSON"></textarea>
-      <p class="pmsg" id="pl-vmsg"></p>
-      <div class="pbtns"><button class="key small primary" data-vact="apply">Apply</button><button class="key small" data-vact="revert">Revert</button><button class="key small" data-vact="delete">Delete view</button></div>
-      <p class="phelp">Shapes: line, arrow, rect, circle, spring, damper, ground, text ("{formula}" inside text shows a value), group (moves and rotates its shapes). Colours: ink, muted, panel, ch1–ch4. Format: design/output/plant-views.md.</p>`;
-    const ta = $('#pl-vjson');
-    ta.value = viewDraft ?? JSON.stringify(v, null, 2);
-    ta.addEventListener('input', () => { viewDraft = ta.value; });
-    ta.addEventListener('keydown', (e) => { e.stopPropagation(); if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') applyView(); });
-    box.querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', () => {
-      if (b.dataset.vact === 'apply') applyView();
-      if (b.dataset.vact === 'revert') { viewDraft = null; renderViewProps(); }
-      if (b.dataset.vact === 'delete') { app.setViews(plantViews().filter((_, j) => j !== rep)); showRep(-1); }
-    }));
-  }
-
-  function applyView() {
-    const ta = $('#pl-vjson');
-    let v;
-    try { v = normalizeView(JSON.parse(ta.value), 'view'); } catch (err) { $('#pl-vmsg').textContent = err.message; return; }
-    const vs = plantViews().slice();
-    vs[rep] = v;
-    app.setViews(vs);
-    viewDraft = null;
-    scene.show(v);
-    renderReps();
-    renderViewProps();
-    app.toast('View applied');
+    const used = [...new Set((JSON.stringify(v).match(/[A-Za-z_]\w*/g) ?? []).filter((n) => app.signalNames().includes(n)))];
+    $('#pl-props').innerHTML = `<h3 class="glabel">${esc(v.name)}</h3>
+      <p class="phelp">A ${v.kind === 'svg' ? 'SVG drawing' : '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}. It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>
+      <p class="phelp">Views are set in the plant's JSON (<code>system.plant.views</code>); the format is in design/output/plant-views.md.</p>`;
   }
 
   let compileMsg = '';
@@ -4389,7 +4392,8 @@ function createPlantEditor(root, app) {
       if (!['source', 'sink', 'inport', 'outport'].includes(b.type)) html += field('name', 'Label', b.name ?? '', 'text', 'optional');
       for (const p of def.params) {
         const v = b.params[p.key];
-        html += field(`p:${p.key}`, p.label, p.kind === 'vector' ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', p.unit ?? (p.kind === 'vector' ? 'highest power first' : ''));
+        const hint = p.kind === 'vector' ? 'highest power first' : p.kind ? '' : `unit: ${p.unit ?? '1'}`;
+        html += field(`p:${p.key}`, p.label, p.kind === 'vector' ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', hint);
       }
       html += '</div><div class="pbtns">';
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="key small" data-act="flip">Flip</button>`;
@@ -4718,6 +4722,9 @@ function createPlantEditor(root, app) {
     render() { renderLibrary(); render(); },
     shown() { renderLibrary(); if (rep >= 0) showRep(rep); else render(); if (first) { first = false; fit(); } },
     hidden() { scene.stop(); },
+    // The representation by name ('' or unknown: the diagram); shown when the tab is.
+    view(name) { rep = plantViews().findIndex((v) => v.name === name); },
+    viewName() { return rep >= 0 ? plantViews()[rep]?.name ?? '' : ''; },
     fit,
     handleKey,
     reset() { path = []; sel.clear(); wireSel = -1; first = true; if (rep >= 0) { rep = -1; scene.stop(); viewEl.hidden = false; $('#pl-scene').hidden = true; for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = false; } },
@@ -4745,15 +4752,18 @@ function createSplitters(shell) {
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') ?? {}; } catch { /* storage unavailable */ }
   const store = () => { try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch { /* storage unavailable */ } };
 
-  // The setup height defaults to what the Input tab needs, measured once.
+  // The setup height defaults to what the Input tab needs, measured while it
+  // is the open tab (a project may open on another tab).
   function naturalSetup() {
+    if (shell.querySelector('#tab-input')?.hidden) return defaultSetup;
     shell.style.removeProperty('--setup-h');
     setup.style.height = 'auto';
     const h = setup.getBoundingClientRect().height;
     setup.style.height = '';
     return Math.ceil(h);
   }
-  let defaultSetup = naturalSetup();
+  let defaultSetup = 0;
+  defaultSetup = naturalSetup();
   const maxSetup = () => Math.max(MIN_SETUP, shell.getBoundingClientRect().height - MIN_TOP);
   const maxControls = () => Math.min(MAX_CONTROLS, instrument.getBoundingClientRect().width - MIN_DISPLAY);
 
@@ -4797,6 +4807,12 @@ function createSplitters(shell) {
   apply();
   document.fonts?.ready.then(() => { defaultSetup = naturalSetup(); apply(); });
   window.addEventListener('resize', apply);
+  return {
+    // A project's opening layout: the setup area's share of the page height,
+    // set as if the viewer had dragged it there.
+    setupShare() { return Math.round(100 * setup.getBoundingClientRect().height / shell.getBoundingClientRect().height) / 100; },
+    setSetup(share) { saved.setupH = share * shell.getBoundingClientRect().height; apply(); store(); },
+  };
 }
 
 return { createSplitters };
@@ -4807,7 +4823,7 @@ __mods['ui/app.js'] = (() => {
 // shows, and wiring between display, controls and tabs. window.loopTuner is
 // the browser API for agents driving the page.
 
-const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, LOOP_SIGNALS } = __mods['core/project.js'];
+const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } = __mods['core/project.js'];
 const { diagramNames } = __mods['core/diagram.js'];
 const { createPlantEditor } = __mods['ui/plant.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
@@ -4827,6 +4843,7 @@ const TABS = [
 ];
 
 function startApp() {
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const $ = (id) => document.getElementById(id);
   const embeddedText = $('loop-tuner-project')?.textContent.trim() || '';
   const shellTemplate = $('lt-shell').outerHTML;
@@ -4855,7 +4872,7 @@ function startApp() {
   const base = `${embeddedText.length}:${hash(embeddedText)}`;
   function autosave() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: app.project })); } catch { /* storage unavailable */ } }, 300);
+    saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch { /* storage unavailable */ } }, 300);
   }
 
   // The acquisition: every signal the display can show. Without a plant and a
@@ -4895,12 +4912,13 @@ function startApp() {
     }
     return acq;
   }
-  // What a scope channel can show: every Source and Sink in the diagram (at
-  // any depth), whatever was simulated, and the loop's signals with a controller.
-  app.signalNames = () => {
+  // What a scope channel can show: only names the diagram gives (its Sources
+  // and Sinks, r always), each with its unit.
+  app.signalNames = () => channelNames(app.project);
+  app.sourceNames = () => { const n = app.signalNames().filter((x) => app.project.system.signals[x]); return n.length ? n : ['r']; };
+  app.unitOf = (name) => {
     const plant = app.project.system.plant;
-    const names = plant?.type === 'diagram' ? diagramNames(plant.diagram) : { sources: [], sinks: [] };
-    return [...new Set([...names.sources, ...names.sinks, ...Object.keys(app.project.system.signals), ...Object.keys(acquire().signals), ...(loopReady(app.project) ? LOOP_SIGNALS : [])])];
+    return (plant?.type === 'diagram' ? diagramNames(plant.diagram).units[name] : null) ?? '1';
   };
   const sig = () => app.project.system.signals[app.signal] ?? app.project.system.signals[(app.signal = Object.keys(app.project.system.signals)[0])];
   app.signalRef = sig;
@@ -4956,8 +4974,14 @@ function startApp() {
     app.beginEdit();
     const keep = views ?? app.project.system.plant?.views;
     app.project.system.plant = { type: 'diagram', diagram, ...(keep?.length ? { views: keep } : {}) };
+    // Only what the diagram names exists: new Sources get a signal, removed
+    // ones lose theirs (r always stays), channels on vanished names clear.
     const signals = app.project.system.signals;
-    for (const name of diagramNames(diagram).sources) signals[name] ??= { period: Math.max(...Object.values(signals).map((x) => x.period), 1), components: [] };
+    const { sources } = diagramNames(diagram);
+    for (const name of sources) signals[name] ??= { period: Math.max(...Object.values(signals).map((x) => x.period), 1), components: [] };
+    for (const name of Object.keys(signals)) if (name !== 'r' && !sources.includes(name)) delete signals[name];
+    pruneChannels(app.project.scope, app.project);
+    if (!signals[app.signal]) app.signal = 'r';
     app.endEdit();
     changed();
   };
@@ -5050,6 +5074,7 @@ function startApp() {
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
     onStopped: () => controls.render(display.mode),
     edit: (fn) => app.editScope(fn),
+    unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
   });
   const controls = createControls($('controls'), app);
@@ -5089,9 +5114,28 @@ function startApp() {
     autosave();
   }
 
+  // How the page is set (run control, tab, view) travels with the project as
+  // `ui` when it is saved, and is applied when a project or system opens.
+  let layout = null;
+  const withUi = () => {
+    const ui = { run: display.mode, ...(UI_TABS.includes(app.tab) ? { tab: app.tab } : {}), ...(plantEditor.viewName() ? { view: plantEditor.viewName() } : {}), ...(layout ? { setup: layout.setupShare() } : {}) };
+    return { ...app.project, ui };
+  };
+  function applyUi(ui = {}) {
+    if (ui.tab) app.tab = ui.tab;
+    plantEditor.view(ui.view ?? '');
+    if (ui.setup) layout?.setSetup(ui.setup);
+    renderTabs();
+    const run = ui.run ?? (reduced ? 'stop' : 'run');
+    display.setMode(run, { restart: true });
+    controls.render(display.mode);
+  }
+
   // Loading
   function load(raw, { keepHistory = true, quiet = false } = {}) {
     const p = normalizeProject(typeof raw === 'string' ? JSON.parse(raw) : raw);
+    const ui = p.ui;
+    delete p.ui;  // applied once below; the page itself is the live state
     if (keepHistory && app.project) app.beginEdit();
     app.project = p;
     app.endEdit();
@@ -5100,11 +5144,12 @@ function startApp() {
     app.signal = Object.keys(p.system.signals).includes('r') ? 'r' : Object.keys(p.system.signals)[0];
     acqKey = '';
     changed();
+    if (ui) applyUi(ui);
     if (!quiet) toast(`Loaded “${p.title}”`);
   }
 
   // Files and sharing
-  const exportJson = () => JSON.stringify(app.project, null, 2);
+  const exportJson = () => JSON.stringify(withUi(), null, 2);
   function exportHtml() {
     const json = exportJson().replace(/</g, '\\u003c');
     return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n<\/script>\n<script id="lt-script">${$('lt-script').textContent}<\/script>\n</body>\n</html>\n`;
@@ -5234,10 +5279,10 @@ function startApp() {
   }
   renderTabs();
   changed();
-  createSplitters($('lt-shell'));
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  display.setMode(reduced ? 'stop' : 'run');
-  controls.render(display.mode);
+  layout = createSplitters($('lt-shell'));
+  const ui = app.project.ui;
+  delete app.project.ui;
+  applyUi(ui);
 }
 
 function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }

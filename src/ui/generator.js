@@ -219,8 +219,8 @@ export function createGenerator(root, app) {
   }
 
   function renderSignals() {
-    const names = Object.keys(app.project.system.signals);
-    $('#g-sigs').innerHTML = names.map((n) => `<button class="sigkey ${n === app.signal ? 'on' : ''}" data-sig="${n}" aria-pressed="${n === app.signal}" title="Edit the signal ${n}, played by the Source blocks named ${n}"><span class="sigsym">${n}</span>${n === 'r' ? 'Reference' : 'Signal'}</button>`).join('')
+    const names = app.sourceNames();
+    $('#g-sigs').innerHTML = names.map((n) => `<button class="sigkey ${n === app.signal ? 'on' : ''}" data-sig="${n}" aria-pressed="${n === app.signal}" title="Edit the signal ${n}, played by the Source blocks named ${n}"><span class="sigsym">${n}</span>${app.unitOf(n) === '1' ? '' : app.unitOf(n)}</button>`).join('')
       + '<p class="sighint">Add a Source block in the Plant tab for another signal.</p>';
     $('#g-sigs').querySelectorAll('[data-sig]').forEach((b) => b.addEventListener('click', () => app.selectSignal(b.dataset.sig)));
   }

@@ -172,7 +172,7 @@ test('a diagram plant matches its single-block equivalent, nested or not', async
   const signals = { r: normalizeReference({ period: 10, components: [{ type: 'step', params: { amplitude: 1, time: 0 } }] }) };
   const sim = { duration: 2, sampleTime: 0.001 };
   const msd = simulateSystem(normalizeDiagram(EXAMPLE_PLANTS.find((p) => p.name.startsWith('Mass')).diagram), signals, sim).signals.y1;
-  const so = simulateSystem(normalizeDiagram({ blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 'p', type: 'secondOrder', params: { K: 1 / 400, wn: 20, zeta: 0.05 } }, { id: 'y1', type: 'sink', params: { name: 'y1' } }], wires: [{ from: 'r', to: 'p' }, { from: 'p', to: 'y1' }] }), signals, sim).signals.y1;
+  const so = simulateSystem(normalizeDiagram({ blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 'p', type: 'secondOrder', params: { K: 1 / 100, wn: 10, zeta: 0.05 } }, { id: 'y1', type: 'sink', params: { name: 'y1' } }], wires: [{ from: 'r', to: 'p' }, { from: 'p', to: 'y1' }] }), signals, sim).signals.y1;
   for (const k of [100, 500, 1000, 2000]) assert.ok(Math.abs(msd[k] - so[k]) < 1e-6, `t = ${k / 1000}: ${msd[k]} vs ${so[k]}`);
   const motor = simulateSystem(normalizeDiagram(EXAMPLE_PLANTS.find((p) => p.name === 'DC motor').diagram), signals, sim).signals;
   // Steady speed of the motor: Kt·10 / (1 + Ke·Kt·10) = 5 / 3.5
@@ -229,8 +229,11 @@ test('2D views compile and move with the signals; library parts combine', async 
   const mixed = normalizeProject(applySystem(p, msd, ['plant']));
   assert.equal(mixed.system.signals.r.components[0].type, 'square', 'the input stays from the pendulum');
   assert.equal(mixed.system.plant.views[0].name, 'Hanging mass');
-  const loop = SYSTEM_LIBRARY.find((s) => s.controller);
-  assert.ok(normalizeProject(applySystem(mixed, loop, ['controller'])).candidates.length > 0);
+  assert.deepEqual(mixed.scope.channels.map((c) => c.source), ['r', 'y1', '', ''], 'a whole load brings the system scope; a plant load keeps what still exists');
+  assert.ok(SYSTEM_LIBRARY.every((s) => s.plant.views?.length), 'every system has a view');
+  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && s.ui.tab === 'plant' && s.plant.views.some((v) => v.name === s.ui.view)), 'every system opens running on its view');
+  assert.deepEqual(p.ui, { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' }, 'a whole load brings how the system opens');
+  assert.deepEqual(normalizeProject({ ui: { run: 'fast', tab: 'plant', extra: 1 } }).ui, { tab: 'plant' }, 'unknown ui values are dropped');
   assert.throws(() => normalizeProject({ system: { plant: { type: 'diagram', diagram: { blocks: [], wires: [] }, views: [{ kind: '2d', shapes: [{ type: 'line', x1: 'sin(' }] }] } } }), /views\[0\]/);
 });
 
@@ -251,4 +254,20 @@ test('a switch passes its chosen input; a terminator ends a signal; SVG views bi
   const v = normalizeView({ kind: 'svg', svg: '<svg viewBox="0 0 10 10"><rect id="m" width="1" height="1"/></svg>', bind: [{ select: '#m', attr: 'transform', value: 'translate({100*y1}, 0)' }] });
   assert.deepEqual(compileBindings(v)({ t: 0, y1: 0.02 }), [{ select: '#m', attr: 'transform', value: 'translate(2, 0)' }]);
   assert.throws(() => normalizeView({ kind: 'svg', svg: '<svg/>', bind: [{ select: '#m', attr: 'onclick', value: 'x' }] }), /not an event/);
+});
+
+test('only what the diagram names exists: signals and channels are pruned, units are kept', async () => {
+  const { channelNames } = await import('../src/core/project.js');
+  const p = normalizeProject({
+    system: {
+      signals: { r: { period: 1, components: [] }, stale: { period: 1, components: [] } },
+      plant: { type: 'diagram', diagram: { blocks: [{ id: 'r', type: 'source', params: { signal: 'r', unit: 'N' } }, { id: 'y1', type: 'sink', params: { name: 'y1', unit: 'm' } }], wires: [{ from: 'r', to: 'y1' }] } },
+    },
+    scope: { channels: [{ source: 'r', on: true }, { source: 'y1', on: true }, { source: 'u', on: true }, { source: 'gone', on: true }] },
+  });
+  assert.deepEqual(Object.keys(p.system.signals), ['r']);
+  assert.deepEqual(channelNames(p), ['r', 'y1']);
+  assert.deepEqual(p.scope.channels.map((c) => `${c.source}:${c.on}`), ['r:true', 'y1:true', ':false', ':false']);
+  const { diagramNames } = await import('../src/core/diagram.js');
+  assert.deepEqual(diagramNames(p.system.plant.diagram).units, { r: 'N', y1: 'm' });
 });

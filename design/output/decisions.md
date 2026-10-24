@@ -2,6 +2,18 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-24 · v2.4: examples that work ([input](../input/2026-10-24-06-make-examples-work.md))
+
+- **Scope channel sources are only the names the diagram defines** (r always), no implicit y, u, e or "effort". (Person.) Names that disappear are cleared from the channels.
+- **Every signal has a unit, default `1`**, set on Sources and Sinks; physics parameters carry units. (Person.)
+- **The System library is three systems that move**: mass–spring–damper, inverted pendulum, DC motor. Inverse response, dead time, third-order lag and the closed-loop duplicates are gone from it (v1's loops stay for the CLI). (Person.)
+- **While sweeping, the trace is drawn only up to the scan line**; nothing ahead of it is shown. (Person: "I don't need to see in advance what happened.") This replaces the dimmed previous sweep.
+- **Single restarts from the start of the screen**, so the pendulum drops again. (Person.)
+- **A project or system says how it opens (`ui`)**: run state, tab, view, setup height. The systems open running on their view in the Plant tab with the setup area at 42 % of the page. Saving writes the current state. (Person: "an example can also contain the default settings on the run control and on the panels and tabs".) The setup height from `ui` is applied as if the viewer had dragged it, so it overrides the per-viewer size once; interpretation.
+- **No view-editing UI**: views are JSON only. (Person.)
+- **Controller decided** ([controller-proposal.md](controller-proposal.md)): two inputs by default, one sample time per Controller block, variants with the same interface that Auto-tune can flip through. (Person.)
+- **Short block labels**: the cart–pole shows `F → x, θ`. Subsystem masks (parameters that reach inner blocks) are on the roadmap. (Person.)
+
 ## 2026-10-24 · v2.3: views, system library, library column ([input](../input/2026-10-24-05-library-controller-views.md))
 
 - **The library column resizes and its groups fold**; both kept per viewer. Rarely used groups start folded. (Person; the starting fold is our choice.)
@@ -14,7 +26,7 @@ Reader: anyone who wants to know why something is the way it is. Newest first. "
 - **SVG views are cleaned before display** (no scripts, handlers, outside links) and bindings cannot target events or links: a shared file cannot run code. Interpretation, for safety.
 - **The mass–spring–damper hangs vertically** from a ceiling. (Person.) Its motion is drawn exaggerated (×40) and says so.
 - **Examples become the System library**: complete systems (input, plant with views, controller) loaded whole or by part from the header; the Plant tab's list draws from the same library. (Person.)
-- **The controller as a block**: proposed in [controller-proposal.md](controller-proposal.md), not built; waiting for the person's answers.
+- **The controller as a block**: proposed in [controller-proposal.md](controller-proposal.md); decided in v2.4.
 - **Repository**: github.com/mb-89/ctrl. The v1 tag could not be pushed (the session's git proxy refuses tag pushes); v1 is commit `b13ff03`.
 
 ## 2026-10-24 · v2.2: the Plant tab ([input](../input/2026-10-24-04-plant-tab.md))

@@ -5,7 +5,6 @@
 
 import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram } from '../core/diagram.js';
 import { SYSTEM_LIBRARY } from '../core/systems.js';
-import { normalizeView } from '../core/views.js';
 import { num, parseSI } from './units.js';
 import { createScene } from './scene.js';
 
@@ -26,20 +25,13 @@ const FOLD_KEY = 'loop-tuner:library-folded';
 const LAYOUT_KEY = 'loop-tuner:plant-layout';
 const loadJson = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } };
 const saveJson = (key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage unavailable */ } };
-const VIEW_TEMPLATE = {
-  name: '2D view', kind: '2d', view: [-1, -0.6, 1, 0.8],
-  shapes: [
-    { type: 'ground', x1: -1, x2: 1, y: -0.1 },
-    { type: 'circle', cx: 'clamp(y1, -0.9, 0.9)', cy: 0.05, r: 0.15, fill: 'ch2' },
-    { type: 'text', x: 0, y: 0.6, text: 'y1 = {y1}' },
-  ],
-};
 
 // Block geometry in canvas units.
 function size(b) {
   if (b.type === 'sum') return [34, 34];
   if (b.type === 'gain') return [58, 40];
   if (['source', 'sink', 'inport', 'outport'].includes(b.type)) return [70, 28];
+  if (diagramBlockDef(b.type).ode) return [150, 60];
   if (b.type === 'terminator') return [26, 26];
   if (b.type === 'switch') { const n = b.params.inputs; return [56, Math.max(40, 18 * n + 8)]; }
   const [ni, no] = blockPorts(b);
@@ -101,7 +93,6 @@ export function createPlantEditor(root, app) {
   let lastClick = { id: null, t: 0 };
   let saveName = null;           // library name being typed for a subsystem
   let rep = -1;                  // -1: the block diagram; otherwise a 2D view index
-  let viewDraft = null;          // the view JSON being edited
   const folded = new Set(loadJson(FOLD_KEY, ['Models', 'Sensors', 'Physics', 'Nonlinear', 'Structure']));
   const scene = createScene($('#pl-scene'), app);
 
@@ -291,9 +282,13 @@ export function createPlantEditor(root, app) {
     return `<g class="${cls}" data-block="${b.id}">${stack}${shape}${text}${ports}</g>`;
   }
 
+  // The line under a block's title: its formula for physics blocks (their
+  // parameters are on the right), else its first parameters, cut to fit.
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    return def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const text = def.ode ? def.formula : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
+    return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
 
   const plantViews = () => app.project.system.plant?.views ?? [];
@@ -301,20 +296,12 @@ export function createPlantEditor(root, app) {
     const vs = plantViews();
     if (rep >= vs.length) rep = -1;
     $('#pl-reps').innerHTML = `<button class="rep ${rep < 0 ? 'on' : ''}" data-rep="-1" role="tab" aria-selected="${rep < 0}">Diagram</button>`
-      + vs.map((v, i) => `<button class="rep ${rep === i ? 'on' : ''}" data-rep="${i}" role="tab" aria-selected="${rep === i}" title="2D view">${esc(v.name)}</button>`).join('')
-      + `<button class="rep add" data-rep="new" title="Add a 2D view of this plant: a scene whose shapes move with the signals">+ 2D</button>`;
-    $('#pl-reps').querySelectorAll('[data-rep]').forEach((b) => b.addEventListener('click', () => {
-      if (b.dataset.rep === 'new') {
-        if (app.project.system.plant?.type !== 'diagram') app.setPlant(normalizeDiagram(rootDiagram()));
-        app.setViews([...plantViews(), normalizeView(VIEW_TEMPLATE)]);
-        showRep(plantViews().length - 1);
-      } else showRep(Number(b.dataset.rep));
-    }));
+      + vs.map((v, i) => `<button class="rep ${rep === i ? 'on' : ''}" data-rep="${i}" role="tab" aria-selected="${rep === i}" title="A view of this plant, from its JSON">${esc(v.name)}</button>`).join('');
+    $('#pl-reps').querySelectorAll('[data-rep]').forEach((b) => b.addEventListener('click', () => showRep(Number(b.dataset.rep))));
   }
 
   function showRep(i) {
     rep = i;
-    viewDraft = null;
     const inView = rep >= 0;
     viewEl.hidden = inView;
     $('#pl-scene').hidden = !inView;
@@ -323,38 +310,13 @@ export function createPlantEditor(root, app) {
     render();
   }
 
+  // Views come from the project's JSON; the panel only says what is shown.
   function renderViewProps() {
     const v = plantViews()[rep];
-    const box = $('#pl-props');
-    box.innerHTML = `<h3 class="glabel">2D view</h3>
-      <p class="phelp">The scene follows the scope: the scan line while it runs, the cursor while you hover the plot. Numbers can be formulas in t and the signal names (${esc(Object.keys(app.sceneEnv()).filter((k) => k !== 't').join(', ') || 'none yet')}).</p>
-      <textarea class="vjson" id="pl-vjson" spellcheck="false" aria-label="The view as JSON"></textarea>
-      <p class="pmsg" id="pl-vmsg"></p>
-      <div class="pbtns"><button class="key small primary" data-vact="apply">Apply</button><button class="key small" data-vact="revert">Revert</button><button class="key small" data-vact="delete">Delete view</button></div>
-      <p class="phelp">Shapes: line, arrow, rect, circle, spring, damper, ground, text ("{formula}" inside text shows a value), group (moves and rotates its shapes). Colours: ink, muted, panel, ch1–ch4. Format: design/output/plant-views.md.</p>`;
-    const ta = $('#pl-vjson');
-    ta.value = viewDraft ?? JSON.stringify(v, null, 2);
-    ta.addEventListener('input', () => { viewDraft = ta.value; });
-    ta.addEventListener('keydown', (e) => { e.stopPropagation(); if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') applyView(); });
-    box.querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', () => {
-      if (b.dataset.vact === 'apply') applyView();
-      if (b.dataset.vact === 'revert') { viewDraft = null; renderViewProps(); }
-      if (b.dataset.vact === 'delete') { app.setViews(plantViews().filter((_, j) => j !== rep)); showRep(-1); }
-    }));
-  }
-
-  function applyView() {
-    const ta = $('#pl-vjson');
-    let v;
-    try { v = normalizeView(JSON.parse(ta.value), 'view'); } catch (err) { $('#pl-vmsg').textContent = err.message; return; }
-    const vs = plantViews().slice();
-    vs[rep] = v;
-    app.setViews(vs);
-    viewDraft = null;
-    scene.show(v);
-    renderReps();
-    renderViewProps();
-    app.toast('View applied');
+    const used = [...new Set((JSON.stringify(v).match(/[A-Za-z_]\w*/g) ?? []).filter((n) => app.signalNames().includes(n)))];
+    $('#pl-props').innerHTML = `<h3 class="glabel">${esc(v.name)}</h3>
+      <p class="phelp">A ${v.kind === 'svg' ? 'SVG drawing' : '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}. It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>
+      <p class="phelp">Views are set in the plant's JSON (<code>system.plant.views</code>); the format is in design/output/plant-views.md.</p>`;
   }
 
   let compileMsg = '';
@@ -409,7 +371,8 @@ export function createPlantEditor(root, app) {
       if (!['source', 'sink', 'inport', 'outport'].includes(b.type)) html += field('name', 'Label', b.name ?? '', 'text', 'optional');
       for (const p of def.params) {
         const v = b.params[p.key];
-        html += field(`p:${p.key}`, p.label, p.kind === 'vector' ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', p.unit ?? (p.kind === 'vector' ? 'highest power first' : ''));
+        const hint = p.kind === 'vector' ? 'highest power first' : p.kind ? '' : `unit: ${p.unit ?? '1'}`;
+        html += field(`p:${p.key}`, p.label, p.kind === 'vector' ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', hint);
       }
       html += '</div><div class="pbtns">';
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="key small" data-act="flip">Flip</button>`;
@@ -738,6 +701,9 @@ export function createPlantEditor(root, app) {
     render() { renderLibrary(); render(); },
     shown() { renderLibrary(); if (rep >= 0) showRep(rep); else render(); if (first) { first = false; fit(); } },
     hidden() { scene.stop(); },
+    // The representation by name ('' or unknown: the diagram); shown when the tab is.
+    view(name) { rep = plantViews().findIndex((v) => v.name === name); },
+    viewName() { return rep >= 0 ? plantViews()[rep]?.name ?? '' : ''; },
     fit,
     handleKey,
     reset() { path = []; sel.clear(); wireSel = -1; first = true; if (rep >= 0) { rep = -1; scene.stop(); viewEl.hidden = false; $('#pl-scene').hidden = true; for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = false; } },

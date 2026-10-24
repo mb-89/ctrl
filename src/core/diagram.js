@@ -20,8 +20,8 @@ const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...ext
 // Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
 // are diagram blocks too: their transfer function becomes the block.
 export const ELEMENTS = {
-  source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }], ports: () => [0, 1], formula: 'r(t)' },
-  sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }], ports: () => [1, 0], formula: 'y' },
+  source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: () => [0, 1], formula: 'r(t)' },
+  sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: () => [1, 0], formula: 'y' },
   terminator: { label: 'Terminator', group: 'Signals', params: [], ports: () => [1, 0], formula: 'ends a signal' },
   switch: {
     label: 'Switch', group: 'Math', formula: 'passes one input',
@@ -89,7 +89,10 @@ function normalizeParams(type, params = {}, where) {
   const out = {};
   for (const p of ELEMENTS[type].params) {
     let v = params[p.key] ?? p.default;
-    if (p.kind === 'name') {
+    if (p.kind === 'unit') {
+      v = String(v).trim() || '1';
+      if (v.length > 12 || /[<>"{}]/.test(v)) throw new Error(`${where}.${p.key}: a short unit such as m, N, rad/s, or 1`);
+    } else if (p.kind === 'name') {
       v = String(v);
       if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
     } else if (p.kind === 'signs') {
@@ -157,18 +160,19 @@ export function plantDiagram(plant) {
   return plant.type === 'diagram' ? plant.diagram : wrapPlant(plant);
 }
 
-// Names of the Source signals and the Sinks anywhere in a diagram.
+// Names of the Source signals and the Sinks anywhere in a diagram, and the
+// unit each one is given ("1" when none).
 export function diagramNames(diagram) {
-  const sources = new Set(), sinks = [];
+  const sources = new Set(), sinks = [], units = {};
   const walk = (d) => {
     for (const b of d.blocks) {
-      if (b.type === 'source') sources.add(b.params.signal);
-      if (b.type === 'sink') sinks.push(b.params.name);
+      if (b.type === 'source') { sources.add(b.params.signal); units[b.params.signal] ??= b.params.unit ?? '1'; }
+      if (b.type === 'sink') { sinks.push(b.params.name); units[b.params.name] = b.params.unit ?? '1'; }
       if (b.type === 'subsystem') walk(b.diagram);
     }
   };
   walk(diagram);
-  return { sources: [...sources], sinks };
+  return { sources: [...sources], sinks, units };
 }
 
 // Flattens and compiles a diagram into a simulation element:

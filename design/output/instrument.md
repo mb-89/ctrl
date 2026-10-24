@@ -6,7 +6,7 @@ Reader: whoever changes the display or its controls. Reference: [the Keysight pa
 
 ## The screen is the record
 
-What the screen shows is what is simulated and swept: from t = 0 to the right edge (horizontal position + 10 divisions). There is no separate record length. The sweep crosses the screen in real time: at 100 ms/div it takes 1 s. Left of the scan line the trace is the current sweep, bright; right of it the previous one, dimmed.
+What the screen shows is what is simulated and swept: from t = 0 to the right edge (horizontal position + 10 divisions). There is no separate record length. The sweep crosses the screen in real time: at 100 ms/div it takes 1 s. While it sweeps, the trace is drawn only up to the scan line: what has happened so far, nothing ahead of it (the person, 2026-10-24). Stopped, the screen shows the whole last sweep.
 
 ## Display
 
@@ -36,7 +36,8 @@ Wheel and knob zooms step 1-2-5; a box zoom shows exactly the marked region.
 
 Four channels, in the classic colours: 1 yellow, 2 green, 3 blue, 4 magenta. Each has a source, an on/off state, a scale (units per division) and an offset.
 
-- **A channel's source is any Source or Sink in the plant diagram** (at any depth), picked under Vertical › Source; once a controller exists, also y, u, e of the loop.
+- **A channel's source is any Source or Sink in the plant diagram** (at any depth), picked under Vertical › Source, and nothing else: the list holds only names the person made in the diagram (r always), each with its unit. Once a controller exists, its signals join. (The person, 2026-10-24.)
+- **Every signal has a unit**, set on its Source or Sink (default `1`, unitless); badges, readouts and the source list show it.
 - **Channel 1 shows r; channels 2–4 start with no source ("none").** Nothing the person adds is put on the scope by itself. (The person, 2026-10-24.) Picking a source switches the channel on; "none" switches it off. A closed-loop system from the library starts with r, y, u, e.
 - A channel whose source has no data shows "no signal" and draws nothing.
 
@@ -54,7 +55,8 @@ Every knob has a readout below it. Click it to type a value: `20m`, `100 ms`, `2
 ## Run Control
 
 - **Run/Stop**: lit green while running, red while stopped. Stop freezes the sweep, not the data: edits still show at once.
-- **Single**: one sweep across the screen, then stop; lit amber meanwhile.
+- **Single**: one sweep from the start of the screen (t = 0 at position 0), then stop; lit amber meanwhile. The plant's view replays it (the pendulum drops again).
+- **A project or system may say how it opens** (`ui`: run state, tab, view, setup height); the System library's systems open running on their view in the Plant tab ([project-format.md](project-format.md)).
 - **Auto Scale**: the timebase shows one period of the input (the smallest 1-2-5 step whose 10 divisions hold the period, position 0); each channel with a signal is scaled to about 6 divisions and centred on a whole division.
 
 ## Knobs

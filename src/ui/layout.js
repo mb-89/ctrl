@@ -14,15 +14,18 @@ export function createSplitters(shell) {
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') ?? {}; } catch { /* storage unavailable */ }
   const store = () => { try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch { /* storage unavailable */ } };
 
-  // The setup height defaults to what the Input tab needs, measured once.
+  // The setup height defaults to what the Input tab needs, measured while it
+  // is the open tab (a project may open on another tab).
   function naturalSetup() {
+    if (shell.querySelector('#tab-input')?.hidden) return defaultSetup;
     shell.style.removeProperty('--setup-h');
     setup.style.height = 'auto';
     const h = setup.getBoundingClientRect().height;
     setup.style.height = '';
     return Math.ceil(h);
   }
-  let defaultSetup = naturalSetup();
+  let defaultSetup = 0;
+  defaultSetup = naturalSetup();
   const maxSetup = () => Math.max(MIN_SETUP, shell.getBoundingClientRect().height - MIN_TOP);
   const maxControls = () => Math.min(MAX_CONTROLS, instrument.getBoundingClientRect().width - MIN_DISPLAY);
 
@@ -66,4 +69,10 @@ export function createSplitters(shell) {
   apply();
   document.fonts?.ready.then(() => { defaultSetup = naturalSetup(); apply(); });
   window.addEventListener('resize', apply);
+  return {
+    // A project's opening layout: the setup area's share of the page height,
+    // set as if the viewer had dragged it there.
+    setupShare() { return Math.round(100 * setup.getBoundingClientRect().height / shell.getBoundingClientRect().height) / 100; },
+    setSetup(share) { saved.setupH = share * shell.getBoundingClientRect().height; apply(); store(); },
+  };
 }

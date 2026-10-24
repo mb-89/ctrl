@@ -10,6 +10,8 @@ Reader: whoever changes how the plant is built or simulated.
 - A **Sink** records its input under a name (y1, y2, …); every Sink anywhere in the diagram, also inside subsystems (and later controllers), is a channel source on the scope, as is every Source.
 - Three ways for a signal to end (the person): **Out** passes it up to the enclosing block, **Sink** records it for the scope, **Terminator** just ends it.
 - A diagram with only a Source shows only that signal. **A new plant is exactly Source r**, and r always stays: its last Source cannot be deleted or renamed away.
+- **Every Source and Sink has a unit** (parameter `unit`, default `1`); so does every physical block parameter. The scope shows the units.
+- **Block labels stay short**; a physics block shows its formula (the Cart–pole: `F → x, θ`). Subsystem parameters that set inner blocks (a mask) are on the roadmap.
 - **Double-click a Source or Sink on the canvas to rename it.** Renaming a Source renames its signal (the Input tab follows); renaming a Sink carries into the scope channels that showed it.
 - **In** and **Out** blocks are the ports of a subsystem (and, later, the plant's connection to the controller).
 
@@ -28,7 +30,7 @@ Reader: whoever changes how the plant is built or simulated.
 | Double-click a subsystem, or Open | Go inside; the breadcrumb or `Esc` goes back up |
 | Flip | Mirror a block (inputs right, outputs left), for feedback paths |
 | Double-click a Switch | Move it to its next input (its number of inputs is a parameter) |
-| Representation switch (Diagram, views, + 2D) | Show the block diagram or one of the plant's views ([plant-views.md](plant-views.md)) |
+| Representation switch (Diagram, views) | Show the block diagram or one of the plant's views ([plant-views.md](plant-views.md)) |
 
 ## Library
 

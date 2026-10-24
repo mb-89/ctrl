@@ -14,7 +14,6 @@ import { siUnit, num } from './units.js';
 import { step125 } from '../core/scale.js';
 
 export const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
-export const SOURCE_LABEL = { r: 'r  reference', y: 'y  output', u: 'u  effort', e: 'e  error', ym: 'ym measured', d: 'd  disturbance' };
 const DIVX = 10, DIVY = 8;
 const PAD = { l: 58, t: 6, r: 8, b: 22 };
 const BG = '#0a0d10';
@@ -54,6 +53,7 @@ export function createDisplay(root, handlers) {
   const region = (x, y) => (x < P.l ? 'yaxis' : y > P.b ? 'xaxis' : 'plot');
   const visible = (i) => scope.channels[i].on && !!data?.signals[scope.channels[i].source];
   const axisChannel = () => (line !== null ? line : selected);
+  const unitLabel = (name) => handlers.unitOf?.(name) ?? '1';
 
   function drawGrid(g) {
     g.fillStyle = BG;
@@ -155,8 +155,8 @@ export function createDisplay(root, handlers) {
       ctx.shadowColor = CHANNEL_COLORS[i];
       ctx.shadowBlur = sel ? 9 : 5;
       ctx.globalAlpha = line !== null && !sel ? 0.55 : 1;
+      // While sweeping, only what has happened so far: nothing ahead of the scan line.
       trace(ctx, data.t, v, ch, 0, k);
-      if (k < n) { ctx.shadowBlur = 0; ctx.globalAlpha = 0.28; trace(ctx, data.t, v, ch, k, n); }
     }
     ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
@@ -253,9 +253,9 @@ export function createDisplay(root, handlers) {
     badges.innerHTML = scope.channels.map((ch, i) => {
       const has = !!data.signals[ch.source];
       const cls = ['badge', ch.on ? 'on' : 'off', i === selected ? 'sel' : '', has ? '' : 'nosig'].join(' ');
-      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${ch.source ? SOURCE_LABEL[ch.source] ?? ch.source : 'no source; pick one under Vertical'}">
+      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${ch.source ? `${ch.source} in ${unitLabel(ch.source)}` : 'no source; pick one under Vertical'}">
         <span class="num">${i + 1}</span><span class="src">${ch.source || '—'}</span>
-        <span class="val">${has ? `${num(ch.scale)}/div` : ch.source ? 'no signal' : 'none'}</span></button>`;
+        <span class="val">${has ? `${num(ch.scale)} ${unitLabel(ch.source)}/div` : ch.source ? 'no signal' : 'none'}</span></button>`;
     }).join('');
     badges.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => handlers.onSelectChannel(Number(b.dataset.ch))));
   }
@@ -423,8 +423,8 @@ export function createDisplay(root, handlers) {
     setData(d) { data = d; if (line !== null && !visible(line)) line = null; renderBadges(); draw(); },
     setScope(s, sel) { scope = s; selected = sel; if (line !== null && line !== sel) line = null; renderBadges(); draw(); },
     setPreview(p) { preview = p; draw(); },
-    setMode(m) {
-      if (m === 'single' && scope) tScan = win()[0];
+    setMode(m, { restart = false } = {}) {
+      if ((m === 'single' || restart) && scope) tScan = win()[0];
       mode = m;
       last = 0;
       kick();

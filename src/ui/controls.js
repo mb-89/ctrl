@@ -3,7 +3,7 @@
 // ("20m", "100 ms", "-0.4").
 
 import { createDial } from './dial.js';
-import { CHANNEL_COLORS, SOURCE_LABEL } from './display.js';
+import { CHANNEL_COLORS } from './display.js';
 import { siUnit, num, parseSI } from './units.js';
 import { step125 } from '../core/scale.js';
 
@@ -92,14 +92,14 @@ export function createControls(root, app) {
     vScale: knob({
       id: 'v-vscale', label: 'Scale', size: 48, title: 'Units per division of the selected channel',
       turn: (sc, s) => { const c = sc.channels[app.channel]; for (let i = 0; i < Math.abs(s); i++) c.scale = step125(c.scale, -Math.sign(s)); },
-      read: () => `${num(ch().scale)}/div`,
+      read: () => `${num(ch().scale)} ${app.unitOf(ch().source)}/div`,
       write: positive((sc, v) => { sc.channels[app.channel].scale = v; }),
     }),
     vPos: knob({
       id: 'v-vpos', label: 'Position', size: 36, title: 'Offset of the selected channel · double-click to zero',
       turn: (sc, s, fine) => { const c = sc.channels[app.channel]; c.offset = round(c.offset + s * c.scale * (fine ? 0.02 : 0.1)); },
       push: (sc) => { sc.channels[app.channel].offset = 0; },
-      read: () => num(ch().offset),
+      read: () => `${num(ch().offset)} ${app.unitOf(ch().source)}`,
       write: (v) => setScope((sc) => { sc.channels[app.channel].offset = v; }),
     }),
   };
@@ -134,11 +134,12 @@ export function createControls(root, app) {
       b.setAttribute('aria-pressed', String(sc.channels[i].on));
     });
     const names = [...new Set([...app.signalNames(), ch().source].filter(Boolean))];
-    if (src.dataset.names !== names.join(',')) {
-      src.innerHTML = '<option value="">— none</option>' + names.map((n) => `<option value="${n}">${SOURCE_LABEL[n] ?? n}</option>`).join('');
+    if (src.dataset.names !== names.join(',') + '|' + names.map(app.unitOf).join(',')) {
+      src.innerHTML = '<option value="">— none</option>' + names.map((n) => `<option value="${n}">${n}${app.unitOf(n) === '1' ? '' : ` (${app.unitOf(n)})`}</option>`).join('');
       src.dataset.names = names.join(',');
     }
     src.value = ch().source;
+    src.dataset.names = names.join(',') + '|' + names.map(app.unitOf).join(',');
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
   }

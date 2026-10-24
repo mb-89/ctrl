@@ -2,7 +2,7 @@
 
 Reader: whoever writes or renders a plant's 2D (later 3D) representation.
 
-**A plant has one editable representation, its block diagram, and any number of views that are configured in the plant's JSON, not drawn in an editor.** A view shows the plant moving: it follows the scope's time (the scan line while running, the cursor while hovering the plot, else the screen's right edge). The Plant tab's representation switch (Diagram | each view | + 2D) shows them; the right panel edits a view's JSON directly.
+**A plant has one editable representation, its block diagram, and any number of views that are configured in the plant's JSON, not drawn in an editor.** A view shows the plant moving: it follows the scope's time (the scan line while running, the cursor while hovering the plot, else the screen's right edge). The Plant tab's representation switch (Diagram | each view) shows them; the right panel only says what the view shows. **Views are added and changed in the project's JSON only; there is no view-editing UI** (the person, 2026-10-24: "drop adding new 2D views for now").
 
 Where a standard exists, we use it (the person, 2026-10-24): SVG for 2D drawings, URDF for robots later.
 

@@ -72,7 +72,7 @@ const HELP = `
 </div>
 <h3>Plant</h3>
 <p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (y1, y2, …) can be shown on any channel. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Double-click a Switch to move it to its next input. Wheel zooms the canvas; dragging the background pans.</p>
-<p>A plant can also have <b>2D views</b> (Diagram | views above the canvas): scenes configured in its JSON that move with the signals, following the scope's scan line or your cursor.</p>
+<p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>System library</h3>
 <p>Complete example systems: input, plant and, where there is one, controller. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>

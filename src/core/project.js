@@ -53,8 +53,13 @@ export function normalizeProject(p) {
   for (const [slot, def] of Object.entries(SYSTEM_DEFAULTS)) system[slot] = normalizeBlock(slot, p.system?.[slot] ?? def);
   const plant = p.system?.plant ?? (v1 ? { type: 'firstOrder' } : null);
   system.plant = plant ? normalizePlant(plant) : null;
-  if (system.plant?.type === 'diagram') for (const name of diagramNames(system.plant.diagram).sources) signals[name] ??= normalizeReference({ period: 1, components: [] });
-  if (!Object.keys(signals).length) signals.r = normalizeReference({ period: 1, components: [] });
+  if (system.plant?.type === 'diagram') {
+    // Only what the diagram names exists: a signal per Source; r always.
+    const { sources } = diagramNames(system.plant.diagram);
+    for (const name of sources) signals[name] ??= normalizeReference({ period: 1, components: [] });
+    for (const name of Object.keys(signals)) if (name !== 'r' && !sources.includes(name)) delete signals[name];
+  }
+  if (!signals.r) signals.r = normalizeReference({ period: 1, components: [] });
   const goal = normalizeGoal(p.goal);
   const raw = Array.isArray(p.candidates) ? p.candidates : [];
   const candidates = raw.map((c, i) => {
@@ -74,10 +79,26 @@ export function normalizeProject(p) {
     format: FORMAT,
     title: String(p.title ?? 'Untitled loop'),
     ...(p.notes ? { notes: String(p.notes) } : {}),
-    sim, system, scope: normalizeScope(p.scope, longestPeriod(signals), candidates.length > 0 && !!system.plant), goal, candidates,
+    sim, system, scope: pruneChannels(normalizeScope(p.scope, longestPeriod(signals), candidates.length > 0 && !!system.plant), { system, candidates }), goal, candidates,
     ...(Array.isArray(p.library) && p.library.length ? { library: p.library.map(normalizeLibraryEntry) } : {}),
     ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
+    ...(normalizeUi(p.ui) ? { ui: normalizeUi(p.ui) } : {}),
   };
+}
+
+// How the page opens: the run control, the open tab, in the Plant tab the
+// representation shown, and the setup area's share of the page height.
+// Unknown values are dropped.
+export const UI_RUN = ['run', 'stop', 'single'];
+export const UI_TABS = ['input', 'plant'];
+export function normalizeUi(ui) {
+  if (!ui || typeof ui !== 'object') return null;
+  const out = {};
+  if (UI_RUN.includes(ui.run)) out.run = ui.run;
+  if (UI_TABS.includes(ui.tab)) out.tab = ui.tab;
+  if (typeof ui.view === 'string' && ui.view) out.view = ui.view;
+  if (Number.isFinite(ui.setup) && ui.setup > 0 && ui.setup < 1) out.setup = ui.setup;
+  return Object.keys(out).length ? out : null;
 }
 
 export function checkName(name) {
@@ -164,6 +185,21 @@ export function normalizeScope(scope = {}, period, loop = false) {
     return ch;
   });
   return { timebase, channels };
+}
+
+// Every name a scope channel can show: the diagram's Sources and Sinks (and
+// r); with a closed loop from an older file, also its y, u, e, ym, d.
+export function channelNames(project) {
+  const plant = project.system.plant;
+  const n = plant?.type === 'diagram' ? diagramNames(plant.diagram) : { sources: [], sinks: [] };
+  return [...new Set(['r', ...n.sources, ...n.sinks, ...(loopReady(project) ? LOOP_SIGNALS : [])])];
+}
+
+// A channel showing a name that no longer exists goes back to no source.
+export function pruneChannels(scope, project) {
+  const names = channelNames(project);
+  for (const ch of scope.channels) if (ch.source && !names.includes(ch.source)) { ch.source = ''; ch.on = false; }
+  return scope;
 }
 
 // With a plant but no controller yet, the plant runs open loop: u = r.

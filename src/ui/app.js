@@ -2,7 +2,7 @@
 // shows, and wiring between display, controls and tabs. window.loopTuner is
 // the browser API for agents driving the page.
 
-import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, LOOP_SIGNALS } from '../core/project.js';
+import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } from '../core/project.js';
 import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
@@ -23,6 +23,7 @@ const TABS = [
 ];
 
 function startApp() {
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const $ = (id) => document.getElementById(id);
   const embeddedText = $('loop-tuner-project')?.textContent.trim() || '';
   const shellTemplate = $('lt-shell').outerHTML;
@@ -51,7 +52,7 @@ function startApp() {
   const base = `${embeddedText.length}:${hash(embeddedText)}`;
   function autosave() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: app.project })); } catch { /* storage unavailable */ } }, 300);
+    saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch { /* storage unavailable */ } }, 300);
   }
 
   // The acquisition: every signal the display can show. Without a plant and a
@@ -91,12 +92,13 @@ function startApp() {
     }
     return acq;
   }
-  // What a scope channel can show: every Source and Sink in the diagram (at
-  // any depth), whatever was simulated, and the loop's signals with a controller.
-  app.signalNames = () => {
+  // What a scope channel can show: only names the diagram gives (its Sources
+  // and Sinks, r always), each with its unit.
+  app.signalNames = () => channelNames(app.project);
+  app.sourceNames = () => { const n = app.signalNames().filter((x) => app.project.system.signals[x]); return n.length ? n : ['r']; };
+  app.unitOf = (name) => {
     const plant = app.project.system.plant;
-    const names = plant?.type === 'diagram' ? diagramNames(plant.diagram) : { sources: [], sinks: [] };
-    return [...new Set([...names.sources, ...names.sinks, ...Object.keys(app.project.system.signals), ...Object.keys(acquire().signals), ...(loopReady(app.project) ? LOOP_SIGNALS : [])])];
+    return (plant?.type === 'diagram' ? diagramNames(plant.diagram).units[name] : null) ?? '1';
   };
   const sig = () => app.project.system.signals[app.signal] ?? app.project.system.signals[(app.signal = Object.keys(app.project.system.signals)[0])];
   app.signalRef = sig;
@@ -152,8 +154,14 @@ function startApp() {
     app.beginEdit();
     const keep = views ?? app.project.system.plant?.views;
     app.project.system.plant = { type: 'diagram', diagram, ...(keep?.length ? { views: keep } : {}) };
+    // Only what the diagram names exists: new Sources get a signal, removed
+    // ones lose theirs (r always stays), channels on vanished names clear.
     const signals = app.project.system.signals;
-    for (const name of diagramNames(diagram).sources) signals[name] ??= { period: Math.max(...Object.values(signals).map((x) => x.period), 1), components: [] };
+    const { sources } = diagramNames(diagram);
+    for (const name of sources) signals[name] ??= { period: Math.max(...Object.values(signals).map((x) => x.period), 1), components: [] };
+    for (const name of Object.keys(signals)) if (name !== 'r' && !sources.includes(name)) delete signals[name];
+    pruneChannels(app.project.scope, app.project);
+    if (!signals[app.signal]) app.signal = 'r';
     app.endEdit();
     changed();
   };
@@ -246,6 +254,7 @@ function startApp() {
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
     onStopped: () => controls.render(display.mode),
     edit: (fn) => app.editScope(fn),
+    unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
   });
   const controls = createControls($('controls'), app);
@@ -285,9 +294,28 @@ function startApp() {
     autosave();
   }
 
+  // How the page is set (run control, tab, view) travels with the project as
+  // `ui` when it is saved, and is applied when a project or system opens.
+  let layout = null;
+  const withUi = () => {
+    const ui = { run: display.mode, ...(UI_TABS.includes(app.tab) ? { tab: app.tab } : {}), ...(plantEditor.viewName() ? { view: plantEditor.viewName() } : {}), ...(layout ? { setup: layout.setupShare() } : {}) };
+    return { ...app.project, ui };
+  };
+  function applyUi(ui = {}) {
+    if (ui.tab) app.tab = ui.tab;
+    plantEditor.view(ui.view ?? '');
+    if (ui.setup) layout?.setSetup(ui.setup);
+    renderTabs();
+    const run = ui.run ?? (reduced ? 'stop' : 'run');
+    display.setMode(run, { restart: true });
+    controls.render(display.mode);
+  }
+
   // Loading
   function load(raw, { keepHistory = true, quiet = false } = {}) {
     const p = normalizeProject(typeof raw === 'string' ? JSON.parse(raw) : raw);
+    const ui = p.ui;
+    delete p.ui;  // applied once below; the page itself is the live state
     if (keepHistory && app.project) app.beginEdit();
     app.project = p;
     app.endEdit();
@@ -296,11 +324,12 @@ function startApp() {
     app.signal = Object.keys(p.system.signals).includes('r') ? 'r' : Object.keys(p.system.signals)[0];
     acqKey = '';
     changed();
+    if (ui) applyUi(ui);
     if (!quiet) toast(`Loaded “${p.title}”`);
   }
 
   // Files and sharing
-  const exportJson = () => JSON.stringify(app.project, null, 2);
+  const exportJson = () => JSON.stringify(withUi(), null, 2);
   function exportHtml() {
     const json = exportJson().replace(/</g, '\\u003c');
     return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n</script>\n<script id="lt-script">${$('lt-script').textContent}</script>\n</body>\n</html>\n`;
@@ -430,10 +459,10 @@ function startApp() {
   }
   renderTabs();
   changed();
-  createSplitters($('lt-shell'));
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  display.setMode(reduced ? 'stop' : 'run');
-  controls.render(display.mode);
+  layout = createSplitters($('lt-shell'));
+  const ui = app.project.ui;
+  delete app.project.ui;
+  applyUi(ui);
 }
 
 function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
