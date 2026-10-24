@@ -128,10 +128,12 @@ function startApp() {
     const away = sliceEnd ? performance.now() - sliceEnd : 0;
     const r = designs.runJobs(Math.min(16, Math.max(8, away)));
     sliceEnd = performance.now();
-    if (r.finished.length) designsSettled(r.finished);
-    if (!designs.busy()) { pumping = false; return; }
-    if (r.waitMs > 0) setTimeout(() => pumpChannel.port2.postMessage(0), r.waitMs);
-    else pumpChannel.port2.postMessage(0);
+    // The next slice is scheduled even if showing this one's result fails.
+    try { if (r.finished.length) designsSettled(r.finished); } finally {
+      if (!designs.busy()) pumping = false;
+      else if (r.waitMs > 0) setTimeout(() => pumpChannel.port2.postMessage(0), r.waitMs);
+      else pumpChannel.port2.postMessage(0);
+    }
   };
   // Progress, at most 10 times a second: only the Computed box, the variant
   // marker and the note beside the title change; no input is re-rendered.
