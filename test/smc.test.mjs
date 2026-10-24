@@ -197,7 +197,7 @@ test('the sliding-mode system loads whole with its record step, its Measure chan
   assert.equal(p.sim.sampleTime, 0.00025, 'four records per controller sample');
   assert.deepEqual(p.scope.channels.map((c) => [c.source, c.on, !!c.measure]), [['e', true, false], ['speed', true, false], ['V', false, true], ['i', false, true]]);
   assert.deepEqual(p.scope.view, { mode: 'xy' }, 'XY without Δ: the phase portrait');
-  assert.deepEqual(VARIANTS, ['Sliding mode, relay (theory)', 'Sliding mode, boundary layer (practice)', 'Super-twisting (continuous)']);
+  assert.deepEqual(VARIANTS, ['Relay (theory)', 'Boundary layer', 'Super-twisting'], 'short enough for the variant list');
   const c = p.system.plant.diagram.blocks.find((b) => b.type === 'controller');
   assert.deepEqual(c.params, { inputs: 3, Ts: 0.001 });
   // A whole load of another system takes the record step away again.
