@@ -65,3 +65,5 @@
 (Transcription: "Ostsee controls" is "oscilloscope controls", the Run Control panel; "hill" is HIL.)
 
 > It's okay if e-stop stays visible from anywhere, but then put it into the header bar. Make it red, put it into the header bar, right in the middle, next to system library, that's fine.
+
+> And I guess the two sentences on what it is, they can go into the help, right?
