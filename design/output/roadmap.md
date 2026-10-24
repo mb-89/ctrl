@@ -18,6 +18,7 @@ Reader: whoever picks the next piece of work.
 - Live (HIL) mode: an External plant block, a plant outside the page over WebSocket (JSON-RPC 2.0, 100 Hz, the plant sets the cycle and defines the signals), watchdogs and a latched E-stop on both sides (the page's E-STOP key, the plant's stop key), Run and Stop through the plant, the loop in a Web Worker, live edits of every controller and observer parameter; `hil-plant.zip` (`hil_plant.py` with runme.sh and runme.ps1) and the "HIL: external motor" system; `window.loopTuner.live` for agents ([hil.md](hil.md)).
 - Speed in the header: simulated time at any factor (1× real time, 0.1× … ∞ as fast as possible), never faster than the page simulates the screen (∞ runs at that speed), saved with the project; the achieved speed measured beside it; Auto-tune runs at it, each run lasting its own length; held at 1× while a live plant is connected ([instrument.md](instrument.md#speed)).
 - Saving traces: Save ▾ stores the screen with every signal (CSV, JSON) or as a picture (PNG); the live record keeps the last minutes of every live signal; saved traces open as dashed references, stepped through when longer than the screen ([instrument.md](instrument.md#save-the-live-record-and-references)).
+- Spectrogram levels: a strip with the amplitudes' histogram and draggable levels (after pyqtgraph), automatic by default, per signal; and a colour switch, Absolute or Above noise (dB above the noise at each frequency) ([instrument.md](instrument.md)).
 - (Superseded) System library: three systems that move, loaded whole or by part, opening running on their view ([system-library.md](system-library.md)).
 - Units on every signal; scope channels list only names the diagram defines; projects carry how they open (`ui`).
 
@@ -45,7 +46,7 @@ Reader: whoever picks the next piece of work.
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
 - ~~Should the input repeat with its period?~~ Settled (2026-10-24): it repeats; no play-once mode.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?
-- ~~Spectrogram levels by default~~: answered (2026-10-24): the automatic floor stays the default, with a switch to dB above the local noise (decisions.md).
+- ~~Spectrogram levels by default~~: answered (2026-10-24): the automatic floor stays the default, with a switch to dB above the local noise, built (decisions.md, instrument.md).
 
 ## Backlog, at the very end (the person, 2026-10-24)
 

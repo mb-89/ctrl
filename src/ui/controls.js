@@ -6,6 +6,7 @@ import { createDial } from './dial.js';
 import { CHANNEL_COLORS } from './display.js';
 import { siUnit, num, parseSI } from './units.js';
 import { step125 } from '../core/scale.js';
+import { withAboveNoise } from '../core/project.js';
 
 export function createControls(root, app) {
   root.innerHTML = `
@@ -23,12 +24,15 @@ export function createControls(root, app) {
         <button class="key small" data-view="xy" title="XY: channel 1 across, the other channels against it (a Lissajous figure)">XY</button>
         <button class="key small" id="k-delta" title="XY: draw channel 1 minus each channel (r on 1 and y on 2: the error e = r − y over r)">Δ</button>
       </div>
+      <div class="srcrow lvrow lvmode" id="lv-mode" role="group" aria-label="Spectrogram colour" hidden><span>Colour</span>
+        <button class="key small" id="lv-abs" title="Absolute: the colour is dB of the signal's unit (0 dB is 1 unit), the same everywhere">Absolute</button>
+        <button class="key small" id="lv-noise" title="Above noise: the colour is dB above the noise at each frequency, so a weak line where the noise is low shows as well as a strong one where it is high">Above noise</button></div>
       <div class="srcrow lvrow" id="lv-row" hidden><span>Levels</span>
         <input class="field" data-lv="0" aria-label="Spectrogram floor, dB" title="Floor: below it black. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
         <span class="dim">…</span>
         <input class="field" data-lv="1" aria-label="Spectrogram ceiling, dB" title="Ceiling: above it the brightest colour. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
         <span class="dim">dB</span>
-        <button class="key small axbtn" id="lv-auto" title="Automatic levels: the ceiling at the largest amplitude shown, the floor 10 dB above the median (the noise)">Auto</button></div>
+        <button class="key small axbtn" id="lv-auto" title="Automatic levels: the ceiling at the largest amplitude shown, the floor 10 dB above the median (the noise); above the noise, 6 dB above it">Auto</button></div>
     </section>
     <section class="group">
       <h3 class="glabel">Horizontal</h3>
@@ -208,10 +212,20 @@ export function createControls(root, app) {
     });
   });
   $('#lv-auto').addEventListener('click', () => { const lv = shownLevels(); if (lv && !lv.auto) app.display.setLevels(lv.source, null); });
+  // What a colour means: dB of the unit (Absolute, the default) or dB above
+  // the noise at each frequency; the levels above follow (each has its own).
+  const lvMode = $('#lv-mode');
+  $('#lv-abs').addEventListener('click', () => setScope((sc) => { sc.view = withAboveNoise(sc.view, false); }));
+  $('#lv-noise').addEventListener('click', () => setScope((sc) => { sc.view = withAboveNoise(sc.view, true); }));
   function renderLevels(force = false) {
-    const lv = shownLevels(), vm = app.project.scope.view?.mode;
-    lvRow.hidden = vm !== 'spectrogram';
-    const fmt = (d) => `${d < 0 ? '−' : ''}${Math.abs(Math.round(d * 10) / 10)}`;
+    const lv = shownLevels(), vm = app.project.scope.view?.mode, above = !!app.project.scope.view?.aboveNoise;
+    lvRow.hidden = lvMode.hidden = vm !== 'spectrogram';
+    for (const [id, on] of [['#lv-abs', !above], ['#lv-noise', above]]) {
+      $(id).classList.toggle('lit-view', on);
+      $(id).setAttribute('aria-pressed', String(on));
+    }
+    // Above the noise with a sign: +6 dB is 6 dB above it.
+    const fmt = (d) => { const r = Math.round(d * 10) / 10; return `${r < 0 ? '−' : lv?.aboveNoise && r > 0 ? '+' : ''}${Math.abs(r)}`; };
     lvIn.forEach((el, j) => {
       el.disabled = !lv;
       if (force || document.activeElement !== el) el.value = lv ? fmt(j ? lv.ceiling : lv.floor) : '';
@@ -220,7 +234,8 @@ export function createControls(root, app) {
     auto.disabled = !lv;
     auto.classList.toggle('lit-view', !!lv?.auto);
     auto.setAttribute('aria-pressed', String(!!lv?.auto));
-    lvRow.title = lv ? `The spectrogram's levels of ${lv.source} (dB of ${lv.unit}: 0 dB is 1 ${lv.unit})${lv.auto ? ', automatic' : ''}` : '';
+    lvRow.title = !lv ? '' : lv.aboveNoise ? `The spectrogram's levels of ${lv.source} in dB above the noise at each frequency (0 dB: the noise there)${lv.auto ? ', automatic' : ''}`
+      : `The spectrogram's levels of ${lv.source} (dB of ${lv.unit}: 0 dB is 1 ${lv.unit})${lv.auto ? ', automatic' : ''}`;
   }
   const src = $('#ch-src');
   // Picking a source switches the channel on; "none" switches it off.

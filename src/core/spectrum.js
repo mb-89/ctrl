@@ -415,16 +415,23 @@ export function dbScale(amp, floorDb = -100) {
 // What an amplitude of zero reads (20·log10(1e-12)).
 export const DB_FLOOR = -240;
 
+// The frames whose centre lies in [t0, t1] (± half a hop, as each is drawn
+// that wide); t0 and t1 are seconds from the first sample.
+function framesIn(sg, t0, t1) {
+  const hop = sg.t.length > 1 ? sg.t[1] - sg.t[0] : 0, frames = [];
+  for (let i = 0; i < sg.frames; i++) if (sg.t[i] + hop / 2 >= t0 && sg.t[i] - hop / 2 <= t1) frames.push(i);
+  return frames;
+}
+
 // The values of the bins the screen shows, in a new Float32Array: frames
 // whose centre lies in [t0, t1] (± half a hop, as each is drawn that wide),
 // frequency rows whose cell overlaps [f0, f1]. values is laid out like
 // sg.amp (frame-major); t0 and t1 are seconds from the first sample.
 export function spectrogramWindow(sg, values, { t0 = -Infinity, t1 = Infinity, f0 = 0, f1 = Infinity } = {}) {
   if (!sg.frames) return new Float32Array(0);
-  const df = sg.f.length > 1 ? sg.f[1] - sg.f[0] : 1, hop = sg.t.length > 1 ? sg.t[1] - sg.t[0] : 0;
+  const df = sg.f.length > 1 ? sg.f[1] - sg.f[0] : 1;
   const b0 = Math.max(0, Math.ceil(f0 / df - 0.5)), b1 = Math.min(sg.bins - 1, Math.floor(f1 / df + 0.5));
-  const frames = [];
-  for (let i = 0; i < sg.frames; i++) if (sg.t[i] + hop / 2 >= t0 && sg.t[i] - hop / 2 <= t1) frames.push(i);
+  const frames = framesIn(sg, t0, t1);
   if (b1 < b0 || !frames.length) return new Float32Array(0);
   const out = new Float32Array(frames.length * (b1 - b0 + 1));
   let q = 0;
@@ -475,17 +482,183 @@ function firstAbove(sorted, zero) {
 // noise alone shows its noise rather than a few specks. `rule` says which of
 // the three set the floor ('median', 'depth', 'span'); exact zeros (`zeros`
 // of them) are left out. Null when there is nothing but zeros.
+// With `noise`, the floor counts from that level instead of the median, and
+// the rule says 'noise': for values already in dB above the noise (see
+// aboveNoise), where the noise is 0 dB by construction.
 // For white noise a bin's amplitude is Rayleigh distributed: its 95th
 // percentile lies 6.3 dB above its median, its 99th 8.2 dB, its 99.9th 10 dB.
-export const AUTO_LEVELS = { margin: 10, depth: 80, span: 20 };
-export function autoLevels(values, { margin = AUTO_LEVELS.margin, depth = AUTO_LEVELS.depth, span = AUTO_LEVELS.span, zero = DB_FLOOR } = {}) {
+// Above the noise the margin is 6 dB (noiseMargin): the point of that view is
+// to find weak lines, and the 5 % of noise bins it lets through get the
+// darkest colours whenever a line stands well above them.
+export const AUTO_LEVELS = { margin: 10, depth: 80, span: 20, noiseMargin: 6 };
+export function autoLevels(values, { margin = AUTO_LEVELS.margin, depth = AUTO_LEVELS.depth, span = AUTO_LEVELS.span, zero = DB_FLOOR, noise = null } = {}) {
   const sorted = Float32Array.from(values).filter((v) => !Number.isNaN(v)).sort();
   const zeros = firstAbove(sorted, zero), real = sorted.subarray(zeros);
   if (!real.length) return null;
-  const ceiling = real[real.length - 1], median = quantileSorted(real, 0.5), raw = median + margin;
-  const rule = raw > ceiling - span ? 'span' : raw < ceiling - depth ? 'depth' : 'median';
+  const ceiling = real[real.length - 1], median = quantileSorted(real, 0.5);
+  const from = Number.isFinite(noise) ? noise : median, raw = from + margin;
+  const rule = raw > ceiling - span ? 'span' : raw < ceiling - depth ? 'depth' : Number.isFinite(noise) ? 'noise' : 'median';
   const floor = rule === 'span' ? ceiling - span : rule === 'depth' ? ceiling - depth : raw;
   return { floor, ceiling, median, rule, zeros, sorted };
+}
+
+// ---- Colour as dB above the local noise (the person, 2026-10-24: "the
+// delta mode, I like that. Like dB above the local noise … Make that a
+// switch"). The noise of a spectrogram is seldom white: in a motor's speed it
+// falls 60 dB from the lowest frequencies to the highest, so one floor either
+// lets the low noise through or hides a weak line high up. Measured against
+// the noise at its own frequency, every line shows by how far it stands out.
+
+// The noise level of each frequency row, in dB (Float32Array of sg.bins):
+//  1. each row's level over the frames whose centre lies in [t0, t1] (exact
+//     zeros left out), robust to lines: a line that sweeps slowly through a
+//     row, or many that pass, can cover more than half of its frames, so not
+//     the plain median (rowNoise below);
+//  2. a running median of those over ±reach rows, as a first guess: a line
+//     that stays at one frequency is a few rows wide (a Hann main lobe: 3 or
+//     4, a Blackman one 5 or 6) and does not count either;
+//  3. rows that stand more than `line` dB above the guess are such lines:
+//     they are bridged by a straight line (in dB) between the nearest rows
+//     that are not, and the guess is made again from the bridged rows, until
+//     no row is added: a cluster of lines (or a wide one) lifts the first
+//     guess, and where the noise falls steeply a line would lift the median
+//     of its window;
+//  4. a running median over ±reach rows again, then averaged over three
+//     rows, so the estimate has no steps (both centred on the row, narrower
+//     towards the ends, so a slope there is not bent).
+// The DC and Nyquist rows keep their own level (step 1 only). Every row
+// takes part, whatever the frequency zoom, so zooming does not change the
+// noise. A row whose frames are mostly exact zeros has no noise (a
+// noise-free signal: a step there would otherwise be its own noise) and
+// takes its nearest row's level; null when no row has noise (or no frame is
+// in the window).
+export const NOISE_EST = { reach: 4, line: 6, clip: 8, start: 0.1 };
+// Step 1 for one row, its values over the frames (sorted, no zeros): start
+// at the 10th percentile, lifted to where the median of Rayleigh-distributed
+// noise lies (+8.2 dB), then take the median of the values below that +
+// clip dB, a few times. Noise alone ends at its median (clip leaves out its
+// top 1.3 %, which moves the median by 0.1 dB). A line 20 dB above the
+// noise is left out while it covers up to about 80 % of the row's frames
+// (the plain median: 50 %); a weaker one lifts the estimate sooner.
+const START_SHIFT = 10 * Math.log10(Math.LN2 / -Math.log(1 - NOISE_EST.start));
+function rowNoise(s, clip) {
+  let e = quantileSorted(s, NOISE_EST.start) + START_SHIFT;
+  for (let k = 0; k < 4; k++) {
+    let c = 0;
+    while (c < s.length && s[c] <= e + clip) c++;
+    if (!c) break;
+    e = quantileSorted(s.subarray(0, c), 0.5);
+  }
+  return e;
+}
+export function noiseLevel(sg, values, { t0 = -Infinity, t1 = Infinity, reach = NOISE_EST.reach, line = NOISE_EST.line, clip = NOISE_EST.clip, zero = DB_FLOOR } = {}) {
+  if (!sg.frames) return null;
+  const frames = framesIn(sg, t0, t1), bins = sg.bins;
+  if (!frames.length) return null;
+  const row = new Float32Array(bins).fill(NaN), col = new Float32Array(frames.length);
+  for (let b = 0; b < bins; b++) {
+    // A row that is mostly exact zeros has no noise.
+    let m = 0, z = 0;
+    for (const i of frames) { const v = values[i * bins + b]; if (v > zero) col[m++] = v; else z++; }
+    if (m > z) row[b] = rowNoise(col.subarray(0, m).sort(), clip);
+  }
+  // Rows without noise: the nearest row with it (the lower one on a tie).
+  const has = [];
+  for (let b = 0; b < bins; b++) if (!Number.isNaN(row[b])) has.push(b);
+  if (!has.length) return null;
+  for (let b = 0, j = 0; b < bins; b++) {
+    if (!Number.isNaN(row[b])) continue;
+    while (j + 1 < has.length && Math.abs(has[j + 1] - b) < Math.abs(has[j] - b)) j++;
+    row[b] = row[has[j]];
+  }
+  // The DC and Nyquist rows are not like the others (one-sided, and real):
+  // they keep their own level and take no part in their neighbours'.
+  const out = Float32Array.from(row);
+  if (bins > 2) out.set(acrossRows(row.subarray(1, bins - 1), reach, line), 1);
+  return out;
+}
+// Steps 2 to 4 of noiseLevel on the rows' levels.
+function acrossRows(row, reach, line) {
+  const n = row.length, isLine = new Uint8Array(n);
+  let bridged = row;
+  for (let pass = 0; pass < 6; pass++) {
+    const guess = runningMedian(bridged, reach);
+    let added = false;
+    for (let b = 0; b < n; b++) if (!isLine[b] && row[b] > guess[b] + line) { isLine[b] = 1; added = true; }
+    if (!added) break;
+    bridged = Float32Array.from(row);
+    for (let b = 0; b < n; b++) {
+      if (!isLine[b]) continue;
+      let a = b - 1, z = b + 1;
+      while (a >= 0 && isLine[a]) a--;
+      while (z < n && isLine[z]) z++;
+      bridged[b] = a < 0 && z >= n ? guess[b] : a < 0 ? row[z] : z >= n ? row[a] : row[a] + ((row[z] - row[a]) * (b - a)) / (z - a);
+    }
+  }
+  // Centred windows here (narrower towards the ends), so a slope is not bent there.
+  const med = runningMedian(bridged, reach, true), out = new Float32Array(n);
+  for (let b = 0; b < n; b++) {
+    const r = Math.min(1, b, n - 1 - b);
+    let s = 0;
+    for (let k = b - r; k <= b + r; k++) s += med[k];
+    out[b] = s / (2 * r + 1);
+  }
+  return out;
+}
+// The median of x over ±reach around each element: towards the ends the
+// window is cut off (more robust), or with centred kept centred on it (no
+// bias on a slope).
+function runningMedian(x, reach, centred = false) {
+  const n = x.length, out = new Float32Array(n), win = new Float32Array(2 * reach + 1);
+  for (let b = 0; b < n; b++) {
+    const r = centred ? Math.min(reach, b, n - 1 - b) : reach;
+    const a = Math.max(0, b - r), z = Math.min(n - 1, b + r), w = win.subarray(0, z - a + 1);
+    w.set(x.subarray(a, z + 1));
+    out[b] = quantileSorted(w.sort(), 0.5);
+  }
+  return out;
+}
+
+// The noise under a spectrogram of x made with `opts` (as spectrogram()
+// takes them; the scope's window is Hann), as the scope estimates it: the
+// lower, row by row, of noiseLevel on that spectrogram and on a second one
+// of x with the same frames and rows but a Blackman window. A line lifts an
+// estimate, it never lowers it, so the lower is the one the lines reached
+// least. A Hann window lets a strong steady line spill into the rows around
+// it (its sidelobes are 31 dB down, then fall 18 dB per octave): a sine
+// 75 dB above the noise, between two rows, lifted the Hann estimate 45 dB
+// above the noise there. Blackman's sidelobes are 58 dB down, so far less
+// spills; but its main lobe is wider (5 or 6 rows, so its running medians
+// reach ±6 rows) and lifts the rows beside a moderate line, which Hann's
+// leaves alone. Blackman's noise reads higher by the ratio of the windows'
+// noise bandwidths (1.73 bins against 1.5: 0.6 dB), which is taken off.
+// `shown`, the spectrogram already made with `opts` ({ sg, db }), saves
+// making it again. Null as noiseLevel.
+export const NOISE_SPECTROGRAM = { window: 'blackman', reach: 6 };
+export function spectrogramNoise(x, dt, opts = {}, { t0 = -Infinity, t1 = Infinity, shown = null } = {}) {
+  const sg = shown?.sg ?? spectrogram(x, dt, opts);
+  if (!sg.frames) return null;
+  const est = noiseLevel(sg, shown?.db ?? dbScale(sg.amp, DB_FLOOR), { t0, t1 });
+  if (!est) return null;
+  const sgB = spectrogram(x, dt, { ...opts, window: NOISE_SPECTROGRAM.window });
+  const estB = noiseLevel(sgB, dbScale(sgB.amp, DB_FLOOR), { t0, t1, reach: NOISE_SPECTROGRAM.reach });
+  if (!estB) return est;
+  const bw = (name) => { const w = windowOf(name, sg.size); let s = 0, s2 = 0; for (const v of w) { s += v; s2 += v * v; } return (s2 * w.length) / (s * s); };
+  const c = 10 * Math.log10(bw(NOISE_SPECTROGRAM.window) / bw(opts.window ?? 'hann'));
+  for (let b = 0; b < est.length; b++) est[b] = Math.min(est[b], estB[b] - c);
+  return est;
+}
+
+// Values (dB, laid out like sg.amp) as dB above the noise of their row: a new
+// Float32Array of v − noise[row]. Exact zeros stay at `zero`, so they are
+// still left out of the levels and the strip's range.
+export function aboveNoise(values, noise, bins, zero = DB_FLOOR) {
+  const out = new Float32Array(values.length);
+  for (let k = 0; k < values.length; k++) {
+    const v = values[k];
+    out[k] = v > zero ? v - noise[k % bins] : zero;
+  }
+  return out;
 }
 
 // The dB range of the levels strip: the shown values (exact zeros left out)
