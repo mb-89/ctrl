@@ -49,3 +49,7 @@
 ## Added while this was being built: Run and Stop go through the plant
 
 > So I feel like our stop and run signal that would also have to go through the plant, and yeah, the plant would have to wire that in some way.
+
+## Added while this was being built: a resonance in the encoder example
+
+> Man, this is crazy good. Cool. Maybe add a resonance to the encoder error and torque ripple. Also add a resonance. So we see what happens if you run through the resonance. Damn, this is crazy.
