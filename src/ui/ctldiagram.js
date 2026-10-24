@@ -1,6 +1,6 @@
 // The Controller tab's small diagram of what the running variant does: draws
 // the description from src/core/structure.js as inline SVG, styled by the
-// theme's colours (style.css, ".sd"). It is redrawn with the tab, so it
+// theme's colours (style.css, ".cdg"). It is redrawn with the tab, so it
 // follows every parameter change.
 
 import { describeVariant } from '../core/structure.js';
@@ -46,14 +46,14 @@ export function structureSvg(d) {
   const wire = (w, halo) => {
     const pts = w.pts.map(([x, y]) => `${x},${y}`).join(' ');
     let s = halo ? `<polyline class="halo" points="${pts}"/>` : '';
-    s += `<polyline class="w${w.dashed ? ' d' : ''}" points="${pts}"/>`;
+    s += `<polyline class="w${w.dashed ? ' d' : ''}${w.dotted ? ' o' : ''}" points="${pts}"/>`;
     if (w.arrow !== false) s += arrow(w.pts);
     return group(s, w.faint, w.tip);
   };
   for (const w of d.wires) if (!w.over) out.push(wire(w, false));
   for (const w of d.wires) if (w.over) out.push(wire(w, true));
   for (const n of d.nodes) out.push(group(NODE[n.kind](n), n.faint, n.tip));
-  return `<svg class="sd" viewBox="0 0 ${d.w} ${d.h}" width="${d.w}" height="${d.h}" role="img" aria-label="${esc(`Diagram: ${d.title}`)}">${out.join('')}</svg>`;
+  return `<svg class="cdg" viewBox="0 0 ${d.w} ${d.h}" width="${d.w}" height="${d.h}" role="img" aria-label="${esc(`Diagram: ${d.title}`)}">${out.join('')}</svg>`;
 }
 
 const group = (s, faint, tip) => (faint || tip ? `<g${faint ? ' class="f"' : ''}>${tip ? `<title>${esc(tip)}</title>` : ''}${s}</g>` : s);

@@ -156,23 +156,26 @@ export function loopMargins(fd, Ts) {
   };
 }
 
-// The closed loop's response to a unit step in r (prefilter left out): the
-// first measurement y and the controller output u at each sample, for K
-// samples. The plant must not pass u straight to a measurement (D = 0), as
-// physical plants do not.
+// The closed loop's response to a unit step in r: the first measurement y
+// and the controller output u at each sample, for K samples. The step goes
+// through the controller's prefilter (ctrl.Tr, outside the loop) as the law
+// does, from rest at 0: rf = 1 − a^(k+1), a = e^(−Ts/Tr). The plant must not
+// pass u straight to a measurement (D = 0), as physical plants do not.
 export function stepResponse(plant, ctrl, Ts, K = 200) {
   const P = discretePlant(plant, Ts), n = P.A.length, m = P.C.length, nc = ctrl.A.length;
   const col = (row, j) => row[j] ?? 0;
-  let xp = new Array(n).fill(0), xc = new Array(nc).fill(0);
+  const a = ctrl.Tr > 0 ? Math.exp(-Ts / ctrl.Tr) : 0;
+  let xp = new Array(n).fill(0), xc = new Array(nc).fill(0), rf = 0;
   const t = [], y = [], u = [];
   for (let k = 0; k <= K; k++) {
+    rf = a * rf + (1 - a);
     const ym = P.C.map((row) => row.reduce((s, c, j) => s + c * xp[j], 0));
-    let uk = col(ctrl.D[0], 0);
+    let uk = col(ctrl.D[0], 0) * rf;
     for (let j = 0; j < m; j++) uk += col(ctrl.D[0], 1 + j) * ym[j];
     for (let j = 0; j < nc; j++) uk += ctrl.C[0][j] * xc[j];
     t.push(k * Ts); y.push(ym[0]); u.push(uk);
     xp = P.A.map((row, i) => row.reduce((s, a, j) => s + a * xp[j], 0) + P.B[i][0] * uk);
-    xc = ctrl.A.map((row, i) => row.reduce((s, a, j) => s + a * xc[j], 0) + col(ctrl.B[i], 0) + ym.reduce((s, v, j) => s + col(ctrl.B[i], 1 + j) * v, 0));
+    xc = ctrl.A.map((row, i) => row.reduce((s, a, j) => s + a * xc[j], 0) + col(ctrl.B[i], 0) * rf + ym.reduce((s, v, j) => s + col(ctrl.B[i], 1 + j) * v, 0));
   }
   return { t, y, u };
 }

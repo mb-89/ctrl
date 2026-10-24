@@ -126,7 +126,7 @@ export function createAutotuneTab(host, app, display) {
       const opts = [];
       if (st.method === 'iterate') opts.push(field('maxIter', 'Iterations', st.maxIter, 'at most; stops when the cost stops falling'));
       // Feedforward gains that are not 0 are tuned anyway; this adds those at 0.
-      if (st.method === 'iterate' && CONTROLLERS[v.type]?.params.some((p) => p.key === 'Kff')) opts.push(`<label class="pf" title="Kff, Kv and Ka that are not 0 are always tuned. Ticked, those at 0 are tuned too: each starts from a fit of the starting run's u to the reference (what the feedforward should put out), and stays 0 if the reference does not explain u."><span class="pfl">Feedforward</span><span class="tuchk"><input type="checkbox" id="tu-ff" ${st.feedforward ? 'checked' : ''} ${job ? 'disabled' : ''}> tune those at 0 too</span><span class="pfh">Kff, Kv, Ka</span></label>`);
+      if (st.method === 'iterate' && CONTROLLERS[v.type]?.params.some((p) => p.key === 'Kff')) opts.push(`<label class="pf" title="Kff, Kv and Ka that are not 0 are always tuned. Ticked, those at 0 are tuned too, from a fit of the starting run's u to the reference (what the feedforward should put out: Kff where the loop rests, Kv and Ka where r moves); a gain the reference does not explain stays 0. The feedforward is tuned first with the feedback held, then the feedback with the feedforward held; a run without a disturbance cannot judge the feedback then, so it is held."><span class="pfl">Feedforward</span><span class="tuchk"><input type="checkbox" id="tu-ff" ${st.feedforward ? 'checked' : ''} ${job ? 'disabled' : ''}> tune those at 0 too</span><span class="pfh">Kff, Kv, Ka</span></label>`);
       if (st.method === 'relay') opts.push(`<label class="pf"><span class="pfl">Rule</span><select class="field" id="tu-rule" ${job ? 'disabled' : ''}>${Object.entries(RULES).map(([k, r]) => `<option value="${k}" ${k === st.rule ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(RULES[st.rule].about)}</span></label>`);
       if (st.method !== 'iterate') opts.push(field('amplitude', st.method === 'relay' ? 'Relay ±d' : 'Step Δu', num(100 * st.amplitude, 3), '% of the actuator range'));
       $('#tu-opts').innerHTML = opts.join('');
@@ -253,7 +253,8 @@ export function createAutotuneTab(host, app, display) {
     if (res.method === 'iterate' || !res.run) shown.res = res;
     if (res.method === 'iterate') {
       if (!res.ok) { end(`Could not run: ${res.why}.`); return; }
-      end(res.better ? 'Done: the cost stopped falling.' : 'Done: no better gains found; the running variant stays.');
+      const notes = res.notes?.length ? ` Note: ${res.notes.join('; ')}.` : '';
+      end((res.better ? 'Done: the cost stopped falling.' : 'Done: no better gains found; the running variant stays.') + notes);
       return;
     }
     if (!res.run) { end(res.ok ? 'Done.' : `Could not run: ${res.why}.`); return; }

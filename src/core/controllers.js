@@ -16,9 +16,11 @@
 // for the Analysis tab: its discrete state space { A, B, C, D } (arrays of
 // rows) from [r, y1 … ym] to u at Ts, valid while u is inside its limits.
 // at.y holds the measurements at the operating point. The prefilter on r lies
-// outside the loop and is left out; the reference feedforward is in r's
-// column. Anti-windup acts only at a limit, so it is not in the model. It
-// throws when the law is not linear there.
+// outside the loop and is left out of A, B, C, D; the model carries its time
+// constant as Tr, so a step response can feed r through it as the law does.
+// The reference feedforward is in r's column. Anti-windup acts only at a
+// limit, so it is not in the model. It throws when the law is not linear
+// there.
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
@@ -85,24 +87,38 @@ export function trackingTime(g, Ts) {
 // v = P + I + D + FF; u is v held to [umin, umax]. While u sits at a limit
 // the anti-windup (g.aw) keeps the integral from running away:
 //   clamp  conditional integration: it stops while the error would push u further
-//   back   back-calculation: dI/dt = Ki·e + (u − v)/Tt, so I tracks the limit
+//   back   back-calculation: dI/dt = Ki·e + (u − v)/Tt, so I tracks the limit.
+//          The feedforward's own excess beyond a limit (a kick as r starts
+//          to move) is left out of (u − v): the integral cannot undo it, and
+//          tracking it would leave I offset once the kick has passed
 //   off    it integrates on (windup)
+// The parameters are read at every sample (Live mode edits them in place).
+// A change of a feedforward gain while running is bumpless: the integral
+// takes the step the new gain would put into u, and lets it go at its own
+// pace (only with a Ki; without one there is nothing to carry it).
 function pidCore(Ts, u0 = 0) {
   let I = u0, D = 0, yPrev = null, r1 = null, r2 = null;
+  let kff = 0, kv = 0, ka = 0;   // the feedforward gains of the sample before
   return (rf, y, g) => {
-    if (yPrev === null) { yPrev = y; r1 = r2 = rf; }
+    const Kff = g.Kff ?? 0, Kv = g.Kv ?? 0, Ka = g.Ka ?? 0;
+    if (yPrev === null) { yPrev = y; r1 = r2 = rf; kff = Kff; kv = Kv; ka = Ka; }
     D = (g.Tf * D - g.Kd * (y - yPrev)) / (g.Tf + Ts);
     yPrev = y;
-    const ff = (g.Kff ?? 0) * rf + ((g.Kv ?? 0) * (rf - r1)) / Ts + ((g.Ka ?? 0) * (rf - 2 * r1 + r2)) / (Ts * Ts);
+    const ffOf = (a, b, c) => a * rf + (b * (rf - r1)) / Ts + (c * (rf - 2 * r1 + r2)) / (Ts * Ts);
+    const ff = ffOf(Kff, Kv, Ka);
+    if (g.Ki && (Kff !== kff || Kv !== kv || Ka !== ka)) I -= ff - ffOf(kff, kv, ka);
+    kff = Kff; kv = Kv; ka = Ka;
     r2 = r1; r1 = rf;
     const e = rf - y;
     const v = g.Kp * (g.b * rf - y) + I + D + ff;
     const u = clamp(v, g.umin, g.umax);
     if (!g.Ki) return u;
-    // Back-calculation's tracking, exact for a held (u − v): I moves by the
-    // fraction 1 − e^(−Ts/Tt) of the excess per sample.
-    if (g.aw === 'back') I += g.Ki * Ts * e + (1 - Math.exp(-Ts / trackingTime(g, Ts))) * (u - v);
-    else if (g.aw === 'off' || u === v || Math.sign(g.Ki * e) !== Math.sign(v - u)) I += g.Ki * Ts * e;
+    if (g.aw === 'back') {
+      // Tracking, exact for a held excess: I moves by the fraction
+      // 1 − e^(−Ts/Tt) of it per sample.
+      const vb = v - ff + clamp(ff, g.umin, g.umax);
+      I += g.Ki * Ts * e + (1 - Math.exp(-Ts / trackingTime(g, Ts))) * (clamp(vb, g.umin, g.umax) - vb);
+    } else if (g.aw === 'off' || u === v || Math.sign(g.Ki * e) !== Math.sign(v - u)) I += g.Ki * Ts * e;
     return u;
   };
 }
@@ -130,10 +146,10 @@ function pidLinear(g, Ts, m = 1) {
     const r1 = state([1], -kv - 2 * ka);
     if (ka) { const r2 = state([0], ka); A[r2][r1] = 1; }
   }
-  return { A, B, C: [C], D };
+  return { A, B, C: [C], D, Tr: g.Tr ?? 0 };
 }
 // A static law u = kr r − K · y.
-const staticLinear = (kr, K) => ({ A: [], B: [], C: [[]], D: [[kr, ...K.map((k) => -k)]] });
+const staticLinear = (kr, K, Tr = 0) => ({ A: [], B: [], C: [[]], D: [[kr, ...K.map((k) => -k)]], Tr });
 
 export const CONTROLLERS = {
   off: {
@@ -163,7 +179,7 @@ export const CONTROLLERS = {
         },
       };
     },
-    linear: (p) => staticLinear(p.kr, p.K),
+    linear: (p) => staticLinear(p.kr, p.K, p.Tr),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -186,7 +202,7 @@ export const CONTROLLERS = {
     // loop sees a PI with the gains at y.
     linear(p, Ts, at) {
       const y = at?.y?.[0] ?? p.at[0];
-      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka }, Ts, at?.y?.length || 1);
+      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1, Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka }, Ts, at?.y?.length || 1);
     },
   },
   swingUp: {

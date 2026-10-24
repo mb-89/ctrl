@@ -103,3 +103,26 @@ test('dead time is exact in the discrete loop, and the step response reaches the
   assert.ok(Math.abs(pi.y.at(-1) - 1) < 1e-4, `${pi.y.at(-1)}`);
   assert.equal(pi.y[5], 0, 'nothing arrives before the dead time');
 });
+
+test('the linear step goes through the prefilter as the law does, so it shows the kick the law puts out', async () => {
+  const { stepResponse, discretePlant } = await import('../src/core/analysis.js');
+  const { CONTROLLERS, normalizeVariant } = await import('../src/core/controllers.js');
+  const Ts = 0.01, G = { A: [[-1]], B: [[1]], C: [[1]], D: [[0]] };
+  for (const params of [{ Kp: 4, Ki: 2, Kd: 0.1, Tf: 0.02, Tr: 0.1, Kv: 0.5 }, { Kp: 4, Ki: 2, Kv: 0.5 }, { Kp: 2, Ki: 1, Tr: 0.3, Kff: 1 }]) {
+    const p = normalizeVariant({ type: 'pid', params }).params;
+    const st = stepResponse(G, CONTROLLERS.pid.linear(p, Ts), Ts, 300);
+    // The law in the same loop, r stepping from rest at 0.
+    const P = discretePlant(G, Ts), law = CONTROLLERS.pid.make(p, Ts);
+    law.step([0, 0]);
+    let x = [0], worst = 0;
+    for (let k = 0; k <= 300; k++) {
+      const y = P.C[0][0] * x[0], u = law.step([1, y]);
+      worst = Math.max(worst, Math.abs(u - st.u[k]), Math.abs(y - st.y[k]));
+      x = [P.A[0][0] * x[0] + P.B[0][0] * u];
+    }
+    assert.ok(worst < 1e-9, `${JSON.stringify(params)}: worst ${worst}`);
+  }
+  // Without a prefilter the velocity feedforward kicks Kv/Ts at the step; with Tr 0.1 about Kv/Tr.
+  const kick = (Tr) => stepResponse(G, CONTROLLERS.pid.linear(normalizeVariant({ type: 'pid', params: { Kp: 0, Kv: 0.5, Tr } }).params, Ts), Ts, 5).u[0];
+  assert.ok(Math.abs(kick(0) - 50) < 1e-9 && kick(0.1) < 5, `${kick(0)} ${kick(0.1)}`);
+});

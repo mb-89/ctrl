@@ -40,7 +40,7 @@ function stepMetrics(st) {
   const peak = Math.max(...y.map((v) => v / yf));
   let k = y.length - 1;
   while (k > 0 && Math.abs(y[k - 1] / yf - 1) <= 0.02) k--;
-  return { yf, overshoot: Math.max(0, (peak - 1) * 100), settle: st.t[k] };
+  return { yf, overshoot: Math.max(0, (peak - 1) * 100), settle: st.t[k], uPeak: Math.max(...st.u.map(Math.abs)) };
 }
 
 export function createAnalysisTab(host, app) {
@@ -163,7 +163,7 @@ export function createAnalysisTab(host, app) {
     const notes = [
       `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
       ...(res.L.delaySamples?.some((d) => d) ? [`dead time: ${res.L.delaySamples.map((d) => `${d} Ts`).join(', ')}, exact in discrete time`] : []),
-      'Linear: u is assumed inside its limits; the prefilter on r is outside the loop.',
+      `Linear: u is assumed inside its limits${Number.isFinite(sm?.uPeak) ? ` (in the step u peaks at ${num(sm.uPeak, 3)} per unit of r)` : ''}; the step goes through the prefilter on r, which is outside the loop.`,
       ...(m.warnings ?? []),
     ];
     $('#an-notes').innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join('');

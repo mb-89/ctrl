@@ -13,12 +13,12 @@ The person asked for the diagrams control engineers read before tuning: root loc
   - the slowest pole's time constant and the least damping ratio ζ;
   - Nyquist's P (open-loop poles outside), N (encirclements of −1) and Z = N + P;
   - the linear step's overshoot, settling time (2 %) and final value;
-  - notes: the operating point, the variant, Ts, dead time in samples, the model's warnings, and that the analysis is linear (u inside its limits; the prefilter is outside the loop).
+  - notes: the operating point, the variant, Ts, dead time in samples, the model's warnings, and that the analysis is linear (u inside its limits, with the peak of u in the step per unit of r, so a feedforward kick far beyond the limits shows; the step goes through the prefilter, which is outside the loop).
 - **Right, four plots** in the scope's dark style:
   - **Root locus**, s-plane (s = ln z / Ts) or z-plane: open-loop poles ×, closed-loop poles ●, and the closed-loop poles for the loop gain scaled ×0.01 … ×100. The s view shows where the loop works: poles up to ten times the crossover (or the slowest pole); faster ones are counted, not drawn. ζ = 0.7 rays; the unit circle in z.
   - **Bode** of the open loop L: magnitude and unwrapped phase, the crossings marked, PM and the GMs that bound the gain interval labelled; the axis ends just below the Nyquist frequency π/Ts.
   - **Nyquist** (Ortskurve) of L for positive frequencies (solid) and negative (dashed), the radius compressed above 1 (1 + ln |L|) so integrators fit while −1 stays put; the unit circle, −1, and the Ms circle (|1 + L| = 1/Ms). It opens on the region around −1.
-  - **Step r → y** of the linear closed loop.
+  - **Step r → y** of the linear closed loop. The step of r goes through the controller's prefilter Tr (carried on its linear model, outside the loop) as the law's does, so a PID with a prefilter shows the response it really gives, not the P kick of an unfiltered step. A velocity or acceleration feedforward still kicks at a step (Kv/Ts, Ka/Ts² per unit of r without a prefilter: 170 V for the sine's Kv 1.7); the limits that would cut it are not in the linear model.
 - **Linked**: hovering the Bode plot marks that frequency on the Nyquist curve and reads out |L| and ∠L. The wheel zooms the locus and Nyquist plot; a double-click restores the automatic view.
 - **The X–Y plot** is the scope's XY mode with Δ ([instrument.md](instrument.md)), not a diagram here: it needs no linear model.
 
@@ -27,7 +27,7 @@ The person asked for the diagrams control engineers read before tuning: root loc
 - **The loop** is cut at the Controller's output u: L(z) = −u_c / v with the plant input u_p = v and r = 0 (`openLoop`). Negative feedback: the loop is stable when 1 + L has no zero on or outside the unit circle.
 - **The plant** is the plant the block sees, linearised at an operating point: at rest (origin), the start state, or the state at the scope's time (cursor, sweep, or the right edge). It comes from the design layer (`linearizeBlock`, [designs.md](designs.md)) through `app.loopModel(path, op)`; until that is merged the tab says so.
 - **Discrete, as simulated**: the plant is discretised with a zero-order hold at the controller's Ts (`discretePlant`), so the margins include the sampling delay; dead time on a measurement becomes round(delay / Ts) unit delays, exact in discrete time.
-- **The controller** is its law's own linear model, `linear(p, Ts, at)` in `controllers.js`: PID (integral, filtered derivative), state feedback, the scheduled PI at the operating point's y, and the swing-up where it catches (it refuses where it pumps energy). The relay has none.
+- **The controller** is its law's own linear model, `linear(p, Ts, at)` in `controllers.js`: PID (integral, filtered derivative, reference feedforward in r's column), state feedback, the scheduled PI at the operating point's y, and the swing-up where it catches (it refuses where it pumps energy). The relay has none. The prefilter is not in its matrices (it is outside the loop, so it changes no margin or pole); the model carries its time constant Tr for the step.
 - **Margins** (`loopMargins`): every gain crossing gives a phase margin and a delay margin ((∠L + 180°) mod 360° / ωc); every −180° crossing gives a gain factor; Ms and Mt over the frequency grid (400 log-spaced points up to π/Ts).
 - **Poles**: eigenvalues of the closed loop's state matrix; the root locus is the same for k·L.
 

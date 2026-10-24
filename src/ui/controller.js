@@ -190,7 +190,12 @@ export function createControllerTab(host, app) {
         host.querySelector(`input[data-k="${inp.dataset.k}"]`)?.focus();
       }, { passive: false });
     });
-    host.querySelectorAll('select[data-k]').forEach((sel) => sel.addEventListener('change', () => commitField(sel)));
+    // A change re-renders the tab: the new select takes the focus, so the
+    // arrow keys keep stepping through the options.
+    host.querySelectorAll('select[data-k]').forEach((sel) => sel.addEventListener('change', () => {
+      commitField(sel);
+      host.querySelector(`select[data-k="${sel.dataset.k}"]`)?.focus();
+    }));
     host.querySelectorAll('[data-v]').forEach((row) => {
       row.addEventListener('click', () => { const i = Number(row.dataset.v); if (i !== c.block.variant) edit((blk) => { blk.variant = i; }); });
       row.addEventListener('dblclick', () => rename(row, Number(row.dataset.v)));

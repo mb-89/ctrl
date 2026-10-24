@@ -318,21 +318,76 @@ test('Iterate tunes the feedforward gains that are not 0; asked to, also those a
   const gs = tuningSpace({ type: 'gainScheduled', params: { at: [0, 1], Kp: [1, 2], Ki: [1, 1], Kff: 2, Kv: 0, Ka: 0 } });
   assert.deepEqual(gs.names, ['Kp table ×', 'Ki table ×', 'Kff']);
   assert.equal(gs.apply([0, 0, Math.log(2)]).params.Kff, 4);
-  // Following a sine with the PID: the u the loop needs is the motor's
-  // voltage per rad/s of speed times the reference's speed (0.7 V·s/rad from
-  // the motor in plants.js). A sine's acceleration is its value times −ω²,
-  // so the run cannot tell Ka from Kff: Ka stays 0.
+  // Following a sine with the PID: the u the loop needs is what the motor
+  // needs to move, V = 0.7·θ' + 0.042·θ'' (+ a tiny jerk term) from the motor
+  // in plants.js ((1 + 0.01 s)(1 + 0.2 s)/5 + 0.5 per rad/s). A sine never
+  // rests, so Kff, what holds y at r, stays 0; the acceleration is told
+  // apart from the speed.
   const p = system('Following a sine');
   const blk = p.system.plant.diagram.blocks.find((b) => b.type === 'controller');
   blk.variant = blk.variants.findIndex((v) => v.name === 'PID');
   const ctx = tuneContext(p, null);
-  const fit = feedforwardStart(runVariant(ctx, ctx.variant), ctx.key, ctx.variant);
-  assert.ok(Math.abs(fit.Kv - 0.7) < 0.07 && Math.abs(fit.Kff) < 0.1 && fit.Ka === 0, JSON.stringify(fit));
+  const fit = feedforwardStart(runVariant(ctx, ctx.variant), ctx.key, ctx.variant, ctx.others);
+  assert.ok(fit.Kff === 0 && Math.abs(fit.Kv - 0.7) < 0.07 && fit.Ka > 0.02 && fit.Ka < 0.06, JSON.stringify(fit));
   const plain = runIterate(p, null, {}, { maxIter: 20 }), ff = runIterate(p, null, {}, { maxIter: 20, feedforward: true });
   assert.ok(ff.names.includes('Kv') && !plain.names.includes('Kv'));
   assert.ok(ff.best.cost.J < 0.5 * plain.best.cost.J, `cost with feedforward ${ff.best.cost.J}, without ${plain.best.cost.J}`);
   assert.ok(ff.best.variant.params.Kv > 1, `Kv ${ff.best.variant.params.Kv}: the motor's 0.7 plus what the D part on the measurement takes away`);
+  assert.equal(ff.notes.length, 1, 'the sine has no disturbance: the feedback was held, and the result says so');
+  // The DC motor on steps: its angle integrates, so no u is needed to hold
+  // it anywhere and Kff, read where the loop rests, is about 0 (a fit over
+  // the whole run read 1.16 V/rad from the transients). Samples where the
+  // load torque acts are left out.
+  const sq = system('DC motor');
+  const sb = sq.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+  sb.variant = sb.variants.findIndex((v) => v.name === 'PD');
+  const sctx = tuneContext(sq, null);
+  const sfit = feedforwardStart(runVariant(sctx, sctx.variant), sctx.key, sctx.variant, sctx.others);
+  assert.ok(Math.abs(sfit.Kff) < 0.05, JSON.stringify(sfit));
+  // With feedforward and feedback gains, the feedforward is tuned first with
+  // the feedback held; the feedback only when the run has a disturbance to
+  // judge it by. Tuned together on this run without one, 250 iterations took
+  // the feedback down to Kp 3.7, Ki 2.1 (three times the error under a load).
+  const pf = system('Following a sine');
+  const pb = pf.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+  pb.variant = pb.variants.findIndex((v) => v.name === 'PID + feedforward');
+  // The stages a run goes through, and its result (the generator's return value).
+  const stagesOf = (p, opts) => {
+    const seen = [], gen = iterate(p, null, {}, opts);
+    for (;;) { const s = gen.next(); if (s.done) return { seen, last: s.value }; if (seen.at(-1) !== s.value.stage) seen.push(s.value.stage); }
+  };
+  const sine = stagesOf(pf, { maxIter: 250 });
+  assert.deepEqual(sine.seen, ['feedforward']);
+  const q = sine.last.best.variant.params;
+  assert.deepEqual([q.Kp, q.Ki, q.Kd], [30, 80, 1], 'the feedback is held');
+  assert.ok(Math.abs(q.Kv - q.Kd - 0.7) < 0.05 && sine.last.notes.length === 1 && sine.last.names.join() === 'Kv', JSON.stringify(q));
+  // The square-wave motor has a load pulse: both stages run.
+  const dc = system('DC motor');
+  const db = dc.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+  db.variant = db.variants.findIndex((v) => v.name === 'PID with prefilter');
+  db.variants[db.variant].params.Kv = 2.2;
+  const motor = stagesOf(dc, { maxIter: 20 });
+  assert.deepEqual(motor.seen, ['feedforward', 'feedback']);
+  assert.equal(motor.last.notes.length, 0);
   // Ticked on the oven (steps, little to explain): never worse than the start.
   const oven = runIterate(system('Oven'), null, {}, { maxIter: 10, feedforward: true });
   assert.ok(oven.best.cost.J <= oven.start.cost);
+});
+
+test('relay and step results move a feedforward that is on with the new gains (Kv with Kd, Kff with Kp(1 − b))', async () => {
+  const { pidVariant } = await import('../src/core/autotune.js');
+  const from = { type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, b: 0.5, Kff: 0.5, Kv: 1.7, Ka: 0.03, aw: 'back', umin: -12, umax: 12 } };
+  const v = pidVariant(from, { Kp: 20, Ki: 5, Kd: 0.6, Td: 0.03 }, 'x', 0.01).params;
+  assert.ok(Math.abs(v.Kv - 1.3) < 1e-12, `Kv ${v.Kv}: the motor's 0.7 plus the new Kd`);
+  assert.ok(Math.abs(v.Kff - (0.5 + (20 - 30) * 0.5)) < 1e-12, `Kff ${v.Kff}`);
+  assert.equal(v.Ka, 0.03);
+  assert.equal(v.aw, 'back');
+  const off = pidVariant({ type: 'pid', params: { Kp: 3, Kd: 1, b: 0.5 } }, { Kp: 20, Ki: 5, Kd: 0.6 }, 'x', 0.01).params;
+  assert.deepEqual([off.Kff, off.Kv], [0, 0], 'a feedforward that is off stays off');
+  // The relay on the sine's PID + feedforward: Kv − Kd stays the motor's 0.7.
+  const p = system('Following a sine');
+  const blk = p.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+  blk.variant = blk.variants.findIndex((x) => x.name === 'PID + feedforward');
+  const res = autotune(p, null, { method: 'relay', rule: 'tl' });
+  assert.ok(res.ok && Math.abs(res.variant.params.Kv - res.variant.params.Kd - 0.7) < 1e-9, JSON.stringify(res.variant.params));
 });
