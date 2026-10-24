@@ -407,14 +407,16 @@ function drawStrip(v, st, shown) {
     const y = Math.round(hover.y) + 0.5;
     g.strokeStyle = 'rgba(235, 240, 245, 0.5)'; g.setLineDash([2, 3]); g.lineWidth = 1;
     g.beginPath(); g.moveTo(hL, y); g.lineTo(S.r, y); g.stroke(); g.setLineDash([]);
-    readout(g, v.P, S.l - 4, [
+    // The readout goes to the right of the strip, outside the screen (the
+    // display places it), so the plot stays in view while the levels move.
+    st.tip = { y: hover.y, rows: [
       [`${fmtDb(d, 1)} dB = ${num(10 ** (d / 20))} ${st.unit}`, grey],
       [`${Math.round(100 * shareAbove(st.sorted, d))} % of the shown bins above`, grey],
       [`floor ${fmtDb(floor, 1)} dB · ceiling ${fmtDb(ceiling, 1)} dB`, grey],
       [st.auto ? autoText(st) : `set by hand for ${st.source} · double-click: auto`, dim],
       ['drag a handle or the band', dim],
       ['wheel: floor · Shift+wheel: ceiling', dim],
-    ], Math.max(S.t + 2, Math.min(S.b - 104, hover.y - 40)));
+    ] };
   }
 }
 

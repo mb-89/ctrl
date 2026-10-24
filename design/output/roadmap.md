@@ -10,7 +10,7 @@ Reader: whoever picks the next piece of work.
 - Tab 1, Input: the signal generator with named signals, Period, Square with count, Function formulas ([signal-generator.md](signal-generator.md)).
 - Tab 2, Plant: block-diagram editor with Sources, Sinks, Terminator, Switch, subsystems, a resizable folding library, sensors and a cart–pole ([plant-editor.md](plant-editor.md)); 2D views in the plant's JSON ([plant-views.md](plant-views.md)).
 - Tab 3, Controller: Controller blocks with variants (PID, state feedback, gain-scheduled PI, energy swing-up, relay, off), the tab to flip and tune them ([controller-proposal.md](controller-proposal.md)).
-- Tab 4, Auto-tune: Nelder–Mead on a simulated cost (watched iteration by iteration), relay feedback with Ziegler–Nichols, Tyreus–Luyben and no-overshoot rules, step response with SIMC; results as new variants, one undo step; the Oven, badly tuned example; `node cli.mjs autotune` and `window.loopTuner.autotune()` for agents ([autotune.md](autotune.md)).
+- Tab 4, Auto-tune: Nelder–Mead on a simulated cost (watched iteration by iteration), relay feedback with Ziegler–Nichols, Tyreus–Luyben and no-overshoot rules, step response with SIMC (plants that settle or integrate, read through ripple, a gain schedule tested point by point, Tight or Smooth); results as new variants, a worse one with the reason, one undo step; the Oven, badly tuned example; `node cli.mjs autotune` and `window.loopTuner.autotune()` for agents ([autotune.md](autotune.md)).
 - Tab 5, Analysis: key numbers (stable, marginal or unstable; gain interval on both sides, phase and delay margins, Ms, Mt, poles, P/N/Z, the linear step with its DC-gain final value), root locus, Bode, Nyquist, step; discrete as simulated, dead time exact to a fraction of a sample; reviewed and fixed ([analysis.md](analysis.md)). It waits for the design layer's plant model (`app.loopModel`, branch `feat/designs`) and says so until then.
 - The scope's XY mode with Δ (the error over the reference), its gestures, status and refit on a mode change ([instrument.md](instrument.md)).
 - System library: eight 5-second systems, seven of them controlled (motor, following a sine, encoder, conical tank, pendulum swing-up, triple pendulum, the badly tuned oven), with disturbances.
@@ -38,12 +38,12 @@ Reader: whoever picks the next piece of work.
 
 ## Open questions
 
-- Header bar: move the file actions into a menu? (Person raised it, 2026-10-24.)
+- Header bar: move the file actions into a menu? (Person raised it, 2026-10-24; later: keep the header as it is for now, with the time control and E-STOP joining it.)
 - Sweep speed: real time is the rule for now; long windows (minutes) may want a faster mode.
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
-- Should the input repeat with its period, or stop after one? Repeating is built; see decisions.md.
+- ~~Should the input repeat with its period?~~ Settled (2026-10-24): it repeats; no play-once mode.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?
-- Spectrogram levels by default: automatic (the floor 10 dB above the median, as built; on *Encoder errors and torque ripple* it hides the 6× line above about 100 Hz and its fold-back until the frequency is zoomed or the floor dragged) or the old fixed 80 dB below the largest amplitude (pyqtgraph's way: everything, noise included)? A third way would show every line there: a floor that follows the noise at each frequency, but a colour would then mean "dB above the local noise", not an amplitude. For the person.
+- ~~Spectrogram levels by default~~: answered (2026-10-24): the automatic floor stays the default, with a switch to dB above the local noise (decisions.md).
 
 ## Backlog, at the very end (the person, 2026-10-24)
 
