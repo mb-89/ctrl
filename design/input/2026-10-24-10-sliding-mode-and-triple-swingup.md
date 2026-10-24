@@ -63,3 +63,5 @@
 > Okay, I feel like for the hill example, the plant script is not clear enough. I'm not sure if I want the hill stuff in the Ostsee controls. Just put them in the plant controls in the bottom right corner. And make it clear, like, yeah, that's too small, the download button for the script. I guess I'm not gonna test it today. But yeah, you can still fix that.
 
 (Transcription: "Ostsee controls" is "oscilloscope controls", the Run Control panel; "hill" is HIL.)
+
+> It's okay if e-stop stays visible from anywhere, but then put it into the header bar. Make it red, put it into the header bar, right in the middle, next to system library, that's fine.
