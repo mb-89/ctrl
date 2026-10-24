@@ -10,7 +10,7 @@ Reader: whoever picks the next piece of work.
 - Tab 1, Input: the signal generator with named signals, Period, Square with count, Function formulas ([signal-generator.md](signal-generator.md)).
 - Tab 2, Plant: block-diagram editor with Sources, Sinks, Terminator, Switch, subsystems, a resizable folding library, sensors and a cart–pole ([plant-editor.md](plant-editor.md)); 2D views in the plant's JSON ([plant-views.md](plant-views.md)).
 - Tab 3, Controller: Controller blocks with variants (PID, state feedback, gain-scheduled PI, energy swing-up, relay, off), the tab to flip and tune them; the PID and the scheduled PI with reference feedforward (Kff, Kv, Ka) and switchable anti-windup; a small diagram of what the running variant does ([controller-proposal.md](controller-proposal.md)).
-- Tab 4, Auto-tune: Nelder–Mead on a simulated cost (watched iteration by iteration), relay feedback with Ziegler–Nichols, Tyreus–Luyben and no-overshoot rules, step response with SIMC; results as new variants, one undo step; the Oven, badly tuned example; `node cli.mjs autotune` and `window.loopTuner.autotune()` for agents ([autotune.md](autotune.md)).
+- Tab 4, Auto-tune: Nelder–Mead on a simulated cost (watched iteration by iteration), relay feedback with Ziegler–Nichols, Tyreus–Luyben and no-overshoot rules, step response with SIMC (plants that settle or integrate, read through ripple, a gain schedule tested point by point, Tight or Smooth); results as new variants, a worse one with the reason, one undo step; the Oven, badly tuned example; `node cli.mjs autotune` and `window.loopTuner.autotune()` for agents ([autotune.md](autotune.md)).
 - System library: eight 5-second systems, seven of them controlled (motor, following a sine, encoder, conical tank, pendulum swing-up, triple pendulum, the badly tuned oven), with disturbances.
 - Earlier runs fade over five runs for comparison.
 - Live (HIL) mode: an External plant block, a plant outside the page over WebSocket (JSON-RPC 2.0, 100 Hz, the plant sets the cycle and defines the signals), watchdogs and a latched E-stop on both sides (the page's E-STOP key, the plant's stop key), Run and Stop through the plant, the loop in a Web Worker, live edits of every controller and observer parameter; `hil-plant.zip` (`hil_plant.py` with runme.sh and runme.ps1) and the "HIL: external motor" system; `window.loopTuner.live` for agents ([hil.md](hil.md)).
@@ -36,9 +36,13 @@ Reader: whoever picks the next piece of work.
 
 ## Open questions
 
-- Header bar: move the file actions into a menu? (Person raised it, 2026-10-24.)
+- Header bar: move the file actions into a menu? (Person raised it, 2026-10-24; later: keep the header as it is for now, with the time control and E-STOP joining it.)
 - Sweep speed: real time is the rule for now; long windows (minutes) may want a faster mode.
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
-- Should the input repeat with its period, or stop after one? Repeating is built; see decisions.md.
+- ~~Should the input repeat with its period?~~ Settled (2026-10-24): it repeats; no play-once mode.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?
-- Spectrogram levels by default: automatic (the floor 10 dB above the median, as built; on *Encoder errors and torque ripple* it hides the 6× line above about 100 Hz and its fold-back until the frequency is zoomed or the floor dragged) or the old fixed 80 dB below the largest amplitude (pyqtgraph's way: everything, noise included)? A third way would show every line there: a floor that follows the noise at each frequency, but a colour would then mean "dB above the local noise", not an amplitude. For the person.
+- ~~Spectrogram levels by default~~: answered (2026-10-24): the automatic floor stays the default, with a switch to dB above the local noise (decisions.md).
+
+## Backlog, at the very end (the person, 2026-10-24)
+
+- **Controller benchmark with a Pugh matrix and a report.** Once a plant is identified (and we trust the model), tune every controller type the library knows on it (PID with feedforward and anti-windup, state feedback/LQR, gain scheduling, sliding mode variants, …), score each against criteria (following, disturbance rejection, overshoot, robustness to the plant's ±15 % variation, effort and actuator wear, noise sensitivity, complexity) in a Pugh matrix against a datum (the PID), pick the best and produce a report. The person: "If we have nothing else … you can try to do that benchmark mode on your own." Input file 10.

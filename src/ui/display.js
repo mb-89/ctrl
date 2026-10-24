@@ -34,6 +34,21 @@ const r1 = (d) => Math.round(d * 10) / 10;
 export function createDisplay(root, handlers) {
   const status = root.querySelector('.status');
   const screen = root.querySelector('.screen');
+  // The levels strip's readout: right of the strip, outside the screen, so it
+  // never covers the plot while the levels are dragged.
+  const stripTip = document.createElement('div');
+  stripTip.className = 'striptip';
+  stripTip.hidden = true;
+  document.body.append(stripTip);
+  function showStripTip(tip) {
+    if (!tip || !S) { stripTip.hidden = true; return; }
+    const r = canvas.getBoundingClientRect();
+    stripTip.innerHTML = tip.rows.map(([t, c]) => `<div style="color:${c}">${t.replace(/[&<>]/g, (x) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[x])}</div>`).join('');
+    stripTip.hidden = false;
+    const w = stripTip.offsetWidth, h = stripTip.offsetHeight;
+    stripTip.style.left = `${Math.min(window.innerWidth - w - 4, r.left + S.r + 10)}px`;
+    stripTip.style.top = `${Math.max(4, Math.min(window.innerHeight - h - 4, r.top + tip.y - h / 2))}px`;
+  }
   const badges = root.querySelector('.badges');
   const canvas = document.createElement('canvas');
   canvas.setAttribute('role', 'img');
@@ -189,6 +204,7 @@ export function createDisplay(root, handlers) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!data || !scope) { ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H); return; }
     layout();
+    if (viewMode() !== 'spectrogram') showStripTip(null);
     if (viewMode() === 'xy') {
       strip = null;
       delete canvas.dataset.levels;
@@ -202,6 +218,7 @@ export function createDisplay(root, handlers) {
       strip = drawFrequency({ g: ctx, P, S, W, H, data, past, live: !!feed, scope, k: mode !== 'stop' ? indexAt(tScan) : n, axis: axisChannel(), line, hover: box ? null : hover,
         sweeping: mode !== 'stop', tScan, tx, xt, vy, colors: CHANNEL_COLORS, drawGrid, unitLabel, levelScale });
       // For agents and tests: the levels as drawn (floor ceiling lo hi, dB) and whether automatic.
+      showStripTip(strip?.tip);
       if (strip) canvas.dataset.levels = `${[strip.floor, strip.ceiling, strip.lo, strip.hi].map((d) => d.toFixed(1)).join(' ')} ${strip.auto ? 'auto' : 'fixed'}`;
       else delete canvas.dataset.levels;
       levelsChanged();
