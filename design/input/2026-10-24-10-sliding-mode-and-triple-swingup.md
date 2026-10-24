@@ -49,3 +49,7 @@
 > So yeah, you usually, yeah, I would also assume that you have a set point. You have a set point feed forward, if that makes sense. You have an position and acceleration feed forward, if that makes sense. I feel like in badly tuned controllers, you can still set that to a bad value. But yeah, nobody that does serious control theory does it without feed forward. So our controllers need to support it.
 
 > And yeah, anti-windup is also a feature that we can have in, and then for one example where we want it badly tuned, we can flip it off. But again, that's also something I would consider just state of the art, so it needs to be in.
+
+## Added while this was being built: the page always sends the effort; the reference goes along for the plant's log
+
+> About reference mode, I feel like what is you? Is you the effort? We should never say, like, we are. Normally, we would send the reference value and we would send. Wait. No, I guess maybe I was wrong about the reference mode. We know the reference in our system. We should send it to the other system so they can log it on their side. But yeah, obviously, we are always sending the control effort. Yeah, I was tripping there. Sorry.
