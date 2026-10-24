@@ -40,7 +40,10 @@ export function applySystem(project, entry, parts) {
     // A whole system brings its controller, or none: candidates an older
     // project carried do not stay behind.
     if (!entry.controller) { p.candidates = []; delete p.selected; delete p.goal; p.sim = {}; }
-    if (entry.scope) p.scope = { ...(p.scope ?? {}), channels: structuredClone(entry.scope.channels) };
+    if (entry.scope) {
+      p.scope = { ...(p.scope ?? {}), channels: structuredClone(entry.scope.channels) };
+      if (entry.scope.view) p.scope.view = structuredClone(entry.scope.view); else delete p.scope.view;
+    }
     if (entry.ui) p.ui = structuredClone(entry.ui);
   }
   delete p.system.reference;

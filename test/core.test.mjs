@@ -242,12 +242,12 @@ test('2D views compile and move with the signals; library parts combine', async 
   assert.equal(mixed.system.signals.r.components[0].type, 'square', 'the input stays from the motor');
   assert.equal(mixed.system.plant.views[0].name, 'Cart and triple pendulum');
   assert.deepEqual(mixed.scope.channels.map((c) => c.source), ['r', '', '', 'd'], 'a whole load brings the system scope; a plant load keeps what still exists');
-  assert.ok(SYSTEM_LIBRARY.every((s) => s.plant.views?.length), 'every system has a view');
+  assert.ok(SYSTEM_LIBRARY.every((s) => s.plant.views?.length || s.scope?.view?.mode), 'every system has a view, or opens the scope in a frequency view');
   const { loopReady } = await import('../src/core/project.js');
   const fromLoop = normalizeProject(applySystem(EXAMPLES[0], msd, ['input', 'plant']));
   assert.equal(fromLoop.candidates.length, 0, 'a whole load leaves no controller of an older project behind');
   assert.equal(loopReady({ ...fromLoop, candidates: EXAMPLES[0].candidates }), false, 'a diagram with its own Sources is never run as a loop plant');
-  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && s.ui.tab === 'plant' && s.plant.views.some((v) => v.name === s.ui.view)), 'every system opens running on its view');
+  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && (!s.ui.view || s.plant.views.some((v) => v.name === s.ui.view))), 'every system opens running, on a view it has');
   assert.deepEqual(p.ui, { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' }, 'a whole load brings how the system opens');
   assert.deepEqual(normalizeProject({ ui: { run: 'fast', tab: 'plant', extra: 1 } }).ui, { tab: 'plant' }, 'unknown ui values are dropped');
   assert.throws(() => normalizeProject({ system: { plant: { type: 'diagram', diagram: { blocks: [], wires: [] }, views: [{ kind: '2d', shapes: [{ type: 'line', x1: 'sin(' }] }] } } }), /views\[0\]/);

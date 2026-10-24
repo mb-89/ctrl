@@ -373,3 +373,14 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .ctlibitem { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); cursor: pointer; font: inherit; font-size: 12.5px; }
 .ctlibitem:hover { border-color: var(--ink-2); }
 .ctlibitem span { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+/* Display modes and display filters (scope, Run Control and Vertical) */
+.viewkeys { margin-top: 2px; gap: 4px; }
+.viewkeys .key { flex: 1; min-height: 24px; }
+.key.lit-view { background: var(--lcd); color: #f2c718; border-color: #f2c718; }
+.st-view { background: #2a3540; color: #f2c718; }
+.srcrow .axbtn { flex: none; padding: 1px 6px; }
+.filtrow select#ch-filt { flex: 1 1 70px; min-width: 0; }
+.filtparams { display: flex; gap: 4px; flex: 2 1 auto; min-width: 0; }
+.filtparams .field { width: 0; flex: 1 1 52px; min-width: 44px; font-family: var(--mono); font-size: 12px; padding: 1px 4px; }
+.filtparams select.field { flex: 0 1 46px; }

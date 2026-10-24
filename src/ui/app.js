@@ -101,6 +101,8 @@ function startApp() {
   // and Sinks, r always), each with its unit.
   app.signalNames = () => channelNames(app.project);
   app.sourceNames = () => { const n = app.signalNames().filter((x) => app.project.system.signals[x]); return n.length ? n : ['r']; };
+  // The scope's Nyquist frequency: half its sampling rate.
+  app.nyquist = () => 0.5 / simOf(app.project).sampleTime;
   app.unitOf = (name) => {
     const plant = app.project.system.plant;
     return (plant?.type === 'diagram' ? diagramNames(plant.diagram).units[name] : null) ?? '1';
