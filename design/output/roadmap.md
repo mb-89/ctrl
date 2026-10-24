@@ -36,10 +36,10 @@ Reader: whoever picks the next piece of work.
 
 ## Open questions
 
-- Header bar: move the file actions into a menu? (Person raised it, 2026-10-24.)
+- Header bar: move the file actions into a menu? (Person raised it, 2026-10-24; later: keep the header as it is for now, with the time control and E-STOP joining it.)
 - Sweep speed: real time is the rule for now; long windows (minutes) may want a faster mode.
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
-- Should the input repeat with its period, or stop after one? Repeating is built; see decisions.md.
+- ~~Should the input repeat with its period?~~ Settled (2026-10-24): it repeats; no play-once mode.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?
 - ~~Spectrogram levels by default~~: answered (2026-10-24): the automatic floor stays the default, with a switch to dB above the local noise (decisions.md).
 

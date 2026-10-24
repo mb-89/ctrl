@@ -97,3 +97,7 @@
 ## Added while this was being built: black boxes are fine for identified real systems
 
 > And then you say the click into it rule. The click into it rule applies for models that we build ourselves, right? If we identify an external system, I can accept that it's black box. If we can identify parts of it, then it's okay. But if we build a neural network that maps the behavior well, then that's also fine. So for identified systems, real systems, I think it's acceptable. Obviously preferred is understanding the structure, but if we don't, we don't.
+
+## Added while this was being built: the time control stays in the header; the input repeats
+
+> I didn't know speed control was joining. Ah, you mean the time control? Okay. Keep it in the header for now. And the input repeat with its period as it does now or play once. Should the input repeat with its period? Yeah, it should. That's the point. Okay. Bake that in.
