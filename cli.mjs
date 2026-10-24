@@ -11,7 +11,7 @@ import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, un
 import { SIGNALS, normalizeComponent, describeComponent } from './src/core/signals.js';
 import { runTune, tunableParams } from './src/core/tune.js';
 import { EXAMPLES, DEFAULT_PROJECT } from './src/core/examples.js';
-import { autotune, tuneReport, placeVariant, controllerBlocks, tunedValues, METHODS as TUNE_METHODS, RULES, SIMC, COSTS } from './src/core/autotune.js';
+import { autotune, tuneReport, placeVariant, controllerBlocks, tunedValues, METHODS as TUNE_METHODS, RULES, SIMC, COSTS, tauCSource } from './src/core/autotune.js';
 
 const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command> [options]
 
@@ -293,10 +293,10 @@ switch (cmd) {
       if (res.model === 'schedule') {
         console.log(`  a step test at each point of the table; ${simc}; u0 ${fmt(res.trim)} (the trim at the start level ${fmt(res.y0)})`);
         for (const p of res.points) {
-          console.log(p.ok ? `    at ${fmt(p.at)}: ${model(p)}; Kp ${fmt(p.gains.Kp)}, Ki ${fmt(p.gains.Ki)}` : `    at ${fmt(p.at)}: no result (${p.why}); the gains from ${fmt(p.from)}`);
+          console.log(p.ok ? `    at ${fmt(p.at)}: ${model(p)}; τc ${fmt(p.gains.tauC)} s; Kp ${fmt(p.gains.Kp)}, Ki ${fmt(p.gains.Ki)}` : `    at ${fmt(p.at)}: no result (${p.why}); the gains from ${fmt(p.from)}`);
           for (const n of p.ok ? p.notes : []) console.log(`      note: ${n}`);
         }
-      } else console.log(`  step at r0 = ${fmt(res.r0)}: ${model(res)}; ${simc}, τc ${fmt(res.gains.tauC)} s`);
+      } else console.log(`  step at r0 = ${fmt(res.r0)}: ${model(res)}; ${simc}, τc ${fmt(res.gains.tauC)} s = ${tauCSource(res.gains, res.simc)}`);
     }
     for (const n of res.notes ?? []) console.log(`  note: ${n}`);
     if (!res.better) console.log(`  the result scores no better than the running variant${res.worse ? `: ${res.worse}` : ''}`);

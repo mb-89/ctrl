@@ -7,7 +7,7 @@
 // comparison; the whole run is one undo step. The work runs in slices
 // between frames, so the page keeps drawing. See design/output/autotune.md.
 
-import { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, SIMC, COSTS, GOAL } from '../core/autotune.js';
+import { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, SIMC, COSTS, GOAL, tauCSource, tauCShort } from '../core/autotune.js';
 import { CONTROLLERS } from '../core/controllers.js';
 import { num, parseSI } from './units.js';
 
@@ -22,7 +22,7 @@ const METHODS = {
   },
   step: {
     label: 'Step response', sub: 'model fit → SIMC',
-    about: 'The running controller holds r at the middle of its range until y settles; then u is held and stepped. A response that settles gives a gain K, a lag τ and a dead time θ; one that ramps (an integrating plant, such as a motor\'s angle) gives a slope k′, a lag τ2 and a dead time θ, and the test ends once the slope is steady. A ripple on y is averaged over its period. SIMC (Skogestad 2003) turns the model into a PI, or a PID when the lag of an integrating plant outlasts its dead time. A gain-scheduled PI is tested at each point of its table and gets SIMC gains there.',
+    about: 'The running controller holds r at the middle of its range until y has settled within 2 % (of how far it moved, or of r\'s span; a steady ripple averaged out); then u is held and stepped. A controller that keeps swinging there hands over at the start instead. A response that settles gives a gain K, a lag τ and a dead time θ; one that ramps (an integrating plant, such as a motor\'s angle) gives a slope k′, a lag τ2 and a dead time θ, and the test ends once the slope is steady and the lag has faded. SIMC (Skogestad 2003) turns the model into a PI, or a PID when the lag of an integrating plant outlasts its dead time; a PID\'s derivative filter counts as dead time. A gain-scheduled PI is tested at each point of its table and gets SIMC gains there.',
   },
 };
 const PACE = 1000 / 6;  // iterations per second while watching
@@ -263,14 +263,17 @@ export function createAutotuneTab(host, app, display) {
     display.clearRuns();
     const T = res.ctx.sim.duration;
     display.setData(res.method === 'relay' ? lastPeriod(res.run, T) : aroundStep(res.run, res.tHold ?? 0, T));
-    // Numbers to three digits; a bias of a millionth of the swing is 0.
-    const u = (x) => num(Math.abs(x) < 1e-6 * Math.abs(res.d ?? res.du ?? 1) ? 0 : x, 3);
+    // Numbers to three digits; a bias of a ten-thousandth of the swing is 0.
+    const u = (x) => num(Math.abs(x) < 1e-4 * Math.abs(res.d ?? res.du ?? 1) ? 0 : x, 3);
     shown.status = (res.method === 'relay'
       ? `On the display: the relay experiment, u = ${u(res.u0)} ± ${u(res.d)} around r0 = ${u(res.r0)}, other inputs at 0.`
       : stepStatus(res, u))
       + (res.ok ? '' : ` It gives no result: ${res.why}.`);
     renderAll();
-    const sweep = 10 * app.project.scope.timebase.scale;
+    // The sweep crosses the screen; it waits only until the experiment's
+    // data ends (a ramp test is cut short).
+    const tb = app.project.scope.timebase, w0 = Math.max(0, tb.position), shownData = display.data;
+    const sweep = Math.max(0, Math.min(tb.position + 10 * tb.scale, shownData.t.at(-1) ?? 0) - w0);
     job.timer = setTimeout(() => {
       if (!job) return;
       if (replaced()) { end('Stopped: the plant changed during the experiment.', { gone: true }); return; }
@@ -297,8 +300,10 @@ export function createAutotuneTab(host, app, display) {
     const held = res.tHold > 0
       ? `${res.before?.variant.name ?? 'the running variant'} held r0 = ${u(res.r0)}${unit}, then u was set to ${u(res.u0 + res.du)} at t = ${num(res.tHold - shift, 3)} s, against a second run that held it at ${u(res.u0)}`
       : `u was held at ${u(res.u0 + res.du)} from the start, against a second run that held it at ${u(res.u0)} (r0 = ${u(res.r0)}${unit})`;
-    const ended = res.model === 'integrating' ? `; y ramps, so the test ended ${num(res.tEnd, 3)} s later, once its slope was steady` : '';
-    return `On the display: ${where}: ${held}${ended}. Other inputs at 0.`;
+    const ended = res.model === 'integrating' ? `; y ramps, so the test ended ${num(res.tEnd, 3)} s later, once its slope was steady${res.faded ? ' and its lag had faded' : ''}` : '';
+    const vm = app.project.scope.view?.mode ?? 'time';
+    const view = vm === 'time' ? '' : ` The display is in ${vm === 'xy' ? 'XY' : vm === 'fft' ? 'FFT' : 'Spectrogram'} mode${vm === 'xy' ? ', channel 1 across' : ''}; Time shows the test over time.`;
+    return `On the display: ${where}: ${held}${ended}. Other inputs at 0.${view}`;
   }
 
   // Ends the run: closes its undo step and brings back the loop's own run,
@@ -370,15 +375,17 @@ export function createAutotuneTab(host, app, display) {
         for (const p of res.points) {
           if (!p.ok) { rows.push(row(`at ${num(p.at, 3)}`, `gains of ${num(p.from, 3)}`, 'no result: see the status')); continue; }
           const { gain, lag } = fit(p);
-          rows.push(row(`at ${num(p.at, 3)}`, `${gain[0]} ${gain[1]}; ${lag[0]} ${lag[1]}`, `Kp ${num(p.gains.Kp, 3)}, Ki ${num(p.gains.Ki, 3)}`));
+          rows.push(row(`at ${num(p.at, 3)}`, `${gain[0]} ${gain[1]}; ${lag[0]} ${lag[1]}`, `Kp ${num(p.gains.Kp, 3)}, Ki ${num(p.gains.Ki, 3)}, τc ${num(p.gains.tauC, 3)} s = ${tauCShort(p.gains, res.simc)}`, '', `τc = ${tauCSource(p.gains, res.simc)}`));
         }
         rows.push(row('u0', num(res.trim, 3), 'balances the start level'));
+        rows.push(row('SIMC', SIMC[res.simc].label, 'τc at each point: in its row', '', SIMC[res.simc].about));
       } else {
         const { gain, lag } = fit(res);
         rows.push(row(...gain));
         rows.push(row(...lag, 'lag, dead time'));
+        // The τc actually used, and what set it (SIMC's rule or a floor).
+        rows.push(row('τc', `${num(res.gains.tauC, 3)} s`, `${SIMC[res.simc].label}: = ${tauCShort(res.gains, res.simc)}`, '', `τc = ${tauCSource(res.gains, res.simc)}`));
       }
-      rows.push(row('SIMC', SIMC[res.simc].label, SIMC[res.simc].about));
     }
     if (s.before) {
       rows.push(row('Cost', costAfter ? `${num(s.before.cost.J, 3)} → ${num(costAfter.J, 3)}` : num(s.before.cost.J, 3), costAfter ? `×${num(costAfter.J / s.before.cost.J, 2)}` : 'at the start', costAfter && costAfter.J > s.before.cost.J ? 'tuworse' : 'tucost'));
@@ -397,7 +404,7 @@ export function createAutotuneTab(host, app, display) {
     drawPlot(s.method === 'iterate' ? s.history : null);
   }
 
-  const row = (k, v, hint, cls = '') => `<li class="turow ${cls}"><span>${esc(k)}</span><span>${esc(v)}</span><em>${esc(hint)}</em></li>`;
+  const row = (k, v, hint, cls = '', title = hint) => `<li class="turow ${cls}"${title ? ` title="${esc(title)}"` : ''}><span>${esc(k)}</span><span>${esc(v)}</span><em>${esc(hint)}</em></li>`;
   const pct = (v) => (Number.isFinite(v) ? `${num(v, 3)} %` : '—');
 
   // The cost of every run tried (dots) and the best so far (line) against

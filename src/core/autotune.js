@@ -49,6 +49,16 @@ export function controllerBlocks(diagram) {
   return out;
 }
 
+// The first External plant block (Live mode) in a diagram, at any depth.
+function externalBlock(diagram) {
+  for (const b of diagram.blocks) {
+    if (b.type === 'external') return b;
+    const inner = b.type === 'subsystem' ? externalBlock(b.diagram) : null;
+    if (inner) return inner;
+  }
+  return null;
+}
+
 // The diagram level holding the block at path, and the block.
 function locate(diagram, path) {
   let level = diagram;
@@ -112,6 +122,10 @@ export function upstreamSource(diagram, path, port) {
 export function tuneContext(project, path) {
   const plant = project.system.plant;
   if (plant?.type !== 'diagram') throw new Error('the plant is not a block diagram yet');
+  // Every method simulates the loop; a plant outside the page (Live mode)
+  // only outputs 0 here, so nothing could be learned from it.
+  const ext = externalBlock(plant.diagram);
+  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}); Auto-tune simulates the loop and has no model of it (identification is not built yet). Tune it live in the Controller tab`);
   const all = controllerBlocks(plant.diagram);
   const key = path ? [].concat(path).join('/') : null;
   const hit = (key && all.find((c) => c.key === key)) || all[0];
@@ -742,7 +756,10 @@ export function settledSlope(t, y, { band = 0.02, last = 0.2 } = {}) {
 
 // When a closed-loop run settled: from when on y, averaged over its ripple
 // period, stayed within 2 % of where it ended (of how far it moved, or of
-// scale when it hardly moved). settled: within the first 80 % of the run.
+// scale when it hardly moved), and its swing about that average stayed
+// within that band of the swing it keeps at the end (a steady ripple,
+// noise): the average alone also passes a loop still ringing down.
+// settled: within the first 80 % of the run.
 function settleTime(t, y, scale) {
   const n = y.length, dt = (t[n - 1] - t[0]) / (n - 1);
   const moved = Math.abs(mean(y, lastStretch(t, 0.2)) - y[0]);
@@ -751,6 +768,14 @@ function settleTime(t, y, scale) {
   const tol = 0.02 * Math.max(Math.abs(final - y[0]), scale);
   let k = n - 1;
   while (k > 0 && Math.abs(s[k - 1] - final) <= tol) k--;
+  if (m > 1 && n > 4 * m) {
+    const c = smooth(y, m, centred), kEnd = n - m, swing = (j) => Math.abs(y[j] - c[j]);
+    let end = 0;
+    for (let j = Math.min(lastStretch(t, 0.2), kEnd - 1); j < kEnd; j++) end = Math.max(end, swing(j));
+    let j = kEnd - 1;
+    while (j > 0 && swing(j - 1) <= end + tol) j--;
+    k = Math.max(k, j);
+  }
   return { settled: Number.isFinite(final) && t[k] <= t[0] + 0.8 * (t[n - 1] - t[0]), time: t[k] };
 }
 
@@ -863,8 +888,8 @@ function* stepAt(ctx, point, du, bound = Infinity) {
     }
     if (kBad <= kOut && kBad < n) return { ...out, ok: false, run: runB, why: 'the open-loop run diverged: the plant is unstable without its controller; use the relay or iterative method' };
     let moved = 0;
-    for (let k = 0; k < n; k++) moved = Math.max(moved, Math.abs(dy[k]));
-    if (!(moved > 1e-9 * point.scale)) return { ...out, ok: false, run: runB, why: `y does not respond to a step of u (Δu = ${fmtN(du)}) at r0 = ${fmtN(point.r0)}: is the controller's output wired to the plant, or does the plant sit at a limit of its own there?` };
+    for (let k = 0; k < n; k++) if (Number.isFinite(dy[k])) moved = Math.max(moved, Math.abs(dy[k]));
+    if (!(moved > 1e-9 * point.scale)) return { ...out, ok: false, still: true, run: runB, why: `y does not respond to a step of u (Δu = ${fmtN(du)}) at r0 = ${fmtN(point.r0)}: is the controller's output wired to the plant, or does the plant sit at a limit of its own there?` };
     const level = settledLevel(t, dy);
     if (level.settled) {
       if (Math.abs(level.final) > bound) return { ...out, ok: false, exceeded: true, final: level.final, run: runB };
@@ -880,34 +905,63 @@ function* stepAt(ctx, point, du, bound = Infinity) {
       while (kStop < kEnd && t[kStop - 1] < ramp.tSteady / 0.8) kStop++;
       let r = settledSlope(t.subarray(0, kStop), dy.subarray(0, kStop));
       while (!r.ramps && kStop < kEnd) { kStop = Math.min(kEnd, Math.ceil(1.05 * kStop) + 1); r = settledSlope(t.subarray(0, kStop), dy.subarray(0, kStop)); }
+      // A steady slope is not yet a straight line: the lag's transient fades
+      // as e^(−t/τ2), and a line through the last fifth that still carries it
+      // reads k' low and θ long (on the motor, cut at 0.26 s: k' −1 %, θ
+      // +22 %). So the test runs on until the last fifth starts L + 5 τ2
+      // after the step (the transient under 1 %), and is fitted again. When y
+      // would leave its bound before then, the step is made smaller.
+      let fit = null, faded = false;
+      for (let pass = 0; pass < 4; pass++) {
+        const tt = t.subarray(0, kStop);
+        fit = fitIntegrating(tt, dy.subarray(0, kStop), du, lastStretch(tt, 0.2));
+        const tNeed = (fit.L + 5 * fit.tau2) / 0.8;
+        faded = t[kStop - 1] >= 0.98 * tNeed;
+        if (faded || kStop >= n) break;
+        let k = kStop;
+        while (k < n && t[k - 1] < tNeed) k++;
+        if (k > kEnd) return { ...out, ok: false, exceeded: true, reach: Math.abs(fit.slope) * Math.max(tNeed - fit.L, 0), run: runB };
+        kStop = k;
+      }
+      r = settledSlope(t.subarray(0, kStop), dy.subarray(0, kStop));
       const tt = t.subarray(0, kStop), yy = dy.subarray(0, kStop);
-      const fit = fitIntegrating(tt, yy, du, lastStretch(tt, 0.2));
-      return { ...out, ok: true, model: 'integrating', ...fit, ripple: r.ripple, rippleT: r.m > 1 ? r.m * ctx.sim.sampleTime : 0, moved: yy[kStop - 1], run: cutRun(runB, k0 + kStop), tEnd: tt[kStop - 1] };
+      return { ...out, ok: true, model: 'integrating', ...fit, faded, ripple: r.ripple, rippleT: r.m > 1 ? r.m * ctx.sim.sampleTime : 0, moved: yy[kStop - 1], run: cutRun(runB, k0 + kStop), tEnd: tt[kStop - 1] };
     }
-    if (kOut < n) return { ...out, ok: false, exceeded: true, run: runB };
+    if (kOut < n) return { ...out, ok: false, exceeded: true, reach: moved, run: runB };
   }
   return { ...out, ok: false, run: runB, why: 'the step response settled neither to a level nor to a steady slope in four periods of the input: a very slow plant (lengthen the input\'s period)' };
 }
 
 // A step test whose response must stay within bound: the step is made smaller
-// (three times at most) until it does. dir: the sign of the step in u to try
-// first (0: upwards); the other way when there is no room.
-function* boundedStep(ctx, point, want, dir, bound, boundWhy) {
+// (five times at most, to 80 % of what fits, at least halved) until it does.
+// dir: the sign of the step in u to try first (0: upwards if there is room);
+// a step toward dir uses what room there is, and goes the other way only
+// when there is less than a tenth of the step asked for. responds: y is
+// known to respond to u elsewhere (another point of a schedule), so a plant
+// that does not respond here sits at a limit of its own.
+function* boundedStep(ctx, point, want, dir, bound, boundWhy, responds = false) {
   const { lo, hi } = limitsOf(ctx.variant);
   const room = (s) => (s > 0 ? hi - point.u0 : point.u0 - lo);
+  const enough = (s) => room(s) >= (dir ? 0.1 : 1) * want;
   const first = dir || 1;
-  const s = room(first) >= want ? first : room(-first) >= want ? -first : room(first) >= room(-first) ? first : -first;
+  const s = enough(first) ? first : room(-first) >= want ? -first : room(first) >= room(-first) ? first : -first;
   let du = s * Math.min(want, room(s));
   if (!(Math.abs(du) >= 0.1 * want)) return { du, u0: point.u0, r0: point.r0, notes: [], ok: false, why: `the actuator is at a limit at r0 = ${fmtN(point.r0)} (u0 = ${fmtN(point.u0)}): no room for a step` };
-  const notes = [];
+  const notes = [], unit = measurement(ctx).unit, u = unit ? ` ${unit}` : '';
   if (dir && s !== dir) notes.push(`the step went the other way (Δu = ${fmtN(du)}): no room for it in u`);
+  else if (Math.abs(du) < want) notes.push(`the step was made smaller, Δu = ${fmtN(du)}, to stay inside the actuator limits`);
+  let moved = null;
   for (let tries = 0; ; tries++) {
     const r = yield* stepAt(ctx, point, du, bound);
+    if (r.still && (moved || responds)) {
+      r.why = `y does not respond to a step of u (Δu = ${fmtN(du)}) at r0 = ${fmtN(point.r0)}${u}, ${moved ? `though a step of Δu = ${fmtN(moved)} moved it by more than ${fmtN(bound)}${u}` : 'though it does at other points'}: the plant sits at a limit of its own there`;
+    }
     if (!r.exceeded) { r.notes.unshift(...notes); return { ...r, bound, boundWhy }; }
-    if (tries === 3) return { ...r, ok: false, notes, why: `even a step of Δu = ${fmtN(du)} moves y by more than ${fmtN(bound)} (${boundWhy}) before it settles` };
-    du *= r.final ? Math.min(0.5, (0.8 * bound) / Math.abs(r.final)) : 0.5;
-    const unit = measurement(ctx).unit;
-    notes.splice(0, notes.length, `the step was made smaller, Δu = ${fmtN(du)}, so y moves by at most ${fmtN(bound)}${unit ? ` ${unit}` : ''} (${boundWhy})`);
+    if (tries === 5) return { ...r, ok: false, notes, why: `even a step of Δu = ${fmtN(du)} moves y by more than ${fmtN(bound)}${u} (${boundWhy}) before it settles` };
+    moved = du;
+    const far = Math.abs(r.final ?? r.reach ?? NaN);
+    du *= far > 0 && Number.isFinite(far) ? Math.min(0.5, (0.8 * bound) / far) : 0.5;
+    notes.splice(0, notes.length, `the step was made smaller, Δu = ${fmtN(du)}, so y moves by at most ${fmtN(bound)}${u} (${boundWhy})`);
   }
 }
 
@@ -952,7 +1006,7 @@ function* scheduleExperiment(ctx, op, want, base, scale) {
     if (!point.reached) { points[i] = { at: target, ok: false, notes: [], why: `${ctx.variant.name} holds y at ${fmtN(point.y)}, not at ${fmtN(target)}` }; continue; }
     const toward = target <= mid ? 1 : -1, next = at[i + toward] ?? at[i - toward];
     const bound = next === undefined ? (op.span > 1e-9 ? op.span / 2 : Infinity) : Math.abs(next - target) / 2;
-    const r = yield* boundedStep(ctx, point, want, sign ? toward * sign : 0, bound, 'half the way to the next point');
+    const r = yield* boundedStep(ctx, point, want, sign ? toward * sign : 0, bound, 'half the way to the next point', sign !== 0);
     if (r.ok && !sign) sign = Math.sign(r.model === 'integrating' ? r.kp : r.K) || 1;
     points[i] = { at: target, ...r, notes: [...r.notes, ...stepNotes(r, measurement(ctx).unit)] };
   }
@@ -996,7 +1050,7 @@ export const stepExperiment = (project, path, opts) => drain(stepExperimentSteps
 function stepNotes(r, unit = '') {
   if (!r.ok) return [];
   const notes = [], u = unit ? ` ${unit}` : '';
-  if (r.model === 'integrating') notes.push(`y ramps (an integrating plant): the test ended ${fmtN(r.tEnd)} s after the step, once its slope was steady, with y moved by ${fmtN(Math.abs(r.moved))}${u}${Number.isFinite(r.bound) ? ` (it may move ${fmtN(r.bound)}${u}, ${r.boundWhy})` : ''}`);
+  if (r.model === 'integrating') notes.push(`y ramps (an integrating plant): the test ended ${fmtN(r.tEnd)} s after the step, once its slope was steady${r.faded ? ' and its lag\'s transient had faded below 1 %' : ', before its lag had faded (the record is too short, so the estimate is rough)'}, with y moved by ${fmtN(Math.abs(r.moved))}${u}${Number.isFinite(r.bound) ? ` (it may move ${fmtN(r.bound)}${u}, ${r.boundWhy})` : ''}`);
   const size = r.model === 'integrating' ? Math.abs(r.moved) : r.size;
   if (r.ripple > 0.005 * size) notes.push(`y ripples by ±${fmtN(r.ripple)}${u} (${fmtN((100 * r.ripple) / size)} % of the step response)${r.rippleT ? `, slowest strong period ${fmtN(r.rippleT)} s; the test reads y averaged over it` : ''}`);
   return notes;
@@ -1007,7 +1061,7 @@ function stepNotes(r, unit = '') {
 // for smoother input usage, less sensitivity to noise and more robustness).
 // The factor 3 for "smooth" is ours.
 export const SIMC = {
-  tight: { label: 'Tight', short: '', f: 1, about: 'τc = θ (Skogestad 2003): fast, with good margins' },
+  tight: { label: 'Tight', short: '', f: 1, about: 'τc = θ (Skogestad 2003): fast; his margins on the model: Ms 1.6–1.7, gain margin about 3' },
   smooth: { label: 'Smooth', short: ' smooth', f: 3, about: 'τc = 3θ: slower and gentler on u, more robust' },
 };
 const simcFactor = (rule) => {
@@ -1015,18 +1069,37 @@ const simcFactor = (rule) => {
   return SIMC[rule].f;
 };
 
+// What set τc, in words, for the notes and the tab: g.by is 'theta' (SIMC's
+// rule), 'lag' (a tenth of the lag, when the dead time is shorter) or
+// 'ripple' (the ripple's period on y); both floors are ours.
+export function tauCSource(g, rule = 'tight') {
+  const f = SIMC[rule]?.f ?? 1, x = f === 1 ? '' : `${f} × `;
+  if (g.by === 'ripple') return `${x}the ripple's period on y (our floor), not the dead time θ = ${fmtN(g.theta)} s`;
+  if (g.by === 'lag') return `${x}a tenth of the lag τ (our floor), not the dead time θ = ${fmtN(g.theta)} s, which is shorter`;
+  if (g.by === 'given') return 'given';
+  const dead = `the dead time${g.Tf ? ' with the derivative\'s filter' : ''}`;
+  return f === 1 ? `θ, ${dead} (Skogestad's tight rule)` : `${f}θ (θ = ${fmtN(g.theta)} s, ${dead})`;
+}
+
+// The same in a few characters, for a row in the tab: θ, 3θ, τ/10, …
+export function tauCShort(g, rule = 'tight') {
+  const f = SIMC[rule]?.f ?? 1, x = f === 1 ? '' : `${f} × `;
+  return g.by === 'ripple' ? `${x}ripple period` : g.by === 'lag' ? `${x}τ/10` : g.by === 'given' ? 'given' : `${f === 1 ? '' : f}θ`;
+}
+
 // SIMC for a first order plus dead time (Skogestad 2003, Table 1):
 //   Kp = τ / (K (τc + θ)),  Ti = min(τ, 4 (τc + θ))
-// θ includes half a controller sample, the delay a digital controller adds.
+// θ includes half a controller sample, the delay of the hold on u.
 // τc = θ (tight) or 3θ (smooth), where the θ that sets τc is at least τ / 10
 // (almost no dead time) and at least minTauC (the period of a ripple on y,
 // so the loop does not chase the ripple); both floors are ours. tauC
-// overrides it.
+// overrides it. by: what set τc (tauCSource).
 export function simcGains(K, tau, theta, Ts = 0, tauC = null, rule = 'tight', minTauC = 0) {
-  const th = theta + Ts / 2;
-  const tc = tauC ?? simcFactor(rule) * Math.max(th, tau / 10, minTauC);
+  const th = theta + Ts / 2, base = Math.max(th, tau / 10, minTauC);
+  const by = tauC !== null ? 'given' : base === th ? 'theta' : minTauC >= tau / 10 ? 'ripple' : 'lag';
+  const tc = tauC ?? simcFactor(rule) * base;
   const Kp = tau / (K * (tc + th)), Ti = Math.min(tau, 4 * (tc + th));
-  return { Kp, Ki: Kp / Ti, Kd: 0, Ti, Td: 0, tauC: tc, theta: th, byRipple: tauC === null && minTauC > Math.max(th, tau / 10) };
+  return { Kp, Ki: Kp / Ti, Kd: 0, Ti, Td: 0, tauC: tc, theta: th, thetaPlant: th, Ts, by, byRipple: by === 'ripple' };
 }
 
 // SIMC for an integrating process, k' e^(−θs) / s, with a lag, / (τ2 s + 1)
@@ -1037,21 +1110,38 @@ export function simcGains(K, tau, theta, Ts = 0, tauC = null, rule = 'tight', mi
 // The derivative cancels the lag, so it is used when the lag dominates the
 // dead time (τ2 > θ, as Skogestad recommends PID); otherwise (or pid: false)
 // a PI, with the lag counted as dead time by the half rule (θ + τ2 / 2). θ
-// includes half a controller sample; τc = θ (tight) or 3θ (smooth), the θ
-// that sets τc at least minTauC (a ripple's period, as above).
-export function simcIntegrating(kp, theta, tau2 = 0, Ts = 0, { rule = 'tight', pid = null, minTauC = 0 } = {}) {
-  const withD = pid ?? tau2 > theta + Ts / 2;
-  const th = (withD ? theta : theta + tau2 / 2) + Ts / 2;
-  const tc = simcFactor(rule) * Math.max(th, minTauC);
-  const Kc = 1 / (kp * (tc + th)), tauI = 4 * (tc + th), tauD = withD ? tau2 : 0;
-  const Kp = Kc * (1 + tauD / tauI), Ki = Kc / tauI, Kd = Kc * tauD;
-  return { Kp, Ki, Kd, Ti: Kp / Ki, Td: Kd / Kp, tauC: tc, theta: th, Kc, tauI, tauD, byRipple: minTauC > th };
+// includes half a controller sample (the hold on u); τc = θ (tight) or 3θ
+// (smooth), the θ that sets τc at least minTauC (a ripple's period, as above).
+// dFilter(Td): the filter Tf the PID's derivative will get. Given, Tf joins
+// the dead time: Skogestad's margins (Ms 1.70, GM 2.96, PM 47° for an
+// integrator) are computed without a filter (he simulates with 0.01 τD),
+// and a filter of a quarter of τD (Ts on the motor) adds a lag about as
+// long as θ. Tf is a lag shorter than the one kept, counted whole as his
+// half rule counts such lags. It depends on the gains, so this repeats
+// until it holds. Without dFilter: his formulas as printed.
+export function simcIntegrating(kp, theta, tau2 = 0, Ts = 0, { rule = 'tight', pid = null, minTauC = 0, dFilter = null } = {}) {
+  const withD = pid ?? tau2 > theta + Ts / 2, f = simcFactor(rule);
+  const own = withD && dFilter;
+  const thPlant = (withD ? theta : theta + tau2 / 2) + Ts / 2;
+  let Tf = own ? dFilter(tau2) : 0, g = null;
+  for (let i = 0; i < 50; i++) {
+    const th = thPlant + (own ? Tf : 0), base = Math.max(th, minTauC);
+    const tc = f * base;
+    const Kc = 1 / (kp * (tc + th)), tauI = 4 * (tc + th), tauD = withD ? tau2 : 0;
+    const Kp = Kc * (1 + tauD / tauI), Ki = Kc / tauI, Kd = Kc * tauD;
+    g = { Kp, Ki, Kd, Ti: Kp / Ki, Td: Kd / Kp, tauC: tc, theta: th, thetaPlant: thPlant, Ts, Tf: own ? Tf : undefined, Kc, tauI, tauD, by: base === th ? 'theta' : 'ripple', byRipple: base !== th };
+    if (!own) break;
+    const next = dFilter(g.Td);
+    if (Math.abs(next - Tf) <= 1e-12 + 1e-9 * Tf) break;
+    Tf = next;
+  }
+  return g;
 }
 
 // SIMC gains for what one step test found.
 function simcFor(m, Ts, rule, pid = null) {
   return m.model === 'integrating'
-    ? simcIntegrating(m.kp, m.theta, m.tau2, Ts, { rule, pid, minTauC: m.rippleT ?? 0 })
+    ? simcIntegrating(m.kp, m.theta, m.tau2, Ts, { rule, pid, minTauC: m.rippleT ?? 0, dFilter: (Td) => derivativeFilter(Td, Ts) })
     : simcGains(m.K, m.tau, m.theta, Ts, null, rule, m.rippleT ?? 0);
 }
 
@@ -1090,11 +1180,13 @@ export function* stepTuneSteps(project, path, opts = {}) {
 // gain-scheduled PI, which has no derivative.
 function simcNotes(m, g, scheduled = false) {
   const notes = [];
-  if (g.byRipple) notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s): a faster loop would chase the ripple`);
+  if (g.by === 'ripple') notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s): a faster loop would chase the ripple`);
+  if (g.by === 'lag') notes.push(`τc = ${fmtN(g.tauC)} s is set from a tenth of the lag τ = ${fmtN(m.tau)} s (our floor), not from the dead time θ = ${fmtN(g.theta)} s, which is shorter`);
   if (m.model === 'integrating' && m.tau2 > 0.02 * m.L) {
-    if (g.Kd) notes.push(`the lag τ2 = ${fmtN(m.tau2)} s is longer than the dead time θ = ${fmtN(g.theta)} s (half a controller sample included), so the PI gets a derivative that cancels it (SIMC PID)`);
+    if (g.Kd) notes.push(`the lag τ2 = ${fmtN(m.tau2)} s is longer than the dead time θ = ${fmtN(g.thetaPlant)} s (half a controller sample included), so the PI gets a derivative that cancels it (SIMC PID)`);
     else notes.push(`${scheduled ? 'a gain-scheduled PI has no derivative' : `the lag τ2 = ${fmtN(m.tau2)} s is no longer than the dead time`}, so half of τ2 counts as dead time (the half rule)`);
   }
+  if (g.Tf) notes.push(`SIMC's margins are for an unfiltered derivative; this PID filters it at Tf = ${fmtN(g.Tf)} s (Td/10, at least a sample), a lag that counts as dead time: θ = ${fmtN(g.thetaPlant)} + ${fmtN(g.Tf)} = ${fmtN(g.theta)} s`);
   return notes;
 }
 
@@ -1148,7 +1240,7 @@ export function* autotuneSteps(project, path, opts = {}) {
   if (res.model === 'integrating' && res.variant.params.Ki && !res.variant.params.Tr && after.overshoot > g.overshoot) {
     const Tr = res.gains.tauI, pre = variantCost(ctx, { ...res.variant, params: { ...res.variant.params, Tr } }, g, scales);
     yield { partial: true, phase: 'score' };
-    res.notes = [...res.notes, `plant and controller both integrate, so y overshoots a step in r (${fmtN(after.overshoot)} %); with a prefilter on r of Tr = τI = ${fmtN(Tr)} s it would overshoot ${fmtN(pre.overshoot)} % (cost ×${fmtN(pre.J / after.J)}), at the price of a slower response to r`];
+    res.notes = [...res.notes, `plant and controller both integrate, so y overshoots a step in r (${fmtN(after.overshoot)} %); with a prefilter on r of Tr = τI = ${fmtN(Tr)} s it would overshoot ${fmtN(pre.overshoot)} %, at the price of a slower response to r: cost ×${fmtN(pre.J / before.cost.J)} of ${ctx.variant.name}, against ×${fmtN(after.J / before.cost.J)} without the prefilter`];
   }
   const out = { ...res, ...head, before, after, better: after.J < before.cost.J };
   if (!out.better) out.worse = whyWorse(out, ctx);
@@ -1208,7 +1300,7 @@ export function whyWorse(res, ctx) {
 export function tuneReport(res) {
   const cost = (c) => c && { J: c.J, overshoot: c.overshoot, saturated: c.saturated, diverged: c.diverged, parts: c.parts };
   const out = { ok: res.ok, method: res.method, block: res.key, where: res.where, goal: res.goal };
-  const model = (m) => (m.model === 'integrating' ? { model: m.model, kp: m.kp, L: m.L, tau2: m.tau2, theta: m.theta, tEnd: m.tEnd } : { model: m.model, K: m.K, tau: m.tau, theta: m.theta });
+  const model = (m) => (m.model === 'integrating' ? { model: m.model, kp: m.kp, L: m.L, tau2: m.tau2, theta: m.theta, tEnd: m.tEnd, faded: m.faded } : { model: m.model, K: m.K, tau: m.tau, theta: m.theta });
   if (!res.ok) Object.assign(out, { why: res.why, notes: res.notes ?? [] });
   else {
     Object.assign(out, { better: res.better, before: { variant: res.before.variant, cost: cost(res.before.cost) }, after: { variant: res.variant, cost: cost(res.after) }, notes: res.notes });
@@ -1260,15 +1352,21 @@ export function placeVariant(project, path, variant, { run = true } = {}) {
   return i;
 }
 
+// The filter on a tuned PID's derivative: Td / 10, but never shorter than a
+// controller sample Ts (a shorter one would pass the measurement's noise and
+// the sampling's steps almost unfiltered).
+export const derivativeFilter = (Td, Ts) => Math.max(Ts, Td / 10);
+
 // A PID with the given gains that drives the same actuator as the variant it
 // replaces: limits, start output, setpoint weight and prefilter carry over.
-// The derivative is filtered at Td / 10 (but not faster than a sample).
+// The derivative is filtered at g.Tf when the rule chose it (SIMC counts it in
+// the dead time), else at derivativeFilter(Td, Ts).
 export function pidVariant(from, g, name, Ts) {
   const p = from.params ?? {};
   const pid = from.type === 'pid';
   return normalizeVariant({
     name: name.slice(0, 40), type: 'pid',
-    params: { Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, Tf: g.Kd ? Math.max(Ts, (g.Td ?? 0) / 10) : (pid ? p.Tf : 0.01), b: pid ? p.b : 1, Tr: p.Tr ?? 0, u0: p.u0 ?? 0, umin: p.umin ?? -Infinity, umax: p.umax ?? Infinity },
+    params: { Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, Tf: g.Kd ? (g.Tf ?? derivativeFilter(g.Td ?? 0, Ts)) : (pid ? p.Tf : 0.01), b: pid ? p.b : 1, Tr: p.Tr ?? 0, u0: p.u0 ?? 0, umin: p.umin ?? -Infinity, umax: p.umax ?? Infinity },
   });
 }
 

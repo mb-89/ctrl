@@ -12,8 +12,9 @@ import {
   iterate, runIterate, tuneContext, runVariant, costScales, runCost, variantCost, tuningSpace,
   relayExperiment, relayTune, pidFromUltimate, stepExperiment, stepTune, simcGains, baseName, RULES,
   autotune, tuneReport, resultName, placeVariant, loopOverlays, upstreamSource,
-  simcIntegrating, settledLevel, settledSlope,
+  simcIntegrating, settledLevel, settledSlope, derivativeFilter, tauCSource,
 } from '../src/core/autotune.js';
+import { analyzeLoop } from '../src/core/analysis.js';
 
 const system = (name) => {
   const p = normalizeProject(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY.find((s) => s.name.startsWith(name)), ['input', 'plant']));
@@ -163,6 +164,8 @@ test('relay and step tests on the oven give working PIDs; experiments explain wh
   const fopdt = stepExperiment(loop({ type: 'fopdt', params: { K: 2, tau: 1, delay: 0.3 } }, { period: 10 }), null, { du: 0.1 });
   assert.ok(fopdt.ok, fopdt.why);
   assert.ok(Math.abs(fopdt.K - 2) < 0.01 && Math.abs(fopdt.tau - 1) < 0.03 && Math.abs(fopdt.theta - 0.3) < 0.03, `${fopdt.K} ${fopdt.tau} ${fopdt.theta}`);
+  // A plant outside the page (Live mode) reads 0 offline: every method says so.
+  for (const method of ['iterate', 'relay', 'step']) assert.throws(() => autotune(system('HIL'), null, { method }), /outside the page/);
   // The triple pendulum has eight measurements.
   assert.match(relayExperiment(system('Triple'), null).why, /measurements/);
   assert.match(stepExperiment(system('Triple'), null).why, /measurements/);
@@ -178,8 +181,9 @@ test('SIMC for an integrating plant: Skogestad\'s Table 1, series form converted
   const smooth = simcIntegrating(2, 0.1, 0, 0, { rule: 'smooth' });
   close(smooth.Kp, 1.25); close(smooth.Ki, 1.25 / 1.6);
   // With a lag longer than θ, SIMC's series PID (Kc 0.5, τI 1, τD 1 when k' = 8,
-  // θ = 0.125, τ2 = 1) is, in ideal form, Kc' 1, τI' 2, τD' 0.5 (Skogestad's
-  // own example after eq. 38), so Kp 1, Ki 0.5, Kd 0.5 here.
+  // θ = 0.125, τ2 = 1) is, in ideal form, Kc' 1, τI' 2, τD' 0.5: the numbers
+  // of Skogestad's example of eq. 36 in his appendix (there for the process
+  // e^(−s)/(s + 1)², here from an integrating one), so Kp 1, Ki 0.5, Kd 0.5.
   const pid = simcIntegrating(8, 0.125, 1);
   close(pid.Kc, 0.5); close(pid.tauI, 1); close(pid.tauD, 1);
   close(pid.Kp, 1); close(pid.Ki, 0.5); close(pid.Kd, 0.5);
@@ -188,6 +192,44 @@ test('SIMC for an integrating plant: Skogestad\'s Table 1, series form converted
   close(half.Kd, 0); close(half.Kp, 1 / (2 * 0.3)); close(half.tauI, 1.2);
   // Half a controller sample joins the dead time, as for the first-order rule.
   close(simcIntegrating(2, 0.1, 0, 0.02).theta, 0.11);
+  // The PID's derivative filter joins it too, when given: Tf is
+  // max(Ts, Td/10) of the gains it gives (here Ts).
+  const Ts = 0.01, dFilter = (Td) => derivativeFilter(Td, Ts);
+  const own = simcIntegrating(1.4286, 0.0103, 0.0497, Ts, { dFilter });
+  close(own.Tf, derivativeFilter(own.Td, Ts));
+  close(own.Tf, Ts);
+  close(own.theta, 0.0103 + Ts / 2 + own.Tf);
+  close(own.thetaPlant, 0.0103 + Ts / 2);
+  close(own.Kc, 1 / (1.4286 * 2 * own.theta));
+  assert.match(tauCSource(own), /derivative's filter/);
+  // A filter longer than a sample is found by repeating: Td/10 of the result.
+  const slow = simcIntegrating(1, 0.05, 1, Ts, { dFilter });
+  assert.ok(slow.Tf > Ts);
+  close(slow.Tf, slow.Td / 10, `Tf ${slow.Tf}, Td ${slow.Td}`);
+  // A PI has no derivative and adds nothing.
+  close(simcIntegrating(2, 0.1, 0, Ts, { dFilter }).theta, 0.1 + Ts / 2);
+});
+
+test('SIMC with the derivative filter in θ keeps Skogestad\'s margins on an integrator with a short lag', () => {
+  // y = ∫ k' u / (τ2 s + 1), τ2 = 5 samples, no dead time: the controller's
+  // own delays (the hold, the derivative's filter) are all the loop has.
+  const k = 1.43, tau2 = 0.05, Ts = 0.01;
+  const p = loop({ type: 'firstOrder', params: { K: k, tau: tau2 } }, {
+    period: 5, Ts, variant: { name: 'P', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
+    extra: [{ id: 'i', type: 'integrator', params: { K: 1 } }],
+    wires: [{ from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'p' }, { from: 'p', to: 'i' }, { from: 'i', to: 'y' }, { from: 'i', to: 'ctrl:1' }],
+  });
+  const res = stepTune(p, null);
+  assert.ok(res.ok && res.model === 'integrating' && res.variant.params.Kd > 0, res.why);
+  assert.ok(Math.abs(res.kp / k - 1) < 0.005 && Math.abs(res.tau2 / tau2 - 1) < 0.05, `k' ${res.kp}, τ2 ${res.tau2}`);
+  // The plant as the Analysis tab takes it: speed, then angle.
+  const plant = { A: [[-1 / tau2, 0], [1, 0]], B: [[k / tau2], [0]], C: [[0, 1]], D: [[0]] };
+  const ms = (params) => analyzeLoop(plant, CONTROLLERS.pid.linear(params, Ts), Ts, { points: 3000 }).margins.ms;
+  const msNow = ms(res.variant.params);
+  assert.ok(msNow > 1.4 && msNow < 1.85, `Ms ${msNow} (Skogestad: 1.59–1.70 for τc = θ)`);
+  // The same rule without the filter in θ: Ms about 10, a loop that rings.
+  const bare = simcIntegrating(res.kp, res.theta, res.tau2, Ts);
+  assert.ok(ms({ ...res.variant.params, Kp: bare.Kp, Ki: bare.Ki, Kd: bare.Kd, Tf: derivativeFilter(bare.Td, Ts) }) > 3);
 });
 
 test('the settling check reads through a steady ripple: a first-order response with a sine on it', () => {
@@ -210,7 +252,7 @@ test('the settling check reads through a steady ripple: a first-order response w
   assert.ok(r.ramps && Math.abs(r.slope - 0.5) < 0.01, JSON.stringify(r));
 });
 
-test('the step test fits an integrator with lag and dead time: k\' and θ within 5 %', () => {
+test('the step test fits an integrator with lag and dead time: k\' and θ within 1 %', () => {
   // y = ∫ 2 e^(−0.3 s)/(0.2 s + 1) u: k' = 2, τ2 = 0.2 s, θ = 0.3 s.
   const p = loop({ type: 'fopdt', params: { K: 2, tau: 0.2, delay: 0.3 } }, {
     period: 10, variant: { name: 'P', type: 'pid', params: { Kp: 0.5, umin: -1, umax: 1 } },
@@ -219,12 +261,16 @@ test('the step test fits an integrator with lag and dead time: k\' and θ within
   });
   const ex = stepExperiment(p, null);
   assert.ok(ex.ok && ex.model === 'integrating', ex.why);
-  assert.ok(Math.abs(ex.kp / 2 - 1) < 0.05, `k' ${ex.kp}`);
-  assert.ok(Math.abs(ex.theta / 0.3 - 1) < 0.05, `θ ${ex.theta}`);
-  assert.ok(Math.abs(ex.tau2 / 0.2 - 1) < 0.1, `τ2 ${ex.tau2}`);
-  assert.ok(Math.abs(ex.L - 0.5) < 0.025, `asymptote's intercept ${ex.L}`);
-  // It ends once the slope is steady: well before the period is over, and
-  // with y moved by no more than half of r's span (0.5).
+  // The test runs until the lag has faded, so the line through its end is
+  // the asymptote: k' and θ within 1 %, τ2 within 5 % (cut where the slope
+  // first looked steady, k' was 1 % low, θ 2 % long and τ2 10 % short).
+  assert.ok(Math.abs(ex.kp / 2 - 1) < 0.01, `k' ${ex.kp}`);
+  assert.ok(Math.abs(ex.theta / 0.3 - 1) < 0.01, `θ ${ex.theta}`);
+  assert.ok(Math.abs(ex.tau2 / 0.2 - 1) < 0.05, `τ2 ${ex.tau2}`);
+  assert.ok(Math.abs(ex.L - 0.5) < 0.01, `asymptote's intercept ${ex.L}`);
+  assert.ok(0.8 * ex.tEnd >= ex.L + 5 * ex.tau2 - 0.05, `the last fifth starts after L + 5 τ2: ended ${ex.tEnd} s`);
+  // It ends once the slope is steady and the lag has faded: well before the
+  // period is over, and with y moved by no more than half of r's span (0.5).
   assert.ok(ex.tEnd < 3 && Math.abs(ex.moved) <= 0.5, `ended ${ex.tEnd} s after the step, y moved ${ex.moved}`);
   assert.ok(ex.notes.some((n) => /ramps/.test(n)));
   assert.ok(ex.run.t[ex.run.t.length - 1] < ex.tHold + 3, 'the run shown ends with the test');
@@ -240,7 +286,7 @@ test('the step method on the library\'s examples: better where the loop is badly
   // The motor's aggressive P and the oven's PID: SIMC beats them.
   const motor = step('DC motor');
   assert.equal(motor.model, 'integrating');
-  assert.ok(Math.abs(motor.kp / (0.5 * 10 / (1 + 0.5 * 0.5 * 10)) - 1) < 0.05, `k' ${motor.kp} V⁻¹s⁻¹ (the motor's speed per volt)`);
+  assert.ok(Math.abs(motor.kp / (0.5 * 10 / (1 + 0.5 * 0.5 * 10)) - 1) < 0.01, `k' ${motor.kp} V⁻¹s⁻¹ (the motor's speed per volt)`);
   assert.ok(motor.after.J < 0.5 * motor.before.cost.J && motor.after.overshoot < motor.before.cost.overshoot, `${motor.before.cost.J} → ${motor.after.J}`);
   assert.ok(motor.variant.params.Kd > 0, 'a lag longer than the dead time: SIMC PID');
   const oven = step('Oven');
@@ -264,6 +310,19 @@ test('the step method on the library\'s examples: better where the loop is badly
   // u0 balances the outlet at the start level: a √(2 g h0).
   assert.ok(Math.abs(tank.variant.params.u0 / (0.1 * Math.sqrt(2 * 9.81 * 0.15)) - 1) < 0.02, `u0 ${tank.variant.params.u0}`);
   assert.ok(tank.after.J < 2 * tank.before.cost.J && tank.after.overshoot < 20, `${tank.before.cost.J} → ${tank.after.J}, overshoot ${tank.after.overshoot} %`);
+  // The full tank (1 m) overflows: a small step does not move y, a large one
+  // drains it too far. Said as it is, not as a wiring fault.
+  const full = tank.points.find((q) => q.at === 1);
+  assert.ok(!full.ok && /limit of its own/.test(full.why) && !/wired/.test(full.why), full.why);
+  // Each point steps toward the middle of the table: down at 0.75 m.
+  assert.ok(tank.points.find((q) => q.at === 0.75).du < 0);
+  // Larger steps are made small enough, also for a single PI on the tank.
+  const tank25 = step('Conical', { amplitude: 0.25 });
+  assert.ok(tank25.after.J < 2.5 * tank25.before.cost.J && tank25.after.overshoot < 20, `${tank25.after.J / tank25.before.cost.J} ${tank25.after.overshoot}`);
+  const empty = system('Conical');
+  empty.system.plant.diagram.blocks.find((b) => b.type === 'controller').variant = 2;
+  const pe = autotune(empty, null, { method: 'step', amplitude: 0.5 });
+  assert.ok(pe.ok && pe.better, `${pe.before?.variant.name}: ${pe.why ?? pe.worse}`);
   // Smooth is slower than tight: smaller gains from the same tests.
   const calm = step('DC motor', { simc: 'smooth' });
   assert.ok(calm.variant.params.Kp < motor.variant.params.Kp && calm.variant.name.endsWith('· SIMC smooth'));
