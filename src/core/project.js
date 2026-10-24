@@ -183,9 +183,39 @@ export function normalizeScope(scope = {}, period, loop = false) {
     if (ch.source === '') ch.on = false;
     if (!(ch.scale > 0) || !Number.isFinite(ch.offset)) throw new Error(`scope.channels[${i}]: scale must be > 0 and offset a number`);
     ch.on = !!ch.on;
+    const f = normalizeFilter(c.filter, `scope.channels[${i}].filter`);
+    if (f) ch.filter = f;
     return ch;
   });
-  return { timebase, channels };
+  const view = normalizeScopeView(scope.view);
+  return { timebase, channels, ...(view ? { view } : {}) };
+}
+
+// A display filter on a channel: the scope shows (and analyses) the filtered
+// signal; the system is not changed. Designs are in core/spectrum.js.
+export const FILTER_TYPES = ['lowpass', 'highpass', 'bandpass', 'notch'];
+function normalizeFilter(f, where) {
+  if (!f || !FILTER_TYPES.includes(f.type)) return null;
+  const f0 = Number(f.f0), order = [2, 4, 6, 8].includes(Number(f.order)) ? Number(f.order) : 2, q = Number(f.q ?? Math.SQRT1_2);
+  if (!(f0 > 0)) throw new Error(`${where}.f0: a frequency above 0 Hz`);
+  if (!(q > 0)) throw new Error(`${where}.q: above 0`);
+  return { type: f.type, f0, order, q };
+}
+
+// How the screen shows the channels: in time (the default), as amplitude
+// spectra (FFT) or as one channel's spectrogram; and which channel, if any,
+// has its values on a second axis at the right.
+export const VIEW_MODES = ['time', 'fft', 'spectrogram'];
+function normalizeScopeView(v) {
+  if (!v || typeof v !== 'object') return null;
+  const out = {};
+  if (VIEW_MODES.includes(v.mode) && v.mode !== 'time') out.mode = v.mode;
+  if (Number.isInteger(v.right) && v.right >= 0 && v.right < 4) out.right = v.right;
+  const fmin = Number(v.fmin), fmax = Number(v.fmax);
+  if (fmin >= 0 && fmax > fmin) { out.fmin = fmin; out.fmax = fmax; }
+  if (v.db === false) out.db = false;
+  if ([64, 128, 256, 512, 1024].includes(Number(v.size))) out.size = Number(v.size);
+  return Object.keys(out).length ? out : null;
 }
 
 // Every name a scope channel can show: the signals (one per Source) and the

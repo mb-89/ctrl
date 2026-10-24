@@ -44,6 +44,18 @@ Four channels, in the classic colours: 1 yellow, 2 green, 3 blue, 4 magenta. Eac
 - A channel key selects that channel for the Vertical knobs; pressing the selected channel's key again turns it off; pressing an off channel turns it on and selects it.
 - **Scale** knob: 1-2-5 steps. **Position** knob: 0.1 division per detent; double-click (the knob's push) sets it to 0.
 
+## Display modes: Time, FFT, Spectrogram (the person, 2026-10-24)
+
+Three keys under Run Control switch what the screen shows; the setting is part of the project (`scope.view`, [project-format.md](project-format.md)).
+
+- **Time**: the default, as above.
+- **FFT**: the amplitude spectrum (single-sided, Hann window, amplitude-correct: a sine of amplitude A reads A) of every shown channel, from what has run so far, so it fills in while the sweep runs. 10 dB per division against a reference level rounded up from the run's largest peak; the Nyquist frequency (half the scope's sampling rate) is marked; the selected channel's peaks are labelled; its display filter is drawn as a dashed response curve. Wheel, drag and Shift-drag act on the frequency axis.
+- **Spectrogram**: the selected channel's short-time spectrum over the screen's time (frequency up the left axis, a heat map 80 dB deep) with the channel's own time trace drawn over it against a **second axis at the right**. The wheel over the plot zooms frequency; over the time axis, time. In the encoder example the error orders rise as straight lines from the origin, and the 6× line folds back at the Nyquist frequency (aliasing).
+- **Display filters**: each channel can have one (Vertical › Filter: low-pass or high-pass Butterworth of order 2–8, band-pass, notch), applied live in every mode: the scope shows and analyses the filtered signal; the system is not changed. The wheel over its frequency sweeps it. Implemented in `src/core/spectrum.js` (second-order sections, bilinear transform with prewarping).
+- **R axis**: one channel can have its values on a second axis at the right of the screen (Vertical › R axis); the left axis then shows another channel.
+
+Code: `src/ui/freqview.js` (drawing, caching of filtered signals and spectra), hooks in `src/ui/display.js`.
+
 ## Horizontal
 
 - **Scale** knob: seconds per division, 1-2-5 steps. **Position** knob: the time at the left edge; double-click sets it to 0.

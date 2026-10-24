@@ -16,6 +16,11 @@ export function createControls(root, app) {
         <button class="key single" id="k-single" title="One sweep, then stop (S)">Single</button>
         <button class="key auto" id="k-auto" title="Fit the display to one period of the input (A)">Auto<br>Scale</button>
       </div>
+      <div class="row viewkeys" id="view-keys" role="group" aria-label="Display mode">
+        <button class="key small" data-view="time" title="Signals over time">Time</button>
+        <button class="key small" data-view="fft" title="Amplitude spectrum of every channel (what has run so far)">FFT</button>
+        <button class="key small" data-view="spectrogram" title="The selected channel's spectrum over time, its trace on the right axis">Spectrogram</button>
+      </div>
     </section>
     <section class="group">
       <h3 class="glabel">Horizontal</h3>
@@ -24,7 +29,10 @@ export function createControls(root, app) {
     <section class="group">
       <h3 class="glabel">Vertical</h3>
       <div class="row chkeys" id="ch-keys"></div>
-      <label class="srcrow"><span>Source</span><select id="ch-src" class="field"></select></label>
+      <div class="srcrow"><span>Source</span><select id="ch-src" class="field"></select><button class="key small axbtn" id="ch-right" title="Show this channel's values on a second axis at the right of the screen">R axis</button></div>
+      <div class="srcrow filtrow"><span>Filter</span><select id="ch-filt" class="field" title="A display filter: changes what the scope shows and analyses, not the system">
+          <option value="">none</option><option value="lowpass">Low-pass</option><option value="highpass">High-pass</option><option value="bandpass">Band-pass</option><option value="notch">Notch</option></select>
+        <span class="filtparams" id="filt-params"></span></div>
       <div class="row dials" id="v-dials"></div>
     </section>`;
   const $ = (s) => root.querySelector(s);
@@ -116,6 +124,42 @@ export function createControls(root, app) {
     b.addEventListener('click', () => app.channelKey(i));
     keys.append(b);
   });
+  // Display mode: time, FFT or spectrogram (the scope's view setting).
+  root.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => setScope((sc) => {
+    const view = { ...(sc.view ?? {}) };
+    if (b.dataset.view === 'time') delete view.mode; else view.mode = b.dataset.view;
+    sc.view = view;
+  })));
+  // The selected channel's display filter.
+  const filt = $('#ch-filt');
+  filt.addEventListener('change', () => setScope((sc) => {
+    const c = sc.channels[app.channel];
+    if (!filt.value) { delete c.filter; return; }
+    const fn = app.nyquist?.() ?? 100;
+    c.filter = { type: filt.value, f0: c.filter?.f0 ?? Number((fn / 10).toPrecision(2)), order: c.filter?.order ?? 4, q: c.filter?.q ?? (filt.value === 'notch' ? 5 : filt.value === 'bandpass' ? 2 : Math.SQRT1_2) };
+  }));
+  const fparams = $('#filt-params');
+  fparams.addEventListener('change', (e) => {
+    const el = e.target, key = el.dataset.f;
+    const v = key === 'order' ? Number(el.value) : parseSI(el.value, key === 'f0' ? 'Hz' : '');
+    if (!(v > 0)) { app.toast(key === 'f0' ? 'Type a frequency, e.g. 50, 1.2k, 50 Hz.' : 'Q must be above 0.'); render(); return; }
+    setScope((sc) => { sc.channels[app.channel].filter[key] = v; });
+  });
+  fparams.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); });
+  // The wheel over the frequency nudges it, so the filter can be swept live.
+  fparams.addEventListener('wheel', (e) => {
+    if (e.target.dataset.f !== 'f0') return;
+    e.preventDefault();
+    const f = ch().filter;
+    app.editScope((sc) => { sc.channels[app.channel].filter.f0 = Number((f.f0 * (e.shiftKey ? 1.01 : 1.06) ** (e.deltaY < 0 ? 1 : -1)).toPrecision(4)); });
+    clearTimeout(fparams.wheelTimer);
+    fparams.wheelTimer = setTimeout(() => app.endEdit(), 400);
+  }, { passive: false });
+  $('#ch-right').addEventListener('click', () => setScope((sc) => {
+    const view = { ...(sc.view ?? {}) };
+    if (view.right === app.channel) delete view.right; else view.right = app.channel;
+    sc.view = view;
+  }));
   const src = $('#ch-src');
   // Picking a source switches the channel on; "none" switches it off.
   src.addEventListener('change', () => setScope((sc) => { const c = sc.channels[app.channel]; c.source = src.value; c.on = src.value !== ''; }));
@@ -140,6 +184,19 @@ export function createControls(root, app) {
     }
     src.value = ch().source;
     src.dataset.names = names.join(',') + '|' + names.map(app.unitOf).join(',');
+    const vm = sc.view?.mode ?? 'time';
+    root.querySelectorAll('[data-view]').forEach((b) => { b.classList.toggle('lit-view', b.dataset.view === vm); b.setAttribute('aria-pressed', String(b.dataset.view === vm)); });
+    const f = ch().filter;
+    filt.value = f?.type ?? '';
+    const fsig = f ? `${f.type}|${f.f0}|${f.order}|${f.q}` : '';
+    if (fparams.dataset.sig !== fsig && !fparams.contains(document.activeElement)) {
+      fparams.innerHTML = !f ? '' : `<input class="field" data-f="f0" value="${siUnit(f.f0, 'Hz', 3)}" aria-label="Filter frequency" title="Corner or centre frequency; the wheel sweeps it">`
+        + (f.type === 'lowpass' || f.type === 'highpass'
+          ? `<select class="field" data-f="order" aria-label="Filter order" title="Order">${[2, 4, 6, 8].map((o) => `<option value="${o}" ${o === f.order ? 'selected' : ''}>${o}.</option>`).join('')}</select>`
+          : `<input class="field" data-f="q" value="${num(f.q, 3)}" aria-label="Filter Q" title="Q">`);
+      fparams.dataset.sig = fsig;
+    }
+    $('#ch-right').classList.toggle('lit-view', sc.view?.right === app.channel);
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
   }

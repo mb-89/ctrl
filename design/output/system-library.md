@@ -15,6 +15,8 @@ Reader: whoever adds an example system or changes how systems load.
 | Triple pendulum | r: cart to 0.5 m at 2.5 s; d: 4 N push at 1 s | LQR · LQR gentle · Off | Three rods held upright on a moving cart; the force arrow is the control effort |
 | Oven, badly tuned | r: 0 → 40 → 60 °C; d: 25 % heat lost while the door is open, 3.6–4.4 s | PID, badly tuned | Made for the Auto-tune tab, where it opens: the temperature overshoots and rings until the tab tunes it |
 
+- **Tags** (the person, 2026-10-24): each system shows coloured tags in the System library: linear or nonlinear, dead time, its controller and observer types, a disturbance, frequency views, HIL, auto-tune. They are derived from the system itself (`systemTags` in `src/core/systems.js`); an entry may add its own. Colours by kind: plant teal, controller blue, observer purple, signal magenta, feature amber.
+- **Encoder errors and torque ripple** (FFT and spectrogram demo): a speed-controlled motor sweeping to 300 rad/s, an encoder with 1× and 2× angle errors, 6× torque ripple; opens in Spectrogram mode on the measured speed.
 - **Signals are named for what they are** (F in N, x in m, θ in rad, …). Controlled systems have a reference **r** and a disturbance **d**, so both following and rejection can be tuned (the person).
 - **The page opens the Mass–spring–damper**, running, on its view. **Loading a system shows it running**: a whole load takes the title, scope channels and `ui` (run, Plant tab, its view, setup area at 42 %).
 - **Header, "System library ▾"**: every system, with Load and one button per part. **Plant tab, "System library" group**: a click loads the plant only.
