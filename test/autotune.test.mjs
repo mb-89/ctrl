@@ -3,9 +3,15 @@ import assert from 'node:assert/strict';
 import { normalizeProject, evaluateSystem, channelNames, autoTimebase } from '../src/core/project.js';
 import { SYSTEM_LIBRARY, applySystem } from '../src/core/systems.js';
 import { DEFAULT_PROJECT } from '../src/core/examples.js';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { CONTROLLERS } from '../src/core/controllers.js';
 import {
   iterate, runIterate, tuneContext, runVariant, costScales, runCost, variantCost, tuningSpace,
   relayExperiment, relayTune, pidFromUltimate, stepExperiment, stepTune, simcGains, baseName, RULES,
+  autotune, tuneReport, resultName, placeVariant, loopOverlays, upstreamSource,
 } from '../src/core/autotune.js';
 
 const system = (name) => {
@@ -14,8 +20,10 @@ const system = (name) => {
   return p;
 };
 
-// One loop: Source r → Controller → plant block(s) → Sink y, y back to the controller.
-const loop = (plant, { period = 20, Ts = 0.01, variant = { name: 'PI', type: 'pid', params: { Kp: 0.1, Ki: 0.05 } }, r = [{ type: 'step', params: { amplitude: 1, time: 0.5 } }] } = {}) => normalizeProject({
+// One loop: Source r → Controller → plant block(s) → Sink y, y back to the
+// controller. extra: more blocks; wires replaces the wiring.
+const LOOP_WIRES = [{ from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'p' }, { from: 'p', to: 'y' }, { from: 'p', to: 'ctrl:1' }];
+const loop = (plant, { period = 20, Ts = 0.01, variant = { name: 'PI', type: 'pid', params: { Kp: 0.1, Ki: 0.05 } }, r = [{ type: 'step', params: { amplitude: 1, time: 0.5 } }], extra = [], wires = LOOP_WIRES } = {}) => normalizeProject({
   system: {
     signals: { r: { period, components: r } },
     plant: { type: 'diagram', diagram: {
@@ -24,11 +32,13 @@ const loop = (plant, { period = 20, Ts = 0.01, variant = { name: 'PI', type: 'pi
         { id: 'ctrl', type: 'controller', params: { inputs: 2, Ts }, variants: [variant] },
         { id: 'p', ...plant },
         { id: 'y', type: 'sink', params: { name: 'y' } },
+        ...extra,
       ],
-      wires: [{ from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'p' }, { from: 'p', to: 'y' }, { from: 'p', to: 'ctrl:1' }],
+      wires,
     } },
   },
 });
+const LAGS = { type: 'lagChain', params: { K: 8, tau: 1, n: 3 } };
 
 test('a Controller block\'s r, y and u are probed under its path, never offered as channels', () => {
   const p = system('Oven');
@@ -156,4 +166,144 @@ test('relay and step tests on the oven give working PIDs; experiments explain wh
   assert.match(stepExperiment(system('DC motor'), null).why, /integrating/);
   assert.match(relayExperiment(system('Triple'), null).why, /measurements/);
   assert.throws(() => iterate(system('Pendulum'), null).next(), /State feedback/);
+});
+
+test('tuning reads a Controller inside a subsystem; unwired inputs are named', () => {
+  const p = normalizeProject({
+    system: {
+      signals: { r: { period: 20, components: [{ type: 'step', params: { amplitude: 1, time: 0.5 } }] } },
+      plant: { type: 'diagram', diagram: {
+        blocks: [
+          { id: 'r', type: 'source', params: { signal: 'r' } },
+          { id: 'sub', type: 'subsystem', name: 'Loop', params: {}, diagram: {
+            blocks: [
+              { id: 'in', type: 'inport', params: { port: 1 } },
+              { id: 'ctrl', type: 'controller', params: { inputs: 2, Ts: 0.01 }, variants: [{ name: 'PI', type: 'pid', params: { Kp: 0.1, Ki: 0.05 } }] },
+              { id: 'p', ...LAGS },
+              { id: 'out', type: 'outport', params: { port: 1 } },
+            ],
+            wires: [{ from: 'in', to: 'ctrl' }, { from: 'ctrl', to: 'p' }, { from: 'p', to: 'out' }, { from: 'p', to: 'ctrl:1' }],
+          } },
+          { id: 'y', type: 'sink', params: { name: 'y' } },
+        ],
+        wires: [{ from: 'r', to: 'sub' }, { from: 'sub', to: 'y' }],
+      } },
+    },
+  });
+  const run = evaluateSystem(p);
+  for (const k of ['sub/ctrl.r', 'sub/ctrl.y', 'sub/ctrl.u']) assert.ok(run.signals[k], k);
+  const ctx = tuneContext(p, ['sub', 'ctrl']);
+  assert.equal(ctx.source, 'r', 'r is traced back through the subsystem port to its Source');
+  const res = autotune(p, ['sub', 'ctrl'], { method: 'iterate', maxIter: 10 });
+  assert.ok(res.ok && res.better && res.after.J < res.before.cost.J, JSON.stringify(tuneReport(res)));
+  // An input without a wire is named, before any run.
+  assert.throws(() => tuneContext(loop(LAGS, { wires: LOOP_WIRES.slice(0, 3) })), /wire the measurement y to input 2/);
+  assert.throws(() => tuneContext(loop(LAGS, { wires: LOOP_WIRES.slice(1) })), /wire the reference r to input 1/);
+  assert.throws(() => autotune(loop(LAGS, { wires: LOOP_WIRES.slice(0, 3) }), null, { method: 'relay' }), /input 2/);
+});
+
+test('Iterate tunes gain-scheduled and state-feedback variants, signs kept', () => {
+  const tank = system('Conical');
+  const startKp = tank.system.plant.diagram.blocks.find((b) => b.id === 'ctrl').variants[0].params.Kp;
+  const gs = runIterate(tank, null, {}, { maxIter: 12 });
+  assert.equal(gs.best.variant.type, 'gainScheduled');
+  assert.ok(gs.cost < 0.95 * gs.start.cost, `${gs.start.cost} → ${gs.cost}`);
+  const ratio = gs.best.variant.params.Kp[0] / startKp[0];
+  assert.ok(gs.best.variant.params.Kp.every((v, i) => Math.abs(v / startKp[i] - ratio) < 1e-9), 'the Kp table scales as a whole');
+  // u = kr r − K y on a first-order lag, sluggish at the start.
+  const sf = loop({ type: 'firstOrder', params: { K: 1, tau: 1 } }, { period: 10, variant: { name: 'Slow', type: 'stateFeedback', params: { K: [0.5], kr: 1.5, umin: -5, umax: 5 } } });
+  const res = runIterate(sf, null, {}, { maxIter: 25 });
+  assert.ok(res.cost < 0.7 * res.start.cost, `${res.start.cost} → ${res.cost}`);
+  assert.ok(res.best.variant.params.K[0] > 0.5 && res.best.variant.params.kr > 1.5, 'faster: both gains rise, neither flips sign');
+});
+
+test('Iterate yields after every run, and a goal changed mid-run changes nothing', () => {
+  const goal = { cost: 'IAE', effort: 0.05 };
+  const it = iterate(system('Oven'), null, goal, { maxIter: 8 });
+  let s, partials = 0, iterations = 0;
+  for (;;) {
+    s = it.next();
+    if (s.done) break;
+    if (s.value.partial) partials++; else iterations++;
+    if (partials === 4) { goal.cost = 'ISE'; goal.effort = 5; }
+  }
+  assert.ok(partials > iterations, `${partials} runs, ${iterations} iterations`);
+  const ref = runIterate(system('Oven'), null, { cost: 'IAE', effort: 0.05 }, { maxIter: 8 });
+  assert.deepEqual(s.value.best.variant.params, ref.best.variant.params);
+  assert.equal(s.value.goal.cost, 'IAE');
+});
+
+test('the relay: reverse-acting plants, a bias at a limit, a reduced amplitude, r through a gain', () => {
+  // y falls when u rises: the relay is reversed and Ku comes out negative.
+  const rev = relayExperiment(loop({ type: 'lagChain', params: { K: -8, tau: 1, n: 3 } }, { variant: { name: 'PI', type: 'pid', params: { Kp: -0.1, Ki: -0.05 } } }), null, { d: 0.1 });
+  assert.ok(rev.ok, rev.why);
+  assert.ok(Math.abs(rev.Ku + 1) < 0.06 && Math.abs(rev.Pu / ((2 * Math.PI) / Math.sqrt(3)) - 1) < 0.03, `Ku ${rev.Ku} Pu ${rev.Pu}`);
+  const g0 = pidFromUltimate(rev.Ku, rev.Pu, 'tl');
+  assert.ok(g0.Kp < 0 && g0.Ki < 0 && g0.Kd < 0, 'a reverse-acting PID');
+  // r0 = 0.5 needs u0 = 1/16; with u at most 1/16 the relay has no room.
+  const atLimit = relayExperiment(loop(LAGS, { variant: { name: 'PI', type: 'pid', params: { Kp: 0.1, Ki: 0.05, umin: 0, umax: 0.0625 } } }), null, { d: 0.01 });
+  assert.ok(!atLimit.ok && /actuator limit/.test(atLimit.why), atLimit.why);
+  // Half the range asked, 0.0375 left above the bias: the amplitude shrinks and says so.
+  const reduced = relayExperiment(loop(LAGS, { variant: { name: 'PI', type: 'pid', params: { Kp: 0.1, Ki: 0.05, umin: 0, umax: 0.1 } } }), null, { amplitude: 0.5 });
+  assert.ok(reduced.ok, reduced.why);
+  assert.ok(Math.abs(reduced.d - 0.0375) < 0.002 && reduced.notes.some((n) => /reduced/.test(n)), `${reduced.d} ${reduced.notes}`);
+  assert.ok(Math.abs(reduced.Ku - 1) < 0.08, `Ku ${reduced.Ku}`);
+  // r through a gain of 2: the Source is held at the middle of its range, r0 = 1.
+  const viaGain = loop(LAGS, { extra: [{ id: 'g', type: 'gain', params: { K: 2 } }], wires: [{ from: 'r', to: 'g' }, { from: 'g', to: 'ctrl' }, ...LOOP_WIRES.slice(1)] });
+  assert.equal(upstreamSource(viaGain.system.plant.diagram, ['ctrl'], 0), 'r');
+  const g = relayExperiment(viaGain, null, { d: 0.1 });
+  assert.ok(g.ok && Math.abs(g.r0 - 1) < 1e-6 && Math.abs(g.Ku - 1) < 0.08, `${g.why} r0 ${g.r0} Ku ${g.Ku}`);
+  // Off, without limits: no scale for the test signal.
+  const off = loop(LAGS, { variant: { name: 'Off', type: 'off', params: {} } });
+  assert.match(relayExperiment(off, null).why, /no actuator limits/);
+  assert.match(stepExperiment(off, null).why, /no actuator limits/);
+});
+
+test('the relay controller: hysteresis and limits', () => {
+  const law = CONTROLLERS.relay.make({ d: 2, eps: 0.5, u0: 1, umin: 0, umax: 2.5 });
+  const u = [[1, 0], [1, 0.8], [1, 1.4], [1, 1.6], [1, 1.2], [1, 0.4]].map((x) => law.step(x));
+  assert.deepEqual(u, [2.5, 2.5, 2.5, 0, 0, 2.5], 'switches only past ±ε; u0 + d is clamped to u max, u0 − d to u min');
+  const rev = CONTROLLERS.relay.make({ d: -1, eps: 0, u0: 0, umin: -Infinity, umax: Infinity });
+  assert.equal(rev.step([1, 0]), -1, 'a negative d reverses it');
+});
+
+test('results: a variant of their own, numbered, never overwriting; a worse one does not run', () => {
+  const p = system('Oven');
+  const block = p.system.plant.diagram.blocks.find((b) => b.id === 'ctrl');
+  assert.equal(resultName(block, 'iterate'), 'PID, badly tuned · auto-tuned');
+  assert.equal(resultName(block, 'relay', 'zn'), 'PID, badly tuned · relay Z–N');
+  placeVariant(p, ['ctrl'], { ...block.variants[0], name: 'PID, badly tuned · auto-tuned' }, { run: false });
+  assert.equal(block.variant, 0);
+  assert.equal(resultName(block, 'iterate'), 'PID, badly tuned · auto-tuned 2', 'an earlier result is not overwritten');
+  block.variant = 1;
+  assert.equal(resultName(block, 'iterate'), 'PID, badly tuned · auto-tuned', 'tuning again from a result updates it');
+  assert.equal(baseName('PID · auto-tuned 2'), 'PID');
+  // The conical tank's gain scheduling beats a fixed PI from a relay rule: not better.
+  const tank = autotune(system('Conical'), null, { method: 'relay' });
+  assert.ok(tank.ok && !tank.better && tank.after.J > tank.before.cost.J, `${tank.before.cost.J} → ${tank.after.J}`);
+  const rep = tuneReport(tank);
+  assert.equal(rep.better, false);
+  assert.equal(rep.before.variant.params.umax, 3);
+  assert.equal(JSON.stringify(rep), JSON.stringify(JSON.parse(JSON.stringify(rep))), 'plain JSON');
+});
+
+test('Auto Scale overlays a Controller block\'s r and y, nothing else', () => {
+  const p = system('Oven');
+  const run = evaluateSystem(p);
+  const units = { r: '°C', T: '°C', P: '%', d: '%' };
+  const chs = ['r', 'T', 'P', 'd'].map((source) => ({ source, on: true }));
+  assert.deepEqual(loopOverlays(chs, run.signals, (n) => units[n]), [[0, 1]], 'r and T share a scale; P and d (same unit) do not');
+  assert.deepEqual(loopOverlays(chs.map((c, i) => ({ ...c, on: i !== 1 })), run.signals, (n) => units[n]), [], 'only channels that are on');
+  assert.deepEqual(loopOverlays(chs, run.signals, (n) => (n === 'T' ? 'K' : units[n])), [], 'only one unit');
+});
+
+test('the command line tunes a Controller block and saves the result', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lt-'));
+  const file = join(dir, 'oven.json');
+  writeFileSync(file, JSON.stringify(system('Oven')));
+  const out = JSON.parse(execFileSync('node', ['cli.mjs', 'autotune', file, '--method', 'step', '--save', '--json']).toString());
+  assert.ok(out.ok && out.better && out.K > 0.9 && out.after.cost.J < out.before.cost.J, JSON.stringify(out));
+  const saved = JSON.parse(readFileSync(file, 'utf8')).system.plant.diagram.blocks.find((b) => b.id === 'ctrl');
+  assert.equal(saved.variants[saved.variant].name, 'PID, badly tuned · SIMC');
+  assert.match(execFileSync('node', ['cli.mjs', 'autotune', file, '--method', 'relay', '--rule', 'zn']).toString(), /Ku 5/);
 });

@@ -7,6 +7,7 @@ import { diagramNames } from '../core/diagram.js';
 import { createPlantEditor } from './plant.js';
 import { createControllerTab } from './controller.js';
 import { createAutotuneTab } from './autotune.js';
+import { loopOverlays, autotune, placeVariant, tuneReport } from '../core/autotune.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
 import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../core/systems.js';
@@ -251,16 +252,12 @@ function startApp() {
       const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
       if (fit) Object.assign(ch, fit);
     }
-    // Channels of one unit whose fits are within a 1-2-5 step of each other
-    // (r and the y that follows it) share one scale and offset, so they overlay.
-    const byUnit = {};
-    for (const ch of app.project.scope.channels) if (ch.on && data.signals[ch.source] && app.unitOf(ch.source) !== '1') (byUnit[app.unitOf(ch.source)] ??= []).push(ch);
-    for (const list of Object.values(byUnit)) {
-      list.sort((a, b) => a.scale - b.scale);
-      let group = [];
-      const share = () => { if (group.length > 1) { const fit = fitChannel(group.flatMap((o) => Array.from(data.signals[o.source]))); for (const o of group) Object.assign(o, fit); } };
-      list.forEach((ch, i) => { if (i && ch.scale > 2.5 * list[i - 1].scale) { share(); group = []; } group.push(ch); });
-      share();
+    // A Controller block's r and the y it compares with r share one scale and
+    // offset, so they overlay (src/core/autotune.js loopOverlays).
+    const chs = app.project.scope.channels;
+    for (const g of loopOverlays(chs, data.signals, app.unitOf)) {
+      const fit = fitChannel(g.flatMap((i) => Array.from(data.signals[chs[i].source])));
+      if (fit) for (const i of g) Object.assign(chs[i], fit);
     }
   }
   app.autoScale = () => {
@@ -484,6 +481,17 @@ function startApp() {
     run: () => { display.setMode('run'); controls.render('run'); },
     stop: () => { display.setMode('stop'); controls.render('stop'); },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
+    // Auto-tune a Controller block at once, as the Auto-tune tab does step by
+    // step: opts { block (id path, 'ctrl'), method, goal, rule, amplitude,
+    // maxIter, apply = true }. Applied, the result goes into a variant of its
+    // own, running if it scores better: one undo step.
+    autotune: (opts = {}) => {
+      tuneTab.stop();
+      let res;
+      try { res = autotune(app.project, opts.block ? String(opts.block).split('/') : null, opts); } catch (err) { return { ok: false, why: err.message }; }
+      if (res.ok && opts.apply !== false) { app.beginEdit(); placeVariant(app.project, res.path, res.variant, { run: res.better }); app.endEdit(); changed(); }
+      return tuneReport(res);
+    },
   };
 
   // Boot: the embedded project, unless this browser has newer work on it.

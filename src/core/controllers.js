@@ -126,9 +126,10 @@ export const CONTROLLERS = {
     // On/off control: u0 + d while the error is positive, u0 − d while it is
     // negative, switching only once e passes ±ε (hysteresis), so a noisy
     // measurement cannot make it chatter. Auto-tune's relay experiment
-    // (Åström–Hägglund) runs one to find Ku and Pu.
+    // (Åström–Hägglund) runs one to find Ku and Pu. A negative d reverses it,
+    // for a plant whose y falls when u rises.
     label: 'Relay (on/off)', summary: 'u = u0 ± d by the sign of e, hysteresis ε',
-    params: [num('d', 'Amplitude d', 1, { unit: 'u', min: 0 }), num('eps', 'Hysteresis ε', 0, { min: 0, help: 'switches when e = r − y passes +ε or −ε' }), num('u0', 'Bias u0', 0, { unit: 'u' }), ...LIMITS],
+    params: [num('d', 'Amplitude d', 1, { unit: 'u', help: 'negative for a plant whose y falls when u rises' }), num('eps', 'Hysteresis ε', 0, { min: 0, help: 'switches when e = r − y passes +ε or −ε' }), num('u0', 'Bias u0', 0, { unit: 'u' }), ...LIMITS],
     make(p) {
       let high = null;
       return {

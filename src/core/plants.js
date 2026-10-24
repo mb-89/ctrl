@@ -383,7 +383,7 @@ export const EXAMPLE_PLANTS = [
         { type: 'rect', x: -0.75, y: -0.45, w: 1.1, h: 1.1, fill: 'panel', stroke: 'ink', lineWidth: 3 },
         { type: 'rect', x: -0.65, y: -0.35, w: 0.9, h: 0.9, fill: 'muted' },
         { type: 'line', x1: -0.6, y1: -0.28, x2: 0.2, y2: -0.28, stroke: 'ink', lineWidth: 6 },
-        { type: 'line', x1: -0.6, y1: -0.28, x2: '-0.6 + 0.008*clamp(P, 0, 100)', y2: -0.28, stroke: 'ch4', lineWidth: 6 },
+        { type: 'line', x1: -0.6, y1: -0.28, x2: '-0.6 + 0.008*clamp(P, 0, 100)', y2: -0.28, stroke: 'ch3', lineWidth: 6 },
         { type: 'group', x: 0.35, y: -0.45, angle: '-0.012*clamp(d, 0, 100)', shapes: [{ type: 'rect', x: -0.05, y: 0, w: 0.05, h: 1.1, fill: 'ink' }] },
         { type: 'rect', x: 0.7, y: -0.45, w: 0.12, h: 1.1, fill: 'panel', stroke: 'muted', lineWidth: 2 },
         { type: 'rect', x: 0.72, y: -0.45, w: 0.08, h: '0.0137*clamp(T, 0, 80)', fill: 'ch2' },

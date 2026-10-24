@@ -14,15 +14,24 @@
 //            order plus dead time, then a SIMC PI (Skogestad 2003).
 // The simulations read the block's own r (input 1), y (input 2) and u from
 // the probes compileDiagram adds under "<block path>.r", ".y", ".u".
+// Every strategy is a generator that yields after each run of the loop, so
+// the page can keep drawing while it works (a run of a large plant takes tens
+// of milliseconds); drain() runs one to its end (tests, the command line).
+// autotune() is the one entry for the page, the command line and agents.
 
 import { simulateSystem } from './sim.js';
 import { defaultSampleTime } from './project.js';
 import { normalizeVariant } from './controllers.js';
-import { parseEnd } from './diagram.js';
+import { parseEnd, blockPorts } from './diagram.js';
 
 const DIVERGED = 100;        // the cost of a run that blew up (normal costs are O(1))
 const OVERSHOOT_WEIGHT = 2;  // cost per 100 % of overshoot beyond the bound
 const LOG_LIMIT = Math.log(1000);
+
+// Runs a strategy's generator to its end and returns its result.
+export function drain(gen) {
+  for (;;) { const s = gen.next(); if (s.done) return s.value; }
+}
 
 // Every Controller block in a diagram, at any depth: { path, key, block, where }.
 export function controllerBlocks(diagram) {
@@ -54,6 +63,46 @@ export function withVariant(diagram, path, variant) {
   return d;
 }
 
+const wireTo = (level, id, port) => level.wires.find((w) => { const e = parseEnd(w.to); return e.id === id && e.port === port; });
+const portBlocks = (d, type) => d.blocks.filter((b) => b.type === type).sort((a, c) => a.params.port - c.params.port);
+
+// The Source whose signal reaches an input of the block at path: back along
+// the wires through blocks with one input (a gain, a lag, a prefilter) and
+// through subsystem ports. null when the input is not wired or is fed by
+// something else (a sum of signals, a loop).
+export function upstreamSource(diagram, path, port) {
+  const frames = [{ d: diagram }];
+  for (const id of path.slice(0, -1)) frames.push({ d: frames.at(-1).d.blocks.find((b) => b.id === id).diagram, sub: id });
+  let id = path.at(-1), p = port;
+  for (let hop = 0; hop < 200; hop++) {
+    const { d } = frames.at(-1);
+    const w = wireTo(d, id, p);
+    if (!w) return null;
+    const from = parseEnd(w.from);
+    const b = d.blocks.find((x) => x.id === from.id);
+    if (!b) return null;
+    if (b.type === 'source') return b.params.signal;
+    if (b.type === 'inport') {
+      // Out of the subsystem, to the wire into its input port.
+      if (frames.length < 2) return null;
+      const { d: inner, sub } = frames.pop();
+      id = sub; p = portBlocks(inner, 'inport').indexOf(b);
+      continue;
+    }
+    if (b.type === 'subsystem') {
+      // Into the subsystem, to the wire into its output port.
+      const out = portBlocks(b.diagram, 'outport')[from.port];
+      if (!out) return null;
+      frames.push({ d: b.diagram, sub: b.id });
+      id = out.id; p = 0;
+      continue;
+    }
+    if (blockPorts(b)[0] !== 1) return null;
+    id = b.id; p = 0;
+  }
+  return null;
+}
+
 // What every strategy needs: the block, its running variant, and the
 // experiment: one period of the input (every step and disturbance in it),
 // sampled as the display samples it.
@@ -66,14 +115,18 @@ export function tuneContext(project, path) {
   if (!hit) throw new Error('there is no Controller block in the plant');
   const { block } = hit;
   if (block.params.inputs < 2) throw new Error(`${hit.where} needs r on input 1 and the measurement y on input 2`);
-  const variant = normalizeVariant(block.variants[block.variant]);
+  // The cost and the experiments read r and y at the block: both must be wired.
+  const { level } = locate(plant.diagram, hit.path);
+  if (!wireTo(level, block.id, 0)) throw new Error(`${hit.where}: wire the reference r to input 1`);
+  if (!wireTo(level, block.id, 1)) throw new Error(`${hit.where}: wire the measurement y to input 2`);
+  const variant = normalizeVariant(block.variants[block.variant ?? 0]);
   const period = Math.max(...Object.values(project.system.signals).map((s) => s.period));
   const sim = { duration: period, sampleTime: project.sim?.sampleTime ?? defaultSampleTime(period) };
   // Copies, so the page may change the project while a tuning run reads these.
   const ctx = { diagram: structuredClone(plant.diagram), signals: structuredClone(project.system.signals), path: hit.path, key: hit.key, where: hit.where, block, variant, sim, Ts: block.params.Ts };
-  // The other inputs (the disturbance d, …): every Source but the one that feeds r.
-  const r = feeding(ctx, 0);
-  ctx.others = r ? Object.keys(ctx.signals).filter((k) => k !== r) : [];
+  // The Source that feeds r, and the other inputs (the disturbance d, …).
+  ctx.source = upstreamSource(ctx.diagram, ctx.path, 0);
+  ctx.others = ctx.source ? Object.keys(ctx.signals).filter((k) => k !== ctx.source) : [];
   return ctx;
 }
 
@@ -85,6 +138,23 @@ export function runVariant(ctx, variant, signals = ctx.signals, sim = ctx.sim) {
 export function loopSignals(run, key) {
   const s = run.signals;
   return { t: run.t, r: s[`${key}.r`], y: s[`${key}.y`], u: s[`${key}.u`] };
+}
+
+// Auto Scale: the scope channels that show one Controller block's r and the
+// y it compares with r (the same values as its probes), in groups of channel
+// indices, so they can share one scale and overlay. unitOf(name) gives a
+// signal's unit; channels of different units are not grouped.
+export function loopOverlays(channels, signals, unitOf = () => '') {
+  const same = (a, b) => a && b && a.length === b.length && a.every((v, k) => Object.is(v, b[k]));
+  const groups = [];
+  for (const key of Object.keys(signals)) {
+    if (!key.endsWith('.r')) continue;
+    const r = signals[key], y = signals[`${key.slice(0, -2)}.y`];
+    const showing = (probe) => channels.map((ch, i) => (ch.on && same(signals[ch.source], probe) ? i : -1)).filter((i) => i >= 0);
+    const g = [...showing(r), ...showing(y)];
+    if (new Set(g).size > 1 && new Set(g.map((i) => unitOf(channels[i].source))).size === 1) groups.push([...new Set(g)]);
+  }
+  return groups;
 }
 
 const limitsOf = (v) => ({ lo: v.params.umin ?? -Infinity, hi: v.params.umax ?? Infinity });
@@ -242,14 +312,17 @@ export function tunedValues(variant) {
 
 // ---- Strategy 1: Nelder–Mead -------------------------------------------
 
-// Nelder–Mead on the log factors, one iteration per yield (a reflection,
-// expansion, contraction or shrink of the simplex), so the page can show each
-// step. Deterministic. When the simplex has collapsed it restarts around the
-// best point with smaller steps, twice at most (a common remedy for stalls).
-// It stops after maxIter iterations, or when 15 (patience) have not lowered
-// the cost by 0.1 %. Yields { iteration, evals, cost, start, best: { variant, cost, x }, improved,
-// tried, names }; the final value has done: true.
+// Nelder–Mead on the log factors. Deterministic. When the simplex has
+// collapsed it restarts around the best point with smaller steps, twice at
+// most (a common remedy for stalls). It stops after maxIter iterations, or
+// when 15 (patience) have not lowered the cost by 0.1 %. The goal is copied
+// at the start: changing it during a run cannot change the search.
+// Yields after every run of the loop { partial: true, … } and after every
+// iteration (a reflection, expansion, contraction or shrink of the simplex)
+// { iteration, evals, cost, start, best: { variant, cost, x }, tried, names };
+// the final value has done: true.
 export function* iterate(project, path, goal = {}, opts = {}) {
+  const g = { ...GOAL, ...goal };
   const ctx = tuneContext(project, path);
   const space = tuningSpace(ctx.variant);
   const n = space.names.length;
@@ -257,32 +330,36 @@ export function* iterate(project, path, goal = {}, opts = {}) {
   let step = opts.step ?? Math.log(2), restarts = opts.restarts ?? 2;
   const startRun = runVariant(ctx, ctx.variant);
   const scales = costScales(startRun, ctx.key, ctx.variant);
-  const detail = runCost(startRun, ctx.key, goal, { scales, variant: ctx.variant, others: ctx.others });
+  const detail = runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others });
   const start = { cost: detail.J, detail, variant: ctx.variant };
-  let evals = 0, best = null, tried = [], iteration = 0;
-  const f = (x) => {
-    const variant = space.apply(x);
-    let cost;
-    try { cost = variantCost(ctx, variant, goal, scales); } catch { cost = { J: 2 * DIVERGED, diverged: true, parts: {} }; }
-    evals++;
-    tried.push(cost.J);
-    if (!best || cost.J < best.cost.J) best = { variant, cost, x: x.slice() };
-    return cost.J;
-  };
-  const report = (iteration, prev) => {
-    const out = { iteration, evals, cost: best.cost.J, start, best, improved: best.cost.J < prev, tried, names: space.names, key: ctx.key, path: ctx.path };
+  const x0 = new Array(n).fill(0);
+  let evals = 1, best = { variant: ctx.variant, cost: detail, x: x0 }, tried = [detail.J], iteration = 0;
+  const report = (partial) => {
+    const out = { iteration, evals, cost: best.cost.J, start, best, tried, names: space.names, key: ctx.key, path: ctx.path, goal: g, scales };
+    if (partial) return { ...out, partial: true };
     tried = [];
     return out;
   };
-
+  // One run of the loop with the gains at x.
+  function* f(x) {
+    const variant = space.apply(x);
+    let cost;
+    try { cost = variantCost(ctx, variant, g, scales); } catch { cost = { J: 2 * DIVERGED, diverged: true, parts: {} }; }
+    evals++;
+    tried.push(cost.J);
+    if (cost.J < best.cost.J) best = { variant, cost, x: x.slice() };
+    yield report(true);
+    return cost.J;
+  }
   let simplex = [], fs = [];
-  const build = (x0) => {
-    simplex = [x0.slice()]; fs = [f(x0)];
-    for (let i = 0; i < n; i++) { const x = x0.slice(); x[i] += step; simplex.push(x); fs.push(f(x)); }
-  };
-  build(new Array(n).fill(0));
-  yield report(0, Infinity);
-  let prev = best.cost.J, mark = prev, since = 0;
+  function* build(xb, fb) {
+    simplex = [xb.slice()]; fs = [fb];
+    for (let i = 0; i < n; i++) { const x = xb.slice(); x[i] += step; simplex.push(x); fs.push(yield* f(x)); }
+  }
+  yield report(true);
+  yield* build(x0, detail.J);
+  yield report(false);
+  let mark = best.cost.J, since = 0;
   const patience = opts.patience ?? 15;
 
   for (iteration = 1; iteration <= maxIter; iteration++) {
@@ -293,76 +370,96 @@ export function* iterate(project, path, goal = {}, opts = {}) {
     if (spread < 1e-2 || fs[n] - fs[0] <= 1e-4 * Math.abs(fs[0])) {
       if (!restarts--) break;
       step /= 4;
-      build(best.x);
+      yield* build(best.x, best.cost.J);
     } else {
       const c = new Array(n).fill(0);
       for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) c[j] += simplex[i][j] / n;
       const at = (a) => c.map((cj, j) => cj + a * (simplex[n][j] - cj));
-      const xr = at(-1), fr = f(xr);
+      const xr = at(-1), fr = yield* f(xr);
       if (fr < fs[0]) {
-        const xe = at(-2), fe = f(xe);
+        const xe = at(-2), fe = yield* f(xe);
         if (fe < fr) { simplex[n] = xe; fs[n] = fe; } else { simplex[n] = xr; fs[n] = fr; }
       } else if (fr < fs[n - 1]) {
         simplex[n] = xr; fs[n] = fr;
       } else {
-        const xc = fr < fs[n] ? at(-0.5) : at(0.5), fc = f(xc);
+        const xc = fr < fs[n] ? at(-0.5) : at(0.5), fc = yield* f(xc);
         if (fc < Math.min(fr, fs[n])) { simplex[n] = xc; fs[n] = fc; } else {
-          for (let i = 1; i <= n; i++) { simplex[i] = simplex[i].map((v, j) => simplex[0][j] + 0.5 * (v - simplex[0][j])); fs[i] = f(simplex[i]); }
+          for (let i = 1; i <= n; i++) { simplex[i] = simplex[i].map((v, j) => simplex[0][j] + 0.5 * (v - simplex[0][j])); fs[i] = yield* f(simplex[i]); }
         }
       }
     }
-    yield report(iteration, prev);
+    yield report(false);
     // Done when the best cost has not fallen by 0.1 % for `patience` iterations.
     if (best.cost.J < 0.999 * mark) { mark = best.cost.J; since = iteration; }
     if (iteration - since >= patience) break;
-    prev = best.cost.J;
   }
-  return { ...report(Math.min(iteration, maxIter), prev), done: true };
+  iteration = Math.min(iteration, maxIter);
+  return { ...report(false), done: true };
 }
 
 export function runIterate(project, path, goal, opts) {
-  const it = iterate(project, path, goal, opts);
-  for (;;) { const s = it.next(); if (s.done) return s.value; }
+  return drain(iterate(project, path, goal, opts));
 }
 
 // ---- Experiments around an operating point -----------------------------
 
-// The Source that feeds an input of the block (its signal name), or null.
-function feeding(ctx, port) {
-  const { level } = locate(ctx.diagram, ctx.path);
-  const w = level.wires.find((x) => { const e = parseEnd(x.to); return e.id === ctx.path.at(-1) && e.port === port; });
-  if (!w) return null;
-  const src = level.blocks.find((b) => b.id === parseEnd(w.from).id);
-  return src?.type === 'source' ? src.params.signal : null;
-}
+const NO_RANGE = 'there is no scale for the test signal: the running variant has no actuator limits and its u does not move. Give it limits (u min, u max) in the Controller tab, or run a variant that controls';
 
-// The operating point for an experiment: r0 in the middle of the reference's
-// range, held constant; every other input (the disturbance d, …) at 0. The
+// The operating point for an experiment: the Source that feeds r (through
+// gains, lags and subsystem ports) held at the middle of its range, every
+// other input (the disturbance d, …) at 0; r0 is the r this gives. The
 // running variant holds r0 first; the u it needs there is the bias u0.
-function operatingPoint(ctx, duration) {
-  const own = loopSignals(runVariant(ctx, ctx.variant), ctx.key);
+function* operatingPoint(ctx) {
+  const ownRun = runVariant(ctx, ctx.variant);
+  yield { partial: true, phase: 'operating point' };
+  const own = loopSignals(ownRun, ctx.key);
   const rr = finiteRange(own.r);
-  const r0 = Number.isFinite(rr.lo) ? (rr.lo + rr.hi) / 2 : 0;
-  const name = feeding(ctx, 0);
-  const signals = {};
-  for (const k of Object.keys(ctx.signals)) signals[k] = { components: k === name ? [{ type: 'dc', params: { level: r0 } }] : [] };
-  const sim = { duration, sampleTime: ctx.sim.sampleTime };
-  const hold = loopSignals(runVariant(ctx, ctx.variant, signals, sim), ctx.key);
+  const name = ctx.source, notes = [];
+  let signals = ctx.signals;
+  if (name) {
+    const sr = finiteRange(ownRun.signals[name] ?? []);
+    const level = Number.isFinite(sr.lo) ? (sr.lo + sr.hi) / 2 : 0;
+    signals = {};
+    for (const [k, s] of Object.entries(ctx.signals)) signals[k] = { ...s, components: k === name ? [{ type: 'dc', params: { level } }] : [] };
+  } else notes.push('input 1 is not fed by a Source (through gains, lags or subsystem ports), so r cannot be held: the experiment runs with the inputs as they are, and the estimate is rough');
+  const sim = { ...ctx.sim };
+  const holdRun = runVariant(ctx, ctx.variant, signals, sim);
+  yield { partial: true, phase: 'operating point' };
+  const hold = loopSignals(holdRun, ctx.key);
   const k0 = Math.floor(0.75 * hold.u.length);
+  const r0 = name ? mean(hold.r, k0) : (rr.lo + rr.hi) / 2;
   let u0 = mean(hold.u, k0);
   const { lo, hi } = limitsOf(ctx.variant);
   if (!Number.isFinite(u0)) u0 = Number.isFinite(lo + hi) ? (lo + hi) / 2 : 0;
   u0 = Math.min(hi, Math.max(lo, u0));
-  return { r0, name, signals, sim, u0, span: rr.hi - rr.lo, own };
+  return { r0, name, signals, sim, u0, span: rr.hi - rr.lo, own, notes };
 }
 
 // The actuator range a test may use: the limits, or, without them, the swing
-// of u in the variant's own run.
+// of u in the variant's own run; 0 when neither gives one.
 function actuatorRange(ctx, own) {
   const { lo, hi } = limitsOf(ctx.variant);
   if (Number.isFinite(hi - lo)) return hi - lo;
   const ur = finiteRange(own.u);
-  return Math.max(ur.hi - ur.lo, Math.abs(ur.hi), Math.abs(ur.lo), 1e-6) || 1;
+  const span = Math.max(ur.hi - ur.lo, Math.abs(ur.hi), Math.abs(ur.lo));
+  return span > 1e-9 ? span : 0;
+}
+
+// The controller replaced by a constant u (a PID without gains holds its start
+// output).
+const constantU = (u, lo, hi) => normalizeVariant({ name: 'Step test', type: 'pid', params: { Kp: 0, Ki: 0, Kd: 0, u0: u, umin: lo, umax: hi } });
+
+// Two open-loop runs, u held at u0 and at u0 + du; their difference dy is the
+// plant's step response from the same start, so the start transient cancels
+// (exact for a linear plant).
+function* openLoopStep(ctx, op, du, sim) {
+  const { lo, hi } = limitsOf(ctx.variant);
+  const runA = runVariant(ctx, constantU(op.u0, lo, hi), op.signals, sim);
+  yield { partial: true, phase: 'open loop' };
+  const runB = runVariant(ctx, constantU(op.u0 + du, lo, hi), op.signals, sim);
+  yield { partial: true, phase: 'open loop' };
+  const yA = loopSignals(runA, ctx.key).y, yB = loopSignals(runB, ctx.key).y;
+  return { runA, runB, dy: yB.map((v, k) => v - yA[k]) };
 }
 
 const longer = (sim, f) => ({ duration: sim.duration * f, sampleTime: sim.sampleTime });
@@ -376,6 +473,7 @@ export const RULES = {
   calm: { label: 'No overshoot', short: 'no overshoot', kp: 0.2, ti: 1 / 2, td: 1 / 3, about: 'the "no overshoot" row of the Ziegler–Nichols tables: gentle' },
 };
 
+// A negative Ku (a reverse-acting plant) gives negative gains, as it should.
 export function pidFromUltimate(Ku, Pu, rule = 'zn') {
   const r = RULES[rule];
   if (!r) throw new Error(`rule: one of ${Object.keys(RULES).join(', ')}`);
@@ -433,38 +531,50 @@ export function whyNot(ctx, method) {
   try { tuningSpace(ctx.variant); return ''; } catch (err) { return err.message; }
 }
 
-// The relay experiment: around r0, u = u0 ± d with hysteresis ε. The bias
-// starts at what the running variant needs to hold r0 and is corrected until
-// the relay is high half the time (a symmetric oscillation). The run grows
-// until it holds enough cycles. Ku = 4d / (π √(a² − ε²)) from the describing
-// function of a relay with hysteresis, a the amplitude of y's fundamental;
-// Pu is the oscillation's period.
+// The relay experiment: around r0, u = u0 ± d with hysteresis ε. A short
+// open-loop step first tells which way the plant goes: if y falls when u
+// rises (reverse acting) the relay is reversed and Ku comes out negative. The
+// bias starts at what the running variant needs to hold r0 and is corrected
+// until the relay is high half the time (a symmetric oscillation). The run
+// grows until it holds enough cycles. Ku = 4d / (π √(a² − ε²)) from the
+// describing function of a relay with hysteresis, a the amplitude of y's
+// fundamental; Pu is the oscillation's period.
 // opts: amplitude (fraction of the actuator range, default 0.1) or d
 // (absolute), hysteresis (absolute; default 0.1 % of r's span).
-export function relayExperiment(project, path, opts = {}) {
+export function* relayExperimentSteps(project, path, opts = {}) {
   const ctx = tuneContext(project, path);
   if (siso(ctx)) return { ctx, ok: false, notes: [], why: siso(ctx) };
-  const op = operatingPoint(ctx, ctx.sim.duration);
+  const op = yield* operatingPoint(ctx);
   const { lo, hi } = limitsOf(ctx.variant);
-  const want = opts.d ?? (opts.amplitude ?? 0.1) * actuatorRange(ctx, op.own);
+  const notes = [...op.notes];
+  const base = { ctx, r0: op.r0, notes, source: op.name };
+  const range = actuatorRange(ctx, op.own);
+  if (opts.d === undefined && !range) return { ...base, ok: false, u0: op.u0, why: NO_RANGE };
+  const want = Math.abs(opts.d ?? (opts.amplitude ?? 0.1) * range);
   const eps = opts.hysteresis ?? 0.001 * (op.span > 1e-9 ? op.span : Math.abs(op.r0) || 1);
-  const notes = [];
+  // Which way y goes when u rises (up if there is room, else down).
+  const probe = hi - op.u0 >= Math.min(want, op.u0 - lo) ? want : -want;
+  const { dy } = yield* openLoopStep(ctx, op, probe, op.sim);
+  let moved = 0;
+  for (const v of dy) if (Number.isFinite(v)) moved += v;
+  const sign = moved * probe < 0 ? -1 : 1;
+  if (sign < 0) notes.push('y falls when u rises (a reverse-acting plant): the relay is reversed and Ku is negative');
   let u0 = op.u0, sim = op.sim, run = null, osc = null, d = want;
-  const base = { ctx, r0: op.r0, eps, notes, source: op.name };
-  if (!op.name) notes.push('input 1 is not fed by a Source, so the experiment uses the reference as it is');
   for (let tries = 0; tries < 8; tries++) {
     // The relay stays inside the limits so it is symmetric about u0.
     d = Math.min(want, hi - u0, u0 - lo);
-    if (!(d > 1e-3 * want)) return { ...base, ok: false, u0, d, run, why: `the bias u0 = ${fmtN(u0)} needed to hold r0 = ${fmtN(op.r0)} sits at an actuator limit (${fmtN(lo)} … ${fmtN(hi)}): no room for the relay to swing` };
-    const relay = normalizeVariant({ name: 'Relay experiment', type: 'relay', params: { d, eps, u0, umin: lo, umax: hi } });
+    // Less than a tenth of the amplitude asked for is too little to read a cycle from.
+    if (!(d > 0.1 * want)) return { ...base, ok: false, u0, d, run, sign, why: `the bias u0 = ${fmtN(u0)} needed to hold r0 = ${fmtN(op.r0)} sits at an actuator limit (${fmtN(lo)} … ${fmtN(hi)}): no room for the relay to swing` };
+    const relay = normalizeVariant({ name: 'Relay experiment', type: 'relay', params: { d: sign * d, eps, u0, umin: lo, umax: hi } });
     run = runVariant(ctx, relay, op.signals, sim);
+    yield { partial: true, phase: 'relay', run };
     osc = readOscillation(run, ctx.key, u0, eps);
-    if (osc.diverged) return { ...base, ok: false, u0, d, run, why: 'the relay run diverged: the plant may be unstable without its controller' };
+    if (osc.diverged) return { ...base, ok: false, u0, d, run, sign, why: 'the relay run diverged: the plant may be unstable without its controller' };
     if (!osc.switched) {
       // Stuck on one side: the bias cannot carry y across r0. Move it by d.
       const { y } = loopSignals(run, ctx.key);
-      u0 += (y[y.length - 1] < op.r0 ? 1 : -1) * want;
-      if (u0 > hi || u0 < lo) return { ...base, ok: false, u0, d, run, why: `the relay never switched: with u0 ± d inside the limits the measurement does not cross r0 = ${fmtN(op.r0)}` };
+      u0 += sign * (y[y.length - 1] < op.r0 ? 1 : -1) * want;
+      if (u0 > hi || u0 < lo) return { ...base, ok: false, u0, d, run, sign, why: `the relay never switched: with u0 ± d inside the limits the measurement does not cross r0 = ${fmtN(op.r0)}` };
       continue;
     }
     if (osc.cycles < 4) {
@@ -475,7 +585,7 @@ export function relayExperiment(project, path, opts = {}) {
     if (Math.abs(osc.high - 0.5) > 0.03 && tries < 6) { u0 = Math.min(hi, Math.max(lo, osc.uMean)); continue; }
     break;
   }
-  const res = { ...base, u0, d, run, sim, osc };
+  const res = { ...base, u0, d, run, sim, osc, sign };
   if (!osc?.switched) return { ...res, ok: false, why: `the relay never switched: the measurement does not cross r0 = ${fmtN(op.r0)}` };
   if (osc.cycles < 4) return { ...res, ok: false, why: `only ${osc.cycles} cycle${osc.cycles === 1 ? '' : 's'} in ${fmtN(sim.duration)} s: the plant is too slow for this window (lengthen the input's period)` };
   if (osc.hysteresisOnly) return { ...res, ok: false, why: 'the oscillation is no larger than the relay\'s hysteresis: the plant has too little lag for a relay test (an integrator or a first-order lag alone)' };
@@ -484,54 +594,59 @@ export function relayExperiment(project, path, opts = {}) {
   if (Math.abs(osc.high - 0.5) > 0.05) notes.push(`the oscillation is asymmetric (relay high ${Math.round(100 * osc.high)} % of the time)`);
   if (d < 0.999 * want) notes.push(`the relay amplitude was reduced to ${fmtN(d)} to stay inside the actuator limits`);
   const a = osc.a1;
-  const Ku = (4 * d) / (Math.PI * Math.sqrt(Math.max(a * a - eps * eps, 1e-30)));
+  const Ku = (4 * sign * d) / (Math.PI * Math.sqrt(Math.max(a * a - eps * eps, 1e-30)));
   return { ...res, ok: true, Ku, Pu: osc.Pu, a };
 }
 
+export const relayExperiment = (project, path, opts) => drain(relayExperimentSteps(project, path, opts));
+
 // Relay experiment, then a PID by the rule, as a new variant that keeps the
 // running variant's limits, start output, setpoint weight and prefilter.
-export function relayTune(project, path, rule = 'zn', opts = {}) {
-  const ex = relayExperiment(project, path, opts);
+// opts.name: the new variant's name.
+export function* relayTuneSteps(project, path, rule = 'tl', opts = {}) {
+  if (!RULES[rule]) throw new Error(`rule: one of ${Object.keys(RULES).join(', ')}`);
+  const ex = yield* relayExperimentSteps(project, path, opts);
   if (!ex.ok) return ex;
   const g = pidFromUltimate(ex.Ku, ex.Pu, rule);
-  const variant = pidVariant(ex.ctx.variant, g, `${baseName(ex.ctx.variant.name)} · relay ${RULES[rule].short}`, ex.ctx.Ts);
+  const variant = pidVariant(ex.ctx.variant, g, opts.name ?? `${baseName(ex.ctx.variant.name)} · relay ${RULES[rule].short}`, ex.ctx.Ts);
   return { ...ex, rule, gains: g, variant };
 }
+
+export const relayTune = (project, path, rule, opts) => drain(relayTuneSteps(project, path, rule, opts));
 
 // ---- Strategy 3: step response and SIMC --------------------------------
 
 // The open-loop step test: the controller is replaced by a constant u0 (what
-// the running variant needs at r0), then u0 + Δu. Their difference is the
-// plant's step response from the same start, so the start transient cancels
-// (exact for a linear plant). A first order plus dead time is fitted by
-// Smith's two-point method (28.3 % and 63.2 % of the change):
+// the running variant needs at r0), then u0 + Δu; their difference is the
+// plant's step response. If it has not settled in one period of the input it
+// runs once more, four times as long. A first order plus dead time is fitted
+// by Smith's two-point method (28.3 % and 63.2 % of the change):
 //   K = Δy∞ / Δu,  τ = 1.5 (t63 − t28),  θ = t63 − τ
 // and tuned by SIMC (Skogestad 2003) with τc = θ ("tight" control):
 //   Kp = τ / (K (τc + θ)),  Ti = min(τ, 4 (τc + θ))
 // θ includes half a controller sample, the delay a digital controller adds;
 // with almost no dead time τc is kept at τ / 10 at least.
-export function stepExperiment(project, path, opts = {}) {
+export function* stepExperimentSteps(project, path, opts = {}) {
   const ctx = tuneContext(project, path);
   if (siso(ctx)) return { ctx, ok: false, notes: [], why: siso(ctx) };
-  const op = operatingPoint(ctx, ctx.sim.duration);
+  const op = yield* operatingPoint(ctx);
   const { lo, hi } = limitsOf(ctx.variant);
-  const want = opts.du ?? (opts.amplitude ?? 0.1) * actuatorRange(ctx, op.own);
+  const range = actuatorRange(ctx, op.own);
+  const base = { ctx, r0: op.r0, u0: op.u0, notes: [...op.notes] };
+  if (opts.du === undefined && !range) return { ...base, ok: false, why: NO_RANGE };
+  const want = Math.abs(opts.du ?? (opts.amplitude ?? 0.1) * range);
   // Upwards if there is room, else downwards, else as far as the limits allow.
   const up = hi - op.u0, down = op.u0 - lo;
   const du = up >= want ? want : down >= want ? -want : up >= down ? up : -down;
-  const base = { ctx, r0: op.r0, u0: op.u0, du, notes: [] };
-  if (Math.abs(du) < 1e-3 * want) return { ...base, ok: false, why: 'the actuator is at a limit at the operating point: no room for a step' };
-  const constant = (u) => normalizeVariant({ name: 'Step test', type: 'pid', params: { Kp: 0, Ki: 0, Kd: 0, u0: u, umin: lo, umax: hi } });
-  let sim = op.sim, runA, runB, dy;
-  for (let tries = 0; tries < 3; tries++) {
-    runA = runVariant(ctx, constant(op.u0), op.signals, sim);
-    runB = runVariant(ctx, constant(op.u0 + du), op.signals, sim);
-    const yA = loopSignals(runA, ctx.key).y, yB = loopSignals(runB, ctx.key).y;
-    dy = yB.map((v, k) => v - yA[k]);
+  base.du = du;
+  if (Math.abs(du) < 0.1 * want) return { ...base, ok: false, why: 'the actuator is at a limit at the operating point: no room for a step' };
+  let sim = op.sim, runB, dy;
+  for (let tries = 0; tries < 2; tries++) {
+    ({ runB, dy } = yield* openLoopStep(ctx, op, du, sim));
     const n = dy.length, end = dy[n - 1], k9 = Math.floor(0.9 * n);
     if (!Number.isFinite(end)) return { ...base, ok: false, run: runB, why: 'the open-loop run diverged: the plant is unstable without its controller; use the relay or iterative method' };
     if (Math.abs(end - dy[k9]) <= 0.02 * Math.abs(end)) break;
-    if (tries === 2) return { ...base, ok: false, run: runB, why: 'the step response has not settled after a long run: an integrating or very slow plant (SIMC here assumes a self-regulating one)' };
+    if (tries === 1) return { ...base, ok: false, run: runB, why: 'the step response has not settled in four periods of the input: an integrating or very slow plant (SIMC here assumes one that settles)' };
     sim = longer(sim, 4);
   }
   const t = runB.t, n = dy.length, end = dy[n - 1];
@@ -548,6 +663,8 @@ export function stepExperiment(project, path, opts = {}) {
   return { ...base, ok: true, run: runB, sim, K, tau, theta, t28, t63 };
 }
 
+export const stepExperiment = (project, path, opts) => drain(stepExperimentSteps(project, path, opts));
+
 export function simcGains(K, tau, theta, Ts = 0, tauC = null) {
   const th = theta + Ts / 2;
   const tc = tauC ?? Math.max(th, tau / 10);
@@ -555,19 +672,109 @@ export function simcGains(K, tau, theta, Ts = 0, tauC = null) {
   return { Kp, Ki: Kp / Ti, Kd: 0, Ti, Td: 0, tauC: tc };
 }
 
-export function stepTune(project, path, opts = {}) {
-  const ex = stepExperiment(project, path, opts);
+// opts.name: the new variant's name; opts.tauC overrides τc = θ.
+export function* stepTuneSteps(project, path, opts = {}) {
+  const ex = yield* stepExperimentSteps(project, path, opts);
   if (!ex.ok) return ex;
   const g = simcGains(ex.K, ex.tau, ex.theta, ex.ctx.Ts, opts.tauC);
-  const variant = pidVariant(ex.ctx.variant, g, `${baseName(ex.ctx.variant.name)} · SIMC`, ex.ctx.Ts);
+  const variant = pidVariant(ex.ctx.variant, g, opts.name ?? `${baseName(ex.ctx.variant.name)} · SIMC`, ex.ctx.Ts);
   return { ...ex, gains: g, variant };
+}
+
+export const stepTune = (project, path, opts) => drain(stepTuneSteps(project, path, opts));
+
+// ---- One entry: the page, the command line, agents ----------------------
+
+export const METHODS = ['iterate', 'relay', 'step'];
+
+// Runs a method on the block at path (default: the first Controller block)
+// and scores its result against the running variant with the goal. Yields
+// what the strategy yields; returns
+//   { ok, why, method, key, where, before: { variant, cost }, variant (the
+//     result, named), after (its cost), better, notes, … the method's own:
+//     iterate: iterations, evals, names; relay: Ku, Pu, a, u0, d, r0, rule,
+//     gains, run; step: K, tau, theta, gains, run }
+// opts: method, goal, maxIter, rule, amplitude, name (of the result variant;
+// default resultName).
+export function* autotuneSteps(project, path, opts = {}) {
+  const method = opts.method ?? 'iterate';
+  if (!METHODS.includes(method)) throw new Error(`method: one of ${METHODS.join(', ')}`);
+  const g = { ...GOAL, ...opts.goal };
+  const ctx = tuneContext(project, path);
+  const head = { method, key: ctx.key, path: ctx.path, where: ctx.where, goal: g };
+  const why = whyNot(ctx, method);
+  if (why) return { ...head, ok: false, why, notes: [] };
+  const name = opts.name ?? resultName(ctx.block, method, opts.rule);
+  if (method === 'iterate') {
+    const r = yield* iterate(project, path, g, { maxIter: opts.maxIter });
+    const better = r.best.cost.J < r.start.cost;
+    return {
+      ...head, ok: true, notes: [], before: { variant: ctx.variant, cost: r.start.detail },
+      variant: { ...r.best.variant, name }, after: r.best.cost, better, iterations: r.iteration, evals: r.evals, names: r.names,
+    };
+  }
+  const startRun = runVariant(ctx, ctx.variant);
+  const scales = costScales(startRun, ctx.key, ctx.variant);
+  const before = { variant: ctx.variant, cost: runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others }) };
+  yield { partial: true, phase: 'start', before };
+  const res = method === 'relay'
+    ? yield* relayTuneSteps(project, path, opts.rule ?? 'tl', { amplitude: opts.amplitude, d: opts.d, name })
+    : yield* stepTuneSteps(project, path, { amplitude: opts.amplitude, du: opts.du, name });
+  if (!res.ok) return { ...res, ...head, before };
+  const after = variantCost(ctx, res.variant, g, scales);
+  yield { partial: true, phase: 'score' };
+  return { ...res, ...head, before, after, better: after.J < before.cost.J };
+}
+
+export const autotune = (project, path, opts) => drain(autotuneSteps(project, path, opts));
+
+// A result of autotune() as plain JSON (no runs; open limits as null), for
+// the command line and agents.
+export function tuneReport(res) {
+  const cost = (c) => c && { J: c.J, overshoot: c.overshoot, saturated: c.saturated, diverged: c.diverged, parts: c.parts };
+  const out = { ok: res.ok, method: res.method, block: res.key, where: res.where, goal: res.goal };
+  if (!res.ok) Object.assign(out, { why: res.why, notes: res.notes ?? [] });
+  else {
+    Object.assign(out, { better: res.better, before: { variant: res.before.variant, cost: cost(res.before.cost) }, after: { variant: res.variant, cost: cost(res.after) }, notes: res.notes });
+    if (res.method === 'iterate') Object.assign(out, { iterations: res.iterations, evals: res.evals, tuned: res.names });
+    if (res.method === 'relay') Object.assign(out, { Ku: res.Ku, Pu: res.Pu, amplitude: res.a, r0: res.r0, u0: res.u0, d: res.d, rule: res.rule, gains: res.gains });
+    if (res.method === 'step') Object.assign(out, { K: res.K, tau: res.tau, theta: res.theta, r0: res.r0, u0: res.u0, du: res.du, gains: res.gains });
+  }
+  return JSON.parse(JSON.stringify(out));
 }
 
 // ---- Variants -----------------------------------------------------------
 
 // The name a variant had before any tuning suffix this module adds.
 export function baseName(name) {
-  return String(name).replace(/( · (auto-tuned|relay .+|SIMC))+$/, '');
+  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC)( \d+)?)+$/, '');
+}
+
+// The name for a method's result: "<base> · auto-tuned", "· relay T–L" (by
+// the rule) or "· SIMC". A running variant that already has the name (or a
+// numbered one of it) keeps it: tuning again updates it. Another variant of
+// that name is never overwritten: the new one is numbered.
+export function resultName(block, method, rule = 'tl') {
+  const running = block.variants[block.variant ?? 0];
+  const base = baseName(running.name);
+  const suffix = method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule]?.short ?? rule}` : ' · SIMC';
+  const named = (s) => `${base.slice(0, Math.max(0, 40 - s.length))}${s}`;
+  const plain = named(suffix);
+  if (running.name === plain || (running.name.startsWith(plain) && /^ \d+$/.test(running.name.slice(plain.length)))) return running.name;
+  const taken = new Set(block.variants.map((v) => v.name));
+  for (let i = 1; ; i++) { const s = named(i === 1 ? suffix : `${suffix} ${i}`); if (!taken.has(s)) return s; }
+}
+
+// Puts a variant into the block at path of the project (changing it): over
+// the variant of the same name, else after the running one. run: make it the
+// running variant. Returns its index.
+export function placeVariant(project, path, variant, { run = true } = {}) {
+  const { block } = locate(project.system.plant.diagram, path);
+  let i = block.variants.findIndex((v) => v.name === variant.name);
+  if (i < 0) { i = (block.variant ?? 0) + 1; block.variants.splice(i, 0, null); }
+  block.variants[i] = structuredClone(variant);
+  if (run) block.variant = i;
+  return i;
 }
 
 // A PID with the given gains that drives the same actuator as the variant it

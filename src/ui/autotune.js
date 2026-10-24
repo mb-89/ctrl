@@ -4,9 +4,10 @@
 // (Åström–Hägglund: Ku and Pu, then a rule) and step response (SIMC). Every
 // result goes into a variant of its own, "<original> · auto-tuned" (or
 // "· relay T–L", "· SIMC"), so the original stays for comparison; the whole
-// run is one undo step. See design/output/autotune.md.
+// run is one undo step. The work runs in slices between frames, so the page
+// keeps drawing. See design/output/autotune.md.
 
-import { controllerBlocks, tuneContext, tunedValues, iterate, relayTune, stepTune, whyNot, baseName, costScales, runVariant, variantCost, RULES, COSTS, GOAL } from '../core/autotune.js';
+import { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, COSTS, GOAL } from '../core/autotune.js';
 import { CONTROLLERS } from '../core/controllers.js';
 import { num, parseSI } from './units.js';
 
@@ -25,6 +26,8 @@ const METHODS = {
   },
 };
 const PACE = 1000 / 6;  // iterations per second while watching
+const SLICE = 30;       // ms of computing per task, so the page keeps drawing
+const GOAL_ABOUT = 'The cost of one run: the error r − y (IAE, ITAE or ISE), plus the effort (the swing of u), the overshoot beyond the bound, and the time u sits at a limit. Over one period of the input, the disturbance d included.';
 
 export function createAutotuneTab(host, app, display) {
   // Settings of this page session (not saved in the project).
@@ -44,15 +47,14 @@ export function createAutotuneTab(host, app, display) {
         <div class="ghead"><h3 class="glabel">Method</h3></div>
         <div class="tumethods" id="tu-methods" role="radiogroup" aria-label="Method"></div>
         <div id="tu-opts" class="pform"></div>
-        <p class="phelp" id="tu-about"></p>
       </section>
       <section class="gcol" aria-label="Goal">
         <div class="ghead"><h3 class="glabel">Goal</h3></div>
         <div class="reps" id="tu-costs" role="radiogroup" aria-label="Cost"></div>
         <div id="tu-goal" class="pform"></div>
-        <p class="phelp" id="tu-goalhelp"></p>
+        <p class="phelp" id="tu-goalhelp" title="${esc(GOAL_ABOUT)}"></p>
       </section>
-      <section class="gcol" aria-label="Progress">
+      <section class="gcol tuprogress" aria-label="Progress">
         <div class="ghead"><h3 class="glabel" id="tu-ptitle">Progress</h3>
           <label class="tufast" title="Run the iterations as fast as the browser can, and skip the experiment's sweep"><button class="sw" id="tu-fast" role="switch" aria-checked="false" aria-label="Fast"></button>Fast</label>
           <button class="key small primary" id="tu-start">Start</button></div>
@@ -67,7 +69,8 @@ export function createAutotuneTab(host, app, display) {
   const root = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
   const blocks = () => controllerBlocks(root());
   const current = () => { const all = blocks(); return all.find((c) => c.key === st.target) ?? all[0] ?? null; };
-  const context = () => { try { return tuneContext(app.project, current()?.path); } catch { return null; } };
+  // The block's tuning context, or why there is none (an unwired input, …).
+  const context = () => { try { return { ctx: tuneContext(app.project, current()?.path) }; } catch (err) { return { why: err.message }; } };
   const unitY = () => { const c = current(); return c ? app.unitOf(inputName(c, 1)) : ''; };
   // The name of the signal on a block input, for its unit: the Source it
   // comes from, or a Sink that shows the same wire.
@@ -81,16 +84,14 @@ export function createAutotuneTab(host, app, display) {
     const sink = lv.wires.find((x) => x.from === w.from && byId(x.to)?.type === 'sink');
     return sink ? byId(sink.to).params.name : '';
   }
-  const resultName = (name, method = st.method, rule = st.rule) => {
-    const b = baseName(name);
-    return (method === 'iterate' ? `${b} · auto-tuned` : method === 'relay' ? `${b} · relay ${RULES[rule].short}` : `${b} · SIMC`).slice(0, 40);
-  };
 
   // ---- Setup columns ----------------------------------------------------
 
   function field(key, label, value, hint) {
-    return `<label class="pf"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${key}" value="${esc(value)}" spellcheck="false" inputmode="decimal"><span class="pfh">${esc(hint)}</span></label>`;
+    return `<label class="pf"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${key}" value="${esc(value)}" spellcheck="false" inputmode="decimal" ${job ? 'disabled' : ''}><span class="pfh">${esc(hint)}</span></label>`;
   }
+  // A container being typed in is not redrawn.
+  const editing = (el) => el.contains(document.activeElement) && document.activeElement.matches('input, select');
 
   function renderSetup() {
     const c = current();
@@ -100,49 +101,54 @@ export function createAutotuneTab(host, app, display) {
       $('#tu-empty').innerHTML = '<div class="later-box"><h3 class="glabel">Nothing to tune</h3><p>Auto-tune improves a <b>Controller</b> block of the plant. Add one in the Plant tab (library, Control group), or load a controlled system from the <b>System library</b>: <b>Oven, badly tuned</b> is made for this tab.</p></div>';
       return;
     }
-    // Typing in a field is not interrupted by a redraw.
-    if (host.contains(document.activeElement) && document.activeElement.matches('input, select')) return;
+    renderButton();
     const all = blocks();
-    const v = c.block.variants[c.block.variant];
+    const v = c.block.variants[c.block.variant ?? 0];
     $('#tu-blocks').innerHTML = all.length > 1
-      ? all.map((x) => `<button class="sigkey ${x === c ? 'on' : ''}" data-path="${esc(x.key)}">${esc(x.where)}</button>`).join('')
+      ? all.map((x) => `<button class="sigkey ${x.key === c.key ? 'on' : ''}" data-path="${esc(x.key)}" ${job ? 'disabled' : ''}>${esc(x.where)}</button>`).join('')
       : `<div class="ctname">${esc(c.where)}</div>`;
     $('#tu-now').innerHTML = `<li class="tuhead"><b>${esc(v.name)}</b><span>${esc(CONTROLLERS[v.type]?.label ?? v.type)} · running</span></li>`
       + tunedValues(v).map(([k, x]) => `<li class="turow"><span>${esc(k)}</span><span>${show(x)}</span></li>`).join('');
-    const ctx = context();
-    const why = ctx ? whyNot(ctx, st.method) : `${c.where} needs r on input 1 and the measurement y on input 2.`;
-    const into = resultName(v.name);
-    $('#tu-target').innerHTML = job ? `Tuning into <b>${esc(job.name ?? into)}</b>; <b>${esc(shown.before.variant.name)}</b> stays as it was.`
-      : why ? `<span class="tuwhy">${esc(why)}</span>`
-        : into === v.name ? (st.method === 'iterate' ? 'Tuning continues from this variant and updates it.' : 'The result replaces this variant\'s gains.')
-          : `The result goes into a variant of its own, <b>${esc(into)}</b>; <b>${esc(v.name)}</b> stays, to compare in the Controller tab.`;
+    const { ctx, why: noCtx } = context();
+    const why = noCtx ?? whyNot(ctx, st.method);
+    const into = job ? job.name : resultName(c.block, st.method, st.rule);
+    const target = $('#tu-target');
+    if (job) { target.innerHTML = `Into <b>${esc(into)}</b>`; target.title = `${shown.before?.variant.name ?? v.name} stays as it was.`; }
+    else if (why) { target.innerHTML = `<span class="tuwhy">${esc(why)}</span>`; target.title = ''; }
+    else if (into === v.name) { target.innerHTML = `Updates <b>${esc(into)}</b>`; target.title = 'Tuning again from a tuned variant updates it in place.'; }
+    else {
+      target.innerHTML = `Into <b>${esc(into)}</b>`;
+      target.title = `The result goes into a variant of its own; ${v.name} stays, to compare in the Controller tab. An earlier result is never overwritten: a new one is numbered.`;
+    }
 
-    $('#tu-methods').innerHTML = Object.entries(METHODS).map(([k, m]) => `<button class="sigkey tumethod ${k === st.method ? 'on' : ''}" data-method="${k}" role="radio" aria-checked="${k === st.method}" ${job ? 'disabled' : ''}><b>${m.label}</b><span>${m.sub}</span></button>`).join('');
-    const opts = [];
-    if (st.method === 'iterate') opts.push(field('maxIter', 'Iterations', st.maxIter, 'at most; it stops when the cost stops falling'));
-    if (st.method === 'relay') opts.push(`<label class="pf"><span class="pfl">Rule</span><select class="field" id="tu-rule">${Object.entries(RULES).map(([k, r]) => `<option value="${k}" ${k === st.rule ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(RULES[st.rule].about)}</span></label>`);
-    if (st.method !== 'iterate') opts.push(field('amplitude', st.method === 'relay' ? 'Relay ±d' : 'Step Δu', num(100 * st.amplitude, 3), '% of the actuator range'));
-    $('#tu-opts').innerHTML = opts.join('');
-    $('#tu-about').textContent = METHODS[st.method].about;
+    $('#tu-methods').innerHTML = Object.entries(METHODS).map(([k, m]) => `<button class="sigkey tumethod ${k === st.method ? 'on' : ''}" data-method="${k}" role="radio" aria-checked="${k === st.method}" title="${esc(m.about)}" ${job ? 'disabled' : ''}><b>${m.label}</b><span>${m.sub}</span></button>`).join('');
+    if (!editing($('#tu-opts'))) {
+      const opts = [];
+      if (st.method === 'iterate') opts.push(field('maxIter', 'Iterations', st.maxIter, 'at most; stops when the cost stops falling'));
+      if (st.method === 'relay') opts.push(`<label class="pf"><span class="pfl">Rule</span><select class="field" id="tu-rule" ${job ? 'disabled' : ''}>${Object.entries(RULES).map(([k, r]) => `<option value="${k}" ${k === st.rule ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(RULES[st.rule].about)}</span></label>`);
+      if (st.method !== 'iterate') opts.push(field('amplitude', st.method === 'relay' ? 'Relay ±d' : 'Step Δu', num(100 * st.amplitude, 3), '% of the actuator range'));
+      $('#tu-opts').innerHTML = opts.join('');
+    }
 
-    $('#tu-costs').innerHTML = Object.keys(COSTS).map((k) => `<button class="rep ${k === st.goal.cost ? 'on' : ''}" data-cost="${k}" role="radio" aria-checked="${k === st.goal.cost}" title="${esc(COSTS[k])}">${k}</button>`).join('');
-    $('#tu-goal').innerHTML = field('effort', 'Effort weight', num(st.goal.effort, 3), 'on the swing of u; 0 ignores effort')
-      + field('overshoot', 'Overshoot ≤', num(st.goal.overshoot, 3), '% of a reference step; beyond costs extra');
-    $('#tu-goalhelp').textContent = `Cost: ${st.goal.cost}, ${COSTS[st.goal.cost]}, of e = r − y; plus effort, overshoot beyond the bound and time at the actuator's limits. Over one period of the input, the disturbance d included. ${st.method === 'iterate' ? 'The search minimises it.' : 'The rule does not use it: it scores the result, to compare methods.'}`;
+    $('#tu-costs').innerHTML = Object.keys(COSTS).map((k) => `<button class="rep ${k === st.goal.cost ? 'on' : ''}" data-cost="${k}" role="radio" aria-checked="${k === st.goal.cost}" title="${esc(COSTS[k])}" ${job ? 'disabled' : ''}>${k}</button>`).join('');
+    if (!editing($('#tu-goal'))) {
+      $('#tu-goal').innerHTML = field('effort', 'Effort weight', num(st.goal.effort, 3), 'on the swing of u; 0 ignores it')
+        + field('overshoot', 'Overshoot ≤', num(st.goal.overshoot, 3), '% of a step; beyond costs extra');
+    }
+    $('#tu-goalhelp').textContent = st.method === 'iterate' ? 'Over one period of the input, d included.' : 'The rule ignores the goal; it scores the result.';
     bind();
-    renderButton();
   }
 
   function bind() {
     host.querySelectorAll('[data-path]').forEach((el) => { el.onclick = () => { if (job) return; st.target = el.dataset.path; shown = null; renderAll(); }; });
     host.querySelectorAll('[data-method]').forEach((el) => { el.onclick = () => { if (job) return; st.method = el.dataset.method; renderAll(); }; });
-    host.querySelectorAll('[data-cost]').forEach((el) => { el.onclick = () => { st.goal.cost = el.dataset.cost; renderSetup(); }; });
+    host.querySelectorAll('[data-cost]').forEach((el) => { el.onclick = () => { if (job) return; st.goal.cost = el.dataset.cost; renderSetup(); }; });
     const rule = $('#tu-rule');
-    if (rule) rule.onchange = () => { st.rule = rule.value; rule.blur(); renderSetup(); };
+    if (rule) rule.onchange = () => { if (job) return; st.rule = rule.value; rule.blur(); renderSetup(); };
     host.querySelectorAll('input[data-k]').forEach((inp) => {
       inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } };
       inp.onblur = () => {
-        if (inp.dataset.cancel) { delete inp.dataset.cancel; setTimeout(renderSetup); return; }
+        if (inp.dataset.cancel || job) { delete inp.dataset.cancel; setTimeout(renderSetup); return; }
         const v = parseSI(inp.value), k = inp.dataset.k;
         const ok = Number.isFinite(v) && v >= 0 && (k !== 'maxIter' || v >= 1) && (k !== 'amplitude' || (v > 0 && v <= 100));
         if (!ok) app.toast(k === 'amplitude' ? 'Enter a percentage above 0, up to 100.' : 'Enter a number, 0 or more.');
@@ -155,179 +161,205 @@ export function createAutotuneTab(host, app, display) {
   }
 
   function renderButton() {
-    const ctx = context();
-    const why = ctx ? whyNot(ctx, st.method) : 'no block';
+    const { ctx, why } = context();
     const b = $('#tu-start');
     b.textContent = job ? 'Stop' : 'Start';
     b.className = `key small ${job ? 'lit-red' : 'primary'}`;
-    b.disabled = !job && !!why;
+    b.disabled = !job && !!(why ?? whyNot(ctx, st.method));
     $('#tu-fast').classList.toggle('on', st.fast);
     $('#tu-fast').setAttribute('aria-checked', String(st.fast));
   }
 
   // ---- Running ------------------------------------------------------------
 
-  // Puts a variant into the block (at index `at`, or under its name, or as a
-  // new one after the running variant) and runs it. It belongs to the run's
-  // undo step and takes none of its own.
-  function place(path, variant, at) {
-    let i = at;
-    app.tuneEdit((p) => {
-      let lv = p.system.plant.diagram;
-      for (const id of path.slice(0, -1)) lv = lv.blocks.find((b) => b.id === id).diagram;
-      const blk = lv.blocks.find((b) => b.id === path.at(-1));
-      if (i === undefined) {
-        i = blk.variants.findIndex((v) => v.name === variant.name);
-        if (i < 0) { i = blk.variant + 1; blk.variants.splice(i, 0, null); }
-      }
-      blk.variants[i] = structuredClone(variant);
-      blk.variant = i;
-    });
-    return i;
+  // Puts a variant into the block (over the result of this run, or as a new
+  // one after the running variant). The first change opens the run's undo
+  // step; the run takes no other.
+  function place(variant, run) {
+    if (!job.edit) { app.beginEdit(); job.edit = true; }
+    app.tuneEdit((p) => placeVariant(p, job.path, variant, { run }));
+    if (run) job.ran = true;
+    shown.placed = structuredClone(variant);
   }
 
   function start() {
-    const c = current(), ctx = context();
-    if (!c || !ctx || whyNot(ctx, st.method)) return;
-    const scales = costScales(runVariant(ctx, ctx.variant), ctx.key, ctx.variant);
-    const before = { variant: ctx.variant, cost: variantCost(ctx, ctx.variant, st.goal, scales) };
-    shown = { method: st.method, rule: st.rule, goal: { ...st.goal }, path: c.path, title: app.project.title, before, scales, history: [], status: '' };
-    // The display shows whole runs while tuning, the earlier ones fading.
-    const base = { mode: display.mode, startData: display.data, path: c.path, plant: app.project.system.plant, timer: 0 };
-    display.clearRuns();
-    if (st.method === 'iterate') {
-      let gen;
-      try { gen = iterate(app.project, c.path, st.goal, { maxIter: st.maxIter }); } catch (err) { app.toast(err.message); return; }
-      app.beginEdit();
-      app.setRunMode('stop');
-      const name = resultName(ctx.variant.name);
-      job = { ...base, kind: 'iterate', gen, name, edit: true, applied: before.cost.J };
-      job.index = place(c.path, { ...ctx.variant, name });
-      shown.status = 'Tuning…';
-      renderAll();
-      tick();
-      return;
-    }
-    let res;
-    try {
-      res = st.method === 'relay' ? relayTune(app.project, c.path, st.rule, { amplitude: st.amplitude }) : stepTune(app.project, c.path, { amplitude: st.amplitude });
-    } catch (err) { res = { ok: false, why: err.message }; }
-    if (!res.run) { shown.res = res; shown.status = `Could not run: ${res.why}.`; renderAll(); return; }
-    // The experiment sweeps across the display as it runs (Fast: at once);
-    // its result shows when it has run.
-    job = { ...base, kind: st.method, name: res.variant?.name, res, experiment: true };
-    app.setRunMode(st.fast ? 'stop' : 'single');
-    display.clearRuns();
-    display.setData({ t: res.run.t, signals: res.run.signals });
-    const u = (x) => num(x, 3);
-    shown.status = st.method === 'relay'
-      ? `Relay experiment: u = ${u(res.u0)} ± ${u(res.d)} around r0 = ${u(res.r0)}, d at 0. Watch y oscillate…`
-      : `Step test: u held at ${u(res.u0)}, then at ${u(res.u0 + res.du)}; r0 = ${u(res.r0)}, d at 0. Watch y react…`;
+    const c = current();
+    const { ctx, why: noCtx } = context();
+    const why = noCtx ?? whyNot(ctx, st.method);
+    if (!c || why) { app.toast(why ?? 'There is no Controller block to tune.'); return; }
+    // The settings are copied: changing them during the run changes nothing.
+    const goal = { ...st.goal };
+    const name = resultName(c.block, st.method, st.rule);
+    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, amplitude: st.amplitude, maxIter: st.maxIter, name });
+    shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null };
+    job = { gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, mode: display.mode, startData: display.data, timer: 0, edit: false, ran: false, swept: false, applied: Infinity, runs: 0 };
+    if (st.method === 'iterate') { app.setRunMode('stop'); display.clearRuns(); }
     renderAll();
-    const sweep = 10 * app.project.scope.timebase.scale;
-    job.timer = setTimeout(() => finishExperiment(res), st.fast ? 500 : 1000 * sweep + 400);
+    job.timer = setTimeout(tick);
   }
 
   const replaced = () => job && app.project.system.plant !== job.plant;
 
+  // Steps the method in slices of about SLICE ms; while iterating, one
+  // iteration per PACE so the improvement can be watched (Fast: no pause).
   function tick() {
     if (!job) return;
-    if (replaced()) { end('Stopped: the plant changed while tuning.', { replaced: true }); return; }
+    if (replaced()) { end('Stopped: the plant changed while tuning.', { gone: true }); return; }
     const t0 = performance.now();
-    let s;
-    do {
+    let iterated = false;
+    for (;;) {
+      let s;
       try { s = job.gen.next(); } catch (err) { end(`Stopped: ${err.message}.`); return; }
-      const r = s.value;
-      shown.history.push({ iteration: r.iteration, cost: r.cost, tried: r.tried });
-      Object.assign(shown, { best: r.best, iteration: r.iteration, evals: r.evals });
-    } while (!s.done && st.fast && performance.now() - t0 < 40);
-    // A better run goes onto the display; the one before it fades.
-    if (shown.best.cost.J < job.applied) {
-      job.applied = shown.best.cost.J;
-      display.keep();
-      place(job.path, { ...shown.best.variant, name: job.name }, job.index);
+      if (s.done) { improve(); finish(s.value); return; }
+      const v = s.value;
+      job.runs++;
+      if (v.before) shown.before ??= v.before;
+      if (v.start) {
+        shown.before ??= { variant: v.start.variant, cost: v.start.detail };
+        Object.assign(shown, { best: v.best, iteration: v.iteration, evals: v.evals });
+      }
+      if (job.kind === 'iterate' && !v.partial) {
+        shown.status = 'Tuning…';
+        shown.history.push({ iteration: v.iteration, cost: v.cost, tried: v.tried });
+        iterated = true;
+        if (!st.fast) break;
+      }
+      if (performance.now() - t0 > SLICE) break;
     }
-    if (s.done) { end('Done: the cost stopped falling.'); return; }
+    if (iterated) improve();
+    if (job.kind !== 'iterate') shown.status = `Running the ${job.kind === 'relay' ? 'relay experiment' : 'step test'}… (${job.runs} run${job.runs === 1 ? '' : 's'} of the loop)`;
     renderProgress();
-    job.timer = setTimeout(tick, st.fast ? 0 : PACE);
+    // After a whole iteration, pause so a person can watch; between the runs
+    // of one, only let the page draw.
+    job.timer = setTimeout(tick, iterated && !st.fast ? Math.max(0, PACE - (performance.now() - t0)) : 0);
   }
 
-  function finishExperiment(res) {
-    if (!job) return;
-    if (replaced()) { end('Stopped: the plant changed during the experiment.', { replaced: true }); return; }
-    job.experiment = false;
+  // A better run goes onto the display; the one before it fades.
+  function improve() {
+    const b = shown.best;
+    if (!b || !(b.cost.J < job.applied) || !(b.cost.J < shown.before.cost.J)) return;
+    job.applied = b.cost.J;
+    display.keep();
+    place({ ...b.variant, name: job.name }, true);
+  }
+
+  function finish(res) {
+    if (res.before) shown.before = res.before;
+    // An experiment's result shows once it has swept across the display.
+    if (res.method === 'iterate' || !res.run) shown.res = res;
+    if (res.method === 'iterate') {
+      if (!res.ok) { end(`Could not run: ${res.why}.`); return; }
+      end(res.better ? 'Done: the cost stopped falling.' : 'Done: no better gains found; the running variant stays.');
+      return;
+    }
+    if (!res.run) { end(res.ok ? 'Done.' : `Could not run: ${res.why}.`); return; }
+    // The experiment sweeps across the display as it ran (Fast: at once),
+    // then the loop's own run comes back, with the result if there is one.
+    job.swept = true;
+    app.setRunMode(st.fast ? 'stop' : 'single');
+    display.clearRuns();
+    display.setData(res.method === 'relay' ? lastPeriod(res.run, res.ctx.sim.duration) : { t: res.run.t, signals: res.run.signals });
+    // Numbers to three digits; a bias of a millionth of the swing is 0.
+    const u = (x) => num(Math.abs(x) < 1e-6 * Math.abs(res.d ?? res.du ?? 1) ? 0 : x, 3);
+    shown.status = (res.method === 'relay'
+      ? `On the display: the relay experiment, u = ${u(res.u0)} ± ${u(res.d)} around r0 = ${u(res.r0)}, other inputs at 0.`
+      : `On the display: the step test, u held at ${u(res.u0)}, then at ${u(res.u0 + (res.du ?? 0))}; r0 = ${u(res.r0)}, other inputs at 0.`)
+      + (res.ok ? '' : ` It gives no result: ${res.why}.`);
+    renderAll();
+    const sweep = 10 * app.project.scope.timebase.scale;
+    job.timer = setTimeout(() => {
+      if (!job) return;
+      if (replaced()) { end('Stopped: the plant changed during the experiment.', { gone: true }); return; }
+      apply(res);
+    }, st.fast ? 500 : 1000 * sweep + 400);
+  }
+
+  function apply(res) {
     shown.res = res;
-    if (!res.ok) { end(`The experiment gave no result: ${res.why}.`, { keepDisplay: true }); return; }
-    app.beginEdit();
-    job.edit = true;
-    place(job.path, res.variant);
-    const ctx = context();
-    if (ctx) shown.after = variantCost(ctx, res.variant, shown.goal, shown.scales);
-    end(res.notes?.length ? `Done. Note: ${res.notes.join('; ')}.` : 'Done.');
+    if (!res.ok) { end(`The experiment gave no result: ${res.why}.`); return; }
+    const notes = res.notes?.length ? ` Note: ${res.notes.join('; ')}.` : '';
+    if (res.better) { place(res.variant, true); end(`Done.${notes}`); return; }
+    // Worse than the running variant: kept to compare, not run.
+    place(res.variant, false);
+    end(`The result scores worse than ${res.before.variant.name} (cost ×${num(res.after.J / res.before.cost.J, 2)}): it was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
   }
 
-  // Ends the run: closes its undo step, leaves the display with the run it
-  // started from (faded) against the result, and restores the run mode. If
-  // the project was replaced meanwhile (loaded, undone), the display shows
-  // that one; its mode is restored only if nothing else set it.
-  function end(status = '', { keepDisplay = false, replaced: gone = false } = {}) {
+  // Ends the run: closes its undo step and brings back the loop's own run,
+  // with the run it started from faded behind a new result, and the run
+  // mode. If the project was replaced meanwhile (loaded, undone), the
+  // display shows that one; its mode is restored only if nothing else set it.
+  function end(status = '', { gone = false } = {}) {
     if (!job) return;
     clearTimeout(job.timer);
     const j = job;
     job = null;
-    if (status) shown.status = status;
+    if (status && shown) shown.status = status;
     if (j.edit) app.endEdit();
-    if (!gone && !keepDisplay) {
-      if (j.experiment) display.setData(j.startData);
+    if (!gone) {
+      if (j.swept && !j.edit) display.setData(j.startData);
       display.clearRuns();
-      if (j.edit) display.keep(j.startData);
+      if (j.ran) display.keep(j.startData);
     }
-    if (!keepDisplay && (!gone || display.mode === 'stop')) app.setRunMode(j.mode === 'single' ? 'stop' : j.mode);
-    const after = shown.after ?? (j.kind === 'iterate' ? shown.best?.cost : null);
+    if (!gone || display.mode === 'stop') app.setRunMode(j.mode === 'single' ? 'stop' : j.mode);
     if (gone) { shown = null; app.toast(status); }
-    else if (after) app.toast(`Auto-tune: cost ×${num(after.J / shown.before.cost.J, 2)} of the start; the faded run is where it started. Ctrl+Z undoes the whole run.`);
+    else if (j.ran) {
+      const after = shown.res?.after ?? shown.best?.cost;
+      if (after && shown.before) app.toast(`Auto-tune: cost ×${num(after.J / shown.before.cost.J, 2)} of the start; the faded run is where it started. Ctrl+Z undoes the whole run.`);
+    }
     renderAll();
   }
 
   // ---- Progress -----------------------------------------------------------
 
+  // Whether the progress column's run still belongs to the project: the same
+  // block, and its result still in it (an undo or another system removes it).
+  function stillShown() {
+    const s = shown;
+    if (!s || s.title !== app.project.title) return false;
+    const c = blocks().find((x) => x.key === s.key);
+    if (!c || (current()?.key !== s.key)) return false;
+    if (!job && s.placed) return c.block.variants.some((v) => v.name === s.placed.name && JSON.stringify(v.params) === JSON.stringify(s.placed.params));
+    return true;
+  }
+
   function renderProgress() {
-    const s = shown, c = current();
-    // The run shown belongs to this project's block (another system loaded since has its own).
-    const mine = s && c && s.path.join('/') === c.key && s.title === app.project.title;
-    $('#tu-plot').hidden = (mine ? s.method : st.method) !== 'iterate';
-    $('#tu-ptitle').textContent = mine ? `Progress · ${METHODS[s.method].label}` : 'Progress';
-    if (!mine) {
-      $('#tu-status').innerHTML = `<span class="dim">Press Start. ${st.method === 'iterate' ? 'Each iteration runs the loop once or a few times and keeps the best gains; the display shows every improvement.' : 'The display shows the experiment as it runs, then the tuned loop.'}</span>`;
+    if (shown && !job && !stillShown()) shown = null;
+    const s = shown;
+    $('#tu-plot').hidden = (s ? s.method : st.method) !== 'iterate';
+    $('#tu-ptitle').textContent = s ? `Progress · ${METHODS[s.method].label}` : 'Progress';
+    if (!s) {
+      $('#tu-status').innerHTML = `<span class="dim">Press Start. ${st.method === 'iterate' ? 'The display shows each improvement.' : 'The display shows the experiment, then the tuned loop.'}</span>`;
       $('#tu-result').innerHTML = '';
       drawPlot(null);
       return;
     }
     const rows = [];
-    const res = s.res && !(job?.experiment) ? s.res : null;
-    const after = s.method === 'iterate' ? s.best?.variant : res?.ok ? res.variant : null;
-    const costAfter = s.method === 'iterate' ? s.best?.cost : s.after;
+    const res = s.res;
+    const after = s.method === 'iterate' ? (s.best && s.best.cost.J < s.before?.cost.J ? s.best.variant : null) : res?.ok ? res.variant : null;
+    const costAfter = s.method === 'iterate' ? s.best?.cost : res?.after;
     if (s.method === 'iterate' && s.best) rows.push(row('Iteration', String(s.iteration), `${s.evals} runs`));
     if (s.method === 'relay' && res?.ok) {
       rows.push(row('Ku', num(res.Ku, 4), `ultimate gain; y swung ±${num(res.a, 3)} ${unitY()}`));
       rows.push(row('Pu', `${num(res.Pu, 4)} s`, 'ultimate period'));
-      rows.push(row('Rule', RULES[s.rule].label, ''));
+      rows.push(row('Rule', RULES[res.rule].label, ''));
     }
     if (s.method === 'step' && res?.ok) {
       rows.push(row('K', num(res.K, 4), 'y per u'));
       rows.push(row('τ, θ', `${num(res.tau, 3)} s, ${num(res.theta, 3)} s`, 'lag, dead time'));
       rows.push(row('τc', `${num(res.gains.tauC, 3)} s`, 'closed-loop time'));
     }
-    rows.push(row('Cost', costAfter ? `${num(s.before.cost.J, 3)} → ${num(costAfter.J, 3)}` : num(s.before.cost.J, 3), costAfter ? `×${num(costAfter.J / s.before.cost.J, 2)}` : 'at the start', 'tucost'));
-    rows.push(row('Overshoot', costAfter ? `${pct(s.before.cost.overshoot)} → ${pct(costAfter.overshoot)}` : pct(s.before.cost.overshoot), 'largest'));
-    const b = tunedValues(s.before.variant), a = after ? tunedValues(after) : [];
-    if (after && after.type !== s.before.variant.type) rows.push(row('Type', `${CONTROLLERS[s.before.variant.type].label} → ${CONTROLLERS[after.type].label}`, ''));
-    const keys = [...new Set([...b, ...a].map(([k]) => k))];
-    for (const k of keys) {
-      const x = b.find(([q]) => q === k)?.[1], y = a.find(([q]) => q === k)?.[1];
-      rows.push(row(k, after ? `${x === undefined ? '—' : show(x)} → ${show(y)}` : show(x), ''));
+    if (s.before) {
+      rows.push(row('Cost', costAfter ? `${num(s.before.cost.J, 3)} → ${num(costAfter.J, 3)}` : num(s.before.cost.J, 3), costAfter ? `×${num(costAfter.J / s.before.cost.J, 2)}` : 'at the start', costAfter && costAfter.J > s.before.cost.J ? 'tuworse' : 'tucost'));
+      rows.push(row('Overshoot', costAfter ? `${pct(s.before.cost.overshoot)} → ${pct(costAfter.overshoot)}` : pct(s.before.cost.overshoot), 'largest'));
+      const b = tunedValues(s.before.variant), a = after ? tunedValues(after) : [];
+      if (after && after.type !== s.before.variant.type) rows.push(row('Type', `${CONTROLLERS[s.before.variant.type].label} → ${CONTROLLERS[after.type].label}`, ''));
+      const keys = [...new Set([...b, ...a].map(([k]) => k))];
+      for (const k of keys) {
+        const x = b.find(([q]) => q === k)?.[1], y = a.find(([q]) => q === k)?.[1];
+        rows.push(row(k, after ? `${x === undefined ? '—' : show(x)} → ${show(y)}` : show(x), ''));
+      }
     }
-    if (s.method !== 'iterate' && after) rows.push(row('Into', after.name, ''));
+    if (s.placed) rows.push(row('Into', s.placed.name, ''));
     $('#tu-result').innerHTML = rows.join('');
     $('#tu-status').textContent = s.status;
     drawPlot(s.method === 'iterate' ? s.history : null);
@@ -391,6 +423,18 @@ export function createAutotuneTab(host, app, display) {
     shown: renderAll,
     stop() { if (job) end('Stopped.'); },
   };
+}
+
+// The last period of a long experiment, from t = 0 on the display: where the
+// relay's cycle has settled and Ku and Pu are read.
+function lastPeriod(run, T) {
+  const n = run.t.length, end = run.t[n - 1];
+  if (end <= T * 1.001) return { t: run.t, signals: run.signals };
+  let k0 = 0;
+  while (k0 < n - 1 && run.t[k0] < end - T) k0++;
+  const signals = {};
+  for (const [k, v] of Object.entries(run.signals)) signals[k] = v.subarray(k0);
+  return { t: run.t.subarray(k0).map((x) => x - run.t[k0]), signals };
 }
 
 // A value for the lists: numbers to four digits, long tables shortened.
