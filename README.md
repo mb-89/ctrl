@@ -6,14 +6,15 @@ Tune a feedback loop's step response in the browser, side by side, like patches 
 
 ## Use it
 
-Open `dist/loop-tuner.html` in a browser. It starts with Åström's third-order test process and four textbook controllers.
+Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control loop:
 
-- **Scope**: output `y` over the reference `r`, and the control effort `u` below. Every checked candidate is overlaid in its own colour, and the scan line sweeps the selected one. Hatched areas are the goal's limits. Hover to read values; click a trace to select it.
-- **Goal**: minimize a metric (ITAE, settling time, effort variation…) subject to bounds on others. Each candidate gets one score; ✓ means it meets every bound, and the best feasible one is marked BEST.
-- **Candidates**: one controller per row. Step through them with ↑/↓, press N to duplicate one, then turn its knobs. Press T to auto-tune.
-- **Rack**: the block diagram, then one module per block. The controller module edits the selected candidate; the other blocks (reference, actuator, disturbance, plant, sensor, noise) are shared, so changing the plant shows how every candidate copes. Each block's type can be swapped (P → PI → PID, ideal sensor → lag + dead time), and switching back restores the old parameters.
+- **Display**: four channels (r, y, u, e) on a 10 × 8 graticule, swept in real time over the record. Hover for a cursor readout.
+- **Controls** to the right, as on a bench scope: Run/Stop, Single, Auto Scale; Horizontal scale and position; Vertical channel keys, scale and position.
+- **Tabs** below set the loop up one step at a time. **Input** is built: a signal generator that sums primitives (step, ramp, pulse, square, sine, chirp, noise, DC, or a waveform loaded from a CSV file) into the reference r(t), with a dashed preview before each one is added. Plant, Controller, Auto-tune and Analysis come next.
 
-Projects are plain JSON. Save, open, drop or paste them; **Export HTML** writes a copy of the page with the project inside.
+Projects are plain JSON, including how the display is set. Save, open, drop or paste them; **Export HTML** writes a copy of the page with the project inside, to send to someone.
+
+The design, its decisions and what comes next are in [design/output](design/output/README.md); the person's original words are in [design/input](design/input/README.md).
 
 ## Build and test
 
@@ -29,13 +30,14 @@ node cli.mjs help
 
 | Where | What |
 |---|---|
-| `src/core/blocks.js` | The block library: every block type registers its slot, parameters and behaviour. Add a block here and it appears in the UI, the CLI and the tuner. |
+| `src/core/signals.js` | The signal generator's primitives; the reference is their sum. |
+| `src/core/blocks.js` | The block library (plant, controller, actuator, sensor, disturbance, noise): every type registers its slot, parameters and behaviour. |
 | `src/core/sim.js` | The closed loop: a digital controller (sampled, zero-order hold) driving continuous actuator, plant and sensor models integrated with RK4; dead time, saturation and seeded measurement noise. |
 | `src/core/metrics.js` | Step-response and effort metrics (`node cli.mjs metrics` lists them). |
 | `src/core/goal.js` | Score and feasibility from the goal. |
 | `src/core/tune.js` | Auto-tune: a seeded scan, then Nelder–Mead on the penalised score. |
 | `src/core/project.js` | The project file: normalisation, evaluation, candidates. |
-| `src/ui/` | The page: knobs, scope, rack, candidate table, app wiring. |
+| `src/ui/` | The page: display, controls, dial, signal generator, app wiring. |
 | `build.mjs` | Bundles core and UI into one HTML file. |
 | `cli.mjs` | The command line, for agents and scripts. |
 

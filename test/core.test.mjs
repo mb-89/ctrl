@@ -9,6 +9,9 @@ import { computeMetrics } from '../src/core/metrics.js';
 import { runTune } from '../src/core/tune.js';
 import { EXAMPLES } from '../src/core/examples.js';
 import { buildHtml, bundleScript } from '../build.mjs';
+import { referenceFn, normalizeReference, parseWaveform } from '../src/core/signals.js';
+import { referenceTrace } from '../src/core/project.js';
+import { DEFAULT_PROJECT } from '../src/core/examples.js';
 
 const loopProject = (system, controller, sim = { duration: 10, sampleTime: 0.01 }, goal) =>
   normalizeProject({ sim, system: { reference: { type: 'step', params: { amplitude: 1, time: 0 } }, ...system }, goal, candidates: [{ name: 'c', controller }] });
@@ -88,11 +91,48 @@ test('the bundle parses and the CLI round-trips a project through HTML', () => {
   assert.doesNotThrow(() => new Function(bundleScript()));
   const dir = mkdtempSync(join(tmpdir(), 'lt-'));
   const json = join(dir, 'p.json'), html = join(dir, 'p.html');
-  execFileSync('node', ['cli.mjs', 'new', '-o', json]);
+  execFileSync('node', ['cli.mjs', 'new', '--example', '0', '-o', json]);
   execFileSync('node', ['cli.mjs', 'try', json, '--from', 'P only', '--set', 'Kp=2', '--name', 'P2', '--save']);
   execFileSync('node', ['cli.mjs', 'html', json, '-o', html]);
   assert.ok(readFileSync(html, 'utf8').includes('"P2"'));
   const out = JSON.parse(execFileSync('node', ['cli.mjs', 'eval', html, '--json']).toString());
   assert.ok(out.candidates.some((c) => c.name === 'P2' && c.controller.params.Kp === 2));
   assert.ok(buildHtml({ fragment: true }).startsWith('<title>'));
+});
+
+test('the reference is the sum of its enabled components', () => {
+  const ref = normalizeReference({ components: [
+    { type: 'step', params: { amplitude: 1, time: 0.1 } },
+    { type: 'ramp', params: { amplitude: 0.5, time: 0.4, rise: 0.5 } },
+    { type: 'dc', params: { level: 9 }, enabled: false },
+  ] });
+  const r = referenceFn(ref, { sampleTime: 0.001 });
+  assert.equal(r(0.05), 0);
+  assert.equal(r(0.2), 1);
+  assert.ok(Math.abs(r(0.65) - 1.25) < 1e-12);
+  assert.equal(r(2), 1.5);
+});
+
+test('noise is reproducible and an arbitrary waveform interpolates its points', () => {
+  const ref = normalizeReference({ components: [{ type: 'noise', params: { std: 1, seed: 3 } }] });
+  const a = referenceFn(ref, { sampleTime: 0.01 }), b = referenceFn(ref, { sampleTime: 0.01 });
+  assert.equal(a(0.537), b(0.537));
+  assert.equal(a(0.531), a(0.539));
+  const pts = parseWaveform('time,value\n0,0\n1,2\n2,2\n');
+  const arb = referenceFn(normalizeReference({ components: [{ type: 'arb', params: { gain: 2, shift: 0 }, points: pts }] }), { sampleTime: 0.01 });
+  assert.equal(arb(0.5), 2);
+  assert.equal(arb(5), 4);
+});
+
+test('a new project is the reference alone; a v1 file still loads with its loop', () => {
+  const p = normalizeProject(structuredClone(DEFAULT_PROJECT));
+  assert.equal(p.system.plant, null);
+  assert.throws(() => evaluateCandidate(p, { controller: { type: 'P', params: { Kp: 1 } } }), /no plant/);
+  const { r } = referenceTrace(p);
+  assert.equal(r[0], 0);
+  assert.equal(r[r.length - 1], 1);
+  const v1 = normalizeProject(EXAMPLES[0]);
+  assert.equal(v1.system.reference.components[0].type, 'step');
+  assert.equal(v1.system.plant.type, 'lagChain');
+  assert.equal(v1.scope.channels[0].source, 'r');
 });

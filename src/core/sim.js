@@ -11,6 +11,7 @@
 
 import { blockDef, SLOTS } from './blocks.js';
 import { tf2ss, rootBound } from './poly.js';
+import { referenceFn } from './signals.js';
 
 const MAX_SAMPLES = 200000;
 const MAX_STEPS = 400000;
@@ -27,7 +28,7 @@ export function simulate(loop, sim) {
   const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
   if (K < Math.round(duration / Ts)) warnings.push(`sample count capped at ${MAX_SAMPLES}; increase sampleTime`);
 
-  const refFn = blockDef('reference', loop.reference.type).signal(loop.reference.params);
+  const refFn = referenceFn(loop.reference, { sampleTime: Ts });
   const distFn = blockDef('disturbance', loop.disturbance.type).signal(loop.disturbance.params);
   const actDef = blockDef('actuator', loop.actuator.type);
   const limits = actDef.limits ? actDef.limits(loop.actuator.params) : null;

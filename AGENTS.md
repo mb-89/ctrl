@@ -6,6 +6,7 @@ You work on a project file (`.json`, or an exported `.html` page with the projec
 
 ## The loop
 
+0. **Check the loop exists.** A new project is only a reference signal (`node cli.mjs signal p.json` lists it; `--add <type> --set k=v --save` adds a component). Tuning needs a plant and controller candidates in the file (`system.plant`, `candidates`); until the Plant and Controller tabs exist, write them into the JSON, or start from `node cli.mjs new --example 0`.
 1. **Read the problem.** `node cli.mjs eval <project>` shows the goal and every candidate, best first. `--json` gives all metrics. The goal is the contract: `minimize` is the objective, `subjectTo` the bounds. If the person's request differs from the goal in the file, change the goal in the JSON first, and say so.
 2. **Explore by hand, then refine.** Try variations and read the metrics:
    ```
@@ -38,5 +39,5 @@ You work on a project file (`.json`, or an exported `.html` page with the projec
 
 - `node cli.mjs help`: every command.
 - `node cli.mjs blocks [slot]`: block types and their parameters with ranges; `node cli.mjs metrics`: what a goal can use.
-- Project file: `sim` (duration, sampleTime), `system` (reference, actuator, disturbance, plant, sensor, noise), `goal`, `candidates` (name, checked, color, controller, and optional per-candidate overrides of any slot). Each block is `{ "type": …, "params": { … } }`; missing params take their defaults.
-- In a browser (for example through Playwright), the page exposes `window.loopTuner`: `getProject()`, `setProject(p)`, `evaluate()`, `select(name)`, `addCandidate(c)`, `metrics()`.
+- Project file: [design/output/project-format.md](design/output/project-format.md).
+- In a browser (for example through Playwright), the page exposes `window.loopTuner`: `getProject()`, `setProject(p)`, `addComponent(c)`, `reference()`, `autoScale()`, `run()`, `stop()`, `selectCandidate(name)`.

@@ -7,15 +7,19 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { buildHtml } from './build.mjs';
 import { SLOTS, BLOCKS, blockDef, normalizeBlock } from './src/core/blocks.js';
 import { METRICS, METRIC } from './src/core/metrics.js';
-import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, uniqueName, nextColor, describeController, fmt } from './src/core/project.js';
+import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, uniqueName, nextColor, describeController, fmt, loopReady, referenceTrace } from './src/core/project.js';
+import { SIGNALS, normalizeComponent, describeComponent } from './src/core/signals.js';
 import { runTune, tunableParams } from './src/core/tune.js';
-import { EXAMPLES } from './src/core/examples.js';
+import { EXAMPLES, DEFAULT_PROJECT } from './src/core/examples.js';
 
 const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command> [options]
 
-  new [--example <n|title>] [-o file]   write a starter project (default: the first example)
-  examples                              list the example projects
-  blocks [slot]                         the block library: types, parameters and ranges (JSON)
+  new [--example <n|title>] [-o file]   write a starter project (default: a step at 0.1 s, no loop yet)
+  examples                              list the example loops
+  signal <project> [--add <type> --set k=v ...] [--remove <n>] [--save]
+                                        list or change the reference r(t), a sum of components
+  blocks [slot]                         the block library: types, parameters and ranges (JSON);
+                                        slot "reference" lists the signal generator's primitives
   metrics                               the metrics a goal can use (JSON)
   eval <project> [--candidate <name>]   score every candidate against the goal, best first
   try <project> [--from <name>] [--type <T>] [--set k=v]... [--name <n>] [--save]
@@ -150,8 +154,8 @@ switch (cmd) {
     EXAMPLES.forEach((e, i) => console.log(`${i}  ${e.title}: ${e.notes}`));
     break;
   case 'new': {
-    const ref = opt.example ?? '0';
-    const ex = EXAMPLES[Number(ref)] ?? EXAMPLES.find((e) => e.title.toLowerCase() === String(ref).toLowerCase());
+    const ref = opt.example;
+    const ex = ref === undefined ? DEFAULT_PROJECT : EXAMPLES[Number(ref)] ?? EXAMPLES.find((e) => e.title.toLowerCase() === String(ref).toLowerCase());
     if (!ex) fail(`no example "${ref}"; see "examples"`);
     const p = normalizeProject(ex);
     if (opt.o) { writeProject(opt.o, p); console.log(`wrote ${opt.o}`); } else console.log(JSON.stringify(p, null, 2));
@@ -160,7 +164,8 @@ switch (cmd) {
   case 'blocks': {
     const slots = pos[1] ? [pos[1]] : SLOTS.map((s) => s.key);
     const out = {};
-    for (const s of slots) {
+    if (slots.includes('reference')) out.reference = Object.entries(SIGNALS).map(([type, d]) => ({ type, label: d.label, params: d.params, ...(type === 'arb' ? { points: '[[t, v], ...]' } : {}) }));
+    for (const s of slots.filter((x) => x !== 'reference')) {
       if (!BLOCKS[s]) fail(`unknown slot "${s}"; slots: ${SLOTS.map((x) => x.key).join(', ')}`);
       out[s] = Object.values(BLOCKS[s]).map((b) => ({
         type: b.type, label: b.label, formula: b.formula,
@@ -175,11 +180,46 @@ switch (cmd) {
     break;
   case 'eval': {
     const project = readProject(pos[1]);
+    if (!loopReady(project)) {
+      const msg = `${project.title}: no loop yet (${project.system.plant ? 'no controller candidates' : 'no plant'}); the reference has ${project.system.reference.components.length} component(s). See "signal".`;
+      if (opt.json) console.log(JSON.stringify({ title: project.title, loop: false, message: msg }, null, 2)); else console.log(msg);
+      break;
+    }
     const { runs, rank } = evaluateProject(project);
     let entries = rank.map((i, r) => report(project, project.candidates[i], runs[i], r + 1));
     if (opt.candidate) { const name = project.candidates[findCandidate(project, opt.candidate)].name; entries = entries.filter((e) => e.name === name); }
     if (opt.json) console.log(JSON.stringify({ title: project.title, goal: project.goal, best: entries.find((e) => e.feasible)?.name ?? null, candidates: entries }, null, 2));
     else printEval(project, entries);
+    break;
+  }
+  case 'signal': {
+    const project = readProject(pos[1]);
+    const comps = project.system.reference.components;
+    if (opt.add) {
+      if (!SIGNALS[opt.add]) fail(`unknown waveform "${opt.add}"; types: ${Object.keys(SIGNALS).join(', ')}`);
+      const params = {};
+      for (const kv of opt.set) {
+        const m = kv.match(/^([A-Za-z0-9_]+)=(.*)$/);
+        if (!m || !SIGNALS[opt.add].params.some((q) => q.key === m[1])) fail(`--set ${kv}: ${opt.add} takes ${SIGNALS[opt.add].params.map((q) => q.key).join(', ')}`);
+        params[m[1]] = Number(m[2]);
+      }
+      try { comps.push(normalizeComponent({ type: opt.add, params })); } catch (e) { fail(e.message); }
+    }
+    if (opt.remove !== undefined) {
+      const i = Number(opt.remove) - 1;
+      if (!(i >= 0 && i < comps.length)) fail(`--remove takes 1 to ${comps.length}`);
+      comps.splice(i, 1);
+    }
+    if (opt.save) writeProject(pos[1], project);
+    const { t, r } = referenceTrace(project);
+    if (opt.json) console.log(JSON.stringify({ duration: project.sim.duration, components: comps, min: Math.min(...r), max: Math.max(...r), final: r[r.length - 1] }, null, 2));
+    else {
+      console.log(`r(t) over ${fmt(project.sim.duration)} s = sum of:`);
+      comps.forEach((c, i) => console.log(`  ${i + 1}  ${describeComponent(c)}${c.enabled === false ? '  (off)' : ''}`));
+      if (!comps.length) console.log('  nothing (r = 0)');
+      console.log(`range ${fmt(Math.min(...r))} … ${fmt(Math.max(...r))}, final ${fmt(r[r.length - 1])} at t = ${fmt(t[t.length - 1])} s`);
+      if (opt.save) console.log(`saved ${pos[1]}`);
+    }
     break;
   }
   case 'try': {
@@ -214,8 +254,9 @@ switch (cmd) {
   }
   case 'trace': {
     const project = readProject(pos[1]);
-    const cand = project.candidates[findCandidate(project, opt.candidate ?? project.selected)];
-    const { result } = evaluateCandidate(project, cand);
+    let result;
+    if (loopReady(project)) result = evaluateCandidate(project, project.candidates[findCandidate(project, opt.candidate ?? project.selected)]).result;
+    else { const { t, r } = referenceTrace(project); const z = new Float64Array(t.length).fill(NaN); result = { t, r, y: z, u: z, ym: z, d: z }; }
     const every = Math.max(1, Number(opt.every ?? 1));
     const keys = ['t', 'r', 'y', 'u', 'ym', 'd'];
     if (opt.json) {

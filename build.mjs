@@ -11,8 +11,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MODULES = [
-  'core/poly.js', 'core/blocks.js', 'core/metrics.js', 'core/goal.js', 'core/sim.js', 'core/project.js', 'core/tune.js', 'core/examples.js',
-  'ui/knob.js', 'ui/scope.js', 'ui/rack.js', 'ui/candidates.js', 'ui/app.js',
+  'core/poly.js', 'core/blocks.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/sim.js', 'core/project.js', 'core/tune.js', 'core/examples.js',
+  'ui/units.js', 'ui/dial.js', 'ui/display.js', 'ui/controls.js', 'ui/generator.js', 'ui/app.js',
 ];
 
 // Each module runs in its own function scope; its exports go into a registry
@@ -45,35 +45,38 @@ const ICON = {
 
 const HELP = `
 <h2 id="help-title">Loop Tuner</h2>
-<p>Tune a feedback loop by trying controller settings side by side. Each row in <b>Candidates</b> is one controller; its response is drawn on the scope in the same colour. The hatched areas are the limits from your <b>Goal</b>: a candidate that stays out of them is feasible (✓), and the feasible one with the lowest score is marked BEST.</p>
-<h3>Working with it</h3>
+<p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time. Right now the Input tab is built: a signal generator for the reference r(t).</p>
+<h3>Display</h3>
 <div class="keys">
-  <span><kbd>↑</kbd> <kbd>↓</kbd></span><span>Step through the candidates</span>
-  <span><kbd>Space</kbd></span><span>Show or hide the selected candidate on the scope</span>
-  <span><kbd>N</kbd></span><span>Duplicate the selected candidate, to try a variation</span>
-  <span><kbd>Del</kbd></span><span>Delete the selected candidate</span>
-  <span><kbd>T</kbd></span><span>Auto-tune: search the gains for the best feasible score</span>
-  <span><kbd>1</kbd> … <kbd>7</kbd></span><span>Jump to a module: reference, controller, actuator, disturbance, plant, sensor, noise</span>
-  <span><kbd>P</kbd></span><span>Play or pause the scan sweep</span>
-  <span><kbd>Ctrl</kbd> <kbd>Z</kbd> / <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd></span><span>Undo / redo</span>
+  <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record in real time, over and over.</span>
+  <span><kbd>S</kbd></span><span>Single: one sweep, then stop</span>
+  <span><kbd>A</kbd></span><span>Auto Scale: fit the timebase and every channel to the data</span>
+  <span>Knobs</span><span>Drag, scroll, or focus and use the arrow keys. Double-click a Position knob to zero it.</span>
+  <span>Channel keys</span><span>Select a channel for the Vertical knobs; press again to turn it off</span>
 </div>
-<p>Knobs: drag up or down (hold <kbd>Shift</kbd> for fine steps), scroll, or use the arrow keys. Double-click a knob to reset it; click its value to type one. Gains that can be switched off read “off” at the bottom of their travel.</p>
-<p>The controller module edits the selected candidate. Every other module is shared by all candidates, so changing the plant shows how every controller copes with it. Changing a block’s type keeps the parameters both types share, and switching back restores the rest.</p>
+<h3>Signal generator</h3>
+<p>Press a waveform key to draft a component: the display shows it dashed on its own and added to r(t). Adjust it, then <b>Add</b>. Click a component in the stack to edit it.</p>
+<div class="keys">
+  <span><kbd>0</kbd>–<kbd>9</kbd> <kbd>.</kbd> <kbd>-</kbd></span><span>Type a value for the active field; <kbd>Enter</kbd> sets it</span>
+  <span><kbd>Enter</kbd></span><span>With nothing typed: add (or apply) the draft</span>
+  <span><kbd>Esc</kbd></span><span>Clear what you typed, or cancel the draft</span>
+  <span><kbd>←</kbd> <kbd>→</kbd></span><span>Move the digit cursor</span>
+  <span><kbd>↑</kbd> <kbd>↓</kbd></span><span>Change the digit under the cursor (the dial does the same)</span>
+  <span><kbd>Tab</kbd></span><span>Next field</span>
+  <span><kbd>Ctrl</kbd> <kbd>Z</kbd></span><span>Undo; <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd> redo</span>
+</div>
 <h3>Files</h3>
-<p>The whole project is one JSON document. <b>Save JSON</b> and <b>Open</b> read and write it; you can also drop a file on the page or paste JSON. <b>Export HTML</b> writes this page with the project inside, ready to send to someone.</p>
+<p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
-<p>The same simulation runs in Node. With the project file (or an exported HTML file):</p>
-<pre>node cli.mjs eval project.json          # metrics, score and feasibility of every candidate
-node cli.mjs try project.json --type PID --set Kp=2 --set Ki=0.8 --set Kd=1 --save
-node cli.mjs tune project.json --from "Z–N PID" --save
-node cli.mjs html project.json -o shared.html</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>evaluate()</code>, <code>select(name)</code> and <code>addCandidate(c)</code>.</p>
-<p><button class="btn primary" id="help-close">Close</button></p>`;
+<pre>node cli.mjs help</pre>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code> and <code>stop()</code>.</p>
+<p><button class="key primary" id="help-close">Close</button></p>`;
 
 const SHELL = `<div id="lt-shell" class="app">
 <header class="bar">
   <div class="brand">${ICON.logo}Loop Tuner</div>
   <input id="title" class="title" aria-label="Project title" spellcheck="false">
+  <span id="loopnote" class="loopnote"></span>
   <div class="actions">
     <select id="examples" class="btn" aria-label="Load an example"><option value="">Examples…</option></select>
     <span class="sep"></span>
@@ -89,25 +92,21 @@ const SHELL = `<div id="lt-shell" class="app">
     <input type="file" id="file" accept=".json,.html,application/json,text/html" hidden>
   </div>
 </header>
-<main class="main">
-  <section class="panel scope-panel" aria-label="Scope">
-    <div class="scope-head">
-      <span class="label">Response</span>
-      <span id="warn" class="warn" hidden></span>
-      <div class="transport">
-        <button id="play" class="btn icon"></button>
-        <select id="speed" class="btn" aria-label="Sweep speed"><option value="1.5">Sweep 1.5 s</option><option value="3" selected>Sweep 3 s</option><option value="6">Sweep 6 s</option><option value="12">Sweep 12 s</option></select>
-      </div>
-    </div>
-    <div class="scope-wrap" id="scope"></div>
-    <div class="readout" id="readout"></div>
+<main class="instrument">
+  <section class="display" id="display" aria-label="Display">
+    <div class="status"></div>
+    <div class="screen"></div>
+    <div class="badges"></div>
   </section>
-  <aside class="side">
-    <section class="panel goal" id="goal" aria-label="Goal"></section>
-    <section class="panel cands" id="cands" aria-label="Candidates"></section>
-  </aside>
-  <section class="panel rack" id="rack" aria-label="Loop"></section>
+  <aside class="controls" id="controls" aria-label="Controls"></aside>
 </main>
+<section class="setup" aria-label="Setup">
+  <div class="tabbar" id="tabbar" role="tablist"></div>
+  <div class="tabpanel">
+    <div id="tab-input" role="tabpanel"></div>
+    <div id="tab-later" role="tabpanel" hidden></div>
+  </div>
+</section>
 <div id="toast" class="toast" role="status" hidden></div>
 <div id="drop" class="drop" hidden>Drop a project file (.json or .html)</div>
 <div id="help-dlg" class="overlay" hidden><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">${HELP}</div></div>

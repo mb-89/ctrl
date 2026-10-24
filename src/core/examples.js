@@ -1,4 +1,23 @@
-// Textbook example projects. The first one is what a fresh page opens with.
+// Example projects. DEFAULT_PROJECT is what a fresh page opens with: the
+// reference alone, a step at 0.1 s (design/output/signal-generator.md).
+// EXAMPLES are complete textbook loops (version 1 files, still loadable).
+
+export const DEFAULT_PROJECT = {
+  format: 'loop-tuner/2',
+  title: 'New loop',
+  sim: { duration: 1, sampleTime: 0.0005 },
+  system: { reference: { components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] }, plant: null },
+  scope: {
+    timebase: { scale: 0.1, position: 0 },
+    channels: [
+      { source: 'r', on: true, scale: 0.2, offset: -0.4 },
+      { source: 'y', on: true, scale: 0.2, offset: -0.4 },
+      { source: 'u', on: false, scale: 0.5, offset: 0 },
+      { source: 'e', on: false, scale: 0.2, offset: 0 },
+    ],
+  },
+  candidates: [],
+};
 
 export const EXAMPLES = [
   {

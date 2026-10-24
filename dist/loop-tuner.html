@@ -5,241 +5,243 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Loop Tuner</title>
 <link id="lt-fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@400;600&display=swap">
-<style id="lt-style">/* Layout: an instrument. The scope screen is the one bold surface; the panel
-   around it stays monochrome so colour belongs to the candidates alone.
-   Scope + side column (goal, candidates) on top, the rack of modules below. */
+<style id="lt-style">/* Layout: a bench instrument. Display (always dark, like a real screen) with
+   its controls to the right; setup tabs below. Rubber keys, knurled knobs,
+   and a small dark LCD for the generator. Colour belongs to the channels. */
 :root {
-  --panel: #e4e7ea;
-  --panel-2: #eef0f2;
-  --module: #f6f7f8;
-  --screen: #fcfcfb;
-  --ink: #14181c;
-  --ink-2: #4b535b;
-  --muted: #7c858d;
-  --line: rgba(20, 24, 28, 0.13);
-  --line-strong: rgba(20, 24, 28, 0.28);
-  --grid: #e6e8ea;
-  --axis: #c3c7cb;
-  --knob: #d9dde1;
-  --knob-cap: #fbfbfb;
-  --hover: rgba(20, 24, 28, 0.05);
-  --select: rgba(20, 24, 28, 0.08);
-  --good: #0a7d0a;
+  --panel: #d6dade;
+  --panel-2: #c8cdd2;
+  --recess: #bfc5cb;
+  --ink: #15191c;
+  --ink-2: #474f57;
+  --muted: #6f7881;
+  --line: rgba(0, 0, 0, 0.15);
+  --line-strong: rgba(0, 0, 0, 0.3);
+  --key-top: #f3f5f6;
+  --key-bot: #d4d9dd;
+  --key-ink: #1d2226;
+  --key-edge: rgba(0, 0, 0, 0.28);
+  --bezel: #23282d;
+  --lcd: #0c1317;
+  --lcd-ink: #d5e3ea;
+  --lcd-dim: #7f939d;
+  --lcd-sel: #20323b;
+  --lit-green: #2fd36f;
+  --lit-red: #ff4b4b;
+  --lit-amber: #ffb21e;
+  --cap-hi: #f4f6f7;
+  --cap-lo: #b9c0c6;
+  --skirt: #2c3237;
+  --knurl: #59616a;
   --bad: #c62f2f;
-  --bad-wash: rgba(198, 47, 47, 0.10);
-  --scan: #14181c;
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
-  --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
   --ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --radius: 6px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --panel: #16191c; --panel-2: #1c2024; --module: #20242a; --screen: #0e1114;
-    --ink: #eef0f1; --ink-2: #b9c0c6; --muted: #848d95;
-    --line: rgba(255, 255, 255, 0.10); --line-strong: rgba(255, 255, 255, 0.24);
-    --grid: #1d2226; --axis: #3a4147; --knob: #31373d; --knob-cap: #2a2f35;
-    --hover: rgba(255, 255, 255, 0.05); --select: rgba(255, 255, 255, 0.09);
-    --good: #2fbf2f; --bad: #ef6464; --bad-wash: rgba(239, 100, 100, 0.13); --scan: #eef0f1;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
-    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    --panel: #1c2024; --panel-2: #16191c; --recess: #111417;
+    --ink: #e7ebee; --ink-2: #b4bcc3; --muted: #838c95;
+    --line: rgba(255, 255, 255, 0.10); --line-strong: rgba(255, 255, 255, 0.22);
+    --key-top: #3a4148; --key-bot: #2a3036; --key-ink: #e7ebee; --key-edge: rgba(0, 0, 0, 0.6);
+    --bezel: #0d0f11; --cap-hi: #8a939b; --cap-lo: #4b535a; --skirt: #121518; --knurl: #3d444b;
+    --bad: #ef6464;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --panel: #16191c; --panel-2: #1c2024; --module: #20242a; --screen: #0e1114;
-  --ink: #eef0f1; --ink-2: #b9c0c6; --muted: #848d95;
-  --line: rgba(255, 255, 255, 0.10); --line-strong: rgba(255, 255, 255, 0.24);
-  --grid: #1d2226; --axis: #3a4147; --knob: #31373d; --knob-cap: #2a2f35;
-  --hover: rgba(255, 255, 255, 0.05); --select: rgba(255, 255, 255, 0.09);
-  --good: #2fbf2f; --bad: #ef6464; --bad-wash: rgba(239, 100, 100, 0.13); --scan: #eef0f1;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
-  --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  --panel: #1c2024; --panel-2: #16191c; --recess: #111417;
+  --ink: #e7ebee; --ink-2: #b4bcc3; --muted: #838c95;
+  --line: rgba(255, 255, 255, 0.10); --line-strong: rgba(255, 255, 255, 0.22);
+  --key-top: #3a4148; --key-bot: #2a3036; --key-ink: #e7ebee; --key-edge: rgba(0, 0, 0, 0.6);
+  --bezel: #0d0f11; --cap-hi: #8a939b; --cap-lo: #4b535a; --skirt: #121518; --knurl: #3d444b;
+  --bad: #ef6464;
   color-scheme: dark;
 }
 
+*, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
 [hidden] { display: none !important; }
 body { background: var(--panel); color: var(--ink); font-family: var(--ui); font-size: 14px; }
-button, input, select, textarea { font: inherit; color: inherit; }
+button, input, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
 .app {
-  height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr);
-  padding-left: max(16px, env(safe-area-inset-left, 0px));
-  padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 0 12px;
+  height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 12px;
 }
 
 /* Header */
-.bar { display: flex; align-items: center; gap: 12px; padding-block: 10px; min-width: 0; flex-wrap: wrap; }
+.bar { display: flex; align-items: center; gap: 12px; padding-top: 10px; flex-wrap: wrap; min-width: 0; }
 .brand { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
 .brand svg { width: 22px; height: 22px; }
-.title { flex: 1 1 200px; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: var(--radius); padding: 4px 8px; font-size: 17px; font-weight: 600; }
+.title { flex: 1 1 180px; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; font-size: 17px; font-weight: 600; }
 .title:hover { border-color: var(--line); }
-.title:focus { border-color: var(--line-strong); background: var(--module); outline: none; }
+.title:focus { border-color: var(--line-strong); background: var(--panel-2); outline: none; }
+.loopnote { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.btn {
-  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: var(--radius);
-  border: 1px solid var(--line-strong); background: var(--module); cursor: pointer; white-space: nowrap; font-size: 13px;
-}
-.btn:hover { background: var(--panel-2); }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--panel-2); cursor: pointer; white-space: nowrap; font-size: 13px; }
+.btn:hover { background: var(--recess); }
 .btn:disabled { opacity: 0.4; cursor: default; }
-.btn.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); }
-.btn.primary:hover { opacity: 0.9; }
 .btn.icon { width: 30px; padding: 0; justify-content: center; }
 .btn svg { width: 15px; height: 15px; }
-.btn.small { height: 24px; font-size: 12px; padding: 0 8px; }
-select.btn { padding-right: 6px; }
 .sep { width: 1px; height: 20px; background: var(--line-strong); }
+.field { height: 26px; border-radius: 5px; border: 1px solid var(--line-strong); background: var(--panel); padding: 0 6px; font-size: 13px; min-width: 0; }
 
-/* Main grid */
-.main {
-  min-height: 0; display: grid; gap: 12px;
-  grid-template-columns: minmax(0, 1fr) minmax(330px, 410px);
-  grid-template-rows: minmax(260px, 1fr) auto;
-  grid-template-areas: "scope side" "rack rack";
+/* Rubber keys */
+.key {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 4px 10px;
+  border-radius: 7px; border: 1px solid var(--key-edge); color: var(--key-ink); cursor: pointer; line-height: 1.1;
+  background: linear-gradient(180deg, var(--key-top), var(--key-bot));
+  box-shadow: 0 2px 0 var(--key-edge), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  font-size: 13px; font-weight: 600; user-select: none; -webkit-user-select: none;
 }
-.panel { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
-.label { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.key:active { transform: translateY(1px); box-shadow: 0 1px 0 var(--key-edge), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+.key:disabled { opacity: 0.45; cursor: default; transform: none; }
+.key.lit-green { background: linear-gradient(180deg, #7ef0a6, var(--lit-green)); color: #062a14; box-shadow: 0 2px 0 var(--key-edge), 0 0 12px rgba(47, 211, 111, 0.55); }
+.key.lit-red { background: linear-gradient(180deg, #ff9a9a, var(--lit-red)); color: #3a0606; box-shadow: 0 2px 0 var(--key-edge), 0 0 12px rgba(255, 75, 75, 0.5); }
+.key.lit-amber { background: linear-gradient(180deg, #ffd77e, var(--lit-amber)); color: #3a2400; box-shadow: 0 2px 0 var(--key-edge), 0 0 12px rgba(255, 178, 30, 0.55); }
+.key.lit { background: linear-gradient(180deg, #a9f5c4, var(--lit-green)); color: #062a14; box-shadow: 0 2px 0 var(--key-edge), 0 0 10px rgba(47, 211, 111, 0.45); }
+.key.primary:not(:disabled) { background: linear-gradient(180deg, #a9f5c4, var(--lit-green)); color: #062a14; }
 
-/* Scope */
-.scope-panel { grid-area: scope; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
-.scope-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px 6px; flex-wrap: wrap; }
-.scope-head .label { margin-right: auto; }
-.transport { display: flex; align-items: center; gap: 6px; }
-.scope-wrap { position: relative; min-height: 0; margin: 0 10px; border-radius: 6px; overflow: hidden; background: var(--screen); border: 1px solid var(--line); }
-.scope-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
-.readout { display: flex; flex-wrap: wrap; gap: 1px; margin: 8px 10px 10px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.cell { flex: 1 1 96px; background: var(--module); padding: 5px 8px; min-width: 0; }
-.cell .k { font-size: 10.5px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cell .v { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.cell.bad { background: var(--bad-wash); }
-.cell.bad .v { color: var(--bad); }
-.cell .v .lim { color: var(--muted); font-size: 11px; }
-.cell.obj .k::after { content: " · min"; color: var(--ink-2); }
+/* Instrument: display + controls */
+.instrument { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 286px; gap: 12px; }
+.display { min-height: 0; background: var(--bezel); border-radius: 12px; padding: 8px 10px; display: grid; grid-template-rows: 22px minmax(0, 1fr) 30px; gap: 6px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), 0 1px 0 var(--line); }
+.status { display: flex; align-items: center; gap: 14px; font-family: var(--mono); font-size: 12px; color: #c9d3da; white-space: nowrap; overflow: hidden; }
+.status .dim { color: #7f8c96; }
+.status .grow { flex: 1; }
+.st { font-weight: 600; padding: 1px 7px; border-radius: 3px; font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+.st-run { background: var(--lit-green); color: #062a14; }
+.st-stop { background: var(--lit-red); color: #3a0606; }
+.st-single { background: var(--lit-amber); color: #3a2400; }
+.screen { position: relative; min-height: 0; border-radius: 4px; overflow: hidden; background: #0a0d10; }
+.screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+.badges { display: flex; gap: 6px; align-items: center; overflow-x: auto; }
+.badge { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 9px 0 0; border-radius: 4px; border: 1px solid #333a40; background: #13171b; color: #c9d3da; font-family: var(--mono); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.badge .num { align-self: stretch; display: grid; place-items: center; width: 22px; background: var(--cc); color: #0a0d10; font-weight: 600; border-radius: 3px 0 0 3px; }
+.badge .src { color: var(--cc); font-weight: 600; }
+.badge.off { opacity: 0.45; }
+.badge.off .num { background: transparent; color: var(--cc); }
+.badge.nosig .val { color: #7f8c96; font-style: italic; }
+.badge.sel { border-color: var(--cc); box-shadow: 0 0 0 1px var(--cc); }
 
-/* Side column */
-.side { grid-area: side; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-.goal { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
-.goal-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.goal-row .word { color: var(--ink-2); font-size: 13px; min-width: 64px; }
-.field { height: 26px; border-radius: 5px; border: 1px solid var(--line-strong); background: var(--module); padding: 0 6px; font-size: 13px; min-width: 0; }
-input.field { width: 64px; font-family: var(--mono); }
-select.field { max-width: 170px; }
-.x { width: 22px; height: 22px; border: 0; background: transparent; color: var(--muted); cursor: pointer; border-radius: 4px; font-size: 14px; line-height: 1; }
-.x:hover { background: var(--hover); color: var(--ink); }
-.link { border: 0; background: transparent; color: var(--ink-2); cursor: pointer; padding: 2px 0; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
-.link:hover { color: var(--ink); }
+.controls { min-height: 0; overflow: auto; background: var(--panel-2); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); }
+.group { display: flex; flex-direction: column; gap: 8px; }
+.group + .group { border-top: 1px solid var(--line); padding-top: 10px; }
+.glabel { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.row { display: flex; gap: 8px; align-items: center; }
+.row .key { flex: 1; min-height: 42px; font-size: 12.5px; text-align: center; }
+.dials { justify-content: space-around; align-items: flex-end; }
+.dialbox { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.dlabel { font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
+.dval { font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; background: var(--lcd); color: var(--lcd-ink); border-radius: 4px; padding: 1px 7px; min-width: 76px; text-align: center; }
+.chkeys .key.ch { min-height: 34px; border-color: var(--cc); box-shadow: 0 2px 0 var(--key-edge), inset 0 0 0 1px var(--cc); }
+.chkeys .key.ch.lit { background: linear-gradient(180deg, color-mix(in srgb, var(--cc) 55%, white), var(--cc)); color: #0a0d10; box-shadow: 0 2px 0 var(--key-edge), 0 0 10px color-mix(in srgb, var(--cc) 70%, transparent); }
+.chkeys .key.ch.sel { outline: 2px solid var(--ink); outline-offset: 2px; }
+.srcrow { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); }
+.srcrow select { flex: 1; }
+#v-dials .dial .skirt { stroke: var(--sel); stroke-width: 3; }
 
-.cands { flex: 1 1 auto; min-height: 200px; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
-.cands-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 6px; }
-.cands-head .label { margin-right: auto; }
-.table-wrap { overflow: auto; min-height: 0; }
-table.ct { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.ct th { position: sticky; top: 0; background: var(--panel-2); text-align: right; font-weight: 600; font-size: 11px; color: var(--muted); padding: 4px 8px; white-space: nowrap; letter-spacing: 0.04em; border-bottom: 1px solid var(--line); z-index: 1; }
-.ct th.l { text-align: left; }
-.ct th .lim { font-weight: 400; }
-.ct td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; font-family: var(--mono); font-size: 12.5px; white-space: nowrap; vertical-align: middle; }
-.ct tr { cursor: pointer; }
-.ct tbody tr:hover { background: var(--hover); }
-.ct tbody tr.sel { background: var(--select); box-shadow: inset 3px 0 0 var(--c); }
-.ct td.chk { width: 26px; padding-right: 0; text-align: left; }
-.ct td.name { text-align: left; font-family: var(--ui); font-size: 13.5px; max-width: 170px; }
-.ct .nm { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.ct .nm span { overflow: hidden; text-overflow: ellipsis; }
-.ct .sum { font-family: var(--mono); font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
-.swatch { flex: none; width: 14px; height: 3px; border-radius: 2px; background: var(--c); }
-tr.off .swatch { opacity: 0.35; }
-tr.off td.name, tr.off td:not(.chk) { color: var(--muted); }
-.ct td.bad { color: var(--bad); }
-.ct td.score { font-weight: 600; }
-.ok-i { color: var(--good); font-family: var(--ui); }
-.bad-i { color: var(--bad); font-family: var(--ui); }
-.star { font-family: var(--ui); font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 3px; padding: 0 3px; margin-right: 4px; }
-input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--ink); cursor: pointer; margin: 0; }
-.rename { width: 100%; height: 24px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--module); padding: 0 4px; }
-.empty { padding: 16px 12px; color: var(--ink-2); font-size: 13px; }
+/* Dial */
+.dial svg { display: block; cursor: grab; touch-action: none; border-radius: 50%; }
+.dial.active svg { cursor: grabbing; }
+.dial .skirt { fill: var(--skirt); }
+.dial .knurl { stroke: var(--knurl); stroke-width: 2.4; }
+.dial .cap { fill: var(--cap-hi); stroke: var(--cap-lo); stroke-width: 3; }
+.dial .dot { fill: #1c2125; }
+.dial svg:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 
-/* Rack */
-.rack { grid-area: rack; padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 8px; }
-.diagram-wrap { overflow-x: auto; }
-.diagram { display: block; height: 110px; width: auto; aspect-ratio: 1000 / 158; margin: 0 auto; }
-.diagram .blk { cursor: pointer; }
-.diagram .blk rect { fill: var(--module); stroke: var(--line-strong); stroke-width: 1; }
-.diagram .blk:hover rect, .diagram .blk.hl rect { stroke: var(--ink); stroke-width: 1.5; }
-.diagram .wire { stroke: var(--ink-2); stroke-width: 1.2; fill: none; }
-.diagram .sum { fill: var(--module); stroke: var(--ink-2); stroke-width: 1.2; }
-.diagram text { fill: var(--ink); font-family: var(--ui); }
-.diagram .t-slot { fill: var(--muted); font-size: 9.5px; letter-spacing: 0.1em; font-weight: 600; }
-.diagram .t-type { font-size: 13px; font-weight: 600; }
-.diagram .t-par { fill: var(--ink-2); font-family: var(--mono); font-size: 9.5px; }
-.diagram .t-sig { fill: var(--ink-2); font-family: var(--mono); font-size: 11px; font-style: italic; }
-.diagram .arrow { fill: var(--ink-2); }
+/* Setup tabs */
+.setup { display: flex; flex-direction: column; min-width: 0; }
+.tabbar { display: flex; gap: 4px; overflow-x: auto; padding-inline: 4px; }
+.tab { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px 8px; border: 1px solid var(--line); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--panel); color: var(--ink-2); cursor: pointer; font-weight: 600; font-size: 13.5px; white-space: nowrap; }
+.tab .tn { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.tab .soon { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 3px; padding: 0 4px; }
+.tab.on { background: var(--panel-2); color: var(--ink); position: relative; top: 1px; }
+.tab.later:not(.on) { opacity: 0.75; }
+.tabpanel { background: var(--panel-2); border: 1px solid var(--line); border-radius: 0 10px 10px 10px; padding: 10px 12px; min-height: 0; }
 
-.modules { display: flex; gap: 8px; align-items: stretch; overflow-x: auto; padding-bottom: 2px; }
-.module { background: var(--module); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; transition: box-shadow 0.25s; }
-.module.flash { box-shadow: 0 0 0 2px var(--ink); }
-.module.hl { border-color: var(--line-strong); }
-.module.cand { border-color: var(--c); box-shadow: inset 0 3px 0 var(--c); }
-.mod-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 22px; }
-.mod-head .btn { margin-left: auto; }
-.mod-head .label { white-space: nowrap; }
-.mod-type { order: 3; flex: 1 0 100%; width: 0; min-width: 100%; height: 24px; border-radius: 5px; border: 1px solid var(--line-strong); background: var(--panel-2); font-size: 12.5px; padding: 0 4px; }
-.mod-formula { width: 0; min-width: 100%; font-family: var(--mono); font-size: 11px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mod-cand { width: 0; min-width: 100%; font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; }
-.module { flex: none; min-width: 128px; }
-.knobs { display: flex; gap: 4px; flex-wrap: wrap; }
-.vec { display: flex; flex-direction: column; gap: 2px; }
-.vec input { width: 130px; }
-.vec input.err { border-color: var(--bad); }
+/* Generator */
+.gen { display: grid; grid-template-columns: 216px minmax(240px, 1fr) 236px minmax(260px, 1.2fr); gap: 14px; align-items: stretch; }
+.gcol { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.wkeys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.wkey { flex-direction: column; gap: 3px; min-height: 44px; padding: 5px 4px; font-size: 12px; }
+.wkey svg { width: 26px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.plist, .slist { background: var(--lcd); color: var(--lcd-ink); border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 2px; box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5); }
+.plist { flex: 1; min-height: 112px; }
+.pfield { display: grid; grid-template-columns: minmax(70px, 1fr) auto 34px; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 4px 8px; cursor: pointer; color: var(--lcd-ink); }
+.pfield:hover { background: rgba(255, 255, 255, 0.04); }
+.pfield.active { background: var(--lcd-sel); border-color: #3e5764; }
+.pfield .pl { font-size: 13px; color: var(--lcd-dim); }
+.pfield.active .pl { color: var(--lcd-ink); }
+.pfield .pv { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.pfield .pu { font-family: var(--mono); font-size: 12px; color: var(--lcd-dim); }
+.pv .cur { background: var(--lcd-ink); color: var(--lcd); border-radius: 2px; }
+.pv .buf { color: #ffd77e; }
+.caret { display: inline-block; width: 7px; height: 15px; margin-left: 1px; vertical-align: -2px; background: #ffd77e; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.hint { font-size: 12.5px; color: var(--lcd-dim); padding: 6px 8px; line-height: 1.45; }
+.hint b { color: var(--lcd-ink); }
+.pact { display: flex; gap: 8px; }
+.pact .key { flex: 1; min-height: 34px; }
+.dialrow { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.key.arrow { width: 38px; min-height: 30px; padding: 0; font-size: 12px; }
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr) 1.25fr; gap: 5px; }
+.keypad .pk { min-height: 26px; padding: 2px; font-family: var(--mono); font-size: 14px; }
+.keypad .pk.fn { font-family: var(--ui); font-size: 12px; }
+.slist { list-style: none; margin: 0; flex: 1; min-height: 100px; overflow: auto; max-height: 170px; }
+.srow { display: grid; grid-template-columns: 18px 26px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 5px; cursor: pointer; }
+.srow:hover { background: rgba(255, 255, 255, 0.04); }
+.srow.editing { background: var(--lcd-sel); }
+.srow.off .sd, .srow.off svg { opacity: 0.4; }
+.srow .sn { font-family: var(--mono); font-size: 11px; color: var(--lcd-dim); }
+.srow svg { width: 24px; height: 14px; fill: none; stroke: #f2c718; stroke-width: 1.6; stroke-linejoin: round; }
+.srow .sd { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slist .empty { color: var(--lcd-dim); font-size: 12.5px; padding: 6px 8px; }
+.sw { width: 30px; height: 16px; border-radius: 8px; border: 1px solid #3e5764; background: #1a252b; position: relative; cursor: pointer; padding: 0; }
+.sw::after { content: ""; position: absolute; top: 1px; left: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--lcd-dim); transition: left 0.15s; }
+.sw.on { background: #1d4d33; border-color: var(--lit-green); }
+.sw.on::after { left: 15px; background: var(--lit-green); }
+.x { width: 22px; height: 22px; border: 0; background: transparent; color: var(--lcd-dim); cursor: pointer; border-radius: 4px; font-size: 13px; }
+.x:hover { color: var(--lcd-ink); background: rgba(255, 255, 255, 0.07); }
+.eq { font-family: var(--mono); font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink-2); margin-left: 4px; }
+.lenrow { display: flex; align-items: center; gap: 8px; background: var(--lcd); border-radius: 8px; padding: 4px; }
+.lenrow .pfield { flex: 1; }
+.lenrow .hint { padding: 0 6px; white-space: nowrap; }
+.later-box { max-width: 70ch; padding: 6px 4px; }
+.later-box p { color: var(--ink-2); line-height: 1.5; margin: 8px 0 0; }
+.later-box .dim { color: var(--muted); }
 
-/* Knob */
-.knob { width: 58px; display: flex; flex-direction: column; align-items: center; gap: 1px; user-select: none; -webkit-user-select: none; }
-.knob .kl { font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
-.knob svg { width: 44px; height: 44px; cursor: ns-resize; touch-action: none; border-radius: 50%; }
-.knob svg:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
-.knob .track { stroke: var(--knob); stroke-width: 4; fill: none; stroke-linecap: round; }
-.knob .val { stroke: var(--kc, var(--ink)); stroke-width: 4; fill: none; stroke-linecap: round; }
-.knob .cap { fill: var(--knob-cap); stroke: var(--line-strong); }
-.knob .ptr { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; }
-.knob .kv { font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums; border: 1px solid transparent; border-radius: 3px; background: transparent; width: 58px; text-align: center; padding: 0; height: 18px; cursor: text; }
-.knob .kv:hover { border-color: var(--line); }
-.knob .kv:focus { border-color: var(--line-strong); background: var(--panel-2); outline: none; }
-.knob.active .kl { color: var(--ink); }
-
-/* Toast, help */
+/* Toast, help, drop */
 .toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: 6px; font-size: 13px; z-index: 20; max-width: min(560px, calc(100% - 32px)); }
-.overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: grid; place-items: center; z-index: 30; padding: 16px; }
+.overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); display: grid; place-items: center; z-index: 30; padding: 16px; }
 .dialog { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 10px; max-width: 680px; width: 100%; max-height: 85vh; overflow: auto; padding: 18px 20px; }
 .dialog h2 { margin: 0 0 4px; font-size: 18px; }
 .dialog h3 { margin: 16px 0 6px; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
-.dialog p, .dialog li { line-height: 1.5; color: var(--ink-2); max-width: 65ch; }
-.dialog code, .dialog pre { font-family: var(--mono); font-size: 12px; }
-.dialog pre { background: var(--module); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; overflow-x: auto; color: var(--ink); }
+.dialog p { line-height: 1.5; color: var(--ink-2); max-width: 65ch; }
+.dialog pre { font-family: var(--mono); font-size: 12px; background: var(--recess); border-radius: 6px; padding: 8px 10px; overflow-x: auto; }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
-kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--module); white-space: nowrap; }
-.drop { position: fixed; inset: 10px; border: 2px dashed var(--ink); border-radius: 12px; display: grid; place-items: center; background: var(--hover); z-index: 40; font-size: 18px; pointer-events: none; }
+kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--panel); white-space: nowrap; }
+.drop { position: fixed; inset: 10px; border: 2px dashed var(--ink); border-radius: 12px; display: grid; place-items: center; background: rgba(0, 0, 0, 0.05); z-index: 40; font-size: 18px; pointer-events: none; }
 
-@media (max-width: 980px) {
-  .app { height: auto; display: block; }
-  .main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "scope" "side" "rack"; }
-  .scope-panel { grid-template-rows: auto 380px auto; }
-  .cands { max-height: none; }
+@media (max-width: 1240px) {
+  .gen { grid-template-columns: 216px minmax(0, 1fr) 236px; }
+  .gstack { grid-column: 1 / -1; }
 }
-@media (max-width: 520px) {
-  .scope-panel { grid-template-rows: auto 300px auto; }
-  .knob { width: 52px; }
-  .knob .kv { width: 52px; }
+@media (max-width: 900px) {
+  .app { height: auto; display: flex; flex-direction: column; }
+  .instrument { grid-template-columns: minmax(0, 1fr); }
+  .display { height: 380px; }
+  .controls { flex-direction: row; flex-wrap: wrap; }
+  .controls .group { flex: 1 1 240px; }
+  .controls .group + .group { border-top: 0; padding-top: 0; }
+  .gen { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
-@media (prefers-reduced-motion: reduce) { .module { transition: none; } }
-.warn { font-size: 12px; color: var(--bad); }
-@media (max-width: 520px) {
-  .goal-row .word:empty { display: none; }
-  .goal-row .word { min-width: 0; }
-  select.field { max-width: 150px; }
+@media (max-width: 560px) {
+  .display { height: 300px; }
+  .gen { grid-template-columns: minmax(0, 1fr); }
+  .status { gap: 8px; font-size: 11px; }
 }
+@media (prefers-reduced-motion: reduce) { .caret { animation: none; } .sw::after { transition: none; } }
 </style>
 </head>
 <body>
@@ -247,6 +249,7 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 <header class="bar">
   <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4 17 H8 V7 H20" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.45"/><path d="M4 17 H8 C10 4 12 4.5 14 8.2 C15.5 11 17 6.5 20 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Loop Tuner</div>
   <input id="title" class="title" aria-label="Project title" spellcheck="false">
+  <span id="loopnote" class="loopnote"></span>
   <div class="actions">
     <select id="examples" class="btn" aria-label="Load an example"><option value="">Examples…</option></select>
     <span class="sep"></span>
@@ -262,53 +265,51 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
     <input type="file" id="file" accept=".json,.html,application/json,text/html" hidden>
   </div>
 </header>
-<main class="main">
-  <section class="panel scope-panel" aria-label="Scope">
-    <div class="scope-head">
-      <span class="label">Response</span>
-      <span id="warn" class="warn" hidden></span>
-      <div class="transport">
-        <button id="play" class="btn icon"></button>
-        <select id="speed" class="btn" aria-label="Sweep speed"><option value="1.5">Sweep 1.5 s</option><option value="3" selected>Sweep 3 s</option><option value="6">Sweep 6 s</option><option value="12">Sweep 12 s</option></select>
-      </div>
-    </div>
-    <div class="scope-wrap" id="scope"></div>
-    <div class="readout" id="readout"></div>
+<main class="instrument">
+  <section class="display" id="display" aria-label="Display">
+    <div class="status"></div>
+    <div class="screen"></div>
+    <div class="badges"></div>
   </section>
-  <aside class="side">
-    <section class="panel goal" id="goal" aria-label="Goal"></section>
-    <section class="panel cands" id="cands" aria-label="Candidates"></section>
-  </aside>
-  <section class="panel rack" id="rack" aria-label="Loop"></section>
+  <aside class="controls" id="controls" aria-label="Controls"></aside>
 </main>
+<section class="setup" aria-label="Setup">
+  <div class="tabbar" id="tabbar" role="tablist"></div>
+  <div class="tabpanel">
+    <div id="tab-input" role="tabpanel"></div>
+    <div id="tab-later" role="tabpanel" hidden></div>
+  </div>
+</section>
 <div id="toast" class="toast" role="status" hidden></div>
 <div id="drop" class="drop" hidden>Drop a project file (.json or .html)</div>
 <div id="help-dlg" class="overlay" hidden><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
 <h2 id="help-title">Loop Tuner</h2>
-<p>Tune a feedback loop by trying controller settings side by side. Each row in <b>Candidates</b> is one controller; its response is drawn on the scope in the same colour. The hatched areas are the limits from your <b>Goal</b>: a candidate that stays out of them is feasible (✓), and the feasible one with the lowest score is marked BEST.</p>
-<h3>Working with it</h3>
+<p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time. Right now the Input tab is built: a signal generator for the reference r(t).</p>
+<h3>Display</h3>
 <div class="keys">
-  <span><kbd>↑</kbd> <kbd>↓</kbd></span><span>Step through the candidates</span>
-  <span><kbd>Space</kbd></span><span>Show or hide the selected candidate on the scope</span>
-  <span><kbd>N</kbd></span><span>Duplicate the selected candidate, to try a variation</span>
-  <span><kbd>Del</kbd></span><span>Delete the selected candidate</span>
-  <span><kbd>T</kbd></span><span>Auto-tune: search the gains for the best feasible score</span>
-  <span><kbd>1</kbd> … <kbd>7</kbd></span><span>Jump to a module: reference, controller, actuator, disturbance, plant, sensor, noise</span>
-  <span><kbd>P</kbd></span><span>Play or pause the scan sweep</span>
-  <span><kbd>Ctrl</kbd> <kbd>Z</kbd> / <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd></span><span>Undo / redo</span>
+  <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record in real time, over and over.</span>
+  <span><kbd>S</kbd></span><span>Single: one sweep, then stop</span>
+  <span><kbd>A</kbd></span><span>Auto Scale: fit the timebase and every channel to the data</span>
+  <span>Knobs</span><span>Drag, scroll, or focus and use the arrow keys. Double-click a Position knob to zero it.</span>
+  <span>Channel keys</span><span>Select a channel for the Vertical knobs; press again to turn it off</span>
 </div>
-<p>Knobs: drag up or down (hold <kbd>Shift</kbd> for fine steps), scroll, or use the arrow keys. Double-click a knob to reset it; click its value to type one. Gains that can be switched off read “off” at the bottom of their travel.</p>
-<p>The controller module edits the selected candidate. Every other module is shared by all candidates, so changing the plant shows how every controller copes with it. Changing a block’s type keeps the parameters both types share, and switching back restores the rest.</p>
+<h3>Signal generator</h3>
+<p>Press a waveform key to draft a component: the display shows it dashed on its own and added to r(t). Adjust it, then <b>Add</b>. Click a component in the stack to edit it.</p>
+<div class="keys">
+  <span><kbd>0</kbd>–<kbd>9</kbd> <kbd>.</kbd> <kbd>-</kbd></span><span>Type a value for the active field; <kbd>Enter</kbd> sets it</span>
+  <span><kbd>Enter</kbd></span><span>With nothing typed: add (or apply) the draft</span>
+  <span><kbd>Esc</kbd></span><span>Clear what you typed, or cancel the draft</span>
+  <span><kbd>←</kbd> <kbd>→</kbd></span><span>Move the digit cursor</span>
+  <span><kbd>↑</kbd> <kbd>↓</kbd></span><span>Change the digit under the cursor (the dial does the same)</span>
+  <span><kbd>Tab</kbd></span><span>Next field</span>
+  <span><kbd>Ctrl</kbd> <kbd>Z</kbd></span><span>Undo; <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd> redo</span>
+</div>
 <h3>Files</h3>
-<p>The whole project is one JSON document. <b>Save JSON</b> and <b>Open</b> read and write it; you can also drop a file on the page or paste JSON. <b>Export HTML</b> writes this page with the project inside, ready to send to someone.</p>
+<p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3>For agents</h3>
-<p>The same simulation runs in Node. With the project file (or an exported HTML file):</p>
-<pre>node cli.mjs eval project.json          # metrics, score and feasibility of every candidate
-node cli.mjs try project.json --type PID --set Kp=2 --set Ki=0.8 --set Kd=1 --save
-node cli.mjs tune project.json --from "Z–N PID" --save
-node cli.mjs html project.json -o shared.html</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>evaluate()</code>, <code>select(name)</code> and <code>addCandidate(c)</code>.</p>
-<p><button class="btn primary" id="help-close">Close</button></p></div></div>
+<pre>node cli.mjs help</pre>
+<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code> and <code>stop()</code>.</p>
+<p><button class="key primary" id="help-close">Close</button></p></div></div>
 </div>
 <script type="application/json" id="loop-tuner-project"></script>
 <script id="lt-script">(() => {
@@ -389,7 +390,7 @@ __mods['core/blocks.js'] = (() => {
 // its parameters (with ranges the UI and the tuner use) and its behaviour:
 //   tf(p)     -> { num, den, delay }   linear SISO element (actuator, plant, sensor, controller)
 //   pid       -> true                  discrete PID (controller slot)
-//   signal(p) -> t => value            signal source (reference, disturbance)
+//   signal(p) -> t => value            signal source (disturbance)
 //   limits(p) -> { min, max }          actuator saturation
 //   noise(p)  -> { std, seed }         measurement noise
 // Blocks in one slot are interchangeable: parameters with the same key carry
@@ -420,34 +421,29 @@ const lag = (t) => [t, 1];
 const BLOCK_LIST = [
   // Reference and disturbance sources
   {
-    type: 'step', slots: ['reference', 'disturbance'], label: 'Step', formula: 'A · 1(t − t₀)',
+    type: 'step', slots: ['disturbance'], label: 'Step', formula: 'A · 1(t − t₀)',
     params: [amp('amplitude', 'A', 1), time('time', 't₀', 1)],
     signal: (p) => (t) => (t >= p.time ? p.amplitude : 0),
   },
   {
-    type: 'square', slots: ['reference', 'disturbance'], label: 'Square', formula: 'A · square(t − t₀, T)',
+    type: 'square', slots: ['disturbance'], label: 'Square', formula: 'A · square(t − t₀, T)',
     params: [amp('amplitude', 'A', 1), time('time', 't₀', 1), num('period', 'T', 10, 0.01, 1000, 'log', { unit: 's' }), num('duty', 'duty', 0.5, 0.05, 0.95)],
     signal: (p) => (t) => (t >= p.time && ((t - p.time) % p.period) < p.duty * p.period ? p.amplitude : 0),
   },
   {
-    type: 'pulse', slots: ['reference', 'disturbance'], label: 'Pulse', formula: 'A for t₀ ≤ t < t₀ + w',
+    type: 'pulse', slots: ['disturbance'], label: 'Pulse', formula: 'A for t₀ ≤ t < t₀ + w',
     params: [amp('amplitude', 'A', 1), time('time', 't₀', 1), num('width', 'w', 1, 0.001, 1000, 'log', { unit: 's' })],
     signal: (p) => (t) => (t >= p.time && t < p.time + p.width ? p.amplitude : 0),
   },
   {
-    type: 'ramp', slots: ['reference', 'disturbance'], label: 'Ramp', formula: 'k · (t − t₀) · 1(t − t₀)',
+    type: 'ramp', slots: ['disturbance'], label: 'Ramp', formula: 'k · (t − t₀) · 1(t − t₀)',
     params: [amp('slope', 'k', 0.1), time('time', 't₀', 1)],
     signal: (p) => (t) => (t >= p.time ? p.slope * (t - p.time) : 0),
   },
   {
-    type: 'sine', slots: ['reference', 'disturbance'], label: 'Sine', formula: 'A · sin(2πf (t − t₀))',
+    type: 'sine', slots: ['disturbance'], label: 'Sine', formula: 'A · sin(2πf (t − t₀))',
     params: [amp('amplitude', 'A', 1), time('time', 't₀', 0), num('frequency', 'f', 0.1, 0.001, 100, 'log', { unit: 'Hz' })],
     signal: (p) => (t) => (t >= p.time ? p.amplitude * Math.sin(2 * Math.PI * p.frequency * (t - p.time)) : 0),
-  },
-  {
-    type: 'staircase', slots: ['reference'], label: 'Staircase', formula: 'h · ⌊(t − t₀)/T + 1⌋',
-    params: [amp('height', 'h', 0.5), time('time', 't₀', 1), num('interval', 'T', 5, 0.01, 1000, 'log', { unit: 's' })],
-    signal: (p) => (t) => (t >= p.time ? p.height * Math.floor((t - p.time) / p.interval + 1) : 0),
   },
   {
     type: 'none', slots: ['disturbance'], label: 'None', formula: '0',
@@ -620,6 +616,182 @@ function retypeBlock(slot, block, newType, stash = {}) {
 }
 
 return { SLOTS, BLOCKS, blockDef, paramMax, normalizeBlock, retypeBlock };
+})();
+// ---- core/signals.js
+__mods['core/signals.js'] = (() => {
+// The signal generator's primitives. The reference r(t) is the sum of a list
+// of components, each one primitive with its parameters:
+//   { "components": [ { "type": "step", "params": { "amplitude": 1, "time": 0.1 } } ] }
+// A component may be switched off with "enabled": false; an Arb component
+// carries its samples in "points": [[t, v], ...].
+
+const p = (key, label, def, unit, extra = {}) => ({ key, label, default: def, unit, ...extra });
+
+const SIGNALS = {
+  dc: {
+    label: 'DC', params: [p('level', 'Level', 1, '')],
+    fn: (q) => () => q.level,
+    describe: (q) => `level ${q.level}`,
+  },
+  step: {
+    label: 'Step', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Time', 0.1, 's', { min: 0 })],
+    fn: (q) => (t) => (t >= q.time ? q.amplitude : 0),
+    describe: (q) => `${q.amplitude} at ${q.time} s`,
+  },
+  ramp: {
+    label: 'Ramp', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0.1, 's', { min: 0 }), p('rise', 'Rise time', 0.5, 's', { min: 1e-9 })],
+    fn: (q) => (t) => (t < q.time ? 0 : t >= q.time + q.rise ? q.amplitude : (q.amplitude * (t - q.time)) / q.rise),
+    describe: (q) => `${q.amplitude} over ${q.rise} s from ${q.time} s`,
+  },
+  pulse: {
+    label: 'Pulse', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0.1, 's', { min: 0 }), p('width', 'Width', 0.1, 's', { min: 1e-9 })],
+    fn: (q) => (t) => (t >= q.time && t < q.time + q.width ? q.amplitude : 0),
+    describe: (q) => `${q.amplitude} for ${q.width} s at ${q.time} s`,
+  },
+  square: {
+    label: 'Square', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('period', 'Period', 0.2, 's', { min: 1e-9 }), p('duty', 'Duty', 50, '%', { min: 0, max: 100 })],
+    fn: (q) => (t) => (t >= q.time && ((t - q.time) % q.period) < (q.duty / 100) * q.period ? q.amplitude : 0),
+    describe: (q) => `${q.amplitude}, period ${q.period} s, duty ${q.duty} %`,
+  },
+  sine: {
+    label: 'Sine', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('frequency', 'Frequency', 5, 'Hz', { min: 0 }), p('phase', 'Phase', 0, '°')],
+    fn: (q) => (t) => (t >= q.time ? q.amplitude * Math.sin(2 * Math.PI * q.frequency * (t - q.time) + (q.phase * Math.PI) / 180) : 0),
+    describe: (q) => `${q.amplitude}, ${q.frequency} Hz`,
+  },
+  chirp: {
+    label: 'Chirp', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('f0', 'Start freq.', 1, 'Hz', { min: 0 }), p('f1', 'End freq.', 20, 'Hz', { min: 0 }), p('duration', 'Duration', 1, 's', { min: 1e-9 })],
+    fn: (q) => (t) => {
+      if (t < q.time || t >= q.time + q.duration) return 0;
+      const s = t - q.time;
+      return q.amplitude * Math.sin(2 * Math.PI * (q.f0 * s + ((q.f1 - q.f0) * s * s) / (2 * q.duration)));
+    },
+    describe: (q) => `${q.amplitude}, ${q.f0} → ${q.f1} Hz over ${q.duration} s`,
+  },
+  noise: {
+    label: 'Noise', params: [p('std', 'σ', 0.05, '', { min: 0 }), p('seed', 'Seed', 1, '', { min: 0, int: true })],
+    // Held per sample and derived from (seed, sample index), so any time
+    // evaluates to the same value in the page and in Node.
+    fn: (q, ctx) => (t) => q.std * gaussAt(q.seed, Math.floor(t / ctx.sampleTime + 1e-9)),
+    describe: (q) => `σ ${q.std}, seed ${q.seed}`,
+  },
+  arb: {
+    label: 'Arb', params: [p('gain', 'Gain', 1, ''), p('shift', 'Time shift', 0, 's')],
+    fn: (q, ctx, comp) => {
+      const pts = comp.points ?? [];
+      return (t) => q.gain * interp(pts, t - q.shift);
+    },
+    describe: (q, comp) => `${(comp.points ?? []).length} points${comp.name ? ` from ${comp.name}` : ''}`,
+  },
+};
+
+function interp(pts, t) {
+  if (!pts.length) return 0;
+  if (t <= pts[0][0]) return t < pts[0][0] ? 0 : pts[0][1];
+  if (t >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
+  let lo = 0, hi = pts.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (pts[mid][0] <= t) lo = mid; else hi = mid; }
+  const [t0, v0] = pts[lo], [t1, v1] = pts[hi];
+  return t1 === t0 ? v1 : v0 + ((v1 - v0) * (t - t0)) / (t1 - t0);
+}
+
+function hash32(a) {
+  a = Math.imul(a ^ (a >>> 16), 0x45d9f3b);
+  a = Math.imul(a ^ (a >>> 16), 0x45d9f3b);
+  return (a ^ (a >>> 16)) >>> 0;
+}
+
+function gaussAt(seed, k) {
+  const u1 = (hash32((seed * 2654435761 + k * 2) | 0) + 1) / 4294967297;
+  const u2 = hash32((seed * 2654435761 + k * 2 + 1) | 0) / 4294967296;
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+function normalizeComponent(c, i = 0) {
+  const def = SIGNALS[c?.type];
+  if (!def) throw new Error(`reference.components[${i}]: unknown type "${c?.type}"; types: ${Object.keys(SIGNALS).join(', ')}`);
+  const params = {};
+  for (const q of def.params) {
+    let v = c.params?.[q.key];
+    v = v === undefined || v === null ? q.default : Number(v);
+    if (!Number.isFinite(v)) throw new Error(`reference.components[${i}].${q.key}: expected a number`);
+    if (q.int) v = Math.round(v);
+    params[q.key] = v;
+  }
+  const out = { type: c.type, params };
+  if (c.enabled === false) out.enabled = false;
+  if (c.type === 'arb') {
+    const pts = (c.points ?? []).map((pt) => [Number(pt[0]), Number(pt[1])]);
+    if (!pts.every((pt) => pt.every(Number.isFinite))) throw new Error(`reference.components[${i}].points: expected [[t, v], ...]`);
+    pts.sort((a, b) => a[0] - b[0]);
+    out.points = pts;
+    if (c.name) out.name = String(c.name);
+  }
+  return out;
+}
+
+function normalizeReference(ref) {
+  if (!ref) return { components: [] };
+  if (!Array.isArray(ref.components)) throw new Error('reference: expected { "components": [...] }');
+  return { components: ref.components.map(normalizeComponent) };
+}
+
+function componentFn(comp, ctx) {
+  return SIGNALS[comp.type].fn(comp.params, ctx, comp);
+}
+
+// r(t): the sum of the enabled components.
+function referenceFn(ref, ctx) {
+  const fns = ref.components.filter((c) => c.enabled !== false).map((c) => componentFn(c, ctx));
+  return (t) => { let s = 0; for (const f of fns) s += f(t); return s; };
+}
+
+function describeComponent(comp) {
+  const def = SIGNALS[comp.type];
+  return `${def.label} · ${def.describe(comp.params, comp)}`;
+}
+
+// Samples of a signal on the simulation grid.
+function sampleSignal(fn, sim) {
+  const K = Math.round(sim.duration / sim.sampleTime);
+  const t = new Float64Array(K + 1), v = new Float64Array(K + 1);
+  for (let k = 0; k <= K; k++) { t[k] = k * sim.sampleTime; v[k] = fn(t[k]); }
+  return { t, v };
+}
+
+// Reads "t, value" rows from CSV or TSV text; a header line is skipped.
+function parseWaveform(text) {
+  const pts = [];
+  for (const line of text.split(/\r?\n/)) {
+    const cells = line.trim().split(/[\s,;]+/).filter(Boolean);
+    if (cells.length < 2) continue;
+    const t = Number(cells[0]), v = Number(cells[1]);
+    if (Number.isFinite(t) && Number.isFinite(v)) pts.push([t, v]);
+  }
+  if (pts.length < 2) throw new Error('expected at least two rows of "time, value"');
+  return pts.sort((a, b) => a[0] - b[0]);
+}
+
+// v1 projects had one reference block; it becomes one component.
+function migrateReferenceBlock(block, duration) {
+  if (!block) return { components: [] };
+  const q = block.params ?? {};
+  switch (block.type) {
+    case 'ramp': {
+      const rise = Math.max(1e-9, duration - (q.time ?? 1));
+      return { components: [{ type: 'ramp', params: { amplitude: (q.slope ?? 0.1) * rise, time: q.time ?? 1, rise } }] };
+    }
+    case 'square': return { components: [{ type: 'square', params: { ...q, duty: (q.duty ?? 0.5) * 100 } }] };
+    case 'sine': return { components: [{ type: 'sine', params: { amplitude: q.amplitude, time: q.time, frequency: q.frequency } }] };
+    case 'staircase': {
+      const comps = [];
+      for (let t = q.time ?? 1; t < duration; t += q.interval ?? 5) comps.push({ type: 'step', params: { amplitude: q.height ?? 0.5, time: t } });
+      return { components: comps };
+    }
+    default: return { components: [{ type: block.type, params: q }] };
+  }
+}
+
+return { SIGNALS, normalizeComponent, normalizeReference, componentFn, referenceFn, describeComponent, sampleSignal, parseWaveform, migrateReferenceBlock };
 })();
 // ---- core/metrics.js
 __mods['core/metrics.js'] = (() => {
@@ -847,6 +1019,7 @@ __mods['core/sim.js'] = (() => {
 
 const { blockDef, SLOTS } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
+const { referenceFn } = __mods['core/signals.js'];
 const MAX_SAMPLES = 200000;
 const MAX_STEPS = 400000;
 const BLOWUP = 1e8;
@@ -862,7 +1035,7 @@ function simulate(loop, sim) {
   const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
   if (K < Math.round(duration / Ts)) warnings.push(`sample count capped at ${MAX_SAMPLES}; increase sampleTime`);
 
-  const refFn = blockDef('reference', loop.reference.type).signal(loop.reference.params);
+  const refFn = referenceFn(loop.reference, { sampleTime: Ts });
   const distFn = blockDef('disturbance', loop.disturbance.type).signal(loop.disturbance.params);
   const actDef = blockDef('actuator', loop.actuator.type);
   const limits = actDef.limits ? actDef.limits(loop.actuator.params) : null;
@@ -1085,34 +1258,44 @@ return { simulate };
 })();
 // ---- core/project.js
 __mods['core/project.js'] = (() => {
-// The project file: one human-editable JSON document holding the system (every
-// slot but the controller), the goal, and the candidates. Each candidate holds
-// its own controller and may override any other slot.
+// The project file: one human-editable JSON document holding the system (the
+// reference and every slot but the controller), how the display is set, the
+// goal, and the candidates. Each candidate holds its own controller and may
+// override any other slot. design/output/project-format.md describes it.
 
 const { SLOTS, normalizeBlock } = __mods['core/blocks.js'];
+const { normalizeReference, migrateReferenceBlock, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { simulate } = __mods['core/sim.js'];
 const { computeMetrics } = __mods['core/metrics.js'];
 const { normalizeGoal, evaluateGoal, compareEvals } = __mods['core/goal.js'];
-const FORMAT = 'loop-tuner/1';
+const FORMAT = 'loop-tuner/2';
 const PALETTE_SIZE = 8;
+const CHANNEL_SOURCES = ['r', 'y', 'u', 'e', 'ym', 'd'];
 
+// Slots that default to a transparent block. The plant has no default in a
+// v2 project: it is null until the Plant tab sets one.
 const SYSTEM_DEFAULTS = {
-  reference: { type: 'step' },
   actuator: { type: 'ideal' },
   disturbance: { type: 'none' },
-  plant: { type: 'firstOrder' },
   sensor: { type: 'ideal' },
   noise: { type: 'none' },
 };
-const CANDIDATE_KEYS = new Set(['name', 'checked', 'color', 'note', 'controller', ...SLOTS.map((s) => s.key)]);
+const BLOCK_SLOTS = ['actuator', 'disturbance', 'plant', 'sensor', 'noise'];
+const CANDIDATE_KEYS = new Set(['name', 'checked', 'color', 'note', 'controller', ...BLOCK_SLOTS]);
 
 function normalizeProject(p) {
   if (!p || typeof p !== 'object') throw new Error('project must be a JSON object');
-  const sim = { duration: Number(p.sim?.duration ?? 20), sampleTime: Number(p.sim?.sampleTime ?? 0.01) };
+  const v1 = p.format === 'loop-tuner/1' || (p.system?.reference && typeof p.system.reference.type === 'string');
+  const sim = { duration: Number(p.sim?.duration ?? (v1 ? 20 : 1)), sampleTime: Number(p.sim?.sampleTime ?? (v1 ? 0.01 : NaN)) };
   if (!(sim.duration > 0)) throw new Error('sim.duration must be > 0');
+  if (!Number.isFinite(sim.sampleTime)) sim.sampleTime = defaultSampleTime(sim.duration);
   if (!(sim.sampleTime > 0) || sim.sampleTime > sim.duration) throw new Error('sim.sampleTime must be > 0 and below the duration');
-  const system = {};
+  const system = {
+    reference: v1 ? normalizeReference(migrateReferenceBlock(p.system?.reference ?? { type: 'step' }, sim.duration)) : normalizeReference(p.system?.reference),
+  };
   for (const [slot, def] of Object.entries(SYSTEM_DEFAULTS)) system[slot] = normalizeBlock(slot, p.system?.[slot] ?? def);
+  const plant = p.system?.plant ?? (v1 ? { type: 'firstOrder' } : null);
+  system.plant = plant ? normalizeBlock('plant', plant) : null;
   const goal = normalizeGoal(p.goal);
   const raw = Array.isArray(p.candidates) ? p.candidates : [];
   const candidates = raw.map((c, i) => {
@@ -1124,7 +1307,7 @@ function normalizeProject(p) {
       controller: normalizeBlock('controller', c.controller ?? { type: 'PID' }),
     };
     if (c.note) out.note = String(c.note);
-    for (const s of SLOTS) if (s.key !== 'controller' && c[s.key]) out[s.key] = normalizeBlock(s.key, c[s.key]);
+    for (const k of BLOCK_SLOTS) if (c[k]) out[k] = normalizeBlock(k, c[k]);
     return out;
   });
   for (const c of candidates) if (c.color === null) c.color = nextColor(candidates);
@@ -1132,9 +1315,48 @@ function normalizeProject(p) {
     format: FORMAT,
     title: String(p.title ?? 'Untitled loop'),
     ...(p.notes ? { notes: String(p.notes) } : {}),
-    sim, system, goal, candidates,
+    sim, system, scope: normalizeScope(p.scope, sim), goal, candidates,
     ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
   };
+}
+
+function defaultSampleTime(duration) {
+  return Number((duration / 2000).toPrecision(2));
+}
+
+const DEFAULT_CHANNELS = [
+  { source: 'r', on: true, scale: 0.2, offset: 0 },
+  { source: 'y', on: true, scale: 0.2, offset: 0 },
+  { source: 'u', on: false, scale: 0.5, offset: 0 },
+  { source: 'e', on: false, scale: 0.2, offset: 0 },
+];
+
+// How the display is set: timebase (s/div, time at the left edge) and four
+// channels (source, on, units/div, offset in units).
+function normalizeScope(scope = {}, sim) {
+  const tb = scope.timebase ?? {};
+  const timebase = { scale: Number(tb.scale ?? sim.duration / 10), position: Number(tb.position ?? 0) };
+  if (!(timebase.scale > 0)) throw new Error('scope.timebase.scale must be > 0');
+  const channels = DEFAULT_CHANNELS.map((d, i) => {
+    const c = scope.channels?.[i] ?? {};
+    const ch = { source: c.source ?? d.source, on: c.on ?? d.on, scale: Number(c.scale ?? d.scale), offset: Number(c.offset ?? d.offset) };
+    if (!CHANNEL_SOURCES.includes(ch.source)) throw new Error(`scope.channels[${i}].source: one of ${CHANNEL_SOURCES.join(', ')}`);
+    if (!(ch.scale > 0) || !Number.isFinite(ch.offset)) throw new Error(`scope.channels[${i}]: scale must be > 0 and offset a number`);
+    ch.on = !!ch.on;
+    return ch;
+  });
+  return { timebase, channels };
+}
+
+// A loop can run once it has a plant and at least one controller candidate.
+function loopReady(project) {
+  return !!project.system.plant && project.candidates.length > 0;
+}
+
+// r(t) on the simulation grid, whether or not a loop exists.
+function referenceTrace(project) {
+  const { t, v } = sampleSignal(referenceFn(project.system.reference, project.sim), project.sim);
+  return { t, r: v };
 }
 
 // The least-used palette slot, earliest first, so a colour follows its
@@ -1154,6 +1376,7 @@ function resolveLoop(project, cand) {
 }
 
 function evaluateCandidate(project, cand) {
+  if (!project.system.plant) throw new Error('the loop has no plant yet; add one in the Plant tab or set system.plant');
   const result = simulate(resolveLoop(project, cand), project.sim);
   const metrics = computeMetrics(result, { settlingBand: project.goal.settlingBand });
   const evaluation = evaluateGoal(metrics, project.goal);
@@ -1203,7 +1426,7 @@ function fmt(v, digits = 3) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { FORMAT, PALETTE_SIZE, normalizeProject, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+return { FORMAT, PALETTE_SIZE, CHANNEL_SOURCES, normalizeProject, defaultSampleTime, normalizeScope, loopReady, referenceTrace, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
 })();
 // ---- core/tune.js
 __mods['core/tune.js'] = (() => {
@@ -1326,7 +1549,26 @@ return { tunableParams, tuneCandidate, runTune };
 })();
 // ---- core/examples.js
 __mods['core/examples.js'] = (() => {
-// Textbook example projects. The first one is what a fresh page opens with.
+// Example projects. DEFAULT_PROJECT is what a fresh page opens with: the
+// reference alone, a step at 0.1 s (design/output/signal-generator.md).
+// EXAMPLES are complete textbook loops (version 1 files, still loadable).
+
+const DEFAULT_PROJECT = {
+  format: 'loop-tuner/2',
+  title: 'New loop',
+  sim: { duration: 1, sampleTime: 0.0005 },
+  system: { reference: { components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] }, plant: null },
+  scope: {
+    timebase: { scale: 0.1, position: 0 },
+    channels: [
+      { source: 'r', on: true, scale: 0.2, offset: -0.4 },
+      { source: 'y', on: true, scale: 0.2, offset: -0.4 },
+      { source: 'u', on: false, scale: 0.5, offset: 0 },
+      { source: 'e', on: false, scale: 0.2, offset: 0 },
+    ],
+  },
+  candidates: [],
+};
 
 const EXAMPLES = [
   {
@@ -1432,103 +1674,94 @@ const EXAMPLES = [
   },
 ];
 
-return { EXAMPLES };
+return { DEFAULT_PROJECT, EXAMPLES };
 })();
-// ---- ui/knob.js
-__mods['ui/knob.js'] = (() => {
-// A rotary knob for one block parameter. Drag up/down (Shift: fine), scroll,
-// arrow keys, double-click to reset, click the value to type one.
+// ---- ui/units.js
+__mods['ui/units.js'] = (() => {
+// Engineering units for the instrument: SI prefixes and 1-2-5 sequences.
 
-const { fmt } = __mods['core/project.js'];
-const SWEEP = 270;
-const OFF = 0.04; // log0: the bottom of the travel is "off" (0)
+const PREFIXES = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n']];
 
-function knobPos(param, value, max) {
-  const { min, scale } = param;
-  if (scale === 'lin') return clamp01((value - min) / (max - min));
-  if (scale === 'log0' && !(value > 0)) return 0;
-  const p = Math.log(Math.max(value, min) / min) / Math.log(max / min);
-  return scale === 'log0' ? OFF + (1 - OFF) * clamp01(p) : clamp01(p);
+// 0.1 -> "100 m", 2e-6 -> "2 µ"; unit appended by the caller.
+function si(v, digits = 3) {
+  if (v === 0) return '0 ';
+  if (!Number.isFinite(v)) return '— ';
+  const a = Math.abs(v);
+  const [f, p] = PREFIXES.find(([f]) => a >= f * 0.9995) ?? PREFIXES[PREFIXES.length - 1];
+  return `${Number((v / f).toPrecision(digits))} ${p}`;
 }
 
-function knobValue(param, pos, max) {
-  const { min, scale } = param;
-  let v;
-  if (scale === 'lin') v = min + pos * (max - min);
-  else if (scale === 'log0') v = pos < OFF ? 0 : min * Math.pow(max / min, (pos - OFF) / (1 - OFF));
-  else v = min * Math.pow(max / min, pos);
-  if (param.int) v = Math.round(v);
-  else if (v !== 0) v = Number(v.toPrecision(4));
-  return v;
+function siUnit(v, unit, digits) {
+  return `${si(v, digits)}${unit}`.replace(/ $/, '');
 }
 
-function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+// The 1-2-5 step nearest to v, and the next one up or down.
+function step125(v, dir) {
+  const e = Math.floor(Math.log10(v));
+  const ladder = [];
+  for (let k = e - 1; k <= e + 1; k++) for (const m of [1, 2, 5]) ladder.push(Number((m * 10 ** k).toPrecision(3)));
+  let i = 0;
+  for (let j = 0; j < ladder.length; j++) if (Math.abs(Math.log(ladder[j] / v)) < Math.abs(Math.log(ladder[i] / v))) i = j;
+  return ladder[Math.max(0, Math.min(ladder.length - 1, i + dir))];
+}
+
+// The smallest 1-2-5 value that is >= v.
+function ceil125(v) {
+  const e = Math.floor(Math.log10(v));
+  for (let k = e; k <= e + 1; k++) for (const m of [1, 2, 5]) { const c = Number((m * 10 ** k).toPrecision(3)); if (c >= v * (1 - 1e-9)) return c; }
+  return 10 ** (e + 1);
+}
+
+// A plain number for readouts: up to 4 significant digits, no exponent noise.
+function num(v, digits = 4) {
+  if (!Number.isFinite(v)) return '—';
+  if (v === 0) return '0';
+  const a = Math.abs(v);
+  if (a >= 1e5 || a < 1e-4) return v.toExponential(2);
+  return String(Number(v.toPrecision(digits)));
+}
+
+return { si, siUnit, step125, ceil125, num };
+})();
+// ---- ui/dial.js
+__mods['ui/dial.js'] = (() => {
+// An endless rotary encoder, like a scope's or a generator's knob: no end
+// stops, every detent is one step. Drag up or right to turn clockwise, scroll,
+// or use the arrow keys when focused. Double-click is the push.
 
 const NS = 'http://www.w3.org/2000/svg';
-function arcPath(a0, a1, r = 17) {
-  const p = (a) => [22 + r * Math.sin(a), 22 - r * Math.cos(a)];
-  const [x0, y0] = p(a0), [x1, y1] = p(a1);
-  const large = a1 - a0 > Math.PI ? 1 : 0;
-  return `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`;
-}
+const PX_PER_DETENT = 14;
+const DEG_PER_DETENT = 18;
 
-// opts: { param, value, max, color, onInput(v), onCommit(v), onStart() }
-function createKnob(opts) {
-  const { param } = opts;
-  let value = opts.value;
-  const max = opts.max;
+// opts: { size, label, onTurn(steps, fine), onPush(), title }
+function createDial(opts) {
+  const size = opts.size ?? 52;
   const root = document.createElement('div');
-  root.className = 'knob';
-  const unit = param.unit ? ` ${param.unit}` : '';
-  root.title = `${param.label}${unit ? ` (${param.unit})` : ''} · drag, scroll or use arrow keys · Shift for fine · double-click to reset`;
-  const label = document.createElement('div');
-  label.className = 'kl';
-  label.textContent = param.label;
+  root.className = 'dial';
   const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 44 44');
+  svg.setAttribute('viewBox', '-50 -50 100 100');
+  svg.setAttribute('width', size);
+  svg.setAttribute('height', size);
   svg.setAttribute('tabindex', '0');
   svg.setAttribute('role', 'slider');
-  svg.setAttribute('aria-label', param.label);
-  if (opts.color) svg.style.setProperty('--kc', opts.color);
-  const a0 = (-SWEEP / 2) * Math.PI / 180, a1 = (SWEEP / 2) * Math.PI / 180;
-  const track = document.createElementNS(NS, 'path');
-  track.setAttribute('class', 'track');
-  track.setAttribute('d', arcPath(a0, a1));
-  const arc = document.createElementNS(NS, 'path');
-  arc.setAttribute('class', 'val');
-  const cap = document.createElementNS(NS, 'circle');
-  cap.setAttribute('class', 'cap');
-  cap.setAttribute('cx', 22); cap.setAttribute('cy', 22); cap.setAttribute('r', 11.5);
-  const ptr = document.createElementNS(NS, 'line');
-  ptr.setAttribute('class', 'ptr');
-  svg.append(track, arc, cap, ptr);
-  const input = document.createElement('input');
-  input.className = 'kv';
-  input.setAttribute('aria-label', `${param.label} value`);
-  input.spellcheck = false;
-  root.append(label, svg, input);
-
-  function show() {
-    const pos = knobPos(param, value, max);
-    const a = a0 + pos * (a1 - a0);
-    // Lin knobs that span zero draw their arc from the centre.
-    const zeroPos = param.scale === 'lin' && param.min < 0 && max > 0 ? knobPos(param, 0, max) : 0;
-    const az = a0 + zeroPos * (a1 - a0);
-    const lo = Math.min(a, az), hi = Math.max(a, az);
-    arc.setAttribute('d', hi - lo > 0.01 ? arcPath(lo, hi) : '');
-    ptr.setAttribute('x1', 22 + 4 * Math.sin(a)); ptr.setAttribute('y1', 22 - 4 * Math.cos(a));
-    ptr.setAttribute('x2', 22 + 10 * Math.sin(a)); ptr.setAttribute('y2', 22 - 10 * Math.cos(a));
-    const text = param.scale === 'log0' && value === 0 ? 'off' : fmt(value);
-    if (document.activeElement !== input) input.value = text;
-    svg.setAttribute('aria-valuenow', String(value));
-    svg.setAttribute('aria-valuetext', `${text}${unit}`);
+  svg.setAttribute('aria-label', opts.label);
+  if (opts.title) root.title = opts.title;
+  // Knurled skirt, cap, indicator.
+  let ticks = '';
+  for (let i = 0; i < 36; i++) {
+    const a = (i * 10 * Math.PI) / 180;
+    ticks += `<line x1="${(46 * Math.sin(a)).toFixed(2)}" y1="${(-46 * Math.cos(a)).toFixed(2)}" x2="${(40 * Math.sin(a)).toFixed(2)}" y2="${(-40 * Math.cos(a)).toFixed(2)}"/>`;
   }
-
-  function setFromPos(pos, commit) {
-    const v = knobValue(param, clamp01(pos), max);
-    if (v !== value) { value = v; show(); opts.onInput(v); }
-    if (commit) opts.onCommit(value);
-  }
+  svg.innerHTML = `<circle class="skirt" r="47"/><g class="knurl">${ticks}</g><circle class="cap" r="36"/><g class="rot"><circle class="dot" cx="0" cy="-26" r="4.5"/></g>`;
+  const rot = svg.querySelector('.rot');
+  root.append(svg);
+  let angle = 0;
+  const turn = (steps, fine) => {
+    if (!steps) return;
+    angle += steps * DEG_PER_DETENT;
+    rot.setAttribute('transform', `rotate(${angle})`);
+    opts.onTurn(steps, fine);
+  };
 
   let drag = null;
   svg.addEventListener('pointerdown', (e) => {
@@ -1536,1237 +1769,899 @@ function createKnob(opts) {
     e.preventDefault();
     svg.focus();
     svg.setPointerCapture(e.pointerId);
-    drag = { x: e.clientX, y: e.clientY, pos: knobPos(param, value, max) };
+    drag = { acc: 0, x: e.clientX, y: e.clientY };
     root.classList.add('active');
-    opts.onStart?.();
   });
   svg.addEventListener('pointermove', (e) => {
     if (!drag) return;
-    const k = e.shiftKey ? 1 / 3000 : 1 / 320;
-    drag.pos = clamp01(drag.pos + (drag.y - e.clientY + (e.clientX - drag.x)) * k);
+    drag.acc += (e.clientX - drag.x) + (drag.y - e.clientY);
     drag.x = e.clientX; drag.y = e.clientY;
-    setFromPos(drag.pos, false);
+    const steps = Math.trunc(drag.acc / PX_PER_DETENT);
+    if (steps) { drag.acc -= steps * PX_PER_DETENT; turn(steps, e.shiftKey); }
   });
-  const end = () => {
-    if (!drag) return;
-    drag = null;
-    root.classList.remove('active');
-    opts.onCommit(value);
-  };
+  const end = () => { drag = null; root.classList.remove('active'); opts.onRelease?.(); };
   svg.addEventListener('pointerup', end);
   svg.addEventListener('pointercancel', end);
-  svg.addEventListener('dblclick', () => { opts.onStart?.(); value = param.default; show(); opts.onInput(value); opts.onCommit(value); });
-
-  let wheelTimer = null;
+  svg.addEventListener('dblclick', () => opts.onPush?.());
+  let wheelAcc = 0;
   svg.addEventListener('wheel', (e) => {
     e.preventDefault();
-    if (!wheelTimer) opts.onStart?.();
-    clearTimeout(wheelTimer);
-    const step = (e.shiftKey ? 0.002 : 0.015) * (e.deltaY < 0 ? 1 : -1);
-    setFromPos(knobPos(param, value, max) + step, false);
-    wheelTimer = setTimeout(() => { wheelTimer = null; opts.onCommit(value); }, 350);
+    wheelAcc += -e.deltaY;
+    const unit = e.deltaMode === 1 ? 3 : 60;
+    const steps = Math.trunc(wheelAcc / unit);
+    if (steps) { wheelAcc -= steps * unit; turn(steps, e.shiftKey); opts.onRelease?.(); }
   }, { passive: false });
-
   svg.addEventListener('keydown', (e) => {
-    const steps = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 10, PageDown: -10 };
-    let pos = null;
-    if (e.key in steps) pos = knobPos(param, value, max) + steps[e.key] * (e.shiftKey ? 0.002 : 0.01);
-    else if (e.key === 'Home') pos = 0;
-    else if (e.key === 'End') pos = 1;
-    if (pos === null) return;
-    e.preventDefault();
-    e.stopPropagation();
-    opts.onStart?.();
-    if (param.int) {
-      const dir = Math.sign(pos - knobPos(param, value, max));
-      const v = Math.min(max, Math.max(param.min, value + dir));
-      if (v !== value) { value = v; show(); opts.onInput(v); }
-      opts.onCommit(value);
-    } else setFromPos(pos, true);
+    const k = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 5, PageDown: -5 }[e.key];
+    if (k) { e.preventDefault(); e.stopPropagation(); turn(k, e.shiftKey); opts.onRelease?.(); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); opts.onPush?.(); }
   });
-
-  input.addEventListener('focus', () => { input.select(); });
-  input.addEventListener('keydown', (e) => {
-    e.stopPropagation();
-    if (e.key === 'Enter') input.blur();
-    if (e.key === 'Escape') { show(); input.dataset.cancel = '1'; input.blur(); }
-  });
-  input.addEventListener('blur', () => {
-    if (input.dataset.cancel) { delete input.dataset.cancel; show(); return; }
-    const txt = input.value.trim().toLowerCase();
-    const v = txt === 'off' ? 0 : Number(txt.replace(',', '.').replace('−', '-'));
-    if (!Number.isFinite(v)) { show(); return; }
-    if (v !== value) { opts.onStart?.(); value = param.int ? Math.round(v) : v; opts.onInput(value); opts.onCommit(value); }
-    show();
-  });
-
-  show();
-  return { el: root, set(v) { value = v; show(); } };
+  return { el: root, svg };
 }
 
-return { knobPos, knobValue, createKnob };
+return { createDial };
 })();
-// ---- ui/scope.js
-__mods['ui/scope.js'] = (() => {
-// The scope: output y(t) over the reference r(t), and effort u(t) below, for
-// every checked candidate. A scan line sweeps the period like an oscilloscope:
-// left of it the selected trace is drawn bright, right of it as the fading
-// previous sweep. Hovering moves the scan line; clicking a trace selects it.
+// ---- ui/display.js
+__mods['ui/display.js'] = (() => {
+// The scope display: a 10 × 8 division graticule, four channels, a real-time
+// sweep, the generator's dashed preview, and a hover cursor. See
+// design/output/instrument.md.
 
-const { fmt } = __mods['core/project.js'];
-const PAD = { l: 50, r: 14, t: 22, b: 24, gap: 26 };
-const SPLIT = 0.64;
+const { siUnit, num } = __mods['ui/units.js'];
+const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
+const SOURCE_LABEL = { r: 'r  reference', y: 'y  output', u: 'u  effort', e: 'e  error', ym: 'ym measured', d: 'd  disturbance' };
+const DIVX = 10, DIVY = 8;
 
-function createScope(wrap, handlers) {
+function createDisplay(root, handlers) {
+  const status = root.querySelector('.status');
+  const screen = root.querySelector('.screen');
+  const badges = root.querySelector('.badges');
   const canvas = document.createElement('canvas');
   canvas.setAttribute('role', 'img');
-  canvas.setAttribute('aria-label', 'Step response scope: output and control effort over time');
-  wrap.append(canvas);
+  canvas.setAttribute('aria-label', 'Oscilloscope display');
+  screen.append(canvas);
   const ctx = canvas.getContext('2d');
-  const layer = document.createElement('canvas');
-  const lctx = layer.getContext('2d');
-  let W = 0, H = 0, dpr = 1;
-  let data = null;
-  let colors = {};
-  let geo = null;
-  let dirty = true;
-  let playing = false, sweepSeconds = 3, phase = 1;
-  let hoverT = null, lastFrame = 0, raf = 0;
+  const grid = document.createElement('canvas');
+  const gctx = grid.getContext('2d');
 
-  function readColors() {
-    const cs = getComputedStyle(document.documentElement);
-    const v = (n) => cs.getPropertyValue(n).trim();
-    colors = { screen: v('--screen'), ink: v('--ink'), ink2: v('--ink-2'), muted: v('--muted'), grid: v('--grid'), axis: v('--axis'), bad: v('--bad'), scan: v('--scan'), mono: v('--mono') };
-    dirty = true;
-  }
+  let W = 0, H = 0, dpr = 1;
+  let data = null, scope = null, preview = null, selected = 0;
+  let mode = 'stop', tScan = 0, last = 0, raf = 0, hover = null;
 
   function resize() {
-    const rect = wrap.getBoundingClientRect();
+    const r = screen.getBoundingClientRect();
     dpr = window.devicePixelRatio || 1;
-    W = Math.max(10, rect.width); H = Math.max(10, rect.height);
-    for (const c of [canvas, layer]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
-    dirty = true;
+    W = Math.max(20, r.width); H = Math.max(20, r.height);
+    for (const c of [canvas, grid]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+    drawGrid();
     draw();
   }
 
-  function niceTicks(lo, hi, n) {
-    const span = hi - lo;
-    if (!(span > 0)) return [lo];
-    const raw = span / n;
-    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-    const step = [1, 2, 2.5, 5, 10].map((s) => s * mag).find((s) => s >= raw) ?? 10 * mag;
-    const out = [];
-    for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-6; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
-    return out;
+  function drawGrid() {
+    const g = gctx;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = '#0a0d10';
+    g.fillRect(0, 0, W, H);
+    const dx = W / DIVX, dy = H / DIVY;
+    g.fillStyle = 'rgba(160, 175, 190, 0.32)';
+    for (let i = 0; i <= DIVX; i++) for (let j = 0; j <= DIVY * 5; j++) g.fillRect(Math.round(i * dx) - 0.5, j * dy / 5 - 0.5, 1, 1);
+    for (let j = 0; j <= DIVY; j++) for (let i = 0; i <= DIVX * 5; i++) g.fillRect(i * dx / 5 - 0.5, Math.round(j * dy) - 0.5, 1, 1);
+    g.strokeStyle = 'rgba(160, 175, 190, 0.38)';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(0, Math.round(H / 2) + 0.5); g.lineTo(W, Math.round(H / 2) + 0.5);
+    g.moveTo(Math.round(W / 2) + 0.5, 0); g.lineTo(Math.round(W / 2) + 0.5, H);
+    for (let i = 0; i <= DIVX * 5; i++) { const x = Math.round(i * dx / 5) + 0.5; g.moveTo(x, H / 2 - 3); g.lineTo(x, H / 2 + 3); }
+    for (let j = 0; j <= DIVY * 5; j++) { const y = Math.round(j * dy / 5) + 0.5; g.moveTo(W / 2 - 3, y); g.lineTo(W / 2 + 3, y); }
+    g.stroke();
+    g.strokeStyle = 'rgba(160, 175, 190, 0.5)';
+    g.strokeRect(0.5, 0.5, W - 1, H - 1);
   }
 
-  function range(arrays, extra) {
-    let lo = Infinity, hi = -Infinity;
-    for (const a of arrays) for (let i = 0; i < a.length; i++) { const v = a[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
-    for (const v of extra) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-    if (!Number.isFinite(lo)) { lo = -1; hi = 1; }
-    if (hi - lo < 1e-9) { lo -= 0.5; hi += 0.5; }
-    const pad = (hi - lo) * 0.08;
-    return [lo - pad, hi + pad];
-  }
+  const tx = (t) => ((t - scope.timebase.position) / scope.timebase.scale) * (W / DIVX);
+  const xt = (x) => scope.timebase.position + (x / (W / DIVX)) * scope.timebase.scale;
+  const vy = (ch, v) => H / 2 - ((v + ch.offset) / ch.scale) * (H / DIVY);
 
-  function computeGeo() {
-    const x0 = PAD.l, x1 = W - PAD.r;
-    const usable = H - PAD.t - PAD.b - PAD.gap;
-    const yTop = PAD.t, yMid = PAD.t + usable * SPLIT, yBot = yMid + PAD.gap, yEnd = H - PAD.b;
-    const { duration, ref, traces, spec } = data;
-    const extra = [];
-    if (spec.step) {
-      const D = spec.step.to - spec.step.from;
-      if (spec.overshootMax !== undefined) extra.push(spec.step.to + (spec.overshootMax / 100) * D);
-    }
-    // Ranges come from the reference and the selected trace; other traces may
-    // widen them by at most their own span again, so one diverging run cannot
-    // flatten the rest.
-    const sel = traces.find((t) => t.selected) ?? traces[0];
-    const clipTo = (base, all) => {
-      const span = base[1] - base[0];
-      return [Math.max(all[0], base[0] - span), Math.min(all[1], base[1] + span)];
-    };
-    const uLim = [0, spec.uMax, spec.uMin !== undefined ? spec.uMin : (spec.uMax !== undefined ? -spec.uMax : undefined)];
-    const [ylo, yhi] = clipTo(range([ref, ...(sel ? [sel.y] : [])], extra), range([ref, ...traces.map((t) => t.y)], extra));
-    const [ulo, uhi] = clipTo(range(sel ? [sel.u] : [], uLim), range(traces.map((t) => t.u), uLim));
-    geo = {
-      x0, x1, duration,
-      sx: (t) => x0 + (t / duration) * (x1 - x0),
-      tx: (x) => ((x - x0) / (x1 - x0)) * duration,
-      out: { top: yTop, bot: yMid, lo: ylo, hi: yhi, sy: (v) => yMid - ((v - ylo) / (yhi - ylo)) * (yMid - yTop) },
-      eff: { top: yBot, bot: yEnd, lo: ulo, hi: uhi, sy: (v) => yEnd - ((v - ulo) / (uhi - ulo)) * (yEnd - yBot) },
-    };
-  }
-
-  function hatch(c) {
-    const p = document.createElement('canvas');
-    p.width = p.height = 8 * dpr;
-    const q = p.getContext('2d');
-    q.strokeStyle = colors.bad; q.globalAlpha = 0.35; q.lineWidth = dpr;
-    q.beginPath(); q.moveTo(0, 8 * dpr); q.lineTo(8 * dpr, 0); q.stroke();
-    const pat = c.createPattern(p, 'repeat');
-    pat.setTransform?.(new DOMMatrix().scale(1 / dpr));
-    return pat;
-  }
-
-  // Draws t/v as a polyline, collapsing points that share a pixel column to
-  // their min and max so long runs stay fast.
-  function series(c, t, v, pane, from = 0, to = t.length - 1) {
-    const { sx } = geo, sy = pane.sy;
+  // Polyline of v over t for samples [from, to], collapsing samples that share
+  // a pixel column into their min/max, skipping what is off screen.
+  function trace(c, t, v, ch, from, to) {
     c.beginPath();
-    let started = false, col = -1, mn = 0, mx = 0, last = 0;
+    let started = false, col = null, mn = 0, mx = 0, lastV = 0;
     const flush = () => {
-      if (col < 0) return;
-      if (mn !== mx) { c.lineTo(col, sy(mn)); c.lineTo(col, sy(mx)); }
-      c.lineTo(col, sy(last));
+      if (col === null) return;
+      if (mn !== mx) { c.lineTo(col, vy(ch, mn)); c.lineTo(col, vy(ch, mx)); }
+      c.lineTo(col, vy(ch, lastV));
     };
-    for (let i = from; i <= to; i++) {
+    for (let i = Math.max(0, from); i <= to; i++) {
       const y = v[i];
       if (!Number.isFinite(y)) break;
-      const x = Math.round(sx(t[i]) * 2) / 2;
-      if (!started) { c.moveTo(x, sy(y)); started = true; col = x; mn = mx = last = y; continue; }
-      if (x === col) { mn = Math.min(mn, y); mx = Math.max(mx, y); last = y; continue; }
+      const x = Math.round(tx(t[i]));
+      if (x < -2 && i < to && tx(t[i + 1]) < -2) continue;
+      if (!started) { c.moveTo(x, vy(ch, y)); started = true; col = x; mn = mx = lastV = y; continue; }
+      if (x === col) { mn = Math.min(mn, y); mx = Math.max(mx, y); lastV = y; continue; }
       flush();
-      col = x; mn = mx = last = y;
+      if (x > W + 2) { col = null; break; }
+      col = x; mn = mx = lastV = y;
     }
     flush();
     c.stroke();
   }
 
-  function clipPane(c, pane) {
-    c.save();
-    c.beginPath();
-    c.rect(geo.x0, pane.top, geo.x1 - geo.x0, pane.bot - pane.top);
-    c.clip();
-  }
-
-  function drawStatic() {
-    const c = lctx;
-    c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    c.clearRect(0, 0, W, H);
-    c.fillStyle = colors.screen;
-    c.fillRect(0, 0, W, H);
-    if (!data) return;
-    computeGeo();
-    const { x0, x1, sx } = geo;
-    c.font = `10.5px ${colors.mono}`;
-    c.lineWidth = 1;
-
-    for (const [pane, name] of [[geo.out, 'OUTPUT  y'], [geo.eff, 'EFFORT  u']]) {
-      c.strokeStyle = colors.grid;
-      c.fillStyle = colors.muted;
-      c.textAlign = 'right'; c.textBaseline = 'middle';
-      for (const v of niceTicks(pane.lo, pane.hi, pane === geo.out ? 6 : 3)) {
-        const y = Math.round(pane.sy(v)) + 0.5;
-        c.beginPath(); c.moveTo(x0, y); c.lineTo(x1, y); c.stroke();
-        c.fillText(fmt(v), x0 - 6, y);
-      }
-      for (const t of niceTicks(0, data.duration, Math.max(2, Math.floor((x1 - x0) / 80)))) {
-        const x = Math.round(sx(t)) + 0.5;
-        c.beginPath(); c.moveTo(x, pane.top); c.lineTo(x, pane.bot); c.stroke();
-      }
-      if (pane.lo < 0 && pane.hi > 0) {
-        c.strokeStyle = colors.axis;
-        const y = Math.round(pane.sy(0)) + 0.5;
-        c.beginPath(); c.moveTo(x0, y); c.lineTo(x1, y); c.stroke();
-      }
-      c.strokeStyle = colors.axis;
-      c.strokeRect(x0 + 0.5, pane.top + 0.5, x1 - x0 - 1, pane.bot - pane.top - 1);
-      c.fillStyle = colors.muted;
-      c.textAlign = 'left'; c.textBaseline = 'bottom';
-      c.font = `600 10px ${colors.mono}`;
-      c.fillText(name, x0, pane.top - 5);
-      c.font = `10.5px ${colors.mono}`;
-    }
-    c.fillStyle = colors.muted;
-    c.textAlign = 'center'; c.textBaseline = 'top';
-    const xt = niceTicks(0, data.duration, Math.max(2, Math.floor((x1 - x0) / 80)));
-    xt.forEach((t, i) => {
-      const last = i === xt.length - 1;
-      c.textAlign = last && sx(t) > x1 - 20 ? 'right' : 'center';
-      c.fillText(last ? `${fmt(t)} s` : fmt(t), last && sx(t) > x1 - 20 ? x1 : sx(t), geo.eff.bot + 5);
-    });
-
-    drawSpec(c);
-
-    // Reference
-    clipPane(c, geo.out);
-    c.strokeStyle = colors.ink; c.lineWidth = 1.5; c.globalAlpha = 0.85;
-    c.setLineDash([]);
-    series(c, data.t, data.ref, geo.out);
-    c.restore();
-    c.globalAlpha = 1;
-
-    // Unselected traces, then the hovered one on top
-    const order = data.traces.filter((t) => !t.selected).sort((a, b) => (a.hot === b.hot ? 0 : a.hot ? 1 : -1));
-    for (const tr of order) {
-      c.strokeStyle = tr.color;
-      c.lineWidth = tr.hot ? 2 : 1.3;
-      c.globalAlpha = tr.hot ? 1 : 0.55;
-      clipPane(c, geo.out); series(c, tr.t, tr.y, geo.out); c.restore();
-      clipPane(c, geo.eff); series(c, tr.t, tr.u, geo.eff); c.restore();
-    }
-    c.globalAlpha = 1;
-    dirty = false;
-  }
-
-  function drawSpec(c) {
-    const { spec } = data;
-    const { sx, x0, x1 } = geo;
-    const pat = hatch(c);
-    const P = geo.out;
-    const region = (pane, t0, t1, v0, v1) => {
-      const xa = Math.max(x0, sx(t0)), xb = Math.min(x1, sx(t1));
-      const ya = Math.max(pane.top, Math.min(pane.bot, pane.sy(v0))), yb = Math.max(pane.top, Math.min(pane.bot, pane.sy(v1)));
-      if (xb <= xa || Math.abs(yb - ya) < 0.5) return;
-      c.fillStyle = pat;
-      c.fillRect(xa, Math.min(ya, yb), xb - xa, Math.abs(yb - ya));
-    };
-    const edge = (pane, t0, t1, v) => {
-      const y = pane.sy(v);
-      if (y < pane.top || y > pane.bot) return;
-      c.strokeStyle = colors.bad; c.globalAlpha = 0.8; c.lineWidth = 1; c.setLineDash([4, 3]);
-      c.beginPath(); c.moveTo(Math.max(x0, sx(t0)), y); c.lineTo(Math.min(x1, sx(t1)), y); c.stroke();
-      c.setLineDash([]); c.globalAlpha = 1;
-    };
-    if (spec.step) {
-      const { time, from, to, end } = spec.step;
-      const D = to - from, s = Math.sign(D) || 1;
-      const far = (dir) => (dir > 0 ? P.hi : P.lo);
-      // settling band (always shown, faint)
-      c.strokeStyle = colors.muted; c.globalAlpha = 0.5; c.setLineDash([2, 3]); c.lineWidth = 1;
-      for (const v of [to + spec.band * Math.abs(D), to - spec.band * Math.abs(D)]) {
-        const y = P.sy(v);
-        c.beginPath(); c.moveTo(sx(time), y); c.lineTo(sx(end), y); c.stroke();
-      }
-      c.setLineDash([]); c.globalAlpha = 1;
-      if (spec.overshootMax !== undefined) {
-        const lim = to + s * (spec.overshootMax / 100) * Math.abs(D);
-        region(P, time, end, lim, far(s)); edge(P, time, end, lim);
-      }
-      if (spec.undershootMax !== undefined) {
-        const lim = from - s * (spec.undershootMax / 100) * Math.abs(D);
-        region(P, time, end, lim, far(-s)); edge(P, time, end, lim);
-      }
-      if (spec.settleMax !== undefined && Number.isFinite(spec.settleMax)) {
-        const ts = time + spec.settleMax;
-        if (ts < end) {
-          const hi = to + spec.band * Math.abs(D), lo = to - spec.band * Math.abs(D);
-          region(P, ts, end, hi, P.hi); region(P, ts, end, lo, P.lo);
-          c.strokeStyle = colors.bad; c.globalAlpha = 0.8; c.setLineDash([4, 3]);
-          c.beginPath(); c.moveTo(sx(ts) + 0.5, P.top); c.lineTo(sx(ts) + 0.5, P.bot); c.stroke();
-          c.setLineDash([]); c.globalAlpha = 1;
-        }
-      }
-    }
-    const E = geo.eff;
-    if (spec.uMax !== undefined) {
-      const lo = spec.uMin ?? -spec.uMax;
-      region(E, 0, data.duration, spec.uMax, E.hi); edge(E, 0, data.duration, spec.uMax);
-      region(E, 0, data.duration, lo, E.lo); edge(E, 0, data.duration, lo);
-    }
-    // Markers for events
-    c.fillStyle = colors.ink2; c.font = `10px ${colors.mono}`; c.textAlign = 'center'; c.textBaseline = 'bottom';
-    const mark = (t, text) => {
-      const x = sx(t);
-      c.beginPath(); c.moveTo(x - 4, P.bot); c.lineTo(x + 4, P.bot); c.lineTo(x, P.bot - 6); c.closePath(); c.fill();
-      c.fillText(text, x, P.bot - 8);
-    };
-    if (spec.dist) mark(spec.dist.time, 'd');
-  }
-
   function indexAt(t) {
     const tt = data.t;
     if (tt.length < 2) return 0;
-    const dt = tt[1] - tt[0];
-    return Math.max(0, Math.min(tt.length - 1, Math.round(t / dt)));
+    return Math.max(0, Math.min(tt.length - 1, Math.round(t / (tt[1] - tt[0]))));
   }
 
   function draw() {
     if (!W) return;
-    if (dirty) drawStatic();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(layer, 0, 0);
-    if (!data || !geo) return;
+    ctx.drawImage(grid, 0, 0);
+    if (!data || !scope) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const sel = data.traces.find((t) => t.selected);
-    const scanT = hoverT ?? (playing ? phase * data.duration : null);
-    if (sel) {
-      const k = scanT === null ? sel.t.length - 1 : indexAt(scanT);
-      ctx.strokeStyle = sel.color; ctx.lineWidth = 2.25;
-      for (const pane of [geo.out, geo.eff]) {
-        const v = pane === geo.out ? sel.y : sel.u;
-        clipPane(ctx, pane);
-        ctx.globalAlpha = 1; series(ctx, sel.t, v, pane, 0, k);
-        if (k < sel.t.length - 1) { ctx.globalAlpha = 0.28; series(ctx, sel.t, v, pane, k, sel.t.length - 1); }
-        ctx.restore();
-      }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
+    ctx.lineJoin = 'round';
+    const n = data.t.length - 1;
+    const sweeping = mode !== 'stop';
+    const k = sweeping ? indexAt(tScan) : n;
+
+    scope.channels.forEach((ch, i) => {
+      const v = data.signals[ch.source];
+      if (!ch.on || !v) return;
+      ctx.strokeStyle = CHANNEL_COLORS[i];
+      ctx.lineWidth = 1.6;
+      ctx.shadowColor = CHANNEL_COLORS[i];
+      ctx.shadowBlur = 5;
       ctx.globalAlpha = 1;
+      trace(ctx, data.t, v, ch, 0, k);
+      if (k < n) { ctx.shadowBlur = 0; ctx.globalAlpha = 0.28; trace(ctx, data.t, v, ch, k, n); }
+    });
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+
+    if (preview) {
+      const ch = scope.channels[preview.channel];
+      ctx.setLineDash([3, 4]); ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(235, 240, 245, 0.75)';
+      trace(ctx, data.t, preview.alone, ch, 0, n);
+      ctx.setLineDash([7, 5]); ctx.lineWidth = 2; ctx.strokeStyle = CHANNEL_COLORS[preview.channel];
+      trace(ctx, data.t, preview.sum, ch, 0, n);
+      ctx.setLineDash([]);
+      ctx.font = '11px "IBM Plex Mono", ui-monospace, monospace';
+      ctx.textBaseline = 'bottom';
+      const tag = (v, text, color) => {
+        const tEnd = Math.min(data.t[n], xt(W - 8));
+        const j = indexAt(tEnd);
+        const y = Math.max(14, Math.min(H - 4, vy(ch, v[j]) - 4));
+        const w = ctx.measureText(text).width;
+        ctx.fillStyle = 'rgba(10, 13, 16, 0.75)'; ctx.fillRect(Math.min(tx(tEnd), W - 6) - w - 6, y - 13, w + 6, 14);
+        ctx.fillStyle = color; ctx.textAlign = 'right'; ctx.fillText(text, Math.min(tx(tEnd), W - 6) - 3, y);
+      };
+      tag(preview.sum, `r + ${preview.label}`, CHANNEL_COLORS[preview.channel]);
+      tag(preview.alone, preview.label, 'rgba(235, 240, 245, 0.85)');
     }
-    if (scanT !== null) {
-      const x = Math.round(geo.sx(scanT)) + 0.5;
-      ctx.strokeStyle = colors.scan; ctx.globalAlpha = 0.45; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x, geo.out.top); ctx.lineTo(x, geo.out.bot); ctx.moveTo(x, geo.eff.top); ctx.lineTo(x, geo.eff.bot); ctx.stroke();
-      ctx.globalAlpha = 1;
-      if (sel) {
-        const k = indexAt(scanT);
-        const dot = (pane, v) => {
-          if (!Number.isFinite(v)) return;
-          const y = pane.sy(v);
-          if (y < pane.top || y > pane.bot) return;
-          ctx.fillStyle = colors.screen; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
-          ctx.fillStyle = sel.color; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.fill();
-        };
-        dot(geo.out, sel.y[k]); dot(geo.eff, sel.u[k]);
-        const text = `t ${fmt(data.t[k])} s   r ${fmt(data.ref[k])}   y ${fmt(sel.y[k])}   u ${fmt(sel.u[k])}`;
-        ctx.font = `11px ${colors.mono}`;
-        const w = ctx.measureText(text).width + 12;
-        const bx = geo.x1 - w - 4, by = geo.out.top + 4;
-        ctx.fillStyle = colors.screen; ctx.globalAlpha = 0.9; ctx.fillRect(bx, by, w, 18); ctx.globalAlpha = 1;
-        ctx.fillStyle = colors.ink; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-        ctx.fillText(text, bx + 6, by + 9);
+
+    if (sweeping) {
+      const x = Math.round(tx(tScan)) + 0.5;
+      if (x >= 0 && x <= W) {
+        ctx.strokeStyle = 'rgba(235, 240, 245, 0.35)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
       }
     }
+
+    // Ground markers: each channel's zero level on the left edge.
+    ctx.font = '600 10px "IBM Plex Mono", ui-monospace, monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    scope.channels.forEach((ch, i) => {
+      if (!ch.on || !data.signals[ch.source]) return;
+      const y0 = vy(ch, 0);
+      const y = Math.max(8, Math.min(H - 8, y0));
+      ctx.fillStyle = CHANNEL_COLORS[i];
+      ctx.beginPath();
+      ctx.moveTo(0, y - 7); ctx.lineTo(11, y - 7); ctx.lineTo(17, y); ctx.lineTo(11, y + 7); ctx.lineTo(0, y + 7); ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#0a0d10';
+      ctx.fillText(y0 < 8 ? '↑' : y0 > H - 8 ? '↓' : String(i + 1), 7, y + 0.5);
+    });
+
+    if (hover !== null) {
+      const x = Math.round(hover) + 0.5;
+      const t = xt(hover);
+      ctx.strokeStyle = 'rgba(235, 240, 245, 0.55)'; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); ctx.setLineDash([]);
+      const rows = [[`t  ${siUnit(t, 's', 4)}`, 'rgba(235, 240, 245, 0.9)']];
+      if (t >= 0 && t <= data.t[n]) {
+        const j = indexAt(t);
+        scope.channels.forEach((ch, i) => {
+          const v = data.signals[ch.source];
+          if (ch.on && v) rows.push([`${i + 1} ${ch.source.padEnd(2)} ${num(v[j])}`, CHANNEL_COLORS[i]]);
+        });
+      }
+      ctx.font = '11.5px "IBM Plex Mono", ui-monospace, monospace';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      const w = Math.max(...rows.map(([s]) => ctx.measureText(s).width)) + 14;
+      const bx = hover + 10 + w > W ? hover - 10 - w : hover + 10;
+      ctx.fillStyle = 'rgba(10, 13, 16, 0.85)'; ctx.fillRect(bx, 8, w, rows.length * 16 + 8);
+      ctx.strokeStyle = 'rgba(160, 175, 190, 0.4)'; ctx.strokeRect(bx + 0.5, 8.5, w - 1, rows.length * 16 + 7);
+      rows.forEach(([s, c], i) => { ctx.fillStyle = c; ctx.fillText(s, bx + 7, 13 + i * 16); });
+    }
+    ctx.restore();
+    renderStatus();
   }
 
-  function loop(now) {
+  function renderStatus() {
+    if (!scope || !data) return;
+    const state = { run: ['run', 'Run'], stop: ['stop', 'Stop'], single: ['single', 'Single'] }[mode];
+    const tb = scope.timebase;
+    const rec = data.t[data.t.length - 1];
+    status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
+      <span>${siUnit(tb.scale, 's')}/div</span>
+      <span class="dim">pos ${siUnit(tb.position, 's', 4)}</span>
+      <span class="dim">record ${siUnit(rec, 's', 4)}</span>
+      <span class="grow"></span>
+      ${mode !== 'stop' ? `<span class="dim">t ${siUnit(tScan, 's', 3)}</span>` : ''}`;
+  }
+
+  function renderBadges() {
+    if (!scope || !data) return;
+    badges.innerHTML = scope.channels.map((ch, i) => {
+      const has = !!data.signals[ch.source];
+      const cls = ['badge', ch.on ? 'on' : 'off', i === selected ? 'sel' : '', has ? '' : 'nosig'].join(' ');
+      return `<button class="${cls}" data-ch="${i}" style="--cc:${CHANNEL_COLORS[i]}" title="Channel ${i + 1}: ${SOURCE_LABEL[ch.source]}">
+        <span class="num">${i + 1}</span><span class="src">${ch.source}</span>
+        <span class="val">${has ? `${num(ch.scale)}/div` : 'no signal'}</span></button>`;
+    }).join('');
+    badges.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => handlers.onSelectChannel(Number(b.dataset.ch))));
+  }
+
+  function frame(now) {
     raf = 0;
-    const dt = lastFrame ? Math.min(0.1, (now - lastFrame) / 1000) : 0;
-    lastFrame = now;
-    if (playing && hoverT === null) { phase += dt / sweepSeconds; if (phase > 1) phase -= 1; }
-    draw();
-    if (playing) raf = requestAnimationFrame(loop);
-    else lastFrame = 0;
-  }
-  function kick() { if (!raf) raf = requestAnimationFrame(loop); }
-
-  canvas.addEventListener('pointermove', (e) => {
-    if (!geo) return;
-    const r = canvas.getBoundingClientRect();
-    const x = e.clientX - r.left;
-    hoverT = x >= geo.x0 && x <= geo.x1 ? geo.tx(x) : null;
-    kick();
-  });
-  canvas.addEventListener('pointerleave', () => { hoverT = null; kick(); });
-  canvas.addEventListener('click', (e) => {
-    if (!geo || !data) return;
-    const r = canvas.getBoundingClientRect();
-    const x = e.clientX - r.left, y = e.clientY - r.top;
-    if (x < geo.x0 || x > geo.x1) return;
-    const k = indexAt(geo.tx(x));
-    let best = null;
-    for (const tr of data.traces) {
-      for (const [pane, v] of [[geo.out, tr.y], [geo.eff, tr.u]]) {
-        if (y < pane.top || y > pane.bot || !Number.isFinite(v[k])) continue;
-        const d = Math.abs(pane.sy(v[k]) - y);
-        if (d < 12 && (!best || d < best.d)) best = { d, idx: tr.idx };
+    const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
+    last = now;
+    if (mode !== 'stop' && data) {
+      tScan += dt;
+      const rec = data.t[data.t.length - 1];
+      if (tScan >= rec) {
+        if (mode === 'single') { tScan = rec; mode = 'stop'; handlers.onStopped?.(); }
+        else tScan %= rec;
       }
     }
-    if (best) handlers.onPick(best.idx);
-  });
+    draw();
+    if (mode !== 'stop') raf = requestAnimationFrame(frame);
+    else last = 0;
+  }
+  const kick = () => { if (!raf) raf = requestAnimationFrame(frame); };
 
-  new ResizeObserver(resize).observe(wrap);
-  readColors();
-  const mq = window.matchMedia('(prefers-color-scheme: dark)');
-  mq.addEventListener?.('change', () => { readColors(); draw(); });
-  new MutationObserver(() => { readColors(); draw(); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  document.fonts?.ready.then(() => { dirty = true; draw(); });
+  canvas.addEventListener('pointermove', (e) => { const r = canvas.getBoundingClientRect(); hover = e.clientX - r.left; if (mode === 'stop') draw(); });
+  canvas.addEventListener('pointerleave', () => { hover = null; if (mode === 'stop') draw(); });
+
+  new ResizeObserver(resize).observe(screen);
+  document.fonts?.ready.then(() => draw());
 
   return {
-    setData(d) { data = d; dirty = true; draw(); },
-    setSweep(opts) {
-      if ('seconds' in opts) sweepSeconds = opts.seconds;
-      if ('playing' in opts) { playing = opts.playing; if (!playing) phase = 1; }
+    setData(d) { data = d; if (data && tScan > data.t[data.t.length - 1]) tScan = 0; renderBadges(); draw(); },
+    setScope(s, sel) { scope = s; selected = sel; renderBadges(); draw(); },
+    setPreview(p) { preview = p; draw(); },
+    setMode(m) {
+      if (m === 'single') tScan = 0;
+      mode = m;
+      last = 0;
       kick();
+      draw();
     },
-    get playing() { return playing; },
+    get mode() { return mode; },
   };
 }
 
-return { createScope };
+return { CHANNEL_COLORS, SOURCE_LABEL, createDisplay };
 })();
-// ---- ui/rack.js
-__mods['ui/rack.js'] = (() => {
-// The rack: the block diagram of the loop, and below it one module per slot
-// with its type selector and knobs. The controller module edits the selected
-// candidate; every other module edits the shared system (or the candidate's
-// own override of that slot, if it has one).
+// ---- ui/controls.js
+__mods['ui/controls.js'] = (() => {
+// The control panel right of the display: Run Control, Horizontal, Vertical.
 
-const { SLOTS, BLOCKS, blockDef, paramMax } = __mods['core/blocks.js'];
-const { fmt } = __mods['core/project.js'];
-const { createKnob } = __mods['ui/knob.js'];
-const SIM_PARAMS = [
-  { key: 'duration', label: 'length', default: 20, min: 0.1, max: 1000, scale: 'log', unit: 's' },
-  { key: 'sampleTime', label: 'Ts', default: 0.01, min: 0.0001, max: 1, scale: 'log', unit: 's' },
-];
+const { createDial } = __mods['ui/dial.js'];
+const { CHANNEL_COLORS, SOURCE_LABEL } = __mods['ui/display.js'];
+const { siUnit, step125, num } = __mods['ui/units.js'];
+const { CHANNEL_SOURCES } = __mods['core/project.js'];
+function createControls(root, app) {
+  root.innerHTML = `
+    <section class="group">
+      <h3 class="glabel">Run Control</h3>
+      <div class="row">
+        <button class="key runstop" id="k-run" title="Run / Stop (R)">Run<br>Stop</button>
+        <button class="key single" id="k-single" title="One sweep, then stop (S)">Single</button>
+        <button class="key auto" id="k-auto" title="Fit the display to the data (A)">Auto<br>Scale</button>
+      </div>
+    </section>
+    <section class="group">
+      <h3 class="glabel">Horizontal</h3>
+      <div class="row dials" id="h-dials"></div>
+    </section>
+    <section class="group">
+      <h3 class="glabel">Vertical</h3>
+      <div class="row chkeys" id="ch-keys"></div>
+      <label class="srcrow"><span>Source</span><select id="ch-src" class="field"></select></label>
+      <div class="row dials" id="v-dials"></div>
+    </section>`;
+  const $ = (s) => root.querySelector(s);
 
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  $('#k-run').addEventListener('click', () => app.toggleRun());
+  $('#k-single').addEventListener('click', () => app.single());
+  $('#k-auto').addEventListener('click', () => app.autoScale());
 
-function summary(block, n = 3) {
-  const def = blockDef(block.slot, block.type);
-  return def.params.filter((p) => p.kind !== 'vector').slice(0, n)
-    .map((p) => `${p.label} ${def.params.length && p.scale === 'log0' && block.params[p.key] === 0 ? 'off' : fmt(block.params[p.key])}`).join(' · ');
+  const readout = (dial, cls) => {
+    const wrap = document.createElement('div');
+    wrap.className = `dialbox ${cls ?? ''}`;
+    const lab = document.createElement('div'); lab.className = 'dlabel';
+    const val = document.createElement('div'); val.className = 'dval';
+    wrap.append(lab, dial.el, val);
+    return { wrap, lab, val };
+  };
+
+  const hScale = createDial({
+    size: 64, label: 'Horizontal scale', title: 'Seconds per division · drag, scroll or arrow keys',
+    onTurn: (s) => app.editScope((sc) => { for (let i = 0; i < Math.abs(s); i++) sc.timebase.scale = step125(sc.timebase.scale, -Math.sign(s)); }),
+    onRelease: () => app.endEdit(),
+  });
+  const hPos = createDial({
+    size: 44, label: 'Horizontal position', title: 'Time at the left edge · double-click to zero',
+    onTurn: (s, fine) => app.editScope((sc) => { sc.timebase.position = round(sc.timebase.position + s * sc.timebase.scale * (fine ? 0.02 : 0.1)); }),
+    onPush: () => { app.editScope((sc) => { sc.timebase.position = 0; }); app.endEdit(); },
+    onRelease: () => app.endEdit(),
+  });
+  const vScale = createDial({
+    size: 64, label: 'Vertical scale', title: 'Units per division of the selected channel',
+    onTurn: (s) => app.editScope((sc) => { const ch = sc.channels[app.channel]; for (let i = 0; i < Math.abs(s); i++) ch.scale = step125(ch.scale, -Math.sign(s)); }),
+    onRelease: () => app.endEdit(),
+  });
+  const vPos = createDial({
+    size: 44, label: 'Vertical position', title: 'Offset of the selected channel · double-click to zero',
+    onTurn: (s, fine) => app.editScope((sc) => { const ch = sc.channels[app.channel]; ch.offset = round(ch.offset + s * ch.scale * (fine ? 0.02 : 0.1)); }),
+    onPush: () => { app.editScope((sc) => { sc.channels[app.channel].offset = 0; }); app.endEdit(); },
+    onRelease: () => app.endEdit(),
+  });
+  const hs = readout(hScale), hp = readout(hPos, 'small'), vs = readout(vScale), vp = readout(vPos, 'small');
+  hs.lab.textContent = 'Scale'; hp.lab.textContent = 'Position';
+  vs.lab.textContent = 'Scale'; vp.lab.textContent = 'Position';
+  $('#h-dials').append(hs.wrap, hp.wrap);
+  $('#v-dials').append(vs.wrap, vp.wrap);
+
+  const keys = $('#ch-keys');
+  CHANNEL_COLORS.forEach((c, i) => {
+    const b = document.createElement('button');
+    b.className = 'key ch';
+    b.style.setProperty('--cc', c);
+    b.textContent = String(i + 1);
+    b.title = `Channel ${i + 1}: select; press again to turn off`;
+    b.addEventListener('click', () => app.channelKey(i));
+    keys.append(b);
+  });
+  const src = $('#ch-src');
+  for (const s of CHANNEL_SOURCES) { const o = document.createElement('option'); o.value = s; o.textContent = SOURCE_LABEL[s]; src.append(o); }
+  src.addEventListener('change', () => { app.editScope((sc) => { sc.channels[app.channel].source = src.value; }); app.endEdit(); });
+
+  function render(mode) {
+    const sc = app.project.scope;
+    const ch = sc.channels[app.channel];
+    $('#k-run').className = `key runstop ${mode === 'stop' ? 'lit-red' : 'lit-green'}`;
+    $('#k-single').className = `key single ${mode === 'single' ? 'lit-amber' : ''}`;
+    hs.val.textContent = `${siUnit(sc.timebase.scale, 's')}/div`;
+    hp.val.textContent = siUnit(sc.timebase.position, 's', 4);
+    vs.val.textContent = `${num(ch.scale)}/div`;
+    vp.val.textContent = num(ch.offset);
+    root.style.setProperty('--sel', CHANNEL_COLORS[app.channel]);
+    [...keys.children].forEach((b, i) => {
+      b.classList.toggle('lit', sc.channels[i].on);
+      b.classList.toggle('sel', i === app.channel);
+      b.setAttribute('aria-pressed', String(sc.channels[i].on));
+    });
+    src.value = ch.source;
+    vs.lab.textContent = `Scale · ${app.channel + 1}`;
+    vp.lab.textContent = `Position · ${app.channel + 1}`;
+  }
+
+  return { render };
 }
 
-function createRack(root, app) {
-  const diagramWrap = document.createElement('div');
-  diagramWrap.className = 'diagram-wrap';
-  const modules = document.createElement('div');
-  modules.className = 'modules';
-  root.append(diagramWrap, modules);
-  const moduleEls = {};
+function round(v) { return Number(v.toPrecision(6)); }
 
-  function blockFor(slot) {
-    const p = app.project, c = app.candidate;
-    if (slot === 'controller') return c ? { ...c.controller, slot } : null;
-    return { ...(c?.[slot] ?? p.system[slot]), slot };
-  }
-
-  function drawDiagram() {
-    const c = app.candidate;
-    const b = Object.fromEntries(SLOTS.map((s) => [s.key, blockFor(s.key)]));
-    const box = (slot, x, y, w, h) => {
-      const blk = b[slot];
-      const def = blk ? blockDef(slot, blk.type) : null;
-      const color = slot === 'controller' && c ? app.colorOf(c) : null;
-      const label = SLOTS.find((s) => s.key === slot).label.toUpperCase();
-      return `<g class="blk" data-slot="${slot}" tabindex="0" role="button" aria-label="${label}: ${esc(def ? def.label : 'none')}">
-        <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="5" ${color ? `style="stroke:${color};stroke-width:2"` : ''}></rect>
-        <text class="t-slot" x="${x + 8}" y="${y + 13}">${label}</text>
-        <text class="t-type" x="${x + 8}" y="${y + 29}">${esc(def ? def.label : '—')}</text>
-        <text class="t-par" x="${x + 8}" y="${y + h - 7}">${esc(blk ? summary(blk, slot === 'controller' ? 3 : 2) : '')}</text>
-      </g>`;
-    };
-    const arrow = (x, y, dir = 'r') => {
-      const p = { r: `${x},${y} ${x - 7},${y - 4} ${x - 7},${y + 4}`, d: `${x},${y} ${x - 4},${y - 7} ${x + 4},${y - 7}`, u: `${x},${y} ${x - 4},${y + 7} ${x + 4},${y + 7}` }[dir];
-      return `<polygon class="arrow" points="${p}"></polygon>`;
-    };
-    const wire = (d) => `<path class="wire" d="${d}"></path>`;
-    const sum = (x, y) => `<circle class="sum" cx="${x}" cy="${y}" r="10"></circle><path class="wire" d="M${x - 5},${y} H${x + 5} M${x},${y - 5} V${y + 5}"></path>`;
-    const t = (x, y, s, cls = 't-sig', anchor = 'middle') => `<text class="${cls}" x="${x}" y="${y}" text-anchor="${anchor}">${s}</text>`;
-    const Y = 82, FB = 138;
-    const noiseOn = b.noise.type !== 'none';
-    const svg = `<svg class="diagram" viewBox="0 0 1000 164" role="group" aria-label="Block diagram of the control loop">
-      ${box('reference', 6, Y - 25, 128, 50)}
-      ${wire(`M134,${Y} H150`)}${arrow(150, Y)}
-      ${sum(160, Y)}
-      ${t(150, Y + 22, '−')}
-      ${wire(`M170,${Y} H203`)}${arrow(203, Y)}${t(186, Y - 6, 'e')}
-      ${box('controller', 203, Y - 30, 176, 60)}
-      ${wire(`M379,${Y} H407`)}${arrow(407, Y)}${t(393, Y - 6, 'u')}
-      ${box('actuator', 407, Y - 25, 130, 50)}
-      ${wire(`M537,${Y} H565`)}${arrow(565, Y)}
-      ${sum(575, Y)}
-      ${box('disturbance', 515, 1, 120, 46)}
-      ${wire(`M575,47 V${Y - 10}`)}${arrow(575, Y - 10, 'd')}${t(583, Y - 16, 'd', 't-sig', 'start')}
-      ${wire(`M585,${Y} H613`)}${arrow(613, Y)}
-      ${box('plant', 613, Y - 25, 160, 50)}
-      ${wire(`M773,${Y} H850`)}${arrow(850, Y)}
-      <circle cx="812" cy="${Y}" r="2.6" class="arrow"></circle>
-      ${t(864, Y + 4, 'y', 't-sig', 'start')}
-      ${wire(`M812,${Y} V${FB} H735`)}<polygon class="arrow" points="728,${FB} 735,${FB - 4} 735,${FB + 4}"></polygon>
-      ${box('sensor', 600, FB - 22, 128, 44)}
-      ${wire(`M600,${FB} H160 V${Y + 10}`)}${arrow(160, Y + 10, 'u')}
-      ${t(330, FB - 6, 'y<tspan baseline-shift="sub" font-size="8">m</tspan>')}
-      ${noiseOn ? `${sum(470, FB)}${wire(`M470,${FB + 24} V${FB + 10}`)}<polygon class="arrow" points="470,${FB + 10} 466,${FB + 17} 474,${FB + 17}"></polygon>
-        <g class="blk lite" data-slot="noise" tabindex="0" role="button" aria-label="Noise: ${esc(blockDef('noise', b.noise.type).label)}">
-          <rect x="480" y="${FB + 8}" width="110" height="18" rx="3" style="fill:transparent;stroke:none"></rect>
-          ${t(484, FB + 21, `n · ${esc(summary(b.noise, 1))}`, 't-par', 'start')}
-        </g>` : ''}
-    </svg>`;
-    diagramWrap.innerHTML = svg;
-    diagramWrap.querySelectorAll('.blk').forEach((g) => {
-      const slot = g.dataset.slot;
-      const go = () => focusModule(slot);
-      g.addEventListener('click', go);
-      g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
-      g.addEventListener('pointerenter', () => moduleEls[slot]?.classList.add('hl'));
-      g.addEventListener('pointerleave', () => moduleEls[slot]?.classList.remove('hl'));
-    });
-  }
-
-  function focusModule(slot) {
-    const m = moduleEls[slot];
-    if (!m) return;
-    m.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    m.classList.add('flash');
-    setTimeout(() => m.classList.remove('flash'), 600);
-    m.querySelector('svg[role="slider"], select')?.focus({ preventScroll: true });
-  }
-
-  function makeModule(slot) {
-    const meta = SLOTS.find((s) => s.key === slot);
-    const blk = blockFor(slot);
-    const el = document.createElement('div');
-    el.className = 'module';
-    el.dataset.slot = slot;
-    if (!blk) { el.innerHTML = `<div class="mod-head"><span class="label">${meta.label}</span></div><div class="empty">Add a candidate first.</div>`; return el; }
-    const def = blockDef(slot, blk.type);
-    const cand = app.candidate;
-    const color = slot === 'controller' ? app.colorOf(cand) : null;
-    if (color) { el.classList.add('cand'); el.style.setProperty('--c', color); }
-
-    const head = document.createElement('div');
-    head.className = 'mod-head';
-    const lab = document.createElement('span');
-    lab.className = 'label';
-    lab.textContent = meta.label;
-    if (slot === 'controller') lab.title = `Edits the selected candidate, ${cand.name}`;
-    const sel = document.createElement('select');
-    sel.className = 'mod-type';
-    sel.id = `type-${slot}`;
-    sel.setAttribute('aria-label', `${meta.label} type`);
-    for (const [type, d] of Object.entries(BLOCKS[slot])) {
-      const o = document.createElement('option');
-      o.value = type; o.textContent = d.label;
-      sel.append(o);
-    }
-    sel.value = blk.type;
-    sel.addEventListener('change', () => app.retype(slot, sel.value));
-    head.append(lab, sel);
-    if (slot === 'controller') {
-      const tune = document.createElement('button');
-      tune.className = 'btn small';
-      tune.id = 'tune-btn';
-      tune.textContent = app.tuning ? 'Stop' : 'Auto-tune';
-      tune.title = 'Search the tunable gains for the best score under the goal; the result becomes a new candidate (T)';
-      tune.addEventListener('click', () => app.toggleTune());
-      head.append(tune);
-    }
-    el.append(head);
-
-    if (slot !== 'controller' && cand?.[slot]) {
-      const who = document.createElement('div');
-      who.className = 'mod-cand';
-      who.textContent = `Only for ${cand.name}`;
-      el.append(who);
-    }
-    const f = document.createElement('div');
-    f.className = 'mod-formula';
-    f.textContent = def.formula;
-    f.title = def.formula;
-    el.append(f);
-
-    const knobs = document.createElement('div');
-    knobs.className = 'knobs';
-    const ctx = { duration: app.project.sim.duration };
-    for (const p of def.params) {
-      if (p.kind === 'vector') knobs.append(vectorField(slot, p, blk.params[p.key]));
-      else {
-        const k = createKnob({
-          param: p, value: blk.params[p.key], max: paramMax(p, ctx), color,
-          onStart: () => app.beginEdit(),
-          onInput: (v) => app.setParam(slot, p.key, v, true),
-          onCommit: (v) => app.setParam(slot, p.key, v, false),
-        });
-        knobs.append(k.el);
-      }
-    }
-    el.append(knobs);
-    el.addEventListener('pointerenter', () => diagramWrap.querySelector(`.blk[data-slot="${slot}"]`)?.classList.add('hl'));
-    el.addEventListener('pointerleave', () => diagramWrap.querySelector(`.blk[data-slot="${slot}"]`)?.classList.remove('hl'));
-    return el;
-  }
-
-  function vectorField(slot, p, value) {
-    const wrap = document.createElement('label');
-    wrap.className = 'vec';
-    const lab = document.createElement('span');
-    lab.className = 'kl';
-    lab.style.fontSize = '11.5px';
-    lab.style.color = 'var(--ink-2)';
-    lab.textContent = `${p.label} (highest power first)`;
-    const input = document.createElement('input');
-    input.className = 'field';
-    input.id = `vec-${slot}-${p.key}`;
-    input.value = value.join(', ');
-    input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); });
-    input.addEventListener('change', () => {
-      const parts = input.value.split(/[\s,;]+/).filter(Boolean).map((x) => Number(x.replace('−', '-')));
-      if (!parts.length || !parts.every(Number.isFinite)) { input.classList.add('err'); app.toast('Enter numbers separated by commas, highest power of s first.'); return; }
-      input.classList.remove('err');
-      app.beginEdit();
-      if (!app.setParam(slot, p.key, parts, false)) input.classList.add('err');
-    });
-    wrap.append(lab, input);
-    return wrap;
-  }
-
-  function simModule() {
-    const el = document.createElement('div');
-    el.className = 'module';
-    el.innerHTML = '<div class="mod-head"><span class="label">Simulation</span></div><div class="mod-formula">window and controller sample time</div>';
-    const knobs = document.createElement('div');
-    knobs.className = 'knobs';
-    for (const p of SIM_PARAMS) {
-      const k = createKnob({
-        param: p, value: app.project.sim[p.key], max: p.max,
-        onStart: () => app.beginEdit(),
-        onInput: (v) => app.setSim(p.key, v, true),
-        onCommit: (v) => app.setSim(p.key, v, false),
-      });
-      knobs.append(k.el);
-    }
-    el.append(knobs);
-    return el;
-  }
-
-  function render() {
-    drawDiagram();
-    const focused = document.activeElement;
-    const focusId = focused && modules.contains(focused) ? focused.id : null;
-    modules.textContent = '';
-    for (const s of SLOTS) {
-      const el = makeModule(s.key);
-      moduleEls[s.key] = el;
-      modules.append(el);
-    }
-    modules.append(simModule());
-    if (focusId) document.getElementById(focusId)?.focus();
-  }
-
-  return { render, refresh: drawDiagram, focusModule };
-}
-
-return { createRack };
+return { createControls };
 })();
-// ---- ui/candidates.js
-__mods['ui/candidates.js'] = (() => {
-// The side column: the goal editor and the candidate table.
+// ---- ui/generator.js
+__mods['ui/generator.js'] = (() => {
+// Tab 1, the signal generator: waveform keys, parameter fields with a digit
+// cursor, a dial and keypad for entry, and the stack of components summed into
+// r(t). A waveform is drafted first (previewed dashed on the display) and only
+// joins the signal on Add. See design/output/signal-generator.md.
 
-const { METRICS, METRIC } = __mods['core/metrics.js'];
-const { fmt, describeController } = __mods['core/project.js'];
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const unitOf = (k) => (METRIC[k].unit ? ` ${METRIC[k].unit}` : '');
+const { SIGNALS, normalizeComponent, describeComponent, parseWaveform } = __mods['core/signals.js'];
+const { createDial } = __mods['ui/dial.js'];
+const ICONS = {
+  dc: 'M2 7 H22',
+  step: 'M2 11 H9 V3 H22',
+  ramp: 'M2 11 H7 L15 3 H22',
+  pulse: 'M2 11 H8 V3 H13 V11 H22',
+  square: 'M2 11 H5 V3 H9 V11 H13 V3 H17 V11 H21',
+  sine: 'M2 7 C4.5 -1 7.5 -1 10 7 S15.5 15 18 7 S20.5 1 22 3',
+  chirp: 'M2 7 C3.5 1 5.5 1 7 7 S10 13 11 7 S13 1 14 7 S15.5 13 16 7 S17.5 1 18 7 S19 12 19.5 7 S20.5 2 21 7',
+  noise: 'M2 8 L4 5 L5 10 L7 4 L8 9 L10 6 L11 11 L13 3 L14 8 L16 6 L17 10 L19 5 L20 8 L22 7',
+  arb: 'M2 11 L6 9 L9 4 L12 8 L15 6 L18 10 L22 3',
+};
+const ORDER = ['dc', 'step', 'ramp', 'pulse', 'square', 'sine', 'chirp', 'noise', 'arb'];
+const icon = (type) => `<svg viewBox="0 0 24 14" aria-hidden="true"><path d="${ICONS[type]}"/></svg>`;
+const LENGTH = { key: 'length', label: 'Length', unit: 's', min: 1e-6 };
 
-function metricSelect(id, value, exclude = []) {
-  const opts = METRICS.filter((m) => m.key === value || !exclude.includes(m.key))
-    .map((m) => `<option value="${m.key}" ${m.key === value ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
-  return `<select class="field" id="${id}" aria-label="Metric">${opts}</select>`;
-}
-
-function createGoalPanel(root, app) {
-  function render() {
-    const g = app.project.goal;
-    const min = Object.entries(g.minimize);
-    const cons = Object.entries(g.subjectTo);
-    let html = '<div class="label">Goal</div>';
-    min.forEach(([k, w], i) => {
-      html += `<div class="goal-row">
-        <span class="word">${i === 0 ? 'Minimize' : '+'}</span>
-        ${metricSelect(`gm-${i}`, k, min.map(([q]) => q))}
-        <span class="word" style="min-width:0">×</span>
-        <input class="field" id="gw-${i}" value="${fmt(w)}" aria-label="Weight" title="Weight of this metric in the score">
-        ${min.length > 1 ? `<button class="x" data-rm-min="${k}" aria-label="Remove term" title="Remove term">✕</button>` : ''}
-      </div>`;
-    });
-    html += '<div class="goal-row"><span class="word">subject to</span>';
-    if (!cons.length) html += '<span class="word" style="color:var(--muted)">no constraints</span>';
-    html += '</div>';
-    cons.forEach(([k, b], i) => {
-      const op = 'max' in b ? 'max' : 'min';
-      html += `<div class="goal-row">
-        <span class="word"></span>
-        ${metricSelect(`gc-${i}`, k, cons.map(([q]) => q))}
-        <select class="field" id="go-${i}" aria-label="Bound"><option value="max" ${op === 'max' ? 'selected' : ''}>≤</option><option value="min" ${op === 'min' ? 'selected' : ''}>≥</option></select>
-        <input class="field" id="gv-${i}" value="${fmt(b[op])}" aria-label="Limit">
-        <span class="word" style="min-width:0;color:var(--muted)">${esc(METRIC[k].unit)}</span>
-        <button class="x" data-rm-con="${k}" aria-label="Remove constraint" title="Remove constraint">✕</button>
-      </div>`;
-    });
-    html += `<div class="goal-row"><span class="word"></span>
-      <button class="link" id="add-con">Add constraint</button>
-      <button class="link" id="add-term">Add objective term</button>
-      <span style="margin-left:auto" class="word" title="Settling band, % of the step">band ±<input class="field" id="gband" style="width:44px" value="${fmt(g.settlingBand * 100)}" aria-label="Settling band in percent"> %</span>
+function createGenerator(root, app) {
+  root.innerHTML = `
+    <div class="gen">
+      <section class="gcol gwave" aria-label="Waveform">
+        <h3 class="glabel">Waveform</h3>
+        <div class="wkeys">${ORDER.map((t) => `<button class="key wkey" data-type="${t}" title="${SIGNALS[t].label}${t === 'arb' ? ': load t, value rows from a CSV file' : ''}">${icon(t)}<span>${SIGNALS[t].label}</span></button>`).join('')}</div>
+        <input type="file" id="arb-file" accept=".csv,.tsv,.txt,text/csv,text/plain" hidden>
+      </section>
+      <section class="gcol gparams" aria-label="Parameters">
+        <h3 class="glabel" id="g-mode"></h3>
+        <div class="plist" id="g-plist"></div>
+        <div class="pact">
+          <button class="key wide primary" id="g-add">Add</button>
+          <button class="key wide" id="g-cancel">Cancel</button>
+        </div>
+      </section>
+      <section class="gcol gentry" aria-label="Entry">
+        <h3 class="glabel">Entry</h3>
+        <div class="dialrow">
+          <button class="key arrow" id="g-left" title="Move the digit cursor left (←)" aria-label="Cursor left">◀</button>
+          <span id="g-dial"></span>
+          <button class="key arrow" id="g-right" title="Move the digit cursor right (→)" aria-label="Cursor right">▶</button>
+        </div>
+        <div class="keypad" id="g-keypad"></div>
+      </section>
+      <section class="gcol gstack" aria-label="Signal">
+        <h3 class="glabel">Signal <span class="eq">r(t) = Σ</span></h3>
+        <ol class="slist" id="g-stack"></ol>
+        <div class="lenrow" id="g-len"></div>
+      </section>
     </div>`;
-    root.innerHTML = html;
+  const $ = (s) => root.querySelector(s);
 
-    const keys = min.map(([k]) => k);
-    min.forEach(([k], i) => {
-      root.querySelector(`#gm-${i}`).addEventListener('change', (e) => app.editGoal((goal) => {
-        const entries = Object.entries(goal.minimize).map(([q, w]) => (q === k ? [e.target.value, w] : [q, w]));
-        goal.minimize = Object.fromEntries(entries);
-      }));
-      numberInput(`#gw-${i}`, (v) => app.editGoal((goal) => { goal.minimize[k] = v; }));
-    });
-    cons.forEach(([k, b], i) => {
-      root.querySelector(`#gc-${i}`).addEventListener('change', (e) => app.editGoal((goal) => {
-        goal.subjectTo = Object.fromEntries(Object.entries(goal.subjectTo).map(([q, c]) => (q === k ? [e.target.value, c] : [q, c])));
-      }));
-      root.querySelector(`#go-${i}`).addEventListener('change', (e) => app.editGoal((goal) => {
-        const v = b.max ?? b.min;
-        goal.subjectTo[k] = { [e.target.value]: v };
-      }));
-      numberInput(`#gv-${i}`, (v) => app.editGoal((goal) => { goal.subjectTo[k] = { ['max' in b ? 'max' : 'min']: v }; }));
-    });
-    root.querySelectorAll('[data-rm-min]').forEach((btn) => btn.addEventListener('click', () => app.editGoal((goal) => { delete goal.minimize[btn.dataset.rmMin]; })));
-    root.querySelectorAll('[data-rm-con]').forEach((btn) => btn.addEventListener('click', () => app.editGoal((goal) => { delete goal.subjectTo[btn.dataset.rmCon]; })));
-    root.querySelector('#add-con').addEventListener('click', () => app.editGoal((goal) => {
-      const free = ['overshoot', 'settlingTime', 'uPeak', 'riseTime', 'uTV', ...METRICS.map((m) => m.key)].find((q) => !(q in goal.subjectTo));
-      if (free) goal.subjectTo[free] = { max: defaultLimit(free, app) };
-    }));
-    root.querySelector('#add-term').addEventListener('click', () => app.editGoal((goal) => {
-      const free = ['uTV', 'iae', 'settlingTime', ...METRICS.map((m) => m.key)].find((q) => !keys.includes(q));
-      if (free) goal.minimize[free] = 0.1;
-    }));
-    numberInput('#gband', (v) => app.editGoal((goal) => { goal.settlingBand = Math.max(0.0001, v / 100); }));
+  // Editor state. The draft is not part of the project until it is added.
+  let draft = null; // { mode: 'new' | 'edit', index, comp }
+  let active = 'length';
+  let buffer = '';
+  const cursors = {};
+
+  const fields = () => (draft ? SIGNALS[draft.comp.type].params : []).concat([LENGTH]);
+  const fieldDef = (key) => fields().find((f) => f.key === key) ?? LENGTH;
+  const getValue = (key) => (key === 'length' ? app.project.sim.duration : draft.comp.params[key]);
+  const cursorOf = (key) => {
+    if (cursors[key] === undefined) {
+      const v = Math.abs(getValue(key));
+      cursors[key] = fieldDef(key).int ? 0 : v === 0 ? -1 : Math.max(-6, Math.floor(Math.log10(v)) - 1);
+    }
+    return cursors[key];
+  };
+
+  function setValue(key, v, live) {
+    const f = fieldDef(key);
+    if (f.int) v = Math.round(v);
+    if (f.min !== undefined) v = Math.max(f.min, v);
+    if (f.max !== undefined) v = Math.min(f.max, v);
+    v = Number(v.toPrecision(10));
+    if (key === 'length') { app.setLength(v, live); }
+    else { draft.comp.params[key] = v; preview(); }
+    render();
   }
 
-  function numberInput(sel, apply) {
-    const el = root.querySelector(sel);
-    el.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') el.blur(); });
-    el.addEventListener('change', () => {
-      const v = Number(el.value.replace(',', '.').replace('−', '-'));
-      if (!Number.isFinite(v)) { app.toast('Enter a number.'); render(); return; }
-      apply(v);
-    });
+  function preview() { app.setPreview(draft ? { comp: draft.comp, replace: draft.mode === 'edit' ? draft.index : null } : null); }
+
+  function startDraft(type) {
+    const def = SIGNALS[type];
+    const params = {};
+    for (const p of def.params) params[p.key] = draft?.comp.params[p.key] ?? p.default;
+    draft = { mode: draft?.mode ?? 'new', index: draft?.index, comp: normalizeComponent({ type, params }) };
+    if (type === 'step' && draft.mode === 'new' && !app.project.system.reference.components.length) draft.comp.params.time = Math.min(0.1, app.project.sim.duration / 2);
+    for (const k of Object.keys(cursors)) if (k !== 'length') delete cursors[k];
+    active = def.params[0]?.key ?? 'length';
+    buffer = '';
+    preview();
+    render();
   }
 
-  return { render };
-}
+  function editComponent(i) {
+    const comp = structuredClone(app.project.system.reference.components[i]);
+    draft = { mode: 'edit', index: i, comp };
+    for (const k of Object.keys(cursors)) if (k !== 'length') delete cursors[k];
+    active = SIGNALS[comp.type].params[0]?.key ?? 'length';
+    buffer = '';
+    preview();
+    render();
+  }
 
-// A starting limit near what the selected candidate achieves, so a new
-// constraint is meaningful straight away.
-function defaultLimit(key, app) {
-  const v = app.runOf(app.candidate)?.metrics[key];
-  if (Number.isFinite(v) && v > 0) return Number(v.toPrecision(2));
-  return { overshoot: 5, settlingTime: 5, uPeak: 5 }[key] ?? 1;
-}
+  function commitDraft() {
+    if (!draft) return;
+    if (draft.mode === 'edit') app.replaceComponent(draft.index, draft.comp);
+    else app.addComponent(draft.comp);
+    draft = null; active = 'length'; buffer = '';
+    preview();
+    render();
+  }
+  function cancelDraft() { draft = null; active = 'length'; buffer = ''; preview(); render(); }
 
-function createCandidateTable(root, app) {
-  const head = document.createElement('div');
-  head.className = 'cands-head';
-  head.innerHTML = `<span class="label">Candidates</span>
-    <button class="btn small" id="c-sort" title="Order the list best first">Sort by score</button>
-    <button class="btn small primary" id="c-new" title="Duplicate the selected candidate (N)">Duplicate</button>`;
-  const wrap = document.createElement('div');
-  wrap.className = 'table-wrap';
-  root.append(head, wrap);
-  head.querySelector('#c-new').addEventListener('click', () => app.duplicate());
-  head.querySelector('#c-sort').addEventListener('click', () => app.sortByScore());
+  // Entry: dial, cursor keys, keypad.
+  const dial = createDial({
+    size: 70, label: 'Entry dial', title: 'Changes the digit under the cursor',
+    onTurn: (s) => {
+      if (active === 'length') app.beginEdit();
+      buffer = '';
+      setValue(active, getValue(active) + s * 10 ** cursorOf(active), true);
+    },
+    onRelease: () => { if (active === 'length') app.endEdit(); },
+  });
+  $('#g-dial').append(dial.el);
+  const moveCursor = (d) => { if (fieldDef(active).int) return; cursors[active] = Math.max(-6, Math.min(6, cursorOf(active) + d)); render(); };
+  $('#g-left').addEventListener('click', () => moveCursor(1));
+  $('#g-right').addEventListener('click', () => moveCursor(-1));
 
-  let renaming = null;
+  const PAD = [['7', '8', '9', 'Del'], ['4', '5', '6', 'Cancel'], ['1', '2', '3', 'Enter'], ['.', '0', '±', null]];
+  $('#g-keypad').innerHTML = PAD.flat().map((k) => (k === null ? '' : `<button class="key pk ${/^\d$/.test(k) ? '' : 'fn'} ${k === 'Enter' ? 'enter' : ''}" data-k="${k}">${k}</button>`)).join('');
+  $('#g-keypad').querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => press(b.dataset.k)));
+
+  function press(k) {
+    if (/^\d$/.test(k)) buffer += k;
+    else if (k === '.') { if (!buffer.includes('.')) buffer += buffer ? '.' : '0.'; }
+    else if (k === '±') {
+      if (buffer) buffer = buffer.startsWith('-') ? buffer.slice(1) : `-${buffer}`;
+      else { if (active === 'length') { app.beginEdit(); setValue(active, -getValue(active)); app.endEdit(); } else setValue(active, -getValue(active)); }
+    } else if (k === 'Del') buffer = buffer.slice(0, -1);
+    else if (k === 'Cancel') { if (buffer) buffer = ''; else cancelDraft(); }
+    else if (k === 'Enter') {
+      if (buffer) {
+        const v = Number(buffer);
+        buffer = '';
+        if (Number.isFinite(v)) {
+          if (active === 'length') { app.beginEdit(); setValue(active, v); app.endEdit(); } else setValue(active, v);
+          delete cursors[active];
+        }
+      } else commitDraft();
+    }
+    render();
+  }
+
+  $('#g-add').addEventListener('click', () => { if (buffer) press('Enter'); commitDraft(); });
+  $('#g-cancel').addEventListener('click', () => { buffer = ''; cancelDraft(); });
+
+  root.querySelectorAll('.wkey').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.type === 'arb') { $('#arb-file').click(); return; }
+    startDraft(b.dataset.type);
+  }));
+  $('#arb-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      const points = parseWaveform(await f.text());
+      startDraft('arb');
+      draft.comp = normalizeComponent({ type: 'arb', params: { gain: 1, shift: 0 }, points, name: f.name });
+      preview(); render();
+      app.toast(`Loaded ${points.length} points from ${f.name}`);
+    } catch (err) { app.toast(`Could not read ${f.name}: ${err.message}`); }
+  });
+
+  // A mouse click on a panel key leaves the keyboard to the entry (typing,
+  // Enter, Esc); keyboard users who tabbed to a key keep its focus.
+  root.addEventListener('click', (e) => { const k = e.target.closest('button'); if (k && e.detail > 0) k.blur(); });
+
+  // Rendering
+  function valueHtml(key) {
+    const f = fieldDef(key);
+    if (key === active && buffer) return `<span class="buf">${buffer}</span><span class="caret"></span>`;
+    const v = getValue(key);
+    const c = f.int ? 0 : cursorOf(key);
+    let natural = 0;
+    while (natural < 6 && Number(v.toFixed(natural)) !== v) natural++;
+    const dec = Math.max(natural, -c, 0);
+    let [ip, fp = ''] = Math.abs(v).toFixed(dec).split('.');
+    if (c >= ip.length) ip = ip.padStart(c + 1, '0');
+    const chars = [...ip].map((ch, i) => [ch, ip.length - 1 - i]);
+    if (fp) chars.push(['.', null], ...[...fp].map((ch, i) => [ch, -(i + 1)]));
+    const sign = v < 0 ? '−' : '';
+    return sign + chars.map(([ch, e]) => (key === active && e === c ? `<span class="cur">${ch}</span>` : ch)).join('');
+  }
+
+  function fieldRow(f) {
+    return `<button class="pfield ${f.key === active ? 'active' : ''}" data-key="${f.key}">
+      <span class="pl">${f.label}</span><span class="pv">${valueHtml(f.key)}</span><span class="pu">${f.unit ?? ''}</span></button>`;
+  }
 
   function render() {
-    const p = app.project;
-    if (!p.candidates.length) {
-      wrap.innerHTML = '<div class="empty">No candidates yet. Press <kbd>N</kbd> or Duplicate to add one.</div>';
-      return;
-    }
-    const cons = Object.entries(p.goal.subjectTo);
-    const objLabel = Object.keys(p.goal.minimize).length === 1 ? METRIC[Object.keys(p.goal.minimize)[0]].short : 'Score';
-    const best = app.bestIndex();
-    let html = `<table class="ct"><thead><tr><th class="l" title="Show in the scope"></th><th class="l">Name</th><th title="Objective value; lower is better">${esc(objLabel)}</th>`;
-    for (const [k, b] of cons) html += `<th title="${esc(METRIC[k].label)}">${esc(METRIC[k].short)} <span class="lim">${'max' in b ? '≤' : '≥'}${fmt(b.max ?? b.min)}</span></th>`;
-    html += '<th class="l"></th></tr></thead><tbody>';
-    p.candidates.forEach((c, i) => {
-      const run = app.runOf(c);
-      const ev = run?.evaluation;
-      const color = app.colorOf(c);
-      const sel = i === app.sel;
-      html += `<tr data-i="${i}" class="${sel ? 'sel' : ''} ${c.checked ? '' : 'off'}" style="--c:${color}">
-        <td class="chk"><input type="checkbox" ${c.checked ? 'checked' : ''} data-chk="${i}" aria-label="Show ${esc(c.name)} in the scope"></td>
-        <td class="name">${renaming === i ? `<input class="rename" id="rename" value="${esc(c.name)}" aria-label="Candidate name">` : `<div class="nm"><span class="swatch"></span><span title="Double-click to rename">${esc(c.name)}</span></div>`}
-          <div class="sum">${esc(describeController(c.controller))}</div></td>
-        <td class="score">${ev ? scoreCell(ev, i === best) : '…'}</td>`;
-      for (const [k] of cons) {
-        const chk = ev?.checks.find((x) => x.metric === k);
-        html += `<td class="${chk && !chk.ok ? 'bad' : ''}">${chk ? fmt(chk.value) : '…'}</td>`;
-      }
-      html += `<td class="l"><button class="x" data-del="${i}" aria-label="Delete ${esc(c.name)}" title="Delete (Del)">✕</button></td></tr>`;
-    });
-    html += '</tbody></table>';
-    wrap.innerHTML = html;
-
-    wrap.querySelectorAll('tbody tr').forEach((tr) => {
-      const i = Number(tr.dataset.i);
-      tr.addEventListener('click', (e) => {
-        if (e.target.closest('input, button')) return;
-        app.select(i);
-      });
-      tr.addEventListener('dblclick', (e) => {
-        if (!e.target.closest('td.name')) return;
-        renaming = i; render();
-        const inp = wrap.querySelector('#rename');
-        inp.focus(); inp.select();
-      });
-      tr.addEventListener('pointerenter', () => app.setHot(i));
-      tr.addEventListener('pointerleave', () => app.setHot(null));
-    });
-    wrap.querySelectorAll('[data-chk]').forEach((cb) => cb.addEventListener('change', () => app.toggleChecked(Number(cb.dataset.chk))));
-    wrap.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => app.remove(Number(b.dataset.del))));
-    const inp = wrap.querySelector('#rename');
-    if (inp) {
-      const done = (save) => {
-        const i = renaming;
-        renaming = null;
-        if (save && inp.value.trim()) app.rename(i, inp.value.trim()); else render();
-      };
-      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); });
-      inp.addEventListener('blur', () => { if (renaming !== null) done(true); });
-    }
-    wrap.querySelector('tr.sel')?.scrollIntoView({ block: 'nearest' });
+    const comps = app.project.system.reference.components;
+    root.querySelectorAll('.wkey').forEach((b) => b.classList.toggle('lit', draft?.comp.type === b.dataset.type));
+    $('#g-mode').textContent = !draft ? 'Parameters' : draft.mode === 'edit' ? `Edit ${draft.index + 1} · ${SIGNALS[draft.comp.type].label}` : `New ${SIGNALS[draft.comp.type].label} · preview`;
+    $('#g-plist').innerHTML = draft
+      ? SIGNALS[draft.comp.type].params.map(fieldRow).join('') + (draft.comp.type === 'arb' ? `<div class="hint">${(draft.comp.points ?? []).length} points${draft.comp.name ? ` from ${draft.comp.name}` : ''}</div>` : '')
+      : `<div class="hint">Press a waveform key to draft a component. The display previews it dashed, alone and added to r(t); <b>Add</b> puts it into the signal.</div>`;
+    $('#g-add').textContent = draft?.mode === 'edit' ? 'Apply' : 'Add';
+    $('#g-add').disabled = !draft;
+    $('#g-cancel').disabled = !draft && !buffer;
+    $('#g-stack').innerHTML = comps.length
+      ? comps.map((c, i) => `<li class="srow ${c.enabled === false ? 'off' : ''} ${draft?.mode === 'edit' && draft.index === i ? 'editing' : ''}" data-i="${i}">
+          <span class="sn">${i + 1}</span>${icon(c.type)}<span class="sd" title="Edit">${describeComponent(c)}</span>
+          <button class="sw ${c.enabled === false ? '' : 'on'}" data-tog="${i}" role="switch" aria-checked="${c.enabled !== false}" aria-label="Component ${i + 1} on"></button>
+          <button class="x" data-del="${i}" aria-label="Remove component ${i + 1}" title="Remove">✕</button></li>`).join('')
+      : '<li class="empty">No components yet: r(t) = 0.</li>';
+    $('#g-len').innerHTML = `${fieldRow(LENGTH)}<span class="hint">record and sweep time</span>`;
+    root.querySelectorAll('.pfield').forEach((b) => b.addEventListener('click', () => { if (buffer) press('Enter'); active = b.dataset.key; render(); }));
+    root.querySelectorAll('.srow').forEach((li) => li.addEventListener('click', (e) => { if (!e.target.closest('button')) editComponent(Number(li.dataset.i)); }));
+    root.querySelectorAll('[data-tog]').forEach((b) => b.addEventListener('click', () => app.toggleComponent(Number(b.dataset.tog))));
+    root.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {
+      const i = Number(b.dataset.del);
+      if (draft?.mode === 'edit' && draft.index === i) cancelDraft();
+      else if (draft?.mode === 'edit' && draft.index > i) draft.index--;
+      app.removeComponent(i);
+    }));
   }
 
-  function scoreCell(ev, isBest) {
-    if (ev.unstable) return '<span class="bad-i">unstable ✕</span>';
-    const icon = ev.feasible ? '<span class="ok-i" title="Meets every constraint">✓</span>' : '<span class="bad-i" title="Violates a constraint">✕</span>';
-    return `${isBest ? '<span class="star" title="Best feasible candidate">BEST</span>' : ''}${fmt(ev.score)} ${icon}`;
+  // Keyboard, while this tab is open. Returns true when the key was used.
+  function handleKey(e) {
+    if (/^[0-9]$/.test(e.key)) { press(e.key); return true; }
+    if (e.key === '.' || e.key === ',') { press('.'); return true; }
+    if (e.key === '-') { press('±'); return true; }
+    if (e.key === 'Backspace') { press('Del'); return true; }
+    if (e.key === 'Enter') { press('Enter'); return true; }
+    if (e.key === 'Escape') { press('Cancel'); return true; }
+    if (e.key === 'ArrowLeft') { moveCursor(1); return true; }
+    if (e.key === 'ArrowRight') { moveCursor(-1); return true; }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const s = e.key === 'ArrowUp' ? 1 : -1;
+      if (active === 'length') { app.beginEdit(); setValue(active, getValue(active) + s * 10 ** cursorOf(active)); app.endEdit(); }
+      else setValue(active, getValue(active) + s * 10 ** cursorOf(active));
+      return true;
+    }
+    if (e.key === 'Tab') {
+      const keys = fields().map((f) => f.key);
+      if (buffer) press('Enter');
+      active = keys[(keys.indexOf(active) + (e.shiftKey ? keys.length - 1 : 1)) % keys.length];
+      render();
+      return true;
+    }
+    return false;
   }
 
-  return { render };
+  return { render, handleKey, get drafting() { return !!draft; }, reset: cancelDraft };
 }
 
-function renderReadout(root, app) {
-  const c = app.candidate;
-  const run = c && app.runOf(c);
-  if (!run) { root.innerHTML = ''; return; }
-  const g = app.project.goal;
-  const shown = ['riseTime', 'overshoot', 'settlingTime', 'steadyStateError', 'itae', 'iae', 'uPeak', 'uTV'];
-  for (const k of [...Object.keys(g.minimize), ...Object.keys(g.subjectTo)]) if (!shown.includes(k)) shown.push(k);
-  root.innerHTML = shown.map((k) => {
-    const m = METRIC[k];
-    const v = run.metrics[k];
-    const chk = run.evaluation.checks.find((x) => x.metric === k);
-    const lim = chk ? ` <span class="lim">${'max' in chk ? '≤' : '≥'}${fmt(chk.max ?? chk.min)}</span>` : '';
-    const cls = ['cell', chk && !chk.ok ? 'bad' : '', k in g.minimize ? 'obj' : ''].join(' ');
-    return `<div class="${cls}" title="${esc(m.label)}: ${esc(m.desc)}"><div class="k">${esc(m.label)}</div><div class="v">${fmt(v)}${esc(unitOf(k))}${lim}</div></div>`;
-  }).join('');
-}
-
-return { createGoalPanel, createCandidateTable, renderReadout };
+return { createGenerator };
 })();
 // ---- ui/app.js
 __mods['ui/app.js'] = (() => {
-// The app: state, history, persistence, and wiring between the panels.
-// window.loopTuner is the browser API for agents driving the page.
+// The app: project state, history, persistence, the acquisition the display
+// shows, and wiring between display, controls and tabs. window.loopTuner is
+// the browser API for agents driving the page.
 
-const { SLOTS, retypeBlock, normalizeBlock, blockDef } = __mods['core/blocks.js'];
-const { tf2ss } = __mods['core/poly.js'];
-const { simulate } = __mods['core/sim.js'];
-const { computeMetrics, METRICS } = __mods['core/metrics.js'];
-const { normalizeProject, evaluateCandidate, nextColor, uniqueName, fmt, describeController, findCandidate } = __mods['core/project.js'];
-const { compareEvals } = __mods['core/goal.js'];
-const { tuneCandidate } = __mods['core/tune.js'];
-const { EXAMPLES } = __mods['core/examples.js'];
-const { createScope } = __mods['ui/scope.js'];
-const { createRack } = __mods['ui/rack.js'];
-const { createGoalPanel, createCandidateTable, renderReadout } = __mods['ui/candidates.js'];
-const STORE_KEY = 'loop-tuner:autosave';
-const SERIES = ['--s1', '--s2', '--s3', '--s4', '--s5', '--s6', '--s7', '--s8'];
+const { normalizeProject, referenceTrace, loopReady, evaluateCandidate, defaultSampleTime, findCandidate } = __mods['core/project.js'];
+const { SIGNALS, normalizeComponent, componentFn, referenceFn, sampleSignal } = __mods['core/signals.js'];
+const { EXAMPLES, DEFAULT_PROJECT } = __mods['core/examples.js'];
+const { createDisplay } = __mods['ui/display.js'];
+const { createControls } = __mods['ui/controls.js'];
+const { createGenerator } = __mods['ui/generator.js'];
+const { ceil125 } = __mods['ui/units.js'];
+const STORE_KEY = 'loop-tuner:v2:autosave';
+const TABS = [
+  { key: 'input', label: 'Input' },
+  { key: 'plant', label: 'Plant', next: 'Pick a plant from the block library and set it with knobs. Channel 2 will show its output y(t). The actuator, sensor and disturbance start as ideal blocks you can swap for richer ones.' },
+  { key: 'controller', label: 'Controller', next: 'Hand-tuned controller candidates, overlaid on the display and stepped through like patches on a synthesizer.' },
+  { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
+  { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
+];
 
 function startApp() {
   const $ = (id) => document.getElementById(id);
-  const embeddedEl = $('loop-tuner-project');
-  const embeddedText = embeddedEl?.textContent.trim() || '';
+  const embeddedText = $('loop-tuner-project')?.textContent.trim() || '';
   const shellTemplate = $('lt-shell').outerHTML;
-  // Inside a frame (an embedded preview) downloads are often blocked: offer copying instead.
   const framed = window.self !== window.top;
   document.querySelectorAll(framed ? '[data-standalone]' : '[data-framed]').forEach((el) => { el.hidden = true; });
 
-  const app = {
-    project: null,
-    sel: 0,
-    hot: null,
-    tuning: null,
-    stash: {},
-    get candidate() { return this.project.candidates[this.sel] ?? null; },
-  };
-
-  // Evaluation cache keyed by everything a run depends on.
-  const cache = new Map();
-  function keyOf(c) {
-    const loop = {};
-    for (const s of SLOTS) loop[s.key] = s.key === 'controller' ? c.controller : (c[s.key] ?? app.project.system[s.key]);
-    return JSON.stringify([loop, app.project.sim, app.project.goal]);
-  }
-  app.runOf = (c) => {
-    if (!c) return null;
-    const k = keyOf(c);
-    let run = cache.get(k);
-    if (!run) {
-      try { run = evaluateCandidate(app.project, c); } catch (err) { run = { error: err.message }; }
-      cache.set(k, run);
-      if (cache.size > 300) cache.delete(cache.keys().next().value);
-    }
-    return run.error ? null : run;
-  };
-  app.colorOf = (c) => getComputedStyle(document.documentElement).getPropertyValue(SERIES[(c?.color ?? 0) % SERIES.length]).trim() || '#2a78d6';
-  app.bestIndex = () => {
-    let best = -1;
-    app.project.candidates.forEach((c, i) => {
-      const ev = app.runOf(c)?.evaluation;
-      if (!ev?.feasible) return;
-      if (best < 0 || compareEvals(ev, app.runOf(app.project.candidates[best]).evaluation) < 0) best = i;
-    });
-    return best;
-  };
+  const app = { project: null, channel: 0, tab: 'input' };
 
   // History: snapshots of the project, taken before each edit.
   const undoStack = [], redoStack = [];
-  const snap = () => JSON.stringify({ project: app.project, sel: app.sel });
   let editOpen = false;
   app.beginEdit = () => {
     if (editOpen) return;
-    undoStack.push(snap());
-    if (undoStack.length > 200) undoStack.shift();
+    undoStack.push(JSON.stringify(app.project));
+    if (undoStack.length > 300) undoStack.shift();
     redoStack.length = 0;
     editOpen = true;
   };
-  const endEdit = () => { editOpen = false; };
-  function restore(s) {
-    const o = JSON.parse(s);
-    app.project = o.project; app.sel = Math.min(o.sel, app.project.candidates.length - 1);
-    renderAll();
-  }
-  app.undo = () => { if (!undoStack.length) return; redoStack.push(snap()); restore(undoStack.pop()); toast('Undone'); };
-  app.redo = () => { if (!redoStack.length) return; undoStack.push(snap()); restore(redoStack.pop()); toast('Redone'); };
+  app.endEdit = () => { editOpen = false; renderChrome(); };
+  const restore = (s) => { app.project = JSON.parse(s); changed(); };
+  app.undo = () => { if (!undoStack.length) return; redoStack.push(JSON.stringify(app.project)); restore(undoStack.pop()); toast('Undone'); };
+  app.redo = () => { if (!redoStack.length) return; undoStack.push(JSON.stringify(app.project)); restore(redoStack.pop()); toast('Redone'); };
 
-  // Persistence: the page remembers the working project per embedded project.
   let saveTimer = null;
+  const base = `${embeddedText.length}:${hash(embeddedText)}`;
   function autosave() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      try { localStorage.setItem(STORE_KEY, JSON.stringify({ base: embeddedText.length + ':' + hash(embeddedText), project: app.project, sel: app.sel })); } catch { /* storage unavailable */ }
-    }, 300);
+    saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: app.project })); } catch { /* storage unavailable */ } }, 300);
   }
-  function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+
+  // The acquisition: every signal the display can show. Without a plant and a
+  // controller there is only r(t).
+  let acqKey = '', acq = null, loopNote = '';
+  function acquire() {
+    const p = app.project;
+    const key = JSON.stringify([p.sim, p.system, p.candidates, p.selected, p.goal]);
+    if (key === acqKey) return acq;
+    acqKey = key;
+    const { t, r } = referenceTrace(p);
+    const signals = { r };
+    loopNote = '';
+    if (loopReady(p)) {
+      const cand = p.candidates[Math.max(0, p.selected ? p.candidates.findIndex((c) => c.name === p.selected) : 0)] ?? p.candidates[0];
+      try {
+        const { result } = evaluateCandidate(p, cand);
+        Object.assign(signals, { y: result.y, u: result.u, e: result.e, ym: result.ym, d: result.d });
+        loopNote = cand.name;
+      } catch (err) { loopNote = ''; toast(`The loop could not be simulated: ${err.message}`); }
+    }
+    acq = { t, signals };
+    return acq;
+  }
 
   // Mutations
-  function targetBlock(slot) {
-    const c = app.candidate;
-    if (slot === 'controller') return c ? ['candidate', c, 'controller'] : null;
-    if (c?.[slot]) return ['candidate', c, slot];
-    return ['system', app.project.system, slot];
-  }
-  app.setParam = (slot, key, value, live) => {
-    const t = targetBlock(slot);
-    if (!t) return false;
-    const [, owner, k] = t;
-    const next = { type: owner[k].type, params: { ...owner[k].params, [key]: value } };
-    try {
-      const block = normalizeBlock(slot, next);
-      const def = blockDef(slot, block.type);
-      if (def.tf) { const tf = def.tf(block.params); tf2ss(tf.num, tf.den); }
-      owner[k] = block;
-    } catch (err) { toast(err.message); return false; }
-    if (!live) endEdit();
-    update({ structure: false });
-    return true;
-  };
-  app.setSim = (key, value, live) => {
-    const sim = { ...app.project.sim, [key]: value };
-    if (!(sim.sampleTime > 0) || sim.sampleTime >= sim.duration) { if (!live) toast('The sample time must be shorter than the simulation length.'); return; }
-    if (sim.duration / sim.sampleTime > 200000) { if (!live) toast('Too many samples: raise Ts or shorten the window.'); return; }
-    app.project.sim = sim;
-    if (!live) { endEdit(); update({ structure: true }); } else update({ structure: false });
-  };
-  app.retype = (slot, type) => {
-    const t = targetBlock(slot);
-    if (!t) return;
-    const [, owner, k] = t;
+  app.editScope = (fn) => { app.beginEdit(); fn(app.project.scope); display.setScope(app.project.scope, app.channel); controls.render(display.mode); autosave(); };
+  app.channelKey = (i) => {
+    const ch = app.project.scope.channels[i];
     app.beginEdit();
-    const old = owner[k];
-    app.stash[slot] = { ...(app.stash[slot] ?? {}), [old.type]: old.params };
-    owner[k] = retypeBlock(slot, old, type, app.stash[slot]);
-    endEdit();
-    update({ structure: true });
+    if (!ch.on) { ch.on = true; app.channel = i; }
+    else if (app.channel === i) ch.on = false;
+    else app.channel = i;
+    app.endEdit();
+    changed({ data: false });
   };
-  app.editGoal = (fn) => {
+  app.selectChannel = (i) => { app.channel = i; changed({ data: false }); };
+  const refs = () => app.project.system.reference.components;
+  app.addComponent = (comp) => { app.beginEdit(); refs().push(normalizeComponent(comp)); app.endEdit(); changed(); toast(`Added ${SIGNALS[comp.type].label} to r(t)`); };
+  app.replaceComponent = (i, comp) => { app.beginEdit(); refs()[i] = normalizeComponent(comp); app.endEdit(); changed(); };
+  app.removeComponent = (i) => { app.beginEdit(); refs().splice(i, 1); app.endEdit(); changed(); };
+  app.toggleComponent = (i) => {
     app.beginEdit();
-    const goal = structuredClone(app.project.goal);
-    fn(goal);
-    try { app.project = normalizeProject({ ...app.project, goal }); } catch (err) { toast(err.message); }
-    endEdit();
-    update({ structure: true, goal: true });
+    const c = refs()[i];
+    if (c.enabled === false) delete c.enabled; else c.enabled = false;
+    app.endEdit(); changed();
   };
-  app.select = (i) => {
-    if (i < 0 || i >= app.project.candidates.length || i === app.sel) return;
-    app.sel = i;
-    app.project.selected = app.candidate.name;
-    update({ structure: true });
-  };
-  app.setHot = (i) => { if (app.hot === i) return; app.hot = i; drawScope(); };
-  app.toggleChecked = (i) => {
-    app.beginEdit();
-    const c = app.project.candidates[i];
-    c.checked = !c.checked;
-    endEdit();
-    update({ structure: false });
-  };
-  app.duplicate = (from = app.candidate, patch = {}) => {
-    app.beginEdit();
+  app.setLength = (v, live) => {
     const p = app.project;
-    const base = from ? structuredClone(from) : { controller: normalizeBlock('controller', { type: 'PID' }) };
-    const c = { ...base, name: uniqueName(p, patch.name ?? (from ? from.name : 'Candidate')), checked: true, color: nextColor(p.candidates), ...patch };
-    delete c.note;
-    const at = from ? p.candidates.indexOf(from) + 1 : p.candidates.length;
-    p.candidates.splice(at, 0, c);
-    app.sel = at;
-    endEdit();
-    update({ structure: true });
-    return c;
-  };
-  app.remove = (i) => {
-    const p = app.project;
-    if (i < 0 || i >= p.candidates.length) return;
-    app.beginEdit();
-    const [gone] = p.candidates.splice(i, 1);
-    if (app.sel >= p.candidates.length) app.sel = p.candidates.length - 1;
-    endEdit();
-    update({ structure: true });
-    toast(`Deleted ${gone.name}. Ctrl+Z brings it back.`);
-  };
-  app.rename = (i, name) => {
-    app.beginEdit();
-    const c = app.project.candidates[i];
-    c.name = uniqueName({ candidates: app.project.candidates.filter((x) => x !== c) }, name);
-    endEdit();
-    update({ structure: true });
-  };
-  app.sortByScore = () => {
-    app.beginEdit();
-    const cur = app.candidate;
-    const p = app.project;
-    p.candidates = p.candidates.map((c) => [c, app.runOf(c)?.evaluation]).sort((a, b) => (a[1] && b[1] ? compareEvals(a[1], b[1]) : 0)).map(([c]) => c);
-    app.sel = Math.max(0, p.candidates.indexOf(cur));
-    endEdit();
-    update({ structure: true });
+    const old = p.sim.duration;
+    if (!(v > 0)) return;
+    if (v / defaultSampleTime(v) > 200000) return;
+    p.sim = { duration: v, sampleTime: defaultSampleTime(v) };
+    // A timebase that showed the whole old record keeps showing the whole record.
+    const tb = p.scope.timebase;
+    if (tb.position === 0 && Math.abs(tb.scale - ceil125(old / 10)) < 1e-12) tb.scale = ceil125(v / 10);
+    if (!live) app.endEdit();
+    changed();
   };
 
-  // Auto-tune runs as a slice of evaluations per frame, so the page stays live
-  // and the scope shows the search converging.
-  app.toggleTune = () => {
-    if (app.tuning) { stopTune(true); return; }
-    const c = app.candidate;
-    if (!c) return;
-    let gen;
-    try { gen = tuneCandidate(app.project, c, { maxEvals: 300 }); } catch (err) { toast(err.message); return; }
-    const preview = app.duplicate(c, { name: `${c.name} tuned` });
-    app.tuning = { gen, preview, evals: 0 };
-    renderRack();
-    const step = () => {
-      if (!app.tuning) return;
-      const t0 = performance.now();
-      let s;
-      do { s = app.tuning.gen.next(); } while (!s.done && performance.now() - t0 < 14);
-      const prog = s.value;
-      if (prog?.best) {
-        preview.controller = { type: preview.controller.type, params: { ...prog.best.params } };
-        app.tuning.evals = prog.evals;
-        update({ structure: false });
-        $('tune-btn').textContent = s.done ? 'Auto-tune' : `Stop · ${prog.evals}`;
-      }
-      if (s.done) stopTune(false);
-      else requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  };
-  function stopTune(cancelled) {
-    const t = app.tuning;
-    app.tuning = null;
-    update({ structure: true });
-    const ev = app.runOf(t.preview)?.evaluation;
-    toast(`${cancelled ? 'Stopped' : 'Tuned'} after ${t.evals} runs: ${describeController(t.preview.controller)} · score ${fmt(ev?.score)} ${ev?.feasible ? '✓' : '(infeasible)'}`);
+  // Preview of a drafted component: alone, and the signal with it added (or
+  // replacing the component being edited), drawn dashed on r's channel.
+  let previewReq = null;
+  app.setPreview = (req) => { previewReq = req; showPreview(); };
+  function showPreview() {
+    if (!previewReq) { display.setPreview(null); return; }
+    const p = app.project;
+    const comps = p.system.reference.components.slice();
+    if (previewReq.replace !== null && previewReq.replace !== undefined) comps[previewReq.replace] = previewReq.comp;
+    else comps.push(previewReq.comp);
+    let alone, sum;
+    try {
+      alone = sampleSignal(componentFn(normalizeComponent(previewReq.comp), p.sim), p.sim).v;
+      sum = sampleSignal(referenceFn({ components: comps.map((c, i) => normalizeComponent(c, i)) }, p.sim), p.sim).v;
+    } catch { display.setPreview(null); return; }
+    const channel = Math.max(0, p.scope.channels.findIndex((c) => c.source === 'r'));
+    display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase() });
   }
+
+  // Run control
+  app.toggleRun = () => { display.setMode(display.mode === 'stop' ? 'run' : 'stop'); controls.render(display.mode); };
+  app.single = () => { display.setMode('single'); controls.render(display.mode); };
+  app.autoScale = () => {
+    const data = acquire();
+    app.beginEdit();
+    const sc = app.project.scope;
+    sc.timebase = { scale: ceil125(app.project.sim.duration / 10), position: 0 };
+    sc.channels.forEach((ch) => {
+      const v = data.signals[ch.source];
+      if (!v) return;
+      let lo = Infinity, hi = -Infinity;
+      for (const x of v) if (Number.isFinite(x)) { lo = Math.min(lo, x); hi = Math.max(hi, x); }
+      if (!Number.isFinite(lo)) return;
+      const span = hi - lo || Math.abs(hi) || 1;
+      ch.scale = ceil125(span / 6);
+      ch.offset = -Number((((hi + lo) / 2) / (ch.scale / 10)).toFixed(0)) * (ch.scale / 10);
+      ch.offset = Number(ch.offset.toPrecision(6)) || 0;
+    });
+    app.endEdit();
+    changed({ data: false });
+    toast('Auto Scale: display fitted to the data');
+  };
 
   // Rendering
-  const scope = createScope($('scope'), { onPick: (i) => app.select(i) });
-  const rack = createRack($('rack'), app);
-  const goalPanel = createGoalPanel($('goal'), app);
-  const table = createCandidateTable($('cands'), app);
-  const renderRack = () => rack.render();
+  const display = createDisplay($('display'), { onSelectChannel: (i) => app.selectChannel(i), onStopped: () => controls.render(display.mode) });
+  const controls = createControls($('controls'), app);
+  const generator = createGenerator($('tab-input'), app);
 
-  function drawScope() {
-    const p = app.project;
-    const traces = [];
-    p.candidates.forEach((c, i) => {
-      if (!c.checked && i !== app.sel) return;
-      const run = app.runOf(c);
-      if (!run) return;
-      traces.push({ idx: i, color: app.colorOf(c), t: run.result.t, y: run.result.y, u: run.result.u, selected: i === app.sel, hot: i === app.hot });
-    });
-    const selRun = app.runOf(app.candidate) ?? (traces[0] && app.runOf(p.candidates[traces[0].idx]));
-    const g = p.goal.subjectTo;
-    const spec = { band: p.goal.settlingBand, step: selRun?.metrics.events.step ?? null, dist: selRun?.metrics.events.disturbance ?? null };
-    if (g.overshoot?.max !== undefined) spec.overshootMax = g.overshoot.max;
-    if (g.undershoot?.max !== undefined) spec.undershootMax = g.undershoot.max;
-    if (g.settlingTime?.max !== undefined) spec.settleMax = g.settlingTime.max;
-    if (g.uPeak?.max !== undefined) spec.uMax = g.uPeak.max;
-    if (!selRun) { scope.setData(null); return; }
-    scope.setData({ duration: p.sim.duration, t: selRun.result.t, ref: selRun.result.r, traces, spec });
+  function renderTabs() {
+    $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
+      <span class="tn">${i + 1}</span>${t.label}${t.next ? '<span class="soon">later</span>' : ''}</button>`).join('');
+    $('tabbar').querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { app.tab = b.dataset.tab; renderTabs(); }));
+    const t = TABS.find((x) => x.key === app.tab);
+    $('tab-input').hidden = app.tab !== 'input';
+    $('tab-later').hidden = app.tab === 'input';
+    if (t.next) {
+      const defined = app.tab === 'plant' && app.project.system.plant ? `<p>This project already has a plant (<code>${app.project.system.plant.type}</code>) from its file; channels 2–4 show the loop.</p>` : '';
+      $('tab-later').innerHTML = `<div class="later-box"><h3 class="glabel">${t.label} · comes next</h3><p>${t.next}</p>${defined}<p class="dim">Until then the display shows what is set up so far. The order and plans are in design/output/tabs.md.</p></div>`;
+    }
   }
 
-  function update({ structure }) {
-    $('title').value = app.project.title;
-    if (structure) rack.render(); else rack.refresh();
-    if (structure) goalPanel.render();
-    table.render();
-    renderReadout($('readout'), app);
-    drawScope();
-    const run = app.runOf(app.candidate);
-    const warn = run?.result.info.warnings ?? [];
-    $('warn').textContent = warn.join(' · ');
-    $('warn').hidden = !warn.length;
+  function renderChrome() {
     $('undo').disabled = !undoStack.length;
     $('redo').disabled = !redoStack.length;
+    $('title').value = app.project.title;
+    $('loopnote').textContent = loopNote ? `loop: ${loopNote}` : '';
+  }
+
+  function changed({ data = true } = {}) {
+    if (data) display.setData(acquire());
+    display.setScope(app.project.scope, app.channel);
+    showPreview();
+    controls.render(display.mode);
+    generator.render();
+    renderChrome();
     autosave();
   }
-  function renderAll() { update({ structure: true }); }
 
   // Loading
   function load(raw, { keepHistory = true, quiet = false } = {}) {
     const p = normalizeProject(typeof raw === 'string' ? JSON.parse(raw) : raw);
     if (keepHistory && app.project) app.beginEdit();
     app.project = p;
-    app.sel = Math.max(0, p.selected ? p.candidates.findIndex((c) => c.name === p.selected) : 0);
-    if (app.sel < 0) app.sel = 0;
-    endEdit();
-    renderAll();
+    app.endEdit();
+    generator.reset();
+    acqKey = '';
+    changed();
     if (!quiet) toast(`Loaded “${p.title}”`);
   }
 
   // Files and sharing
   const exportJson = () => JSON.stringify(app.project, null, 2);
   function exportHtml() {
-    const style = $('lt-style').textContent;
-    const script = $('lt-script').textContent;
-    const fonts = $('lt-fonts')?.outerHTML ?? '';
     const json = exportJson().replace(/</g, '\\u003c');
-    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${escapeHtml(app.project.title)} · Loop Tuner</title>\n${fonts}\n<style id="lt-style">${style}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n<\/script>\n<script id="lt-script">${script}<\/script>\n</body>\n</html>\n`;
+    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n<\/script>\n<script id="lt-script">${$('lt-script').textContent}<\/script>\n</body>\n</html>\n`;
   }
-  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   function download(name, text, type) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([text], { type }));
     a.download = name;
-    document.body.append(a);
-    a.click();
+    document.body.append(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
-  const fileStem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
+  const stem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
   async function copy(text, what) {
-    try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser. Use Save instead.'); }
+    try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
-
-  $('save').addEventListener('click', () => { download(`${fileStem()}.json`, exportJson(), 'application/json'); toast('Saved the project as JSON'); });
-  $('export').addEventListener('click', () => { download(`${fileStem()}.html`, exportHtml(), 'text/html'); toast('Exported a standalone HTML file with this project inside'); });
+  $('save').addEventListener('click', () => { download(`${stem()}.json`, exportJson(), 'application/json'); toast('Saved the project as JSON'); });
+  $('export').addEventListener('click', () => { download(`${stem()}.html`, exportHtml(), 'text/html'); toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
   $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
   $('open').addEventListener('click', () => $('file').click());
-  $('file').addEventListener('change', async (e) => {
-    const f = e.target.files[0];
-    if (f) await openFile(f);
-    e.target.value = '';
-  });
+  $('file').addEventListener('change', async (e) => { const f = e.target.files[0]; if (f) await openFile(f); e.target.value = ''; });
   async function openFile(f) {
     const text = await f.text();
     try {
       if (/^\s*</.test(text)) {
         const m = text.match(/<script type="application\/json" id="loop-tuner-project">([\s\S]*?)<\/script>/);
-        if (!m) throw new Error('This HTML file has no Loop Tuner project inside.');
+        if (!m || !m[1].trim()) throw new Error('this page has no Loop Tuner project inside');
         load(m[1]);
       } else load(text);
     } catch (err) { toast(`Could not open ${f.name}: ${err.message}`); }
@@ -2775,11 +2670,7 @@ function startApp() {
   window.addEventListener('dragenter', (e) => { if (e.dataTransfer?.types.includes('Files')) { dragDepth++; $('drop').hidden = false; } });
   window.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('drop').hidden = true; });
   window.addEventListener('dragover', (e) => e.preventDefault());
-  window.addEventListener('drop', (e) => {
-    e.preventDefault(); dragDepth = 0; $('drop').hidden = true;
-    const f = e.dataTransfer.files[0];
-    if (f) openFile(f);
-  });
+  window.addEventListener('drop', (e) => { e.preventDefault(); dragDepth = 0; $('drop').hidden = true; const f = e.dataTransfer.files[0]; if (f) openFile(f); });
   window.addEventListener('paste', (e) => {
     if (e.target.closest?.('input, textarea')) return;
     const text = e.clipboardData?.getData('text') ?? '';
@@ -2788,114 +2679,81 @@ function startApp() {
   });
 
   const ex = $('examples');
-  EXAMPLES.forEach((x, i) => { const o = document.createElement('option'); o.value = i; o.textContent = x.title; ex.append(o); });
-  ex.addEventListener('change', () => { if (ex.value !== '') load(structuredClone(EXAMPLES[Number(ex.value)])); ex.value = ''; });
-
-  $('title').addEventListener('change', () => { app.beginEdit(); app.project.title = $('title').value.trim() || 'Untitled loop'; endEdit(); update({ structure: false }); });
+  [DEFAULT_PROJECT, ...EXAMPLES].forEach((x, i) => { const o = document.createElement('option'); o.value = i; o.textContent = x.title; ex.append(o); });
+  ex.addEventListener('change', () => {
+    if (ex.value === '') return;
+    const src = [DEFAULT_PROJECT, ...EXAMPLES][Number(ex.value)];
+    const fresh = !src.scope;
+    load(structuredClone(src));
+    if (fresh) app.autoScale();
+    ex.value = '';
+  });
+  $('title').addEventListener('change', () => { app.beginEdit(); app.project.title = $('title').value.trim() || 'Untitled loop'; app.endEdit(); autosave(); });
   $('title').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); });
   $('undo').addEventListener('click', app.undo);
   $('redo').addEventListener('click', app.redo);
-
-  // Sweep transport
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const playBtn = $('play');
-  function setPlaying(on) {
-    scope.setSweep({ playing: on });
-    playBtn.innerHTML = on ? '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="2" width="3.5" height="12" fill="currentColor"/><rect x="9.5" y="2" width="3.5" height="12" fill="currentColor"/></svg>' : '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2 L14 8 L4 14 Z" fill="currentColor"/></svg>';
-    playBtn.setAttribute('aria-label', on ? 'Pause sweep' : 'Play sweep');
-    playBtn.title = `${on ? 'Pause' : 'Play'} the scan sweep (P)`;
-  }
-  playBtn.addEventListener('click', () => setPlaying(!scope.playing));
-  $('speed').addEventListener('change', (e) => scope.setSweep({ seconds: Number(e.target.value) }));
-  scope.setSweep({ seconds: Number($('speed').value) });
-
-  // Help
   $('help').addEventListener('click', () => { $('help-dlg').hidden = false; $('help-close').focus(); });
   $('help-close').addEventListener('click', () => { $('help-dlg').hidden = true; });
   $('help-dlg').addEventListener('click', (e) => { if (e.target === $('help-dlg')) $('help-dlg').hidden = true; });
 
-  // Keyboard
   window.addEventListener('keydown', (e) => {
     const inField = e.target.closest?.('input, select, textarea');
     const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.key.toLowerCase() === 'z') { if (inField) return; e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
-    if (mod && e.key.toLowerCase() === 'y') { if (inField) return; e.preventDefault(); app.redo(); return; }
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $('save').click(); return; }
+    if (mod && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
+    if (mod && e.key.toLowerCase() === 'y' && !inField) { e.preventDefault(); app.redo(); return; }
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
     if (inField || mod || e.altKey) return;
-    if (e.key === 'Escape' && !$('help-dlg').hidden) { $('help-dlg').hidden = true; return; }
-    if (e.target.closest?.('[role="slider"]') && e.key.startsWith('Arrow')) return;
-    const n = app.project.candidates.length;
-    switch (e.key) {
-      case 'ArrowDown': case 'j': e.preventDefault(); app.select(Math.min(n - 1, app.sel + 1)); break;
-      case 'ArrowUp': case 'k': e.preventDefault(); app.select(Math.max(0, app.sel - 1)); break;
-      case ' ': case 'x': if (e.target.closest?.('button')) return; e.preventDefault(); app.toggleChecked(app.sel); break;
-      case 'n': case 'd': app.duplicate(); break;
-      case 'Delete': case 'Backspace': app.remove(app.sel); break;
-      case 't': app.toggleTune(); break;
-      case 'p': setPlaying(!scope.playing); break;
-      case '?': $('help').click(); break;
-      default: {
-        const slot = { 1: 'reference', 2: 'controller', 3: 'actuator', 4: 'disturbance', 5: 'plant', 6: 'sensor', 7: 'noise' }[e.key];
-        if (slot) rack.focusModule(slot);
-      }
-    }
+    if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
+    const onControl = e.target.closest?.('button, [role="slider"], a');
+    if (app.tab === 'input' && !(onControl && ['Enter', ' ', 'Tab'].includes(e.key)) && generator.handleKey(e)) { e.preventDefault(); return; }
+    const k = e.key.toLowerCase();
+    if (k === 'r') app.toggleRun();
+    else if (k === 's') app.single();
+    else if (k === 'a') app.autoScale();
+    else if (e.key === '?') $('help').click();
   });
 
-  // Toast
   let toastTimer = null;
   function toast(msg) {
     const el = $('toast');
-    el.textContent = msg;
-    el.hidden = false;
+    el.textContent = msg; el.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { el.hidden = true; }, 3200);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 3000);
   }
   app.toast = toast;
 
-  // Browser API for agents (Playwright and the like). Every call takes and
-  // returns plain JSON, the same shapes as the project file and the CLI.
+  // Browser API for agents. Plain JSON in and out, the same shapes as the file.
   window.loopTuner = {
-    version: 1,
+    version: 2,
     getProject: () => structuredClone(app.project),
     setProject: (p) => { load(p, { quiet: true }); return structuredClone(app.project); },
-    evaluate: () => app.project.candidates.map((c) => {
-      const run = app.runOf(c);
-      return { name: c.name, controller: c.controller, metrics: run && strip(run.metrics), score: run?.evaluation.score ?? null, feasible: run?.evaluation.feasible ?? false, checks: run?.evaluation.checks ?? [] };
-    }),
-    select: (ref) => { app.select(findCandidate(app.project, ref)); return app.candidate.name; },
-    addCandidate: (c) => {
-      const p = normalizeProject({ ...app.project, candidates: [...app.project.candidates, c] });
-      app.beginEdit();
-      app.project.candidates.push(p.candidates[p.candidates.length - 1]);
-      app.sel = app.project.candidates.length - 1;
-      endEdit(); update({ structure: true });
-      return app.candidate.name;
-    },
-    metrics: () => METRICS.map(({ key, label, unit, desc }) => ({ key, label, unit, desc })),
-    simulate: (loop, sim) => { const r = simulate(loop, sim); return strip(computeMetrics(r)); },
+    addComponent: (c) => { app.addComponent(c); return structuredClone(refs()); },
+    reference: () => { const { t, r } = referenceTrace(app.project); return { t: Array.from(t), r: Array.from(r) }; },
+    autoScale: () => app.autoScale(),
+    run: () => { display.setMode('run'); controls.render('run'); },
+    stop: () => { display.setMode('stop'); controls.render('stop'); },
+    selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
   };
-  function strip(m) {
-    const o = {};
-    for (const [k, v] of Object.entries(m)) o[k] = typeof v === 'number' && !Number.isFinite(v) ? null : v;
-    return o;
-  }
 
-  // Boot: embedded project, unless this browser has newer work on it.
-  let initial = null;
+  // Boot: the embedded project, unless this browser has newer work on it.
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch { /* storage unavailable */ }
   try {
-    const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-    if (saved && saved.base === embeddedText.length + ':' + hash(embeddedText)) initial = saved;
-  } catch { /* storage unavailable */ }
-  try {
-    if (initial) { app.project = normalizeProject(initial.project); app.sel = Math.min(initial.sel ?? 0, app.project.candidates.length - 1); }
-    else load(embeddedText ? JSON.parse(embeddedText) : structuredClone(EXAMPLES[0]), { keepHistory: false, quiet: true });
+    if (saved && saved.base === base) app.project = normalizeProject(saved.project);
+    else app.project = normalizeProject(embeddedText ? JSON.parse(embeddedText) : structuredClone(DEFAULT_PROJECT));
   } catch (err) {
-    load(structuredClone(EXAMPLES[0]), { keepHistory: false, quiet: true });
-    toast(`The embedded project could not be read (${err.message}); opened the example instead.`);
+    app.project = normalizeProject(structuredClone(DEFAULT_PROJECT));
+    setTimeout(() => toast(`The embedded project could not be read (${err.message}); opened a new one instead.`));
   }
-  renderAll();
-  setPlaying(!reduced);
+  renderTabs();
+  changed();
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  display.setMode(reduced ? 'stop' : 'run');
+  controls.render(display.mode);
 }
+
+function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startApp);
 else startApp();

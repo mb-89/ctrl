@@ -2,7 +2,7 @@
 // its parameters (with ranges the UI and the tuner use) and its behaviour:
 //   tf(p)     -> { num, den, delay }   linear SISO element (actuator, plant, sensor, controller)
 //   pid       -> true                  discrete PID (controller slot)
-//   signal(p) -> t => value            signal source (reference, disturbance)
+//   signal(p) -> t => value            signal source (disturbance)
 //   limits(p) -> { min, max }          actuator saturation
 //   noise(p)  -> { std, seed }         measurement noise
 // Blocks in one slot are interchangeable: parameters with the same key carry
@@ -34,34 +34,29 @@ const lag = (t) => [t, 1];
 const BLOCK_LIST = [
   // Reference and disturbance sources
   {
-    type: 'step', slots: ['reference', 'disturbance'], label: 'Step', formula: 'A · 1(t − t₀)',
+    type: 'step', slots: ['disturbance'], label: 'Step', formula: 'A · 1(t − t₀)',
     params: [amp('amplitude', 'A', 1), time('time', 't₀', 1)],
     signal: (p) => (t) => (t >= p.time ? p.amplitude : 0),
   },
   {
-    type: 'square', slots: ['reference', 'disturbance'], label: 'Square', formula: 'A · square(t − t₀, T)',
+    type: 'square', slots: ['disturbance'], label: 'Square', formula: 'A · square(t − t₀, T)',
     params: [amp('amplitude', 'A', 1), time('time', 't₀', 1), num('period', 'T', 10, 0.01, 1000, 'log', { unit: 's' }), num('duty', 'duty', 0.5, 0.05, 0.95)],
     signal: (p) => (t) => (t >= p.time && ((t - p.time) % p.period) < p.duty * p.period ? p.amplitude : 0),
   },
   {
-    type: 'pulse', slots: ['reference', 'disturbance'], label: 'Pulse', formula: 'A for t₀ ≤ t < t₀ + w',
+    type: 'pulse', slots: ['disturbance'], label: 'Pulse', formula: 'A for t₀ ≤ t < t₀ + w',
     params: [amp('amplitude', 'A', 1), time('time', 't₀', 1), num('width', 'w', 1, 0.001, 1000, 'log', { unit: 's' })],
     signal: (p) => (t) => (t >= p.time && t < p.time + p.width ? p.amplitude : 0),
   },
   {
-    type: 'ramp', slots: ['reference', 'disturbance'], label: 'Ramp', formula: 'k · (t − t₀) · 1(t − t₀)',
+    type: 'ramp', slots: ['disturbance'], label: 'Ramp', formula: 'k · (t − t₀) · 1(t − t₀)',
     params: [amp('slope', 'k', 0.1), time('time', 't₀', 1)],
     signal: (p) => (t) => (t >= p.time ? p.slope * (t - p.time) : 0),
   },
   {
-    type: 'sine', slots: ['reference', 'disturbance'], label: 'Sine', formula: 'A · sin(2πf (t − t₀))',
+    type: 'sine', slots: ['disturbance'], label: 'Sine', formula: 'A · sin(2πf (t − t₀))',
     params: [amp('amplitude', 'A', 1), time('time', 't₀', 0), num('frequency', 'f', 0.1, 0.001, 100, 'log', { unit: 'Hz' })],
     signal: (p) => (t) => (t >= p.time ? p.amplitude * Math.sin(2 * Math.PI * p.frequency * (t - p.time)) : 0),
-  },
-  {
-    type: 'staircase', slots: ['reference'], label: 'Staircase', formula: 'h · ⌊(t − t₀)/T + 1⌋',
-    params: [amp('height', 'h', 0.5), time('time', 't₀', 1), num('interval', 'T', 5, 0.01, 1000, 'log', { unit: 's' })],
-    signal: (p) => (t) => (t >= p.time ? p.height * Math.floor((t - p.time) / p.interval + 1) : 0),
   },
   {
     type: 'none', slots: ['disturbance'], label: 'None', formula: '0',
