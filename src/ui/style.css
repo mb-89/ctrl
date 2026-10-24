@@ -474,3 +474,40 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
   .tune { grid-template-columns: minmax(0, 1fr); height: auto; }
   .tune > .tuprogress { order: -1; }
 }
+
+/* Controller tab: the small diagram of what the running variant does
+   (src/ui/ctldiagram.js), under the variant list. Theme colours only. */
+.ctdiag { margin: 2px 0 0; padding: 5px 3px 3px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); cursor: zoom-in; }
+.ctdiag:hover { border-color: var(--line-strong); }
+.ctdiag figcaption { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 4px; }
+.ctdiag figcaption span { font-size: 11px; color: var(--muted); }
+.ctdiag svg { display: block; width: 100%; max-width: 405px; height: auto; margin: 0 auto; }
+.sd { font-family: var(--mono); font-size: 10px; }
+.sd .w { fill: none; stroke: var(--ink-2); stroke-width: 1.1; stroke-linejoin: round; }
+.sd .w.d { stroke-dasharray: 3 2; }
+.sd .halo { fill: none; stroke: var(--panel); stroke-width: 5; }
+.sd .ah, .sd .dot { fill: var(--ink-2); }
+.sd .b { fill: var(--key-top); stroke: var(--ink-2); stroke-width: 1; }
+.sd .t { fill: var(--ink); }
+.sd .k { fill: var(--muted); }
+.sd .v { fill: var(--ink); font-weight: 600; }
+.sd .p { fill: var(--ink); font-size: 11px; font-weight: 600; }
+.sd .n { fill: var(--muted); font-size: 9px; }
+.sd .n.warn { fill: var(--bad); font-weight: 600; }
+.sd .sg { fill: var(--ink-2); font-size: 9px; }
+.sd .f { opacity: 0.3; }
+.ctdiag-big { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); cursor: zoom-out; padding: 16px; }
+.ctdiag-big figure { margin: 0; width: min(100%, 840px); background: var(--panel); border-radius: 12px; padding: 14px 16px 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35); }
+.ctdiag-big svg { display: block; width: 100%; height: auto; }
+.ctdiag-big figcaption { font-size: 12.5px; color: var(--muted); margin: 0 0 8px; }
+.ctdiag-big figcaption + svg + figcaption { margin: 8px 0 0; }
+.ctdiag-big b { color: var(--ink); }
+.tuchk { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); }
+/* Narrow: the Controller tab's columns stack, two and then one across. */
+@media (max-width: 900px) {
+  .ctl { grid-template-columns: repeat(2, minmax(0, 1fr)); height: auto; }
+  .ctl > .gcol { overflow: visible; }
+}
+@media (max-width: 560px) {
+  .ctl { grid-template-columns: minmax(0, 1fr); }
+}

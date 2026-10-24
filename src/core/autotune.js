@@ -271,22 +271,35 @@ const UNTUNABLE = {
 // The knobs the optimiser turns, as log factors on the variant's own values:
 // x = 0 is the variant as it is, x = ln 2 doubles a gain. A gain at 0 stays
 // off (the structure is the person's choice) and no sign ever flips.
-//   pid            Kp, Ki, Kd
-//   gainScheduled  the Kp table and the Ki table, each scaled as a whole
+//   pid            Kp, Ki, Kd, and the reference feedforward Kff, Kv, Ka
+//   gainScheduled  the Kp table and the Ki table, each scaled as a whole; Kff, Kv, Ka
 //   stateFeedback  each gain in K, and the prefilter kr
-export function tuningSpace(variant) {
-  const p = variant.params;
+// start: values for feedforward gains that are 0, when the person asked to
+// tune those too (feedforwardStart); they are then turned like the others,
+// from there. base is the variant at x = 0.
+const FF_KEYS = ['Kff', 'Kv', 'Ka'];
+const isOn = (v) => Number.isFinite(v) && v !== 0;
+export function tuningSpace(variant, { start = null } = {}) {
+  const p = { ...variant.params };
+  const started = start ? FF_KEYS.filter((k) => p[k] === 0 && isOn(start[k])) : [];
+  for (const k of started) p[k] = start[k];
   const f = (x) => Math.exp(Math.max(-LOG_LIMIT, Math.min(LOG_LIMIT, x)));
-  const on = (v) => Number.isFinite(v) && v !== 0;
+  const on = isOn;
+  const ff = FF_KEYS.filter((k) => on(p[k]));
   let names, apply;
   if (variant.type === 'pid') {
-    const keys = ['Kp', 'Ki', 'Kd'].filter((k) => on(p[k]));
+    const keys = ['Kp', 'Ki', 'Kd', ...FF_KEYS].filter((k) => on(p[k]));
     names = keys;
     apply = (x) => { const q = { ...p }; keys.forEach((k, i) => { q[k] = p[k] * f(x[i]); }); return q; };
   } else if (variant.type === 'gainScheduled') {
     const keys = ['Kp', 'Ki'].filter((k) => p[k].some(on));
-    names = keys.map((k) => `${k} table ×`);
-    apply = (x) => { const q = { ...p }; keys.forEach((k, i) => { q[k] = p[k].map((v) => v * f(x[i])); }); return q; };
+    names = [...keys.map((k) => `${k} table ×`), ...ff];
+    apply = (x) => {
+      const q = { ...p };
+      keys.forEach((k, i) => { q[k] = p[k].map((v) => v * f(x[i])); });
+      ff.forEach((k, j) => { q[k] = p[k] * f(x[keys.length + j]); });
+      return q;
+    };
   } else if (variant.type === 'stateFeedback') {
     const idx = p.K.map((v, i) => i).filter((i) => on(p.K[i]));
     names = [...idx.map((i) => `K${i + 1}`), ...(on(p.kr) ? ['kr'] : [])];
@@ -298,14 +311,66 @@ export function tuningSpace(variant) {
     };
   } else throw new Error(UNTUNABLE[variant.type] ?? `a ${variant.type} variant cannot be tuned`);
   if (!names.length) throw new Error('every gain of this variant is 0; give the gains it should use a start value, then tune');
-  return { names, apply: (x) => ({ ...variant, params: apply(x) }) };
+  return { names, started, base: started.length ? { ...variant, params: p } : variant, apply: (x) => ({ ...variant, params: apply(x) }) };
+}
+
+// Start values for feedforward gains that are 0, when the person asks to tune
+// them too. The feedforward should put out the u the loop needs to follow r,
+// so the start is the u of the starting run explained by the reference: the
+// least-squares fit u ≈ c + Kff·rf + Kv·drf/dt + Ka·d²rf/dt² (rf: r through
+// the variant's prefilter; differences over the run's samples). A term whose
+// signal the run cannot tell from the ones before it (a constant r has no
+// speed; a sine's acceleration is its value times −ω²) is left out, and so is
+// one that explains less than 2 % of u's swing: it stays 0. Returns
+// { Kff, Kv, Ka } (0 where left out).
+export function feedforwardStart(run, key, variant) {
+  const { t, r, u } = loopSignals(run, key);
+  const n = t.length, out = { Kff: 0, Kv: 0, Ka: 0 };
+  if (n < 5) return out;
+  const dt = (t[n - 1] - t[0]) / (n - 1), Tr = variant.params.Tr ?? 0;
+  const a = Tr > 0 ? Math.exp(-dt / Tr) : 0;
+  const rf = new Float64Array(n);
+  for (let k = 0; k < n; k++) rf[k] = k && a ? a * rf[k - 1] + (1 - a) * r[k] : r[k];
+  const d1 = new Float64Array(n), d2 = new Float64Array(n);
+  for (let k = 1; k < n - 1; k++) { d1[k] = (rf[k + 1] - rf[k - 1]) / (2 * dt); d2[k] = (rf[k + 1] - 2 * rf[k] + rf[k - 1]) / (dt * dt); }
+  const rows = []; for (let k = 1; k < n - 1; k++) if (Number.isFinite(u[k]) && Number.isFinite(rf[k])) rows.push(k);
+  if (rows.length < 4) return out;
+  const cols = [rows.map(() => 1), rows.map((k) => rf[k]), rows.map((k) => d1[k]), rows.map((k) => d2[k])];
+  const y = rows.map((k) => u[k]);
+  // Gram–Schmidt decides which columns the run can tell apart.
+  const dot = (x, z) => x.reduce((s, v, i) => s + v * z[i], 0);
+  const basis = [], kept = [];
+  cols.forEach((c, j) => {
+    let w = c.slice();
+    for (const q of basis) { const s = dot(w, q); w = w.map((v, i) => v - s * q[i]); }
+    const norm = Math.sqrt(dot(w, w)), full = Math.sqrt(dot(c, c));
+    if (norm > 1e-6 * full && norm > 1e-12) { basis.push(w.map((v) => v / norm)); kept.push(j); }
+  });
+  // The normal equations of the kept columns.
+  const m = kept.length, M = kept.map((i) => kept.map((j) => dot(cols[i], cols[j]))), b = kept.map((i) => dot(cols[i], y));
+  for (let i = 0; i < m; i++) {
+    let piv = i; for (let k = i + 1; k < m; k++) if (Math.abs(M[k][i]) > Math.abs(M[piv][i])) piv = k;
+    [M[i], M[piv]] = [M[piv], M[i]]; [b[i], b[piv]] = [b[piv], b[i]];
+    for (let k = i + 1; k < m; k++) { const f = M[k][i] / M[i][i]; for (let j = i; j < m; j++) M[k][j] -= f * M[i][j]; b[k] -= f * b[i]; }
+  }
+  const c = new Array(m).fill(0);
+  for (let i = m - 1; i >= 0; i--) { let s = b[i]; for (let j = i + 1; j < m; j++) s -= M[i][j] * c[j]; c[i] = s / M[i][i]; }
+  const sd = (x) => { const mu = x.reduce((s, v) => s + v, 0) / x.length; return Math.sqrt(x.reduce((s, v) => s + (v - mu) ** 2, 0) / x.length); };
+  const swing = sd(y);
+  kept.forEach((j, i) => {
+    if (!j || !Number.isFinite(c[i])) return;
+    if (Math.abs(c[i]) * sd(cols[j]) >= 0.02 * swing) out[FF_KEYS[j - 1]] = c[i];
+  });
+  return out;
 }
 
 // The values the tuner turns, for showing before and after: [[name, value]].
+// Feedforward gains show when they are not 0.
 export function tunedValues(variant) {
   const p = variant.params;
-  if (variant.type === 'pid') return ['Kp', 'Ki', 'Kd'].map((k) => [k, p[k]]);
-  if (variant.type === 'gainScheduled') return [['Kp', p.Kp], ['Ki', p.Ki]];
+  const ff = FF_KEYS.filter((k) => isOn(p[k])).map((k) => [k, p[k]]);
+  if (variant.type === 'pid') return [...['Kp', 'Ki', 'Kd'].map((k) => [k, p[k]]), ...ff];
+  if (variant.type === 'gainScheduled') return [['Kp', p.Kp], ['Ki', p.Ki], ...ff];
   if (variant.type === 'stateFeedback') return [['K', p.K], ['kr', p.kr]];
   return [];
 }
@@ -321,19 +386,24 @@ export function tunedValues(variant) {
 // iteration (a reflection, expansion, contraction or shrink of the simplex)
 // { iteration, evals, cost, start, best: { variant, cost, x }, tried, names };
 // the final value has done: true.
+// opts.feedforward: also tune the feedforward gains that are 0, from the
+// start feedforwardStart fits to the starting run.
 export function* iterate(project, path, goal = {}, opts = {}) {
   const g = { ...GOAL, ...goal };
   const ctx = tuneContext(project, path);
-  const space = tuningSpace(ctx.variant);
-  const n = space.names.length;
+  tuningSpace(ctx.variant);   // says why not, before any run
   const maxIter = opts.maxIter ?? 60;
   let step = opts.step ?? Math.log(2), restarts = opts.restarts ?? 2;
   const startRun = runVariant(ctx, ctx.variant);
   const scales = costScales(startRun, ctx.key, ctx.variant);
   const detail = runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others });
   const start = { cost: detail.J, detail, variant: ctx.variant };
+  const space = tuningSpace(ctx.variant, { start: opts.feedforward && ['pid', 'gainScheduled'].includes(ctx.variant.type) ? feedforwardStart(startRun, ctx.key, ctx.variant) : null });
+  const n = space.names.length;
   const x0 = new Array(n).fill(0);
-  let evals = 1, best = { variant: ctx.variant, cost: detail, x: x0 }, tried = [detail.J], iteration = 0;
+  // best.x: where the best lies in the search (null: the variant as it was,
+  // which is x0 only when no feedforward gain was started).
+  let evals = 1, best = { variant: ctx.variant, cost: detail, x: space.started.length ? null : x0 }, tried = [detail.J], iteration = 0;
   const report = (partial) => {
     const out = { iteration, evals, cost: best.cost.J, start, best, tried, names: space.names, key: ctx.key, path: ctx.path, goal: g, scales };
     if (partial) return { ...out, partial: true };
@@ -357,7 +427,9 @@ export function* iterate(project, path, goal = {}, opts = {}) {
     for (let i = 0; i < n; i++) { const x = xb.slice(); x[i] += step; simplex.push(x); fs.push(yield* f(x)); }
   }
   yield report(true);
-  yield* build(x0, detail.J);
+  // With started feedforward gains, x0 is a new point: run it first.
+  const f0 = space.started.length ? yield* f(x0) : detail.J;
+  yield* build(x0, f0);
   yield report(false);
   let mark = best.cost.J, since = 0;
   const patience = opts.patience ?? 15;
@@ -370,7 +442,7 @@ export function* iterate(project, path, goal = {}, opts = {}) {
     if (spread < 1e-2 || fs[n] - fs[0] <= 1e-4 * Math.abs(fs[0])) {
       if (!restarts--) break;
       step /= 4;
-      yield* build(best.x, best.cost.J);
+      yield* build(best.x ?? x0, best.x ? best.cost.J : f0);
     } else {
       const c = new Array(n).fill(0);
       for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) c[j] += simplex[i][j] / n;
@@ -694,7 +766,8 @@ export const METHODS = ['iterate', 'relay', 'step'];
 //     result, named), after (its cost), better, notes, … the method's own:
 //     iterate: iterations, evals, names; relay: Ku, Pu, a, u0, d, r0, rule,
 //     gains, run; step: K, tau, theta, gains, run }
-// opts: method, goal, maxIter, rule, amplitude, name (of the result variant;
+// opts: method, goal, maxIter, feedforward (iterate: also the feedforward
+// gains that are 0), rule, amplitude, name (of the result variant;
 // default resultName).
 export function* autotuneSteps(project, path, opts = {}) {
   const method = opts.method ?? 'iterate';
@@ -706,7 +779,7 @@ export function* autotuneSteps(project, path, opts = {}) {
   if (why) return { ...head, ok: false, why, notes: [] };
   const name = opts.name ?? resultName(ctx.block, method, opts.rule);
   if (method === 'iterate') {
-    const r = yield* iterate(project, path, g, { maxIter: opts.maxIter });
+    const r = yield* iterate(project, path, g, { maxIter: opts.maxIter, feedforward: opts.feedforward });
     const better = r.best.cost.J < r.start.cost;
     return {
       ...head, ok: true, notes: [], before: { variant: ctx.variant, cost: r.start.detail },
@@ -778,14 +851,18 @@ export function placeVariant(project, path, variant, { run = true } = {}) {
 }
 
 // A PID with the given gains that drives the same actuator as the variant it
-// replaces: limits, start output, setpoint weight and prefilter carry over.
-// The derivative is filtered at Td / 10 (but not faster than a sample).
+// replaces: limits, start output, setpoint weight, prefilter, reference
+// feedforward and anti-windup carry over. The derivative is filtered at
+// Td / 10 (but not faster than a sample).
 export function pidVariant(from, g, name, Ts) {
   const p = from.params ?? {};
   const pid = from.type === 'pid';
   return normalizeVariant({
     name: name.slice(0, 40), type: 'pid',
-    params: { Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, Tf: g.Kd ? Math.max(Ts, (g.Td ?? 0) / 10) : (pid ? p.Tf : 0.01), b: pid ? p.b : 1, Tr: p.Tr ?? 0, u0: p.u0 ?? 0, umin: p.umin ?? -Infinity, umax: p.umax ?? Infinity },
+    params: {
+      Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, Tf: g.Kd ? Math.max(Ts, (g.Td ?? 0) / 10) : (pid ? p.Tf : 0.01), b: pid ? p.b : 1, Tr: p.Tr ?? 0,
+      Kff: p.Kff ?? 0, Kv: p.Kv ?? 0, Ka: p.Ka ?? 0, u0: p.u0 ?? 0, umin: p.umin ?? -Infinity, umax: p.umax ?? Infinity, aw: p.aw ?? 'clamp', Tt: p.Tt ?? 0,
+    },
   });
 }
 

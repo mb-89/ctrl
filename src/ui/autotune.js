@@ -31,7 +31,7 @@ const GOAL_ABOUT = 'The cost of one run: the error r − y (IAE, ITAE or ISE), p
 
 export function createAutotuneTab(host, app, display) {
   // Settings of this page session (not saved in the project).
-  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', amplitude: 0.1, maxIter: 60, fast: false };
+  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', amplitude: 0.1, maxIter: 60, fast: false, feedforward: false };
   let job = null;   // the run in progress
   let shown = null; // what the progress column shows: the current or last run
 
@@ -125,6 +125,8 @@ export function createAutotuneTab(host, app, display) {
     if (!editing($('#tu-opts'))) {
       const opts = [];
       if (st.method === 'iterate') opts.push(field('maxIter', 'Iterations', st.maxIter, 'at most; stops when the cost stops falling'));
+      // Feedforward gains that are not 0 are tuned anyway; this adds those at 0.
+      if (st.method === 'iterate' && CONTROLLERS[v.type]?.params.some((p) => p.key === 'Kff')) opts.push(`<label class="pf" title="Kff, Kv and Ka that are not 0 are always tuned. Ticked, those at 0 are tuned too: each starts from a fit of the starting run's u to the reference (what the feedforward should put out), and stays 0 if the reference does not explain u."><span class="pfl">Feedforward</span><span class="tuchk"><input type="checkbox" id="tu-ff" ${st.feedforward ? 'checked' : ''} ${job ? 'disabled' : ''}> tune those at 0 too</span><span class="pfh">Kff, Kv, Ka</span></label>`);
       if (st.method === 'relay') opts.push(`<label class="pf"><span class="pfl">Rule</span><select class="field" id="tu-rule" ${job ? 'disabled' : ''}>${Object.entries(RULES).map(([k, r]) => `<option value="${k}" ${k === st.rule ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(RULES[st.rule].about)}</span></label>`);
       if (st.method !== 'iterate') opts.push(field('amplitude', st.method === 'relay' ? 'Relay ±d' : 'Step Δu', num(100 * st.amplitude, 3), '% of the actuator range'));
       $('#tu-opts').innerHTML = opts.join('');
@@ -145,6 +147,8 @@ export function createAutotuneTab(host, app, display) {
     host.querySelectorAll('[data-cost]').forEach((el) => { el.onclick = () => { if (job) return; st.goal.cost = el.dataset.cost; renderSetup(); }; });
     const rule = $('#tu-rule');
     if (rule) rule.onchange = () => { if (job) return; st.rule = rule.value; rule.blur(); renderSetup(); };
+    const ff = $('#tu-ff');
+    if (ff) ff.onchange = () => { if (job) return; st.feedforward = ff.checked; ff.blur(); renderSetup(); };
     host.querySelectorAll('input[data-k]').forEach((inp) => {
       inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } };
       inp.onblur = () => {
@@ -190,7 +194,7 @@ export function createAutotuneTab(host, app, display) {
     // The settings are copied: changing them during the run changes nothing.
     const goal = { ...st.goal };
     const name = resultName(c.block, st.method, st.rule);
-    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, amplitude: st.amplitude, maxIter: st.maxIter, name });
+    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, amplitude: st.amplitude, maxIter: st.maxIter, feedforward: st.feedforward, name });
     shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null };
     job = { gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, mode: display.mode, startData: display.data, timer: 0, edit: false, ran: false, swept: false, applied: Infinity, runs: 0 };
     if (st.method === 'iterate') { app.setRunMode('stop'); display.clearRuns(); }

@@ -307,3 +307,32 @@ test('the command line tunes a Controller block and saves the result', () => {
   assert.equal(saved.variants[saved.variant].name, 'PID, badly tuned · SIMC');
   assert.match(execFileSync('node', ['cli.mjs', 'autotune', file, '--method', 'relay', '--rule', 'zn']).toString(), /Ku 5/);
 });
+
+test('Iterate tunes the feedforward gains that are not 0; asked to, also those at 0, from a fit of u to the reference', async () => {
+  const { feedforwardStart } = await import('../src/core/autotune.js');
+  const p0 = { Kp: 2, Ki: 1, Kd: 0, Kff: 0, Kv: 0.5, Ka: 0 };
+  assert.deepEqual(tuningSpace({ type: 'pid', params: p0 }).names, ['Kp', 'Ki', 'Kv'], 'a feedforward gain at 0 stays off');
+  const started = tuningSpace({ type: 'pid', params: p0 }, { start: { Kff: 0.3, Kv: 9, Ka: 0 } });
+  assert.deepEqual(started.names, ['Kp', 'Ki', 'Kff', 'Kv']);
+  assert.deepEqual([started.base.params.Kff, started.base.params.Kv], [0.3, 0.5], 'only gains at 0 take a start value');
+  const gs = tuningSpace({ type: 'gainScheduled', params: { at: [0, 1], Kp: [1, 2], Ki: [1, 1], Kff: 2, Kv: 0, Ka: 0 } });
+  assert.deepEqual(gs.names, ['Kp table ×', 'Ki table ×', 'Kff']);
+  assert.equal(gs.apply([0, 0, Math.log(2)]).params.Kff, 4);
+  // Following a sine with the PID: the u the loop needs is the motor's
+  // voltage per rad/s of speed times the reference's speed (0.7 V·s/rad from
+  // the motor in plants.js). A sine's acceleration is its value times −ω²,
+  // so the run cannot tell Ka from Kff: Ka stays 0.
+  const p = system('Following a sine');
+  const blk = p.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+  blk.variant = blk.variants.findIndex((v) => v.name === 'PID');
+  const ctx = tuneContext(p, null);
+  const fit = feedforwardStart(runVariant(ctx, ctx.variant), ctx.key, ctx.variant);
+  assert.ok(Math.abs(fit.Kv - 0.7) < 0.07 && Math.abs(fit.Kff) < 0.1 && fit.Ka === 0, JSON.stringify(fit));
+  const plain = runIterate(p, null, {}, { maxIter: 20 }), ff = runIterate(p, null, {}, { maxIter: 20, feedforward: true });
+  assert.ok(ff.names.includes('Kv') && !plain.names.includes('Kv'));
+  assert.ok(ff.best.cost.J < 0.5 * plain.best.cost.J, `cost with feedforward ${ff.best.cost.J}, without ${plain.best.cost.J}`);
+  assert.ok(ff.best.variant.params.Kv > 1, `Kv ${ff.best.variant.params.Kv}: the motor's 0.7 plus what the D part on the measurement takes away`);
+  // Ticked on the oven (steps, little to explain): never worse than the start.
+  const oven = runIterate(system('Oven'), null, {}, { maxIter: 10, feedforward: true });
+  assert.ok(oven.best.cost.J <= oven.start.cost);
+});

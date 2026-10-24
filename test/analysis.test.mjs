@@ -54,8 +54,13 @@ test("each linear law's state space reproduces its step() while u is inside its 
   const cases = [
     ['pid', { Kp: 2, Ki: 3, Kd: 0.4, Tf: 0.02, b: 0.7, Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
     ['pid', { Kp: 1.5, Ki: 0, Kd: 0, Tf: 0.01, b: 1, Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    // Reference feedforward: static, velocity and acceleration, alone and together.
+    ['pid', { Kp: 2, Ki: 3, Kd: 0.4, Tf: 0.02, b: 0.7, Tr: 0, Kff: 0.8, Kv: 0.3, Ka: 0.02, u0: 0, umin: -Infinity, umax: Infinity, aw: 'back' }, 1],
+    ['pid', { Kp: 0, Ki: 0, Kd: 0, Tf: 0.01, b: 1, Tr: 0, Kff: 0, Kv: 0.5, Ka: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    ['pid', { Kp: 1, Ki: 0, Kd: 0, Tf: 0.01, b: 1, Tr: 0, Kff: 0, Kv: 0, Ka: 0.01, u0: 0, umin: -Infinity, umax: Infinity }, 1],
     ['stateFeedback', { K: [1, -2, 0.5], kr: 3, Tr: 0, umin: -Infinity, umax: Infinity }, 3],
     ['gainScheduled', { at: [0, 1], Kp: [1, 3], Ki: [0.5, 2], Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    ['gainScheduled', { at: [0, 1], Kp: [1, 3], Ki: [0.5, 2], Tr: 0, Kff: 1.2, Kv: 0.2, Ka: 0.01, u0: 0, umin: -Infinity, umax: Infinity }, 1],
     ['swingUp', { kE: 1, kx: 0, kv: 0, l: 0.5, g: 9.81, thetaS: 0.4, K: [-1, -30, -2, -5], kr: -1, umin: -Infinity, umax: Infinity }, 4],
   ];
   for (const [type, p, m] of cases) {
@@ -74,10 +79,11 @@ test("each linear law's state space reproduces its step() while u is inside its 
       x = lin.A.map((row, i) => row.reduce((s, a, j) => s + a * x[j], 0) + lin.B[i].reduce((s, b, j) => s + b * v[j], 0));
       worst = Math.max(worst, Math.abs(uLaw - u0 - u));
     }
-    // The scheduled PI's slope term is second order in the small moves.
-    assert.ok(worst < (type === 'gainScheduled' ? 1e-5 : 1e-12), `${type}: worst ${worst}`);
+    // The scheduled PI's slope term is second order in the small moves; Ka/Ts² is large, so its rounding is too.
+    assert.ok(worst < (type === 'gainScheduled' ? 1e-5 : 1e-10), `${type}: worst ${worst}`);
   }
-  assert.throws(() => CONTROLLERS.swingUp.linear(cases[4][1], Ts, { y: [0, Math.PI, 0, 0] }), /pumps energy/);
+  const swing = cases.find((c) => c[0] === 'swingUp')[1];
+  assert.throws(() => CONTROLLERS.swingUp.linear(swing, Ts, { y: [0, Math.PI, 0, 0] }), /pumps energy/);
 });
 
 test('dead time is exact in the discrete loop, and the step response reaches the textbook final values', async () => {

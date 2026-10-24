@@ -12,13 +12,28 @@
 // for the Analysis tab: its discrete state space { A, B, C, D } (arrays of
 // rows) from [r, y1 … ym] to u at Ts, valid while u is inside its limits.
 // at.y holds the measurements at the operating point. The prefilter on r lies
-// outside the loop and is left out. It throws when the law is not linear there.
+// outside the loop and is left out; the reference feedforward is in r's
+// column. Anti-windup acts only at a limit, so it is not in the model. It
+// throws when the law is not linear there.
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
 const LIMITS = [num('umin', 'u min', -Infinity, { unit: 'u' }), num('umax', 'u max', Infinity, { unit: 'u' })];
 const PREFILTER = num('Tr', 'Prefilter Tr', 0, { unit: 's', min: 0, help: 'Vorfilter: a first-order lag on r; 0 is off' });
 const START = num('u0', 'Start output u0', 0, { unit: 'u', help: 'the integral part at t = 0, so a loop can start in balance' });
+// Reference feedforward: terms of u computed from the prefiltered reference
+// rf alone, outside the loop. 0 is off.
+const FEEDFORWARD = [
+  num('Kff', 'Feedforward Kff', 0, { unit: 'u per r', help: 'static feedforward: u += Kff · rf; the input that holds y at r, per unit of r' }),
+  num('Kv', 'Velocity FF Kv', 0, { unit: 'u per r/s', help: 'velocity feedforward: u += Kv · drf/dt' }),
+  num('Ka', 'Acceleration FF Ka', 0, { unit: 'u per r/s²', help: 'acceleration feedforward: u += Ka · d²rf/dt²' }),
+];
+// Anti-windup: what the integral does while u sits at a limit.
+export const ANTI_WINDUP = { clamp: 'clamping', back: 'back-calculation', off: 'off (windup)' };
+const WINDUP = [
+  { key: 'aw', label: 'Anti-windup', default: 'clamp', kind: 'choice', options: ANTI_WINDUP, help: 'clamping: the integral stops at a limit; back-calculation: it is pulled back with time constant Tt; off: it winds up' },
+  num('Tt', 'Tracking Tt', 0, { unit: 's', min: 0, help: 'back-calculation only: how fast the integral follows the limit; 0: √(Ti·Td), or Ti/2 without D' }),
+];
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
@@ -38,37 +53,71 @@ function lookup(xs, ys, x) {
   return ys[ys.length - 1];
 }
 
-// A PI(D) step shared by the fixed and the scheduled controller: derivative on
-// the measurement (filtered), setpoint weight b on the P part, integration
-// stopped while the output is saturated and the error would push it further.
+// The tracking time constant of back-calculation: Tt when given, else the
+// rule of thumb of Åström and Hägglund, Tt = √(Ti·Td) (between Td and Ti),
+// and Ti/2 for a PI, with Ti = Kp/Ki and Td = Kd/Kp; never below Ts.
+export function trackingTime(g, Ts) {
+  if (g.Tt > 0) return g.Tt;
+  const Ti = Math.abs(g.Kp / g.Ki), Td = Math.abs(g.Kd / g.Kp);
+  const t = Td > 0 ? Math.sqrt(Ti * Td) : Ti / 2;
+  return Number.isFinite(t) && t > Ts ? t : Ts;
+}
+
+// A PI(D) step shared by the fixed and the scheduled controller, on the
+// prefiltered reference rf and the measurement y:
+//   P   Kp (b·rf − y)              setpoint weight b on the P part
+//   I   Ki ∫ (rf − y)              starting at u0
+//   D   −Kd dy/dt, filtered (Tf)   on the measurement: a step of r gives no kick
+//   FF  Kff·rf + Kv·drf/dt + Ka·d²rf/dt², by differences over Ts. Before
+//       the first sample rf is taken to have rested at its first value, so
+//       the first sample puts out no kick
+// v = P + I + D + FF; u is v held to [umin, umax]. While u sits at a limit
+// the anti-windup (g.aw) keeps the integral from running away:
+//   clamp  conditional integration: it stops while the error would push u further
+//   back   back-calculation: dI/dt = Ki·e + (u − v)/Tt, so I tracks the limit
+//   off    it integrates on (windup)
 function pidCore(Ts, u0 = 0) {
-  let I = u0, D = 0, yPrev = null;
+  let I = u0, D = 0, yPrev = null, r1 = null, r2 = null;
   return (rf, y, g) => {
-    if (yPrev === null) yPrev = y;
+    if (yPrev === null) { yPrev = y; r1 = r2 = rf; }
     D = (g.Tf * D - g.Kd * (y - yPrev)) / (g.Tf + Ts);
     yPrev = y;
+    const ff = (g.Kff ?? 0) * rf + ((g.Kv ?? 0) * (rf - r1)) / Ts + ((g.Ka ?? 0) * (rf - 2 * r1 + r2)) / (Ts * Ts);
+    r2 = r1; r1 = rf;
     const e = rf - y;
-    const v = g.Kp * (g.b * rf - y) + I + D;
+    const v = g.Kp * (g.b * rf - y) + I + D + ff;
     const u = clamp(v, g.umin, g.umax);
-    if (u === v || Math.sign(e) !== Math.sign(v - u)) I += g.Ki * Ts * e;
+    if (!g.Ki) return u;
+    // Back-calculation's tracking, exact for a held (u − v): I moves by the
+    // fraction 1 − e^(−Ts/Tt) of the excess per sample.
+    if (g.aw === 'back') I += g.Ki * Ts * e + (1 - Math.exp(-Ts / trackingTime(g, Ts))) * (u - v);
+    else if (g.aw === 'off' || u === v || Math.sign(g.Ki * e) !== Math.sign(v - u)) I += g.Ki * Ts * e;
     return u;
   };
 }
 
 // pidCore's linear model with the gains g, for m measurements (only y1 is
-// used). States: the integral I (when Ki ≠ 0); the filtered derivative D and
-// the previous measurement (when Kd ≠ 0).
+// used). States, each only when its gain is not 0: the integral I; the
+// filtered derivative D and the previous measurement; the reference one and
+// two samples back (for Kv and Ka).
 function pidLinear(g, Ts, m = 1) {
   const pad = (row) => [...row, ...new Array(m + 1 - row.length).fill(0)];
   const A = [], B = [], C = [], D = [pad([g.Kp * g.b, -g.Kp])];
-  if (g.Ki) { A.push([1]); B.push(pad([g.Ki * Ts, -g.Ki * Ts])); C.push(1); }
+  // A new state: its input row b and its weight c in u; A's entries are set after.
+  const state = (b, c) => { for (const row of A) row.push(0); A.push(new Array(A.length + 1).fill(0)); B.push(pad(b)); C.push(c); return A.length - 1; };
+  if (g.Ki) { const i = state([g.Ki * Ts, -g.Ki * Ts], 1); A[i][i] = 1; }
   if (g.Kd) {
-    const c = 1 / (g.Tf + Ts), i = A.length;
-    for (const row of A) row.push(0, 0);
-    A.push([...new Array(i).fill(0), g.Tf * c, g.Kd * c], new Array(i + 2).fill(0));
-    B.push(pad([0, -g.Kd * c]), pad([0, 1]));
-    C.push(g.Tf * c, g.Kd * c);
+    const c = 1 / (g.Tf + Ts);
+    const d = state([0, -g.Kd * c], g.Tf * c), p = state([0, 1], g.Kd * c);
+    A[d][d] = g.Tf * c; A[d][p] = g.Kd * c;
     D[0][1] -= g.Kd * c;
+  }
+  // FF = Kff·r + Kv·(r − r1)/Ts + Ka·(r − 2·r1 + r2)/Ts².
+  const kv = (g.Kv ?? 0) / Ts, ka = (g.Ka ?? 0) / (Ts * Ts);
+  D[0][0] += (g.Kff ?? 0) + kv + ka;
+  if (kv || ka) {
+    const r1 = state([1], -kv - 2 * ka);
+    if (ka) { const r2 = state([0], ka); A[r2][r1] = 1; }
   }
   return { A, B, C: [C], D };
 }
@@ -83,7 +132,7 @@ export const CONTROLLERS = {
   },
   pid: {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
-    params: [num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1), PREFILTER, START, ...LIMITS],
+    params: [num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1, { help: 'weights r in the P part only (two degrees of freedom); not feedforward' }), PREFILTER, ...FEEDFORWARD, START, ...LIMITS, ...WINDUP],
     make(p, Ts) {
       const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
       return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
@@ -107,11 +156,11 @@ export const CONTROLLERS = {
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
-    params: [vec('at', 'At y =', [0, 1]), vec('Kp', 'Kp', [1, 1]), vec('Ki', 'Ki', [0, 0]), PREFILTER, START, ...LIMITS],
+    params: [vec('at', 'At y =', [0, 1]), vec('Kp', 'Kp', [1, 1]), vec('Ki', 'Ki', [0, 0]), PREFILTER, ...FEEDFORWARD, START, ...LIMITS, ...WINDUP],
     check(p) { if (p.Kp.length !== p.at.length || p.Ki.length !== p.at.length) return 'At, Kp and Ki need the same number of values'; if (p.at.some((v, i) => i && v <= p.at[i - 1])) return 'the At values must increase'; return ''; },
     make(p, Ts) {
       const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
-      const g = { Kp: 0, Ki: 0, Kd: 0, Tf: 0, b: 1, umin: p.umin, umax: p.umax };
+      const g = { Kp: 0, Ki: 0, Kd: 0, Tf: 0, b: 1, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
       return {
         step(x) {
           const y = x[1] ?? 0;
@@ -124,7 +173,7 @@ export const CONTROLLERS = {
     // loop sees a PI with the gains at y.
     linear(p, Ts, at) {
       const y = at?.y?.[0] ?? p.at[0];
-      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1 }, Ts, at?.y?.length || 1);
+      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka }, Ts, at?.y?.length || 1);
     },
   },
   swingUp: {
@@ -191,6 +240,10 @@ export const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
 
 function normalizeParam(spec, v, where) {
   v ??= spec.default;
+  if (spec.kind === 'choice') {
+    if (!Object.hasOwn(spec.options, v)) throw new Error(`${where}.${spec.key}: one of ${Object.keys(spec.options).join(', ')}`);
+    return v;
+  }
   if (spec.kind === 'vector') {
     if (!Array.isArray(v) || !v.length || !v.every((x) => Number.isFinite(Number(x)))) throw new Error(`${where}.${spec.key}: a list of numbers`);
     return v.map(Number);

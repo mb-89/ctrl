@@ -32,6 +32,7 @@ node cli.mjs autotune p.json                                   # Nelder–Mead o
 node cli.mjs autotune p.json --method relay --rule tl          # relay experiment: Ku, Pu, then Tyreus–Luyben
 node cli.mjs autotune p.json --method step                     # open-loop step, FOPDT fit, SIMC PI
 node cli.mjs autotune p.json --cost ITAE --overshoot 5 --save  # another goal; keep the result
+node cli.mjs autotune p.json --ff                              # also tune the feedforward gains that are 0
 ```
 
 It prints the running variant and the result side by side (cost, overshoot, gains) and, for the experiments, what they measured. `--save` puts the result into the block as a variant of its own, "<name> · auto-tuned" (or "· relay T–L", "· SIMC"), and makes it run only if it scores better; the original stays, so the person can flip between them in the Controller tab. `--block motor/ctrl` picks a block by its id path when there are several; `--json` gives the full report. When a method cannot run it says why (a swing-up has no r − y to tune; the relay and step tests need one measurement; an integrating plant has no settled step response). Compare methods: the optimiser knows the goal and usually wins on it; a rule gives a sound loop in one experiment.
@@ -53,4 +54,4 @@ It prints the running variant and the result side by side (cost, overshoot, gain
 - `node cli.mjs help`: every command.
 - `node cli.mjs blocks [slot]`: block types and their parameters with ranges; `node cli.mjs metrics`: what a goal can use.
 - Project file: [design/output/project-format.md](design/output/project-format.md).
-- In a browser (for example through Playwright), the page exposes `window.loopTuner`: `getProject()`, `setProject(p)`, `addComponent(c)`, `reference()`, `autoScale()`, `run()`, `stop()`, `selectCandidate(name)`, and `autotune({ block, method, goal, rule, amplitude, maxIter, apply })`, which returns the same report as `node cli.mjs autotune --json` and, applied (the default), puts the result into the project as one undo step.
+- In a browser (for example through Playwright), the page exposes `window.loopTuner`: `getProject()`, `setProject(p)`, `addComponent(c)`, `reference()`, `autoScale()`, `run()`, `stop()`, `selectCandidate(name)`, and `autotune({ block, method, goal, rule, amplitude, maxIter, feedforward, apply })`, which returns the same report as `node cli.mjs autotune --json` and, applied (the default), puts the result into the project as one undo step.
