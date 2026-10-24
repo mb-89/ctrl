@@ -124,6 +124,7 @@ export function createLive(app, display, controlsRoot, record) {
     state = s; detail = d;
     if (s === 'connecting') { estop = null; desc = null; link = null; plantStatus = null; programKey = ''; }
     if (s === 'running') { estop = null; attach(); }
+    if (s === 'open' && d === 'reset') estop = null;  // Reset with the scope stopped: cleared, not started
     if (s === 'closed' && was !== 'closed') {
       app.toast(was === 'connecting' ? `Could not connect: ${d}` : `Disconnected: ${d}`);
       // The screen holds the last sweeps; Run goes back to the simulation.
