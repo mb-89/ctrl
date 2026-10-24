@@ -97,12 +97,17 @@ test('superTwisting: u is continuous in s; its integral part moves by Ts·k2 per
   assert.ok(Math.abs(v - 12) < 1e-9, 'v stops at umax (anti-windup)');
 });
 
-test('Auto-tune turns λ and the switching gains; a relay stays a relay', () => {
-  assert.deepEqual(tuningSpace({ type: 'slidingMode', params: sm({ lambda: 10, K: 12, phi: 0 }) }).names, ['λ', 'K']);
-  assert.deepEqual(tuningSpace({ type: 'slidingMode', params: sm({ lambda: 10, K: 12, phi: 2 }) }).names, ['λ', 'K', 'φ']);
+test('Auto-tune turns λ and φ, not K; a relay stays a relay', () => {
+  // K is the actuator's swing: turned down below the limit it would only hide
+  // the relay from the cost's time-at-a-limit count while it still slams.
+  assert.deepEqual(tuningSpace({ type: 'slidingMode', params: sm({ lambda: 10, K: 12, phi: 0 }) }).names, ['λ']);
+  assert.deepEqual(tuningSpace({ type: 'slidingMode', params: sm({ lambda: 10, K: 12, phi: 2 }) }).names, ['λ', 'φ']);
   assert.deepEqual(tuningSpace({ type: 'superTwisting', params: st({ lambda: 10, k1: 4, k2: 44 }) }).names, ['λ', 'k1', 'k2']);
   const sp = tuningSpace({ type: 'slidingMode', params: sm({ lambda: 10, K: 12, phi: 2 }) });
-  assert.deepEqual(sp.apply([Math.log(2), 0, Math.log(0.5)]).params.lambda, 20);
+  const q = sp.apply([Math.log(2), Math.log(0.5)]).params;
+  assert.equal(q.lambda, 20);
+  assert.equal(q.phi, 1);
+  assert.equal(q.K, 12, 'K is left as it is');
 });
 
 // ---- The textbook plant: a double integrator --------------------------------

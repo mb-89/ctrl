@@ -650,3 +650,13 @@ Test files: `test/linearize.test.mjs`, `test/design.test.mjs`, `test/planner.tes
 - Dead time is left out of state-space designs and reported. Quantisers and noise are left out of LQR and used for the Kalman R.
 - Plans are computed when a system loads (2–4 s, visible) and are not kept across page loads. A plan that failed still runs, so the attempt can be seen.
 - Hand types stay for people who want numbers. "Copy as numbers" is the bridge, offered for LQR, PI and Kalman, never for plans.
+
+## 15. Follow-up: a feedforward computed from the plant the block sees
+
+Added 2026-10-24 with the reference feedforward of the PID and the gain-scheduled PI ([controller-proposal.md](controller-proposal.md), [input](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)). Today Kff, Kv and Ka are hand-set tuning inputs (the sine example's Kv 1.7) or found by Auto-tune's Iterate. A feedforward that is really the plant's inverse is computable, so the design layer should offer it, not the library:
+
+- From the plant the block sees, linearised at the operating point (`ctx.linearize`): its low-frequency inverse G⁻¹(s) ≈ c0 + c1·s + c2·s² from the transfer function from u to the first measurement. Kff = c0 (1/K for a plant with a steady gain K; 0 for an integrating one), Kv = c1, Ka = c2.
+- Plus what the feedback's parts on y take away when y follows r: Kv += Kd (D on the measurement), Kff += Kp(1 − b). For the sine example that gives Kv = 0.7 + 1 = 1.7, the hand value.
+- As a designed twin of the PID (say `pidFF`, or an option of `scheduledPI`) whose inputs are the feedback gains and which computes Kff, Kv, Ka; "Copy as numbers" gives a PID with them. Dead time is left out and reported, as for the other designs; a non-minimum-phase or unstable inverse is refused with a sentence.
+- Nothing of it is stored: the values follow the plant, like every design.
+

@@ -4,12 +4,16 @@
 // (Åström–Hägglund: Ku and Pu, then a rule) and step response (a model fit,
 // then SIMC). Every result goes into a variant of its own, "<original> ·
 // auto-tuned" (or "· relay T–L", "· SIMC"), so the original stays for
-// comparison; the whole run is one undo step. The work runs in slices
-// between frames, so the page keeps drawing. See design/output/autotune.md.
+// comparison; the whole run is one undo step. Its runs go at the header's
+// Speed (ui/speed.js): Iterate sweeps each run it tries across the display at
+// that speed, each lasting its own length, and computes the next one
+// meanwhile; as fast as possible, it computes in slices between frames, so
+// the page keeps drawing. See design/output/autotune.md.
 
 import { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, SIMC, COSTS, GOAL, tauCSource, tauCShort } from '../core/autotune.js';
 import { CONTROLLERS } from '../core/controllers.js';
 import { num, parseSI } from './units.js';
+import { AS_FAST, formatSpeed } from '../core/speed.js';
 
 const METHODS = {
   iterate: {
@@ -25,13 +29,15 @@ const METHODS = {
     about: 'The running controller holds r at the middle of its range until y has settled within 2 % (of how far it moved, or of r\'s span; a steady ripple averaged out); then u is held and stepped. A controller that keeps swinging there hands over at the start instead. A response that settles gives a gain K, a lag τ and a dead time θ; one that ramps (an integrating plant, such as a motor\'s angle) gives a slope k′, a lag τ2 and a dead time θ, and the test ends once the slope is steady and the lag has faded. SIMC (Skogestad 2003) turns the model into a PI, or a PID when the lag of an integrating plant outlasts its dead time; a PID\'s derivative filter counts as dead time. A gain-scheduled PI is tested at each point of its table and gets SIMC gains there.',
   },
 };
-const PACE = 1000 / 6;  // iterations per second while watching
-const SLICE = 30;       // ms of computing per task, so the page keeps drawing
+const SLICE = 30;    // ms of computing per task, so the page keeps drawing
+const HOLD = 400;    // ms an experiment stays on the display after its sweep
+const POLL = 100;    // ms between looks at whether a sweep has ended, besides the display's word
+const IMPROVE = 250; // ms at least between two improvements shown at ∞ (each redraws the page)
 const GOAL_ABOUT = 'The cost of one run: the error r − y (IAE, ITAE or ISE), plus the effort (the swing of u), the overshoot beyond the bound, and the time u sits at a limit. Over one period of the input, the disturbance d included.';
 
 export function createAutotuneTab(host, app, display) {
   // Settings of this page session (not saved in the project).
-  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', simc: 'tight', amplitude: 0.1, maxIter: 60, fast: false };
+  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', simc: 'tight', amplitude: 0.1, maxIter: 60, feedforward: false };
   let job = null;   // the run in progress
   let shown = null; // what the progress column shows: the current or last run
 
@@ -56,7 +62,6 @@ export function createAutotuneTab(host, app, display) {
       </section>
       <section class="gcol tuprogress" aria-label="Progress">
         <div class="ghead"><h3 class="glabel" id="tu-ptitle">Progress</h3>
-          <label class="tufast" title="Run the iterations as fast as the browser can, and skip the experiment's sweep"><button class="sw" id="tu-fast" role="switch" aria-checked="false" aria-label="Fast"></button>Fast</label>
           <button class="key small primary" id="tu-start">Start</button></div>
         <div class="tustatus" id="tu-status" role="status"></div>
         <canvas class="tuplot" id="tu-plot" aria-label="Cost against iteration"></canvas>
@@ -125,6 +130,8 @@ export function createAutotuneTab(host, app, display) {
     if (!editing($('#tu-opts'))) {
       const opts = [];
       if (st.method === 'iterate') opts.push(field('maxIter', 'Iterations', st.maxIter, 'at most; stops when the cost stops falling'));
+      // Feedforward gains that are not 0 are tuned anyway; this adds those at 0.
+      if (st.method === 'iterate' && CONTROLLERS[v.type]?.params.some((p) => p.key === 'Kff')) opts.push(`<label class="pf" title="Kff, Kv and Ka that are not 0 are always tuned. Ticked, those at 0 are tuned too, from a fit of the starting run's u to the reference (what the feedforward should put out: Kff where the loop rests, Kv and Ka where r moves); a gain the reference does not explain stays 0. The feedforward is tuned first with the feedback held, then the feedback with the feedforward held; a run without a disturbance cannot judge the feedback then, so it is held."><span class="pfl">Feedforward</span><span class="tuchk"><input type="checkbox" id="tu-ff" ${st.feedforward ? 'checked' : ''} ${job ? 'disabled' : ''}> tune those at 0 too</span><span class="pfh">Kff, Kv, Ka</span></label>`);
       if (st.method === 'relay') opts.push(`<label class="pf"><span class="pfl">Rule</span><select class="field" id="tu-rule" ${job ? 'disabled' : ''}>${Object.entries(RULES).map(([k, r]) => `<option value="${k}" ${k === st.rule ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(RULES[st.rule].about)}</span></label>`);
       if (st.method === 'step') opts.push(`<label class="pf"><span class="pfl">SIMC τc</span><select class="field" id="tu-simc" ${job ? 'disabled' : ''}>${Object.entries(SIMC).map(([k, r]) => `<option value="${k}" ${k === st.simc ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(SIMC[st.simc].about)}</span></label>`);
       if (st.method !== 'iterate') opts.push(field('amplitude', st.method === 'relay' ? 'Relay ±d' : 'Step Δu', num(100 * st.amplitude, 3), '% of the actuator range'));
@@ -148,6 +155,8 @@ export function createAutotuneTab(host, app, display) {
     if (rule) rule.onchange = () => { if (job) return; st.rule = rule.value; rule.blur(); renderSetup(); };
     const simc = $('#tu-simc');
     if (simc) simc.onchange = () => { if (job) return; st.simc = simc.value; simc.blur(); renderSetup(); };
+    const ff = $('#tu-ff');
+    if (ff) ff.onchange = () => { if (job) return; st.feedforward = ff.checked; ff.blur(); renderSetup(); };
     host.querySelectorAll('input[data-k]').forEach((inp) => {
       inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } };
       inp.onblur = () => {
@@ -169,8 +178,6 @@ export function createAutotuneTab(host, app, display) {
     b.textContent = job ? 'Stop' : 'Start';
     b.className = `key small ${job ? 'lit-red' : 'primary'}`;
     b.disabled = !job && !!(why ?? whyNot(ctx, st.method));
-    $('#tu-fast').classList.toggle('on', st.fast);
-    $('#tu-fast').setAttribute('aria-checked', String(st.fast));
   }
 
   // ---- Running ------------------------------------------------------------
@@ -178,9 +185,9 @@ export function createAutotuneTab(host, app, display) {
   // Puts a variant into the block (over the result of this run, or as a new
   // one after the running variant). The first change opens the run's undo
   // step; the run takes no other.
-  function place(variant, run) {
+  function place(variant, run, from = null) {
     if (!job.edit) { app.beginEdit(); job.edit = true; }
-    app.tuneEdit((p) => placeVariant(p, job.path, variant, { run }));
+    app.tuneEdit((p) => placeVariant(p, job.path, variant, { run }), from);
     if (run) job.ran = true;
     shown.placed = structuredClone(variant);
   }
@@ -193,57 +200,168 @@ export function createAutotuneTab(host, app, display) {
     // The settings are copied: changing them during the run changes nothing.
     const goal = { ...st.goal };
     const name = resultName(c.block, st.method, st.rule, st.simc);
-    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, simc: st.simc, amplitude: st.amplitude, maxIter: st.maxIter, name });
+    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, simc: st.simc, amplitude: st.amplitude, maxIter: st.maxIter, feedforward: st.feedforward, name });
     shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null, unit: unitY() };
-    job = { gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, mode: display.mode, startData: display.data, timer: 0, edit: false, ran: false, swept: false, applied: Infinity, runs: 0 };
-    if (st.method === 'iterate') { app.setRunMode('stop'); display.clearRuns(); }
+    // bests: the loop's run with each better set of gains, newest first; the
+    // display fades them behind the run on screen. queue: steps computed
+    // ahead, not yet taken. bestRun: the run of the best gains so far (it
+    // stands for the screen's when that is the same simulation; app.tuneEdit).
+    job = {
+      gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, ctx, mode: display.mode, startData: display.data,
+      timer: 0, lookTimer: 0, improveTimer: 0, improvedAt: 0, stepMs: 0, queue: [], playing: false,
+      edit: false, ran: false, swept: false, showing: false, applied: Infinity, runs: 0, bests: [display.data], seenBest: null, bestRun: null,
+    };
+    // The display stands still for every method: it shows the tuner's runs,
+    // and at ∞ the readout counts the tuner's computing.
+    app.setRunMode('stop');
+    if (st.method === 'iterate') display.clearRuns();
     renderAll();
-    job.timer = setTimeout(tick);
+    schedule();
   }
 
   const replaced = () => job && app.project.system.plant !== job.plant;
+  // The next slice of computing, in a task of its own.
+  const schedule = () => { if (job && !job.timer) job.timer = setTimeout(() => { if (job) { job.timer = 0; tick(); } }, 0); };
 
-  // Steps the method in slices of about SLICE ms; while iterating, one
-  // iteration per PACE so the improvement can be watched (Fast: no pause).
+  // One step of the method: { value, done }, or { error }. stepMs follows
+  // how long a step takes, so a slice stops before the next would overrun it.
+  function compute() {
+    const t0 = performance.now();
+    let s;
+    try { s = job.gen.next(); } catch (err) { s = { error: err }; }
+    job.stepMs = Math.max(performance.now() - t0, 0.8 * job.stepMs);
+    return s;
+  }
+  // The next step: one computed ahead, else a new one.
+  const step = () => (job.queue.length ? job.queue.shift() : compute());
+
+  // Steps the method. Iterate at a finite speed: computes ahead up to the
+  // next run of the loop, which then sweeps across the display at that speed
+  // and lasts its own length (a 5 s run takes 5 s at 1×, 0.5 s at 10×), while
+  // the run after it is computed. As fast as possible, and the experiments'
+  // runs at any speed (they are shown once they are done): in slices of
+  // about SLICE ms between frames. At ∞ with the display standing still, the
+  // simulated time computed counts as the achieved speed.
   function tick() {
     if (!job) return;
     if (replaced()) { end('Stopped: the plant changed while tuning.', { gone: true }); return; }
-    const t0 = performance.now();
-    let iterated = false;
+    if (job.kind === 'iterate' && app.speed() !== AS_FAST) { ahead(); return; }
+    if (job.playing) return;  // a run still sweeps: when it ends, swept() goes on
+    const t0 = performance.now(), counting = app.speed() === AS_FAST && display.mode === 'stop';
+    let iterated = false, seconds = 0;
+    const count = () => { if (counting) { app.timeRan(t0 / 1000, 0); app.timeRan(performance.now() / 1000, seconds); } };
     for (;;) {
-      let s;
-      try { s = job.gen.next(); } catch (err) { end(`Stopped: ${err.message}.`); return; }
-      if (s.done) { improve(); finish(s.value); return; }
-      const v = s.value;
-      job.runs++;
-      if (v.before) shown.before ??= v.before;
-      if (v.start) {
-        shown.before ??= { variant: v.start.variant, cost: v.start.detail };
-        Object.assign(shown, { best: v.best, iteration: v.iteration, evals: v.evals });
-      }
-      if (job.kind === 'iterate' && !v.partial) {
-        shown.status = 'Tuning…';
-        shown.history.push({ iteration: v.iteration, cost: v.cost, tried: v.tried });
-        iterated = true;
-        if (!st.fast) break;
-      }
-      if (performance.now() - t0 > SLICE) break;
+      const s = step();
+      if (s.error) { end(`Stopped: ${s.error.message}.`); return; }
+      if (s.done) { count(); improve(); finish(s.value); return; }
+      seconds += s.value.seconds ?? 0;
+      if (take(s.value)) iterated = true;
+      if (performance.now() - t0 + job.stepMs > SLICE) break;
     }
-    if (iterated) improve();
+    count();
+    // An improvement goes into the project in a task of its own, a few
+    // times a second at most: placing it redraws the page.
+    if (iterated) improveSoon();
     if (job.kind !== 'iterate') shown.status = `Running the ${job.kind === 'relay' ? 'relay experiment' : 'step test'}… (${job.runs} run${job.runs === 1 ? '' : 's'} of the loop)`;
     renderProgress();
-    // After a whole iteration, pause so a person can watch; between the runs
-    // of one, only let the page draw.
-    job.timer = setTimeout(tick, iterated && !st.fast ? Math.max(0, PACE - (performance.now() - t0)) : 0);
+    schedule();
   }
 
-  // A better run goes onto the display; the one before it fades.
+  // What a step of the method tells: the runs, the start, the best so far, the
+  // history of the cost plot. True at the end of an iteration.
+  function take(v) {
+    if (v.seconds) job.runs++;
+    if (v.before) shown.before ??= v.before;
+    // The run in which the best changed is the run of the best gains.
+    if (v.best && v.best !== job.seenBest) { job.seenBest = v.best; job.bestRun = v.run ?? null; }
+    if (v.start) {
+      shown.before ??= { variant: v.start.variant, cost: v.start.detail };
+      Object.assign(shown, { best: v.best, iteration: v.iteration, evals: v.evals });
+    }
+    if (job.kind === 'iterate' && !v.partial) {
+      shown.status = 'Tuning…';
+      shown.history.push({ iteration: v.iteration, cost: v.cost, tried: v.tried });
+      return true;
+    }
+    return false;
+  }
+
+  // Iterate at a finite speed: computes ahead, in slices, up to the next run
+  // of the loop while the one before sweeps (Nelder–Mead needs only a run's
+  // cost, known before its sweep); the steps are taken when it sweeps.
+  const ready = () => { const s = job.queue.at(-1); return !!s && (!!s.error || !!s.done || !!s.value?.run); };
+  function ahead() {
+    const t0 = performance.now();
+    while (!ready()) {
+      job.queue.push(compute());
+      if (!ready() && performance.now() - t0 + job.stepMs > SLICE) { schedule(); return; }
+    }
+    if (!job.playing) playNext();
+  }
+  // Takes the steps computed ahead, up to the next run, which sweeps; the one
+  // after it is computed meanwhile.
+  function playNext() {
+    while (job.queue.length) {
+      const s = job.queue.shift();
+      if (s.error) { end(`Stopped: ${s.error.message}.`); return; }
+      if (s.done) { improve(); finish(s.value); return; }
+      take(s.value);
+      if (s.value.run) { sweep(s.value.run); break; }
+    }
+    renderProgress();
+    schedule();
+  }
+  // Calls then() once the sweep on the display has ended: when the display
+  // says so (in the frame the sweep ends), or when Run or Single was pressed
+  // meanwhile (the scope's Stop stops the tuning: scopeStopped).
+  function afterSweep(then) {
+    const go = () => { if (!job || job.next !== go) return; job.next = null; clearTimeout(job.lookTimer); then(); };
+    job.next = go;
+    const look = () => { if (!job || job.next !== go) return; if (display.mode !== 'single') go(); else job.lookTimer = setTimeout(look, POLL); };
+    job.lookTimer = setTimeout(look, POLL);
+  }
+  // The display's sweep ended: go on at once, so the next run starts in the
+  // same frame, where this one ended.
+  app.sweepEnded = () => job?.next?.();
+  function sweep(run) {
+    job.showing = true;
+    job.playing = true;
+    app.playRun({ t: run.t, signals: run.signals }, job.bests.slice(0, 4));
+    const sp = formatSpeed(app.speed());
+    shown.status = job.runs <= 1 ? `Scoring the running variant: its run sweeps at ${sp}.`
+      : `Run ${job.runs}${shown.iteration ? `, iteration ${shown.iteration}` : ''}, sweeping at ${sp}; the best so far fades behind it.`;
+    afterSweep(swept);
+  }
+  function swept() {
+    if (!job) return;
+    job.playing = false;
+    if (replaced()) { end('Stopped: the plant changed while tuning.', { gone: true }); return; }
+    improve();
+    if (job.kind === 'iterate' && app.speed() !== AS_FAST && ready()) playNext();
+    else schedule();
+  }
+  // At ∞: an improvement shown at most every IMPROVE ms.
+  function improveSoon() {
+    if (job.improveTimer) return;
+    job.improveTimer = setTimeout(() => {
+      if (!job) return;
+      job.improveTimer = 0;
+      job.improvedAt = performance.now();
+      improve();
+    }, Math.max(0, job.improvedAt + IMPROVE - performance.now()));
+  }
+
+  // A better run becomes the best: its gains go into the result variant, the
+  // display shows the loop's run with them, and the runs before it fade.
   function improve() {
     const b = shown.best;
     if (!b || !(b.cost.J < job.applied) || !(b.cost.J < shown.before.cost.J)) return;
     job.applied = b.cost.J;
-    display.keep();
-    place({ ...b.variant, name: job.name }, true);
+    const variant = { ...b.variant, name: job.name };
+    // The tuner's run with these gains stands for the screen's, if it is the same simulation.
+    place(variant, true, job.seenBest === b && job.bestRun ? { run: job.bestRun, ctx: job.ctx, variant } : null);
+    job.bests.unshift(display.data);
+    display.setPast(job.bests.slice(1, 5));
   }
 
   function finish(res) {
@@ -252,17 +370,16 @@ export function createAutotuneTab(host, app, display) {
     if (res.method === 'iterate' || !res.run) shown.res = res;
     if (res.method === 'iterate') {
       if (!res.ok) { end(`Could not run: ${res.why}.`); return; }
-      end(res.better ? 'Done: the cost stopped falling.' : 'Done: no better gains found; the running variant stays.');
+      const notes = res.notes?.length ? ` Note: ${res.notes.join('; ')}.` : '';
+      end((res.better ? 'Done: the cost stopped falling.' : 'Done: no better gains found; the running variant stays.') + notes);
       return;
     }
     if (!res.run) { end(res.ok ? 'Done.' : `Could not run: ${res.why}.`); return; }
-    // The experiment sweeps across the display as it ran (Fast: at once),
-    // then the loop's own run comes back, with the result if there is one.
+    // The experiment sweeps across the display at the header's speed (∞: at
+    // once), then the loop's own run comes back, with the result if any.
     job.swept = true;
-    app.setRunMode(st.fast ? 'stop' : 'single');
-    display.clearRuns();
     const T = res.ctx.sim.duration;
-    display.setData(res.method === 'relay' ? lastPeriod(res.run, T) : aroundStep(res.run, res.tHold ?? 0, T));
+    app.playRun(res.method === 'relay' ? lastPeriod(res.run, T) : aroundStep(res.run, res.tHold ?? 0, T), []);
     // Numbers to three digits; a bias of a ten-thousandth of the swing is 0.
     const u = (x) => num(Math.abs(x) < 1e-4 * Math.abs(res.d ?? res.du ?? 1) ? 0 : x, 3);
     shown.status = (res.method === 'relay'
@@ -270,15 +387,14 @@ export function createAutotuneTab(host, app, display) {
       : stepStatus(res, u))
       + (res.ok ? '' : ` It gives no result: ${res.why}.`);
     renderAll();
-    // The sweep crosses the screen; it waits only until the experiment's
-    // data ends (a ramp test is cut short).
-    const tb = app.project.scope.timebase, w0 = Math.max(0, tb.position), shownData = display.data;
-    const sweep = Math.max(0, Math.min(tb.position + 10 * tb.scale, shownData.t.at(-1) ?? 0) - w0);
-    job.timer = setTimeout(() => {
-      if (!job) return;
-      if (replaced()) { end('Stopped: the plant changed during the experiment.', { gone: true }); return; }
-      apply(res);
-    }, st.fast ? 500 : 1000 * sweep + 400);
+    afterSweep(() => {
+      clearTimeout(job.timer);
+      job.timer = setTimeout(() => {
+        if (!job) return;
+        if (replaced()) { end('Stopped: the plant changed during the experiment.', { gone: true }); return; }
+        apply(res);
+      }, HOLD);
+    });
   }
 
   function apply(res) {
@@ -310,19 +426,19 @@ export function createAutotuneTab(host, app, display) {
   // with the run it started from faded behind a new result, and the run
   // mode. If the project was replaced meanwhile (loaded, undone), the
   // display shows that one; its mode is restored only if nothing else set it.
-  function end(status = '', { gone = false } = {}) {
+  function end(status = '', { gone = false, mode = null } = {}) {
     if (!job) return;
-    clearTimeout(job.timer);
+    for (const t of [job.timer, job.lookTimer, job.improveTimer]) clearTimeout(t);
     const j = job;
     job = null;
     if (status && shown) shown.status = status;
     if (j.edit) app.endEdit();
     if (!gone) {
-      if (j.swept && !j.edit) display.setData(j.startData);
+      if (j.swept || j.showing) app.showLoop();
       display.clearRuns();
       if (j.ran) display.keep(j.startData);
     }
-    if (!gone || display.mode === 'stop') app.setRunMode(j.mode === 'single' ? 'stop' : j.mode);
+    if (!gone || display.mode === 'stop') app.setRunMode(mode ?? (j.mode === 'single' ? 'stop' : j.mode));
     if (gone) { shown = null; app.toast(status); }
     else if (j.ran) {
       const after = shown.res?.after ?? shown.best?.cost;
@@ -350,7 +466,7 @@ export function createAutotuneTab(host, app, display) {
     $('#tu-plot').hidden = (s ? s.method : st.method) !== 'iterate';
     $('#tu-ptitle').textContent = s ? `Progress · ${METHODS[s.method].label}` : 'Progress';
     if (!s) {
-      $('#tu-status').innerHTML = `<span class="dim">Press Start. ${st.method === 'iterate' ? 'The display shows each improvement.' : 'The display shows the experiment, then the tuned loop.'}</span>`;
+      $('#tu-status').innerHTML = `<span class="dim">Press Start. ${st.method === 'iterate' ? 'Each run tried sweeps across the display at the header\'s Speed; at ∞ it computes as fast as it can and shows each improvement.' : 'The display shows the experiment at the header\'s Speed, then the tuned loop.'}</span>`;
       $('#tu-result').innerHTML = '';
       drawPlot(null);
       return;
@@ -454,13 +570,15 @@ export function createAutotuneTab(host, app, display) {
     if (!job) start();
     else end(job.kind === 'iterate' ? 'Stopped. The best gains so far are kept.' : 'Stopped before the result was applied.');
   };
-  $('#tu-fast').onclick = (e) => { e.preventDefault(); st.fast = !st.fast; renderButton(); };
   new ResizeObserver(() => { if (!host.hidden) drawPlot(shown?.method === 'iterate' ? shown.history : null); }).observe($('#tu-plot'));
 
   return {
     render() { if (!host.hidden) renderAll(); },
     shown: renderAll,
     stop() { if (job) end('Stopped.'); },
+    // The scope's Stop while a run of the tuner sweeps on the display: the
+    // tuning stops, as with the tab's Stop, and the scope stays stopped.
+    scopeStopped() { if (job?.next) end(job.kind === 'iterate' ? 'Stopped. The best gains so far are kept.' : 'Stopped before the result was applied.', { mode: 'stop' }); },
   };
 }
 

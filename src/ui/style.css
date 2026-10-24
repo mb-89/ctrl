@@ -78,6 +78,32 @@ button, input, select { font: inherit; color: inherit; }
 .btn.icon { width: 30px; padding: 0; justify-content: center; }
 .btn svg { width: 15px; height: 15px; }
 .sep { width: 1px; height: 20px; background: var(--line-strong); }
+/* Speed (ui/speed.js): a factor in a header button's frame, its presets in a
+   header popover, and the speed achieved beside it in the readout type. */
+.speed { display: inline-flex; align-items: center; gap: 6px; }
+.speed-label { font-size: 13px; color: var(--ink-2); }
+.speed-set { display: inline-flex; align-items: stretch; height: 30px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--panel-2); }
+.speed-set:focus-within { border-color: var(--ink-2); }
+.speed-in { width: calc(9ch + 12px); min-width: 0; border: 0; border-radius: 5px 0 0 5px; background: transparent; padding: 0 4px 0 8px; font-family: var(--mono); font-size: 13px; text-align: right; }
+.speed-in:focus { outline: none; background: var(--panel); }
+.speed-btn { width: 24px; padding: 0; border: 0; border-left: 1px solid var(--line); border-radius: 0 5px 5px 0; background: transparent; color: var(--ink-2); font-size: 11px; cursor: pointer; }
+.speed-btn:hover:not([aria-disabled="true"]) { background: var(--recess); color: var(--ink); }
+/* Held at 1× by a live plant: read-only, in the secondary ink, with a lock
+   over the field's empty left end (nothing moves). */
+.speed-lock { display: none; position: absolute; left: 7px; top: 0; bottom: 0; align-items: center; color: var(--ink-2); pointer-events: none; }
+.speed-lock svg { width: 12px; height: 12px; }
+.speed.locked .speed-lock { display: inline-flex; }
+.speed.locked .speed-in { color: var(--ink-2); }
+.speed.locked .speed-in, .speed.locked .speed-btn { cursor: not-allowed; }
+.speed.locked .speed-btn { color: var(--muted); }
+.speed-got { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 10ch; white-space: nowrap; }
+.speed-got.held { color: var(--ink-2); }
+.popover.speed-pop { left: 0; right: auto; width: 220px; padding: 4px; }
+.speed-item { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; font-size: 13px; }
+.speed-item b { min-width: 4ch; font-family: var(--mono); font-weight: 600; }
+.speed-item span { color: var(--muted); font-size: 12px; }
+.speed-item:hover, .speed-item:focus-visible { background: var(--recess); outline: none; }
+.speed-item[aria-checked="true"] { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .field { height: 26px; border-radius: 5px; border: 1px solid var(--line-strong); background: var(--panel); padding: 0 6px; font-size: 13px; min-width: 0; }
 
 /* Rubber keys */
@@ -359,12 +385,13 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 }
 
 /* Controller tab */
-.ctl { display: grid; grid-template-columns: minmax(200px, 250px) minmax(200px, 260px) minmax(260px, 1fr) minmax(200px, 260px); gap: 14px; align-items: stretch; height: 100%; min-height: 0; }
+.ctl { display: grid; grid-template-columns: minmax(200px, 250px) minmax(200px, 320px) minmax(260px, 1fr) minmax(200px, 260px); gap: 14px; align-items: stretch; height: 100%; min-height: 0; }
 .ctl > .gcol { min-height: 0; overflow: auto; }
 .ctname { font-weight: 600; font-size: 13px; color: var(--ink); }
 .ctblocks { display: flex; flex-direction: column; gap: 4px; }
 .ctport { display: inline-block; font-family: var(--mono); font-size: 11.5px; padding: 0 5px; margin: 2px 2px 0 0; border-radius: 4px; background: var(--panel); border: 1px solid var(--line); white-space: nowrap; }
-.vlist { margin: 0; list-style: none; flex: 0 1 auto; }
+/* The list keeps its rows; the column scrolls when the diagram below needs room. */
+.vlist { margin: 0; list-style: none; flex: 0 0 auto; }
 .vrow { grid-template-columns: 14px minmax(0, 1fr) auto; }
 .vrow .vdot { font-size: 10px; color: #33d17a; }
 .vrow .vtype { font-size: 11px; color: var(--lcd-dim); white-space: nowrap; }
@@ -471,11 +498,48 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
 .tuplot { display: block; width: 100%; height: 118px; flex: 0 0 auto; border-radius: 8px; background: #0a0d10; }
 .tuplot[hidden] { display: none; }
 .tune .field:disabled, .tune .rep:disabled { opacity: 0.55; cursor: default; }
-.tufast { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
 /* Narrow: the columns stack, Start and the progress first. */
 @media (max-width: 900px) {
   .tune { grid-template-columns: minmax(0, 1fr); height: auto; }
   .tune > .tuprogress { order: -1; }
+}
+
+/* Controller tab: the small diagram of what the running variant does
+   (src/ui/ctldiagram.js), under the variant list. Theme colours only. */
+.ctdiag { margin: 2px 0 0; padding: 5px 3px 3px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); cursor: zoom-in; }
+.ctdiag:hover { border-color: var(--line-strong); }
+.ctdiag figcaption { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 4px; }
+.ctdiag figcaption span { font-size: 11px; color: var(--muted); }
+.ctdiag svg { display: block; width: 100%; max-width: 405px; height: auto; margin: 0 auto; }
+.cdg { font-family: var(--mono); font-size: 10px; }
+.cdg .w { fill: none; stroke: var(--ink-2); stroke-width: 1.1; stroke-linejoin: round; }
+.cdg .w.d { stroke-dasharray: 3 2; }
+.cdg .w.o { stroke-dasharray: 1 2; }
+.cdg .halo { fill: none; stroke: var(--panel); stroke-width: 5; }
+.cdg .ah, .cdg .dot { fill: var(--ink-2); }
+.cdg .b { fill: var(--key-top); stroke: var(--ink-2); stroke-width: 1; }
+.cdg .t { fill: var(--ink); }
+.cdg .k { fill: var(--muted); }
+.cdg .v { fill: var(--ink); font-weight: 600; }
+.cdg .p { fill: var(--ink); font-size: 11px; font-weight: 600; }
+.cdg .n { fill: var(--muted); font-size: 9px; }
+.cdg .n.warn { fill: var(--bad); font-weight: 600; }
+.cdg .sg { fill: var(--ink-2); font-size: 9px; }
+.cdg .f { opacity: 0.3; }
+.ctdiag-big { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); cursor: zoom-out; padding: 16px; }
+.ctdiag-big figure { margin: 0; width: min(100%, 840px); background: var(--panel); border-radius: 12px; padding: 14px 16px 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35); }
+.ctdiag-big svg { display: block; width: 100%; height: auto; }
+.ctdiag-big figcaption { font-size: 12.5px; color: var(--muted); margin: 0 0 8px; }
+.ctdiag-big figcaption + svg + figcaption { margin: 8px 0 0; }
+.ctdiag-big b { color: var(--ink); }
+.tuchk { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); }
+/* Narrow: the Controller tab's columns stack, two and then one across. */
+@media (max-width: 900px) {
+  .ctl { grid-template-columns: repeat(2, minmax(0, 1fr)); height: auto; }
+  .ctl > .gcol { overflow: visible; }
+}
+@media (max-width: 560px) {
+  .ctl { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Live (HIL, ui/live.js) and Save (ui/record.js). Live is a second row of

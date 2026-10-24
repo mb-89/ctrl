@@ -28,10 +28,11 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
   tune <project> [--from <name>] [--params Kp,Ki] [--evals 300] [--seed 1] [--name <n>] [--save]
                                         auto-tune a candidate's gains; --save adds the result
   autotune <project> [--block <id path>] [--method iterate|relay|step] [--rule tl|zn|calm] [--simc tight|smooth]
-           [--cost IAE|ITAE|ISE] [--effort 0.05] [--overshoot 10] [--iterations 60] [--amplitude 10] [--save]
+           [--cost IAE|ITAE|ISE] [--effort 0.05] [--overshoot 10] [--iterations 60] [--ff] [--amplitude 10] [--save]
                                         improve a Controller block's running variant by simulation, as the
                                         page's Auto-tune tab does; --save puts the result into the block as a
-                                        variant of its own (running if it scores better)
+                                        variant of its own (running if it scores better); --ff also tunes
+                                        the feedforward gains (Kff, Kv, Ka) that are 0
   trace <project> [--candidate <name>] [--every 10] [--json]
                                         time series t, r, y, u, ym, d as CSV
   html <project> [-o out.html]          a standalone page with the project inside, to share
@@ -49,7 +50,7 @@ function parseArgs(argv) {
     if (a === '-o') { opt.o = argv[++i]; continue; }
     if (a.startsWith('--')) {
       const key = a.slice(2);
-      if (['json', 'save', 'help'].includes(key)) { opt[key] = true; continue; }
+      if (['json', 'save', 'help', 'ff'].includes(key)) { opt[key] = true; continue; }
       const val = argv[++i];
       if (val === undefined) fail(`--${key} needs a value`);
       if (key === 'set') opt.set.push(val); else opt[key] = val;
@@ -274,7 +275,7 @@ switch (cmd) {
     const path = opt.block ? opt.block.split('/') : null;
     if (path && !controllerBlocks(project.system.plant?.diagram).some((c) => c.key === opt.block)) fail(`--block ${opt.block}: no Controller block there; blocks: ${controllerBlocks(project.system.plant?.diagram).map((c) => c.key).join(', ') || 'none'}`);
     let res;
-    try { res = autotune(project, path, { method, goal, rule: opt.rule, simc: opt.simc, amplitude, maxIter: opt.iterations ? Number(opt.iterations) : undefined }); } catch (e) { fail(e.message); }
+    try { res = autotune(project, path, { method, goal, rule: opt.rule, simc: opt.simc, amplitude, maxIter: opt.iterations ? Number(opt.iterations) : undefined, feedforward: !!opt.ff }); } catch (e) { fail(e.message); }
     if (res.ok && opt.save) { placeVariant(project, res.path, res.variant, { run: res.better }); writeProject(pos[1], project); }
     const rep = tuneReport(res);
     if (opt.json) { console.log(JSON.stringify(rep, null, 2)); if (!res.ok) process.exitCode = 1; break; }

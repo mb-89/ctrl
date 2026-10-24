@@ -379,6 +379,26 @@ export function eig(A) {
   return hqr(a).sort(byRealThenImag);
 }
 
+// The eigenvalues of A after a small random change of its balanced form:
+// every entry moved by up to rel · the largest entry (a fixed pseudo-random
+// pattern, so the result is repeatable). eig's own rounding is such a change
+// of about n·eps, so a tenfold or larger change shows which eigenvalues
+// rounding can move, and by how much: a repeated eigenvalue of a defective
+// matrix jumps by about (rel)^(1/m), a well-separated one by about rel.
+export function eigPerturbed(A, rel = 1024 * EPS) {
+  const n = square(A, 'eigPerturbed');
+  const a = A.map((r) => Array.from(r));
+  if (!finite(a)) throw new Error('eigPerturbed: matrix has non-finite entries');
+  if (n === 0) return [];
+  balance(a);
+  const s = rel * maxAbs(a);
+  let seed = 0x2545f491;
+  const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed / 2147483648 - 1; };
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) a[i][j] += s * rnd();
+  hessenberg(a);
+  return hqr(a).sort(byRealThenImag);
+}
+
 // ---- Riccati equations, LQR and Kalman gains
 
 // Structure-preserving doubling algorithm (Chu, Fan, Lin 2005) for the DARE.

@@ -13,6 +13,7 @@ import { computeMetrics } from './metrics.js';
 import { normalizeGoal, evaluateGoal, compareEvals } from './goal.js';
 import { normalizeDiagram, diagramNames } from './diagram.js';
 import { normalizeView } from './views.js';
+import { parseSpeed, speedToJson } from './speed.js';
 
 export const FORMAT = 'loop-tuner/2';
 export const PALETTE_SIZE = 8;
@@ -90,7 +91,8 @@ export function normalizeProject(p) {
 }
 
 // How the page opens: the run control, the open tab, in the Plant tab the
-// representation shown, and the setup area's share of the page height.
+// representation shown, the setup area's share of the page height, and the
+// speed of time (a positive factor, or -1: as fast as possible).
 // Unknown values are dropped.
 export const UI_RUN = ['run', 'stop', 'single'];
 export const UI_TABS = ['input', 'plant', 'controller', 'tune', 'analysis'];
@@ -101,6 +103,8 @@ export function normalizeUi(ui) {
   if (UI_TABS.includes(ui.tab)) out.tab = ui.tab;
   if (typeof ui.view === 'string' && ui.view) out.view = ui.view;
   if (Number.isFinite(ui.setup) && ui.setup > 0 && ui.setup < 1) out.setup = ui.setup;
+  const speed = parseSpeed(ui.speed);
+  if (speed !== null) out.speed = speedToJson(speed);
   return Object.keys(out).length ? out : null;
 }
 

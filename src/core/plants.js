@@ -199,7 +199,7 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Following a sine (XY)',
-    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
+    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line. PID + feedforward adds a velocity feedforward Kv, set by hand, so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'sine', params: { amplitude: 1, frequency: 0.2 } }] },
       d: { period: PERIOD, components: [] },
@@ -210,6 +210,8 @@ export const EXAMPLE_PLANTS = [
       { name: 'P', type: 'pid', params: { Kp: 3, umin: -12, umax: 12 } },
       { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
       { name: 'PID', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, umin: -12, umax: 12 } },
+      // Kv set by hand: raised until the figure lay flat.
+      { name: 'PID + feedforward', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, Kv: 1.7, umin: -12, umax: 12 } },
     ]),
     views: motorViews(),
   },
@@ -409,7 +411,7 @@ export const EXAMPLE_PLANTS = [
     // demo fits 5 s. The gains are hand-picked to be poor; the tab computes
     // better ones from the plant.
     name: 'Oven, badly tuned',
-    notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled to fit 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration.',
+    notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled to fit 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration. The variant without anti-windup has the same gains, but its integral winds up while the heater is full on: the first step overshoots to 67 °C instead of 52 °C.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }] },
       d: { period: PERIOD, components: [pulse(25, 3.6, 0.8)] },
@@ -422,6 +424,7 @@ export const EXAMPLE_PLANTS = [
         src('d', 300, 220, '%'),
         ctrl(130, 90, 2, 0.02, [
           { name: 'PID, badly tuned', type: 'pid', params: { Kp: 6, Ki: 12, Kd: 0.1, Tf: 0.02, umin: 0, umax: 100 } },
+          { name: 'PID, badly tuned, no anti-windup', type: 'pid', params: { Kp: 6, Ki: 12, Kd: 0.1, Tf: 0.02, umin: 0, umax: 100, aw: 'off' } },
         ]),
         { id: 'heater', type: 'firstOrder', name: 'heater', params: { K: 1, tau: 0.1 }, x: 300, y: 96 },
         { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 420, y: 104 },

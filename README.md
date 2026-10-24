@@ -8,7 +8,7 @@ Tune a feedback loop's step response in the browser, side by side, like patches 
 
 Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control loop:
 
-- **Display**: four channels on a 10 × 8 graticule, any of the system's named signals; the screen is the record, swept in real time. Wheel to zoom (over an axis: that axis only), drag to pan, click a trace to work on it alone, Shift-drag to zoom to a box.
+- **Display**: four channels on a 10 × 8 graticule, any of the system's named signals; the screen is the record, swept at the **Speed** set in the header (1× real time by default; any factor, or ∞ as fast as the page simulates it, with the speed achieved beside it; Auto-tune runs at it too, and a live plant holds it at 1×). Wheel to zoom (over an axis: that axis only), drag to pan, click a trace to work on it alone, Shift-drag to zoom to a box.
 - **Controls** to the right, as on a bench scope: Run/Stop, Single, Auto Scale; Horizontal and Vertical knobs whose readouts you can also type into.
 - **Save ▾**, under the screen, stores what the screen holds with every signal (CSV, JSON) or as a picture (PNG); **Open** shows a saved trace dashed behind the live ones.
 - **Live (HIL)**: a system's plant can run outside the page, in real time. Load **HIL: external motor**, download **hil-plant.zip** from Run Control's **plant script…**, unzip it and run `runme.sh` (Linux, macOS) or `runme.ps1` (Windows), which install what they need; press **Connect**, and tune the controller while the motor runs at 100 Hz. The scope's Run and Stop start and stop the plant; E-STOP on the page, or Enter at the plant, stops it, and ten silent cycles on either side are an E-stop too. **Rec** keeps the last minutes of every live signal (5 min unless set). The protocol (JSON-RPC 2.0 over a WebSocket) is in [design/output/hil.md](design/output/hil.md), for plants of your own, in any language.
@@ -17,7 +17,8 @@ Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control lo
   - **Plant**: the system as a block diagram, Simulink-style: Source blocks play signals, Sink blocks (x, speed, …) are what the scope shows, blocks nest into subsystems. A plant can carry 2D views (simple shapes, or standard SVG bound to signals) that move with the simulation.
   - **Controller**: Controller blocks in the diagram hold interchangeable variants (PID, state feedback, gain-scheduled PI, energy swing-up); flip and tune them here. The run before stays faded on the display, for comparison.
   - The **System library** in the header holds complete systems, from a mass–spring–damper to a triple pendulum on a cart; load one whole, or only its input or plant.
-  - Auto-tune and Analysis come next.
+  - **Auto-tune**: improves a Controller block's running variant by simulation (iterate with Nelder–Mead, relay feedback, step response with SIMC); the result is a new variant to compare.
+  - **Analysis**: a Controller block's loop, linearised: stability, gain and phase margins, Ms, poles, root locus, Bode, Nyquist and the linear step, discrete as simulated. Built; it shows its numbers once the plant model from the design layer is merged, and says so until then.
 
 Projects are plain JSON, including how the display is set. Save, open, drop or paste them; **Export HTML** writes a copy of the page with the project inside, to send to someone. The built page carries no comments and no trace of where it was made (enforced by `test/provenance.test.mjs`). Where a hosting page offers a save adapter, saving goes through it; otherwise through a download link, and Copy JSON and Copy HTML remain.
 

@@ -298,8 +298,12 @@ test('traces round-trip through CSV and JSON, written in parts', () => {
   assert.throws(() => parseTrace('t,x\nzero,1\n'), /first column/);
 });
 
-// A value other than v for a parameter, of the same shape.
-const other = (v) => (Array.isArray(v) ? v.map((x, i) => (x === 0 ? 0.05 * (i + 1) : x * 1.5)) : v === 0 ? 0.05 : v * 1.5);
+// A value other than v for a parameter, of the same shape; for a choice
+// (anti-windup), the next option.
+const other = (v, spec = {}) => {
+  if (spec.kind === 'choice') { const keys = Object.keys(spec.options); return keys[(keys.indexOf(v) + 1) % keys.length]; }
+  return Array.isArray(v) ? v.map((x, i) => (x === 0 ? 0.05 * (i + 1) : x * 1.5)) : v === 0 ? 0.05 : v * 1.5;
+};
 // Test values that make every law do something (finite limits, a filter on r).
 const LAW_PARAMS = {
   pid: { Kp: 2, Ki: 1, Kd: 0.1, Tf: 0.02, Tr: 0.1, umin: -5, umax: 5 },
@@ -318,7 +322,7 @@ test('every controller and observer law reads its parameters at every step (so a
       const base = normalizeVariant({ type, params: LAW_PARAMS[type] ?? {} }, type, lib).params;
       for (const spec of lib[type].params) {
         if (spec.key === 'u0') continue;  // the integral at the start: it waits for the next start
-        const next = other(base[spec.key]);
+        const next = other(base[spec.key], spec);
         const edited = { ...base }, fresh = { ...base, [spec.key]: next };
         // Made with the old value and changed before the first step, a law
         // that reads its parameters as it runs matches one made with the new.
@@ -363,7 +367,7 @@ test('live edits of any variant parameter are taken in place; names are cosmetic
     r.step(0, [0.1, 0]);
     for (const spec of CONTROLLERS[type].params) {
       const d = LOOP(v), c = d.blocks.find((b) => b.id === 'c');
-      c.variants[0].params[spec.key] = other(c.variants[0].params[spec.key]);
+      c.variants[0].params[spec.key] = other(c.variants[0].params[spec.key], spec);
       assert.equal(r.update(normalizeDiagram(d), SIGNALS), 'kept', `${type}.${spec.key}`);
     }
   }
