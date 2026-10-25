@@ -2,6 +2,14 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: the HIL simulator runs any of our models ([input 21](../input/2026-10-25-21-hil-simulator-runs-any-model.md))
+
+The person: "the external [HIL] can be configured to simulate something else ... a startup flag where you can specify what you simulate ... any of the models that we have ... You don't have to rebuild anything about this. You can just reuse the code we already have ... build it in a way that works ... it adds its parameter fluctuations ... randomly fluctuates any of the parameters we have ... flick on or off effects on any detail level more or less randomly, unless we specify what we want. And then we need to run an identification on it ... a complete random mode where ... we don't even specify what type of system we want ... the interface description, it has to come over the wire".
+- **One simulation code, two places**: the external simulator runs the page's own simulation core and library models (the same JavaScript), not a second implementation; the plant script's hand-written physics is replaced by it. How it runs outside the browser (Node, or a JavaScript engine inside the Python plant that keeps its STOP window) is to be measured and chosen; it must install as simply as today's runme scripts.
+- **Flags**: which model to run (any library system's plant), how much to vary (every physical parameter, ±15 % by default, seeded), which effects to switch (the high-detail switches and detail levels, at random by default, or as specified), and a random mode that picks the system too. The flags it drew stay secret unless asked for (`--show-params`).
+- **The interface comes over the wire**: on connect the plant describes its inputs and outputs (names, units, full scales, ranges, kinds); the page knows nothing else (input 20) and identifies the plant before tuning.
+- Design in progress: [hil-simulator.md](hil-simulator.md).
+
 ## 2026-10-25 · v2.8: the HIL plant is a black box ([input 20](../input/2026-10-25-20-hil-plant-is-a-black-box.md))
 
 The person: "we shouldn't make assumptions about the plant ... Even if the plant that you programmed is actually a DC motor, we just can't make assumptions about the structure of it ... We have to identify it before we tune it ... the diagram of the [HIL] is a black box. You have a controller that's running against the black box. The signals and their names, they are given to you in the interface ... you can't put a disturbance on it ... you could if you had a dyno control, but we don't have that ... the arm, it doesn't have a 2D or 3D representation because it's a black box ... if the plant exposes a [d] signal, then we can also use it."
