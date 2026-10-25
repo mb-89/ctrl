@@ -97,7 +97,7 @@ The lamp's colour says what kind of on it is:
 
 ### Text: Heading and Label
 
-`.label` (a column's name: small capitals, muted), `.disclosure` (a `.label` that opens and closes its group: a chevron, then the name, `aria-expanded`; the Plant library's groups), `.heading` and `.heading-lg` (a thing's name, a title), `.flabel` (a field's label), `.note` (secondary prose), `.hint` (small muted text: a hint, a unit, a count), `.muted` (the muted colour inline), `.mono` (values, formulas), `.text-ok` / `.text-warn` / `.text-bad` (status as text, with its word or mark), `kbd`, `code`.
+`.label` (a column's name: small capitals, muted), `.disclosure` (a `.label` that opens and closes its group: a chevron, then the name, `aria-expanded`; the Plant library's groups; also the `<summary>` of a native `<details class="more">`, details one click away, its chevron drawn from the open state: [tabs.md](tabs.md#progressive-disclosure)), `.heading` and `.heading-lg` (a thing's name, a title), `.flabel` (a field's label), `.note` (secondary prose), `.hint` (small muted text: a hint, a unit, a count), `.muted` (the muted colour inline), `.mono` (values, formulas), `.text-ok` / `.text-warn` / `.text-bad` (status as text, with its word or mark), `kbd`, `code`.
 
 ### Canvases
 
