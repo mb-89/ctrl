@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the Hu–Lin variable-gain controller, researched and compared ([input 33](../input/2026-10-25-33-hu-lin-controller.md))
+
+The person (an exception to the feature freeze, asked for explicitly): "a paper written by a guy called Hu and a guy called Lin ... a structurally variable controller where ... when the error is big, we use a smaller gain, and then while the error gets smaller, we use a bigger and bigger gain, so we stay close to saturation ... we never open up the loop by just entering plain saturation. I wonder how well this behaves against a controller that just has a proper anti-windup ... find this controller ... in the paper they had a plant ... an experiment or an example library element ... that compares that controller against the alternatives. And if that structurally variable controller is a good thing, then maybe we can use this also."
+- **Research first**: identify the paper(s) (Tingshu Hu and Zongli Lin's work on control under actuator saturation: variable or scheduled gains on nested invariant sets, low-and-high gain, composite nonlinear feedback), the scheme, its guarantees and the plant it was shown on.
+- **Then an example**: the controller built in the page from the plant (its gains computed, like every designed type), against PID or state feedback with clamping and back-calculation anti-windup, on the paper's plant if it can be modelled honestly, else on a library plant with a hard actuator limit; the comparison measured (tracking, overshoot, settling, effort, how close to the limit, robustness to plant change) and stated.
+- **Adopt or not** follows from the numbers; recorded either way. Built on its own branch in its own session.
+
 ## 2026-10-25 · v2.9: the library's buttons stacked ([input 32](../input/2026-10-25-32-library-buttons-stacked.md))
 
 The person: "the load, input, and plant buttons are currently horizontally next to each other. That takes up a lot of space and makes the text span over more lines ... Put them below each other ... you can make the text take more space." Load, Input and Plant now stand in one narrow column at the right of each card, aligned to its top; the name, tags, bottom line and Details take the rest of the width.
