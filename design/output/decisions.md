@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: a deadbeat example; the benchmark's Pugh matrix; no holding back on usage ([input 34](../input/2026-10-25-34-hu-lin-scheduling-variable.md), [input 35](../input/2026-10-25-35-deadbeat-and-pugh-matrix.md))
+
+- **Hu–Lin, reproduced**: the person remembers the paper gave everything except how to compute one important scheduling variable, which they once had to work out; the session reproduces the paper's results and derives that variable, with the derivation written down.
+- **A deadbeat example** (the person: "something that shows a deadbeat controller"), built in parallel: deadbeat as a designed type (all poles at the origin, computed from the discretised plant), and an example that shows its exact finite settling, its effort and sample-time trade-off, and its sensitivity.
+- **The benchmark is a Pugh matrix** (the person: "a big matrix where you compare which controller can I use for this plant, how good are the results ... To make a decision on which controller to use in which plant"). Designed now, in parallel; built after the overhaul, as ordered in input 29.
+- **Usage**: the person, after the weekly-limit warning: "don't worry about the limits. You just keep running ... get the Puma finished first, but keep the other stuff running"; "If we burn through all our tokens by tomorrow and then I can't do something the rest of the week, that's fine." Everything runs in parallel; the PUMA has first claim.
+
 ## 2026-10-25 · v2.9: the Hu–Lin variable-gain controller, researched and compared ([input 33](../input/2026-10-25-33-hu-lin-controller.md))
 
 The person (an exception to the feature freeze, asked for explicitly): "a paper written by a guy called Hu and a guy called Lin ... a structurally variable controller where ... when the error is big, we use a smaller gain, and then while the error gets smaller, we use a bigger and bigger gain, so we stay close to saturation ... we never open up the loop by just entering plain saturation. I wonder how well this behaves against a controller that just has a proper anti-windup ... find this controller ... in the paper they had a plant ... an experiment or an example library element ... that compares that controller against the alternatives. And if that structurally variable controller is a good thing, then maybe we can use this also."
