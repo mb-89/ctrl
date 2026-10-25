@@ -183,21 +183,33 @@ test('the report: the bottom line first, then the matrix and the runners-up', ()
   assert.match(html, /^<!doctype html>/);
   assert.match(html, /<strong>B<\/strong>/);
   assert.ok(html.indexOf('class="rpt-bottom"') < html.indexOf('<table'));
+  // What it is, first (input 68): a heading and a line on what was compared.
+  assert.match(html, /<h1>Decision: Small<\/h1>\s*<p class="dim rpt-sub">3 options compared on 3 criteria against the datum, D; 3 in\.<\/p>/);
+  assert.match(renderHtml(decide({ ...small(), kind: 'Controller benchmark' })), /<h1>Controller benchmark: Small<\/h1>/);
+  // Nothing outside the table but the bottom line, the keys, the
+  // sensitivity and what opens.
+  assert.doesNotMatch(html.replace(/<script[\s\S]*?<\/script>/g, ''), /<h2/);
   const noScripts = (x) => x.replace(/<script[\s\S]*?<\/script>/g, '');
   assert.equal((noScripts(html).match(/<style/g) || []).length, 1);
   assert.match(html, /<style id="rpt-style" data-license="IBM Plex/);
   assert.doesNotMatch(noScripts(renderHtml(r)), /<style/);
   assert.match(renderHtml(r, { theme: 'dark' }), /<html lang="en" data-theme="dark">/);
-  // The matrix as a Pugh matrix is laid out (input 63): the datum's column
-  // first, the weight in its own column, the counts and the weighted total
-  // at the bottom.
-  const head = html.slice(html.indexOf('<table class="rpt-overview"'));
-  assert.match(head, /<th>Criterion<\/th><th>Weight<\/th><th[^>]*>Tol\.<\/th><th class="datum"><span class="rpt-vhead"><span class="rpt-word">D<\/span><\/span><\/th>/);
-  const tr = (label) => head.match(new RegExp(`<tr><td>${label}</td>(.*?)</tr>`))[1].replace(/<[^>]+>/g, ' ').trim().split(/\s+/);
-  assert.deepEqual(tr('Σ \\+'), ['1', '3']);   // A: ++ S −; B: + ++ +
-  assert.deepEqual(tr('Σ S'), ['1', '0']);
-  assert.deepEqual(tr('Σ −'), ['1', '0']);
-  assert.ok(head.indexOf('Σ −') < head.indexOf('Weighted total'));
+  // One table, an option a row (inputs 66, 67): the datum's row first,
+  // then the ranking; a row is a <details> whose summary is the option's
+  // bottom line (its name, its total, its marks); the weights are fields
+  // in the head and nowhere else; one total, × when vetoed; nothing said
+  // twice (no better/worse lines, no count of vetoes, no weighted or veto row).
+  const vetoedA = renderHtml(decide({ ...small(), gates: [{ criterion: 'cost', max: 15, why: 'too dear' }] }), { style: reportStyle() });
+  const sections = [...vetoedA.matchAll(/<details class="rpt-opt([^"]*)" data-section="(\w+)" data-fits="(\w+)"/g)].map((m) => [m[2], m[1].trim(), m[3]]);
+  assert.deepEqual(sections, [['D', '', 'true'], ['B', '', 'true'], ['A', 'out', 'false']]);
+  const rowOf = (k) => vetoedA.match(new RegExp(`data-section="${k}"[^>]*><summary class="rpt-grid">(.*?)</summary>`))[1];
+  assert.deepEqual(rowOf('B').replace(/<[^>]+>/g, ' ').trim().split(/\s+/), ['B', '+8', '+', '++', '+']);
+  assert.deepEqual(rowOf('A').replace(/<[^>]+>/g, ' ').trim().split(/\s+/), ['A', '+5', '×', '++', 'S', '−']);
+  assert.equal((noScripts(vetoedA).match(/data-weight="/g) || []).length, 3, 'a weight is changed in the head only');
+  assert.equal((noScripts(vetoedA).match(/data-cell="/g) || []).length, 6, 'every mark of every option but the datum, in place');
+  for (const gone of [/Better<\/span> than/, /veto(es)? remains?/, /Weighted total/, /<td>Vetoes<\/td>/, /Σ/]) assert.doesNotMatch(noScripts(vetoedA), gone);
+  // Whatever can be changed is a field, the same look everywhere.
+  assert.ok([...noScripts(vetoedA).matchAll(/<button[^>]*data-(?:weight|tol|cell)=[^>]*>/g)].every((m) => /class="field field-sm rpt-field/.test(m[0])));
   // Interactive (input 61): two scripts, inline, the matrix (as data) and the
   // engine; nothing fetched; a static page without them on request.
   assert.equal((html.match(/<script/g) || []).length, 2);
@@ -252,38 +264,49 @@ test('figures: plotted from series, thinned, at most two per option, bad ones re
   assert.throws(() => normalizeMatrix({ ...small(), candidates: [{ key: 'D', figures: [{ title: 'x', series: [{ x: [0, 1], y: [1, 2], role: 'hero' }] }] }] }), /role/);
 });
 
-// The page budget (input 59): at most one printed page per option compared,
-// the matrix aside. Measured by printing to PDF (A4) in Chromium and
-// counting pages: the report with the per-option sections against the same
-// report without them. The deadbeat motor's matrix (13 candidates, 6 fit)
-// with two figures for each option that fits, of the size the benchmark
+// One page with nothing open (input 68), and the page budget with
+// everything open (input 59: at most one printed page per option, the
+// matrix aside). Measured by printing to PDF (A4) in Chromium and counting
+// pages. The deadbeat motor's matrix (13 options, 6 in) with the example's
+// two changes and two figures for every option, of the size the benchmark
 // draws (400 points, two panels, five series), synthetic curves.
-test('the deadbeat report stays within one page per option', { skip: !chromium && 'Playwright is not installed' }, async () => {
+const deadbeat = () => {
   const mx = JSON.parse(readFileSync(new URL('./fixtures/pugh-deadbeat.json', import.meta.url), 'utf8'));
-  const first = decide(mx);
-  // Figures for every option (input 62); only those that fit show them.
   for (const c of mx.candidates) c.figures = [figure(1), figure(2)];
-  const res = decide(mx);
-  assert.ok(first.ranking.length < 13);
+  mx.kind = 'Controller benchmark';
+  mx.overrides = [
+    { kind: 'option', candidate: 'c10', action: 'nudge', by: -1, comment: 'unacceptable effort: the relay slams the full voltage, the motor would not last' },
+    { kind: 'cell', candidate: 'c3', criterion: 'noise', action: 'veto', comment: 'the noise level is a placeholder until the current sensor is chosen' },
+  ];
+  return mx;
+};
+test('the deadbeat report: one page with nothing open, at most a page per option with everything open', { skip: !chromium && 'Playwright is not installed' }, async () => {
+  const res = decide(deadbeat());
   assert.equal(res.candidates.length, 13);
   assert.equal(res.suggestion.label, 'State feedback');
   const dir = mkdtempSync(join(tmpdir(), 'pugh-'));
+  const file = join(dir, 'report.html');
+  writeFileSync(file, renderHtml(res, { style: reportStyle() }));
   const browser = await chromium.launch();
   try {
-    const pages = async (html, name) => {
-      const file = join(dir, name);
-      writeFileSync(file, html);
-      const page = await browser.newPage();
-      await page.goto(pathToFileURL(file).href);
-      const pdf = await page.pdf({ format: 'A4', preferCSSPageSize: true });
-      await page.close();
-      return (pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
-    };
-    const style = reportStyle(), full = await pages(renderHtml(res, { style }), 'full.html'), base = await pages(renderHtml(res, { style, sections: false, interactive: false }), 'base.html');   // static: with its script the page draws itself whole
-    console.log(`# page budget: ${full} pages with the sections, ${base} without, ${res.candidates.length} options`);
-    const options = res.candidates.length;   // every option compared has a section (input 64)
-    assert.ok(full - base <= options, `${full} pages with the sections, ${base} without: more than one page for each of ${options} options`);
-    assert.ok(full <= base + options && full >= base, `${full} pages`);
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(pathToFileURL(file).href);
+    await page.waitForSelector('section.rpt.live');
+    const pages = async () => ((await page.pdf({ format: 'A4', preferCSSPageSize: true })).toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+    // Nothing open: the heading, the bottom line, the keys, the changes as
+    // a line, the sensitivity and the table, on one A4 page and on one
+    // screen of 1440 × 900 (the page does not scroll, nor does the table).
+    assert.equal(await page.evaluate(() => document.querySelectorAll('section.rpt details[open]').length), 0);
+    const screen = await page.evaluate(() => ({ height: document.documentElement.scrollHeight, table: [...document.querySelectorAll('.rpt-scroll')].filter((b) => b.scrollWidth > b.clientWidth + 1).length }));
+    assert.ok(screen.height <= 900, `${screen.height} px high at 1440 × 900`);
+    assert.equal(screen.table, 0, 'the table scrolls at 1440 px');
+    const closed = await pages();
+    assert.equal(closed, 1, `${closed} A4 pages with nothing open`);
+    // Everything open: at most a page per option more.
+    await page.evaluate(() => document.querySelectorAll('section.rpt details').forEach((d) => { d.open = true; }));
+    const all = await pages();
+    console.log(`# page budget: ${closed} page with nothing open, ${all} with everything open, ${res.candidates.length} options`);
+    assert.ok(all > closed && all - closed <= res.candidates.length, `${all} pages with everything open`);
   } finally { await browser.close(); }
 });
 
@@ -419,10 +442,18 @@ test('the report decides again in the browser, and equals decide() here', { skip
     };
     await act('[data-weight="cost"] >> nth=0', 'set', { weight: 2, comment: 'cost matters more' });
     await act('[data-cell="B|speed"]', 'veto', { comment: 'the speed test was wrong' });
+    // A mark sits in its row's summary: changing it does not open the row.
+    assert.equal(await page.evaluate(() => document.querySelector('[data-section="B"]').open), false);
+    // A row opens to its actions and vetoes, and stays open across changes.
+    await page.click('[data-section="B"] > summary .rpt-name');
     await act('[data-act="up"][data-cand="B"]', 'up', { comment: 'easy to maintain' });
+    assert.equal(await page.evaluate(() => document.querySelector('[data-section="B"]').open), true);
+    await page.focus('[data-section="A"] > summary');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.getAttribute('[data-section="A"]', 'open'), '');
     await act('[data-lift="A|gate0"]', 'lift', { comment: 'the budget can stretch' });
     await act('[data-act="veto"][data-cand="B"]', 'veto', { comment: 'unacceptable effort' });
-    const state = await page.evaluate(() => ({ overrides: window.pughState.overrides, totals: Object.fromEntries([...document.querySelectorAll('[data-total]')].map((e) => [e.dataset.total, Number(e.dataset.value)])), fits: Object.fromEntries([...document.querySelectorAll('[data-fits]')].map((e) => [e.dataset.fits, e.dataset.value === 'true'])), bottom: document.querySelector('[data-bottom]').textContent }));
+    const state = await page.evaluate(() => ({ overrides: window.pughState.overrides, totals: Object.fromEntries([...document.querySelectorAll('[data-total]')].map((e) => [e.dataset.total, Number(e.dataset.value)])), fits: Object.fromEntries([...document.querySelectorAll('[data-section]')].map((e) => [e.dataset.section, e.dataset.fits === 'true'])), bottom: document.querySelector('[data-bottom]').textContent }));
     assert.deepEqual(state.overrides.map((o) => o.kind), ['criterion', 'cell', 'option', 'lift', 'option']);
     const here = decide({ ...mx, overrides: state.overrides });
     for (const c of here.candidates) {
@@ -442,7 +473,7 @@ test('the report decides again in the browser, and equals decide() here', { skip
     await again.waitForSelector('section.rpt.live');
     const reopened = await again.evaluate(() => window.pughState.overrides);
     assert.equal(reopened.length, 4);
-    assert.match(await again.textContent('.rpt-person'), /Changed by the person/);
+    assert.match(await again.textContent('.rpt-person > summary'), /^4 changes by you/);
     // Export: the changes as JSON, for the command line.
     const [exp] = await Promise.all([page.waitForEvent('download'), page.click('[data-tool="export"]')]);
     const json = join(dir, 'changes.json');
@@ -464,7 +495,18 @@ test('the report decides again in the browser, and equals decide() here', { skip
     assert.notEqual(await bg(page), light);
     await page.emulateMedia({ media: 'print' });
     assert.equal(await bg(page), light, 'print is light whatever the theme');
+    // Paper shows what is open (input 68): B, opened above, prints its
+    // panel; the rows left closed print as a line.
+    const shown = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('details.rpt-opt')].map((d) => [d.dataset.section, [d.open, d.querySelector('.rpt-panel').checkVisibility()]])));
+    assert.deepEqual(shown.B, [true, true]);
+    for (const [k, [isOpen, seen]] of Object.entries(shown)) assert.equal(seen, isOpen, `${k} printed as it is`);
     await page.emulateMedia({ media: 'screen' });
+    // Print with everything open: every <details> open while printing,
+    // then back as it was.
+    await page.evaluate(() => { window.print = () => { window.allOpen = [...document.querySelectorAll('section.rpt details')].every((d) => d.open); window.dispatchEvent(new Event('afterprint')); }; });
+    await page.click('[data-tool="print-all"]');
+    assert.equal(await page.evaluate(() => window.allOpen), true);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('details.rpt-opt[open]')].map((d) => d.dataset.section)), ['B', 'A'].filter((k) => shown[k][0]));
     // Save keeps the theme chosen.
     const [dark] = await Promise.all([page.waitForEvent('download'), page.click('[data-tool="save"]')]);
     const darkFile = join(dir, 'dark.html');
@@ -492,7 +534,7 @@ test('the report at 1440, 1000 and 390 px and in print: no word broken, nothing 
     await page.waitForSelector('section.rpt.live');
     const check = () => page.evaluate(() => {
       const broken = [];
-      for (const cell of document.querySelectorAll('.rpt th, .rpt td')) {
+      for (const cell of document.querySelectorAll('.rpt th, .rpt td, .rpt-grid > *')) {
         const walk = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
         for (let n = walk.nextNode(); n; n = walk.nextNode()) {
           for (const m of n.data.matchAll(/\S+/g)) {

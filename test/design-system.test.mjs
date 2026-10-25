@@ -109,10 +109,14 @@ test('the decision report has no look of its own: classes from the one sheet onl
   const classes = new Set(tags.flatMap((t) => t.match(/\sclass="([^"]*)"/)?.[1].split(/\s+/).filter(Boolean) ?? []));
   const missing = [...classes].filter((c) => !new RegExp(`\\.${c.replace(/[-]/g, '\\-')}(?![\\w-])`).test(css));
   assert.deepEqual(missing, [], 'classes the style sheet does not define');
-  // One button: every key is .btn; a chosen key is pressed, not a class.
+  // One button: every key is .btn; every value the person can change (a
+  // mark, a weight, a tolerance) is a .field, the page's look for "enter
+  // here" (input 66: "clearly mark elements that are changeable"); a
+  // chosen key is pressed, not a class.
   const buttons = tags.filter((t) => /^<button\b/.test(t));
   assert.ok(buttons.length > 10);
-  assert.deepEqual(buttons.filter((t) => !/\sclass="btn[ "]/.test(t)), [], 'keys that are not .btn');
+  assert.deepEqual(buttons.filter((t) => !/\sclass="btn[ "]/.test(t) && !/\sclass="field field-sm rpt-field[ "]/.test(t)), [], 'keys that are neither .btn nor a value field');
+  assert.deepEqual(buttons.filter((t) => /data-(weight|tol|cell)=/.test(t) !== /\sclass="field /.test(t)), [], 'a value the person can change is a field, and only such a value');
   assert.deepEqual([...classes].filter((c) => /^(active|selected|on|chosen|current|pressed)$/.test(c)), [], 'a selected look of its own');
   assert.equal(tags.filter((t) => /aria-pressed="true"/.test(t)).length, 1, 'the theme in use reads pressed');
 });
