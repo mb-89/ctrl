@@ -690,7 +690,9 @@ function pughEngine() {
     h.push(`<div class="rpt-tools rpt-live">${btn('Undo', { tool: 'undo' })}${btn('Save report', { tool: 'save' })}${btn('Export changes', { tool: 'export' })}${btn('Print', { tool: 'print' })}${themes}<span class="dim">Weights and tolerances: in the table. Marks and vetoes: in each option's section.</span></div>`);
     if (res.sensitivity) h.push(`<div class="rpt-sens">${sensitivitySvg(res)}</div>`);
     h.push(`<p class="dim">Datum: <strong>${esc(res.datum.label)}</strong>. Marks: ++ much better, + better, S the same within the tolerance, − worse, −− much worse (beyond ×${esc(fmt(res.strong))}), ? not judged (counts as S); a dashed frame: changed by the person.</p>`);
-    h.push(`<table class="rpt-overview"><colgroup><col class="c"><col class="w"><col class="t">${cols.map(() => '<col>').join('')}</colgroup><thead><tr><th>Criterion</th><th>Weight</th><th title="tolerance: the band within which a mark is S">Tol.</th>${cols.map((c) => `<th class="${[c.datum ? 'datum' : '', c.fits ? '' : 'out'].join(' ').trim()}">${esc(c.label)}</th>`).join('')}</tr></thead><tbody>`);
+    // The options' names stand on end (no word is broken, however many
+    // options); a table wider than the page scrolls in its own box.
+    h.push(`<div class="rpt-scroll"><table class="rpt-overview"><thead><tr><th>Criterion</th><th>Weight</th><th title="tolerance: the band within which a mark is S">Tol.</th>${cols.map((c) => `<th class="${[c.datum ? 'datum' : '', c.fits ? '' : 'out'].join(' ').trim()}"><span class="rpt-vhead">${c.label.split(' ').map((w) => `<span class="rpt-word">${esc(w)}</span>`).join(' ')}</span></th>`).join('')}</tr></thead><tbody>`);
     res.criteria.forEach((cr, i) => {
       const w = res.weights[i];
       h.push(`<tr><td>${esc(cr.label)}${cr.kind === 'judged' ? ' (judged)' : ''}</td><td data-weight="${esc(cr.key)}" tabindex="0" role="button" aria-label="${esc(`${cr.label}: weight ${fmt(w)}; change`)}"${w !== cr.defaults.weight ? ' class="changed"' : ''}>${esc(fmt(w))}</td><td${cr.kind === 'measured' ? ` data-tol="${esc(cr.key)}" tabindex="0" role="button" aria-label="${esc(`${cr.label}: tolerance ${pctTol(cr.tolerance)}; change`)}"${cr.tolerance !== cr.defaults.tolerance ? ' class="changed"' : ''}` : ' class="dim"'}>${cr.kind === 'measured' ? esc(pctTol(cr.tolerance)) : '—'}</td>${cols.map((c) => {
@@ -706,11 +708,11 @@ function pughEngine() {
       h.push(`<tr><td>${label}</td><td></td><td></td>${cols.map((c) => `<td class="${[c.datum ? 'datum' : '', c.fits ? '' : 'out'].join(' ').trim()}">${c.datum ? '' : count(c, f)}</td>`).join('')}</tr>`);
     }
     h.push(`<tr><th>Weighted total</th><th></th><th></th>${cols.map((c) => `<th data-total="${esc(c.key)}" data-value="${c.total}" class="${[c.datum ? 'datum' : '', c.nudge ? 'changed' : '', c.fits ? '' : 'out'].join(' ').trim()}">${c.datum && !c.offset ? '0' : esc(signed(c.total))}</th>`).join('')}</tr>`);
-    h.push(`<tr><td>Vetoes</td><td></td><td></td>${cols.map((c) => { const n = openVetoes(c).length, lifted = c.vetoes.length - n; return `<td data-fits="${esc(c.key)}" data-value="${c.fits}" class="${n ? 'minus' : ''}${lifted ? ' changed' : ''}">${n ? `${n} ✕` : 'none'}${lifted ? ` (${lifted} lifted)` : ''}</td>`; }).join('')}</tr></tbody></table>`);
+    h.push(`<tr><td>Vetoes</td><td></td><td></td>${cols.map((c) => { const n = openVetoes(c).length, lifted = c.vetoes.length - n; return `<td data-fits="${esc(c.key)}" data-value="${c.fits}" class="${n ? 'minus' : ''}${lifted ? ' changed' : ''}">${n ? `${n} ✕` : 'none'}${lifted ? ` (${lifted} lifted)` : ''}</td>`; }).join('')}</tr></tbody></table></div>`);
     if (res.sensitivity) {
-      h.push(`<h2 class="rpt-gap">Runners-up</h2><table><thead><tr>${['Runner-up', 'Total', 'Ties when one weight changes', `Reasonable (±${esc(fmt(res.sensitivity.step))})`, 'All weights together', 'Share of draws'].map((t) => `<th>${t}</th>`).join('')}</tr></thead><tbody>`);
+      h.push(`<h2 class="rpt-gap">Runners-up</h2><div class="rpt-scroll"><table><thead><tr>${['Runner-up', 'Total', 'Ties when one weight changes', `Reasonable (±${esc(fmt(res.sensitivity.step))})`, 'All weights together', 'Share of draws'].map((t) => `<th>${t}</th>`).join('')}</tr></thead><tbody>`);
       for (const row of runnerRows(res)) h.push(`<tr>${row.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`);
-      h.push('</tbody></table>');
+      h.push('</tbody></table></div>');
     }
     if (sections) {
       const order = [...res.ranking, ...cols.filter((c) => !c.fits).map((c) => c.key)];

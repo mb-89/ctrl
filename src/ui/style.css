@@ -877,16 +877,21 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .rpt .rpt-person { margin: 0 0 var(--space-4); padding: var(--space-2) 0 var(--space-2) var(--space-4); border-left: 3px solid var(--warn); }
 .rpt .rpt-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-4); }
 .rpt .rpt-sens { max-width: 150mm; break-inside: avoid; }
-.rpt table.rpt-overview { table-layout: fixed; }
-.rpt table.rpt-overview th, .rpt table.rpt-overview td { overflow-wrap: break-word; hyphens: auto; }
-.rpt table.rpt-overview col.c { width: 27mm; } .rpt table.rpt-overview col.w, .rpt table.rpt-overview col.t { width: 11mm; }
+/* No word is ever broken: the options' names stand on end (bottom to top,
+   wrapping between words), and a table wider than its place scrolls in its
+   own box, never the page. */
+.rpt .rpt-scroll { overflow-x: auto; max-width: 100%; }
+.rpt table.rpt-overview td:first-child { min-width: 24mm; } .rpt table.rpt-overview td:not(:first-child) { white-space: nowrap; }
+.rpt table.rpt-overview th:has(> .rpt-vhead) { vertical-align: bottom; padding: var(--space-1) 1px; }
+.rpt .rpt-word { white-space: nowrap; }
+.rpt .rpt-vhead { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); max-height: 30mm; text-align: left; font-weight: 600; }
 .rpt .rpt-option.out h2 { color: var(--ink-2); }
 .rpt .rpt-option { margin-top: var(--space-5); padding-top: var(--space-2); border-top: 1px solid var(--line); break-inside: avoid; }
 .rpt-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-2); }
 .rpt ul.rpt-vetoes { margin: var(--space-1) 0; padding-left: var(--space-6); }
-.rpt .rpt-small { display: flex; gap: var(--space-4); margin-top: var(--space-1); } .rpt .rpt-small table { flex: 1 1 0; }
-.rpt .rpt-figs { display: flex; gap: var(--space-4); margin-top: var(--space-2); }
-.rpt figure { flex: 1 1 0; min-width: 0; margin: 0; } .rpt figcaption { color: var(--ink-2); font-size: var(--text-xs); }
+.rpt .rpt-small { display: flex; flex-wrap: wrap; gap: 0 var(--space-4); margin-top: var(--space-1); } .rpt .rpt-small table { flex: 1 1 60mm; }
+.rpt .rpt-figs { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-top: var(--space-2); }
+.rpt figure { flex: 1 1 60mm; min-width: 0; margin: 0; } .rpt figcaption { color: var(--ink-2); font-size: var(--text-xs); }
 .rpt [data-cell], .rpt [data-weight], .rpt [data-tol] { cursor: pointer; }
 .rpt [data-cell]:hover, .rpt [data-weight]:hover, .rpt [data-tol]:hover { background: var(--hover); }
 .rpt .rpt-live { display: none; } .rpt.live .rpt-live { display: inline-flex; } .rpt.live div.rpt-live { display: flex; }

@@ -192,7 +192,7 @@ test('the report: the bottom line first, then the matrix and the runners-up', ()
   // first, the weight in its own column, the counts and the weighted total
   // at the bottom.
   const head = html.slice(html.indexOf('<table class="rpt-overview"'));
-  assert.match(head, /<th>Criterion<\/th><th>Weight<\/th><th[^>]*>Tol\.<\/th><th class="datum">D<\/th>/);
+  assert.match(head, /<th>Criterion<\/th><th>Weight<\/th><th[^>]*>Tol\.<\/th><th class="datum"><span class="rpt-vhead"><span class="rpt-word">D<\/span><\/span><\/th>/);
   const tr = (label) => head.match(new RegExp(`<tr><td>${label}</td>(.*?)</tr>`))[1].replace(/<[^>]+>/g, ' ').trim().split(/\s+/);
   assert.deepEqual(tr('Σ \\+'), ['1', '3']);   // A: ++ S −; B: + ++ +
   assert.deepEqual(tr('Σ S'), ['1', '0']);
@@ -475,3 +475,49 @@ test('the report decides again in the browser, and equals decide() here', { skip
   } finally { await browser.close(); }
 });
 
+
+// At every width no word is broken and nothing leaves the viewport: the
+// options' names stand on end, a table wider than its place scrolls in its
+// own box; on paper (A4, 186 mm of text) nothing needs to scroll.
+test('the report at 1440, 1000 and 390 px and in print: no word broken, nothing outside the viewport', { skip: !chromium && 'Playwright is not installed' }, async () => {
+  const mx = JSON.parse(readFileSync(new URL('./fixtures/pugh-deadbeat.json', import.meta.url), 'utf8'));
+  for (const c of mx.candidates) c.figures = [figure(1), figure(2)];
+  const dir = mkdtempSync(join(tmpdir(), 'pugh-widths-'));
+  const file = join(dir, 'report.html');
+  writeFileSync(file, renderHtml(decide(mx), { style: reportStyle() }));
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(pathToFileURL(file).href);
+    await page.waitForSelector('section.rpt.live');
+    const check = () => page.evaluate(() => {
+      const broken = [];
+      for (const cell of document.querySelectorAll('.rpt th, .rpt td')) {
+        const walk = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          for (const m of n.data.matchAll(/\S+/g)) {
+            const r = document.createRange();
+            r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length);
+            if (r.getClientRects().length > 1) broken.push(m[0]);
+          }
+        }
+      }
+      const scrolls = [...document.querySelectorAll('.rpt-scroll')].filter((b) => b.scrollWidth > b.clientWidth + 1).length;
+      return { broken, page: document.documentElement.scrollWidth - window.innerWidth, scrolls };
+    });
+    for (const width of [1440, 1000, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const r = await check();
+      assert.deepEqual(r.broken, [], `${width} px: words broken`);
+      assert.ok(r.page <= 0, `${width} px: the page is ${r.page} px wider than the viewport`);
+      if (width >= 1000) assert.equal(r.scrolls, 0, `${width} px: a table scrolls`);
+    }
+    // Print: A4's 186 mm of text is about 703 px; paper cannot scroll.
+    await page.emulateMedia({ media: 'print' });
+    await page.setViewportSize({ width: 703, height: 1000 });
+    const p = await check();
+    assert.deepEqual(p.broken, [], 'print: words broken');
+    assert.equal(p.scrolls, 0, 'print: a table would need to scroll');
+    assert.ok(p.page <= 0, 'print: wider than the paper');
+  } finally { await browser.close(); }
+});
