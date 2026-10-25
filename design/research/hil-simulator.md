@@ -2,7 +2,7 @@
 
 Reader: whoever changes how the external HIL simulator runs the page's JavaScript core, or wants to know why it runs the way it does ([../output/hil-simulator.md](../output/hil-simulator.md)).
 
-**Bottom line: the simulator stays a Python script run by uv, and runs the page's own core in V8 inside the Python process (PyPI `mini-racer`, one more dependency in the script's header, installed by uv like websockets).** It keeps the window with its STOP, the asyncio server and the reviewed safety code, installs exactly as today (winget or the package manager installs only uv; uv installs everything else, as the person asked in [input 25](../input/2026-10-25-25-hil-python-through-uv.md)), and its per-cycle cost on the heaviest library plants is 0.8–1.1 ms on average, at most 13 ms, well inside 100 and 200 Hz. Node.js is faster per call but has no window toolkit and comes in uneven versions from Linux package managers; QuickJS has no Windows or macOS wheels for current Pythons and computes transcendental functions differently from V8.
+**Bottom line: the simulator stays a Python script run by uv, and runs the page's own core in V8 inside the Python process (PyPI `mini-racer`, one more dependency in the script's header, installed by uv like websockets).** It keeps the window with its STOP, the asyncio server and the reviewed safety code, installs exactly as today, in one click (the runme script bootstraps uv from winget or, on Linux, uv's installer; uv runs the script and installs everything it needs, never pip: [inputs 25](../input/2026-10-25-25-hil-python-through-uv.md) and [26](../input/2026-10-25-26-runme-bootstraps-from-winget.md)), and its per-cycle cost on the heaviest library plants is 0.8–1.1 ms on average, at most 13 ms, well inside 100 and 200 Hz. Node.js is faster per call but has no window toolkit and comes in uneven versions from Linux package managers; QuickJS has no Windows or macOS wheels for current Pythons and computes transcendental functions differently from V8.
 
 ## How this was measured (2026-10-25)
 
@@ -53,7 +53,7 @@ Calc and late in ms: mean / p99 / max.
 
 | Runtime | What the person installs | Size | Windows (winget only) | Linux (package manager only) |
 |---|---|---|---|---|
-| **V8 in Python (mini-racer)** | nothing new: uv installs `mini-racer` with websockets, from the script's header | wheel 39 MB (Windows), 61 MB (macOS arm64), 82 MB (Linux x86_64 and arm64), installed once into uv's cache | uv by winget, as today | uv by its installer (curl from the package manager if needed), as today |
+| **V8 in Python (mini-racer)** | nothing new: uv installs `mini-racer` with websockets, from the script's header | installed 39 MB (Windows), 61 MB (macOS arm64), 82 MB (Linux x86_64 and arm64), once into uv's cache; the Linux download is 21 MB (measured from an empty cache: with uv's Python, 3 s here) | uv by winget, as today | uv by its installer (curl from the package manager if needed), as today |
 | QuickJS in Python | nothing new (uv) | 3.8 MB | **no wheel** for Python 3.13 or later on Windows or macOS (wheels stop at 3.12); uv would have to be pinned to an older Python, or compile C | Linux x86_64 only for 3.13; none for arm64 |
 | Node from PyPI, a child of Python | nothing new (uv installs `nodejs-wheel-binaries`) | 204 MB installed (Node 24 with npm) | yes | yes |
 | Node.js alone | Node: `winget install OpenJS.NodeJS.LTS`; Linux: the distribution's `nodejs` | about 30 MB download, 100 MB installed | yes | **uneven**: Ubuntu 22.04's is Node 12, too old for the core (`??=`, `structuredClone`, `Object.hasOwn`); Debian 12 and Ubuntu 24.04 have 18; others current |
@@ -85,7 +85,7 @@ The core's arithmetic (+, −, ×, ÷, √) is exact IEEE 754 everywhere, so a d
 
 ## Choice
 
-**V8 inside the Python plant, through `mini-racer`, installed by uv.** It is the only option that keeps the plant's window and its reviewed safety code, installs exactly as today (one dependency more in the script's header, fetched by uv; winget and the package manager still install only uv, input 25), has wheels for every platform the runme scripts serve (Windows, macOS, Linux on x86_64 and arm64, any CPython from 3.10), and runs the same engine family as the page. Its cost, about 1 ms a cycle with rare spikes to 13 ms, fits 100 and 200 Hz.
+**V8 inside the Python plant, through `mini-racer`, installed by uv.** It is the only option that keeps the plant's window and its reviewed safety code, installs exactly as today (one dependency more in the script's header, fetched by uv; the runme scripts still bootstrap uv from winget or uv's installer, inputs 25 and 26), has wheels for every platform the runme scripts serve (Windows, macOS, Linux on x86_64 and arm64, any CPython from 3.10), and runs the same engine family as the page. Its cost, about 1 ms a cycle with rare spikes to 13 ms, fits 100 and 200 Hz.
 
 Kept in reserve, measured: Node from PyPI as a child process (`nodejs-wheel-binaries`), if mini-racer ever lags behind a platform; the plant's code would change only in how it calls the core.
 
