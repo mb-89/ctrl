@@ -957,6 +957,30 @@ const SIMULATOR = {
     },
   },
 };
+// Made for the Identify tab (identification.md §13): the badly tuned oven
+// with a hidden variation (±15 %, seed 3), opening on Identify. Its r climbs
+// and is back at 0 by 2 s, so the oven has cooled when the period ends and
+// the run joins up where it repeats (inputs 50–52): 0.35 °C is left at 5 s.
+{
+  const at = EXAMPLE_PLANTS.findIndex((e) => e.name === 'Oven, badly tuned'), oven = EXAMPLE_PLANTS[at];
+  const diagram = structuredClone(oven.diagram);
+  const ctl = diagram.blocks.find((b) => b.id === 'ctrl');
+  ctl.variants = ctl.variants.slice(0, 1);
+  EXAMPLE_PLANTS.splice(at + 1, 0, {
+    ...structuredClone(oven),
+    name: 'Unknown oven: identify, then tune',
+    summary: 'The badly tuned oven, its parameters hidden as a real oven\'s are. It opens on Identify: find the plant by one experiment, compare it with the drawing, then tune on the model.',
+    notes: 'The oven of Oven, badly tuned (heater, chamber, a dead time and a thermocouple), but the oven the test measures differs from the drawing: every physical parameter is off by up to 15 % (seed 3, under Hide a variation), as a real oven differs from its datasheet. The scope runs the drawn oven; Identify, Compare and the cost "on the diagram" use the hidden one. Two things to do. 1. Identify: press Start; the page eases in, finds the plant and checks the model on a test it was not fitted to. Compare with the diagram (Check column) puts the drawing\'s numbers beside what was found; The hidden plant (Model column) reveals what was drawn. 2. Tune on the model: press Use for Auto-tune and Analysis, then Start in the Auto-tune tab; the status gives the cost on the model and on the hidden oven, and Try on the plant runs the result in steps.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 1 } }, { type: 'step', params: { amplitude: -60, time: 2 } }] },
+      d: { period: PERIOD, components: [pulse(25, 1.5, 0.3)] },
+    },
+    ui: { ...ui('Oven'), tab: 'identify' },
+    diagram,
+    identify: { ctrl: { vary: { share: 0.15, seed: 3 } } },
+  });
+  SIMULATOR['Unknown oven: identify, then tune'] = SIMULATOR['Oven, badly tuned'];
+}
 for (const e of EXAMPLE_PLANTS) Object.assign(e, SIMULATOR[e.name] ?? {});
 
 // A new project's plant: the reference alone.

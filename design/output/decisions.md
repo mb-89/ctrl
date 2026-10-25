@@ -47,6 +47,16 @@ The person, after the prototype ranked Hu–Lin first on "DC motor, deadbeat" wi
 - **"Measure it instead" by matching**: the sensor for an observer is the block output whose run matches the measured signal's rate within 5 %, so it works on the Servo motor main now has (the structure trace of the first prototype found no integrator there).
 - **Results**: sliding-mode motor, the boundary-layer sliding mode (+10, robust); oven, the PID, sensitive (the PI from the plant ties it, the feedforward ties if complexity's weight drops to 0.75); tank, keep the loaded schedule (robust); deadbeat motor, state feedback (+16, robust), Hu–Lin, LQR, the planned swing-up and the relay fail the main job.
 
+## 2026-10-25 · v2.9, Identify: Compare, Hide a variation, Unknown oven (§18 step 11)
+
+Built on branch `feat/identify-tab` from [identification.md](identification.md) §13 and [input 58](../input/2026-10-25-58-identify-without-hil.md) ("run the identification without a HIL … see how far they are from what I actually parameterized"); [§13.1](identification.md#131-built-step-11) has the numbers:
+
+- **The diagram's numbers are its path's**: the gain, τ of the slowest pole (f, ζ of the slowest two for a resonance) and the dead time of the minimal realisation from u to y at each place. Interpretation: "time scale" for a model of several lags is the slowest, as the model's τ₁ is.
+- **A note where the linearisation is far from the push** (under 60 % of the found step at the most-seen place), naming friction, a dead band or a limit. Interpretation: the arm's smooth Coulomb friction makes its linearisation at rest 500 × as damped as any push; the physics is right, and the page says why the numbers part rather than hide them.
+- **The variation applies where the test looks** (the experiment, Compare, Try on the plant's demonstration, the "on the diagram" score), never to the scope's run of the diagram: the diagram stays the drawing.
+- **A library entry may carry `identify`** (its Identify settings), loaded with its plant; loading a plant drops the settings and kept tests of the plant before. Interpretation: they measured another plant.
+- **The Unknown oven's r returns to 0 within the period** (0 → 40 → 60 → 0 by 2 s) so the run joins up (inputs 50–52); no "Identify" tag on its card: the eight tones are taken among the features, and the one left (aqua) is PID's on the same card.
+
 ## 2026-10-25 · v2.9, Identify: Try on the plant (§18 step 10)
 
 Built on branch `feat/identify-tab` from [identification.md](identification.md) §11 (no new words from the person; [§11.1](identification.md#111-built-step-10) has the numbers):

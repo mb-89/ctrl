@@ -23,10 +23,11 @@ import {
   STRUCTURES, CHOICE, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
   fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded, frf,
 } from './fit.js';
-import { cholesky } from './linalg.js';
+import { cholesky, eig, solve, csolve } from './linalg.js';
+import { pathRealisation } from './linearize.js';
 import { createStepRunner } from './live.js';
-import { loopModel } from './project.js';
-import { analyzeLoop } from './analysis.js';
+import { loopModel, linearizeBlock } from './project.js';
+import { analyzeLoop, discretePlant } from './analysis.js';
 import { physicalMaskKeys } from './physics.js';
 
 export class IdentifyError extends Error {
@@ -1397,6 +1398,140 @@ export function loopRanges(project, path, model, { count = 12 } = {}) {
     take('gm', r.margins.gmUp); take('pm', r.margins.pm); take('ms', r.margins.ms);
   }
   return out.n || out.unstable ? out : null;
+}
+
+// ---- Compare with the diagram (§13, simulated plants only)
+
+// The project with the plant a block's Identify measures (§13): the diagram
+// varied by the block's hidden variation where one is set, else as it is.
+// The experiment, Compare and the "on the diagram" score use it.
+export function variedProject(project, path) {
+  const known = (() => { try { return knownFor(project, path); } catch { return null; } })();
+  const vary = known && project.system.identify?.[known.block.key]?.vary;
+  if (!vary || project.system.plant?.type !== 'diagram') return project;
+  return { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: varyDiagram(project.system.plant.diagram, vary.share, vary.seed).diagram } } };
+}
+
+// What the test found beside the diagram's own linearisation at each place
+// the test sat (linearizeBlock at { y: level }, the hidden variation's copy
+// when one is set): per place the gain (k′ for an integrating plant), the
+// main time scale (τ of the slowest pole; f and ζ of the slowest two for a
+// resonance) and the dead time, the found ones the Where refit's (the rest
+// held at the main fit). Returns { rows: [{ level, seen, found, diagram,
+// error }], sentence, notes, factors } where found and diagram are { gain,
+// tau | f, zeta, theta } and diagram also carries sys, the path as a
+// continuous { A, B, C, D, delay } for compareCurves; a place the diagram
+// cannot be linearised at carries error. vary: { share, seed } or null.
+export function compareWithDiagram(project, path, model, { vary = null } = {}) {
+  if (!model?.ok) throw new IdentifyError('compare', 'there is no model to compare', 'identify the plant first');
+  if (project.system.plant?.type !== 'diagram') throw new IdentifyError('compare', 'the plant is not a diagram: there is nothing to compare with', 'Compare is for simulated plants');
+  let diagram = project.system.plant.diagram, factors = null;
+  if (vary) ({ diagram, factors } = varyDiagram(diagram, vary.share, vary.seed));
+  const proj = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram } } };
+  const S = STRUCTURES[model.structure], gk = GAIN(S), p = model.params;
+  const resonant = SCALE[model.structure] === 'f';
+  const places = model.where?.length ? model.where : [{ level: model.holds?.[0]?.y ?? 0, gain: p[gk], gainSd: model.sd?.[gk] ?? null, scale: p[SCALE[model.structure]], scaleKey: SCALE[model.structure], seen: 1 }];
+  const id = [].concat(path ?? controllerBlocks(diagram)[0]?.path ?? []);
+  const rows = places.map((pl) => {
+    const found = { gain: pl.gain, gainSd: pl.gainSd, theta: p.theta ?? 0 };
+    if (resonant) { found.f = pl.scale; found.zeta = p.zeta; } else found.tau = pl.scale;
+    const row = { level: pl.level, seen: pl.seen ?? 1, found, diagram: null, error: null };
+    try { row.diagram = pathNumbers(linearizeBlock(proj, id, { y: pl.level }), resonant); } catch (e) { row.error = e.message; }
+    return row;
+  });
+  const ok = rows.filter((r) => r.diagram && r.seen >= GRADE.seen);
+  const notes = [];
+  if (controllerBlocks(diagram).length > 1) notes.push('The test ran the other Controller blocks; the diagram\'s linearisation holds them at 0.');
+  if (rows.some((r) => r.diagram && r.diagram.integrating !== S.integrating)) notes.push(`The diagram's path ${rows.find((r) => r.diagram)?.diagram.integrating ? 'integrates' : 'settles'}; the model's does ${S.integrating ? 'integrate' : 'settle'}.`);
+  let sentence = rows.find((r) => r.error)?.error ? `The diagram has no linearisation at ${fmtNum(rows.find((r) => r.error).level, 3)}: ${rows.find((r) => r.error).error}.` : '';
+  if (ok.length) {
+    const K = p[gk], gains = ok.map((r) => r.diagram.gain);
+    const lo = Math.min(...gains), hi = Math.max(...gains);
+    const off = (a, b) => Math.abs(a - b) / Math.abs(b);
+    const unit = (x) => withU(fmtNum(x, 2), model.names?.yUnit && model.names?.uUnit ? `${model.names.yUnit}/${model.names.uUnit}${S.integrating ? '/s' : ''}` : '');
+    if (ok.length > 1 && hi > 1.25 * lo) {
+      sentence = K >= 0.9 * lo && K <= 1.1 * hi
+        ? `The identified gain (${unit(K)}) sits between the diagram's gains at the ${ok.length} places the test sat (${unit(lo)} … ${unit(hi)}): one linear model is a compromise for this plant.`
+        : `The identified gain (${unit(K)}) lies outside the diagram's gains at the places the test sat (${unit(lo)} … ${unit(hi)}).`;
+    } else {
+      const gOff = Math.max(...ok.map((r) => off(r.found.gain, r.diagram.gain)));
+      const key = resonant ? 'f' : 'tau';
+      const sOff = Math.max(...ok.map((r) => off(r.found[key], r.diagram[key])));
+      const within = (x) => `within ${Math.max(1, Math.round(100 * x))} %`;
+      sentence = `The identified model is ${within(gOff)} of the diagram's gain and ${within(sOff)} of its ${resonant ? 'frequency' : 'time scale'} at the places the test sat.`;
+    }
+    // Where the most-seen place's linear step is far from the model's, the
+    // slope there is not what a push of the test's size sees.
+    const main = ok.reduce((x, y) => (y.seen > x.seen ? y : x));
+    const N = Math.max(2, Math.ceil(compareHorizon(model) / model.Ts) + 1);
+    const placed = model.where?.length ? { ...model, params: { ...p, [gk]: main.found.gain, [SCALE[model.structure]]: resonant ? main.found.f : main.found.tau } } : model;
+    const ym = modelStep(placed, (N - 1) * model.Ts).y, yd = compareCurves(main.diagram.sys, model.Ts, { N }).step;
+    main.agree = fitPercent(ym, yd);
+    if (main.agree < GRADE.fair) notes.push(`Near ${fmtNum(main.level, 3)} the diagram's linearisation explains only ${pctText(Math.max(0, main.agree))} % of the step the test found there: a nonlinearity there (friction, a dead band, a limit) has a slope at rest that a push of the test's size does not see. The test measured the push.`);
+    const thetaD = ok[0].diagram.theta, thetaF = p.theta ?? 0;
+    if (thetaF > thetaD + 2 * model.Ts) notes.push(`The found dead time (${fmtNum(thetaF, 2)} s) is longer than the diagram's (${fmtNum(thetaD, 2)} s): it stands in for lags the model leaves out.`);
+  }
+  return { rows, sentence, notes, factors };
+}
+
+// How long the Step plot and the comparison look: six of the model's slowest
+// times (its dead time on top), at least ten samples, at most 10 min.
+export function compareHorizon(model) {
+  const slow = Math.max(...model.chain.filter((x) => ['lag', 'delay'].includes(x.kind)).map((x) => x.value), 1 / (model.params.f ?? Infinity) * 3, 10 * model.Ts);
+  return Math.min(6 * slow + (model.params.theta ?? 0), 600);
+}
+
+// The numbers of a linearised path (linearize.js pathRealisation): its gain
+// (k′ where it integrates), the slowest pole's τ or the slowest two's f and
+// ζ, its dead time, and the path itself.
+function pathNumbers(lin, resonant) {
+  const { A, b, c, d } = pathRealisation(lin, 0);
+  const theta = lin.delay?.[0] ?? 0;
+  const n = A.length;
+  const sys = { A, B: b.map((x) => [x]), C: [c.slice()], D: [[d]], delay: [theta] };
+  if (!n) return { gain: d, integrating: false, theta, sys, ...(resonant ? { f: NaN, zeta: NaN } : { tau: 0 }) };
+  const size = Math.sqrt(A.flat().reduce((s, v) => s + v * v, 0));
+  const poles = eig(A);
+  const zero = poles.filter((q) => Math.hypot(q.re, q.im) <= 1e-9 * size);
+  const rest = poles.filter((q) => Math.hypot(q.re, q.im) > 1e-9 * size).sort((x, y) => Math.hypot(x.re, x.im) - Math.hypot(y.re, y.im));
+  const integrating = zero.length > 0;
+  // The gain: G(0), or s·G(s) at an s far below every other pole where it integrates.
+  const at = (s) => d + c.reduce((a, ci, i) => a + ci * solve(A.map((row, r) => row.map((v, j) => (r === j ? s : 0) - v)), b)[i], 0);
+  const s0 = 1e-7 * (rest.length ? Math.hypot(rest[0].re, rest[0].im) : size);
+  const gain = integrating ? s0 * at(s0) : at(0);
+  const out = { gain, integrating, theta, sys };
+  if (resonant) {
+    const two = rest.slice(0, 2);
+    if (two.length < 2) { out.f = NaN; out.zeta = NaN; } else {
+      // The slowest pair: a complex pair as it is, two real poles as the second order they make.
+      const w = Math.sqrt(Math.hypot(two[0].re, two[0].im) * Math.hypot(two[1].re, two[1].im));
+      out.f = w / (2 * Math.PI); out.zeta = -(two[0].re + two[1].re) / (2 * w);
+    }
+  } else out.tau = rest.length ? -1 / rest[0].re : 0;
+  return out;
+}
+
+// The diagram's path of a comparison row as the sampled loop sees it (zero-
+// order hold and dead time, analysis.js discretePlant), for the dashed curves
+// on Bode and Step: { mag: |G(e^{jωTs})| at w, step: the response to one unit
+// more of u from rest, N samples }.
+export function compareCurves(sys, Ts, { w = [], N = 0 } = {}) {
+  const P = discretePlant(sys, Ts);
+  const n = P.A.length;
+  const mag = w.map((om) => {
+    if (!n) return Math.abs(P.D[0][0]);
+    const zr = Math.cos(om * Ts), zi = Math.sin(om * Ts);
+    const { xr, xi } = csolve(P.A.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v)), P.A.map((row, i) => row.map((_, j) => (i === j ? zi : 0))), P.B.map((r) => r[0]), P.B.map(() => 0));
+    const re = P.D[0][0] + P.C[0].reduce((a, v, i) => a + v * xr[i], 0), im = P.C[0].reduce((a, v, i) => a + v * xi[i], 0);
+    return Math.hypot(re, im);
+  });
+  const step = new Float64Array(N);
+  let x = new Array(n).fill(0);
+  for (let k = 0; k < N; k++) {
+    step[k] = P.D[0][0] * (k > 0 ? 1 : 0) + P.C[0].reduce((a, v, i) => a + v * x[i], 0);
+    x = P.A.map((row, i) => row.reduce((a, v, j) => a + v * x[j], 0) + P.B[i][0]);
+  }
+  return { mag, step };
 }
 
 // The model of the block's kept test in use (system.identify[key]), from its

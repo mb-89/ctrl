@@ -12755,6 +12755,26 @@ const SIMULATOR = {
     },
   },
 };
+{
+  const at = EXAMPLE_PLANTS.findIndex((e) => e.name === 'Oven, badly tuned'), oven = EXAMPLE_PLANTS[at];
+  const diagram = structuredClone(oven.diagram);
+  const ctl = diagram.blocks.find((b) => b.id === 'ctrl');
+  ctl.variants = ctl.variants.slice(0, 1);
+  EXAMPLE_PLANTS.splice(at + 1, 0, {
+    ...structuredClone(oven),
+    name: 'Unknown oven: identify, then tune',
+    summary: 'The badly tuned oven, its parameters hidden as a real oven\'s are. It opens on Identify: find the plant by one experiment, compare it with the drawing, then tune on the model.',
+    notes: 'The oven of Oven, badly tuned (heater, chamber, a dead time and a thermocouple), but the oven the test measures differs from the drawing: every physical parameter is off by up to 15 % (seed 3, under Hide a variation), as a real oven differs from its datasheet. The scope runs the drawn oven; Identify, Compare and the cost "on the diagram" use the hidden one. Two things to do. 1. Identify: press Start; the page eases in, finds the plant and checks the model on a test it was not fitted to. Compare with the diagram (Check column) puts the drawing\'s numbers beside what was found; The hidden plant (Model column) reveals what was drawn. 2. Tune on the model: press Use for Auto-tune and Analysis, then Start in the Auto-tune tab; the status gives the cost on the model and on the hidden oven, and Try on the plant runs the result in steps.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 1 } }, { type: 'step', params: { amplitude: -60, time: 2 } }] },
+      d: { period: PERIOD, components: [pulse(25, 1.5, 0.3)] },
+    },
+    ui: { ...ui('Oven'), tab: 'identify' },
+    diagram,
+    identify: { ctrl: { vary: { share: 0.15, seed: 3 } } },
+  });
+  SIMULATOR['Unknown oven: identify, then tune'] = SIMULATOR['Oven, badly tuned'];
+}
 for (const e of EXAMPLE_PLANTS) Object.assign(e, SIMULATOR[e.name] ?? {});
 
 const EMPTY_PLANT = { blocks: [src('r', 60, 104, '1')], wires: [] };
@@ -13714,6 +13734,7 @@ function fromPlant(e) {
     ...(e.scope ? { scope: structuredClone(e.scope) } : {}),
     ...(e.ui ? { ui: structuredClone(e.ui) } : {}),
     ...(e.sim ? { sim: structuredClone(e.sim) } : {}),
+    ...(e.identify ? { identify: structuredClone(e.identify) } : {}),
     tags: systemTags(e),
   };
 }
@@ -13788,7 +13809,10 @@ function applySystem(project, entry, parts) {
   if (parts.includes('input') && entry.input) {
     p.system.signals = { ...(p.system.signals ?? {}), ...structuredClone(entry.input.signals) };
   }
-  if (parts.includes('plant') && entry.plant) p.system.plant = structuredClone(entry.plant);
+  if (parts.includes('plant') && entry.plant) {
+    p.system.plant = structuredClone(entry.plant);
+    if (entry.identify) p.system.identify = structuredClone(entry.identify); else delete p.system.identify;
+  }
   if (parts.includes('controller') && entry.controller) {
     const c = structuredClone(entry.controller);
     Object.assign(p, { candidates: c.candidates, goal: c.goal, sim: c.sim });
@@ -17094,10 +17118,11 @@ const {
   STRUCTURES, CHOICE, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
   fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded, frf,
 } = __mods['core/fit.js'];
-const { cholesky } = __mods['core/linalg.js'];
+const { cholesky, eig, solve, csolve } = __mods['core/linalg.js'];
+const { pathRealisation } = __mods['core/linearize.js'];
 const { createStepRunner } = __mods['core/live.js'];
-const { loopModel } = __mods['core/project.js'];
-const { analyzeLoop } = __mods['core/analysis.js'];
+const { loopModel, linearizeBlock } = __mods['core/project.js'];
+const { analyzeLoop, discretePlant } = __mods['core/analysis.js'];
 const { physicalMaskKeys } = __mods['core/physics.js'];
 class IdentifyError extends Error {
   constructor(code, message, hint = '') {
@@ -18176,6 +18201,113 @@ function loopRanges(project, path, model, { count = 12 } = {}) {
   return out.n || out.unstable ? out : null;
 }
 
+
+function variedProject(project, path) {
+  const known = (() => { try { return knownFor(project, path); } catch { return null; } })();
+  const vary = known && project.system.identify?.[known.block.key]?.vary;
+  if (!vary || project.system.plant?.type !== 'diagram') return project;
+  return { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: varyDiagram(project.system.plant.diagram, vary.share, vary.seed).diagram } } };
+}
+
+function compareWithDiagram(project, path, model, { vary = null } = {}) {
+  if (!model?.ok) throw new IdentifyError('compare', 'there is no model to compare', 'identify the plant first');
+  if (project.system.plant?.type !== 'diagram') throw new IdentifyError('compare', 'the plant is not a diagram: there is nothing to compare with', 'Compare is for simulated plants');
+  let diagram = project.system.plant.diagram, factors = null;
+  if (vary) ({ diagram, factors } = varyDiagram(diagram, vary.share, vary.seed));
+  const proj = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram } } };
+  const S = STRUCTURES[model.structure], gk = GAIN(S), p = model.params;
+  const resonant = SCALE[model.structure] === 'f';
+  const places = model.where?.length ? model.where : [{ level: model.holds?.[0]?.y ?? 0, gain: p[gk], gainSd: model.sd?.[gk] ?? null, scale: p[SCALE[model.structure]], scaleKey: SCALE[model.structure], seen: 1 }];
+  const id = [].concat(path ?? controllerBlocks(diagram)[0]?.path ?? []);
+  const rows = places.map((pl) => {
+    const found = { gain: pl.gain, gainSd: pl.gainSd, theta: p.theta ?? 0 };
+    if (resonant) { found.f = pl.scale; found.zeta = p.zeta; } else found.tau = pl.scale;
+    const row = { level: pl.level, seen: pl.seen ?? 1, found, diagram: null, error: null };
+    try { row.diagram = pathNumbers(linearizeBlock(proj, id, { y: pl.level }), resonant); } catch (e) { row.error = e.message; }
+    return row;
+  });
+  const ok = rows.filter((r) => r.diagram && r.seen >= GRADE.seen);
+  const notes = [];
+  if (controllerBlocks(diagram).length > 1) notes.push('The test ran the other Controller blocks; the diagram\'s linearisation holds them at 0.');
+  if (rows.some((r) => r.diagram && r.diagram.integrating !== S.integrating)) notes.push(`The diagram's path ${rows.find((r) => r.diagram)?.diagram.integrating ? 'integrates' : 'settles'}; the model's does ${S.integrating ? 'integrate' : 'settle'}.`);
+  let sentence = rows.find((r) => r.error)?.error ? `The diagram has no linearisation at ${fmtNum(rows.find((r) => r.error).level, 3)}: ${rows.find((r) => r.error).error}.` : '';
+  if (ok.length) {
+    const K = p[gk], gains = ok.map((r) => r.diagram.gain);
+    const lo = Math.min(...gains), hi = Math.max(...gains);
+    const off = (a, b) => Math.abs(a - b) / Math.abs(b);
+    const unit = (x) => withU(fmtNum(x, 2), model.names?.yUnit && model.names?.uUnit ? `${model.names.yUnit}/${model.names.uUnit}${S.integrating ? '/s' : ''}` : '');
+    if (ok.length > 1 && hi > 1.25 * lo) {
+      sentence = K >= 0.9 * lo && K <= 1.1 * hi
+        ? `The identified gain (${unit(K)}) sits between the diagram's gains at the ${ok.length} places the test sat (${unit(lo)} … ${unit(hi)}): one linear model is a compromise for this plant.`
+        : `The identified gain (${unit(K)}) lies outside the diagram's gains at the places the test sat (${unit(lo)} … ${unit(hi)}).`;
+    } else {
+      const gOff = Math.max(...ok.map((r) => off(r.found.gain, r.diagram.gain)));
+      const key = resonant ? 'f' : 'tau';
+      const sOff = Math.max(...ok.map((r) => off(r.found[key], r.diagram[key])));
+      const within = (x) => `within ${Math.max(1, Math.round(100 * x))} %`;
+      sentence = `The identified model is ${within(gOff)} of the diagram's gain and ${within(sOff)} of its ${resonant ? 'frequency' : 'time scale'} at the places the test sat.`;
+    }
+    const main = ok.reduce((x, y) => (y.seen > x.seen ? y : x));
+    const N = Math.max(2, Math.ceil(compareHorizon(model) / model.Ts) + 1);
+    const placed = model.where?.length ? { ...model, params: { ...p, [gk]: main.found.gain, [SCALE[model.structure]]: resonant ? main.found.f : main.found.tau } } : model;
+    const ym = modelStep(placed, (N - 1) * model.Ts).y, yd = compareCurves(main.diagram.sys, model.Ts, { N }).step;
+    main.agree = fitPercent(ym, yd);
+    if (main.agree < GRADE.fair) notes.push(`Near ${fmtNum(main.level, 3)} the diagram's linearisation explains only ${pctText(Math.max(0, main.agree))} % of the step the test found there: a nonlinearity there (friction, a dead band, a limit) has a slope at rest that a push of the test's size does not see. The test measured the push.`);
+    const thetaD = ok[0].diagram.theta, thetaF = p.theta ?? 0;
+    if (thetaF > thetaD + 2 * model.Ts) notes.push(`The found dead time (${fmtNum(thetaF, 2)} s) is longer than the diagram's (${fmtNum(thetaD, 2)} s): it stands in for lags the model leaves out.`);
+  }
+  return { rows, sentence, notes, factors };
+}
+
+function compareHorizon(model) {
+  const slow = Math.max(...model.chain.filter((x) => ['lag', 'delay'].includes(x.kind)).map((x) => x.value), 1 / (model.params.f ?? Infinity) * 3, 10 * model.Ts);
+  return Math.min(6 * slow + (model.params.theta ?? 0), 600);
+}
+
+function pathNumbers(lin, resonant) {
+  const { A, b, c, d } = pathRealisation(lin, 0);
+  const theta = lin.delay?.[0] ?? 0;
+  const n = A.length;
+  const sys = { A, B: b.map((x) => [x]), C: [c.slice()], D: [[d]], delay: [theta] };
+  if (!n) return { gain: d, integrating: false, theta, sys, ...(resonant ? { f: NaN, zeta: NaN } : { tau: 0 }) };
+  const size = Math.sqrt(A.flat().reduce((s, v) => s + v * v, 0));
+  const poles = eig(A);
+  const zero = poles.filter((q) => Math.hypot(q.re, q.im) <= 1e-9 * size);
+  const rest = poles.filter((q) => Math.hypot(q.re, q.im) > 1e-9 * size).sort((x, y) => Math.hypot(x.re, x.im) - Math.hypot(y.re, y.im));
+  const integrating = zero.length > 0;
+  const at = (s) => d + c.reduce((a, ci, i) => a + ci * solve(A.map((row, r) => row.map((v, j) => (r === j ? s : 0) - v)), b)[i], 0);
+  const s0 = 1e-7 * (rest.length ? Math.hypot(rest[0].re, rest[0].im) : size);
+  const gain = integrating ? s0 * at(s0) : at(0);
+  const out = { gain, integrating, theta, sys };
+  if (resonant) {
+    const two = rest.slice(0, 2);
+    if (two.length < 2) { out.f = NaN; out.zeta = NaN; } else {
+      const w = Math.sqrt(Math.hypot(two[0].re, two[0].im) * Math.hypot(two[1].re, two[1].im));
+      out.f = w / (2 * Math.PI); out.zeta = -(two[0].re + two[1].re) / (2 * w);
+    }
+  } else out.tau = rest.length ? -1 / rest[0].re : 0;
+  return out;
+}
+
+function compareCurves(sys, Ts, { w = [], N = 0 } = {}) {
+  const P = discretePlant(sys, Ts);
+  const n = P.A.length;
+  const mag = w.map((om) => {
+    if (!n) return Math.abs(P.D[0][0]);
+    const zr = Math.cos(om * Ts), zi = Math.sin(om * Ts);
+    const { xr, xi } = csolve(P.A.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v)), P.A.map((row, i) => row.map((_, j) => (i === j ? zi : 0))), P.B.map((r) => r[0]), P.B.map(() => 0));
+    const re = P.D[0][0] + P.C[0].reduce((a, v, i) => a + v * xr[i], 0), im = P.C[0].reduce((a, v, i) => a + v * xi[i], 0);
+    return Math.hypot(re, im);
+  });
+  const step = new Float64Array(N);
+  let x = new Array(n).fill(0);
+  for (let k = 0; k < N; k++) {
+    step[k] = P.D[0][0] * (k > 0 ? 1 : 0) + P.C[0].reduce((a, v, i) => a + v * x[i], 0);
+    x = P.A.map((row, i) => row.reduce((a, v, j) => a + v * x[j], 0) + P.B[i][0]);
+  }
+  return { mag, step };
+}
+
 function keptModel(project, path = null) {
   const key = path ? [].concat(path).join('/') : controllerBlocks(project.system.plant.diagram)[0]?.key;
   const e = project.system.identify?.[key];
@@ -18626,7 +18758,7 @@ function discreteAt(d, Om) {
   return [sr * mr - si * mi, sr * mi + si * mr];
 }
 
-return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, twinDiagram, PUSH, testPush, modelProject, identifiedLoop, loopRanges, keptModel, TRY, planTry, tryOutcome, varyDiagram, identifyRun, shakeWanted, fitSupply, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, twinDiagram, PUSH, testPush, modelProject, identifiedLoop, loopRanges, variedProject, compareWithDiagram, compareHorizon, compareCurves, keptModel, TRY, planTry, tryOutcome, varyDiagram, identifyRun, shakeWanted, fitSupply, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {

@@ -12,6 +12,7 @@
 
 import { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, diagramCost, RULES, SIMC, COSTS, GOAL, tauCSource, tauCShort } from '../core/autotune.js';
 import { findExternal } from '../core/hil.js';
+import { variedProject } from '../core/identify.js';
 import { CONTROLLERS } from '../core/controllers.js';
 import { num, parseSI } from './units.js';
 import { AS_FAST, formatSpeed } from '../core/speed.js';
@@ -491,7 +492,7 @@ export function createAutotuneTab(host, app, display) {
       const after = shown.placed ?? (shown.best?.variant && shown.best.cost.J < shown.before?.cost.J ? shown.best.variant : null);
       if (after && shown.before && !findExternal(root())) {
         try {
-          const was = diagramCost(app.project, j.path, shown.before.variant, shown.goal), now = diagramCost(app.project, j.path, after, shown.goal);
+          const plant = variedProject(app.project, j.path), was = diagramCost(plant, j.path, shown.before.variant, shown.goal), now = diagramCost(plant, j.path, after, shown.goal);
           const onM = shown.res?.after ?? shown.best?.cost;
           shown.status += ` On the model ${num(onM?.J ?? NaN, 3)} · on the diagram ${num(now.J, 3)} (it was ${num(was.J, 3)}).`;
         } catch { /* the diagram cannot run it: the model's cost stands alone */ }
