@@ -4,8 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File runme.ps1      (options go to hil_plant.py: ... runme.ps1 --help)
 # It installs uv (https://docs.astral.sh/uv/) with winget, or with uv's own
 # installer where there is no winget; uv then fetches a Python of its own
-# (with tkinter, for the plant's window) and the websockets package for
-# hil_plant.py. Run it again any time; what is installed stays.
+# (with tkinter, for the plant's window) and what hil_plant.py needs
+# (websockets, and mini-racer: V8, which runs the page's code in
+# loop-tuner-core.js). Run it again any time; what is installed stays.
 $ErrorActionPreference = 'Stop'
 # A window opened by a click closes when the script ends: on any error, say
 # what went wrong and wait for Enter (runme.cmd waits by itself).
@@ -27,7 +28,7 @@ try {
     # The installer changed PATH for new windows; read it back for this one.
     $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ";$env:USERPROFILE\.local\bin"
     if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-      Stop-WithMessage 'Could not install uv. Install it by hand (https://docs.astral.sh/uv/getting-started/installation/), then run runme again. Or, with Python 3.9+: pip install websockets, then python hil_plant.py'
+      Stop-WithMessage 'Could not install uv. Install it by hand (https://docs.astral.sh/uv/getting-started/installation/), then run runme again.'
     }
   }
   uv run --python-preference only-managed hil_plant.py @args

@@ -179,7 +179,11 @@ class CorePlant:
         """Integrates the cycle's spans in order, each [seconds, inputs] with
         its inputs held, and returns the outputs at its end (NaN for one that
         is not a number)."""
-        return self.numbers(self.js.eval(f"JSON.stringify(__plant.cycle({json.dumps(segments)}))"))
+        try:
+            text = self.js.eval(f"JSON.stringify(__plant.cycle({json.dumps(segments)}))")
+        except Exception as err:  # an error in the model: the cycle fails, saying what it was
+            raise RuntimeError(js_message(err)) from None
+        return self.numbers(text)
 
     def measure(self):
         """The outputs now."""

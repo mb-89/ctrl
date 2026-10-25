@@ -1,8 +1,9 @@
 #!/bin/sh
 # Loop Tuner's external plant (Live mode): installs what it needs, then runs.
 # Linux and macOS:  sh runme.sh      (options go to hil_plant.py: sh runme.sh --help)
-# It needs uv (https://docs.astral.sh/uv/), which brings Python and the
-# websockets package. If uv is missing it installs it into ~/.local/bin with
+# It needs uv (https://docs.astral.sh/uv/), which brings Python and what the
+# plant needs (websockets, and mini-racer: V8, which runs the page's code in
+# loop-tuner-core.js). If uv is missing it installs it into ~/.local/bin with
 # uv's own installer, through curl or wget; with neither, it first installs
 # curl with the system's package manager (it says so; that asks for sudo).
 # uv then runs the plant on a Python of its own, which has tkinter for the
@@ -26,7 +27,7 @@ if ! have uv; then
       elif have pacman; then $SUDO pacman -S --noconfirm curl
       elif have apk; then $SUDO apk add curl
       else
-        echo "runme.sh needs curl, wget or a package manager to install uv. Or, with Python 3.9+: pip install websockets && python3 hil_plant.py"
+        echo "runme.sh needs curl, wget or a package manager to install uv (https://docs.astral.sh/uv/getting-started/installation/)."
         exit 1
       fi
     fi
@@ -40,7 +41,6 @@ if ! have uv; then
   fi
   if ! have uv; then
     echo "Could not install uv (no connection to astral.sh?). Install it by hand (https://docs.astral.sh/uv/getting-started/installation/), then run sh runme.sh again."
-    echo "Or, with Python 3.9+: pip install websockets && python3 hil_plant.py"
     exit 1
   fi
 fi
