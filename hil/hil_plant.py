@@ -9,6 +9,7 @@ computer and stands in for real hardware in Loop Tuner's Live (HIL) mode.
     uv run hil_plant.py                     a DC motor swinging an arm, 100 Hz
     uv run hil_plant.py --mode reference    the same, with its own controller
     uv run hil_plant.py --plant heater      a heater and a temperature
+    uv run hil_plant.py --dyno              the motor with a load-torque input too
     python3 hil_plant.py --check            the physics for 3 s, no server
     python3 hil_plant.py --describe         what it tells the page about itself
     python3 hil_plant.py --help             every option
@@ -31,8 +32,10 @@ setpoint and the page only records.
 The plant the page does not know: each physical parameter differs from
 nominal by a random factor within +-15 % (--vary), a new plant each start
 unless --seed is given; --show-params prints the true values. The page is
-told the ports, their units and full scales, never the physics: it has to
-identify the plant, as it would a real one.
+told the ports, their units, full scales and hard ranges, never the
+physics: it has to identify the plant, as it would a real one. It has no
+disturbance input unless --dyno offers one (a load torque), as a rig with a
+dynamometer would.
 
 The protocol (JSON-RPC 2.0, one message per WebSocket text frame, at
 ws://127.0.0.1:8765; the README has it in a paragraph):
@@ -134,11 +137,12 @@ class Motor:
     # The physical parameters, which the page is not told (see plant_params).
     PHYSICS = {"R": "ohm", "L": "H", "k": "N·m/A", "J": "kg·m²", "b": "N·m·s/rad", "Tc": "N·m", "mgl": "N·m"}
 
-    # The ports: what drives it (the effort, then test inputs), what it
-    # measures, each with its full scale (min ... max). The outputs' hard
-    # ranges are its monitoring: beyond one the plant stops itself (E-stop).
-    # The arm stays below the horizontal-and-a-half; the library's PID peaks
-    # at about 1.8 rad, 16 rad/s and 7 A on a plant varied by 15 %.
+    # The ports: what drives it (the effort, then test inputs, offered only
+    # with --dyno), what it measures, each with its full scale (min ... max).
+    # The outputs' hard ranges are its monitoring: beyond one the plant stops
+    # itself (E-stop). The arm stays below the horizontal-and-a-half; a PID
+    # (Kp 10, Ki 20, Kd 0.6) peaks at about 1.8 rad, 16 rad/s and 7 A on a
+    # plant varied by 15 %.
     EFFORT = port("V", "V", -12.0, 12.0, safe=0.0)
     TESTS = [port("load", "N·m", -0.2, 0.2, safe=0.0, kind="disturbance")]
     OUTPUTS = [port("angle", "rad", -math.pi, math.pi, hard=(-2.5, 2.5)), port("speed", "rad/s", -120.0, 120.0, hard=(-60.0, 60.0)),
@@ -285,11 +289,16 @@ class Plant:
         self.model = self.Model(plant_params(args))
         self.mode = args.mode
         M = self.Model
+        # Test inputs (a load torque) only with --dyno: a rig without a
+        # dynamometer has none. Without it they hold their safe values.
+        dyno = getattr(args, "dyno", False)
+        tests = list(M.TESTS) if dyno else []
+        self.hidden = [] if dyno else [p["safe"] for p in M.TESTS]
         if self.mode == "control":
-            self.inputs = [dict(M.EFFORT, kind="effort")] + M.TESTS
+            self.inputs = [dict(M.EFFORT, kind="effort")] + tests
             self.outputs = list(M.OUTPUTS)
         elif self.mode == "reference":
-            self.inputs = [dict(M.REFERENCE, kind="reference")] + M.TESTS
+            self.inputs = [dict(M.REFERENCE, kind="reference")] + tests
             self.outputs = list(M.OUTPUTS) + [dict(M.EFFORT, kind="effort")]
         else:  # log: no inputs; it holds its own setpoint and reports it
             self.inputs = []
@@ -660,10 +669,11 @@ class Plant:
     # ---- the cycle
 
     def applied(self):
-        """The plant's inputs in its model's order: [effort, tests...]."""
+        """The plant's inputs in its model's order: [effort, tests...]; the
+        tests --dyno does not offer at their safe values."""
         if self.mode == "control":
-            return self.u
-        return [self.effort] + list(self.u[1:]) if self.inputs else [self.effort] + [p["safe"] for p in self.Model.TESTS]
+            return list(self.u) + self.hidden
+        return [self.effort] + list(self.u[1:]) + self.hidden if self.inputs else [self.effort] + [p["safe"] for p in self.Model.TESTS]
 
     def cycle(self, now, last, span):
         """One cycle: the physics over the last `span` seconds, each u applied
@@ -1056,6 +1066,8 @@ def main():
     p.add_argument("--port", type=int, default=8765, help="port (default 8765)")
     p.add_argument("--rate", type=float, default=100.0, help="cycle rate in Hz (default 100; up to 200 measured sound with the default watchdog; at 500 or 1000 raise --watchdog and expect late cycles)")
     p.add_argument("--watchdog", type=int, default=10, help="E-stop after this many cycles without u (default 10)")
+    p.add_argument("--dyno", action="store_true",
+                   help="offer the test inputs too (the motor: a load torque, a disturbance input); by default the plant has none, as a rig without a dynamometer")
     p.add_argument("--slew", type=float, default=0.0, metavar="PCT",
                    help="limit how fast each input may change, in %% of its range per second (default 0: no limit; the page ramps in at 10 %%/s itself)")
     p.add_argument("--vary", type=float, default=0.15, metavar="F",

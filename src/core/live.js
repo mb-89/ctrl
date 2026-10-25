@@ -28,7 +28,7 @@ function controllerOnReference(params, links) {
   for (const c of links.ctrls) {
     for (const i of c.drives ?? []) {
       if ((params.kinds?.[i] ?? 'effort') !== 'reference') continue;
-      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Wire the Controller's output elsewhere, load a system made for reference mode (such as "HIL: external motor, reference mode"), or start the plant in control mode (hil_plant.py without --mode reference).`;
+      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Wire the Controller's output elsewhere, load a system made for reference mode (such as "HIL: an external plant, reference mode"), or start the plant in control mode (hil_plant.py without --mode reference).`;
     }
   }
   return null;
@@ -248,6 +248,43 @@ export function keptWires(wires, id, was, now) {
   const sig = (p, i) => `${p.inputs[i]}:${p.kinds?.[i] || 'effort'}`;
   const changed = (i) => i >= now.inputs.length || i >= was.inputs.length || sig(was, i) !== sig(now, i);
   return wires.filter((w) => { const f = parseEnd(w.from), t = parseEnd(w.to); return !(t.id === id && changed(t.port)) && !(f.id === id && f.port >= now.outputs.length); });
+}
+
+// A level whose External block (id) takes a plant's ports, was and now its
+// parameters before and after (input 20: the page draws and wires what the
+// plant describes). The wires go as keptWires says, and the Sinks follow
+// the outputs: a Sink named for its port (the port's old name) takes the
+// new name and unit; an output without a Sink gets one, wired; a Sink named
+// for a port that is gone goes with it. Returns { blocks, wires, renamed:
+// { old: new name, or null for one that went } } for the scope's channels.
+const SIGNAL_NAME = /^[A-Za-z][A-Za-z0-9_]{0,11}$/;
+export function followPorts(level, id, was, now) {
+  const ext = level.blocks.find((b) => b.id === id);
+  const fromPort = (w) => { const f = parseEnd(w.from); return f.id === id ? f.port : -1; };
+  const fed = (b) => level.wires.filter((w) => parseEnd(w.to).id === b.id);
+  const renamed = {};
+  // Sinks named for an output that is gone, fed by nothing else, go.
+  const gone = new Set(level.blocks.filter((b) => b.type === 'sink' && fed(b).length && fed(b).every((w) => fromPort(w) >= now.outputs.length && b.params.name === was.outputs[fromPort(w)])).map((b) => b.id));
+  for (const b of level.blocks) if (gone.has(b.id)) renamed[b.params.name] = null;
+  const blocks = level.blocks.filter((b) => !gone.has(b.id)).map((b) => structuredClone(b));
+  const wires = keptWires(level.wires, id, was, now).filter((w) => !gone.has(parseEnd(w.to).id));
+  const taken = new Set(diagramNames({ blocks, wires }).sinks.concat(diagramNames({ blocks, wires }).sources));
+  now.outputs.forEach((name, j) => {
+    const unit = now.outUnits?.[j] ?? '1';
+    const sinks = blocks.filter((b) => b.type === 'sink' && wires.some((w) => parseEnd(w.to).id === b.id && fromPort(w) === j));
+    for (const b of sinks) {
+      if (b.params.name !== was.outputs[j]) continue;  // the person's own name stays
+      if (name !== b.params.name && SIGNAL_NAME.test(name) && !taken.has(name)) { taken.delete(b.params.name); renamed[b.params.name] = name; b.params.name = name; taken.add(name); }
+      b.params.unit = unit;
+    }
+    if (sinks.length || !SIGNAL_NAME.test(name) || taken.has(name)) return;
+    let sid = name;
+    for (let k = 2; blocks.some((b) => b.id === sid); k++) sid = `${name}_${k}`;
+    blocks.push({ id: sid, type: 'sink', params: { name, unit }, x: (ext?.x ?? 0) + 260, y: (ext?.y ?? 0) + 36 * j });
+    wires.push({ from: j ? `${id}:${j}` : id, to: sid });
+    taken.add(name);
+  });
+  return { blocks, wires, renamed };
 }
 
 // Why Run cannot start this diagram against its plant, or null (the loop

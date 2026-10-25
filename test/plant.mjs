@@ -43,7 +43,7 @@ export async function startPlant(extra = []) {
 export async function connectPlant(port) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
   const frames = [], notes = [], waiting = new Map();
-  let id = 0, u = [0, 0], closed = null;
+  let id = 0, u = [0], closed = null;
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     frames.push(m);

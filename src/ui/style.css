@@ -321,6 +321,12 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .rep.add { color: var(--muted); }
 .pscenebox { background: var(--panel); background-image: none; }
 .pscene { position: absolute; inset: 0; width: 100%; height: 100%; }
+#pl-iface.piface { overflow: auto; background: var(--panel); background-image: none; }
+.ifbox { padding: 10px 14px; }
+.iftable { border-collapse: collapse; font-family: var(--mono); font-size: 12px; margin: 6px 0; }
+.iftable th, .iftable td { text-align: left; padding: 3px 10px 3px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.iftable thead th { font-family: var(--sans, inherit); font-size: 11px; color: var(--muted); font-weight: 600; }
+.iftable td:first-child { color: var(--muted); }
 .pscene text { font-family: var(--mono); }
 .pscene .sctime { fill: var(--muted); font-size: 11px; }
 .pscene .scerr { fill: var(--bad); font-size: 12px; }

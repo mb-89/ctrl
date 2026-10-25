@@ -39,7 +39,7 @@ const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturatio
 const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
 export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
 const TONE = {
-  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta',
+  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta', 'Black box': 'yellow',
   PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
   // Seven of the eight tones are taken by controller tags: this one is set.
   'Sliding mode': 'red',
@@ -65,9 +65,11 @@ export function systemTags(e) {
   walk(e.diagram);
   const tags = [];
   const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind, tone: toneOf(label) }); };
-  // An External plant's physics is outside the page: its entry says what it is.
-  const own = blocks.some((b) => b.type === 'external') ? (e.tags ?? []).filter((t) => t.kind === 'plant') : [];
-  if (own.length) for (const t of own) add(t.label, 'plant'); else add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
+  // An External plant is outside the page, a black box until identified
+  // (input 20): its entry may say more, the diagram cannot.
+  const external = blocks.some((b) => b.type === 'external');
+  const own = external ? (e.tags ?? []).filter((t) => t.kind === 'plant') : [];
+  if (own.length) for (const t of own) add(t.label, 'plant'); else add(external ? 'Black box' : nonlinear ? 'Nonlinear' : 'Linear', 'plant');
   if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');

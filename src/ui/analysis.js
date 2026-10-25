@@ -16,6 +16,7 @@ import { analyzeLoop, stepInfo, stepResponse, sPlanePoint, respondAt, phaseAt } 
 import { createPlot, extent, PLOT_COLORS } from './plots.js';
 import { CHANNEL_COLORS } from './display.js';
 import { num } from './units.js';
+import { findExternal } from '../core/hil.js';
 
 const OPS = [
   { key: 'origin', label: 'At rest', title: 'All states and u at 0 (the pendulums upright)' },
@@ -133,6 +134,8 @@ export function createAnalysisTab(host, app) {
     const c = all.find((x) => target && x.path.join('/') === target.join('/')) ?? all[0];
     if (!c) return { empty: 'This system has no Controller block. Add one in the Plant tab, wire the reference to its first input and the measurements to the others.' };
     target = c.path;
+    // A plant outside the page is a black box (input 20): no diagram to analyse.
+    if (findExternal(app.project.system.plant?.diagram)) return { c, all, error: 'The plant runs outside the page and is a black box: the page knows only its interface (Plant tab, Interface). Analysis needs an identified model of it, which Identify will give (not built yet).' };
     if (!app.loopModel) return { c, all, error: 'The analysis needs the plant a block sees, linearised at an operating point. That comes with the design layer.' };
     const spec = opSpec(), from = op === 't' ? app.scopeTimeFrom?.() : null;
     const key = JSON.stringify([app.project.system, c.path, spec]);

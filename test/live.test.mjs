@@ -474,7 +474,7 @@ test('the plant script runs its physics and describes itself as the HIL system e
   assert.match(out, /^angle 1\.\d+ rad/);
   const desc = checkDescription(JSON.parse(py('--describe')));
   const { SYSTEM_LIBRARY } = await import('../src/core/systems.js');
-  const hil = SYSTEM_LIBRARY.find((s) => s.name === 'HIL: external motor');
+  const hil = SYSTEM_LIBRARY.find((s) => s.name === 'HIL: an external plant');
   const block = normalizeDiagram(hil.plant.diagram).blocks.find((b) => b.type === 'external');
   assert.ok(sameDescription(block.params, desc), 'connecting changes nothing in the library system');
   assert.equal(desc.watchdog, 10);
@@ -529,7 +529,7 @@ test('hil_plant.py speaks the protocol: describe, the y/u cycle, its watchdog, R
     const m = JSON.parse(e.data);
     if (m.id !== undefined && waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); return; }
     notes.push(m);
-    if (m.method === 'y' && answer) ws.send(uMessage(m.params.seq, [0, 0]));
+    if (m.method === 'y' && answer) ws.send(uMessage(m.params.seq, [0]));
   };
   ws.onclose = (e) => { closed = e; };
   try {

@@ -4,9 +4,10 @@ Loop Tuner: the external plant for Live (HIL) mode
 What it is
   hil_plant.py is a plant that runs outside the page, in real time, on your
   computer: a simulated DC motor swinging an unbalanced arm, at 100 Hz. It
-  stands in for real hardware. It is the plant of the systems "HIL: external
-  motor" and "HIL: external motor, reference mode" in Loop Tuner's System
-  library. It listens on ws://127.0.0.1:8765 (this computer only), sends its
+  stands in for real hardware. It is the plant of the systems "HIL: an
+  external plant" and "HIL: an external plant, reference mode" in Loop
+  Tuner's System library, which know only the inputs and outputs it
+  describes: to the page it is a black box, identified before tuning. It listens on ws://127.0.0.1:8765 (this computer only), sends its
   outputs every cycle and applies the inputs the page sends back.
 
 Start it
@@ -32,7 +33,7 @@ Start it
   s stop, r run, e E-stop, x reset, q quit.
 
 Then, in Loop Tuner
-  System library > HIL: external motor > Load. Plant tab: Connect. Nothing
+  System library > HIL: an external plant > Load. Plant tab: Connect. Nothing
   moves yet: the plant stays stopped until Run. Run starts it: the
   reference first ramps to its first value (at most 10 % of its full scale
   per second), then the loop runs and the arm follows. Stop stops it; Single
@@ -70,6 +71,9 @@ The plant the page does not know
   Loop Tuner is told the ports, their units and full scales, never the
   physics: it has to identify the plant, as with a real device.
   --plant heater runs a second, simpler plant (a heater and a temperature).
+  It has no disturbance input, as a rig without a dynamometer has none;
+  --dyno offers one (the motor's load torque, "load"), which the page then
+  shows as one more described input.
 
 More
   --log FILE.csv   every cycle (t, outputs, inputs, r and e) and every event

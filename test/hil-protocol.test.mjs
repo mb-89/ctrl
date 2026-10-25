@@ -15,13 +15,13 @@ import { SCRIPT, startPlant, connectPlant } from './plant.mjs';
 
 const OLD = {
   protocol: 'loop-tuner-hil/1', name: 'fake', rate_hz: 100, running: false, estop: null,
-  inputs: [{ name: 'V', unit: 'V', min: -12, max: 12, safe: 0, kind: 'effort' }, { name: 'load', unit: 'N·m', min: -0.2, max: 0.2, safe: 0, kind: 'disturbance' }],
+  inputs: [{ name: 'V', unit: 'V', min: -12, max: 12, safe: 0, kind: 'effort' }],
   outputs: [{ name: 'angle', unit: 'rad', min: -Math.PI, max: Math.PI }, { name: 'speed', unit: 'rad/s', min: -120, max: 120 }, { name: 'current', unit: 'A', min: -12, max: 12 }],
 };
 const NEW = { ...OLD, outputs: OLD.outputs.map((o, j) => ({ ...o, hard_min: [-2.5, -60, -10][j], hard_max: [2.5, 60, 10][j] })) };
 
 const tick = async () => { for (let i = 0; i < 12; i++) await new Promise((r) => setTimeout(r, 0)); };
-const system = async (name = 'HIL: external motor') => (await import('../src/core/systems.js')).SYSTEM_LIBRARY.find((s) => s.name === name);
+const system = async (name = 'HIL: an external plant') => (await import('../src/core/systems.js')).SYSTEM_LIBRARY.find((s) => s.name === name);
 const signalsOf = (sys) => Object.fromEntries(Object.entries(sys.input.signals).map(([k, v]) => [k, normalizeReference(v)]));
 
 // A fake plant that answers requests at once; the test sends its y.
@@ -76,7 +76,7 @@ test('describe with output hard ranges parses, and the External block keeps them
 });
 
 test('the library\'s HIL systems carry the plant\'s hard ranges', async () => {
-  for (const name of ['HIL: external motor', 'HIL: external motor, reference mode']) {
+  for (const name of ['HIL: an external plant', 'HIL: an external plant, reference mode']) {
     const b = (await system(name)).plant.diagram.blocks.find((x) => x.type === 'external');
     assert.deepEqual([b.params.ymin.slice(0, 3), b.params.ymax.slice(0, 3)], [[-2.5, -60, -10], [2.5, 60, 10]], name);
   }
@@ -86,18 +86,18 @@ test('y carries applied: parsed; the loop records it as applied.NAME signals wit
   assert.deepEqual(parseMessage('{"jsonrpc":"2.0","method":"y","params":{"seq":3,"t":0.03,"y":[1,2,3],"applied":[12,"x"]}}').applied, [12, NaN]);
   assert.equal(parseMessage('{"jsonrpc":"2.0","method":"y","params":{"seq":3,"t":0.03,"y":[1],"applied":"12"}}').applied, null, 'not a list: not given, the y stands');
   const { plant, out, loop } = await running(NEW);
-  plant.y({ seq: 0, t: 0, y: [0, 0, 0], applied: [0, 0] });
-  plant.y({ seq: 1, t: 0.01, y: [0.1, 0, 0], applied: [12, -0.2] });
+  plant.y({ seq: 0, t: 0, y: [0, 0, 0], applied: [0] });
+  plant.y({ seq: 1, t: 0.01, y: [0.1, 0, 0], applied: [12] });
   plant.y({ seq: 2, t: 0.02, y: [0.2, 0, 0] });
   assert.equal(plant.sent.filter((m) => m.method === 'u').length, 3, 'every y answered');
   loop.handle({ type: 'stop' });
   await tick();
   const batches = out.filter((m) => m.type === 'samples');
   const b = batches.at(-1);
-  assert.deepEqual(b.names.slice(-2), ['applied.V', 'applied.load']);
-  assert.deepEqual(b.units, { 'applied.V': 'V', 'applied.load': 'N·m' });
-  const rows = batches.flatMap((x) => x.values.map((v) => v.slice(-2)));
-  assert.deepEqual(rows.slice(0, 2), [[0, 0], [12, -0.2]], 'what the plant applied, after its clamps');
+  assert.deepEqual(b.names.slice(-2), ['V', 'applied.V']);
+  assert.deepEqual(b.units, { 'applied.V': 'V' });
+  const rows = batches.flatMap((x) => x.values.map((v) => v.slice(-1)));
+  assert.deepEqual(rows.slice(0, 2), [[0], [12]], 'what the plant applied, after its clamps');
   assert.ok(rows[2].every(Number.isNaN), 'a y without applied: NaN, not a made-up value');
   assert.ok(batches.every((x) => x.values.every((v) => v.length === x.names.length)));
 });
@@ -171,16 +171,16 @@ test('hil_plant.py echoes the inputs it applied after its clamps, and E-stops wh
     const d = (await page.call('describe')).result;
     assert.deepEqual(d.outputs.map((o) => [o.name, Number(o.min.toFixed(4)), Number(o.max.toFixed(4))]), [['angle', -3.1416, 3.1416], ['speed', -120, 120], ['current', -12, 12]], 'min … max is still the full scale');
     assert.deepEqual(d.outputs.map((o) => [o.hard_min, o.hard_max]), [[-2.5, 2.5], [-60, 60], [-10, 10]]);
-    page.answer([30, 'x']);  // beyond V's limit, and not a number
+    page.answer([30]);  // beyond V's limit
     await page.call('start');
     const estop = await page.until(() => page.notes.find((m) => m.method === 'estop'), 5000);
     assert.match(estop.params.reason, /^angle 2\.\d+ rad beyond 2\.5$/);
     const ys = page.notes.filter((m) => m.method === 'y');
     assert.ok(ys.length >= 5);
     assert.ok(ys.every((m) => Array.isArray(m.params.y) && m.params.y.length === 3), 'y as before');
-    assert.deepEqual(ys[0].params.applied, [0, 0], 'the first cycle: the safe inputs');
-    assert.deepEqual(ys.at(-1).params.applied, [12, 0], 'V 30 is applied as 12 V, its limit; load "x" as the safe 0');
-    assert.ok(ys.every((m) => [0, 12].includes(m.params.applied[0]) && m.params.applied[1] === 0), 'only ever what it applied');
+    assert.deepEqual(ys[0].params.applied, [0], 'the first cycle: the safe input');
+    assert.deepEqual(ys.at(-1).params.applied, [12], 'V 30 is applied as 12 V, its limit');
+    assert.ok(ys.every((m) => [0, 12].includes(m.params.applied[0])), 'only ever what it applied');
     assert.ok(ys.at(-1).params.y[0] <= 2.5, 'the y beyond the range is not sent: the E-stop comes in its place');
     assert.equal((await page.call('describe')).result.estop, estop.params.reason, 'latched');
     assert.deepEqual((await page.call('reset')).result, {}, 'the monitoring\'s E-stop is reset from either side');

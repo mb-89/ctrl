@@ -331,7 +331,7 @@ The level each System library entry runs today is kept: each entry carries the g
 | **Conical tank** (Conical tank, gain scheduling) | L1 **Torricelli**: an ideal orifice and pump (today) · L2 + real outlet and pump: a discharge coefficient Cd in the outlet's equation (`qout = Cd*a*sqrt(2*g*h)`; about 0.61 for a sharp-edged orifice, neutral 1) and the pump's spin-up lag τ_p (a Transfer function before the pump, den [τ_p, 1], neutral 0) | An outlet without contraction losses, a pump that follows its command at once | After transparent-models.md step 4 (the tank opens). With the neutral values L2 is L1 exactly |
 | **Oven** | One level. Heater, chamber, dead time and thermocouple already are its detail; a lumped level (one lag with τ = the sum, and the dead time) only if an example needs it | – | – |
 | **Mass–spring–damper** | One level (primitives, not a subsystem) | – | – |
-| **HIL: external motor** | None: its physics is outside the page, and a live plant may not sit in a level | – | – |
+| **HIL: an external plant** | None: its physics is outside the page (a black box), and a live plant may not sit in a level | – | – |
 | **Op-amp board** (new example) | Four levels (§8) | – | Step 7 |
 
 Each level of each model has more states or more mask parameters read by blocks than the one below: the person's "more calculations and more parameters". The motor goes from 4 to 5 parameters, the carts gain b and c, the op-amp reads 0, 2, 5 and 8.

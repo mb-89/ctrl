@@ -186,6 +186,7 @@ export const EXTERNAL_BLOCK = {
     // The hard range: beyond it the plant E-stops (from describe).
     { key: 'ymin', label: 'y hard min', default: [], kind: 'list' },
     { key: 'ymax', label: 'y hard max', default: [], kind: 'list' },
+    { key: 'outKinds', label: 'Kinds of y', default: [], kind: 'list' },
     { key: 'ramp', label: 'Ramp-in', default: RAMP_DEFAULT, unit: '%/s', min: 0.01, max: 1000 },
     { key: 'scales', label: 'Full scales', default: {}, kind: 'hidden' },
   ],
@@ -223,6 +224,8 @@ export const EXTERNAL_BLOCK = {
       return [lo, hi];
     };
     const [outMin, outMax] = pairs('outMin', 'outMax'), [ymin, ymax] = pairs('ymin', 'ymax');
+    // An output is a measurement, or the plant's own control effort.
+    const outKinds = fit(splitKeep(d.outKinds).map((k) => (k === 'effort' ? 'effort' : 'measurement')), m, 'measurement');
     const ramp = Number(d.ramp);
     if (!(ramp >= 0.01 && ramp <= 1000)) throw new Error(`${where}.ramp: from 0.01 to 1000 % of full scale per second`);
     const scales = {};
@@ -236,7 +239,7 @@ export const EXTERNAL_BLOCK = {
       inUnits: fit(split(d.inUnits), n, '1').map((u, i) => checkUnit(u, `${where}.inUnits[${i}]`)),
       min, max, safe, kinds, measures, outputs,
       outUnits: fit(split(d.outUnits), m, '1').map((u, i) => checkUnit(u, `${where}.outUnits[${i}]`)),
-      outMin, outMax, ymin, ymax, ramp, scales,
+      outMin, outMax, ymin, ymax, outKinds, ramp, scales,
     };
   },
 };
@@ -254,8 +257,21 @@ export function externalParams(desc, prev = {}) {
     outputs: desc.outputs.map((p) => p.name), outUnits: desc.outputs.map((p) => p.unit),
     outMin: desc.outputs.map((p) => p.min ?? null), outMax: desc.outputs.map((p) => p.max ?? null),
     ymin: desc.outputs.map((p) => p.hard_min ?? null), ymax: desc.outputs.map((p) => p.hard_max ?? null),
+    outKinds: desc.outputs.map((p) => p.kind ?? 'measurement'),
     ramp: keep.ramp ?? RAMP_DEFAULT, scales: keep.scales ?? {},
   });
+}
+
+// The plant's interface, all the page knows of it (input 20: the rest is a
+// black box): its inputs and outputs as the block keeps them from describe,
+// for the Plant tab's Interface and for agents. Ranges are [lo, hi] or null.
+export function interfaceOf(params) {
+  const pair = (lo, hi, j) => (lo?.[j] === null || lo?.[j] === undefined || hi?.[j] === null || hi?.[j] === undefined ? null : [lo[j], hi[j]]);
+  return {
+    mode: modeOf(params.kinds ?? []), rate: params.rate,
+    inputs: params.inputs.map((name, i) => ({ name, unit: params.inUnits[i], fullScale: [params.min[i], params.max[i]], safe: params.safe[i], kind: params.kinds?.[i] ?? 'effort', measures: params.measures?.[i] || null })),
+    outputs: params.outputs.map((name, j) => ({ name, unit: params.outUnits[j], fullScale: pair(params.outMin, params.outMax, j), hard: pair(params.ymin, params.ymax, j), kind: params.outKinds?.[j] ?? 'measurement' })),
+  };
 }
 
 // The mode of a block (from its inputs' kinds): control, reference or log.

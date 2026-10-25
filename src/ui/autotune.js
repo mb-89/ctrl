@@ -109,7 +109,7 @@ export function createAutotuneTab(host, app, display) {
     $('.tune').hidden = !c;
     $('#tu-empty').hidden = !!c;
     if (!c && notLoop) {
-      $('#tu-empty').innerHTML = '<div class="later-box"><h3 class="glabel">Auto-tune is not in the loop</h3><p>In reference mode the External plant runs its own controller, with its own limits and monitoring; the page only sends the references and records. There is no controller here for Auto-tune to tune. To tune a controller in this page, use a plant in control mode, such as <b>HIL: external motor</b>.</p></div>';
+      $('#tu-empty').innerHTML = '<div class="later-box"><h3 class="glabel">Auto-tune is not in the loop</h3><p>In reference mode the External plant runs its own controller, with its own limits and monitoring; the page only sends the references and records. There is no controller here for Auto-tune to tune. To tune a controller in this page, use a plant in control mode, such as <b>HIL: an external plant</b>.</p></div>';
       return;
     }
     if (!c) {
