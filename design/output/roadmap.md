@@ -40,6 +40,14 @@ Reader: whoever picks the next piece of work.
 
    Coordinate with feat/design-system and feat/designs, which touch `src/ui/plant.js`.
 
+5. **One Servo motor** ([servo.md](servo.md), designed, not built; the person's [input 18](../input/2026-10-25-18-servo-motor-detail.md)). In its §11 steps:
+   - the minimal mask (numbers, toggles, a choice) and switches resolved at compile time;
+   - built-in components stored by reference (`component`, `params`), opened read-only, Edit a copy into My blocks;
+   - the DC motor examples, then the encoder example, on the component;
+   - the PUMA's Motor drives on it, with or after robot.md's motors.
+
+   Shares the mask with [transparent-models.md](transparent-models.md) and [detail-levels.md](detail-levels.md): whichever reaches it first builds it.
+
 ## Later
 
 - Live, more ([hil.md](hil.md#not-yet)), from the person's words of 2026-10-24: a plant that runs its own loop and takes the reference r from the page ("we could also be sending the reference value"); signals the plant only logs ("use our page here just to log stuff"); an agent tuning a live loop through MCP ("could we also connect an agent to that web page"); identifying the live plant, which varies by up to ±15 % and is not described to the page, so Auto-tune and Analysis work for HIL ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)); then several External blocks, remote plants (wss://, a token), a trigger for live sweeps, a plant recording on its own side. Check `runme.ps1` and the plant's timing on Windows (untested here).

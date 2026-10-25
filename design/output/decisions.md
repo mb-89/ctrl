@@ -6,7 +6,15 @@ Reader: anyone who wants to know why something is the way it is. Newest first. "
 
 The person: "make them high detail toggles in our servo motor ... the servo motor can also run speed controlled ... we show them in the spectrogram thing, but we could also just increase the level of the servos of the robot, and then the same errors would show up in the robot too ... it would also be reuse. So think about that."
 - **Direction (being designed):** one reusable servo motor component, openable like every model, used by the DC motor examples (position), the encoder example (speed) and the PUMA's six joints (geared, current drive). Its non-idealities (the encoder's 1× and 2× angle errors, torque ripple, the shaft resonance, noise, and more the research finds) are high-detail switches of that one model; at their neutral values they vanish exactly (as SPICE's added parameters do), so the plain motor is the same model with them off.
-- **Interpretation:** the switches come first, built on the component's mask, and need none of the detail-levels machinery (which stays at the end of the backlog); when levels come, a level is a named set of these switches. Design: [servo.md](servo.md) (in progress).
+- **Interpretation:** the switches come first, built on the component's mask, and need none of the detail-levels machinery (which stays at the end of the backlog); when levels come, a level is a named set of these switches. Design: [servo.md](servo.md).
+- **Designed** ([servo.md](servo.md), research [../research/servo.md](../research/servo.md), prototype on branch feat/servo-design):
+  - **One component, motion in and torque out.** The Servo motor is the drive, torque, friction, ripple, gear and encoder. The output shaft's θ and ω come in, τ goes out. The inertia is the mechanism's: a Shaft (∫ 1/J) beside a lone motor, the arm's mass matrix (G²·Jm) in the robot. Interpretation: this is the only form in which one model serves a lone motor and a robot joint with no physics in two places.
+  - **Switches.** Each effect is a toggle on the mask with its own fields, kept while off. Off is not compiled (required: a compiled off branch changed the step, 2 substeps against 1). On at the neutral value it is bit for bit the plain motor where a neutral value exists.
+  - **Drive and loops.** Voltage or current drive is the one choice. Speed, position or torque control is which output the loop reads and what it commands, not a mode.
+  - **The encoder example.** Its "flexible shaft" is the encoder's coupling (sensor side), which is what main computes. Rebuilt, it differs by 2.2·10⁻¹² relative, because the motor now owns its friction (proven exact with the friction put back); the test tolerance is 10⁻⁹. The DC motor examples: 1.4·10⁻¹⁴.
+  - **Storage.** A use is stored as a reference plus mask values (`component: "servo-motor@1"`, `params`), opens read-only, and Edit a copy makes a My block. Built-in components are versioned.
+  - **Detail levels**, when built, are named sets of these switches.
+  - **Open for the person:** what the robot opens with (Coulomb only, or more); realistic or visible error sizes; when to add the two-mass shaft and backlash.
 
 ## 2026-10-25 · v2.8: a warning in a limited environment ([input 16](../input/2026-10-25-16-limited-environment-banner.md))
 
