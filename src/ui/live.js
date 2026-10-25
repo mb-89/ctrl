@@ -16,8 +16,8 @@
 // agent with only a browser can read the page. See design/output/hil.md.
 
 import { HIL_URL, externalParams, sameDescription, samePorts, findExternal, blockMode, RAMP_DEFAULT } from '../core/hil.js';
-import { createLiveLoop, liveKey, liveScales } from '../core/live.js';
-import { normalizeDiagram, parseEnd } from '../core/diagram.js';
+import { createLiveLoop, liveKey, liveScales, liveProblem, keptWires } from '../core/live.js';
+import { normalizeDiagram } from '../core/diagram.js';
 import { sweepStart } from '../core/trace.js';
 import { zipFiles } from '../core/zip.js';
 import { num, parseSI } from './units.js';
@@ -59,6 +59,10 @@ export function createLive(app, display, record, panelHost) {
     <p class="phelp lv-agents">Agents: <code>loopTuner.help()</code></p>`;
   panelHost.prepend(panel);
   const estopKey = $('estop');
+  // Every message Live shows is a toast for the person; the page keeps the
+  // last one for an agent (state().message, #toast[data-last]), since a
+  // toast is gone after 3 s.
+  const tell = (msg) => app.toast(msg);
 
   // ---- The External plant block, at any depth.
   const rootDiagram = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
@@ -69,17 +73,23 @@ export function createLive(app, display, record, panelHost) {
     const hit = findExternal(next);
     if (!hit) return false;
     fn(hit.block, hit.level);
-    try { app.setPlant(normalizeDiagram(next)); return true; } catch (err) { app.toast(err.message); return false; }
+    try { app.setPlant(normalizeDiagram(next)); return true; } catch (err) { tell(err.message); return false; }
   }
   // Gives the block the plant's ports (keeping the page's own settings);
-  // wires to ports that are gone go.
+  // wires to ports that are gone, or into inputs whose name or kind changed,
+  // go (core/live.js keptWires). Returns how many went, or false.
   function takePorts(dsc) {
-    return editExternal((b, lv) => {
+    let dropped = 0;
+    const ok = editExternal((b, lv) => {
+      const was = b.params;
       b.params = externalParams(dsc, b.params);
-      const nIn = b.params.inputs.length, nOut = b.params.outputs.length;
-      lv.wires = lv.wires.filter((w) => { const f = parseEnd(w.from), t = parseEnd(w.to); return !(t.id === b.id && t.port >= nIn) && !(f.id === b.id && f.port >= nOut); });
+      const before = lv.wires.length;
+      lv.wires = keptWires(lv.wires, b.id, was, b.params);
+      dropped = before - lv.wires.length;
     });
+    return ok ? dropped : false;
   }
+  const wentText = (n) => (n ? `; ${n} wire${n > 1 ? 's' : ''} into inputs that changed went` : '');
   const portText = (dsc) => `in ${dsc.inputs.map((p) => p.name).join(', ') || 'none'}; out ${dsc.outputs.map((p) => p.name).join(', ')}`;
   // The full scales of the signals around the plant, and the references.
   const scalesNow = () => liveScales(rootDiagram());
@@ -109,7 +119,7 @@ export function createLive(app, display, record, panelHost) {
         url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
         w = new Worker(url, { name: 'loop-tuner-live' });
       } catch { fallback(); return; }
-      w.onerror = (e) => { e.preventDefault(); if (!settled) fallback(); else app.toast(`Live: ${e.message}`); };
+      w.onerror = (e) => { e.preventDefault(); if (!settled) fallback(); else tell(`Live: ${e.message}`); };
       w.onmessage = (e) => {
         if (settled) { receive(e.data); return; }
         if (e.data?.type !== 'ready') return;
@@ -124,26 +134,34 @@ export function createLive(app, display, record, panelHost) {
   // state: idle (never connected), connecting, open (connected, the plant
   // stopped), running, closed (offline after a connection).
   let state = 'idle', detail = '', estop = null, desc = null, link = null, plantStatus = null, programKey = '', ramp = null, hold = null;
+  // The plant start or stop the page has asked for and the loop has not
+  // answered yet: the keys count it at once (keyLink), so a Stop pressed
+  // right after Run (or Run right after Stop) is never lost.
+  let pending = null;
   const updates = {};  // how the running loop took edits: { kept, rebuilt, signals }
   const waiters = [];  // connect() promises, settled at open or closed
+  const answers = new Map();  // ask() promises, settled by the loop's done
+  let asked = 0;
   function receive(m) {
     if (m.type === 'state') onState(m.state, m.detail);
     else if (m.type === 'described') onDescribed(m.desc);
     else if (m.type === 'estop') {
       estop = { by: m.by, reason: m.reason };
-      app.toast(`E-STOP${m.by === 'plant' ? ' from the plant' : ''}: ${m.reason}. Reset, then Run.`);
+      pending = null;
+      tell(`E-STOP${m.by === 'plant' ? ' from the plant' : ''}: ${m.reason}. ${/at the plant/.test(m.reason) ? 'Reset it at the plant (its window or console), then Run.' : 'Reset, then Run.'}`);
       screen('stop');
       render();
     } else if (m.type === 'run') onRun(m.by);
-    else if (m.type === 'stopped') { app.toast(`The plant stopped: ${m.reason || `by the ${m.by}`}.`); screen('stop'); render(); }
-    else if (m.type === 'refused') { screen('stop'); render(); }
-    else if (m.type === 'cleared') app.toast('The plant was reset at its own key: Run goes on.');
+    else if (m.type === 'stopped') { tell(`The plant stopped: ${m.reason || `by the ${m.by}`}.`); screen('stop'); render(); }
+    else if (m.type === 'refused') { pending = null; screen('stop'); render(); }
+    else if (m.type === 'done') { const r = answers.get(m.id); answers.delete(m.id); r?.(m); }
+    else if (m.type === 'cleared') tell('The plant was reset at its own key: Run goes on.');
     else if (m.type === 'samples') onSamples(m);
     else if (m.type === 'stats') { link = m.link; plantStatus = m.plant; renderStats(); }
     else if (m.type === 'programmed') {
       updates[m.how] = (updates[m.how] ?? 0) + 1;
-      if (m.how === 'rebuilt') app.toast('The diagram changed: the controllers start afresh.');
-    } else if (m.type === 'error') app.toast(`Live: ${m.message}`);
+      if (m.how === 'rebuilt') tell('The diagram changed: the controllers start afresh.');
+    } else if (m.type === 'error') tell(`Live: ${m.message}`);
   }
   // The scope's mode, without going through the plant (it told us already).
   function screen(m, restart = false) {
@@ -156,12 +174,15 @@ export function createLive(app, display, record, panelHost) {
   function onState(s, d) {
     const was = state;
     state = s; detail = d;
+    // Every state the loop reports is the answer to the last start or stop
+    // (an overtaken one reports nothing), or news that overrides it.
+    pending = null;
     if (s === 'connecting') { estop = null; desc = null; link = null; plantStatus = null; programKey = ''; ramp = null; }
     if (s === 'running') { estop = null; attach(); }
     if (s === 'open' && d === 'reset') estop = null;
     if (s === 'open' && was === 'running') { ramp = null; if (hold) setHold(false); }
     if (s === 'closed' && was !== 'closed') {
-      app.toast(was === 'connecting' ? `Could not connect: ${d}` : `Disconnected: ${d}`);
+      tell(was === 'connecting' ? `Could not connect: ${d}` : `Disconnected: ${d}`);
       ramp = null;
       screen('stop');
     }
@@ -176,8 +197,9 @@ export function createLive(app, display, record, panelHost) {
   function onDescribed(dsc) {
     desc = dsc;
     const hit = external();
-    if (hit && !sameDescription(hit.block.params, desc) && takePorts(desc)) {
-      app.toast(`The External plant block took the plant's ports: ${portText(desc)}. Ctrl+Z goes back.`);
+    const went = hit && !sameDescription(hit.block.params, desc) ? takePorts(desc) : false;
+    if (went !== false) {
+      tell(`The External plant block took the plant's ports: ${portText(desc)}${wentText(went)}. Ctrl+Z goes back.`);
       setTimeout(() => app.fullScale?.());
     }
     sendProgram();  // (the edit above may have sent it already)
@@ -194,8 +216,8 @@ export function createLive(app, display, record, panelHost) {
 
   async function connect(url) {
     const hit = external();
-    if (!hit) { app.toast('This system has no External plant block: add one from the Live group in the Plant tab, or load “HIL: external motor”.'); return api.state(); }
-    if (!window.WebSocket) { app.toast('This browser has no WebSocket.'); return api.state(); }
+    if (!hit) { tell('This system has no External plant block: add one from the Live group in the Plant tab, or load “HIL: external motor”.'); return api.state(); }
+    if (!window.WebSocket) { tell('This browser has no WebSocket.'); return api.state(); }
     if (on()) return api.state();
     if (url && url !== hit.block.params.url && !editExternal((b) => { b.params.url = url; })) return api.state();
     state = 'connecting'; render();
@@ -254,7 +276,7 @@ export function createLive(app, display, record, panelHost) {
     inRamp = false; runT0 = null; ramp = null;
     record.live.run();
     attach();
-    if (by === 'plant' && display.mode === 'stop') { screen('run', true); app.toast('The plant started a run at its own key.'); }
+    if (by === 'plant' && display.mode === 'stop') { screen('run', true); tell('The plant started a run at its own key.'); }
   }
   // What the display draws each frame (Hold: the screen as it was).
   function poll() {
@@ -278,7 +300,7 @@ export function createLive(app, display, record, panelHost) {
   }
   function setHold(onOff) {
     const want = onOff ?? !hold;
-    if (want && (state !== 'running' || !feeding)) { app.toast('Hold freezes the screen while the plant runs: Run first.'); return false; }
+    if (want && (state !== 'running' || !feeding)) { tell('Hold freezes the screen while the plant runs: Run first.'); return false; }
     hold = want ? { data: sweep ? structuredClone(view(sweep)) : empty, scan: sweep && lastT !== null ? sweep.w0 + (lastT - sweep.start) : windowOf()[0] } : null;
     render();
     return !!hold;
@@ -313,25 +335,56 @@ export function createLive(app, display, record, panelHost) {
   const on = () => ['connecting', 'open', 'running'].includes(state);
   const connected = () => ['open', 'running'].includes(state);
   const linkState = () => (state === 'running' ? 'running' : state === 'open' ? 'open' : state === 'connecting' ? 'connecting' : 'offline');
-  // The scope's Run, Stop or Single, through the plant (core/live.js liveKey).
+  const keyLink = () => { const l = linkState(); return pending === 'run' && l === 'open' ? 'running' : pending === 'stop' && l === 'running' ? 'open' : l; };
+  // The scope's Run, Stop or Single, through the plant (core/live.js
+  // liveKey). Returns { display, plant, why }: why says why a key was
+  // refused.
   function key(k) {
-    const a = liveKey(k, { link: linkState(), latched: !!estop, display: display.mode });
-    if (a.why) app.toast(a.why);
+    let a = liveKey(k, { link: keyLink(), latched: !!estop, display: display.mode });
+    // A Controller wired to an input the plant takes as a reference: Run is
+    // refused before anything reaches the plant (the loop refuses it too).
+    if (a.plant === 'start') { const why = liveProblem(rootDiagram()); if (why) a = { display: 'stop', restart: false, plant: null, why }; }
+    if (a.why) tell(a.why);
     if (a.display !== 'run' && hold) setHold(false);
     if (a.display && (a.display !== display.mode || a.restart)) display.setMode(a.display, { restart: a.restart });
     // The live feed takes the screen at once, so the scope never sweeps on
     // its own while the plant starts.
-    if (a.plant === 'start') { cut(); attach(); host.post({ type: 'start' }); }
-    if (a.plant === 'stop') host.post({ type: 'stop' });
+    if (a.plant === 'start') { pending = 'run'; cut(); attach(); host.post({ type: 'start' }); }
+    // Stop always reaches a connected plant, whatever the page believes it
+    // is doing (one that started at its own key a moment ago stops too).
+    else if ((k === 'stop' || k === 'swept') && connected()) { pending = 'stop'; host.post({ type: 'stop' }); }
     render();
+    return { display: a.display, plant: a.plant, why: a.why };
   }
-  function estopNow() {
-    if (!connected()) { app.toast('E-STOP acts on a connected plant; none is connected.'); return; }
-    host.post({ type: 'estop' });
+  // A request to the loop, answered once the plant has answered it:
+  // resolves the loop's done { error? }.
+  function ask(msg, ms = 4000) {
+    if (!host) return Promise.resolve({ error: 'not connected' });
+    const id = ++asked;
+    return new Promise((resolve) => {
+      answers.set(id, resolve);
+      host.post({ ...msg, id });
+      setTimeout(() => { if (answers.delete(id)) resolve({ error: 'no answer from the loop' }); }, ms);
+    });
   }
-  function resetNow() { if (connected()) host.post({ type: 'reset' }); }
+  async function estopNow() {
+    if (!connected()) { tell('E-STOP acts on a connected plant; none is connected.'); return api.state(); }
+    pending = null;
+    await ask({ type: 'estop' });
+    return api.state();
+  }
+  async function resetNow() {
+    if (!connected()) { tell('Reset acts on a connected plant; none is connected.'); return api.state(); }
+    await ask({ type: 'reset' });
+    return api.state();
+  }
+  async function disconnect() {
+    if (!host || !on()) return api.state();
+    await ask({ type: 'disconnect' });
+    return api.state();
+  }
 
-  $('live-connect').addEventListener('click', () => { if (on()) host?.post({ type: 'disconnect' }); else connect(); });
+  $('live-connect').addEventListener('click', () => { if (on()) disconnect(); else connect(); });
   $('live-reset').addEventListener('click', resetNow);
   $('live-hold').addEventListener('click', () => setHold());
   estopKey.addEventListener('click', estopNow);
@@ -363,7 +416,7 @@ export function createLive(app, display, record, panelHost) {
     const hit = external();
     if (!hit) return;
     const v = rampEl.value.trim() === '' ? hit.block.params.ramp : parseSI(rampEl.value.replace('%', ''));
-    if (!(v >= 0.01 && v <= 1000)) { app.toast('A ramp-in from 0.01 to 1000 % of full scale per second.'); renderSettings(true); return; }
+    if (!(v >= 0.01 && v <= 1000)) { tell('A ramp-in from 0.01 to 1000 % of full scale per second.'); renderSettings(true); return; }
     if (v !== hit.block.params.ramp) settings({ ramp: v });
   });
   function renderSettings(force = false) {
@@ -387,7 +440,7 @@ export function createLive(app, display, record, panelHost) {
         const lo = box.querySelector(`[data-scale="${nm}"][data-end="0"]`).value.trim(), hi = box.querySelector(`[data-scale="${nm}"][data-end="1"]`).value.trim();
         if (lo === '' && hi === '') { if (own[nm]) settings({ scales: { [nm]: null } }); renderSettings(true); return; }
         const pair = [parseSI(lo), parseSI(hi)];
-        if (!(pair[0] < pair[1])) { app.toast('A full scale is two numbers, low below high (both empty: the plant\'s).'); renderSettings(true); return; }
+        if (!(pair[0] < pair[1])) { tell('A full scale is two numbers, low below high (both empty: the plant\'s).'); renderSettings(true); return; }
         const was = scales[nm];
         if (!was || was[0] !== pair[0] || was[1] !== pair[1]) settings({ scales: { [nm]: pair } });
       });
@@ -397,8 +450,9 @@ export function createLive(app, display, record, panelHost) {
   // ---- The plant's download: a zip with runme scripts that install what it
   // needs; through the page's one download path.
   async function downloadPlant() {
-    const ok = await app.download(ZIP_NAME, new Blob([plantZip()], { type: 'application/zip' }), 'application/zip');
-    if (ok) app.toast(`Saved ${ZIP_NAME}: unzip it, run runme.sh (Linux, macOS) or runme.ps1 (Windows), then Connect. Help (?), Live, has the details.`);
+    const ok = await app.download(ZIP_NAME, new Blob([plantZip()], { type: 'application/zip' }), 'application/zip',
+      'loopTuner.live.plantFiles() has its files as text; or Copy HTML, save it as a .html file and open that in a browser, which can save the zip');
+    if (ok) tell(`Saved ${ZIP_NAME}: unzip it, run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), then Connect. Help (?), Live, has the details.`);
     return ok;
   }
 
@@ -498,7 +552,7 @@ export function createLive(app, display, record, panelHost) {
   const api = {
     worker: true,  // false: run the loop on the page (to compare)
     connect: (url) => connect(url),
-    disconnect: () => { host?.post({ type: 'disconnect' }); },
+    disconnect: () => disconnect(),
     estop: () => estopNow(),
     reset: () => resetNow(),
     hold: (onOff) => setHold(onOff),
@@ -506,7 +560,7 @@ export function createLive(app, display, record, panelHost) {
     downloadPlant: () => downloadPlant(),
     plantFiles: () => ({ ...HIL_FILES }),
     state: () => ({
-      state: linkState(), detail, run: display.mode, estop, hold: !!hold, mode: modeOf(),
+      state: linkState(), detail, pending, message: app.lastMessage(), run: display.mode, estop, hold: !!hold, mode: modeOf(),
       plant: desc ? { name: desc.name, rate_hz: desc.rate_hz, mode: desc.mode, inputs: desc.inputs, outputs: desc.outputs } : null,
       ramp: ramp ? { left: ramp.left, to: ramp.to } : null,
       where: host?.kind ?? null, link, status: plantStatus, t: plantT, updates: { ...updates },
@@ -533,11 +587,12 @@ export function createLive(app, display, record, panelHost) {
       const hit = external();
       if (!hit && feeding) detach();
       if (!host || !on()) return;
-      if (!hit) { app.toast('This system has no External plant block: Live disconnected.'); host.post({ type: 'disconnect' }); return; }
+      if (!hit) { tell('This system has no External plant block: Live disconnected.'); disconnect(); return; }
       if (!desc) return;
       if (!samePorts(hit.block.params, desc)) {
         // (after the toast of whatever caused it, such as Undo)
-        if (takePorts(desc)) setTimeout(() => app.toast(`While connected, the External plant block keeps the plant's ports (${portText(desc)}); Disconnect to change them.`));
+        const went = takePorts(desc);
+        if (went !== false) setTimeout(() => tell(`While connected, the External plant block keeps the plant's ports (${portText(desc)})${wentText(went)}; Disconnect to change them.`));
         return;
       }
       sendProgram();

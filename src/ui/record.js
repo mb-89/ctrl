@@ -99,7 +99,7 @@ export function createRecord(app, display) {
   // done.
   async function save(what, kind) {
     closePop();
-    if (kind === 'png') { const ok = await app.download(`${stem('screen')}.png`, await screenshot(), 'image/png'); if (ok) app.toast('Saved a screenshot of the scope (PNG)'); return ok; }
+    if (kind === 'png') { const ok = await app.download(`${stem('screen')}.png`, await screenshot(), 'image/png', 'use Save ▾ › Copy image'); if (ok) app.toast('Saved a screenshot of the scope (PNG)'); return ok; }
     if (kind === 'image') return copyImage();
     const x = what === 'screen' ? screenTrace() : recordTrace();
     if (!x) { app.toast(what === 'screen' ? 'Nothing on the screen yet.' : 'The live record is empty: connect a plant and Run.'); return false; }
@@ -109,7 +109,7 @@ export function createRecord(app, display) {
     // Built in parts, as a Blob; CSV with a UTF-8 mark first, so spreadsheets
     // read units such as N·m right.
     const file = kind === 'json' ? new Blob(traceToJsonParts(x.trace, meta), { type: 'application/json' }) : new Blob(['\uFEFF', ...traceToCsvParts(x.trace, meta)], { type: 'text/csv' });
-    const ok = await app.download(`${stem(what)}.${kind}`, file, file.type);
+    const ok = await app.download(`${stem(what)}.${kind}`, file, file.type, 'use Save ▾ › Copy (CSV to the clipboard)');
     if (ok) app.toast(`Saved ${duration(span(x.trace))} of ${listed(names)} (${x.what}, ${kind.toUpperCase()})`);
     return ok;
   }
@@ -184,9 +184,13 @@ export function createRecord(app, display) {
   const pop = $('rc-pop');
   function renderPop() {
     const scr = screenTrace(), lr = rec.length > 1;
+    // Where the host offers no downloads, only the copy keys (as the
+    // header's Save JSON and Export HTML hide there).
+    const files = app.canSave();
     const key = (what, kind, text, title) => `<button class="rkey" role="menuitem" data-save="${what}:${kind}" title="${esc(title)}">${text}</button>`;
-    const pics = (what) => key(what, 'png', 'Screenshot (PNG)', 'a picture of the scope as it is: the status line, the screen and the channel badges') + key(what, 'image', 'Copy image', 'the same picture to the clipboard');
-    const keys = (what, png) => key(what, 'csv', 'CSV', 't and every signal, units in the header: for spreadsheets') + key(what, 'json', 'JSON', 'the same as JSON: for scripts')
+    const file = (what, kind, text, title) => (files ? key(what, kind, text, title) : '');
+    const pics = (what) => file(what, 'png', 'Screenshot (PNG)', 'a picture of the scope as it is: the status line, the screen and the channel badges') + key(what, 'image', 'Copy image', 'the same picture to the clipboard');
+    const keys = (what, png) => file(what, 'csv', 'CSV', 't and every signal, units in the header: for spreadsheets') + file(what, 'json', 'JSON', 'the same as JSON: for scripts')
       + key(what, 'copy', 'Copy', 'CSV to the clipboard') + (png ? pics(what) : '');
     const row = (label, note, body) => `<div class="rc-row"><span class="rc-what">${label}<span class="rc-note">${esc(note)}</span></span><span class="rc-keys">${body}</span></div>`;
     pop.innerHTML = row('Screen', scr ? `${duration(span(scr.trace))} · ${Object.keys(scr.trace.signals).length} signals` : 'nothing yet', scr ? keys('screen', true) : pics('screen'))
@@ -289,7 +293,13 @@ export function createRecord(app, display) {
     api: {
       screen: (format = 'csv') => { const x = screenTrace(); return x ? (format === 'json' ? traceToJsonParts : traceToCsvParts)(x.trace, { title: app.project.title, source: x.source }).join('') : ''; },
       live: (format = 'csv') => { const x = recordTrace(); return x ? (format === 'json' ? traceToJsonParts : traceToCsvParts)(x.trace, { title: app.project.title, source: x.source }).join('') : ''; },
-      save: (what = 'screen', format = 'csv') => save(what === 'record' || what === 'live' ? 'record' : 'screen', format),
+      save: async (what = 'screen', format = 'csv') => {
+        const w = what === 'live' ? 'record' : what;
+        if (!['screen', 'record'].includes(w)) throw new Error(`record.save: what is "screen" or "record", not ${JSON.stringify(what)}`);
+        if (!['csv', 'json', 'png'].includes(format)) throw new Error(`record.save: format is "csv", "json" or "png", not ${JSON.stringify(format)}`);
+        if (format === 'png' && w !== 'screen') throw new Error('record.save: "png" is a picture of the screen; the live record saves as "csv" or "json"');
+        return save(w, format);
+      },
       screenshot: async () => { const blob = await screenshot(); return new Promise((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsDataURL(blob); }); },
       reference: (text, name = 'reference') => addReference(text, name),
       clearReferences: () => { refs.length = 0; display.setRefs([]); renderRefs(); },

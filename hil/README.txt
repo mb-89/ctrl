@@ -11,19 +11,24 @@ What it is
 
 Start it
   Linux, macOS:  sh runme.sh
-  Windows:       right-click runme.ps1 > Run with PowerShell
-                 (or: powershell -ExecutionPolicy Bypass -File runme.ps1)
-  With uv:       uv run hil_plant.py
+  Windows:       double-click runme.cmd (it runs runme.ps1; or right-click
+                 runme.ps1 > Run with PowerShell, or in a terminal:
+                 powershell -ExecutionPolicy Bypass -File runme.ps1)
+  With uv:       uv run --python-preference only-managed hil_plant.py
+                 (uv's own Python, which has tkinter for the window;
+                 plain uv run hil_plant.py may pick a system Python without)
   With Python:   pip install websockets, then python3 hil_plant.py
 
   The runme scripts install uv if it is missing (uv's installer through curl
   or wget on Linux and macOS, or curl from the package manager first;
-  winget, else uv's installer, on Windows); uv fetches Python and the
-  websockets package. Options go through: sh runme.sh --help.
+  winget, else uv's installer, on Windows) and say what to do if that
+  fails; uv fetches a Python of its own and the websockets package.
+  Options go through: sh runme.sh --help, runme.cmd --help.
 
   A window opens with a big red STOP (an emergency stop, latched until
-  Reset), Run/Stop, Reset and the state of the link. Without a display, or
-  with --no-gui, the console takes the same commands, one per line:
+  Reset), Run/Stop, Reset, where it listens (ws://127.0.0.1:8765; the title
+  says so too) and the state of the link. Without a display, or with
+  --no-gui, the console takes the same commands, one per line:
   s stop, r run, e E-stop, x reset, q quit.
 
 Then, in Loop Tuner
@@ -36,10 +41,14 @@ Then, in Loop Tuner
 Safety, on both sides
   The plant clamps every input to its limits. If it hears nothing for 10
   cycles, if the page goes away while running, if the arm turns more than a
-  full turn, or if STOP is pressed (in its window, in its console, or the
-  page's E-STOP), it applies its safe inputs (0 V) and stays stopped until
-  Reset. The page stops too if it hears nothing for 10 cycles. Ctrl+C ends
-  the plant cleanly. --slew PCT also limits how fast each input may change.
+  full turn, if an output is not a number, if its own cycle fails, or if
+  STOP is pressed (in its window, in its console, or the page's E-STOP), it
+  applies its safe inputs (0 V) and stays stopped until Reset. Who pressed
+  STOP resets it: a STOP pressed here only here, the page's E-STOP only on
+  the page (while it is connected). The page stops too if it hears nothing
+  for 10 cycles, or no number for an output for 3. Ctrl+C ends the plant
+  cleanly; a cycle that fails ends it with the error, its inputs safe.
+  --slew PCT also limits how fast each input may change.
 
 Two modes
   Control (the default): the page is the controller and sends the control
@@ -75,14 +84,22 @@ The protocol, in a paragraph
   [{name, unit}]}: what each answer also carries for the plant's log),
   "stop", "reset" and "estop". Every cycle the plant sends y {seq, t, y: [...]}
   and the page answers at once with u {seq, u: [...], log: [...]}, values in
-  the units "describe" gave. The plant also sends estop {reason, t}, running
-  {running, by, reason} when it starts or stops at its own keys, and status
-  once a second. The header of hil_plant.py has every message.
+  the units "describe" gave (null for an output that is not a number). The
+  plant also sends estop {reason, t}, running {running, by, reason}
+  whenever it starts or stops, and status once a second, every frame in the
+  order made. Errors: -32700 not JSON, -32600 not a request, -32601 no such
+  method, -32602 params not an object, -32000 refused (E-stop latched, or a
+  STOP pressed at the plant), -32603 failed. The header of hil_plant.py has
+  every message.
 
 Real hardware in its place
   Keep the server, the cycle, the watchdog and the window of hil_plant.py and
   replace the Motor class with your device's I/O: its ports (name, unit, full
   scale, safe value) are the description, advance(span, u) applies the inputs
-  for a span of time, outputs() reads the measurements. Or write the same in
-  any language that speaks the protocol above: Loop Tuner's External plant
-  block takes whatever ports the plant describes.
+  for a span of time, outputs() reads the measurements, and safe(u) puts the
+  safe inputs on the device at once (hil_plant.py calls it on every E-stop,
+  stop, failed cycle and shutdown: it must not fail). Give the device a
+  watchdog of its own as well (its drive goes safe when nobody writes to it
+  for a while): if this script's process dies, nothing here can act. Or
+  write the same in any language that speaks the protocol above: Loop
+  Tuner's External plant block takes whatever ports the plant describes.

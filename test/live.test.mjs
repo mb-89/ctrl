@@ -348,7 +348,7 @@ test('every controller and observer law reads its parameters at every step (so a
   }
 });
 
-test('live edits of any variant parameter are taken in place; names are cosmetic; a stop shows the safe inputs', () => {
+test('live edits of any variant parameter are taken in place; names are cosmetic; an output that is not a number holds', () => {
   // The review's case: a gain-scheduled PI's output limit, lowered while running.
   const gs = { name: 'GS', type: 'gainScheduled', params: { at: [0, 1], Kp: [5, 5], Ki: [1, 1], umin: -12, umax: 12 } };
   const runner = createLiveRunner(LOOP(gs), SIGNALS);
@@ -380,16 +380,16 @@ test('live edits of any variant parameter are taken in place; names are cosmetic
       assert.equal(r.update(normalizeDiagram(d), SIGNALS), 'kept', `${type}.${spec.key}`);
     }
   }
-  // E-stop latched: the plant applies its safe inputs, and the Sink on the
-  // controller's output shows them, not what the controller computes.
+  // An output that is not a number (null on the wire) holds its last number
+  // and is reported, never taken for a measured 0.
   const held = createLiveRunner(LOOP(), SIGNALS);
   held.step(0, [0, 0]);
-  const free = held.step(0.1, [0.1, 0]);
-  assert.ok(Math.abs(free.u[0]) > 0.5);
-  const stopped = held.step(0.11, [0.1, 0], true);
-  assert.deepEqual(stopped.u, [0, 0]);
-  assert.deepEqual(stopped.values.slice(2), [0.1, 0], 'angle as measured, V as applied (safe)');
-  assert.equal(stopped.values[0], 1, 'r plays on');
+  const free = held.step(0.1, [0.4, 0]);
+  assert.deepEqual(free.missing, []);
+  const gap = held.step(0.11, [NaN, 0]);
+  assert.deepEqual(gap.missing, ['angle']);
+  assert.equal(gap.values[2], 0.4, 'angle holds its last number');
+  assert.deepEqual(held.step(0.12, [0.41]).missing, ['speed'], 'a missing value is not a number either');
 });
 
 test('an observer in a live loop takes parameter edits in place and keeps its estimate', () => {
@@ -422,7 +422,7 @@ test('an observer in a live loop takes parameter edits in place and keeps its es
 test('the plant ships in the bundle; the worker part of the bundle runs on its own', () => {
   const bundle = bundleScript();
   assert.ok(bundle.includes('const __HIL_FILES = {"hil_plant.py":"#!/usr/bin/env python3'));
-  for (const f of ['runme.sh', 'runme.ps1', 'README.txt']) assert.ok(bundle.includes(`"${f}":`), f);
+  for (const f of ['runme.sh', 'runme.cmd', 'runme.ps1', 'README.txt']) assert.ok(bundle.includes(`"${f}":`), f);
   // The worker gets the core modules only: no DOM is touched.
   const cut = bundle.indexOf('\n// ---- ui/');
   const core = new Function(`return ${bundle.slice(0, cut)}\nreturn __mods;\n})();`)();
@@ -430,16 +430,22 @@ test('the plant ships in the bundle; the worker part of the bundle runs on its o
   const text = readFileSync(new URL('../hil/hil_plant.py', import.meta.url), 'utf8');
   assert.match(text, /# \/\/\/ script\n# requires-python = ">=3\.9"\n# dependencies = \["websockets>=13"\]\n# \/\/\//, 'PEP 723 metadata, for uv run');
   assert.ok(statSync(new URL('../hil/runme.sh', import.meta.url)).mode & 0o100, 'runme.sh is executable');
+  // A click starts them: runme.cmd (CRLF, for cmd.exe) runs runme.ps1; both
+  // runme scripts ask uv for its own Python (a system one may lack tkinter).
+  const cmd = readFileSync(new URL('../hil/runme.cmd', import.meta.url), 'utf8');
+  assert.ok(cmd.split('\n').slice(0, -1).every((l) => l.endsWith('\r')), 'runme.cmd has CRLF line ends');
+  assert.match(cmd, /powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0runme\.ps1" %\*/);
+  for (const f of ['runme.sh', 'runme.ps1']) assert.match(readFileSync(new URL(`../hil/${f}`, import.meta.url), 'utf8'), /uv run --python-preference only-managed hil_plant\.py/, f);
 });
 
 test('hil-plant.zip: the plant with its runme scripts, read back as a zip (by Python when it is here)', (t) => {
   assert.equal(crc32(new TextEncoder().encode('123456789')), 0xcbf43926, 'the standard CRC-32 check value');
-  const names = ['hil_plant.py', 'runme.sh', 'runme.ps1', 'README.txt'];
+  const names = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README.txt'];
   const files = names.map((f) => ({ name: `hil-plant/${f}`, data: readFileSync(new URL(`../hil/${f}`, import.meta.url), 'utf8'), mode: f.endsWith('.sh') ? 0o755 : 0o644 }));
   const zip = zipFiles(files, new Date(2026, 9, 24, 12, 0, 0));
   const v = new DataView(zip.buffer);
   assert.equal(v.getUint32(0, true), 0x04034b50, 'starts with a local file header');
-  assert.equal(v.getUint16(zip.length - 12, true), 4, 'four files in the directory');
+  assert.equal(v.getUint16(zip.length - 12, true), 5, 'five files in the directory');
   const path = join(tmpdir(), `hil-plant-${process.pid}.zip`);
   writeFileSync(path, zip);
   let out;
@@ -452,6 +458,7 @@ test('hil-plant.zip: the plant with its runme scripts, read back as a zip (by Py
   assert.deepEqual(JSON.parse(out), [
     ['hil-plant/hil_plant.py', '0o100644', '#!/usr/bin/e'],
     ['hil-plant/runme.sh', '0o100755', '#!/bin/sh\n# '],
+    ['hil-plant/runme.cmd', '0o100644', '@echo off\r\nr'],
     ['hil-plant/runme.ps1', '0o100644', "# Loop Tuner"],
     ['hil-plant/README.txt', '0o100644', 'Loop Tuner: '],
   ]);

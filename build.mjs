@@ -6,6 +6,7 @@
 //   import { buildHtml } ...  -> used by the CLI to embed a project
 
 import { stripComments } from './tools/strip-comments.mjs';
+import { AGENT_NOTE } from './src/core/guide.js';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,7 +22,7 @@ const MODULES = [
 // the bundle as __HIL_FILES (ui/live.js zips them), so an exported page has
 // them too. They are kept as written (no comment stripping), so they must
 // carry no provenance either (test/provenance.test.mjs).
-const HIL_FILES = ['hil_plant.py', 'runme.sh', 'runme.ps1', 'README.txt'];
+const HIL_FILES = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README.txt'];
 const hilFiles = () => `// hil/: the external plant, offered under Live\nconst __HIL_FILES = ${JSON.stringify(Object.fromEntries(HIL_FILES.map((f) => [f, readFileSync(join(ROOT, 'hil', f), 'utf8')])))};`;
 
 // Each module runs in its own function scope; its exports go into a registry
@@ -95,19 +96,20 @@ const HELP = `
 <h3>Auto-tune</h3>
 <p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. Every run the tuner tries sweeps across the display at the header's <b>Speed</b> and lasts its own length, one period of the input, whatever the screen shows (a 5 s run takes 5 s at 1×, half a second at 10×); at ∞ it computes as fast as it can and shows each improvement. The scope's Stop stops the tuning too. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>.</p>
 <h3 id="help-live">Live (HIL)</h3>
-<p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time; <b>HIL: external motor</b> in the System library is made for it. Its plant, <b>hil-plant.zip</b> (Plant tab, <b>Download the plant (zip)</b>), is a simulated DC motor swinging an unbalanced arm that stands in for real hardware: replace it with your device behind the same protocol, in any language. To run it, unzip it and run <code>sh runme.sh</code> (Linux, macOS) or <code>runme.ps1</code> (Windows: right-click › Run with PowerShell); they install what it needs (uv, which brings Python and the websockets package) and start it, in a window with a red <b>STOP</b>. Then <b>Connect</b> in the Plant tab.</p>
+<p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time; <b>HIL: external motor</b> in the System library is made for it. Its plant, <b>hil-plant.zip</b> (Plant tab, <b>Download the plant (zip)</b>), is a simulated DC motor swinging an unbalanced arm that stands in for real hardware: replace it with your device behind the same protocol, in any language. To run it, unzip it and run <code>sh runme.sh</code> (Linux, macOS) or double-click <code>runme.cmd</code> (Windows; it runs <code>runme.ps1</code>); they install what it needs (uv, which brings its own Python and the websockets package) and start it, in a window with a red <b>STOP</b> that also says where it listens. Then <b>Connect</b> in the Plant tab.</p>
 <p>Nothing runs by itself. Offline the scope stands still and says OFFLINE. Connect opens the link and reads the plant's ports; the plant stays stopped. <b>Run</b> starts the plant and the sweep: first every reference moves to its waveform's first value at no more than 10 % of its full scale per second (the status line counts down), then the loop runs. Every channel spans its signal's full scale, for orientation. <b>Stop</b> stops both; <b>Single</b> runs one sweep and stops the plant (pressed while running, the sweep under way finishes first). <b>Hold</b> (<kbd>H</kbd>) freezes the screen while the plant runs on. Tune the controller meanwhile: a parameter takes effect at the next sample.</p>
-<p><b>E-STOP</b> (the red key in the header, or <kbd>E</kbd>), <b>STOP</b> in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until <b>Reset</b>; the plant tells the page when it stops or starts at its own keys, and the page follows at once. In <b>reference mode</b> (<b>HIL: external motor, reference mode</b>, with the plant started as <code>sh runme.sh --mode reference</code>) the plant runs its own controller and the page sends the references: the page's controllers and Auto-tune are not in the loop. The plant varies its physics by up to 15 % at every start and does not tell the page. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them. <b>Live settings</b> in the Plant tab set the ramp-in and the references' full scales, saved with the system.</p>
+<p><b>E-STOP</b> (the red key in the header, or <kbd>E</kbd>), <b>STOP</b> in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until <b>Reset</b>: a STOP pressed at the plant is reset at the plant, the page's E-STOP on the page. The plant tells the page when it stops or starts at its own keys, and the page follows at once. In <b>reference mode</b> (<b>HIL: external motor, reference mode</b>, with the plant started as <code>sh runme.sh --mode reference</code>) the plant runs its own controller and the page sends the references: the page's controllers and Auto-tune are not in the loop. The plant varies its physics by up to 15 % at every start and does not tell the page. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them. <b>Live settings</b> in the Plant tab set the ramp-in and the references' full scales, saved with the system.</p>
 <h3>System library</h3>
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <h3 id="help-for-agents">For agents</h3>
-<p>Everything a person does here an agent can do through <code>window.loopTuner</code>: <code>loopTuner.help()</code> returns this guide as data, <code>loopTuner.api</code> lists every method. From a command line: <code>node cli.mjs help</code>.</p>
+<p>Everything a person does here an agent can do through <code>window.loopTuner</code>: <code>loopTuner.help()</code> returns this guide as data, <code>loopTuner.api</code> lists every method. (In the Loop Tuner repository, <code>node cli.mjs help</code> gives the command line's own help.)</p>
 <pre class="guide" id="help-agents"></pre>
 <p><button class="key primary" id="help-close">Close</button></p>`;
 
 const SHELL = `<div id="lt-shell" class="app">
+<p class="sr-only" id="agent-note">${AGENT_NOTE}</p>
 <header class="bar">
   <div class="brand">${ICON.logo}Loop Tuner</div>
   <input id="title" class="title" aria-label="Project title" spellcheck="false">
@@ -130,7 +132,7 @@ const SHELL = `<div id="lt-shell" class="app">
     <button id="export" class="btn" data-standalone title="Download this page with the project inside, to send to someone">Export HTML</button>
     <button id="copy" class="btn" title="Copy the project JSON">Copy JSON</button>
     <button id="copy-html" class="btn" data-framed title="Copy a standalone HTML page with the project inside">Copy HTML</button>
-    <button id="help" class="btn icon" title="Help and keyboard shortcuts (?)" aria-label="Help">?</button>
+    <button id="help" class="btn icon" title="Help and keyboard shortcuts (?); for agents: loopTuner.help()" aria-label="Help, and a guide for agents: loopTuner.help()">?</button>
     <input type="file" id="file" accept=".json,.html,application/json,text/html" hidden>
   </div>
 </header>
@@ -173,9 +175,9 @@ export function buildHtml({ project = null, fragment = false } = {}) {
     // Only the hosted page gets the host's save adapter; the standalone page
     // (and every page it exports) knows nothing of the host.
     const host = '<script id="lt-host">window.__ltHost = { saver: () => window.claude?.use?.(\'downloads\') ?? Promise.resolve(null) };</script>';
-    return `<title>${esc(title)}</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n${FONTS}\n<style id="lt-style">${css}</style>\n${host}\n${body}\n`;
+    return `<title>${esc(title)}</title>\n<meta name="description" content="${esc(AGENT_NOTE)}">\n<meta name="claude:viewport-fit-sides" content="cover">\n${FONTS}\n<style id="lt-style">${css}</style>\n${host}\n${body}\n`;
   }
-  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(title)}</title>\n${FONTS}\n<style id="lt-style">${css}</style>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
+  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(title)}</title>\n<meta name="description" content="${esc(AGENT_NOTE)}">\n${FONTS}\n<style id="lt-style">${css}</style>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

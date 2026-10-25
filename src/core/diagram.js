@@ -549,13 +549,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
     // External plants (Live mode): y is written by the caller, u() reads what
-    // the diagram feeds the block after the last eval, and shows[i] lists the
-    // probes (Sinks) on the same signal as input i, which show what the plant
-    // applies during a stop.
-    externals: externals.map((k) => {
-      const shows = nodes[k].inputs.map((s) => (s < 0 ? [] : probeList.flatMap(([, pk], j) => (nodes[pk].kind === 'pass' && origin(pk) === origin(s) ? [j] : []))));
-      return { name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])), shows };
-    }),
+    // the diagram feeds the block after the last eval.
+    externals: externals.map((k) => ({ name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])) })),
     // Who feeds what around the (first) External plant, by signal name
     // (Live mode: full scales, the ramp-in, the plant's log):
     //   sinks    { name: { output: j } }  a Sink showing the plant's output j
@@ -563,9 +558,10 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     //   sources  { signal: { input: i } } a Source wired to input i
     //            { signal: { ctrl, measured } } a Source on a Controller's r;
     //            measured: the plant output its y comes from (if it does)
-    //   ctrls    [{ key, source, measured }] every Controller block: its id
-    //            path (its probes are key.r, key.y, key.u), the Source on its
-    //            r and the plant output on its y, where they are those
+    //   ctrls    [{ key, source, measured, drives }] every Controller block:
+    //            its id path (its probes are key.r, key.y, key.u), the Source
+    //            on its r and the plant output on its y, where they are those,
+    //            and the plant inputs its output u is wired to (drives)
     links() {
       const ext = externals[0] ?? -1;
       const outOf = (i) => { const o = origin(i); return o >= 0 && nodes[o].kind === 'tap' && nodes[o].parent === ext ? nodes[o].j : undefined; };
@@ -586,7 +582,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         const [r = -1, y = -1] = nodes[k].inputs;
         const ro = origin(r), measured = y >= 0 ? outOf(y) : undefined;
         const source = ro >= 0 && nodes[ro].kind === 'src' ? nodes[ro].signal : undefined;
-        ctrls.push({ key, source, measured });
+        ctrls.push({ key, source, measured, drives: inputsFrom(k) });
         if (source !== undefined && !sources[source]) sources[source] = { ctrl: key, ...(measured !== undefined ? { measured } : {}) };
       }
       return { sinks, sources, ctrls };

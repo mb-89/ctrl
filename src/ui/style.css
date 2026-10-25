@@ -575,6 +575,8 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
 .lv-fsin { display: flex; align-items: center; gap: 4px; color: var(--muted); }
 .lv-fsin .field { width: 0; flex: 1 1 60px; font-family: var(--mono); font-size: 12px; text-align: right; }
 .lv-agents code { font-size: 11.5px; }
+/* Read by screen readers and agents, not shown. */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .btn.estop { background: var(--danger); border-color: var(--danger); color: var(--lcd-ink); font-weight: 700; letter-spacing: 0.06em; padding: 0 14px; }
 .btn.estop:hover:not(:disabled) { background: var(--danger); filter: brightness(1.12); }
 .btn.estop:disabled { opacity: 0.45; }

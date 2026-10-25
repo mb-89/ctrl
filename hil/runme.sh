@@ -5,7 +5,9 @@
 # websockets package. If uv is missing it installs it into ~/.local/bin with
 # uv's own installer, through curl or wget; with neither, it first installs
 # curl with the system's package manager (it says so; that asks for sudo).
-# Run it again any time; what is installed stays.
+# uv then runs the plant on a Python of its own, which has tkinter for the
+# plant's window (a system Python may not). Run it again any time; what is
+# installed stays.
 set -e
 cd "$(dirname "$0")"
 PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
@@ -30,9 +32,16 @@ if ! have uv; then
     fi
   fi
   if ! have uv; then
-    if have curl; then curl -LsSf https://astral.sh/uv/install.sh | sh
-    else wget -qO- https://astral.sh/uv/install.sh | sh
+    # Into ~/.local/bin, which is on this script's PATH whatever the
+    # installer would choose; a failed download leaves uv missing (below).
+    if have curl; then curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" sh || true
+    else wget -qO- https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" sh || true
     fi
   fi
+  if ! have uv; then
+    echo "Could not install uv (no connection to astral.sh?). Install it by hand (https://docs.astral.sh/uv/getting-started/installation/), then run sh runme.sh again."
+    echo "Or, with Python 3.9+: pip install websockets && python3 hil_plant.py"
+    exit 1
+  fi
 fi
-exec uv run hil_plant.py "$@"
+exec uv run --python-preference only-managed hil_plant.py "$@"

@@ -5,7 +5,7 @@
 import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } from '../core/project.js';
 import { diagramNames } from '../core/diagram.js';
 import { findExternal, blockMode, fullScaleChannel } from '../core/hil.js';
-import { GUIDE, apiList, guideText } from '../core/guide.js';
+import { GUIDE, AGENT_NOTE, apiList, guideText } from '../core/guide.js';
 import { createPlantEditor } from './plant.js';
 import { drawnValues, refitSwitched } from './xyview.js';
 import { createControllerTab } from './controller.js';
@@ -316,11 +316,13 @@ function startApp() {
 
   // Run control. With an External plant, Run, Stop and Single go through
   // the plant (ui/live.js, core/live.js liveKey): nothing runs by itself.
+  // Returns { display, plant, why }: why says why a key was refused.
   app.setMode = (m) => {
     // The scope's Stop while Auto-tune sweeps its runs stops the tuning.
     if (m === 'stop') tuneTab?.scopeStopped();
-    if (live?.owns()) { live.key(m); app.runChanged(); return; }
+    if (live?.owns()) { const r = live.key(m); app.runChanged(); return r; }
     display.setMode(m); app.runChanged();
+    return { display: display.mode, plant: null, why: null };
   };
   // The keys and the page's data-run follow the scope's mode.
   app.runChanged = () => { controls.render(display.mode); $('lt-shell').dataset.run = display.mode; display.renderStatus(); };
@@ -513,25 +515,27 @@ function startApp() {
   const exportJson = () => JSON.stringify(withUi(), null, 2);
   function exportHtml() {
     const json = exportJson().replace(/</g, '\\u003c');
-    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n</script>\n<script id="lt-script">${$('lt-script').textContent}</script>\n</body>\n</html>\n`;
+    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n<meta name="description" content="${esc(AGENT_NOTE)}">\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n</script>\n<script id="lt-script">${$('lt-script').textContent}</script>\n</body>\n</html>\n`;
   }
   // Saving a file. Where the hosting page offers a save adapter (the hosted
   // build adds one; the viewer confirms each save), through it; in a plain
   // browser, through a download link. Resolves true once the file is on its
-  // way. Framed without an adapter, only the Copy buttons are offered.
+  // way. Framed without an adapter, only the Copy buttons are offered, and a
+  // save tried anyway says what to do instead (hint).
   let saver = null;
   (window.__ltHost?.saver?.() ?? Promise.resolve(null)).then((d) => {
     saver = d;
     if (d && framed) document.querySelectorAll('[data-standalone]').forEach((el) => { el.hidden = false; });
   }).catch(() => {});
-  async function download(name, data, type) {
+  app.canSave = () => !!saver || !framed;
+  async function download(name, data, type, hint = 'use the Copy keys') {
     if (saver) {
       try { await saver.save({ filename: name, data }); return true; } catch (err) {
         if (err?.code !== 'declined') toast(`Could not save ${name}: ${err?.message ?? err?.code ?? err}`);
         return false;
       }
     }
-    if (framed) { toast('Saving files is not available here; use Copy JSON or Copy HTML.'); return false; }
+    if (framed) { toast(`Saving files is not available here: ${hint}.`); return false; }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
     a.download = name;
@@ -545,8 +549,8 @@ function startApp() {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
   app.copy = copy;  // for Save and the plant script (ui/record.js, ui/live.js)
-  $('save').addEventListener('click', async () => { if (await download(`${stem()}.json`, exportJson(), 'application/json')) toast('Saved the project as JSON'); });
-  $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html')) toast('Exported a standalone page with this project inside'); });
+  $('save').addEventListener('click', async () => { if (await download(`${stem()}.json`, exportJson(), 'application/json', 'use Copy JSON')) toast('Saved the project as JSON'); });
+  $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html', 'use Copy HTML')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
   $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
   $('open').addEventListener('click', () => $('file').click());
@@ -646,14 +650,31 @@ function startApp() {
     else if (e.key === '?') $('help').click();
   });
 
+  // A message for 3 s; the last one stays readable for agents
+  // (#toast[data-last], loopTuner.live.state().message).
   let toastTimer = null;
   function toast(msg) {
     const el = $('toast');
     el.textContent = msg; el.hidden = false;
+    el.dataset.last = msg;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { el.hidden = true; }, 3000);
   }
   app.toast = toast;
+  app.lastMessage = () => $('toast').dataset.last ?? '';
+
+  // A Controller (or Observer) block by id path, in a copy of the project.
+  function controllerBlock(block) {
+    const path = String(block ?? 'ctrl').split('/');
+    const next = structuredClone(app.project);
+    let lv = next.system.plant?.type === 'diagram' ? next.system.plant.diagram : null;
+    let b = null;
+    for (const id of path) { b = lv?.blocks.find((x) => x.id === id); lv = b?.diagram; }
+    if (!b || !['controller', 'observer'].includes(b.type)) throw new Error(`no Controller block "${block}"`);
+    return { next, b };
+  }
+  // What the scope's keys return through the API.
+  const keyResult = (r) => ({ ok: !r?.why, why: r?.why ?? null, run: display.mode, live: live.owns() ? live.api.state() : null });
 
   // Browser API for agents. Plain JSON in and out, the same shapes as the
   // file. help() is the page's own guide (core/guide.js), also in the Help
@@ -670,15 +691,13 @@ function startApp() {
       return entry.name;
     },
     // The running variant of a Controller block (id path), its parameters
-    // changed: one undo step; live, they act at the next sample.
+    // changed: one undo step; live, they act at the next sample. A name the
+    // variant does not have is refused, with the names it has.
     setGains: (block, params) => {
-      const path = String(block ?? 'ctrl').split('/');
-      const next = structuredClone(app.project);
-      let lv = next.system.plant?.type === 'diagram' ? next.system.plant.diagram : null;
-      let b = null;
-      for (const id of path) { b = lv?.blocks.find((x) => x.id === id); lv = b?.diagram; }
-      if (!b || !['controller', 'observer'].includes(b.type)) throw new Error(`no Controller block "${block}"`);
+      const { next, b } = controllerBlock(block);
       const v = b.variants[b.variant ?? 0];
+      const unknown = Object.keys(params ?? {}).filter((k) => !(k in v.params));
+      if (unknown.length) throw new Error(`setGains: ${v.name} (${v.type}) has no ${unknown.join(', ')}; its parameters: ${Object.keys(v.params).join(', ')}`);
       Object.assign(v.params, params);
       app.beginEdit();
       app.project = normalizeProject(next);
@@ -686,14 +705,33 @@ function startApp() {
       changed();
       return structuredClone(v);
     },
+    // Which variant of a Controller block runs (by name, or by index): one
+    // undo step. Live, the new variant starts afresh at the next cycle.
+    setVariant: (block, name) => {
+      const { next, b } = controllerBlock(block);
+      const names = b.variants.map((v) => v.name);
+      const exact = names.indexOf(String(name));
+      const i = Number.isInteger(name) ? name : exact >= 0 ? exact : names.findIndex((n) => n.toLowerCase() === String(name).toLowerCase());
+      if (!(i >= 0 && i < names.length)) throw new Error(`setVariant: "${block}" has no variant ${JSON.stringify(name)}; its variants: ${names.map((n) => JSON.stringify(n)).join(', ')}`);
+      b.variant = i;
+      app.beginEdit();
+      app.project = normalizeProject(next);
+      app.endEdit();
+      changed();
+      return structuredClone(b.variants[i]);
+    },
     getProject: () => structuredClone(app.project),
     setProject: (p) => { load(p, { quiet: true }); return structuredClone(app.project); },
     addComponent: (c) => { app.addComponent(c); return structuredClone(refs()); },
     reference: () => { const { t, r } = referenceTrace(app.project); return { t: Array.from(t), r: Array.from(r) }; },
     autoScale: () => app.autoScale(),
-    run: () => app.setMode('run'),
-    stop: () => app.setMode('stop'),
-    single: () => app.setMode('single'),
+    // The scope's keys: { ok, why (why a key was refused), run (the scope's
+    // mode now), live (live.state() with an External plant, else null) }.
+    // With a plant, it answers a moment later: live.state().pending says
+    // what is under way until then.
+    run: () => keyResult(app.setMode('run')),
+    stop: () => keyResult(app.setMode('stop')),
+    single: () => keyResult(app.setMode('single')),
     // The speed of time: x a factor, or -1 (or 'inf') for as fast as possible.
     // Returns { speed, effective, achieved, simulation, locked } (-1 for as
     // fast as possible; simulation: how fast the page simulates the screen,
