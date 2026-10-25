@@ -43,7 +43,16 @@ test('the built page carries no provenance (names, accounts, repositories, sessi
     }
   }
   // The standalone page does not even name the host it was first shown in.
-  assert.equal(/claude/i.exec(pages.standalone), null, 'the standalone page mentions the host');
+  // One exception (input 36): the MCP server the page carries explains how to
+  // connect an agent, naming MCP clients as instructions (Claude Code's
+  // command, Claude Desktop's config file). Those names are set aside in its
+  // own files only (__MCP_FILES: mcp.mjs's help, README.md), and only them:
+  // claude.ai, the host's adapter and anything else still fail, there too.
+  const CLIENTS = /Claude (?:Code|Desktop)|claude mcp add|claude_desktop_config\.json/g;
+  const own = pages.standalone.replace(/^const __MCP_FILES = .*$/m, (line) => line.replace(CLIENTS, ''));
+  assert.ok(own !== pages.standalone, 'the MCP server\'s files name the clients it explains');
+  assert.equal(/claude/i.exec(own), null, 'the standalone page mentions the host');
+  assert.equal(/claude/i.exec(pages.standalone.replace(/^const __MCP_FILES = .*$/m, '')), null, 'client names only in the MCP server\'s own files');
   assert.ok(!/\/\/ ---- ui\//.test('') && pages.standalone.includes('\n// ---- ui/'), 'module markers stay (the live worker finds the core by them)');
 });
 
@@ -54,5 +63,5 @@ test('dist holds what the build makes and nothing else', async () => {
   const dist = new URL('../dist/', import.meta.url);
   assert.deepEqual(readdirSync(dist).sort(), ['artifact.html', 'hil-plant', 'loop-tuner.html']);
   const plant = readdirSync(new URL('hil-plant/', dist));
-  assert.deepEqual(plant.filter((f) => !/^(README\.txt|hil_plant\.py|loop-tuner-core\.js|runme\.(sh|cmd|ps1))$/.test(f)), [], 'the plant\'s files only');
+  assert.deepEqual(plant.filter((f) => !/^(README\.md|hil_plant\.py|loop-tuner-core\.js|runme\.(sh|cmd|ps1))$/.test(f)), [], 'the plant\'s files only');
 });

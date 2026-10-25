@@ -41,6 +41,44 @@ const TERMINAL = !!process.stdin.isTTY;
 
 const arg = (name) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
 const log = (...a) => process.stderr.write(`loop-tuner mcp: ${a.join(' ')}\n`);
+const ME = fileURLToPath(import.meta.url);
+
+// What it is and how to connect an agent, for someone who has never used
+// MCP (input 36): printed when it starts (on stderr: stdout is the protocol)
+// and by --help; README.md says the same. url: where the page is.
+function explain(url) {
+  const cfg = (key, extra = {}) => JSON.stringify({ [key]: { 'loop-tuner': { ...extra, command: 'node', args: [ME] } } });
+  return `Loop Tuner's MCP server
+=======================
+An MCP server gives an AI agent tools: MCP, the Model Context Protocol, is how
+agent apps (MCP clients) start a program like this one and call what it offers.
+This one lets an agent load, run, measure, tune and analyse control loops, and
+work on the Loop Tuner page you have open, so you both see the same page.
+
+Connect an agent: register this server once with your MCP client.
+  Claude Code:     claude mcp add loop-tuner -- node "${ME}"
+  Claude Desktop:  Settings > Developer > Edit Config (claude_desktop_config.json), add
+                   ${cfg('mcpServers')}
+  VS Code:         .vscode/mcp.json in your folder:
+                   ${cfg('servers', { type: 'stdio' })}
+  Cursor:          ~/.cursor/mcp.json:
+                   ${cfg('mcpServers')}
+  Any other client: an MCP server over stdio, the command
+                   node "${ME}"
+The client then starts this server by itself whenever the agent needs it.
+
+${url ? `The page: ${url}\n  Open it in a browser; the agent works on the same page (or ask it to open it).\n\n` : ''}Ask the agent, for example: "help me tune this system", "let's look at this
+identification together", "why does this loop ring?".
+
+Options (none is needed): --port N (the page's port, default 8766; a free one
+if it is taken), --no-page (no page), --no-open (from a terminal: do not open
+the browser), --help.
+`;
+}
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  process.stdout.write(`node mcp.mjs [options]\n\n${explain('http://127.0.0.1:8766/ (or the port it prints)')}`);
+  process.exit(0);
+}
 
 // ---- The core: the download's (the page's own, cut from its script) or the source's
 
@@ -200,7 +238,12 @@ function servePage(port) {
   server.on('error', (e) => {
     if (e.code === 'EADDRINUSE' && port !== 0) { log(`port ${port} is in use; taking a free one`); port = 0; server.listen(0, '127.0.0.1'); } else log(`the page is not served: ${e.message}`);
   });
-  server.on('listening', () => { page.url = `http://127.0.0.1:${server.address().port}/`; log(`the page: ${page.url}`); });
+  server.on('listening', () => {
+    page.url = `http://127.0.0.1:${server.address().port}/`;
+    process.stderr.write(`\n${explain(page.url)}\n`);
+    // Run by a person (runme): the page opens in the default browser.
+    if (TERMINAL && !process.argv.includes('--no-open')) openBrowser(page.url);
+  });
   server.listen(port, '127.0.0.1');
   // Under an agent's client, stdin keeps the server alive; it ends with it.
   if (!TERMINAL) server.unref();
@@ -688,13 +731,10 @@ function serve() {
   process.stdin.on('end', () => queue.then(() => process.exit(0)));
 }
 
-// Started from a terminal rather than by an agent's client: the page only,
-// and how to register the server.
-if (TERMINAL) {
-  const me = fileURLToPath(import.meta.url);
-  log('started from a terminal, so no agent talks to this window; it serves the page only. Register this server with your agent\'s client (an MCP server over stdio):');
-  process.stderr.write(`\n  the command:              node "${me}"\n  a command-line client:    <client> mcp add loop-tuner -- node "${me}"\n  a desktop client's JSON:  { "mcpServers": { "loop-tuner": { "command": "node", "args": [${JSON.stringify(me)}] } } }\n\n`);
-}
+// Started from a terminal (runme) rather than by an agent's client: no agent
+// talks to this window; it serves the page and says how to connect one.
+if (TERMINAL) process.stderr.write('Started from a terminal: this window serves the page; an agent connects through its own MCP client (below). Ctrl+C ends it.\n');
+if (process.argv.includes('--no-page')) process.stderr.write(`\n${explain(null)}\n`);
 if (!process.argv.includes('--no-page')) servePage(Number(arg('--port') ?? process.env.LOOP_TUNER_PORT ?? 8766));
 if (!TERMINAL) serve();
 log(`ready (protocol ${[...MODERN, ...LEGACY].join(', ')})`);

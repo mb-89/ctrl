@@ -5,10 +5,11 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, writeFileSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
 import { startServer, stopAll } from '../tools/mcp-client.mjs';
 import { buildHtml, bundleScript } from '../build.mjs';
 import { simulatorCore } from '../src/core/hilsim.js';
@@ -17,7 +18,7 @@ const require = createRequire(import.meta.url);
 let chromium = null;
 try { ({ chromium } = require(process.env.PLAYWRIGHT || '/opt/node22/lib/node_modules/playwright')); } catch { /* not installed */ }
 after(stopAll);
-const FILES = ['README.txt', 'loop-tuner-core.js', 'loop-tuner.html', 'mcp.mjs', 'runme.cmd', 'runme.ps1', 'runme.sh'];
+const FILES = ['README.md', 'loop-tuner-core.js', 'loop-tuner.html', 'mcp.mjs', 'runme.cmd', 'runme.ps1', 'runme.sh'];
 const root = new URL('../', import.meta.url);
 
 // The download's folder as the page makes it, from the source (the same
@@ -29,7 +30,7 @@ function folder(files) {
 }
 const fromSource = () => ({
   'mcp.mjs': readFileSync(new URL('mcp.mjs', root), 'utf8'),
-  ...Object.fromEntries(['README.txt', 'runme.sh', 'runme.cmd', 'runme.ps1'].map((f) => [f, readFileSync(new URL(`mcp/${f}`, root), 'utf8')])),
+  ...Object.fromEntries(['README.md', 'runme.sh', 'runme.cmd', 'runme.ps1'].map((f) => [f, readFileSync(new URL(`mcp/${f}`, root), 'utf8')])),
   'loop-tuner-core.js': simulatorCore(bundleScript()),
   'loop-tuner.html': buildHtml(),
 });
@@ -58,7 +59,7 @@ test('mcp download: away from the source, the server runs on the page\'s own cor
     assert.ok(served.includes('id="lt-script"'));
   } finally { await Promise.all([away.close(), here.close()]); }
   assert.ok(statSync(join(dir, 'runme.sh')).mode & 0o100, 'runme.sh is executable');
-  const readme = readFileSync(join(dir, 'README.txt'), 'utf8');
+  const readme = readFileSync(join(dir, 'README.md'), 'utf8');
   assert.match(readme, /mcp add loop-tuner -- node/);
   assert.match(readme, /"mcpServers"/);
   for (const f of ['runme.sh', 'runme.ps1']) assert.doesNotMatch(readFileSync(join(dir, f), 'utf8'), /\bpip\b/, `${f} never uses pip`);
@@ -88,8 +89,66 @@ test('mcp download: the Export menu offers it, and the page zips the files it ca
     const files = await page.evaluate(() => window.loopTuner.mcpFiles());
     assert.deepEqual(Object.keys(files).sort(), FILES);
     const src = fromSource();
-    for (const f of ['mcp.mjs', 'README.txt', 'runme.sh', 'runme.cmd', 'runme.ps1']) assert.equal(files[f], src[f], f);
+    for (const f of ['mcp.mjs', 'README.md', 'runme.sh', 'runme.cmd', 'runme.ps1']) assert.equal(files[f], src[f], f);
     assert.equal(files['loop-tuner-core.js'], simulatorCore(await page.evaluate(() => document.getElementById('lt-script').textContent)));
     assert.match(files['loop-tuner.html'], /id="loop-tuner-project">\n\{/);
   } finally { await browser.close(); }
+});
+
+// Input 36: both downloads alike, one click, options in --help; the MCP
+// server explains itself.
+const carried = (html, name) => JSON.parse(new RegExp(`^const ${name} = (\\{.*\\});$`, 'm').exec(html)[1]);
+const ONE_CLICK = ['README.md', 'runme.cmd', 'runme.ps1', 'runme.sh'];
+
+test('both downloads alike: runme.sh, runme.ps1, runme.cmd and README.md beside the program', () => {
+  const html = buildHtml();
+  const hil = Object.keys(carried(html, '__HIL_FILES')).sort(), mcp = Object.keys(carried(html, '__MCP_FILES')).sort();
+  assert.deepEqual(hil, [...ONE_CLICK, 'hil_plant.py'].sort());
+  assert.deepEqual(mcp, [...ONE_CLICK, 'mcp.mjs'].sort());
+  // (each zip adds the page's core, loop-tuner-core.js; the server's also the page)
+  for (const files of [carried(html, '__HIL_FILES'), carried(html, '__MCP_FILES')]) {
+    assert.match(files['README.md'], /^# /, 'README.md is Markdown');
+    assert.match(files['README.md'], /one click/i);
+    assert.match(files['runme.cmd'], /runme\.ps1/, 'a double-click on Windows runs runme.ps1');
+    for (const f of ['runme.sh', 'runme.ps1']) assert.doesNotMatch(files[f], /\bpip\b/, `${f} never uses pip`);
+  }
+});
+
+test('runme --help lists the options and installs nothing', () => {
+  const run = (dir, env = {}) => spawnSync('/bin/sh', [join(dir, 'runme.sh'), '--help'], { encoding: 'utf8', env: { ...process.env, ...env } });
+  const zip = folder(fromSource());   // runme.sh beside mcp.mjs, as unzipped
+  const mcp = run(zip);
+  assert.equal(mcp.status, 0);
+  assert.match(mcp.stdout, /--port N/);
+  assert.doesNotMatch(mcp.stdout + mcp.stderr, /installing/i);
+  // Without Node, it says where the options are, and still installs nothing.
+  const noNode = ['/usr/bin', '/bin'].filter((d) => !existsSync(join(d, 'node'))).join(':');
+  const bare = run(zip, { PATH: noNode });
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.match(bare.stdout, /README\.md has them/);
+  const hil = run(fileURLToPath(new URL('hil/', root)));
+  assert.equal(hil.status, 0);
+  assert.match(hil.stdout, /--model NAME/);
+  assert.doesNotMatch(hil.stdout + hil.stderr, /Installing uv/);
+});
+
+test('the MCP server explains itself when it starts: what MCP is, the page\'s address, the connect lines with its path', async () => {
+  const me = fileURLToPath(new URL('mcp.mjs', root));
+  const child = spawn(process.execPath, [me, '--port', '0'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let err = '';
+  child.stderr.setEncoding('utf8');
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no start text: ${err}`)), 20000);
+    child.stderr.on('data', (d) => { err += d; if (/Options \(none is needed\)/.test(err)) { clearTimeout(timer); resolve(); } });
+  });
+  child.stdin.end();
+  assert.match(err, /An MCP server gives an AI agent tools/);
+  assert.match(err, /The page: http:\/\/127\.0\.0\.1:\d+\//);
+  assert.ok(err.includes(`claude mcp add loop-tuner -- node "${me}"`), 'Claude Code, with the path');
+  assert.ok(err.includes(JSON.stringify({ mcpServers: { 'loop-tuner': { command: 'node', args: [me] } } })), 'the JSON config, with the path');
+  assert.match(err, /VS Code/);
+  assert.match(err, /help me tune this system/);
+  const help = spawnSync(process.execPath, [me, '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0);
+  assert.ok(help.stdout.includes(`node "${me}"`));
 });
