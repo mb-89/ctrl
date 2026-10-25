@@ -4,11 +4,8 @@
 // stop keys, log file and bench. See design/output/hil.md.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { liveKey, liveScales, createLiveLoop } from '../src/core/live.js';
 import { singleFrom } from '../src/core/speed.js';
@@ -17,8 +14,8 @@ import { checkDescription, sameDescription, rpcRequest, uMessage, startParams } 
 import { normalizeDiagram } from '../src/core/diagram.js';
 import { normalizeReference } from '../src/core/signals.js';
 import { bundleScript } from '../build.mjs';
+import { runPlant, startPlant } from './plant.mjs';
 
-const SCRIPT = fileURLToPath(new URL('../hil/hil_plant.py', import.meta.url));
 
 test('the scope keys with an External plant: nothing runs by itself, Run and Stop go through the plant', () => {
   // Offline or connecting: Run and Single are refused, the scope stays stopped.
@@ -143,11 +140,15 @@ test('the loop: a reset at the plant\'s own key clears an E-stop the plant latch
   assert.ok(!plant.sent.some((m) => m.method === 'start'), 'nothing started');
 });
 
-// ---- The plant script (when Python is here; the server parts with uv).
-function py(args, opts = {}) { return execFileSync('python3', ['-I', SCRIPT, ...args], { stdio: 'pipe', ...opts }).toString(); }
+// ---- The plant script (run by uv, with the page's core, when uv can here).
+const py = (args) => runPlant(args);
+// What the script says when it refuses (its stderr).
+function refusal(args) {
+  try { py(args); return 'it did not refuse'; } catch (err) { return String(err.stderr); }
+}
 
-test('the plant script: both modes describe the library systems, a second plant, and never the physics', async (t) => {
-  try { py(['--check']); } catch (err) { if (err.code === 'ENOENT') { t.skip('no python3'); return; } throw err; }
+test('the plant script: both modes describe the library systems, any model, and never the model or its physics', async (t) => {
+  if (py(['--describe']) === null) { t.skip('uv with websockets and mini-racer in its cache is not here'); return; }
   const { SYSTEM_LIBRARY } = await import('../src/core/systems.js');
   const block = (name) => normalizeDiagram(SYSTEM_LIBRARY.find((s) => s.name === name).plant.diagram).blocks.find((b) => b.type === 'external');
   const control = checkDescription(JSON.parse(py(['--describe'])));
@@ -161,43 +162,21 @@ test('the plant script: both modes describe the library systems, a second plant,
   const logger = checkDescription(JSON.parse(py(['--describe', '--mode', 'log'])));
   assert.equal(logger.mode, 'log');
   assert.equal(logger.inputs.length, 0);
-  const heater = checkDescription(JSON.parse(py(['--describe', '--plant', 'heater'])));
-  assert.deepEqual([heater.inputs[0].name, heater.outputs[0].name, heater.outputs[0].unit], ['P', 'T', '°C']);
-  assert.match(py(['--check', '--plant', 'heater']), /°C after 30 s/);
-  // Full scales for every port, no physics in the description.
-  for (const d of [control, reference, heater]) for (const p of [...d.inputs, ...d.outputs]) assert.ok(Number.isFinite(p.min) && Number.isFinite(p.max), `${p.name} has a full scale`);
-  const raw = py(['--describe', '--seed', '3']);
-  for (const name of ['"R"', '"J"', '"mgl"', '"Tc"', 'seed']) assert.ok(!raw.includes(name), `describe does not say ${name}`);
-  // --show-params and the seed are for the person at the plant, in --help.
+  const oven = checkDescription(JSON.parse(py(['--describe', '--model', 'Oven, badly tuned'])));
+  assert.deepEqual([oven.inputs[0].name, oven.outputs[0].name, oven.outputs[0].unit], ['P', 'T', '°C']);
+  assert.match(py(['--check', '--model', 'Oven, badly tuned']), /Oven, badly tuned, nominal, after 5 s of its own controller: T [\d.]+ °C/);
+  // Full scales for every port; no model, no physics in the description.
+  for (const d of [control, reference, oven]) for (const p of [...d.inputs, ...d.outputs]) assert.ok(Number.isFinite(p.min) && Number.isFinite(p.max), `${p.name} has a full scale`);
+  const raw = py(['--describe', '--seed', '3', '--random']);
+  for (const name of ['"R"', '"J"', '"mgl"', '"Tc"', 'seed', 'motor', 'pendulum', 'Oven', 'tank']) assert.ok(!raw.includes(name), `describe does not say ${name}`);
+  // --list names every model; the model, the seed and --show-params are for the person at the plant, in --help.
+  const list = py(['--list']);
+  for (const e of SYSTEM_LIBRARY.filter((s) => !s.plant.diagram.blocks.some((b) => b.type === 'external'))) assert.ok(list.includes(`${e.name}: in `), e.name);
   const help = py(['--help']);
-  for (const opt of ['--plant', '--mode', '--vary', '--seed', '--show-params', '--log', '--bench', '--no-gui', '--slew']) assert.ok(help.includes(opt), opt);
+  for (const opt of ['--model', '--random', '--list', '--detail', '--dyno', '--core', '--mode', '--vary', '--seed', '--show-params', '--log', '--bench', '--no-gui', '--slew']) assert.ok(help.includes(opt), opt);
+  assert.match(refusal(['--plant', 'heater']), /--plant is gone: .*--model "Oven, badly tuned"/);
+  assert.match(refusal(['--model', 'No such thing', '--describe']), /no model "No such thing"; --list gives the models/);
 });
-
-// A port nobody listens on now (the system picks it).
-const freePort = () => new Promise((resolve) => { const srv = createServer(); srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)); }); });
-
-
-// Starts hil_plant.py (console mode, stdin a pipe) on a free port: with
-// python3 if it has websockets, else with uv from its cache (no network).
-async function startPlant(extra = []) {
-  const port = await freePort();
-  const ways = [['python3', ['-I', SCRIPT, '--no-gui', '--port', String(port), ...extra]], ['uv', ['run', '--offline', '--quiet', SCRIPT, '--no-gui', '--port', String(port), ...extra]]];
-  for (const [cmd, args] of ways) {
-    const proc = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    let text = '';
-    proc.stdout.on('data', (b) => { text += b; });
-    const up = await new Promise((resolve) => {
-      const done = (v) => { clearTimeout(timer); resolve(v); };
-      const timer = setTimeout(() => done(false), 20000);
-      proc.on('error', () => done(false));
-      proc.on('exit', () => done(false));
-      proc.stdout.on('data', () => { if (/listening on/.test(text)) done(true); });
-    });
-    if (up) return { proc, port, out: () => text };
-    proc.kill();
-  }
-  return null;
-}
 
 test('hil_plant.py: STOP, reset, run and stop at its own keys reach the page; r and e go to its log file (when it can run here)', async (t) => {
   if (typeof WebSocket !== 'function') { t.skip('no WebSocket in this Node'); return; }

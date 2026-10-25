@@ -7,6 +7,7 @@
 
 import { stripComments } from './tools/strip-comments.mjs';
 import { AGENT_NOTE } from './src/core/guide.js';
+import { simulatorCore, CORE_FILE } from './src/core/hilsim.js';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -14,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 export const MODULES = [
-  'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/speed.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/structure.js', 'core/observers.js', 'core/hil.js', 'core/xml.js', 'core/urdf.js', 'core/rbd.js', 'core/puma560.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/spectrum.js', 'core/analysis.js', 'core/autotune.js',
+  'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/speed.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/structure.js', 'core/observers.js', 'core/hil.js', 'core/xml.js', 'core/urdf.js', 'core/rbd.js', 'core/puma560.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/hilsim.js', 'core/spectrum.js', 'core/analysis.js', 'core/autotune.js',
   'core/ramp.js', 'core/live.js', 'core/trace.js', 'core/zip.js', 'core/guide.js',
   'ui/units.js', 'ui/palette.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/measure.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/view3d.js', 'ui/plant.js', 'ui/ctldiagram.js', 'ui/controller.js', 'ui/autotune.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/speed.js', 'ui/limited.js', 'ui/app.js',
 ];
@@ -274,5 +275,10 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const standalone = buildHtml();
   writeFileSync(join(ROOT, 'dist/loop-tuner.html'), standalone);
   writeFileSync(join(ROOT, 'dist/artifact.html'), buildHtml({ fragment: true }));
+  // The plant's zip, unpacked: hil/ and the page's own core, as the page zips them.
+  const plant = join(ROOT, 'dist/hil-plant');
+  mkdirSync(plant, { recursive: true });
+  for (const f of HIL_FILES) writeFileSync(join(plant, f), readFileSync(join(ROOT, 'hil', f)), { mode: f.endsWith('.sh') ? 0o755 : 0o644 });
+  writeFileSync(join(plant, CORE_FILE), simulatorCore(bundleScript()));
   console.log(`dist/loop-tuner.html  ${(standalone.length / 1024).toFixed(0)} KB`);
 }
