@@ -2,6 +2,14 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: an agentic mode: the MCP server hosts the page; one Export menu ([input 30](../input/2026-10-25-30-mcp-hosts-the-page-export-menu.md))
+
+The person: "we have a way to run this thing in an agentic mode. And then there is an MCP server that also hosts the web page ... the MCP server is something independent from our [HIL] plant, because the [HIL] plant really is only an example ... We have save JSON, export HTML, copy JSON, copy HTML. You can put that all into one export menu. You can also put the download for the [HIL] plant there ... a download button for the [HIL] server, and ... for the MCP server, and the MCP server would just host the same ... page locally, but it would also allow the agent to connect to it ... if it slows down the Puma, then don't spawn an agent to do it."
+- **Agentic mode**: the MCP server (Node, no dependencies) serves the same page on localhost; the person opens it in a browser, and the page connects back to the server, so the agent's tools act on the page the person sees (load a system, set parameters, run, read the scope's signals, Auto-tune, Analysis), next to the tools that run the core without a page. Interpretation: the page bridge uses the page's own agent API (`window.loopTuner`); the page only connects back when it was served by the MCP server.
+- **Independent of the HIL plant**: separate code, separate download; neither needs the other.
+- **One Export menu** in the header for Save JSON, Copy JSON, Export HTML, Copy HTML, Download the HIL plant (zip) and Download the MCP server (zip). Interpretation: the Plant tab's Live panel keeps its own plant download too ("this download can have two buttons").
+- **Done by the MCP session already running**, on its own branch and container; no new agent, the PUMA's session is untouched.
+
 ## 2026-10-25 · v2.9: the PUMA in parallel; an MCP server; the order to the end ([input 29](../input/2026-10-25-29-puma-parallel-mcp-order.md))
 
 The person: "why does the Puma have to wait for the foundations? Can you not clarify the interfaces that are needed in advance and then do it in parallel? ... finish up and make it runnable as an MCP ... before the overhaul. So tomorrow I could use that if the overhaul doesn't finish. Then you can start the overhaul at night, and after that you can start the benchmark feature. So they are nice to have, but if they don't make it in, that doesn't break anything. But the Puma, that's important."
