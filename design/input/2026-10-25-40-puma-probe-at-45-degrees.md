@@ -1,0 +1,3 @@
+# The PUMA's tool is a probe touching the circle at 45° from outside (2026-10-25)
+
+> Maybe we can make it, I'm not sure if, one, two, three. Maybe if we made the tool a pointer, you know, these sapphire red pointer dots, and we made it so it is supposed to, the sapphire dot is supposed to touch the circle with a with an angle, so not from the top, but from like 45 degrees from outside of the circle. I feel like that would put a bit more movement, a visible movement onto all the axes. That would also mean, I feel like, is every axle moving? I guess it is. A bit difficult to see, but that would make it clearer. See if you can do that.
