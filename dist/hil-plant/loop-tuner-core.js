@@ -5100,6 +5100,264 @@ const PUMA560 = {
 
 return { PUMA560 };
 })();
+// ---- core/mech.js
+__mods['core/mech.js'] = (() => {
+
+const { NAME_RE, isReserved } = __mods['core/formula.js'];
+const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
+const coord = (key, label, def) => ({ key, label, default: def, kind: 'coord' });
+
+const MECH_ELEMENTS = {
+  world: { label: 'World', group: 'Mechanics', formula: 'g ↓', part: true, frames: () => ['W'], params: [num('g', 'g', 9.81, { unit: 'm/s²' })], ports: () => [0, 0] },
+  rail: {
+    label: 'Rail', group: 'Mechanics', formula: 'F − b·v', part: true, joint: true, frames: () => ['B', 'F'],
+    params: [coord('name', 'Coordinate', 'x'), coord('rate', 'Rate', 'v'), num('b', 'Friction b', 0, { unit: 'N·s/m', min: 0 }), num('incline', 'Incline α', 0, { unit: 'rad' }),
+      num('x0', 'Start s₀', 0, { unit: 'm' }), num('v0', 'Start ṡ₀', 0, { unit: 'm/s' }), num('force', 'Force input (0/1)', 1, { int: true, min: 0, max: 1 })],
+    ports: (p) => [p.force ? 1 : 0, 2], outputs: (p) => [p.name, p.rate], inputNames: (p) => (p.force ? ['F'] : []),
+  },
+  hinge: {
+    label: 'Hinge', group: 'Mechanics', formula: 'θ from upright', part: true, joint: true, frames: () => ['B', 'F'],
+    params: [coord('name', 'Coordinate', 'θ'), coord('rate', 'Rate', 'ω'), num('c', 'Damping c', 0, { unit: 'N·m·s/rad', min: 0 }),
+      num('theta0', 'Start θ₀', 0, { unit: 'rad' }), num('omega0', 'Start ω₀', 0, { unit: 'rad/s' }), num('torque', 'Torque input (0/1)', 0, { int: true, min: 0, max: 1 })],
+    ports: (p) => [p.torque ? 1 : 0, 2], outputs: (p) => [p.name, p.rate], inputNames: (p) => (p.torque ? ['τ'] : []),
+  },
+  mass: { label: 'Mass', group: 'Mechanics', formula: 'm', part: true, frames: () => ['F'], params: [num('m', 'Mass m', 1, { unit: 'kg', min: 0 })], ports: () => [0, 0] },
+  rod: {
+    label: 'Rod', group: 'Mechanics', formula: 'l, m at tip', part: true, frames: () => ['B', 'T'],
+    params: [num('l', 'Length l', 0.5, { unit: 'm', min: 0 }), num('m', 'Mass m', 0, { unit: 'kg', min: 0 }), { key: 'at', label: 'Mass at', default: 'tip', kind: 'choice', options: ['tip', 'uniform'] }],
+    ports: () => [0, 0],
+  },
+};
+const isPart = (type) => Object.hasOwn(MECH_ELEMENTS, type);
+
+function checkCoord(v, where) {
+  const s = String(v ?? '').trim();
+  if (!NAME_RE.test(s) || s.length > 8) throw new Error(`${where}: a short name such as x, θ1 or ω1 (letters, digits, _)`);
+  if (isReserved(s)) throw new Error(`${where}: "${s}" is the time, a constant or a function; choose another name`);
+  return s;
+}
+
+const label = (b) => `'${b.name ?? b.id}'`;
+const err = (message, blocks) => Object.assign(new Error(message), { code: 'mechanism', blocks });
+
+function parseFrame(end) {
+  const s = String(end), at = s.lastIndexOf(':');
+  return at < 0 ? { id: s, port: '' } : { id: s.slice(0, at), port: s.slice(at + 1) };
+}
+
+function normalizeJoins(joins, blocks, path) {
+  if (joins === undefined || joins === null) return undefined;
+  if (!Array.isArray(joins)) throw new Error(`${path}.joins: a list of joins, each a list of frame ports such as ["world:W", "rail:B"]`);
+  const byId = new Map(blocks.map((b) => [b.id, b])), used = new Map();
+  return joins.map((j, i) => {
+    const at = `${path}.joins[${i}]`;
+    if (!Array.isArray(j) || j.length < 2) throw new Error(`${at}: a join holds two frame ports or more`);
+    return j.map((end) => {
+      const { id, port } = parseFrame(end), b = byId.get(id);
+      if (!b) throw new Error(`${at}: no block "${id}"`);
+      const frames = MECH_ELEMENTS[b.type]?.frames(b.params) ?? [];
+      if (!frames.includes(port)) throw new Error(`${at}: ${label(b)} has no frame port "${port}"${frames.length ? ` (its frame ports: ${frames.join(', ')})` : ' (only Mechanics parts have frame ports)'}`);
+      const key = `${id}:${port}`;
+      if (used.has(key)) throw new Error(`${at}: ${key} is already in join ${used.get(key) + 1}; a port is in one join (one point)`);
+      used.set(key, i);
+      return key;
+    });
+  });
+}
+
+function mechanisms(blocks, joins = []) {
+  const parts = blocks.filter((b) => isPart(b.type));
+  if (!parts.length) return [];
+  const frameOf = new Map();
+  joins.forEach((j, i) => { for (const key of j) frameOf.set(key, i); });
+  let next = joins.length;
+  const atFrame = new Map();   
+  for (const b of parts) {
+    for (const port of MECH_ELEMENTS[b.type].frames(b.params)) {
+      const key = `${b.id}:${port}`;
+      if (!frameOf.has(key)) frameOf.set(key, next++);
+      const f = frameOf.get(key);
+      if (!atFrame.has(f)) atFrame.set(f, []);
+      atFrame.get(f).push({ part: b, port });
+    }
+  }
+  const seen = new Set(), out = [];
+  for (const world of parts.filter((b) => b.type === 'world')) {
+    if (seen.has(world.id)) continue;
+    const reached = new Map(), mine = [world], rails = [], hinges = [], bodies = [], base = [];
+    seen.add(world.id);
+    const start = frameOf.get(`${world.id}:W`);
+    reached.set(start, { c: [0, 0], rails: [], rods: [], hinge: -1 });
+    const queue = [start];
+    while (queue.length) {
+      const f = queue.shift(), fr = reached.get(f);
+      for (const { part: b, port } of atFrame.get(f)) {
+        if (b === world && port === 'W') continue;
+        if (seen.has(b.id)) {
+          if (mine.includes(b)) continue;
+          throw err(`${label(b)} is in two mechanisms`, [b.id]);
+        }
+        if (b.type === 'world') throw err(`${label(world)} and ${label(b)} are joined: one World per mechanism`, [world.id, b.id]);
+        const frames = MECH_ELEMENTS[b.type].frames(b.params);
+        if (frames.length === 2 && port !== frames[0]) throw err(`${label(b)} is joined the wrong way round: its base (${frames[0]}) goes on the World's side`, [b.id]);
+        seen.add(b.id); mine.push(b);
+        const p = b.params;
+        if (b.type === 'mass') { bodies.push({ part: b, m: p.m, I: 0, hinge: -1, c: [...fr.c], rails: [...fr.rails], rods: [...fr.rods] }); continue; }
+        let g;
+        if (b.type === 'rail') {
+          if (fr.hinge >= 0) throw err(`${label(b)} sits on a part that turns (${label(hinges[fr.hinge])}): a rail's base must not turn (the World or another rail)`, [b.id, hinges[fr.hinge].id]);
+          rails.push(b);
+          g = { c: [...fr.c], rails: [...fr.rails, rails.length - 1], rods: [...fr.rods], hinge: -1 };
+        } else if (b.type === 'hinge') {
+          hinges.push(b); base.push(fr.hinge);
+          g = { c: [...fr.c], rails: [...fr.rails], rods: [...fr.rods], hinge: hinges.length - 1 };
+        } else {
+          const along = (k) => (fr.hinge < 0 ? { c: [fr.c[0], fr.c[1] + k * p.l], rods: [...fr.rods] } : { c: [...fr.c], rods: [...fr.rods, { part: b, hinge: fr.hinge, f: k }] });
+          const tip = along(1);
+          g = { c: tip.c, rails: [...fr.rails], rods: tip.rods, hinge: fr.hinge };
+          if (p.m > 0) {
+            if (p.at === 'uniform') { const mid = along(0.5); bodies.push({ part: b, m: p.m, I: (p.m * p.l * p.l) / 12, hinge: fr.hinge, c: mid.c, rails: [...fr.rails], rods: mid.rods }); }
+            else bodies.push({ part: b, m: p.m, I: 0, hinge: -1, c: tip.c, rails: [...fr.rails], rods: tip.rods });
+          }
+        }
+        const gi = frameOf.get(`${b.id}:${frames[1]}`);
+        if (reached.has(gi)) throw err(`a mechanism must be a tree: ${label(b)} closes a loop`, [b.id]);
+        reached.set(gi, g);
+        queue.push(gi);
+      }
+    }
+    const order = (list) => list.slice().sort((a, b) => blocks.indexOf(a) - blocks.indexOf(b));
+    const rs = order(rails), hs = order(hinges);
+    const ri = rails.map((b) => rs.indexOf(b)), hi = hinges.map((b) => hs.indexOf(b));
+    for (const body of bodies) {
+      body.rails = body.rails.map((r) => ri[r]);
+      body.rods = body.rods.map((r) => ({ ...r, hinge: hi[r.hinge] }));
+      if (body.hinge >= 0) body.hinge = hi[body.hinge];
+    }
+    const baseOrdered = new Array(hs.length);
+    hinges.forEach((b, j) => { baseOrdered[hi[j]] = base[j] < 0 ? -1 : hi[base[j]]; });
+    const joints = order([...rs, ...hs]);
+    const names = new Map();
+    for (const jn of joints) for (const k of ['name', 'rate']) {
+      const nm = jn.params[k];
+      if (names.has(nm)) throw err(`${label(names.get(nm))} and ${label(jn)} both name a coordinate or rate ${nm}`, [names.get(nm).id, jn.id]);
+      names.set(nm, jn);
+    }
+    if (joints.length || bodies.length) out.push({ world, parts: mine, rails: rs, hinges: hs, joints, base: baseOrdered, bodies });
+  }
+  const loose = parts.filter((b) => !seen.has(b.id));
+  if (loose.length) throw err(`${loose.map(label).join(', ')} ${loose.length === 1 ? 'is' : 'are'} not joined to a World`, loose.map((b) => b.id));
+  return out;
+}
+
+function constants(mech) {
+  const g = mech.world.params.g, np = mech.rails.length, nh = mech.hinges.length;
+  const d = mech.rails.map((r) => [Math.cos(r.params.incline), Math.sin(r.params.incline)]);
+  const Mpp = new Float64Array(np * np), Cpr = new Float64Array(np * nh), Crr = new Float64Array(nh * nh), I = new Float64Array(nh), Gp = new Float64Array(np), Gr = new Float64Array(nh);
+  for (const b of mech.bodies) {
+    const L = new Float64Array(nh);
+    for (const r of b.rods) L[r.hinge] += r.f * r.part.params.l;
+    const P = new Float64Array(np);
+    for (const p of b.rails) P[p] = 1;
+    for (let p = 0; p < np; p++) {
+      for (let q = 0; q < np; q++) Mpp[p * np + q] += b.m * P[p] * P[q] * (d[p][0] * d[q][0] + d[p][1] * d[q][1]);
+      for (let j = 0; j < nh; j++) Cpr[p * nh + j] += b.m * P[p] * L[j];
+      Gp[p] -= g * b.m * P[p] * d[p][1];
+    }
+    for (let j = 0; j < nh; j++) {
+      for (let k = 0; k < nh; k++) Crr[j * nh + k] += b.m * L[j] * L[k];
+      Gr[j] += g * b.m * L[j];
+    }
+    if (b.hinge >= 0) I[b.hinge] += b.I;
+  }
+  return { g, np, nh, d, Mpp, Cpr, Crr, I, Gp, Gr };
+}
+
+function mechanismOde(mech) {
+  const K = constants(mech), { np, nh, d, Mpp, Cpr, Crr, I, Gp, Gr } = K, N = np + nh;
+  const joints = [...mech.rails, ...mech.hinges];
+  const outAt = mech.joints.map((b) => joints.indexOf(b));
+  const inputs = mech.joints.filter((b) => (b.type === 'rail' ? b.params.force : b.params.torque));
+  const railIn = new Int32Array(np).fill(-1), hingeIn = new Int32Array(nh).fill(-1);
+  inputs.forEach((b, k) => { if (b.type === 'rail') railIn[mech.rails.indexOf(b)] = k; else hingeIn[mech.hinges.indexOf(b)] = k; });
+  const bf = Float64Array.from(mech.rails, (r) => r.params.b), cf = Float64Array.from(mech.hinges, (h) => h.params.c);
+  const base = Int32Array.from(mech.base);
+  for (let p = 0; p < np; p++) if (!(Mpp[p * np + p] > 0)) throw err(`${label(mech.rails[p])} moves no mass: put a Mass on it`, [mech.rails[p].id]);
+  for (let j = 0; j < nh; j++) if (!(Crr[j * nh + j] + I[j] > 0)) throw err(`${label(mech.hinges[j])} moves no mass: put a Rod with a mass, or a Mass, on it`, [mech.hinges[j].id]);
+  const ode = {
+    n: 2 * N, mechanism: mech, constants: K, nIn: inputs.length, inputs,
+    states: () => [
+      ...mech.rails.map((b) => ({ name: b.params.name, unit: 'm', angle: false })), ...mech.hinges.map((b) => ({ name: b.params.name, unit: 'rad', angle: true })),
+      ...mech.rails.map((b) => ({ name: b.params.rate, unit: 'm/s', angle: false })), ...mech.hinges.map((b) => ({ name: b.params.rate, unit: 'rad/s', angle: false })),
+    ],
+    init: () => [...mech.rails.map((b) => b.params.x0), ...mech.hinges.map((b) => b.params.theta0), ...mech.rails.map((b) => b.params.v0), ...mech.hinges.map((b) => b.params.omega0)],
+    out: (X, o, p, y) => { for (let k = 0; k < outAt.length; k++) { y[2 * k] = X[o + outAt[k]]; y[2 * k + 1] = X[o + N + outAt[k]]; } },
+    make() {
+      const s = new Float64Array(nh), c = new Float64Array(nh), w2 = new Float64Array(nh), tq = new Float64Array(nh);
+      const A = new Float64Array(N * N), r = new Float64Array(N), q = new Float64Array(N), one = inputs.length === 1;
+      return (X, o, u, dX, uv) => {
+        for (let j = 0; j < nh; j++) { const th = X[o + np + j], w = X[o + N + np + j]; s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w; }
+        for (let p = 0; p < np; p++) {
+          for (let k = 0; k <= p; k++) A[p * N + k] = Mpp[p * np + k];
+          let rp = Gp[p] - bf[p] * X[o + N + p];
+          if (railIn[p] >= 0) rp += one ? u : uv[railIn[p]];
+          for (let k = 0; k < nh; k++) rp += Cpr[p * nh + k] * (d[p][0] * s[k] + d[p][1] * c[k]) * w2[k];
+          r[p] = rp;
+        }
+        for (let j = 0; j < nh; j++) {
+          const wj = X[o + N + np + j], wb = base[j] >= 0 ? X[o + N + np + base[j]] : 0;
+          tq[j] = (hingeIn[j] >= 0 ? (one ? u : uv[hingeIn[j]]) : 0) - cf[j] * (wj - wb);
+        }
+        for (let j = 0; j < nh; j++) {
+          const row = (np + j) * N;
+          for (let p = 0; p < np; p++) A[row + p] = Cpr[p * nh + j] * (d[p][0] * c[j] - d[p][1] * s[j]);
+          let rj = Gr[j] * s[j] + tq[j];
+          for (let k = 0; k < nh; k++) {
+            if (k <= j) A[row + np + k] = Crr[j * nh + k] * (c[j] * c[k] + s[j] * s[k]) + (k === j ? I[j] : 0);
+            rj -= Crr[j * nh + k] * (s[j] * c[k] - c[j] * s[k]) * w2[k];
+            if (base[k] === j) rj -= tq[k];   
+          }
+          r[np + j] = rj;
+        }
+        for (let j = 0; j < N; j++) {
+          let dd = A[j * N + j];
+          for (let k = 0; k < j; k++) dd -= A[j * N + k] * A[j * N + k] * A[k * N + k];
+          A[j * N + j] = dd;
+          for (let i = j + 1; i < N; i++) {
+            let e = A[i * N + j];
+            for (let k = 0; k < j; k++) e -= A[i * N + k] * A[j * N + k] * A[k * N + k];
+            A[i * N + j] = e / dd;
+          }
+        }
+        for (let i = 0; i < N; i++) { let e = r[i]; for (let k = 0; k < i; k++) e -= A[i * N + k] * q[k]; q[i] = e; }
+        for (let i = 0; i < N; i++) q[i] /= A[i * N + i];
+        for (let i = N - 1; i >= 0; i--) { let e = q[i]; for (let k = i + 1; k < N; k++) e -= A[k * N + i] * q[k]; q[i] = e; }
+        for (let i = 0; i < N; i++) { dX[o + i] = X[o + N + i]; dX[o + N + i] = q[i]; }
+      };
+    },
+    bound: () => {
+      const lens = [];
+      for (const b of mech.parts) if (b.type === 'rod' && b.params.l > 0) lens.push(b.params.at === 'uniform' ? (2 * b.params.l) / 3 : b.params.l);
+      let w = nh && lens.length ? 4 * Math.sqrt((K.g / Math.min(...lens)) * (1 + nh)) : 0;
+      for (let p = 0; p < np; p++) w += bf[p] / Mpp[p * np + p];
+      for (let j = 0; j < nh; j++) w += cf[j] / (Crr[j * nh + j] + I[j]);
+      return w;
+    },
+    pose(X, o = 0) {
+      const at = (b) => {
+        let x = b.c[0], y = b.c[1];
+        for (const p of b.rails) { x += X[o + p] * d[p][0]; y += X[o + p] * d[p][1]; }
+        for (const rr of b.rods) { const th = X[o + np + rr.hinge], l = rr.f * rr.part.params.l; x += l * Math.sin(th); y += l * Math.cos(th); }
+        return [x, y];
+      };
+      return mech.bodies.map((b) => ({ id: b.part.id, m: b.m, I: b.I, hinge: b.hinge, angle: b.hinge >= 0 ? X[o + np + b.hinge] : 0, at: at(b) }));
+    },
+  };
+  return ode;
+}
+
+return { MECH_ELEMENTS, isPart, checkCoord, parseFrame, normalizeJoins, mechanisms, constants, mechanismOde };
+})();
 // ---- core/physics.js
 __mods['core/physics.js'] = (() => {
 
@@ -5142,6 +5400,41 @@ function conicalTank(p = {}) {
   });
 }
 
+function cartChain(n, p, names) {
+  const theta = (k) => names.theta(k), omega = (k) => names.omega(k);
+  const blocks = [
+    port('F', 'inport', 'F', 1, 20, 40),
+    { id: 'world', type: 'world', name: 'world', params: { g: 'g' }, x: 20, y: 200 },
+    { id: 'rail', type: 'rail', name: 'rail', params: { name: 'x', rate: 'v', b: 'b', force: 1 }, x: 130, y: 120 },
+    { id: 'cart', type: 'mass', name: 'cart', params: { m: 'M' }, x: 150, y: 260 },
+  ];
+  const wires = [{ from: 'F', to: 'rail' }, { from: 'rail', to: 'o_1' }, { from: 'rail:1', to: `o_${n + 2}` }];
+  const joins = [['world:W', 'rail:B'], ['rail:F', 'cart:F', `${names.hinge(1)}:B`]];
+  for (let k = 1; k <= n; k++) {
+    const h = names.hinge(k), r = names.rod(k), x = 130 + 220 * k;
+    blocks.push({ id: h, type: 'hinge', name: n === 1 ? 'hinge' : `hinge ${k}`, params: { name: theta(k), rate: omega(k), theta0: names.theta0(k) }, x, y: 120 });
+    blocks.push({ id: r, type: 'rod', name: n === 1 ? 'pole' : `rod ${k}`, params: { l: names.l(k), m: names.m(k), at: 'tip' }, x: x + 110, y: 200 });
+    wires.push({ from: h, to: `o_${k + 1}` }, { from: `${h}:1`, to: `o_${n + k + 2}` });
+    joins.push([`${h}:F`, `${r}:B`]);
+    if (k < n) joins.push([`${r}:T`, `${names.hinge(k + 1)}:B`]);
+  }
+  const outs = ['x', ...Array.from({ length: n }, (_, i) => theta(i + 1)), 'v', ...Array.from({ length: n }, (_, i) => omega(i + 1))];
+  outs.forEach((nm, i) => blocks.push(port(`o_${i + 1}`, 'outport', nm, i + 1, 360 + 220 * n, 20 + 36 * i)));
+  return { blocks, wires, joins };
+}
+
+function cartPole(p = {}) {
+  return masked(CART_POLE_MASK, p, cartChain(1, p, {
+    theta: () => 'θ', omega: () => 'ω', hinge: () => 'hinge', rod: () => 'pole', theta0: () => 'theta0', l: () => 'l', m: () => 'm',
+  }));
+}
+
+function pendulumOnCart(n, p = {}) {
+  return masked(chainMask(n), p, cartChain(n, p, {
+    theta: (k) => `θ${k}`, omega: (k) => `ω${k}`, hinge: (k) => `hinge${k}`, rod: (k) => `rod${k}`, theta0: (k) => `theta${k}0`, l: (k) => `l${k}`, m: (k) => `m${k}`,
+  }));
+}
+
 const TEMPLATES = {
   conicalTank: { label: 'Conical tank', formula: 'q → h', name: 'tank', make: () => conicalTank() },
 };
@@ -5158,7 +5451,7 @@ function expandPhysics(b) {
 
 const physicalMaskKeys = (mask) => mask.filter((f) => f.key !== 'g' && !/^Start\b/.test(f.label)).map((f) => f.key);
 
-return { conicalTank, TEMPLATES, isOldPhysics, expandPhysics, physicalMaskKeys };
+return { conicalTank, cartPole, pendulumOnCart, TEMPLATES, isOldPhysics, expandPhysics, physicalMaskKeys };
 })();
 // ---- core/diagram.js
 __mods['core/diagram.js'] = (() => {
@@ -5171,6 +5464,7 @@ const { gaussAt } = __mods['core/signals.js'];
 const { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME_RE } = __mods['core/formula.js'];
 const { CONTROLLERS, normalizeVariant, makeLaw } = __mods['core/controllers.js'];
 const { isOldPhysics, expandPhysics } = __mods['core/physics.js'];
+const { MECH_ELEMENTS, isPart, normalizeJoins, mechanisms, mechanismOde, checkCoord } = __mods['core/mech.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
 const { SYNC_DESIGNS, defaultDesigns } = __mods['core/design.js'];
 const { EXTERNAL_BLOCK } = __mods['core/hil.js'];
@@ -5255,6 +5549,7 @@ const ELEMENTS = {
     outputs: (p) => Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`),
   },
   external: EXTERNAL_BLOCK,
+  ...MECH_ELEMENTS,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
@@ -5494,6 +5789,11 @@ function normalizeParams(type, params = {}, where, scope = null, resolve = false
     } else if (p.kind === 'name') {
       v = String(v);
       if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
+    } else if (p.kind === 'coord') {
+      v = checkCoord(v, `${where}.${p.key}`);
+    } else if (p.kind === 'choice') {
+      v = String(v);
+      if (!p.options.includes(v)) throw new Error(`${where}.${p.key}: one of ${p.options.join(', ')}`);
     } else if (p.kind === 'signs') {
       v = String(v);
       if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
@@ -5561,7 +5861,8 @@ function normalizeDiagram(d, path = 'plant', opts = {}) {
     if (taken.has(w.to)) throw new Error(`${path}: input ${w.to} has two wires`);
     taken.add(w.to);
   }
-  return { blocks, wires };
+  const joins = normalizeJoins(d.joins, blocks, path);
+  return joins ? { blocks, wires, joins } : { blocks, wires };
 }
 
 function wrapPlant(block) {
@@ -5630,6 +5931,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   const externals = [];
   let extNode = -1, outNode = -1;
   const ctrlNodes = [];  
+  const mechList = [];   
 
   function level(d, prefix, ids, root) {
     const outs = {}, ins = {};
@@ -5685,6 +5987,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       const def = diagramBlockDef(b.type);
       const [nIn, nOut] = blockPorts(b);
+      if (def.part) { outs[b.id] = []; ins[b.id] = []; continue; }
       if (b.type === 'controller' || b.type === 'observer') {
         const lib = VARIANT_LIBS[b.type];
         const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
@@ -5734,6 +6037,20 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       outs[b.id] = [k, ...Array.from({ length: nOut - 1 }, (_, j) => add({ kind: 'pick', name: `${name}.${outputNames(def, b.params)[j + 1]}`, ft: true, inputs: [k], parent: k, j: j + 1 }))];
       ins[b.id] = node.inputs.map((_, s) => [k, s]);
     }
+    let mechs;
+    try { mechs = mechanisms(d.blocks, d.joins); } catch (e) { throw Object.assign(new Error(`${path}${prefix ? ` (${prefix.slice(0, -1)})` : ''}: ${e.message}`), { code: e.code, blocks: (e.blocks ?? []).map((id) => `${ids}${id}`) }); }
+    for (const mech of mechs) {
+      let ode;
+      try { ode = mechanismOde(mech); } catch (e) { throw Object.assign(new Error(`${path}${prefix ? ` (${prefix.slice(0, -1)})` : ''}: ${e.message}`), { code: e.code, blocks: (e.blocks ?? []).map((id) => `${ids}${id}`) }); }
+      const name = prefix ? prefix.slice(0, -1) : (mech.world.name ?? mech.world.id);
+      const k = add({ kind: 'ode', name, prefix, short: name, mech, ft: false, ode, rates: ode.make(), p: null, inputs: new Array(ode.nIn).fill(-1), uv: ode.nIn > 1 ? new Float64Array(ode.nIn) : null, outv: new Float64Array(2 * mech.joints.length), bound: ode.bound() });
+      mechList.push({ name, idPath: ids.slice(0, -1), node: k, mechanism: mech, ode });
+      mech.joints.forEach((jn, j) => {
+        outs[jn.id] = [0, 1].map((r) => add({ kind: 'tap', name: `${prefix}${jn.params[r ? 'rate' : 'name']}`, ft: false, parent: k, j: 2 * j + r, see: -1 }));
+        const slot = ode.inputs.indexOf(jn);
+        ins[jn.id] = slot >= 0 ? [[k, slot]] : [];
+      });
+    }
     for (const w of d.wires) {
       const f = parseEnd(w.from), t = parseEnd(w.to);
       const src = outs[f.id][f.port], [dst, slot] = ins[t.id][t.port];
@@ -5779,7 +6096,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   }
   const states = [];
   for (const nd of stateNodes) {
-    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
+    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: nd.mech ? `${nd.prefix}${s.name}` : `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
     else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: nd.unit && nd.unit !== '1' ? nd.unit : '', angle: !!nd.angle, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
   }
 
@@ -5882,6 +6199,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   const probeSrc = probeList.map(([, k]) => origin(k)), outSrc = outNode >= 0 ? origin(outNode) : -1;
   const self = {
     n, bound, warnings, minTs, sampleTimes, states, designs,
+    mechanisms: mechList.map(({ node, ...m }) => ({ ...m, offset: nodes[node].off })),
     setStep(step) { h = step; },
     sample(t, X, o, u) {
       for (const nd of ctrls) {
@@ -7853,7 +8171,7 @@ function fromPlant(e) {
   };
 }
 
-const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
+const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'hinge', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = {
   pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],

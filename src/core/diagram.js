@@ -19,6 +19,7 @@ import { gaussAt } from './signals.js';
 import { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME_RE } from './formula.js';
 import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
 import { isOldPhysics, expandPhysics } from './physics.js';
+import { MECH_ELEMENTS, isPart, normalizeJoins, mechanisms, mechanismOde, checkCoord } from './mech.js';
 import { OBSERVERS } from './observers.js';
 import { SYNC_DESIGNS, defaultDesigns } from './design.js';
 import { EXTERNAL_BLOCK } from './hil.js';
@@ -132,6 +133,8 @@ export const ELEMENTS = {
   // A plant outside the page (Live mode, hil.js): its outputs come from the
   // plant every cycle, its inputs are sent back; offline the outputs hold 0.
   external: EXTERNAL_BLOCK,
+  // Mechanics parts, joined at frame ports (mech.js; transparent-models.md §1.1).
+  ...MECH_ELEMENTS,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
@@ -405,6 +408,11 @@ function normalizeParams(type, params = {}, where, scope = null, resolve = false
     } else if (p.kind === 'name') {
       v = String(v);
       if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
+    } else if (p.kind === 'coord') {
+      v = checkCoord(v, `${where}.${p.key}`);
+    } else if (p.kind === 'choice') {
+      v = String(v);
+      if (!p.options.includes(v)) throw new Error(`${where}.${p.key}: one of ${p.options.join(', ')}`);
     } else if (p.kind === 'signs') {
       v = String(v);
       if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
@@ -478,7 +486,9 @@ export function normalizeDiagram(d, path = 'plant', opts = {}) {
     if (taken.has(w.to)) throw new Error(`${path}: input ${w.to} has two wires`);
     taken.add(w.to);
   }
-  return { blocks, wires };
+  // Mechanics parts meet at joins (one point each; mech.js).
+  const joins = normalizeJoins(d.joins, blocks, path);
+  return joins ? { blocks, wires, joins } : { blocks, wires };
 }
 
 // A single plant model as a diagram: In -> block -> Out.
@@ -575,6 +585,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const externals = [];
   let extNode = -1, outNode = -1;
   const ctrlNodes = [];  // [block id path, node] of every Controller block
+  const mechList = [];   // every mechanism compiled (el.mechanisms)
 
   // Creates nodes for one level; returns, per block id, where its output
   // ports come from and where its input ports go. Each node has a name
@@ -634,6 +645,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       const def = diagramBlockDef(b.type);
       const [nIn, nOut] = blockPorts(b);
+      // Mechanics parts: their mechanism's node (below) gives a joint's ports.
+      if (def.part) { outs[b.id] = []; ins[b.id] = []; continue; }
       if (b.type === 'controller' || b.type === 'observer') {
         const lib = VARIANT_LIBS[b.type];
         const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
@@ -695,6 +708,22 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       outs[b.id] = [k, ...Array.from({ length: nOut - 1 }, (_, j) => add({ kind: 'pick', name: `${name}.${outputNames(def, b.params)[j + 1]}`, ft: true, inputs: [k], parent: k, j: j + 1 }))];
       ins[b.id] = node.inputs.map((_, s) => [k, s]);
     }
+    // One state node per mechanism; a joint's outputs are taps of it (its
+    // coordinate and rate), its force or torque one of its inputs.
+    let mechs;
+    try { mechs = mechanisms(d.blocks, d.joins); } catch (e) { throw Object.assign(new Error(`${path}${prefix ? ` (${prefix.slice(0, -1)})` : ''}: ${e.message}`), { code: e.code, blocks: (e.blocks ?? []).map((id) => `${ids}${id}`) }); }
+    for (const mech of mechs) {
+      let ode;
+      try { ode = mechanismOde(mech); } catch (e) { throw Object.assign(new Error(`${path}${prefix ? ` (${prefix.slice(0, -1)})` : ''}: ${e.message}`), { code: e.code, blocks: (e.blocks ?? []).map((id) => `${ids}${id}`) }); }
+      const name = prefix ? prefix.slice(0, -1) : (mech.world.name ?? mech.world.id);
+      const k = add({ kind: 'ode', name, prefix, short: name, mech, ft: false, ode, rates: ode.make(), p: null, inputs: new Array(ode.nIn).fill(-1), uv: ode.nIn > 1 ? new Float64Array(ode.nIn) : null, outv: new Float64Array(2 * mech.joints.length), bound: ode.bound() });
+      mechList.push({ name, idPath: ids.slice(0, -1), node: k, mechanism: mech, ode });
+      mech.joints.forEach((jn, j) => {
+        outs[jn.id] = [0, 1].map((r) => add({ kind: 'tap', name: `${prefix}${jn.params[r ? 'rate' : 'name']}`, ft: false, parent: k, j: 2 * j + r, see: -1 }));
+        const slot = ode.inputs.indexOf(jn);
+        ins[jn.id] = slot >= 0 ? [[k, slot]] : [];
+      });
+    }
     for (const w of d.wires) {
       const f = parseEnd(w.from), t = parseEnd(w.to);
       const src = outs[f.id][f.port], [dst, slot] = ins[t.id][t.port];
@@ -754,7 +783,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   // for a first-order block (its state is its output).
   const states = [];
   for (const nd of stateNodes) {
-    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
+    // A mechanism's states are labelled by its level: 'cart and 3 rods/θ1'.
+    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: nd.mech ? `${nd.prefix}${s.name}` : `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
     else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: nd.unit && nd.unit !== '1' ? nd.unit : '', angle: !!nd.angle, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
   }
 
@@ -890,6 +920,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const probeSrc = probeList.map(([, k]) => origin(k)), outSrc = outNode >= 0 ? origin(outNode) : -1;
   const self = {
     n, bound, warnings, minTs, sampleTimes, states, designs,
+    // The mechanisms: { name, idPath (its level), node, mechanism (mech.js's topology), ode }.
+    mechanisms: mechList.map(({ node, ...m }) => ({ ...m, offset: nodes[node].off })),
     setStep(step) { h = step; },
     // Called at each completed step with the state there: a controller whose
     // sample is due reads its inputs and sets its held output; the outputs are

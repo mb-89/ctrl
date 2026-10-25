@@ -52,6 +52,51 @@ export function conicalTank(p = {}) {
   });
 }
 
+// A chain of n rods on a cart (n = 1 is the cart–pole's structure): In F →
+// rail (x, v, friction b) carrying the cart (Mass M), then for each rod a
+// hinge θk (from upright) and a rod lk with its bob mk at the tip; Out ports
+// x, θ1…θn, v, ω1…ωn. names: the coordinates' names (the cart–pole's θ, ω).
+function cartChain(n, p, names) {
+  const theta = (k) => names.theta(k), omega = (k) => names.omega(k);
+  const blocks = [
+    port('F', 'inport', 'F', 1, 20, 40),
+    { id: 'world', type: 'world', name: 'world', params: { g: 'g' }, x: 20, y: 200 },
+    { id: 'rail', type: 'rail', name: 'rail', params: { name: 'x', rate: 'v', b: 'b', force: 1 }, x: 130, y: 120 },
+    { id: 'cart', type: 'mass', name: 'cart', params: { m: 'M' }, x: 150, y: 260 },
+  ];
+  const wires = [{ from: 'F', to: 'rail' }, { from: 'rail', to: 'o_1' }, { from: 'rail:1', to: `o_${n + 2}` }];
+  const joins = [['world:W', 'rail:B'], ['rail:F', 'cart:F', `${names.hinge(1)}:B`]];
+  for (let k = 1; k <= n; k++) {
+    const h = names.hinge(k), r = names.rod(k), x = 130 + 220 * k;
+    blocks.push({ id: h, type: 'hinge', name: n === 1 ? 'hinge' : `hinge ${k}`, params: { name: theta(k), rate: omega(k), theta0: names.theta0(k) }, x, y: 120 });
+    blocks.push({ id: r, type: 'rod', name: n === 1 ? 'pole' : `rod ${k}`, params: { l: names.l(k), m: names.m(k), at: 'tip' }, x: x + 110, y: 200 });
+    wires.push({ from: h, to: `o_${k + 1}` }, { from: `${h}:1`, to: `o_${n + k + 2}` });
+    joins.push([`${h}:F`, `${r}:B`]);
+    if (k < n) joins.push([`${r}:T`, `${names.hinge(k + 1)}:B`]);
+  }
+  const outs = ['x', ...Array.from({ length: n }, (_, i) => theta(i + 1)), 'v', ...Array.from({ length: n }, (_, i) => omega(i + 1))];
+  outs.forEach((nm, i) => blocks.push(port(`o_${i + 1}`, 'outport', nm, i + 1, 360 + 220 * n, 20 + 36 * i)));
+  return { blocks, wires, joins };
+}
+
+// The cart–pole: a point mass m on a massless pole of length l, hinged on a
+// cart of mass M; θ = 0 is upright, positive leaning towards +x; b is the
+// cart's friction. F → x, θ, v, ω.
+export function cartPole(p = {}) {
+  return masked(CART_POLE_MASK, p, cartChain(1, p, {
+    theta: () => 'θ', omega: () => 'ω', hinge: () => 'hinge', rod: () => 'pole', theta0: () => 'theta0', l: () => 'l', m: () => 'm',
+  }));
+}
+
+// A chain of n rods on a cart (point masses m1…mn at the ends of massless
+// rods l1…ln, each hinged on the one before); angles from upright. F → x,
+// θ1…θn, v, ω1…ωn.
+export function pendulumOnCart(n, p = {}) {
+  return masked(chainMask(n), p, cartChain(n, p, {
+    theta: (k) => `θ${k}`, omega: (k) => `ω${k}`, hinge: (k) => `hinge${k}`, rod: (k) => `rod${k}`, theta0: (k) => `theta${k}0`, l: (k) => `l${k}`, m: (k) => `m${k}`,
+  }));
+}
+
 // The Plant tab's Physics group: each template inserts its masked subsystem.
 export const TEMPLATES = {
   conicalTank: { label: 'Conical tank', formula: 'q → h', name: 'tank', make: () => conicalTank() },
