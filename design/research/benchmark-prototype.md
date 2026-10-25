@@ -1,12 +1,12 @@
 # Benchmark prototype: the output
 
-Reader: whoever checks the numbers [../output/benchmark.md](../output/benchmark.md) quotes. Generated, not hand-written: `node tools/benchmark-prototype.mjs "DC motor, sliding mode" "Oven" "Conical" "DC motor, deadbeat"`, then `node tools/benchmark-prototype.mjs "Pendulum swing-up" "DC motor, position" "Triple" "Following a sine" "Encoder errors" "DC motor, speed" "DC motor with an unbalanced"` (the rest of the library: cost and limits), on main at 3691720, in this container (Node 22). The decision (marks, vetoes, datum, ranking, weight sensitivity) is the generic module `src/core/pugh.js` ([../output/pugh.md](../output/pugh.md)); since input 64 an option that does not fit lists every veto (each failing gate, one per reason), so the reasons below may name several; the rankings, marks, totals, fits and verdicts are unchanged (checked line by line on all eleven systems). Timings vary by machine (and with the container's load); the matrices are deterministic.
+Reader: whoever checks the numbers [../output/benchmark.md](../output/benchmark.md) quotes. Generated, not hand-written: `node tools/benchmark-prototype.mjs "DC motor, sliding mode" "Oven" "Conical" "DC motor, deadbeat"`, then `node tools/benchmark-prototype.mjs "Pendulum swing-up" "DC motor, position" "Triple" "Following a sine" "Encoder errors" "DC motor, speed" "DC motor with an unbalanced"` (the rest of the library: cost and limits), on main at 98e1dd0, in this container (Node 22). Since input 70 the datum is the controller set up now (the running variant as loaded), so the marks, gates and rankings differ from earlier versions of this file. The decision (marks, vetoes, datum, ranking, weight sensitivity) is the generic module `src/core/pugh.js` ([../output/pugh.md](../output/pugh.md)); since input 64 an option that does not fit lists every veto (each failing gate, one per reason), so the reasons below may name several; the rankings, marks, totals, fits and verdicts are unchanged (checked line by line on all eleven systems). Timings vary by machine (and with the container's load); the matrices are deterministic.
 
 Goal: {"cost":"IAE","effort":0.05,"overshoot":10,"saturation":0.2}; Iterate up to 60 iterations; sweep 8 plants within ±15 %. Node v22.22.0.
 
 ## DC motor, sliding mode
 
-Step test for the starts: integrating. Total 33.2 s: load 0.228 s, starts 0.586 s, tuning 27.1 s, scoring 1.58 s, sweep (8 plants) 3.48 s. One run 43 ms, so about 778 runs' worth.
+Step test for the starts: integrating. Total 31.9 s: load 0.209 s, starts 0.598 s, tuning 26.1 s, scoring 1.48 s, sweep (8 plants) 3.28 s. One run 44 ms, so about 731 runs' worth.
 
 Tests: the system's own input (its own disturbance plays); the smooth move: r through 1/(τs + 1)³, τ = 0.0238 s.
 
@@ -27,14 +27,14 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 
 | Candidate | Tuned how | J start → tuned | Runs | ms | Fits |
 |---|---|---|---|---|---|
-| As loaded: Relay (theory) | not tuned | 0.302 | 0 | 0 | no: fails the main job: Following a smooth move (IAE) ×2.55 of the datum's (at most ×2) |
-| PID | step test, SIMC (integrating) | 0.206 → 0.0767 | 115 | 6400 | yes |
-| Gain-scheduled PI | the PID's gains, flat | 2.34 → 0.125 | 92 | 5600 | no: fails the main job: Following a smooth move (IAE) ×2.9 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×9.35 of the datum's (at most ×2) |
-| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.0155 | 0.0773 → 0.0766 | 31 | 2300 | yes |
-| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 2.64 → 2.64 | 1 | 52 | no: fails the main job: Following steps (IAE) ×3.04 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×4.52 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×9.7 of the datum's (at most ×2) |
-| Sliding mode (ideal) | λ from the step model, K the full swing | 0.595 → 0.26 | 38 | 2600 | yes |
-| Sliding mode (boundary layer) | and φ = 0.2·λ·span r | 0.551 → 0.0757 | 57 | 3500 | yes |
-| Super-twisting | λ as the sliding mode; k1 = U/3, k2 = 3.7 U | 0.869 → 0.0654 | 115 | 6700 | yes |
+| As loaded: Relay (theory) | not tuned | 0.302 | 0 | 0 | yes |
+| PID | step test, SIMC (integrating) | 0.206 → 0.0767 | 115 | 6300 | no: fails the main job: Rejecting d (IAE) ×2.79 of the datum's (at most ×2) |
+| Gain-scheduled PI | the PID's gains, flat | 2.34 → 0.125 | 92 | 5200 | no: fails the main job: Rejecting d (IAE) ×26.1 of the datum's (at most ×2) |
+| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.0155 | 0.0773 → 0.0766 | 31 | 2200 | no: fails the main job: Rejecting d (IAE) ×2.79 of the datum's (at most ×2) |
+| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 2.64 → 2.64 | 1 | 50 | no: fails the main job: Rejecting d (IAE) ×27.1 of the datum's (at most ×2) |
+| Sliding mode (ideal) | λ from the step model, K the full swing | 0.595 → 0.26 | 38 | 2400 | yes |
+| Sliding mode (boundary layer) | and φ = 0.2·λ·span r | 0.551 → 0.0757 | 57 | 3400 | no: fails the main job: Rejecting d (IAE) ×2.43 of the datum's (at most ×2) |
+| Super-twisting | λ as the sliding mode; k1 = U/3, k2 = 3.7 U | 0.869 → 0.0654 | 115 | 6500 | yes |
 
 Scores:
 
@@ -51,42 +51,41 @@ Scores:
 
 The feedforward's share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):
 
-- PID + feedforward from the plant (Kff 0, Kv 2.45, Ka 0.0359, prefilter Tr 0.0155 s): 3.7 % on the system's steps, 58 % on the smooth move; following IAE 0.077 (steps), 0.021 (move), against the datum's 0.077 and 0.04.
+- PID + feedforward from the plant (Kff 0, Kv 2.45, Ka 0.0359, prefilter Tr 0.0155 s): 3.7 % on the system's steps, 58 % on the smooth move; following IAE 0.077 (steps), 0.021 (move), against the datum's 0.13 and 0.1.
 
-Pugh matrix: datum **PID**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: Relay (theory)**, the controller set up now; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: Relay (theory) | PID | Gain-scheduled PI | PID + feedforward from the plant | Relay (on/off) | Sliding mode (ideal) | Sliding mode (boundary layer) | Super-twisting |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Following steps (IAE) (1.5) | − | D | − | S | −− | S | S | S |
-| Following a smooth move (IAE) (1.5) | −− | D | −− | + | −− | + | S | − |
-| Rejecting d (IAE) (3) | ++ | D | −− | S | −− | ++ | + | ++ |
-| Overshoot (2) | S | D | −− | S | −− | S | S | − |
-| Settling (2 %, s) (1) | −− | D | −− | S | −− | + | + | S |
-| Effort (u swing) (1) | −− | D | + | S | −− | −− | S | + |
-| Wear (u travel/s) (2) | −− | D | ++ | S | −− | −− | S | −− |
-| Time at a limit (1) | −− | D | ++ | S | −− | −− | S | ++ |
-| Robustness Ms (2) | ? | D | + | S | ? | ? | + | ? |
-| Plant ±15 % (worst J) (3) | −− | D | − | S | −− | −− | S | + |
-| Noise → u (2) | −− | D | ++ | S | −− | −− | ++ | ++ |
-| Complexity (1) | + | D | − | −− | + | + | − | − |
-| Tuning runs (1) | ++ | D | S | ++ | ++ | ++ | + | S |
-| **Weighted** | -15.5 | 0 | -7.5 | +1.5 | -33 | -6.5 | +10 | +7.5 |
-| **Fits** | no | yes | no | yes | no | yes | yes | yes |
+| Following steps (IAE) (1.5) | D | + | S | + | − | + | + | + |
+| Following a smooth move (IAE) (1.5) | D | ++ | − | ++ | − | ++ | ++ | ++ |
+| Rejecting d (IAE) (3) | D | −− | −− | −− | −− | ++ | −− | + |
+| Overshoot (2) | D | S | −− | S | −− | S | S | −− |
+| Settling (2 %, s) (1) | D | ++ | S | ++ | −− | ++ | ++ | ++ |
+| Effort (u swing) (1) | D | ++ | ++ | ++ | S | S | ++ | ++ |
+| Wear (u travel/s) (2) | D | ++ | ++ | ++ | ++ | + | ++ | ++ |
+| Time at a limit (1) | D | ++ | ++ | ++ | S | S | ++ | ++ |
+| Robustness Ms (2) | D | ? | ? | ? | ? | ? | ? | ? |
+| Plant ±15 % (worst J) (3) | D | ++ | ++ | ++ | −− | + | ++ | ++ |
+| Noise → u (2) | D | ++ | ++ | ++ | S | S | ++ | ++ |
+| Complexity (1) | D | + | − | −− | + | + | − | − |
+| Tuning runs (1) | D | −− | −− | −− | S | −− | −− | −− |
+| **Weighted** | 0 | +17.5 | +3.5 | +14.5 | -16 | +16.5 | +15.5 | +20.5 |
+| **Fits** | yes | no | no | no | no | yes | no | yes |
 
-Ranking (fitting only): 1. Sliding mode (boundary layer) (+10); 2. Super-twisting (+7.5); 3. PID + feedforward from the plant (+1.5); 4. PID (+0); 5. Sliding mode (ideal) (-6.5).
+Ranking (fitting only): 1. Super-twisting (+20.5); 2. Sliding mode (ideal) (+16.5); 3. As loaded: Relay (theory) (+0).
 
-Not ranked: As loaded: Relay (theory): fails the main job: Following a smooth move (IAE) ×2.55 of the datum's (at most ×2); Gain-scheduled PI: fails the main job: Following a smooth move (IAE) ×2.9 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×9.35 of the datum's (at most ×2); Relay (on/off): fails the main job: Following steps (IAE) ×3.04 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×4.52 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×9.7 of the datum's (at most ×2).
+Not ranked: PID: fails the main job: Rejecting d (IAE) ×2.79 of the datum's (at most ×2); Gain-scheduled PI: fails the main job: Rejecting d (IAE) ×26.1 of the datum's (at most ×2); PID + feedforward from the plant: fails the main job: Rejecting d (IAE) ×2.79 of the datum's (at most ×2); Relay (on/off): fails the main job: Rejecting d (IAE) ×27.1 of the datum's (at most ×2); Sliding mode (boundary layer): fails the main job: Rejecting d (IAE) ×2.43 of the datum's (at most ×2).
 
-Suggestion: **Sliding mode (boundary layer)** (+10), added as a variant, not switched on.
+Suggestion: **Super-twisting** (+20.5), added as a variant, not switched on.
 
-Weight sensitivity (winner Sliding mode (boundary layer); reasonable: each weight within ±1 of its default): **robust**. It wins 86.2 % of 4000 weight draws within one step.
-- Super-twisting (+7.5, wins 13.8 % of draws): ties if Wear (u travel/s) goes 2 → 0.75 (not reasonable); all weights together: 9.5 % of the weights' size, the largest single change 0.31.
-- PID + feedforward from the plant (+1.5, wins 0 % of draws): ties if Following a smooth move (IAE) goes 1.5 → 10 (not reasonable); all weights together: 41 % of the weights' size, the largest single change 1.7.
-- PID (+0, wins 0 % of draws): ties if Complexity goes 1 → 11 (not reasonable); all weights together: 51 % of the weights' size, the largest single change 2.
+Weight sensitivity (winner Super-twisting; reasonable: each weight within ±1 of its default): **holds**. It wins 92.1 % of 4000 weight draws within one step.
+- Sliding mode (ideal) (+16.5, wins 7.88 % of draws): ties if Overshoot goes 2 → 4 (not reasonable); all weights together: 13 % of the weights' size, the largest single change 0.35.
+- Relay (theory) (+0, wins 0 % of draws): ties if Overshoot goes 2 → 12.3 (not reasonable); all weights together: 50 % of the weights' size, the largest single change 1.1.
 
 ## Oven, badly tuned
 
-Step test for the starts: fopdt. Total 1.9 s: load 0.0239 s, starts 0.0465 s, tuning 1.4 s, scoring 0.144 s, sweep (8 plants) 0.248 s. One run 5.7 ms, so about 334 runs' worth.
+Step test for the starts: fopdt. Total 1.9 s: load 0.0238 s, starts 0.0322 s, tuning 1.42 s, scoring 0.136 s, sweep (8 plants) 0.234 s. One run 3.3 ms, so about 559 runs' worth.
 
 Tests: the system's own input (its own disturbance plays); the smooth move: r through 1/(τs + 1)³, τ = 0.0476 s.
 
@@ -114,12 +113,12 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 |---|---|---|---|---|---|
 | As loaded: PID, badly tuned | not tuned | 1.28 | 0 | 0 | no: unstable at r's middle (2 poles outside) |
 | PID | step test, SIMC (fopdt) | 0.152 → 0.139 | 57 | 250 | yes |
-| PI from the plant | one level, r's middle; Tcl searched → 0.435 | 0.836 → 0.14 | 31 | 170 | yes |
-| Gain-scheduled PI | PI from the plant at 3 levels | 0.14 → 0.139 | 82 | 340 | yes |
+| PI from the plant | one level, r's middle; Tcl searched → 0.435 | 0.836 → 0.14 | 31 | 200 | yes |
+| Gain-scheduled PI | PI from the plant at 3 levels | 0.14 → 0.139 | 82 | 310 | yes |
 | PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.403 | 0.756 → 0.136 | 31 | 160 | yes |
-| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 1.91 → 1.91 | 1 | 2.9 | yes |
+| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 1.91 → 1.91 | 1 | 3.6 | yes |
 | Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 0.606 → 0.587 | 25 | 140 | yes |
-| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r | 0.434 → 0.11 | 70 | 310 | yes |
+| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r | 0.434 → 0.11 | 70 | 330 | yes |
 
 Scores:
 
@@ -136,42 +135,42 @@ Scores:
 
 The feedforward's share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):
 
-- PID + feedforward from the plant (Kff 1, Kv 0.65, Ka 0.08, prefilter Tr 0.403 s): 85 % on the system's steps, 88 % on the smooth move; following IAE 0.14 (steps), 0.11 (move), against the datum's 0.14 and 0.14.
+- PID + feedforward from the plant (Kff 1, Kv 0.65, Ka 0.08, prefilter Tr 0.403 s): 85 % on the system's steps, 88 % on the smooth move; following IAE 0.14 (steps), 0.11 (move), against the datum's 0.18 and 0.16.
 
-Pugh matrix: datum **PID**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: PID, badly tuned**, the controller set up now (it fails: unstable at r's middle (2 poles outside); kept as the datum, the person chose it); five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: PID, badly tuned | PID | PI from the plant | Gain-scheduled PI | PID + feedforward from the plant | Relay (on/off) | Sliding mode (ideal) ⚙ rate observer | Sliding mode (boundary layer) ⚙ rate observer |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Following steps (IAE) (1.5) | − | D | S | S | S | − | S | + |
-| Following a smooth move (IAE) (1.5) | − | D | S | S | + | S | S | + |
-| Rejecting d (IAE) (3) | − | D | S | S | S | − | − | + |
-| Overshoot (2) | −− | D | S | S | S | −− | −− | S |
-| Settling (2 %, s) (1) | S | D | S | S | + | S | S | S |
-| Effort (u swing) (1) | − | D | S | S | S | −− | −− | S |
-| Wear (u travel/s) (2) | −− | D | S | S | − | −− | −− | − |
-| Time at a limit (1) | −− | D | S | S | S | −− | −− | S |
-| Robustness Ms (2) | ? | D | S | S | S | ? | ? | − |
-| Plant ±15 % (worst J) (3) | −− | D | S | S | S | −− | −− | + |
-| Noise → u (2) | −− | D | S | S | S | −− | −− | − |
-| Complexity (1) | − | D | − | −− | −− | + | −− | −− |
-| Tuning runs (1) | ++ | D | + | S | + | ++ | ++ | S |
-| **Weighted** | -26 | 0 | +0 | -2 | -0.5 | -23.5 | -25 | +1 |
+| Following steps (IAE) (1.5) | D | + | + | + | + | S | + | + |
+| Following a smooth move (IAE) (1.5) | D | + | + | + | + | S | + | + |
+| Rejecting d (IAE) (3) | D | + | S | + | + | − | − | + |
+| Overshoot (2) | D | ++ | ++ | ++ | ++ | − | + | ++ |
+| Settling (2 %, s) (1) | D | S | S | S | + | S | S | S |
+| Effort (u swing) (1) | D | + | ++ | + | ++ | − | − | ++ |
+| Wear (u travel/s) (2) | D | ++ | ++ | ++ | ++ | S | − | + |
+| Time at a limit (1) | D | ++ | ++ | ++ | ++ | −− | −− | ++ |
+| Robustness Ms (2) | D | ? | ? | ? | ? | ? | ? | ? |
+| Plant ±15 % (worst J) (3) | D | ++ | ++ | ++ | ++ | − | + | ++ |
+| Noise → u (2) | D | ++ | ++ | ++ | ++ | −− | −− | ++ |
+| Complexity (1) | D | + | − | −− | −− | + | −− | −− |
+| Tuning runs (1) | D | −− | −− | −− | −− | S | −− | −− |
+| **Weighted** | 0 | +26 | +22 | +23 | +25 | -14 | -8 | +22 |
 | **Fits** | no | yes | yes | yes | yes | yes | yes | yes |
 
-Ranking (fitting only): 1. Sliding mode (boundary layer) ⚙ rate observer (+1); 2. PID (+0); 3. PI from the plant (+0); 4. PID + feedforward from the plant (-0.5); 5. Gain-scheduled PI (-2); 6. Relay (on/off) (-23.5); 7. Sliding mode (ideal) ⚙ rate observer (-25).
+Ranking (fitting only): 1. PID (+26); 2. PID + feedforward from the plant (+25); 3. Gain-scheduled PI (+23); 4. Sliding mode (boundary layer) ⚙ rate observer (+22); 5. PI from the plant (+22); 6. Sliding mode (ideal) ⚙ rate observer (-8); 7. Relay (on/off) (-14).
 
 Not ranked: As loaded: PID, badly tuned: unstable at r's middle (2 poles outside).
 
-Suggestion: **PID** (+0), added as a variant, not switched on; ranked above it with a plant change: Sliding mode (boundary layer) ⚙ rate observer (+1; a Finite difference observer (Tf 0.0253 s) makes ẏ from y for input 3).
+Suggestion: **PID** (+26), added as a variant, not switched on.
 
-Weight sensitivity (winner PID; reasonable: each weight within ±1 of its default): **sensitive**. It wins 43.3 % of 4000 weight draws within one step.
-- PI from the plant (+0, wins 27.6 % of draws): tied now: the same total, J breaks the tie; all weights together: 0 % of the weights' size, the largest single change 0.
-- PID + feedforward from the plant (-0.5, wins 29.1 % of draws): ties if Complexity goes 1 → 0.75 (reasonable); all weights together: 2.7 % of the weights' size, the largest single change 0.13.
-- Gain-scheduled PI (-2, wins 0 % of draws): ties if Complexity goes 1 → 0 (not reasonable); all weights together: 15 % of the weights' size, the largest single change 1.
+Weight sensitivity (winner PID; reasonable: each weight within ±1 of its default): **depends**. It wins 65.9 % of 4000 weight draws within one step.
+- PID + feedforward from the plant (+25, wins 34.1 % of draws): ties if Complexity goes 1 → 0.667 (reasonable); all weights together: 4.6 % of the weights' size, the largest single change 0.27.
+- Gain-scheduled PI (+23, wins 0 % of draws): ties if Complexity goes 1 → 0 (not reasonable); all weights together: 15 % of the weights' size, the largest single change 1.
+- PI from the plant (+22, wins 0 % of draws): ties if Effort (u swing) goes 1 → 5 (not reasonable); all weights together: 26 % of the weights' size, the largest single change 1.
 
 ## Conical tank, gain scheduling
 
-Step test for the starts: schedule. Total 2.5 s: load 0.0349 s, starts 0.315 s, tuning 1.62 s, scoring 0.176 s, sweep (8 plants) 0.29 s. One run 5.1 ms, so about 480 runs' worth.
+Step test for the starts: schedule. Total 2.4 s: load 0.0346 s, starts 0.3 s, tuning 1.56 s, scoring 0.162 s, sweep (8 plants) 0.275 s. One run 4.8 ms, so about 495 runs' worth.
 
 Tests: the system's own input (its own disturbance plays); the smooth move: r through 1/(τs + 1)³, τ = 0.0357 s.
 
@@ -198,13 +197,13 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 | Candidate | Tuned how | J start → tuned | Runs | ms | Fits |
 |---|---|---|---|---|---|
 | As loaded: Gain-scheduled PI | not tuned | 0.0853 | 0 | 0 | yes |
-| PID | step test, SIMC at 0.5 (the schedule's middle); no point on the way fits (tuned: unstable where the run starts (2 poles outside)) | 0.0786 → 0.0646 | 78 | 410 | no: unstable where the run starts (2 poles outside); it rests there only because it starts in balance |
-| PI from the plant | one level, r's middle; Tcl searched → 0.214; backed off to 75 % of the way (tuned: unstable where the run starts (2 poles outside)) | 0.123 → 0.118 | 32 | 250 | yes |
-| Gain-scheduled PI | step tests, a SIMC schedule; backed off to 25 % of the way (tuned: Ms 12) | 0.141 → 0.0822 | 69 | 370 | yes |
+| PID | step test, SIMC at 0.5 (the schedule's middle); no point on the way fits (tuned: unstable where the run starts (2 poles outside)) | 0.0786 → 0.0646 | 78 | 390 | no: unstable where the run starts (2 poles outside); it rests there only because it starts in balance |
+| PI from the plant | one level, r's middle; Tcl searched → 0.214; backed off to 75 % of the way (tuned: unstable where the run starts (2 poles outside)) | 0.123 → 0.118 | 32 | 230 | yes |
+| Gain-scheduled PI | step tests, a SIMC schedule; backed off to 25 % of the way (tuned: Ms 12) | 0.141 → 0.0822 | 69 | 360 | yes |
 | Speed PI from the plant | its defaults | 4.35 → 4.35 | 1 | 5.2 | no: unstable at r's middle (2 poles outside); fails the main job: Following steps (IAE) ×3.33 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×3.25 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×4.97 of the datum's (at most ×2) |
 | Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 5.08 → 5.08 | 1 | 4.3 | no: fails the main job: Rejecting d (IAE) ×5.47 of the datum's (at most ×2) |
 | Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 5.13 → 5.06 | 20 | 140 | no: fails the main job: Following steps (IAE) ×2.29 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×2.36 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×3.53 of the datum's (at most ×2) |
-| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r; no point on the way fits (tuned: unstable at r's middle (2 poles outside)) | 5.03 → 3.4 | 76 | 420 | no: unstable at r's middle (2 poles outside); fails the main job: Following a smooth move (IAE) ×2.33 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×3.52 of the datum's (at most ×2) |
+| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r; no point on the way fits (tuned: unstable at r's middle (2 poles outside)) | 5.03 → 3.4 | 76 | 430 | no: unstable at r's middle (2 poles outside); fails the main job: Following a smooth move (IAE) ×2.33 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×3.52 of the datum's (at most ×2) |
 
 Scores:
 
@@ -219,7 +218,7 @@ Scores:
 | Sliding mode (ideal) ⚙ rate observer | 0.29 | 0.29 | 0.36 | 180 % | 1.4 | 0.4 | 3.5 | 1 | no linear model | 5.1 | 0.64 | 9 | 20 | — | — |
 | Sliding mode (boundary layer) ⚙ rate observer | 0.22 | 0.29 | 0.36 | 110 % | 1.4 | 0.22 | 3.7 | 0.6 | unstable | 4.5 | 0.16 | 10 | 76 | — | — |
 
-Pugh matrix: datum **As loaded: Gain-scheduled PI**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: Gain-scheduled PI**, the controller set up now; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: Gain-scheduled PI | PID | PI from the plant | Gain-scheduled PI | Speed PI from the plant | Relay (on/off) | Sliding mode (ideal) ⚙ rate observer | Sliding mode (boundary layer) ⚙ rate observer |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -245,13 +244,13 @@ Not ranked: PID: unstable where the run starts (2 poles outside); it rests there
 
 Suggestion: keep **Gain-scheduled PI**, the running variant: nothing beats it.
 
-Weight sensitivity (winner As loaded: Gain-scheduled PI; reasonable: each weight within ±1 of its default): **robust**. It wins 100 % of 4000 weight draws within one step.
+Weight sensitivity (winner As loaded: Gain-scheduled PI; reasonable: each weight within ±1 of its default): **holds**. It wins 100 % of 4000 weight draws within one step.
 - Gain-scheduled PI (-5, wins 0 % of draws): ties if Complexity goes 1 → 6 (not reasonable); all weights together: 30 % of the weights' size, the largest single change 1.
 - PI from the plant (-8, wins 0 % of draws): ties if Complexity goes 1 → 5 (not reasonable); all weights together: 38 % of the weights' size, the largest single change 1.7.
 
 ## DC motor, deadbeat
 
-Step test for the starts: integrating. Total 9.1 s: load 0.0419 s, starts 0.105 s, tuning 6.73 s, scoring 0.685 s, sweep (8 plants) 1.47 s. One run 9.2 ms, so about 987 runs' worth.
+Step test for the starts: integrating. Total 8.5 s: load 0.0396 s, starts 0.0944 s, tuning 6.27 s, scoring 0.715 s, sweep (8 plants) 1.33 s. One run 8.8 ms, so about 965 runs' worth.
 
 Tests: the system's own input, plus the standard disturbance (it has none of its own): a load step of -2.4 at the plant's input from 3.35 s (10 % of u's range); the smooth move: r through 1/(τs + 1)³, τ = 0.0238 s.
 
@@ -267,18 +266,18 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 
 | Candidate | Tuned how | J start → tuned | Runs | ms | Fits |
 |---|---|---|---|---|---|
-| As loaded: Deadbeat, 100 ms | not tuned | 0.56 | 0 | 0 | no: fails the main job: Following a smooth move (IAE) ×2.17 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×9.54 of the datum's (at most ×2) |
-| PID | step test, SIMC (integrating); backed off to 75 % of the way (tuned: Ms 3.3) | 0.374 → 0.127 | 111 | 1200 | yes |
-| LQR | Q = 1 for every measurement; R searched → 0.0336 | 4.17 → 2.43 | 31 | 460 | no: fails the main job: Following steps (IAE) ×5.65 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×6.64 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×27.2 of the datum's (at most ×2) |
-| State feedback | the LQR row's gains | 2.43 → 0.0809 | 107 | 1200 | yes |
-| Deadbeat | its defaults | 0.904 → 0.904 | 1 | 12 | no: fragile, at r's middle: Robustness Ms 5.19 above 3 |
-| Gain-scheduled PI | the PID's gains, flat | 3.04 → 0.786 | 63 | 670 | no: fails the main job: Following steps (IAE) ×2.05 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×2.34 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×11.4 of the datum's (at most ×2) |
-| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.0363 | 0.0839 → 0.089 | 31 | 460 | yes |
-| Planned swing-up + TV-LQR | its defaults | 4.29 → 4.29 | 1 | 65 | no: fails the main job: Following steps (IAE) ×7.68 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×9.17 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×40.3 of the datum's (at most ×2) |
-| Variable gain (Hu–Lin) | its defaults | 4.17 → 4.17 | 1 | 20 | no: fails the main job: Following steps (IAE) ×7.35 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×8.66 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×35.8 of the datum's (at most ×2) |
-| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 3.33 → 3.33 | 1 | 9.8 | no: fails the main job: Following steps (IAE) ×3.04 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×3.11 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×9.16 of the datum's (at most ×2) |
-| Sliding mode (ideal) | λ from the step model, K the full swing | 0.291 → 0.284 | 39 | 480 | yes |
-| Sliding mode (boundary layer) | and φ = 0.2·λ·span r | 0.0895 → 0.0839 | 64 | 730 | yes |
+| As loaded: Deadbeat, 100 ms | not tuned | 0.56 | 0 | 0 | yes |
+| PID | step test, SIMC (integrating); backed off to 75 % of the way (tuned: Ms 3.3) | 0.374 → 0.127 | 111 | 1100 | yes |
+| LQR | Q = 1 for every measurement; R searched → 0.0336 | 4.17 → 2.43 | 31 | 450 | no: fails the main job: Following steps (IAE) ×3.54 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×3.06 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×2.85 of the datum's (at most ×2) |
+| State feedback | the LQR row's gains | 2.43 → 0.0809 | 107 | 1000 | yes |
+| Deadbeat | its defaults | 0.904 → 0.904 | 1 | 11 | no: fragile, at r's middle: Robustness Ms 5.19 above 3 |
+| Gain-scheduled PI | the PID's gains, flat | 3.04 → 0.786 | 63 | 660 | yes |
+| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.0363 | 0.0839 → 0.089 | 31 | 410 | yes |
+| Planned swing-up + TV-LQR | its defaults | 4.29 → 4.29 | 1 | 61 | no: fails the main job: Following steps (IAE) ×4.82 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×4.23 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×4.22 of the datum's (at most ×2) |
+| Variable gain (Hu–Lin) | its defaults | 4.17 → 4.17 | 1 | 20 | no: fails the main job: Following steps (IAE) ×4.61 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×3.99 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×3.75 of the datum's (at most ×2) |
+| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 3.33 → 3.33 | 1 | 9 | yes |
+| Sliding mode (ideal) | λ from the step model, K the full swing | 0.291 → 0.284 | 39 | 440 | yes |
+| Sliding mode (boundary layer) | and φ = 0.2·λ·span r | 0.0895 → 0.0839 | 64 | 660 | yes |
 | Super-twisting | λ as the sliding mode; k1 = U/3, k2 = 3.7 U | 0.0815 → 0.0741 | 141 | 1400 | yes |
 
 Scores:
@@ -301,45 +300,43 @@ Scores:
 
 The feedforward's share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):
 
-- PID + feedforward from the plant (Kff 0, Kv 1.66, Ka 0.0324, prefilter Tr 0.0363 s): 26 % on the system's steps, 43 % on the smooth move; following IAE 0.091 (steps), 0.036 (move), against the datum's 0.096 and 0.08.
+- PID + feedforward from the plant (Kff 0, Kv 1.66, Ka 0.0324, prefilter Tr 0.0363 s): 26 % on the system's steps, 43 % on the smooth move; following IAE 0.091 (steps), 0.036 (move), against the datum's 0.15 and 0.18.
 
-Pugh matrix: datum **PID**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: Deadbeat, 100 ms**, the controller set up now; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: Deadbeat, 100 ms | PID | LQR | State feedback | Deadbeat | Gain-scheduled PI | PID + feedforward from the plant | Planned swing-up + TV-LQR | Variable gain (Hu–Lin) | Relay (on/off) | Sliding mode (ideal) | Sliding mode (boundary layer) | Super-twisting |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Following steps (IAE) (1.5) | − | D | −− | + | + | −− | S | −− | −− | −− | S | + | + |
-| Following a smooth move (IAE) (1.5) | −− | D | −− | + | ++ | −− | ++ | −− | −− | −− | + | + | + |
-| Rejecting d (IAE) (3) | −− | D | −− | + | ++ | −− | S | −− | −− | −− | ++ | − | ++ |
-| Overshoot (2) | −− | D | −− | ++ | −− | −− | + | −− | −− | −− | + | ++ | ++ |
-| Settling (2 %, s) (1) | + | D | −− | + | ++ | −− | S | − | −− | −− | − | + | ++ |
-| Effort (u swing) (1) | + | D | ++ | S | − | + | S | ++ | ++ | −− | −− | S | S |
-| Wear (u travel/s) (2) | ++ | D | ++ | S | −− | ++ | S | ++ | ++ | −− | −− | − | −− |
-| Time at a limit (1) | ++ | D | ++ | S | −− | ++ | S | ++ | ++ | −− | −− | S | S |
-| Robustness Ms (2) | + | D | + | + | − | + | S | ++ | ++ | ? | ? | S | ? |
-| Plant ±15 % (worst J) (3) | − | D | −− | ++ | − | − | + | −− | −− | −− | ++ | ++ | + |
-| Noise → u (2) | ++ | D | ++ | − | −− | ++ | S | ++ | ++ | −− | −− | S | −− |
-| Complexity (1) | − | D | −− | − | − | − | −− | − | + | + | + | − | − |
-| Tuning runs (1) | ++ | D | ++ | S | ++ | + | ++ | ++ | ++ | ++ | ++ | + | S |
-| **Weighted** | -2.5 | 0 | -10 | +16 | -6.5 | -8 | +8 | -6 | -5 | -33 | +5.5 | +9 | +9 |
-| **Fits** | no | yes | no | yes | no | no | yes | no | no | no | yes | yes | yes |
+| Following steps (IAE) (1.5) | D | + | −− | + | + | − | + | −− | −− | − | + | + | + |
+| Following a smooth move (IAE) (1.5) | D | ++ | −− | ++ | ++ | S | ++ | −− | −− | − | ++ | ++ | ++ |
+| Rejecting d (IAE) (3) | D | ++ | −− | ++ | ++ | − | ++ | −− | −− | S | ++ | ++ | ++ |
+| Overshoot (2) | D | ++ | −− | ++ | S | − | ++ | −− | −− | − | ++ | ++ | ++ |
+| Settling (2 %, s) (1) | D | − | −− | S | + | −− | − | − | −− | −− | − | S | ++ |
+| Effort (u swing) (1) | D | − | ++ | − | −− | + | − | ++ | ++ | −− | −− | − | − |
+| Wear (u travel/s) (2) | D | −− | ++ | −− | −− | + | −− | ++ | ++ | −− | −− | −− | −− |
+| Time at a limit (1) | D | −− | S | −− | −− | S | −− | S | S | −− | −− | −− | −− |
+| Robustness Ms (2) | D | − | + | + | −− | + | − | + | + | ? | ? | − | ? |
+| Plant ±15 % (worst J) (3) | D | + | −− | ++ | S | − | + | −− | −− | −− | ++ | ++ | ++ |
+| Noise → u (2) | D | −− | S | −− | −− | + | −− | + | + | −− | −− | −− | −− |
+| Complexity (1) | D | + | − | + | + | + | − | + | ++ | ++ | + | + | + |
+| Tuning runs (1) | D | −− | −− | −− | S | −− | −− | S | S | S | −− | −− | −− |
+| **Weighted** | 0 | +2.5 | -19 | +10.5 | -3.5 | -5.5 | +0.5 | -12 | -12 | -23 | +6.5 | +6.5 | +10.5 |
+| **Fits** | yes | yes | no | yes | no | yes | yes | no | no | yes | yes | yes | yes |
 
-Ranking (fitting only): 1. State feedback (+16); 2. Super-twisting (+9); 3. Sliding mode (boundary layer) (+9); 4. PID + feedforward from the plant (+8); 5. Sliding mode (ideal) (+5.5); 6. PID (+0).
+Ranking (fitting only): 1. Super-twisting (+10.5); 2. State feedback (+10.5); 3. Sliding mode (boundary layer) (+6.5); 4. Sliding mode (ideal) (+6.5); 5. PID (+2.5); 6. PID + feedforward from the plant (+0.5); 7. As loaded: Deadbeat, 100 ms (+0); 8. Gain-scheduled PI (-5.5); 9. Relay (on/off) (-23).
 
-Not ranked: As loaded: Deadbeat, 100 ms: fails the main job: Following a smooth move (IAE) ×2.17 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×9.54 of the datum's (at most ×2); LQR: fails the main job: Following steps (IAE) ×5.65 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×6.64 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×27.2 of the datum's (at most ×2); Deadbeat: fragile, at r's middle: Robustness Ms 5.19 above 3; Gain-scheduled PI: fails the main job: Following steps (IAE) ×2.05 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×2.34 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×11.4 of the datum's (at most ×2); Planned swing-up + TV-LQR: fails the main job: Following steps (IAE) ×7.68 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×9.17 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×40.3 of the datum's (at most ×2); Variable gain (Hu–Lin): fails the main job: Following steps (IAE) ×7.35 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×8.66 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×35.8 of the datum's (at most ×2); Relay (on/off): fails the main job: Following steps (IAE) ×3.04 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×3.11 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×9.16 of the datum's (at most ×2).
+Not ranked: LQR: fails the main job: Following steps (IAE) ×3.54 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×3.06 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×2.85 of the datum's (at most ×2); Deadbeat: fragile, at r's middle: Robustness Ms 5.19 above 3; Planned swing-up + TV-LQR: fails the main job: Following steps (IAE) ×4.82 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×4.23 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×4.22 of the datum's (at most ×2); Variable gain (Hu–Lin): fails the main job: Following steps (IAE) ×4.61 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×3.99 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×3.75 of the datum's (at most ×2).
 
-Suggestion: **State feedback** (+16), added as a variant, not switched on.
+Suggestion: **Super-twisting** (+10.5), added as a variant, not switched on.
 
-Weight sensitivity (winner State feedback; reasonable: each weight within ±1 of its default): **robust**. It wins 100 % of 4000 weight draws within one step.
-- Super-twisting (+9, wins 0 % of draws): ties if Rejecting d (IAE) goes 3 → 10 (not reasonable); all weights together: 35 % of the weights' size, the largest single change 1.6.
-- Sliding mode (boundary layer) (+9, wins 0 % of draws): ties if Noise → u goes 2 → 9 (not reasonable); all weights together: 38 % of the weights' size, the largest single change 1.8.
-- PID + feedforward from the plant (+8, wins 0 % of draws): ties if Tuning runs goes 1 → 5 (not reasonable); all weights together: 34 % of the weights' size, the largest single change 1.2.
+Weight sensitivity (winner Super-twisting; reasonable: each weight within ±1 of its default): **depends**. It wins 50.8 % of 4000 weight draws within one step.
+- State feedback (+10.5, wins 49.1 % of draws): tied now: the same total, J breaks the tie; all weights together: 0 % of the weights' size, the largest single change 0.
+- Sliding mode (boundary layer) (+6.5, wins 0 % of draws): no single weight makes it tie; all weights together: 34 % of the weights' size, the largest single change 2.
+- Sliding mode (ideal) (+6.5, wins 0 % of draws): no single weight makes it tie; all weights together: 21 % of the weights' size, the largest single change 1.
 
-
-# The rest of the library
 
 ## Pendulum swing-up
 
-Step test for the starts: relay. Total 2.7 s: load 0.0558 s, starts 0.135 s, tuning 1.61 s, scoring 0.519 s, sweep (8 plants) 0.315 s. One run 3.9 ms, so about 672 runs' worth.
+Step test for the starts: relay. Total 2.6 s: load 0.0528 s, starts 0.128 s, tuning 1.58 s, scoring 0.515 s, sweep (8 plants) 0.335 s. One run 4.1 ms, so about 646 runs' worth.
 
 Tests: the system's own input (its own disturbance plays); no smooth move (r has no steps to smooth).
 
@@ -355,19 +352,19 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 
 | Candidate | Tuned how | J start → tuned | Runs | ms | Fits |
 |---|---|---|---|---|---|
-| As loaded: Swing-up + LQR catch | not tuned | 0.193 | 0 | 0 | no: fails the main job: Rejecting d (IAE) ×9.09 of the datum's (at most ×2) |
-| PID | relay test, Tyreus–Luyben; backed off to 50 % of the way (tuned: Ms 2300) | 0.00531 → 5.7e-4 | 113 | 450 | yes |
-| LQR | Q = 1 for every measurement; R searched → 1 | 67.4 → 67.4 | 31 | 65 | no: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5.3e+4 of the datum's (at most ×2) |
-| State feedback | the LQR row's gains; no point on the way fits (tuned: unstable at r's middle (1 poles outside)) | 67.4 → 67.4 | 21 | 120 | no: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5.3e+4 of the datum's (at most ×2) |
-| Speed PI from the plant | its defaults | 100 → 100 | 1 | 5.4 | no: unstable at r's middle (4 poles outside); fails the main job: Rejecting d (IAE) ×8.2e+4 of the datum's (at most ×2) |
-| Swing-up (Lyapunov) + state feedback | its defaults (not iterated: A swing-up switches between pumping energy and catching the ) | 6.49 → 6.49 | 1 | 4 | no: fails the main job: Rejecting d (IAE) ×4040 of the datum's (at most ×2) |
-| Swing-up + LQR catch | its defaults | 6.49 → 6.49 | 1 | 5.5 | no: fails the main job: Rejecting d (IAE) ×4040 of the datum's (at most ×2) |
-| Planned swing-up + TV-LQR | its defaults | 0.106 → 0.106 | 1 | 300 | no: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×26 of the datum's (at most ×2) |
-| Variable gain (Hu–Lin) | its defaults | 67.4 → 67.4 | 1 | 21 | no: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5.3e+4 of the datum's (at most ×2) |
-| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 0.414 → 0.414 | 1 | 2.9 | no: fails the main job: Rejecting d (IAE) ×90.5 of the datum's (at most ×2) |
-| Sliding mode (ideal) | λ from the step model, K the full swing | 7.83 → 0.375 | 26 | 100 | no: fails the main job: Rejecting d (IAE) ×86.7 of the datum's (at most ×2) |
-| Sliding mode (boundary layer) | and φ = 0.2·λ·span r; no point on the way fits (tuned: unstable at r's middle (4 poles outside)) | 2.1 → 0.00745 | 33 | 140 | no: unstable at r's middle (4 poles outside); fails the main job: Rejecting d (IAE) ×8.83 of the datum's (at most ×2) |
-| Super-twisting | λ as the sliding mode; k1 = U/3, k2 = 3.7 U | 3.4 → 0.006 | 125 | 390 | no: fails the main job: Rejecting d (IAE) ×4.81 of the datum's (at most ×2) |
+| As loaded: Swing-up + LQR catch | not tuned | 0.193 | 0 | 0 | yes |
+| PID | relay test, Tyreus–Luyben; backed off to 50 % of the way (tuned: Ms 2300) | 0.00531 → 5.7e-4 | 113 | 430 | yes |
+| LQR | Q = 1 for every measurement; R searched → 1 | 67.4 → 67.4 | 31 | 65 | no: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5830 of the datum's (at most ×2) |
+| State feedback | the LQR row's gains; no point on the way fits (tuned: unstable at r's middle (1 poles outside)) | 67.4 → 67.4 | 21 | 110 | no: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5830 of the datum's (at most ×2) |
+| Speed PI from the plant | its defaults | 100 → 100 | 1 | 5 | no: unstable at r's middle (4 poles outside); fails the main job: Rejecting d (IAE) ×9080 of the datum's (at most ×2) |
+| Swing-up (Lyapunov) + state feedback | its defaults (not iterated: A swing-up switches between pumping energy and catching the ) | 6.49 → 6.49 | 1 | 4.7 | no: fails the main job: Rejecting d (IAE) ×445 of the datum's (at most ×2) |
+| Swing-up + LQR catch | its defaults | 6.49 → 6.49 | 1 | 5 | no: fails the main job: Rejecting d (IAE) ×445 of the datum's (at most ×2) |
+| Planned swing-up + TV-LQR | its defaults | 0.106 → 0.106 | 1 | 290 | no: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×2.86 of the datum's (at most ×2) |
+| Variable gain (Hu–Lin) | its defaults | 67.4 → 67.4 | 1 | 21 | no: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5830 of the datum's (at most ×2) |
+| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 0.414 → 0.414 | 1 | 2.9 | no: fails the main job: Rejecting d (IAE) ×9.95 of the datum's (at most ×2) |
+| Sliding mode (ideal) | λ from the step model, K the full swing | 7.83 → 0.375 | 26 | 100 | no: fails the main job: Rejecting d (IAE) ×9.54 of the datum's (at most ×2) |
+| Sliding mode (boundary layer) | and φ = 0.2·λ·span r; no point on the way fits (tuned: unstable at r's middle (4 poles outside)) | 2.1 → 0.00745 | 33 | 140 | no: unstable at r's middle (4 poles outside) |
+| Super-twisting | λ as the sliding mode; k1 = U/3, k2 = 3.7 U | 3.4 → 0.006 | 125 | 390 | yes |
 
 Scores:
 
@@ -387,35 +384,39 @@ Scores:
 | Sliding mode (boundary layer) | — | — | 0.023 | 0 % | — | 0.035 | 0.19 | 0 | unstable | 0.0075 | 0.047 | 5 | 33 | — | — |
 | Super-twisting | — | — | 0.012 | 0 % | — | 0.021 | 0.18 | 0 | no linear model | 0.006 | 0.052 | 5 | 130 | — | — |
 
-Pugh matrix: datum **PID**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: Swing-up + LQR catch**, the controller set up now; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: Swing-up + LQR catch | PID | LQR | State feedback | Speed PI from the plant | Swing-up (Lyapunov) + state feedback | Swing-up + LQR catch | Planned swing-up + TV-LQR | Variable gain (Hu–Lin) | Relay (on/off) | Sliding mode (ideal) | Sliding mode (boundary layer) | Super-twisting |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Following steps (IAE) (1.5) | ? | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
-| Following a smooth move (IAE) (1.5) | ? | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
-| Rejecting d (IAE) (3) | −− | D | −− | −− | −− | −− | −− | −− | −− | −− | −− | −− | −− |
-| Overshoot (2) | S | D | S | S | S | S | S | S | S | S | S | S | S |
-| Settling (2 %, s) (1) | ? | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
-| Effort (u swing) (1) | −− | D | ++ | ++ | −− | −− | −− | −− | ++ | −− | −− | −− | − |
-| Wear (u travel/s) (2) | −− | D | ++ | ++ | −− | −− | −− | −− | ++ | −− | −− | − | − |
-| Time at a limit (1) | −− | D | −− | −− | S | − | − | S | −− | −− | −− | S | S |
-| Robustness Ms (2) | ? | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
-| Plant ±15 % (worst J) (3) | −− | D | −− | −− | −− | −− | −− | −− | −− | −− | −− | −− | − |
-| Noise → u (2) | ++ | D | ++ | ++ | −− | ++ | ++ | ++ | ++ | −− | −− | ++ | ++ |
-| Complexity (1) | −− | D | −− | −− | + | −− | −− | − | + | + | + | − | − |
-| Tuning runs (1) | ++ | D | ++ | ++ | ++ | ++ | ++ | ++ | ++ | ++ | ++ | ++ | S |
-| **Weighted** | -16 | 0 | -4 | -4 | -19 | -15 | -15 | -13 | -1 | -21 | -21 | -11 | -9 |
-| **Fits** | no | yes | no | no | no | no | no | no | no | no | no | no | no |
+| Following steps (IAE) (1.5) | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
+| Following a smooth move (IAE) (1.5) | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
+| Rejecting d (IAE) (3) | D | ++ | −− | −− | −− | −− | −− | −− | −− | −− | −− | S | + |
+| Overshoot (2) | D | S | S | S | S | S | S | S | S | S | S | S | S |
+| Settling (2 %, s) (1) | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
+| Effort (u swing) (1) | D | ++ | ++ | ++ | −− | + | + | ++ | ++ | −− | −− | ++ | ++ |
+| Wear (u travel/s) (2) | D | ++ | ++ | ++ | −− | S | S | ++ | ++ | −− | −− | ++ | ++ |
+| Time at a limit (1) | D | ++ | −− | −− | ++ | + | + | ++ | −− | −− | −− | ++ | ++ |
+| Robustness Ms (2) | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
+| Plant ±15 % (worst J) (3) | D | ++ | −− | −− | −− | −− | −− | + | −− | −− | − | ++ | ++ |
+| Noise → u (2) | D | −− | ++ | ++ | −− | + | + | ++ | ++ | −− | −− | S | S |
+| Complexity (1) | D | ++ | + | + | ++ | + | + | ++ | ++ | ++ | ++ | ++ | ++ |
+| Tuning runs (1) | D | −− | −− | −− | S | S | S | S | S | S | −− | −− | −− |
+| **Weighted** | 0 | +16 | -5 | -5 | -18 | -7 | -7 | +11 | -2 | -22 | -21 | +14 | +17 |
+| **Fits** | yes | yes | no | no | no | no | no | no | no | no | no | no | yes |
 
-Ranking (fitting only): 1. PID (+0).
+Ranking (fitting only): 1. Super-twisting (+17); 2. PID (+16); 3. As loaded: Swing-up + LQR catch (+0).
 
-Not ranked: As loaded: Swing-up + LQR catch: fails the main job: Rejecting d (IAE) ×9.09 of the datum's (at most ×2); LQR: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5.3e+4 of the datum's (at most ×2); State feedback: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5.3e+4 of the datum's (at most ×2); Speed PI from the plant: unstable at r's middle (4 poles outside); fails the main job: Rejecting d (IAE) ×8.2e+4 of the datum's (at most ×2); Swing-up (Lyapunov) + state feedback: fails the main job: Rejecting d (IAE) ×4040 of the datum's (at most ×2); Swing-up + LQR catch: fails the main job: Rejecting d (IAE) ×4040 of the datum's (at most ×2); Planned swing-up + TV-LQR: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×26 of the datum's (at most ×2); Variable gain (Hu–Lin): unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5.3e+4 of the datum's (at most ×2); Relay (on/off): fails the main job: Rejecting d (IAE) ×90.5 of the datum's (at most ×2); Sliding mode (ideal): fails the main job: Rejecting d (IAE) ×86.7 of the datum's (at most ×2); Sliding mode (boundary layer): unstable at r's middle (4 poles outside); fails the main job: Rejecting d (IAE) ×8.83 of the datum's (at most ×2); Super-twisting: fails the main job: Rejecting d (IAE) ×4.81 of the datum's (at most ×2).
+Not ranked: LQR: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5830 of the datum's (at most ×2); State feedback: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5830 of the datum's (at most ×2); Speed PI from the plant: unstable at r's middle (4 poles outside); fails the main job: Rejecting d (IAE) ×9080 of the datum's (at most ×2); Swing-up (Lyapunov) + state feedback: fails the main job: Rejecting d (IAE) ×445 of the datum's (at most ×2); Swing-up + LQR catch: fails the main job: Rejecting d (IAE) ×445 of the datum's (at most ×2); Planned swing-up + TV-LQR: unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×2.86 of the datum's (at most ×2); Variable gain (Hu–Lin): unstable at r's middle (1 poles outside); fails the main job: Rejecting d (IAE) ×5830 of the datum's (at most ×2); Relay (on/off): fails the main job: Rejecting d (IAE) ×9.95 of the datum's (at most ×2); Sliding mode (ideal): fails the main job: Rejecting d (IAE) ×9.54 of the datum's (at most ×2); Sliding mode (boundary layer): unstable at r's middle (4 poles outside).
 
-Suggestion: **PID** (+0), added as a variant, not switched on.
+Suggestion: **Super-twisting** (+17), added as a variant, not switched on.
+
+Weight sensitivity (winner Super-twisting; reasonable: each weight within ±1 of its default): **depends**. It wins 74.7 % of 4000 weight draws within one step.
+- PID (+16, wins 25.3 % of draws): ties if Noise → u goes 2 → 1.5 (reasonable); all weights together: 6.8 % of the weights' size, the largest single change 0.4.
+- Swing-up + LQR catch (+0, wins 0 % of draws): ties if Tuning runs goes 1 → 9.5 (not reasonable); all weights together: 53 % of the weights' size, the largest single change 1.7.
 
 ## DC motor, position control
 
-Step test for the starts: integrating. Total 3.7 s: load 0.0311 s, starts 0.121 s, tuning 2.71 s, scoring 0.309 s, sweep (8 plants) 0.443 s. One run 11 ms, so about 324 runs' worth.
+Step test for the starts: integrating. Total 3.3 s: load 0.0292 s, starts 0.0804 s, tuning 2.52 s, scoring 0.275 s, sweep (8 plants) 0.408 s. One run 7.7 ms, so about 435 runs' worth.
 
 Tests: the system's own input (its own disturbance plays); the smooth move: r through 1/(τs + 1)³, τ = 0.0239 s.
 
@@ -442,13 +443,13 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 
 | Candidate | Tuned how | J start → tuned | Runs | ms | Fits |
 |---|---|---|---|---|---|
-| As loaded: P, too aggressive | not tuned | 1.27 | 0 | 0 | no: fragile, at r's middle: Robustness Ms 4.7 above 3; fails the main job: Rejecting d (IAE) ×2.81 of the datum's (at most ×2) |
-| PID | step test, SIMC (integrating) | 0.13 → 0.111 | 91 | 820 | yes |
-| Gain-scheduled PI | the PID's gains, flat | 1.17 → 0.114 | 61 | 560 | no: fails the main job: Rejecting d (IAE) ×3.57 of the datum's (at most ×2) |
-| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.0277 | 0.112 → 0.11 | 31 | 430 | yes |
-| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 1.55 → 1.55 | 1 | 7.7 | no: fails the main job: Following a smooth move (IAE) ×2.54 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×13 of the datum's (at most ×2) |
-| Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 0.32 → 0.32 | 32 | 350 | no: fails the main job: Rejecting d (IAE) ×4.49 of the datum's (at most ×2) |
-| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r | 0.119 → 0.11 | 52 | 490 | yes |
+| As loaded: P, too aggressive | not tuned | 1.27 | 0 | 0 | no: fragile, at r's middle: Robustness Ms 4.7 above 3 |
+| PID | step test, SIMC (integrating) | 0.13 → 0.111 | 91 | 770 | yes |
+| Gain-scheduled PI | the PID's gains, flat | 1.17 → 0.114 | 61 | 480 | yes |
+| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.0277 | 0.112 → 0.11 | 31 | 420 | yes |
+| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 1.55 → 1.55 | 1 | 6.2 | no: fails the main job: Rejecting d (IAE) ×4.65 of the datum's (at most ×2) |
+| Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 0.32 → 0.32 | 32 | 330 | yes |
+| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r | 0.119 → 0.11 | 52 | 470 | yes |
 
 Scores:
 
@@ -464,40 +465,41 @@ Scores:
 
 The feedforward's share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):
 
-- PID + feedforward from the plant (Kff 0, Kv 1.34, Ka 0.0356, prefilter Tr 0.0277 s): 16 % on the system's steps, 75 % on the smooth move; following IAE 0.12 (steps), 0.061 (move), against the datum's 0.11 and 0.078.
+- PID + feedforward from the plant (Kff 0, Kv 1.34, Ka 0.0356, prefilter Tr 0.0277 s): 16 % on the system's steps, 75 % on the smooth move; following IAE 0.12 (steps), 0.061 (move), against the datum's 0.16 and 0.11.
 
-Pugh matrix: datum **PID**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: P, too aggressive**, the controller set up now (it fails: fragile, at r's middle: Robustness Ms 4.7 above 3; kept as the datum, the person chose it); five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: P, too aggressive | PID | Gain-scheduled PI | PID + feedforward from the plant | Relay (on/off) | Sliding mode (ideal) ⚙ rate observer | Sliding mode (boundary layer) ⚙ rate observer |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Following steps (IAE) (1.5) | − | D | − | S | − | − | S |
-| Following a smooth move (IAE) (1.5) | − | D | − | + | −− | − | S |
-| Rejecting d (IAE) (3) | −− | D | −− | S | −− | −− | − |
-| Overshoot (2) | −− | D | −− | + | −− | −− | S |
-| Settling (2 %, s) (1) | −− | D | −− | S | −− | −− | S |
-| Effort (u swing) (1) | − | D | + | S | −− | −− | S |
-| Wear (u travel/s) (2) | −− | D | + | S | −− | −− | S |
-| Time at a limit (1) | − | D | ++ | S | −− | −− | S |
-| Robustness Ms (2) | −− | D | + | S | ? | ? | + |
-| Plant ±15 % (worst J) (3) | −− | D | S | S | −− | −− | S |
-| Noise → u (2) | + | D | ++ | S | −− | −− | ++ |
-| Complexity (1) | + | D | − | −− | + | −− | −− |
-| Tuning runs (1) | ++ | D | S | ++ | ++ | ++ | + |
-| **Weighted** | -26 | 0 | -5 | +3.5 | -31.5 | -33 | +2 |
-| **Fits** | no | yes | no | yes | no | no | yes |
+| Following steps (IAE) (1.5) | D | + | + | + | − | + | + |
+| Following a smooth move (IAE) (1.5) | D | + | − | + | − | S | + |
+| Rejecting d (IAE) (3) | D | ++ | − | ++ | −− | − | ++ |
+| Overshoot (2) | D | ++ | ++ | ++ | S | ++ | ++ |
+| Settling (2 %, s) (1) | D | ++ | + | ++ | − | − | ++ |
+| Effort (u swing) (1) | D | + | + | + | −− | − | + |
+| Wear (u travel/s) (2) | D | ++ | ++ | ++ | −− | −− | ++ |
+| Time at a limit (1) | D | + | ++ | + | −− | −− | + |
+| Robustness Ms (2) | D | ++ | ++ | ++ | ? | ? | ++ |
+| Plant ±15 % (worst J) (3) | D | ++ | ++ | ++ | − | ++ | ++ |
+| Noise → u (2) | D | − | ++ | − | −− | −− | + |
+| Complexity (1) | D | − | −− | −− | + | −− | −− |
+| Tuning runs (1) | D | −− | −− | −− | S | −− | −− |
+| **Weighted** | 0 | +26 | +19 | +25 | -24 | -7.5 | +29 |
+| **Fits** | no | yes | yes | yes | no | yes | yes |
 
-Ranking (fitting only): 1. PID + feedforward from the plant (+3.5); 2. Sliding mode (boundary layer) ⚙ rate observer (+2); 3. PID (+0).
+Ranking (fitting only): 1. Sliding mode (boundary layer) ⚙ rate observer (+29); 2. PID (+26); 3. PID + feedforward from the plant (+25); 4. Gain-scheduled PI (+19); 5. Sliding mode (ideal) ⚙ rate observer (-7.5).
 
-Not ranked: As loaded: P, too aggressive: fragile, at r's middle: Robustness Ms 4.7 above 3; fails the main job: Rejecting d (IAE) ×2.81 of the datum's (at most ×2); Gain-scheduled PI: fails the main job: Rejecting d (IAE) ×3.57 of the datum's (at most ×2); Relay (on/off): fails the main job: Following a smooth move (IAE) ×2.54 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×13 of the datum's (at most ×2); Sliding mode (ideal) ⚙ rate observer: fails the main job: Rejecting d (IAE) ×4.49 of the datum's (at most ×2).
+Not ranked: As loaded: P, too aggressive: fragile, at r's middle: Robustness Ms 4.7 above 3; Relay (on/off): fails the main job: Rejecting d (IAE) ×4.65 of the datum's (at most ×2).
 
-Suggestion: **PID + feedforward from the plant** (+3.5), added as a variant, not switched on.
+Suggestion: **PID** (+26), added as a variant, not switched on; ranked above it with a plant change: Sliding mode (boundary layer) ⚙ rate observer (+29; a Finite difference observer (Tf 0.01 s) makes ẏ from y for input 3).
 
-Weight sensitivity (winner PID + feedforward from the plant; reasonable: each weight within ±1 of its default): **robust**. It wins 97.8 % of 4000 weight draws within one step.
-- PID (+0, wins 2.23 % of draws): ties if Complexity goes 1 → 2.75 (not reasonable); all weights together: 17 % of the weights' size, the largest single change 0.7.
+Weight sensitivity (winner PID; reasonable: each weight within ±1 of its default): **holds**. It wins 99.5 % of 4000 weight draws within one step.
+- PID + feedforward from the plant (+25, wins 0 % of draws): ties if Complexity goes 1 → 0 (not reasonable); all weights together: 15 % of the weights' size, the largest single change 1.
+- Gain-scheduled PI (+19, wins 0.55 % of draws): ties if Rejecting d (IAE) goes 3 → 0.667 (not reasonable); all weights together: 21 % of the weights' size, the largest single change 0.84.
 
 ## Triple pendulum
 
-Step test for the starts: relay. Total 9.1 s: load 3.58 s, starts 0.123 s, tuning 2.57 s, scoring 2.11 s, sweep (8 plants) 0.646 s. One run 5.5 ms, so about 1640 runs' worth.
+Step test for the starts: relay. Total 9.1 s: load 3.52 s, starts 0.119 s, tuning 2.68 s, scoring 2.08 s, sweep (8 plants) 0.63 s. One run 5.8 ms, so about 1571 runs' worth.
 
 Tests: the system's own input (its own disturbance plays); no smooth move (r has no steps to smooth).
 
@@ -513,19 +515,19 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 
 | Candidate | Tuned how | J start → tuned | Runs | ms | Fits |
 |---|---|---|---|---|---|
-| As loaded: Planned swing-up + TV-LQR | not tuned | 0.219 | 0 | 0 | no: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×3.71 of the datum's (at most ×2) |
+| As loaded: Planned swing-up + TV-LQR | not tuned | 0.219 | 0 | 0 | no: unstable at r's middle (3 poles outside) |
 | PID | relay test, Tyreus–Luyben; backed off to 25 % of the way (tuned: unstable at r's middle (2 poles outside)) | 0.0103 → 0.00355 | 115 | 720 | yes |
-| LQR | Q = 1 for every measurement; R searched → 2.23; no point on the way fits (tuned: unstable at r's middle (3 poles outside)) | 32.6 → 20.5 | 35 | 190 | no: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×2480 of the datum's (at most ×2) |
-| State feedback | the LQR row's gains; no point on the way fits (tuned: unstable at r's middle (5 poles outside)) | 20.5 → 14.3 | 84 | 480 | no: unstable at r's middle (5 poles outside); fails the main job: Rejecting d (IAE) ×989 of the datum's (at most ×2) |
-| Speed PI from the plant | its defaults | 100 → 100 | 1 | 24 | no: unstable at r's middle (6 poles outside); fails the main job: Rejecting d (IAE) ×4.0e+4 of the datum's (at most ×2) |
-| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.25 | 0.00355 → 0.00355 | 31 | 100 | yes |
-| Swing-up (Lyapunov) + state feedback | its defaults (not iterated: A swing-up switches between pumping energy and catching the ) | 78.3 → 78.3 | 1 | 5.9 | no: fails the main job: Rejecting d (IAE) ×1.3e+4 of the datum's (at most ×2) |
-| Planned swing-up + TV-LQR | its defaults | 0.244 → 0.244 | 1 | 12 | no: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×10.3 of the datum's (at most ×2) |
-| Variable gain (Hu–Lin) | its defaults | 24.5 → 24.5 | 1 | 27 | no: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×2780 of the datum's (at most ×2) |
-| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 0.733 → 0.733 | 1 | 4.8 | no: fails the main job: Rejecting d (IAE) ×58.8 of the datum's (at most ×2) |
-| Sliding mode (ideal) | λ from the step model, K the full swing | 25.6 → 1.12 | 27 | 190 | no: fails the main job: Rejecting d (IAE) ×133 of the datum's (at most ×2) |
-| Sliding mode (boundary layer) | and φ = 0.2·λ·span r; no point on the way fits (tuned: unstable at r's middle (8 poles outside)) | 8.17 → 1.69 | 49 | 330 | no: unstable at r's middle (8 poles outside); fails the main job: Rejecting d (IAE) ×147 of the datum's (at most ×2) |
-| Super-twisting | λ as the sliding mode; k1 = U/3, k2 = 3.7 U | 13.9 → 1.21 | 79 | 470 | no: fails the main job: Rejecting d (IAE) ×180 of the datum's (at most ×2) |
+| LQR | Q = 1 for every measurement; R searched → 2.23; no point on the way fits (tuned: unstable at r's middle (3 poles outside)) | 32.6 → 20.5 | 35 | 190 | no: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×667 of the datum's (at most ×2) |
+| State feedback | the LQR row's gains; no point on the way fits (tuned: unstable at r's middle (5 poles outside)) | 20.5 → 14.3 | 84 | 500 | no: unstable at r's middle (5 poles outside); fails the main job: Rejecting d (IAE) ×266 of the datum's (at most ×2) |
+| Speed PI from the plant | its defaults | 100 → 100 | 1 | 19 | no: unstable at r's middle (6 poles outside); fails the main job: Rejecting d (IAE) ×1.1e+4 of the datum's (at most ×2) |
+| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.25 | 0.00355 → 0.00355 | 31 | 110 | yes |
+| Swing-up (Lyapunov) + state feedback | its defaults (not iterated: A swing-up switches between pumping energy and catching the ) | 78.3 → 78.3 | 1 | 8.3 | no: fails the main job: Rejecting d (IAE) ×3510 of the datum's (at most ×2) |
+| Planned swing-up + TV-LQR | its defaults | 0.244 → 0.244 | 1 | 16 | no: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×2.78 of the datum's (at most ×2) |
+| Variable gain (Hu–Lin) | its defaults | 24.5 → 24.5 | 1 | 29 | no: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×750 of the datum's (at most ×2) |
+| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 0.733 → 0.733 | 1 | 4.7 | no: fails the main job: Rejecting d (IAE) ×15.8 of the datum's (at most ×2) |
+| Sliding mode (ideal) | λ from the step model, K the full swing | 25.6 → 1.12 | 27 | 190 | no: fails the main job: Rejecting d (IAE) ×35.8 of the datum's (at most ×2) |
+| Sliding mode (boundary layer) | and φ = 0.2·λ·span r; no point on the way fits (tuned: unstable at r's middle (8 poles outside)) | 8.17 → 1.69 | 49 | 340 | no: unstable at r's middle (8 poles outside); fails the main job: Rejecting d (IAE) ×39.6 of the datum's (at most ×2) |
+| Super-twisting | λ as the sliding mode; k1 = U/3, k2 = 3.7 U | 13.9 → 1.21 | 79 | 550 | no: fails the main job: Rejecting d (IAE) ×48.5 of the datum's (at most ×2) |
 
 Scores:
 
@@ -549,38 +551,38 @@ The feedforward's share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):
 
 - PID + feedforward from the plant (Kff -5.4e-15, Kv 6.33, Ka 1.24, prefilter Tr 0.25 s): 0 % on the system's steps, — on the smooth move; following IAE — (steps), — (move), against the datum's — and —.
 
-Pugh matrix: datum **PID**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: Planned swing-up + TV-LQR**, the controller set up now (it fails: unstable at r's middle (3 poles outside); kept as the datum, the person chose it); five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: Planned swing-up + TV-LQR | PID | LQR | State feedback | Speed PI from the plant | PID + feedforward from the plant | Swing-up (Lyapunov) + state feedback | Planned swing-up + TV-LQR | Variable gain (Hu–Lin) | Relay (on/off) | Sliding mode (ideal) | Sliding mode (boundary layer) | Super-twisting |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Following steps (IAE) (1.5) | ? | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
-| Following a smooth move (IAE) (1.5) | ? | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
-| Rejecting d (IAE) (3) | −− | D | −− | −− | −− | S | −− | −− | −− | −− | −− | −− | −− |
-| Overshoot (2) | S | D | S | S | S | S | S | S | S | S | S | S | S |
-| Settling (2 %, s) (1) | ? | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
-| Effort (u swing) (1) | −− | D | −− | −− | −− | S | −− | −− | −− | −− | −− | −− | −− |
-| Wear (u travel/s) (2) | −− | D | −− | −− | −− | S | −− | −− | −− | −− | −− | −− | −− |
-| Time at a limit (1) | S | D | −− | −− | S | S | −− | S | −− | −− | −− | −− | −− |
-| Robustness Ms (2) | ? | D | ? | ? | ? | S | ? | ? | ? | ? | ? | ? | ? |
-| Plant ±15 % (worst J) (3) | −− | D | −− | −− | −− | S | −− | −− | −− | −− | −− | −− | −− |
-| Noise → u (2) | −− | D | −− | −− | −− | S | −− | −− | −− | −− | ++ | −− | −− |
-| Complexity (1) | −− | D | −− | −− | + | −− | −− | −− | + | + | + | − | − |
-| Tuning runs (1) | ++ | D | ++ | S | ++ | ++ | ++ | ++ | ++ | ++ | ++ | ++ | S |
-| **Weighted** | -22 | 0 | -24 | -26 | -19 | +0 | -24 | -22 | -21 | -21 | -13 | -23 | -25 |
+| Following steps (IAE) (1.5) | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
+| Following a smooth move (IAE) (1.5) | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
+| Rejecting d (IAE) (3) | D | ++ | −− | −− | −− | ++ | −− | −− | −− | −− | −− | −− | −− |
+| Overshoot (2) | D | S | S | S | S | S | S | S | S | S | S | S | S |
+| Settling (2 %, s) (1) | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
+| Effort (u swing) (1) | D | ++ | −− | −− | −− | ++ | −− | S | −− | −− | −− | −− | −− |
+| Wear (u travel/s) (2) | D | ++ | −− | −− | −− | ++ | −− | S | −− | −− | −− | −− | −− |
+| Time at a limit (1) | D | S | −− | −− | S | S | −− | S | −− | −− | −− | −− | −− |
+| Robustness Ms (2) | D | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? |
+| Plant ±15 % (worst J) (3) | D | ++ | −− | −− | −− | ++ | −− | S | −− | −− | −− | −− | −− |
+| Noise → u (2) | D | ++ | − | ++ | −− | ++ | + | S | S | − | ++ | − | S |
+| Complexity (1) | D | ++ | − | − | ++ | + | − | + | ++ | ++ | ++ | + | + |
+| Tuning runs (1) | D | −− | −− | −− | S | −− | S | S | S | S | −− | −− | −− |
+| **Weighted** | 0 | +22 | -25 | -19 | -20 | +21 | -19 | -5 | -18 | -20 | -16 | -23 | -21 |
 | **Fits** | no | yes | no | no | no | yes | no | no | no | no | no | no | no |
 
-Ranking (fitting only): 1. PID (+0); 2. PID + feedforward from the plant (+0).
+Ranking (fitting only): 1. PID (+22); 2. PID + feedforward from the plant (+21).
 
-Not ranked: As loaded: Planned swing-up + TV-LQR: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×3.71 of the datum's (at most ×2); LQR: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×2480 of the datum's (at most ×2); State feedback: unstable at r's middle (5 poles outside); fails the main job: Rejecting d (IAE) ×989 of the datum's (at most ×2); Speed PI from the plant: unstable at r's middle (6 poles outside); fails the main job: Rejecting d (IAE) ×4.0e+4 of the datum's (at most ×2); Swing-up (Lyapunov) + state feedback: fails the main job: Rejecting d (IAE) ×1.3e+4 of the datum's (at most ×2); Planned swing-up + TV-LQR: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×10.3 of the datum's (at most ×2); Variable gain (Hu–Lin): unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×2780 of the datum's (at most ×2); Relay (on/off): fails the main job: Rejecting d (IAE) ×58.8 of the datum's (at most ×2); Sliding mode (ideal): fails the main job: Rejecting d (IAE) ×133 of the datum's (at most ×2); Sliding mode (boundary layer): unstable at r's middle (8 poles outside); fails the main job: Rejecting d (IAE) ×147 of the datum's (at most ×2); Super-twisting: fails the main job: Rejecting d (IAE) ×180 of the datum's (at most ×2).
+Not ranked: As loaded: Planned swing-up + TV-LQR: unstable at r's middle (3 poles outside); LQR: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×667 of the datum's (at most ×2); State feedback: unstable at r's middle (5 poles outside); fails the main job: Rejecting d (IAE) ×266 of the datum's (at most ×2); Speed PI from the plant: unstable at r's middle (6 poles outside); fails the main job: Rejecting d (IAE) ×1.1e+4 of the datum's (at most ×2); Swing-up (Lyapunov) + state feedback: fails the main job: Rejecting d (IAE) ×3510 of the datum's (at most ×2); Planned swing-up + TV-LQR: unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×2.78 of the datum's (at most ×2); Variable gain (Hu–Lin): unstable at r's middle (3 poles outside); fails the main job: Rejecting d (IAE) ×750 of the datum's (at most ×2); Relay (on/off): fails the main job: Rejecting d (IAE) ×15.8 of the datum's (at most ×2); Sliding mode (ideal): fails the main job: Rejecting d (IAE) ×35.8 of the datum's (at most ×2); Sliding mode (boundary layer): unstable at r's middle (8 poles outside); fails the main job: Rejecting d (IAE) ×39.6 of the datum's (at most ×2); Super-twisting: fails the main job: Rejecting d (IAE) ×48.5 of the datum's (at most ×2).
 
-Suggestion: **PID** (+0), added as a variant, not switched on.
+Suggestion: **PID** (+22), added as a variant, not switched on.
 
-Weight sensitivity (winner PID; reasonable: each weight within ±1 of its default): **sensitive**. It wins 49.9 % of 4000 weight draws within one step.
-- PID + feedforward from the plant (+0, wins 50.1 % of draws): tied now: the same total, J breaks the tie; all weights together: 0 % of the weights' size, the largest single change 0.
+Weight sensitivity (winner PID; reasonable: each weight within ±1 of its default): **holds**. It wins 100 % of 4000 weight draws within one step.
+- PID + feedforward from the plant (+21, wins 0 % of draws): ties if Complexity goes 1 → 0 (not reasonable); all weights together: 15 % of the weights' size, the largest single change 1.
 
 ## Following a sine (XY)
 
-Step test for the starts: integrating. Total 3.4 s: load 0.0288 s, starts 0.0668 s, tuning 2.66 s, scoring 0.194 s, sweep (8 plants) 0.433 s. One run 7.3 ms, so about 469 runs' worth.
+Step test for the starts: integrating. Total 3.5 s: load 0.0284 s, starts 0.0663 s, tuning 2.71 s, scoring 0.208 s, sweep (8 plants) 0.428 s. One run 7.3 ms, so about 477 runs' worth.
 
 Tests: the system's own input, plus the standard disturbance (it has none of its own): a load step of -2.4 at the plant's input from 2.5 s (10 % of u's range); no smooth move (r has no steps to smooth).
 
@@ -607,13 +609,13 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 
 | Candidate | Tuned how | J start → tuned | Runs | ms | Fits |
 |---|---|---|---|---|---|
-| As loaded: P | not tuned | 0.219 | 0 | 0 | no: fails the main job: Rejecting d (IAE) ×59.9 of the datum's (at most ×2) |
-| PID | step test, SIMC (integrating); backed off to 50 % of the way (tuned: Ms 10) | 0.0158 → 0.00515 | 94 | 810 | yes |
-| Gain-scheduled PI | the PID's gains, flat; no point on the way fits (tuned: Ms 8.5) | 0.169 → 0.00772 | 48 | 420 | no: fragile, at r's middle: Robustness Ms 8.5 above 3 |
-| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.00178 | 0.0174 → 0.0016 | 31 | 230 | yes |
-| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 0.326 → 0.326 | 1 | 7.6 | no: fails the main job: Rejecting d (IAE) ×19.5 of the datum's (at most ×2) |
-| Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 0.258 → 0.256 | 42 | 450 | no: fails the main job: Rejecting d (IAE) ×8.28 of the datum's (at most ×2) |
-| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r | 0.0344 → 0.0155 | 76 | 700 | no: fails the main job: Rejecting d (IAE) ×3.15 of the datum's (at most ×2) |
+| As loaded: P | not tuned | 0.219 | 0 | 0 | yes |
+| PID | step test, SIMC (integrating); backed off to 50 % of the way (tuned: Ms 10) | 0.0158 → 0.00515 | 94 | 800 | yes |
+| Gain-scheduled PI | the PID's gains, flat; no point on the way fits (tuned: Ms 8.5) | 0.169 → 0.00772 | 48 | 440 | no: fragile, at r's middle: Robustness Ms 8.5 above 3 |
+| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.00178 | 0.0174 → 0.0016 | 31 | 220 | yes |
+| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 0.326 → 0.326 | 1 | 7.7 | yes |
+| Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 0.258 → 0.256 | 42 | 430 | yes |
+| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r | 0.0344 → 0.0155 | 76 | 770 | yes |
 
 Scores:
 
@@ -631,38 +633,40 @@ The feedforward's share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):
 
 - PID + feedforward from the plant (Kff 0, Kv 1.95, Ka 0.0295, prefilter Tr 0.00178 s): 48 % on the system's steps, — on the smooth move; following IAE — (steps), — (move), against the datum's — and —.
 
-Pugh matrix: datum **PID**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: P**, the controller set up now; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: P | PID | Gain-scheduled PI | PID + feedforward from the plant | Relay (on/off) | Sliding mode (ideal) ⚙ rate observer | Sliding mode (boundary layer) ⚙ rate observer |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Following steps (IAE) (1.5) | ? | D | ? | ? | ? | ? | ? |
-| Following a smooth move (IAE) (1.5) | ? | D | ? | ? | ? | ? | ? |
-| Rejecting d (IAE) (3) | −− | D | − | + | −− | −− | −− |
-| Overshoot (2) | S | D | S | S | S | S | S |
-| Settling (2 %, s) (1) | ? | D | ? | ? | ? | ? | ? |
-| Effort (u swing) (1) | S | D | S | S | −− | −− | − |
-| Wear (u travel/s) (2) | + | D | −− | − | −− | −− | −− |
-| Time at a limit (1) | S | D | S | S | −− | −− | S |
-| Robustness Ms (2) | ++ | D | −− | S | ? | ? | S |
-| Plant ±15 % (worst J) (3) | −− | D | − | + | −− | −− | −− |
-| Noise → u (2) | ++ | D | ++ | S | −− | −− | −− |
-| Complexity (1) | + | D | − | −− | + | −− | −− |
-| Tuning runs (1) | ++ | D | + | ++ | ++ | ++ | S |
-| **Weighted** | +1 | 0 | -10 | +4 | -21 | -24 | -23 |
-| **Fits** | no | yes | no | yes | no | no | no |
+| Following steps (IAE) (1.5) | D | ? | ? | ? | ? | ? | ? |
+| Following a smooth move (IAE) (1.5) | D | ? | ? | ? | ? | ? | ? |
+| Rejecting d (IAE) (3) | D | ++ | ++ | ++ | ++ | ++ | ++ |
+| Overshoot (2) | D | S | S | S | S | S | S |
+| Settling (2 %, s) (1) | D | ? | ? | ? | ? | ? | ? |
+| Effort (u swing) (1) | D | S | − | S | −− | −− | − |
+| Wear (u travel/s) (2) | D | − | −− | −− | −− | −− | −− |
+| Time at a limit (1) | D | S | S | S | −− | −− | S |
+| Robustness Ms (2) | D | −− | −− | −− | ? | ? | −− |
+| Plant ±15 % (worst J) (3) | D | ++ | ++ | ++ | − | − | ++ |
+| Noise → u (2) | D | −− | −− | −− | −− | −− | −− |
+| Complexity (1) | D | − | −− | −− | + | −− | −− |
+| Tuning runs (1) | D | −− | −− | −− | S | −− | −− |
+| **Weighted** | 0 | -1 | -5 | -4 | -8 | -13 | -5 |
+| **Fits** | yes | yes | no | yes | yes | yes | yes |
 
-Ranking (fitting only): 1. PID + feedforward from the plant (+4); 2. PID (+0).
+Ranking (fitting only): 1. As loaded: P (+0); 2. PID (-1); 3. PID + feedforward from the plant (-4); 4. Sliding mode (boundary layer) ⚙ rate observer (-5); 5. Relay (on/off) (-8); 6. Sliding mode (ideal) ⚙ rate observer (-13).
 
-Not ranked: As loaded: P: fails the main job: Rejecting d (IAE) ×59.9 of the datum's (at most ×2); Gain-scheduled PI: fragile, at r's middle: Robustness Ms 8.5 above 3; Relay (on/off): fails the main job: Rejecting d (IAE) ×19.5 of the datum's (at most ×2); Sliding mode (ideal) ⚙ rate observer: fails the main job: Rejecting d (IAE) ×8.28 of the datum's (at most ×2); Sliding mode (boundary layer) ⚙ rate observer: fails the main job: Rejecting d (IAE) ×3.15 of the datum's (at most ×2).
+Not ranked: Gain-scheduled PI: fragile, at r's middle: Robustness Ms 8.5 above 3.
 
-Suggestion: **PID + feedforward from the plant** (+4), added as a variant, not switched on.
+Suggestion: keep **P**, the running variant: nothing beats it.
 
-Weight sensitivity (winner PID + feedforward from the plant; reasonable: each weight within ±1 of its default): **robust**. It wins 98.3 % of 4000 weight draws within one step.
-- PID (+0, wins 1.73 % of draws): ties if Complexity goes 1 → 3 (not reasonable); all weights together: 18 % of the weights' size, the largest single change 0.73.
+Weight sensitivity (winner As loaded: P; reasonable: each weight within ±1 of its default): **depends**. It wins 62.6 % of 4000 weight draws within one step.
+- PID (-1, wins 37.3 % of draws): ties if Rejecting d (IAE) goes 3 → 3.5 (reasonable); all weights together: 3.2 % of the weights' size, the largest single change 0.091.
+- PID + feedforward from the plant (-4, wins 0 % of draws): ties if Rejecting d (IAE) goes 3 → 5 (not reasonable); all weights together: 11 % of the weights' size, the largest single change 0.29.
+- Relay (on/off) (-8, wins 0.025 % of draws): ties if Rejecting d (IAE) goes 3 → 7 (not reasonable); all weights together: 26 % of the weights' size, the largest single change 0.73.
 
 ## Encoder errors and torque ripple
 
-Step test for the starts: fopdt. Total 18.6 s: load 0.191 s, starts 0.363 s, tuning 13.2 s, scoring 1.09 s, sweep (8 plants) 3.48 s. One run 57 ms, so about 327 runs' worth.
+Step test for the starts: fopdt. Total 18.1 s: load 0.198 s, starts 0.359 s, tuning 12.8 s, scoring 1.03 s, sweep (8 plants) 3.29 s. One run 71 ms, so about 256 runs' worth.
 
 Tests: the system's own input, plus the standard disturbance (it has none of its own): a load step of -9.6 at the plant's input from 2.5 s (10 % of u's range); no smooth move (r has no steps to smooth).
 
@@ -691,11 +695,11 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 |---|---|---|---|---|---|
 | As loaded: PI speed | not tuned | 0.0838 | 0 | 0 | yes |
 | PID | step test, SIMC (fopdt) | 0.0801 → 0.0747 | 70 | 4500 | yes |
-| Gain-scheduled PI | the PID's gains, flat | 0.0747 → 0.0747 | 37 | 2800 | yes |
-| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.00145 | 0.757 → 0.587 | 31 | 1600 | no: fails the main job: Rejecting d (IAE) ×3.33 of the datum's (at most ×2) |
-| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 0.353 → 0.353 | 1 | 61 | no: fails the main job: Rejecting d (IAE) ×2.14 of the datum's (at most ×2) |
-| Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 0.83 → 0.36 | 17 | 1800 | no: fails the main job: Rejecting d (IAE) ×2.23 of the datum's (at most ×2) |
-| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r; no point on the way fits (tuned: unstable where the run starts (3 poles outside)) | 0.824 → 0.175 | 30 | 2300 | no: unstable where the run starts (3 poles outside); it rests there only because it starts in balance; fails the main job: Rejecting d (IAE) ×3.02 of the datum's (at most ×2) |
+| Gain-scheduled PI | the PID's gains, flat | 0.0747 → 0.0747 | 37 | 2700 | yes |
+| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.00145 | 0.757 → 0.587 | 31 | 1500 | no: fails the main job: Rejecting d (IAE) ×3.09 of the datum's (at most ×2) |
+| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 0.353 → 0.353 | 1 | 56 | yes |
+| Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 0.83 → 0.36 | 17 | 1800 | no: fails the main job: Rejecting d (IAE) ×2.07 of the datum's (at most ×2) |
+| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r; no point on the way fits (tuned: unstable where the run starts (3 poles outside)) | 0.824 → 0.175 | 30 | 2200 | no: unstable where the run starts (3 poles outside); it rests there only because it starts in balance; fails the main job: Rejecting d (IAE) ×2.8 of the datum's (at most ×2) |
 
 Scores:
 
@@ -713,39 +717,40 @@ The feedforward's share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):
 
 - PID + feedforward from the plant (Kff 3.5e+6, Kv 4.3e+12, Ka 5.2e+18, prefilter Tr 0.00145 s): 48 % on the system's steps, — on the smooth move; following IAE — (steps), — (move), against the datum's — and —.
 
-Pugh matrix: datum **PID**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: PI speed**, the controller set up now; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: PI speed | PID | Gain-scheduled PI | PID + feedforward from the plant | Relay (on/off) | Sliding mode (ideal) ⚙ rate observer | Sliding mode (boundary layer) ⚙ rate observer |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Following steps (IAE) (1.5) | ? | D | ? | ? | ? | ? | ? |
-| Following a smooth move (IAE) (1.5) | ? | D | ? | ? | ? | ? | ? |
-| Rejecting d (IAE) (3) | S | D | S | −− | −− | −− | −− |
-| Overshoot (2) | S | D | S | S | S | S | S |
-| Settling (2 %, s) (1) | ? | D | ? | ? | ? | ? | ? |
-| Effort (u swing) (1) | S | D | S | S | −− | −− | − |
-| Wear (u travel/s) (2) | −− | D | S | − | −− | −− | −− |
-| Time at a limit (1) | S | D | S | −− | −− | −− | S |
-| Robustness Ms (2) | ? | D | ? | ? | ? | ? | ? |
-| Plant ±15 % (worst J) (3) | S | D | S | −− | −− | −− | −− |
-| Noise → u (2) | −− | D | S | + | −− | −− | −− |
-| Complexity (1) | + | D | − | −− | + | −− | −− |
-| Tuning runs (1) | ++ | D | + | ++ | ++ | ++ | ++ |
-| **Weighted** | -5 | 0 | +0 | -14 | -21 | -24 | -21 |
-| **Fits** | yes | yes | yes | no | no | no | no |
+| Following steps (IAE) (1.5) | D | ? | ? | ? | ? | ? | ? |
+| Following a smooth move (IAE) (1.5) | D | ? | ? | ? | ? | ? | ? |
+| Rejecting d (IAE) (3) | D | S | S | −− | − | −− | −− |
+| Overshoot (2) | D | S | S | S | S | S | S |
+| Settling (2 %, s) (1) | D | ? | ? | ? | ? | ? | ? |
+| Effort (u swing) (1) | D | S | S | S | −− | −− | − |
+| Wear (u travel/s) (2) | D | ++ | ++ | ++ | −− | −− | −− |
+| Time at a limit (1) | D | S | S | −− | −− | −− | S |
+| Robustness Ms (2) | D | ? | ? | ? | ? | ? | ? |
+| Plant ±15 % (worst J) (3) | D | S | S | −− | −− | −− | −− |
+| Noise → u (2) | D | ++ | ++ | ++ | −− | −− | −− |
+| Complexity (1) | D | + | − | −− | + | −− | −− |
+| Tuning runs (1) | D | −− | −− | −− | S | −− | −− |
+| **Weighted** | 0 | +7 | +5 | -10 | -20 | -28 | -25 |
+| **Fits** | yes | yes | yes | no | yes | no | no |
 
-Ranking (fitting only): 1. Gain-scheduled PI (+0); 2. PID (+0); 3. As loaded: PI speed (-5).
+Ranking (fitting only): 1. PID (+7); 2. Gain-scheduled PI (+5); 3. As loaded: PI speed (+0); 4. Relay (on/off) (-20).
 
-Not ranked: PID + feedforward from the plant: fails the main job: Rejecting d (IAE) ×3.33 of the datum's (at most ×2); Relay (on/off): fails the main job: Rejecting d (IAE) ×2.14 of the datum's (at most ×2); Sliding mode (ideal) ⚙ rate observer: fails the main job: Rejecting d (IAE) ×2.23 of the datum's (at most ×2); Sliding mode (boundary layer) ⚙ rate observer: unstable where the run starts (3 poles outside); it rests there only because it starts in balance; fails the main job: Rejecting d (IAE) ×3.02 of the datum's (at most ×2).
+Not ranked: PID + feedforward from the plant: fails the main job: Rejecting d (IAE) ×3.09 of the datum's (at most ×2); Sliding mode (ideal) ⚙ rate observer: fails the main job: Rejecting d (IAE) ×2.07 of the datum's (at most ×2); Sliding mode (boundary layer) ⚙ rate observer: unstable where the run starts (3 poles outside); it rests there only because it starts in balance; fails the main job: Rejecting d (IAE) ×2.8 of the datum's (at most ×2).
 
-Suggestion: **Gain-scheduled PI** (+0), added as a variant, not switched on.
+Suggestion: **PID** (+7), added as a variant, not switched on.
 
-Weight sensitivity (winner Gain-scheduled PI; reasonable: each weight within ±1 of its default): **sensitive**. It wins 49.8 % of 4000 weight draws within one step.
-- PID (+0, wins 49.8 % of draws): tied now: the same total, J breaks the tie; all weights together: 0 % of the weights' size, the largest single change 0.
-- As loaded: PI speed (-5, wins 0.425 % of draws): ties if Complexity goes 1 → 3.5 (not reasonable); all weights together: 21 % of the weights' size, the largest single change 0.77.
+Weight sensitivity (winner PID; reasonable: each weight within ±1 of its default): **holds**. It wins 100 % of 4000 weight draws within one step.
+- Gain-scheduled PI (+5, wins 0 % of draws): ties if Complexity goes 1 → 0 (not reasonable); all weights together: 15 % of the weights' size, the largest single change 1.
+- PI speed (+0, wins 0 % of draws): ties if Tuning runs goes 1 → 4.5 (not reasonable); all weights together: 29 % of the weights' size, the largest single change 1.1.
+- Relay (on/off) (-20, wins 0 % of draws): ties if Tuning runs goes 1 → 14.5 (not reasonable); all weights together: 60 % of the weights' size, the largest single change 2.
 
 ## DC motor, speed from an encoder
 
-Step test for the starts: relay. Total 13.8 s: load 0.0875 s, starts 0.593 s, tuning 9.29 s, scoring 1.2 s, sweep (8 plants) 2.51 s. One run 26 ms, so about 523 runs' worth.
+Step test for the starts: relay. Total 13.2 s: load 0.085 s, starts 0.601 s, tuning 8.9 s, scoring 1.14 s, sweep (8 plants) 2.39 s. One run 25 ms, so about 529 runs' worth.
 
 Tests: the system's own input (its own disturbance plays); the smooth move: r through 1/(τs + 1)³, τ = 0.0548 s.
 
@@ -774,14 +779,14 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 | As loaded: PI speed | not tuned | 3 | 0 | 0 | yes |
 | PID | relay test, Tyreus–Luyben | 4.19 → 4.19 | 40 | 1400 | yes |
 | PI from the plant | one level, r's middle; Tcl searched → 0.0401 | 4.21 → 4.19 | 31 | 1200 | yes |
-| Gain-scheduled PI | PI from the plant at 3 levels | 4.19 → 2.44 | 55 | 1900 | yes |
-| Speed PI from the plant | its defaults | 4.19 → 4.19 | 1 | 31 | yes |
+| Gain-scheduled PI | PI from the plant at 3 levels | 4.19 → 2.44 | 55 | 1800 | yes |
+| Speed PI from the plant | its defaults | 4.19 → 4.19 | 1 | 32 | yes |
 | PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 0.0969 | 2.46 → 2.44 | 31 | 1200 | yes |
-| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 3.2 → 3.2 | 1 | 27 | yes |
-| Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 3.36 → 3.36 | 5 | 170 | no: fails the main job: Following steps (IAE) ×2.01 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×2.07 of the datum's (at most ×2) |
-| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r | 3.36 → 3.36 | 8 | 270 | no: fails the main job: Following steps (IAE) ×2.01 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×2.06 of the datum's (at most ×2) |
+| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 3.2 → 3.2 | 1 | 25 | yes |
+| Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 3.36 → 3.36 | 5 | 160 | yes |
+| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r | 3.36 → 3.36 | 8 | 260 | yes |
 | As loaded ⚙ sensor | not tuned | 0.0128 | 0 | 0 | yes |
-| PID ⚙ sensor | relay test, Tyreus–Luyben | 1.42 → 0.0121 | 108 | 3000 | yes |
+| PID ⚙ sensor | relay test, Tyreus–Luyben | 1.42 → 0.0121 | 108 | 2800 | yes |
 
 Scores:
 
@@ -801,42 +806,40 @@ Scores:
 
 The feedforward's share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):
 
-- PID + feedforward from the plant (Kff 0.7, Kv 0.0422, Ka 4.0e-4, prefilter Tr 0.0969 s): 69 % on the system's steps, 69 % on the smooth move; following IAE 0.31 (steps), 0.29 (move), against the datum's 0.3 and 0.29.
+- PID + feedforward from the plant (Kff 0.7, Kv 0.0422, Ka 4.0e-4, prefilter Tr 0.0969 s): 69 % on the system's steps, 69 % on the smooth move; following IAE 0.31 (steps), 0.29 (move), against the datum's 0.32 and 0.3.
 
-Pugh matrix: datum **PID**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: PI speed**, the controller set up now; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: PI speed | PID | PI from the plant | Gain-scheduled PI | Speed PI from the plant | PID + feedforward from the plant | Relay (on/off) | Sliding mode (ideal) ⚙ rate observer | Sliding mode (boundary layer) ⚙ rate observer | Loaded ⚙ sensor | PID ⚙ sensor |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Following steps (IAE) (1.5) | S | D | S | S | S | S | − | −− | −− | ++ | ++ |
-| Following a smooth move (IAE) (1.5) | S | D | S | S | S | S | − | −− | −− | ++ | ++ |
-| Rejecting d (IAE) (3) | S | D | S | S | S | S | S | S | S | ++ | ++ |
-| Overshoot (2) | S | D | S | + | S | + | S | S | S | ++ | ++ |
-| Settling (2 %, s) (1) | S | D | S | S | S | S | S | S | S | ++ | ++ |
-| Effort (u swing) (1) | − | D | − | − | −− | S | −− | −− | −− | + | + |
-| Wear (u travel/s) (2) | −− | D | − | − | −− | S | −− | −− | −− | ++ | ++ |
-| Time at a limit (1) | −− | D | S | S | S | S | −− | −− | −− | S | S |
-| Robustness Ms (2) | + | D | + | + | + | S | ? | ? | S | + | + |
-| Plant ±15 % (worst J) (3) | + | D | S | + | S | + | + | + | + | ++ | ++ |
-| Noise → u (2) | −− | D | − | − | −− | S | −− | −− | −− | ++ | ++ |
-| Complexity (1) | + | D | − | −− | + | −− | + | −− | −− | − | −− |
-| Tuning runs (1) | ++ | D | S | S | ++ | S | ++ | ++ | ++ | ++ | −− |
-| **Weighted** | -3 | 0 | -4 | +0 | -5 | +3 | -9 | -15 | -15 | +36 | +31 |
-| **Fits** | yes | yes | yes | yes | yes | yes | yes | no | no | yes | yes |
+| Following steps (IAE) (1.5) | D | S | S | S | S | S | S | − | − | ++ | ++ |
+| Following a smooth move (IAE) (1.5) | D | S | S | S | S | S | − | − | − | ++ | ++ |
+| Rejecting d (IAE) (3) | D | S | S | S | S | S | S | S | S | ++ | ++ |
+| Overshoot (2) | D | S | S | + | S | + | S | S | S | ++ | ++ |
+| Settling (2 %, s) (1) | D | S | S | S | S | S | S | S | S | ++ | ++ |
+| Effort (u swing) (1) | D | + | + | + | − | + | − | − | − | ++ | ++ |
+| Wear (u travel/s) (2) | D | ++ | + | + | S | ++ | − | − | − | ++ | ++ |
+| Time at a limit (1) | D | ++ | ++ | ++ | ++ | ++ | −− | −− | −− | ++ | ++ |
+| Robustness Ms (2) | D | − | + | + | S | − | ? | ? | − | S | S |
+| Plant ±15 % (worst J) (3) | D | − | − | + | − | + | S | S | S | ++ | ++ |
+| Noise → u (2) | D | ++ | + | + | S | ++ | − | −− | − | ++ | ++ |
+| Complexity (1) | D | − | − | −− | + | −− | + | −− | −− | −− | −− |
+| Tuning runs (1) | D | −− | −− | −− | S | −− | S | − | −− | S | −− |
+| **Weighted** | 0 | +3 | +3 | +10 | -1 | +10 | -7.5 | -15 | -16 | +34 | +32 |
+| **Fits** | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 
-Ranking (fitting only): 1. As loaded ⚙ sensor (+36); 2. PID ⚙ sensor (+31); 3. PID + feedforward from the plant (+3); 4. Gain-scheduled PI (+0); 5. PID (+0); 6. As loaded: PI speed (-3); 7. PI from the plant (-4); 8. Speed PI from the plant (-5); 9. Relay (on/off) (-9).
+Ranking (fitting only): 1. As loaded ⚙ sensor (+34); 2. PID ⚙ sensor (+32); 3. Gain-scheduled PI (+10); 4. PID + feedforward from the plant (+10); 5. PID (+3); 6. PI from the plant (+3); 7. As loaded: PI speed (+0); 8. Speed PI from the plant (-1); 9. Relay (on/off) (-7.5); 10. Sliding mode (ideal) ⚙ rate observer (-15); 11. Sliding mode (boundary layer) ⚙ rate observer (-16).
 
-Not ranked: Sliding mode (ideal) ⚙ rate observer: fails the main job: Following steps (IAE) ×2.01 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×2.07 of the datum's (at most ×2); Sliding mode (boundary layer) ⚙ rate observer: fails the main job: Following steps (IAE) ×2.01 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×2.06 of the datum's (at most ×2).
+Suggestion: **Gain-scheduled PI** (+10), added as a variant, not switched on; ranked above it with a plant change: As loaded ⚙ sensor (+34; input 2 measures motor:2 directly (it matches the rate of motor:1 within 0.18 %), in place of 'speed estimator' (Finite difference)); PID ⚙ sensor (+32; input 2 measures motor:2 directly (it matches the rate of motor:1 within 0.18 %), in place of 'speed estimator' (Finite difference)).
 
-Suggestion: **PID + feedforward from the plant** (+3), added as a variant, not switched on; ranked above it with a plant change: As loaded ⚙ sensor (+36; input 2 measures motor:2 directly (it matches the rate of motor:1 within 0.18 %), in place of 'speed estimator' (Finite difference)); PID ⚙ sensor (+31; input 2 measures motor:2 directly (it matches the rate of motor:1 within 0.18 %), in place of 'speed estimator' (Finite difference)).
-
-Weight sensitivity (winner PID + feedforward from the plant; reasonable: each weight within ±1 of its default): **robust**. It wins 96.3 % of 4000 weight draws within one step.
-- Gain-scheduled PI (+0, wins 0.175 % of draws): ties if Robustness Ms goes 2 → 5 (not reasonable); all weights together: 23 % of the weights' size, the largest single change 0.75.
-- PID (+0, wins 1.03 % of draws): ties if Complexity goes 1 → 2.5 (not reasonable); all weights together: 19 % of the weights' size, the largest single change 1.
-- As loaded: PI speed (-3, wins 2.33 % of draws): ties if Complexity goes 1 → 3 (not reasonable); all weights together: 17 % of the weights' size, the largest single change 0.64.
+Weight sensitivity (winner Gain-scheduled PI; reasonable: each weight within ±1 of its default): **depends**. It wins 49.1 % of 4000 weight draws within one step.
+- PID + feedforward from the plant (+10, wins 50.8 % of draws): tied now: the same total, J breaks the tie; all weights together: 0 % of the weights' size, the largest single change 0.
+- PID (+3, wins 0 % of draws): ties if Wear (u travel/s) goes 2 → 9 (not reasonable); all weights together: 31 % of the weights' size, the largest single change 1.2.
+- PI from the plant (+3, wins 0 % of draws): ties if Complexity goes 1 → 8 (not reasonable); all weights together: 43 % of the weights' size, the largest single change 2.3.
 
 ## DC motor with an unbalanced arm
 
-Step test for the starts: relay. Total 7.7 s: load 0.0586 s, starts 0.311 s, tuning 5.84 s, scoring 0.428 s, sweep (8 plants) 0.975 s. One run 14 ms, so about 556 runs' worth.
+Step test for the starts: relay. Total 7.8 s: load 0.056 s, starts 0.314 s, tuning 6 s, scoring 0.411 s, sweep (8 plants) 0.913 s. One run 14 ms, so about 558 runs' worth.
 
 Tests: the system's own input (its own disturbance plays); the smooth move: r through 1/(τs + 1)³, τ = 0.0477 s.
 
@@ -864,12 +867,12 @@ Candidates (J: the goal's cost on the system's run, IAE + effort + overshoot + s
 |---|---|---|---|---|---|
 | As loaded: PID | not tuned | 0.152 | 0 | 0 | yes |
 | PID | relay test, Tyreus–Luyben | 0.433 → 0.0429 | 112 | 1700 | yes |
-| PI from the plant | one level, r's middle; Tcl searched → 0.107 | 3.66 → 2.65 | 31 | 590 | no: fails the main job: Following steps (IAE) ×7.07 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×6.24 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×31.3 of the datum's (at most ×2) |
-| Gain-scheduled PI | PI from the plant at 3 levels | 2.68 → 2.4 | 89 | 1300 | no: fails the main job: Following steps (IAE) ×6.89 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×6.25 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×30.7 of the datum's (at most ×2) |
-| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 1.02 | 6.6 → 0.294 | 31 | 600 | no: fails the main job: Following steps (IAE) ×5.38 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×6.12 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×30.6 of the datum's (at most ×2) |
-| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 4.03 → 4.03 | 1 | 13 | no: fails the main job: Following steps (IAE) ×8.16 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×8.24 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×41.6 of the datum's (at most ×2) |
-| Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 0.345 → 0.274 | 13 | 330 | no: fails the main job: Following a smooth move (IAE) ×2.29 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×4.6 of the datum's (at most ×2) |
-| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r | 0.274 → 0.0695 | 80 | 1300 | yes |
+| PI from the plant | one level, r's middle; Tcl searched → 0.107 | 3.66 → 2.65 | 31 | 600 | no: fails the main job: Following steps (IAE) ×5.18 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×5.06 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×16.5 of the datum's (at most ×2) |
+| Gain-scheduled PI | PI from the plant at 3 levels | 2.68 → 2.4 | 89 | 1400 | no: fails the main job: Following steps (IAE) ×5.05 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×5.07 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×16.1 of the datum's (at most ×2) |
+| PID + feedforward from the plant | the PID row's gains; Kff, Kv, Ka from the plant; Tr searched → 1.02 | 6.6 → 0.294 | 31 | 590 | no: fails the main job: Following steps (IAE) ×3.94 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×4.96 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×16.1 of the datum's (at most ×2) |
+| Relay (on/off) | the full actuator range, hysteresis 0.5 % of r | 4.03 → 4.03 | 1 | 13 | no: fails the main job: Following steps (IAE) ×5.98 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×6.68 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×21.9 of the datum's (at most ×2) |
+| Sliding mode (ideal) ⚙ rate observer | λ from the step model, K the full swing | 0.345 → 0.274 | 13 | 320 | no: fails the main job: Rejecting d (IAE) ×2.42 of the datum's (at most ×2) |
+| Sliding mode (boundary layer) ⚙ rate observer | and φ = 0.2·λ·span r | 0.274 → 0.0695 | 80 | 1400 | yes |
 
 Scores:
 
@@ -886,34 +889,33 @@ Scores:
 
 The feedforward's share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):
 
-- PID + feedforward from the plant (Kff 2, Kv 21.3, Ka 0.0785, prefilter Tr 1.02 s): 52 % on the system's steps, 52 % on the smooth move; following IAE 0.32 (steps), 0.29 (move), against the datum's 0.058 and 0.047.
+- PID + feedforward from the plant (Kff 2, Kv 21.3, Ka 0.0785, prefilter Tr 1.02 s): 52 % on the system's steps, 52 % on the smooth move; following IAE 0.32 (steps), 0.29 (move), against the datum's 0.08 and 0.058.
 
-Pugh matrix: datum **PID**; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
+Pugh matrix: datum **As loaded: PID**, the controller set up now; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights 1.5, 1.5, 3, 2, 1, 1, 2, 1, 2, 3, 2, 1, 1.
 
 | Criterion (weight) | Loaded: PID | PID | PI from the plant | Gain-scheduled PI | PID + feedforward from the plant | Relay (on/off) | Sliding mode (ideal) ⚙ rate observer | Sliding mode (boundary layer) ⚙ rate observer |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Following steps (IAE) (1.5) | − | D | −− | −− | −− | −− | − | − |
-| Following a smooth move (IAE) (1.5) | − | D | −− | −− | −− | −− | −− | − |
-| Rejecting d (IAE) (3) | − | D | −− | −− | −− | −− | −− | ++ |
-| Overshoot (2) | −− | D | −− | −− | −− | −− | − | −− |
-| Settling (2 %, s) (1) | −− | D | −− | −− | −− | −− | −− | −− |
-| Effort (u swing) (1) | + | D | −− | −− | S | −− | −− | − |
-| Wear (u travel/s) (2) | + | D | −− | −− | S | −− | −− | −− |
-| Time at a limit (1) | + | D | −− | −− | S | −− | −− | −− |
-| Robustness Ms (2) | − | D | + | + | S | ? | ? | + |
-| Plant ±15 % (worst J) (3) | −− | D | −− | −− | −− | −− | −− | −− |
-| Noise → u (2) | + | D | −− | −− | S | −− | −− | + |
-| Complexity (1) | + | D | − | −− | −− | + | −− | −− |
-| Tuning runs (1) | ++ | D | ++ | S | ++ | ++ | ++ | S |
-| **Weighted** | -11 | 0 | -33 | -36 | -24 | -33 | -32.5 | -14 |
+| Following steps (IAE) (1.5) | D | + | −− | −− | −− | −− | − | − |
+| Following a smooth move (IAE) (1.5) | D | + | −− | −− | −− | −− | − | − |
+| Rejecting d (IAE) (3) | D | + | −− | −− | −− | −− | −− | ++ |
+| Overshoot (2) | D | ++ | −− | −− | + | −− | ++ | + |
+| Settling (2 %, s) (1) | D | ++ | −− | −− | −− | −− | −− | −− |
+| Effort (u swing) (1) | D | − | −− | −− | − | −− | −− | − |
+| Wear (u travel/s) (2) | D | − | −− | −− | − | −− | −− | −− |
+| Time at a limit (1) | D | − | −− | −− | − | −− | −− | −− |
+| Robustness Ms (2) | D | + | + | + | + | ? | ? | + |
+| Plant ±15 % (worst J) (3) | D | ++ | −− | −− | − | −− | ++ | ++ |
+| Noise → u (2) | D | − | −− | −− | − | −− | −− | S |
+| Complexity (1) | D | + | − | −− | −− | + | −− | −− |
+| Tuning runs (1) | D | −− | −− | −− | −− | S | −− | −− |
+| **Weighted** | 0 | +13 | -37 | -38 | -23 | -35 | -17 | +0 |
 | **Fits** | yes | yes | no | no | no | no | no | yes |
 
-Ranking (fitting only): 1. PID (+0); 2. As loaded: PID (-11); 3. Sliding mode (boundary layer) ⚙ rate observer (-14).
+Ranking (fitting only): 1. PID (+13); 2. Sliding mode (boundary layer) ⚙ rate observer (+0); 3. As loaded: PID (+0).
 
-Not ranked: PI from the plant: fails the main job: Following steps (IAE) ×7.07 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×6.24 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×31.3 of the datum's (at most ×2); Gain-scheduled PI: fails the main job: Following steps (IAE) ×6.89 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×6.25 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×30.7 of the datum's (at most ×2); PID + feedforward from the plant: fails the main job: Following steps (IAE) ×5.38 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×6.12 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×30.6 of the datum's (at most ×2); Relay (on/off): fails the main job: Following steps (IAE) ×8.16 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×8.24 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×41.6 of the datum's (at most ×2); Sliding mode (ideal) ⚙ rate observer: fails the main job: Following a smooth move (IAE) ×2.29 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×4.6 of the datum's (at most ×2).
+Not ranked: PI from the plant: fails the main job: Following steps (IAE) ×5.18 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×5.06 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×16.5 of the datum's (at most ×2); Gain-scheduled PI: fails the main job: Following steps (IAE) ×5.05 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×5.07 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×16.1 of the datum's (at most ×2); PID + feedforward from the plant: fails the main job: Following steps (IAE) ×3.94 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×4.96 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×16.1 of the datum's (at most ×2); Relay (on/off): fails the main job: Following steps (IAE) ×5.98 of the datum's (at most ×2); fails the main job: Following a smooth move (IAE) ×6.68 of the datum's (at most ×2); fails the main job: Rejecting d (IAE) ×21.9 of the datum's (at most ×2); Sliding mode (ideal) ⚙ rate observer: fails the main job: Rejecting d (IAE) ×2.42 of the datum's (at most ×2).
 
-Suggestion: **PID** (+0), added as a variant, not switched on.
+Suggestion: **PID** (+13), added as a variant, not switched on.
 
-Weight sensitivity (winner PID; reasonable: each weight within ±1 of its default): **robust**. It wins 100 % of 4000 weight draws within one step.
-- As loaded: PID (-11, wins 0 % of draws): ties if Tuning runs goes 1 → 6.5 (not reasonable); all weights together: 33 % of the weights' size, the largest single change 0.88.
-
+Weight sensitivity (winner PID; reasonable: each weight within ±1 of its default): **holds**. It wins 100 % of 4000 weight draws within one step.
+- PID (+0, wins 0 % of draws): ties if Tuning runs goes 1 → 7.5 (not reasonable); all weights together: 39 % of the weights' size, the largest single change 1.
