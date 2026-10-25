@@ -57,7 +57,7 @@ test('trim: the tank holds a level; a level beyond the pump is refused with a se
   // pendulum keeps hanging; a pole held tilted is no equilibrium.
   const pend = modelOf(system('Pendulum swing-up'));
   const moved = trim(pend, [0.3]);
-  assert.deepEqual(Array.from(moved.x, (v) => Number(v.toFixed(9))), [0.3, 0, Number(Math.PI.toFixed(9)), 0]);
+  assert.deepEqual(Array.from(moved.x, (v) => Number(v.toFixed(9))), [0.3, Number(Math.PI.toFixed(9)), 0, 0]);
   close(moved.u, 0, 1e-12, 'u');
   refusal(() => trim(pend, [0.3, 0.5]), 'trim-failed', /no equilibrium with x = 0\.3 m, θ = 0\.5 rad/);
   refusal(() => trim(pend, [1, 2, 3, 4, 5]), 'bad-op', /5 levels for 4 measurements \(x, θ, v, ω\)/);
@@ -72,7 +72,7 @@ test('operating points: origin, initial state and their warnings', () => {
   const hanging = operatingPoint(pend, 'initial');
   assert.ok(hanging.rest);
   close(hanging.u, 0, 1e-12, 'u');
-  assert.equal(hanging.x[2], Math.PI);
+  assert.equal(hanging.x[1], Math.PI);
   // The encoder example's origin is not at rest: the encoder's error is not 0 at angle 0.
   const enc = operatingPoint(modelOf(system('Encoder')), 'origin');
   assert.ok(!enc.rest);
@@ -121,9 +121,9 @@ test('linearize and the first-order fit: exact on a lag; mean residence time on 
   // The motor's angle integrates: no static gain, so no pole cancellation.
   refusal(() => firstOrderFit(linearize(modelOf(system('DC motor')))), 'integrating-plant', /angle integrates V/);
 
-  // The cart–pole at the origin: C picks the states (x, θ, v, ω from x, v, θ, ω), D = 0.
+  // The cart–pole at the origin: C is the identity (states and measurements are x, θ, v, ω), D = 0.
   const cp = linearize(modelOf(system('Pendulum swing-up')));
-  assert.deepEqual(cp.C, [[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]]);
+  assert.deepEqual(cp.C, [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]);
   assert.deepEqual(cp.D, [[0], [0], [0], [0]]);
   assert.equal(cp.op.label, 'origin (all states 0, u = 0)');
   assert.deepEqual(cp.outputs.map((o) => o.unit), ['m', 'rad', 'm/s', 'rad/s']);
@@ -143,7 +143,7 @@ test('kinks: a saturation at its limit, one narrower than the step and the empty
   };
   const lin = oneWay(0, 25);
   assert.match(lin.kinks[0], /^'amp' is at its limit at the operating point \(input 0, limits 0 to 25\): the slope differs left and right$/);
-  assert.ok(lin.kinks.some((k) => /^the slope of the rate of cart and pole\.v along F differs left and right/.test(k)), lin.kinks.join(' | '));
+  assert.ok(lin.kinks.some((k) => /^the slope of the rate of cart and pole\/v along F differs left and right/.test(k)), lin.kinks.join(' | '));
   refusal(() => lqrDesign(lin, { Q: [10, 50, 1, 1], R: 0.1, Ts: 0.01 }), 'kink', /^LQR needs slopes, and the plant has a kink at origin \(all states 0, u = 0\): 'amp' is at its limit/);
   // Narrower than the difference step: one-sided slopes agree (both a tenth), the limit check does not.
   refusal(() => lqrDesign(oneWay(-1e-7, 1e-7), { Q: [10, 50, 1, 1], R: 0.1, Ts: 0.01 }), 'kink', /'amp' is at its limit/);

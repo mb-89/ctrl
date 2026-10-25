@@ -65,7 +65,7 @@ test('LQR from the plant reproduces the gains the library held, to 0.1 %; it ref
   }
   // What the status says, and that it carries no numbers into JSON.
   const st = statusOf(project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1)]));
-  assert.equal(st.seen, 'F → x, θ, v, ω · 4 states (x, v, θ, ω)');
+  assert.equal(st.seen, 'F → x, θ, v, ω · 4 states (x, θ, v, ω)');
   assert.equal(st.at, 'origin (all states 0, u = 0)');
   assert.deepEqual(st.rows[0].labels, ['x', 'θ', 'v', 'ω']);
   assert.equal(st.rows[1].note, 'x follows r');
@@ -219,7 +219,7 @@ test('designs resolve observers first: a Controller looks through a designed obs
     const el = compileDiagram(normalizeDiagram(d), 'plant', { standalone: true, designs: createDesignStore() });
     assert.deepEqual(el.designs.map((s) => [s.path, s.status]), [['obs', 'ok'], ['ctrl', 'ok']]);
     // u is named by the Sink that records it, for an Observer as for a Controller.
-    assert.equal(el.designs[0].seen, 'F → x, θ · 4 states (x, v, θ, ω)');
+    assert.equal(el.designs[0].seen, 'F → x, θ · 4 states (x, θ, v, ω)');
     const direct = statusOf(project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1)]));
     assert.deepEqual(el.designs[1].values.K, direct.values.K);
   } finally { delete OBSERVERS.truth; }
@@ -311,7 +311,7 @@ test('swingUpLqr: the catch is LQR from the plant; it needs the cart–pole\'s x
   assert.ok(Math.abs(st.values.l - 0.5) < 1e-6 && Math.abs(st.values.g - 9.81) < 1e-5, `l ${st.values.l}, g ${st.values.g}`);
   assert.deepEqual(st.rows.at(-1).labels, ['l', 'g']);
   const longer = project('Pendulum swing-up');
-  longer.system.plant.diagram.blocks.find((b) => b.type === 'cartPole').params.l = 0.8;
+  longer.system.plant.diagram.blocks.find((b) => b.id === 'cart').params.l = 0.8;
   const lv = statusOf(longer).values;
   assert.ok(Math.abs(lv.l - 0.8) < 1e-6 && Math.abs(lv.g - 9.81) < 1e-5, `l ${lv.l}, g ${lv.g}`);
   assert.deepEqual(CONTROLLERS.swingUpLqr.manual(ctrlOf(longer).variants[0].params, lv).params.l, lv.l);
@@ -441,7 +441,7 @@ test('trajectory: Q, R and start re-run the gains, never the plan; T and the lim
 test('trajectory: verified as it runs, from t = 0 through start; the force it may use each way', () => {
   // The single cart–pole, planned from θ = 2 rad (not at rest: it falls).
   const p = project('Pendulum swing-up', [{ name: 'plan', type: 'trajectory', params: { T: 2.4, Q: [10, 50, 1, 1], R: 0.1, umin: -25, umax: 25 } }]);
-  p.system.plant.diagram.blocks.find((b) => b.type === 'cartPole').params.theta0 = 2;
+  p.system.plant.diagram.blocks.find((b) => b.id === 'cart').params.theta0 = 2;
   const store = createDesignStore();
   const now = statusOf(p, store);
   assert.equal(now.status, 'ok', now.warnings.join(' | '));

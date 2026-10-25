@@ -2747,6 +2747,7 @@ function defaultDesigns() { return fallback ?? SYNC_DESIGNS; }
 
 
 function stateText(s) {
+  if (s.group) return `${s.name} (${s.group})`;
   return s.label.endsWith(`.${s.name}`) ? `${s.name} (${s.label.slice(0, -s.name.length - 1)})` : s.label;
 }
 
@@ -5295,44 +5296,52 @@ function mechanismOde(mech) {
     make() {
       const s = new Float64Array(nh), c = new Float64Array(nh), w2 = new Float64Array(nh), tq = new Float64Array(nh);
       const A = new Float64Array(N * N), r = new Float64Array(N), q = new Float64Array(N), one = inputs.length === 1;
+      const dx = Float64Array.from(d, (v) => v[0]), dy = Float64Array.from(d, (v) => v[1]);
+      const kids = Array.from({ length: nh }, (_, j) => Int32Array.from(base.reduce((a, b, k) => (b === j ? [...a, k] : a), [])));
       return (X, o, u, dX, uv) => {
-        for (let j = 0; j < nh; j++) { const th = X[o + np + j], w = X[o + N + np + j]; s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w; }
+        const V = o + N;
+        for (let j = 0; j < nh; j++) { const th = X[o + np + j], w = X[V + np + j]; s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w; }
         for (let p = 0; p < np; p++) {
           for (let k = 0; k <= p; k++) A[p * N + k] = Mpp[p * np + k];
-          let rp = Gp[p] - bf[p] * X[o + N + p];
+          let rp = Gp[p] - bf[p] * X[V + p];
           if (railIn[p] >= 0) rp += one ? u : uv[railIn[p]];
-          for (let k = 0; k < nh; k++) rp += Cpr[p * nh + k] * (d[p][0] * s[k] + d[p][1] * c[k]) * w2[k];
+          for (let k = 0; k < nh; k++) rp += Cpr[p * nh + k] * (dx[p] * s[k] + dy[p] * c[k]) * w2[k];
           r[p] = rp;
         }
         for (let j = 0; j < nh; j++) {
-          const wj = X[o + N + np + j], wb = base[j] >= 0 ? X[o + N + np + base[j]] : 0;
-          tq[j] = (hingeIn[j] >= 0 ? (one ? u : uv[hingeIn[j]]) : 0) - cf[j] * (wj - wb);
+          const b = base[j];
+          tq[j] = (hingeIn[j] >= 0 ? (one ? u : uv[hingeIn[j]]) : 0) - cf[j] * (X[V + np + j] - (b >= 0 ? X[V + np + b] : 0));
         }
         for (let j = 0; j < nh; j++) {
-          const row = (np + j) * N;
-          for (let p = 0; p < np; p++) A[row + p] = Cpr[p * nh + j] * (d[p][0] * c[j] - d[p][1] * s[j]);
-          let rj = Gr[j] * s[j] + tq[j];
+          const row = (np + j) * N, sj = s[j], cj = c[j];
+          for (let p = 0; p < np; p++) A[row + p] = Cpr[p * nh + j] * (dx[p] * cj - dy[p] * sj);
+          let rj = Gr[j] * sj + tq[j];
           for (let k = 0; k < nh; k++) {
-            if (k <= j) A[row + np + k] = Crr[j * nh + k] * (c[j] * c[k] + s[j] * s[k]) + (k === j ? I[j] : 0);
-            rj -= Crr[j * nh + k] * (s[j] * c[k] - c[j] * s[k]) * w2[k];
-            if (base[k] === j) rj -= tq[k];   
+            const C = Crr[j * nh + k];
+            if (k <= j) A[row + np + k] = C * (cj * c[k] + sj * s[k]);
+            rj -= C * (sj * c[k] - cj * s[k]) * w2[k];
           }
+          A[row + np + j] += I[j];
+          const kj = kids[j];
+          for (let i = 0; i < kj.length; i++) rj -= tq[kj[i]];   
           r[np + j] = rj;
         }
         for (let j = 0; j < N; j++) {
-          let dd = A[j * N + j];
-          for (let k = 0; k < j; k++) dd -= A[j * N + k] * A[j * N + k] * A[k * N + k];
-          A[j * N + j] = dd;
+          const rowj = j * N;
+          let dd = A[rowj + j];
+          for (let k = 0; k < j; k++) dd -= A[rowj + k] * A[rowj + k] * A[k * N + k];
+          A[rowj + j] = dd;
           for (let i = j + 1; i < N; i++) {
-            let e = A[i * N + j];
-            for (let k = 0; k < j; k++) e -= A[i * N + k] * A[j * N + k] * A[k * N + k];
-            A[i * N + j] = e / dd;
+            const rowi = i * N;
+            let e = A[rowi + j];
+            for (let k = 0; k < j; k++) e -= A[rowi + k] * A[rowj + k] * A[k * N + k];
+            A[rowi + j] = e / dd;
           }
         }
         for (let i = 0; i < N; i++) { let e = r[i]; for (let k = 0; k < i; k++) e -= A[i * N + k] * q[k]; q[i] = e; }
         for (let i = 0; i < N; i++) q[i] /= A[i * N + i];
         for (let i = N - 1; i >= 0; i--) { let e = q[i]; for (let k = i + 1; k < N; k++) e -= A[k * N + i] * q[k]; q[i] = e; }
-        for (let i = 0; i < N; i++) { dX[o + i] = X[o + N + i]; dX[o + N + i] = q[i]; }
+        for (let i = 0; i < N; i++) { dX[o + i] = X[V + i]; dX[V + i] = q[i]; }
       };
     },
     bound: () => {
@@ -5436,10 +5445,16 @@ function pendulumOnCart(n, p = {}) {
 }
 
 const TEMPLATES = {
+  cartPole: { label: 'Cart–pole', formula: 'F → x, θ, v, ω', name: 'cart and pole', make: () => cartPole() },
+  pendulum1: { label: 'Pendulum on cart', formula: 'F → x, θ1, v, ω1', name: 'cart and rod', make: () => pendulumOnCart(1) },
+  pendulum2: { label: 'Double pendulum on cart', formula: 'F → x, θ1, θ2, v, ω…', name: 'cart and 2 rods', make: () => pendulumOnCart(2) },
+  pendulum3: { label: 'Triple pendulum on cart', formula: 'F → x, θ1…θ3, v, ω…', name: 'cart and 3 rods', make: () => pendulumOnCart(3) },
   conicalTank: { label: 'Conical tank', formula: 'q → h', name: 'tank', make: () => conicalTank() },
 };
 
 const OLD_TYPES = {
+  cartPole: (p) => cartPole(p),
+  pendulumCart: (p) => pendulumOnCart(Math.min(3, Math.max(1, Math.round(Number(p.links ?? 3)) || 3)), p),
   conicalTank: (p) => conicalTank(p),
 };
 const isOldPhysics = (type) => Object.hasOwn(OLD_TYPES, type);
@@ -5500,43 +5515,6 @@ const ELEMENTS = {
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1, { inf: true }), num('max', 'Max', 1, { inf: true })], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
   noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
-  cartPole: {
-    label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ, v, ω', outputs: ['x', 'θ', 'v', 'ω'], ports: () => [1, 4],
-    params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
-    ode: {
-      n: 4,
-      states: () => [state('x', 'm'), state('v', 'm/s'), state('θ', 'rad', true), state('ω', 'rad/s')],
-      init: (p) => [0, 0, p.theta0, 0],
-      out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; y[2] = X[o + 1]; y[3] = X[o + 3]; },
-      make(p) {
-        const { M, m, l, g, b } = p, ml = m * l, mg = m * g;
-        return (X, o, u, dX) => {
-          const v = X[o + 1], th = X[o + 2], w = X[o + 3];
-          const s = Math.sin(th), c = Math.cos(th);
-          const a = (u - b * v + ml * w * w * s - mg * s * c) / (M + m * s * s);
-          dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (g * s - a * c) / l;
-        };
-      },
-      bound: (p) => 2 * Math.sqrt(p.g * (p.M + p.m) / (p.M * p.l)) + p.b / p.M,
-    },
-  },
-  pendulumCart: {
-    label: 'Pendulum chain on cart', group: 'Physics', formula: 'F → x, θ…, v, ω…',
-    outputs: (p) => ['x', ...links(p).map((i) => `θ${i + 1}`), 'v', ...links(p).map((i) => `ω${i + 1}`)],
-    ports: (p) => [1, 2 * p.links + 2],
-    params: [num('links', 'Links', 3, { min: 1, int: true, max: 3 }), num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }),
-      ...[1, 2, 3].flatMap((i) => [num(`m${i}`, `Mass m${i}`, 0.1, { unit: 'kg', min: 1e-6 }), num(`l${i}`, `Rod l${i}`, 0.25, { unit: 'm', min: 1e-6 })]),
-      num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }),
-      ...[1, 2, 3].map((i) => num(`theta${i}0`, `Start θ${i}₀`, i === 1 ? 0.05 : 0, { unit: 'rad' }))],
-    ode: {
-      n: (p) => 2 * p.links + 2,
-      states: (p) => [state('x', 'm'), ...links(p).map((i) => state(`θ${i + 1}`, 'rad', true)), state('v', 'm/s'), ...links(p).map((i) => state(`ω${i + 1}`, 'rad/s'))],
-      init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
-      out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
-      make: (p) => chainRates(p),
-      bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
-    },
-  },
   controller: {
     label: 'Controller', group: 'Control', formula: 'u = C(r, y)',
     params: [num('inputs', 'Inputs (r, y…)', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.01, { unit: 's', min: 1e-4 })],
@@ -5554,10 +5532,6 @@ const ELEMENTS = {
 };
 
 const VARIANT_LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
-
-const links = (p) => Array.from({ length: p.links }, (_, i) => i);
-
-const state = (name, unit, angle = false) => ({ name, unit, angle });
 
 const nameList = (text) => String(text ?? '').split(',').map((x) => x.trim()).filter(Boolean);
 const eqLines = (text) => String(text ?? '').split(/\n|;/).map((x) => x.trim()).filter(Boolean).map((line) => {
@@ -5602,56 +5576,6 @@ function compileEquations(params, consts) {
   });
   const first = inputs.length + 1;
   return { n: first + lines.length, nIn: inputs.length, fs, first, out: outputs.map((n) => slot.get(n)) };
-}
-
-function chainRates(p) {
-  const n = p.links, N = n + 1, { g, b } = p;
-  const mu = new Float64Array(n), ml = new Float64Array(n), mgl = new Float64Array(n), mll = new Float64Array(n * n);
-  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += p[`m${i + 1}`]; mu[i] = acc; }
-  for (let j = 0; j < n; j++) {
-    const lj = p[`l${j + 1}`];
-    ml[j] = mu[j] * lj; mgl[j] = mu[j] * g * lj;
-    for (let k = 0; k < n; k++) mll[j * n + k] = mu[Math.max(j, k)] * lj * p[`l${k + 1}`];
-  }
-  const total = p.M + mu[0];
-  const s = new Float64Array(n), c = new Float64Array(n), w2 = new Float64Array(n);
-  const A = new Float64Array(N * N), r = new Float64Array(N), q = new Float64Array(N);
-  return (X, o, u, dX) => {
-    for (let j = 0; j < n; j++) {
-      const th = X[o + 1 + j], w = X[o + n + 2 + j];
-      s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w;
-    }
-    A[0] = total;
-    r[0] = u - b * X[o + n + 1];
-    for (let j = 0; j < n; j++) {
-      const row = (j + 1) * N;
-      A[row] = ml[j] * c[j];
-      r[0] += ml[j] * s[j] * w2[j];
-      let rj = mgl[j] * s[j];
-      for (let k = 0; k < n; k++) {
-        const cjk = c[j] * c[k] + s[j] * s[k], sjk = s[j] * c[k] - c[j] * s[k];   
-        if (k <= j) A[row + k + 1] = mll[j * n + k] * cjk;
-        rj -= mll[j * n + k] * sjk * w2[k];
-      }
-      r[j + 1] = rj;
-    }
-    for (let j = 0; j < N; j++) {
-      let d = A[j * N + j];
-      for (let k = 0; k < j; k++) d -= A[j * N + k] * A[j * N + k] * A[k * N + k];
-      A[j * N + j] = d;
-      for (let i = j + 1; i < N; i++) {
-        let e = A[i * N + j];
-        for (let k = 0; k < j; k++) e -= A[i * N + k] * A[j * N + k] * A[k * N + k];
-        A[i * N + j] = e / d;
-      }
-    }
-    for (let i = 0; i < N; i++) { let e = r[i]; for (let k = 0; k < i; k++) e -= A[i * N + k] * q[k]; q[i] = e; }
-    for (let i = 0; i < N; i++) q[i] /= A[i * N + i];
-    for (let i = N - 1; i >= 0; i--) { let e = q[i]; for (let k = i + 1; k < N; k++) e -= A[k * N + i] * q[k]; q[i] = e; }
-    dX[o] = X[o + n + 1];
-    for (let j = 0; j < n; j++) { dX[o + 1 + j] = X[o + n + 2 + j]; dX[o + n + 2 + j] = q[j + 1]; }
-    dX[o + n + 1] = q[0];
-  };
 }
 
 function outputNames(def, params) {
@@ -6096,7 +6020,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   }
   const states = [];
   for (const nd of stateNodes) {
-    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: nd.mech ? `${nd.prefix}${s.name}` : `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
+    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: nd.mech ? `${nd.prefix}${s.name}` : `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j, ...(nd.mech && nd.prefix ? { group: nd.prefix.slice(0, -1) } : {}) }));
     else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: nd.unit && nd.unit !== '1' ? nd.unit : '', angle: !!nd.angle, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
   }
 
@@ -6831,7 +6755,7 @@ return { simulate, stepPlan, substeps, simulateSystem };
 // ---- core/plants.js
 __mods['core/plants.js'] = (() => {
 
-const { conicalTank } = __mods['core/physics.js'];
+const { conicalTank, cartPole, pendulumOnCart } = __mods['core/physics.js'];
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
 const channels = (...sources) => [0, 1, 2, 3].map((i) => {
@@ -7157,7 +7081,7 @@ const EXAMPLE_PLANTS = [
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 104 },
-        { id: 'cart', type: 'cartPole', name: 'cart and pole', params: { M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: Math.PI }, x: 400, y: 80 },
+        { id: 'cart', name: 'cart and pole', x: 400, y: 80, ...cartPole({ M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: Math.PI }) },
         sink('x', 640, 84, 'm'), sink('theta', 640, 120, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
@@ -7189,7 +7113,7 @@ const EXAMPLE_PLANTS = [
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },
-        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }, x: 400, y: 60 },
+        { id: 'cart', name: 'cart and 3 rods', x: 400, y: 60, ...pendulumOnCart(3, { M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }) },
         sink('x', 640, 64, 'm'), sink('theta1', 640, 100, 'rad'), sink('theta2', 640, 136, 'rad'), sink('theta3', 640, 172, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
@@ -8171,7 +8095,7 @@ function fromPlant(e) {
   };
 }
 
-const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'hinge', 'saturation', 'quantizer', 'fcn', 'switch']);
+const NONLINEAR = new Set(['hinge', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = {
   pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
@@ -8311,8 +8235,6 @@ function paramAt(diagram, at) {
 }
 
 const PHYSICAL = {
-  cartPole: ['M', 'm', 'l', 'b'],
-  pendulumCart: (p) => ['M', 'b', ...Array.from({ length: p.links }, (_, i) => [`m${i + 1}`, `l${i + 1}`]).flat()],
   firstOrder: ['K', 'tau'], fopdt: ['K', 'tau', 'delay'], secondOrder: ['K', 'wn', 'zeta'], lagChain: ['K', 'tau'], integratorLag: ['K', 'tau'],
   doubleIntegrator: ['K'], inverseResponse: ['K', 'Tz', 'tau1', 'tau2'],
   tf: (p) => [...p.num.map((v, i) => (v ? `num[${i}]` : null)), ...p.den.map((v, i) => (v ? `den[${i}]` : null))].filter(Boolean),
@@ -8505,7 +8427,8 @@ function simPlant(opts = {}) {
         const raw = names[src.port];
         const name = fresh(raw ?? (src.port ? `${b.id}${src.port}` : b.id));
         const unit = b.type === 'source' ? b.params.unit : OUTPUT_UNITS[String(raw ?? '').replace(/\d+$/, '')] ?? '1';
-        s = { key: null, name, unit, src };
+        const w = own.wires.find((x) => { const t = parseEnd(x.to); return t.id === ctrl.id && t.port === j; });
+        s = { key: null, name, unit, src, end: w?.from };
         added.push(s);
       }
       if (!measured.includes(s)) measured.push(s);
@@ -8517,6 +8440,7 @@ function simPlant(opts = {}) {
     for (const s of list) {
       const id = `hil_${s.name}`;
       out.blocks.push({ id, type: 'sink', params: { name: s.name, unit: s.unit }, x: 0, y: 0 });
+      if (s.end) { out.wires.push({ from: s.end, to: id }); continue; }
       const [path, ...rest] = s.src.key.split('/');
       if (rest.length) throw new Error(`${entry.name}: a measurement inside a subsystem needs a Sink`);
       out.wires.push({ from: s.src.port ? `${path}:${s.src.port}` : path, to: id });

@@ -77,8 +77,6 @@ function paramAt(diagram, at) {
 // gains and time constants; a transfer function's coefficients; a dead time.
 // Never g, start values, noise, seeds, ports, signs or controllers.
 const PHYSICAL = {
-  cartPole: ['M', 'm', 'l', 'b'],
-  pendulumCart: (p) => ['M', 'b', ...Array.from({ length: p.links }, (_, i) => [`m${i + 1}`, `l${i + 1}`]).flat()],
   firstOrder: ['K', 'tau'], fopdt: ['K', 'tau', 'delay'], secondOrder: ['K', 'wn', 'zeta'], lagChain: ['K', 'tau'], integratorLag: ['K', 'tau'],
   doubleIntegrator: ['K'], inverseResponse: ['K', 'Tz', 'tau1', 'tau2'],
   tf: (p) => [...p.num.map((v, i) => (v ? `num[${i}]` : null)), ...p.den.map((v, i) => (v ? `den[${i}]` : null))].filter(Boolean),
@@ -304,7 +302,10 @@ export function simPlant(opts = {}) {
         const raw = names[src.port];
         const name = fresh(raw ?? (src.port ? `${b.id}${src.port}` : b.id));
         const unit = b.type === 'source' ? b.params.unit : OUTPUT_UNITS[String(raw ?? '').replace(/\d+$/, '')] ?? '1';
-        s = { key: null, name, unit, src };
+        // Wired where the Controller reads it (a subsystem's output, when
+        // the measurement is a joint inside an open model).
+        const w = own.wires.find((x) => { const t = parseEnd(x.to); return t.id === ctrl.id && t.port === j; });
+        s = { key: null, name, unit, src, end: w?.from };
         added.push(s);
       }
       if (!measured.includes(s)) measured.push(s);
@@ -317,6 +318,7 @@ export function simPlant(opts = {}) {
     for (const s of list) {
       const id = `hil_${s.name}`;
       out.blocks.push({ id, type: 'sink', params: { name: s.name, unit: s.unit }, x: 0, y: 0 });
+      if (s.end) { out.wires.push({ from: s.end, to: id }); continue; }
       const [path, ...rest] = s.src.key.split('/');
       if (rest.length) throw new Error(`${entry.name}: a measurement inside a subsystem needs a Sink`);
       out.wires.push({ from: s.src.port ? `${path}:${s.src.port}` : path, to: id });

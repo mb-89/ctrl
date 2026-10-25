@@ -2,6 +2,15 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the carts open ([transparent-models.md](transparent-models.md) steps 5–7; [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md))
+
+- **The cart–pole and the pendulum chains are masked subsystems of Mechanics parts** (World, Rail, Hinge, Mass, Rod joined at frame ports; `core/mech.js`), compiled to one state node per mechanism. The `cartPole` and `pendulumCart` types and `chainRates` are gone; old files open them on load (the chain's `links` gives the number of rods).
+- **One state order for mechanisms**: positions, then rates. The cart–pole's state is (x, θ, v, ω), no longer (x, v, θ, ω); its measurements, Q, K and the swing-up's inputs are unchanged (they are in measurement order). Labels are `cart and pole/θ`.
+- **Both carts' fingerprints change, as planned**: the rates agree with the old blocks to 4.9·10⁻¹⁵ and 5.8·10⁻¹⁴ (relative), not bit for bit. Over the library's 5 s runs the swing-up moves by 1.2·10⁻¹³ N in F, the triple by 2·10⁻⁷ N in F and 2.4·10⁻⁸ rad in θ3 (the plan amplifies). The triple's planned swing-up is the same plan (204 iterations, 5.52 M model calls, F at sample 100 −3.79128241 N against −3.79128237 N).
+- **Its planning takes about 10 % longer** (Node 22, CPU time, 3 interleaved runs each: 1.06–1.14 s → 1.19–1.22 s; a model call 179 → 201 ns), where the plan expected no change. Interpretation: accepted rather than special-casing the mechanism for chains; the code stays one path.
+- **The Plant tab's Physics group inserts templates** (Cart–pole, Pendulum, Double and Triple pendulum on cart, Conical tank); a new Mechanics group holds the parts. Interpretation: a pendulum of one rod is its own template, beside the cart–pole (the same mechanism with the chain's names θ1, ω1).
+- Interpretation: a mechanism state's text in a design's refusal reads "ω (cart and pole)", as a block's did.
+
 ## 2026-10-25 · v2.9: the tank opens ([transparent-models.md](transparent-models.md) step 4; [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md))
 
 - **The conical tank is a masked subsystem** of Equations, a Sum and a limited Integrator (`core/physics.js`); the `conicalTank` block type is gone and old files open it on load, keeping id, name, place and ports.

@@ -4,11 +4,14 @@
 // System library's pictures to the model (they draw the state as it is).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diagramBlockDef, normalizeDiagram, compileDiagram } from '../src/core/diagram.js';
+import { normalizeDiagram, compileDiagram } from '../src/core/diagram.js';
 import { SYSTEM_LIBRARY } from '../src/core/systems.js';
-import { conicalTank } from '../src/core/physics.js';
+import { conicalTank, cartPole, pendulumOnCart } from '../src/core/physics.js';
 
-const params = (type, over = {}) => ({ ...Object.fromEntries(diagramBlockDef(type).params.map((s) => [s.key, s.default])), ...over });
+// The open models by the old blocks' names: their mask values, and the subsystem.
+const MODELS = { cartPole: () => cartPole(), pendulumCart: (p) => pendulumOnCart(p.links ?? 3, p) };
+const params = (type, over = {}) => ({ ...(type === 'pendulumCart' ? pendulumOnCart(over.links ?? 3).params : MODELS[type]().params), ...over });
+const model = (type, p) => (type === 'cartPole' ? cartPole(p) : pendulumOnCart(p.links, p));
 
 // An open model (a masked subsystem from physics.js) compiled as the plant
 // alone: In → model → Out (its first output). { el, f(t, X, u, dX), y(t, X) }.
@@ -21,22 +24,14 @@ function compiled(sub) {
 }
 
 // Integrates one physics model with RK4 at step h for T seconds under the
-// input u(t, X); calls watch(t, X) at every step. type: an old block type
-// (its ode), or an open model, a masked subsystem (compiled, its In driven by u).
+// input u(t, X); calls watch(t, X) at every step. type: 'cartPole' or
+// 'pendulumCart' (the open model with parameters p), or an open model, a
+// masked subsystem; it is compiled, its In driven by u.
 function run(type, p, { T, h = 1e-3, u = () => 0, X0, watch }) {
-  let n, init, f;
-  if (typeof type === 'string') {
-    const { ode } = diagramBlockDef(type);
-    n = typeof ode.n === 'function' ? ode.n(p) : ode.n;
-    init = ode.init(p);
-    // The rate function the compile uses: ode.make computes the constants once.
-    const rates = ode.make(p);
-    f = (t, x, d) => rates(x, 0, u(t, x), d);
-  } else {
-    const c = compiled(type);
-    n = c.el.n; init = new Float64Array(n); c.el.init(init, 0);
-    f = (t, x, d) => c.f(t, x, u(t, x), d);
-  }
+  const c = compiled(typeof type === 'string' ? model(type, p) : type);
+  const n = c.el.n, init = new Float64Array(n);
+  c.el.init(init, 0);
+  const f = (t, x, d) => c.f(t, x, u(t, x), d);
   const X = Float64Array.from(X0 ?? init), Xt = new Float64Array(n);
   const k = [1, 2, 3, 4].map(() => new Float64Array(n));
   for (let i = 0, t = 0; i < Math.round(T / h); i++, t += h) {
@@ -54,9 +49,9 @@ function run(type, p, { T, h = 1e-3, u = () => 0, X0, watch }) {
   return X;
 }
 
-// Cart–pole, state [x, v, θ, ω]: energy and horizontal momentum.
-const cpEnergy = (p, X) => { const [, v, th, w] = X; return 0.5 * (p.M + p.m) * v * v + p.m * p.l * v * w * Math.cos(th) + 0.5 * p.m * p.l * p.l * w * w + p.m * p.g * p.l * Math.cos(th); };
-const cpMomentum = (p, X) => (p.M + p.m) * X[1] + p.m * p.l * X[3] * Math.cos(X[2]);
+// Cart–pole, state [x, θ, v, ω] (positions, then rates): energy and horizontal momentum.
+const cpEnergy = (p, X) => { const [, th, v, w] = X; return 0.5 * (p.M + p.m) * v * v + p.m * p.l * v * w * Math.cos(th) + 0.5 * p.m * p.l * p.l * w * w + p.m * p.g * p.l * Math.cos(th); };
+const cpMomentum = (p, X) => (p.M + p.m) * X[2] + p.m * p.l * X[3] * Math.cos(X[1]);
 
 // Pendulum chain on a cart, state [x, θ1…θn, v, ω1…ωn]: point masses at the rod ends.
 function chainBodies(p, X) {
@@ -81,7 +76,7 @@ function drift(type, p, X0, energy, momentum, T = 5) {
 
 test('cart–pole without friction or force keeps its energy and horizontal momentum', () => {
   const p = params('cartPole', { b: 0 });
-  for (const X0 of [[0, 0, 2.5, 0], [0, 0.7, Math.PI - 0.3, 4], [0, -1, 0.1, -2]]) {
+  for (const X0 of [[0, 2.5, 0, 0], [0, Math.PI - 0.3, 0.7, 4], [0, 0.1, -1, -2]]) {
     const { de, dm } = drift('cartPole', p, X0, cpEnergy, cpMomentum);
     assert.ok(de < 1e-7, `energy drift ${de}`);
     assert.ok(dm < 1e-9, `momentum drift ${dm}`);
@@ -91,10 +86,10 @@ test('cart–pole without friction or force keeps its energy and horizontal mome
 test('cart–pole: friction only takes energy out, and a force changes momentum by its impulse', () => {
   const p = params('cartPole', { b: 0.5 });
   let prev = Infinity, rose = 0;
-  run('cartPole', p, { T: 5, X0: [0, 1, 2, 3], watch: (t, X) => { const e = cpEnergy(p, X); if (e > prev + 1e-12) rose++; prev = e; } });
+  run('cartPole', p, { T: 5, X0: [0, 2, 1, 3], watch: (t, X) => { const e = cpEnergy(p, X); if (e > prev + 1e-12) rose++; prev = e; } });
   assert.equal(rose, 0, 'energy rose under friction alone');
   const q = params('cartPole', { b: 0 }), F = 3;
-  const X = run('cartPole', q, { T: 2, X0: [0, 0, 2, 0], u: () => F });
+  const X = run('cartPole', q, { T: 2, X0: [0, 2, 0, 0], u: () => F });
   assert.ok(Math.abs(cpMomentum(q, X) - F * 2) < 1e-8);
 });
 
@@ -102,7 +97,7 @@ test('a hanging pole swings at the textbook frequency √(g (M + m) / (M l))', (
   const p = params('cartPole', { b: 0 });
   const crossings = [];
   let last = 0;
-  run('cartPole', p, { T: 10, h: 2e-4, X0: [0, 0, Math.PI + 1e-3, 0], watch: (t, X) => { const d = X[2] - Math.PI; if (last < 0 && d >= 0) crossings.push(t); last = d; } });
+  run('cartPole', p, { T: 10, h: 2e-4, X0: [0, Math.PI + 1e-3, 0, 0], watch: (t, X) => { const d = X[1] - Math.PI; if (last < 0 && d >= 0) crossings.push(t); last = d; } });
   const period = (crossings.at(-1) - crossings[0]) / (crossings.length - 1);
   const expected = 2 * Math.PI / Math.sqrt((p.g * (p.M + p.m)) / (p.M * p.l));
   assert.ok(Math.abs(period - expected) / expected < 1e-3, `${period} vs ${expected}`);
@@ -113,7 +108,7 @@ test('pushed with a constant force, a pole that trails at atan(a/g) stays there 
   // accelerating cart's frame "down" leans back, and the pole swings about that.
   const p = params('cartPole', { b: 0 }), F = 25, a = F / (p.M + p.m), th = Math.PI + Math.atan(a / p.g);
   let worst = 0;
-  const X = run('cartPole', p, { T: 2, X0: [0, 0, th, 0], u: () => F, watch: (t, x) => { worst = Math.max(worst, Math.abs(x[2] - th)); } });
+  const X = run('cartPole', p, { T: 2, X0: [0, th, 0, 0], u: () => F, watch: (t, x) => { worst = Math.max(worst, Math.abs(x[1] - th)); } });
   assert.ok(worst < 1e-6, `pole moved ${worst} rad`);
   assert.ok(Math.abs(X[0] - 0.5 * a * 4) < 1e-6, `x = ${X[0]}`);
 });
@@ -132,10 +127,10 @@ test('a chain of one rod moves as the cart–pole with the same masses', () => {
   const cp = params('cartPole', { b: 0.1, M: 1, m: 0.2, l: 0.5 });
   const ch = params('pendulumCart', { links: 1, b: 0.1, M: 1, m1: 0.2, l1: 0.5 });
   const u = (t) => 3 * Math.sin(5 * t);
-  const A = run('cartPole', cp, { T: 3, X0: [0, 0, 2, 0], u });
+  const A = run('cartPole', cp, { T: 3, X0: [0, 2, 0, 0], u });
   const B = run('pendulumCart', ch, { T: 3, X0: [0, 2, 0, 0], u });
-  // [x, v, θ, ω] against [x, θ, v, ω]
-  for (const [i, j] of [[0, 0], [1, 2], [2, 1], [3, 3]]) assert.ok(Math.abs(A[i] - B[j]) < 1e-9, `state ${i}: ${A[i]} vs ${B[j]}`);
+  // The same mechanism class now: equal to rounding.
+  for (let i = 0; i < 4; i++) assert.ok(Math.abs(A[i] - B[i]) < 1e-12, `state ${i}: ${A[i]} vs ${B[i]}`);
 });
 
 test('the conical tank keeps its water: volume in equals volume stored, never below empty or above full', () => {

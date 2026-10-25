@@ -99,12 +99,18 @@ export function pendulumOnCart(n, p = {}) {
 
 // The Plant tab's Physics group: each template inserts its masked subsystem.
 export const TEMPLATES = {
+  cartPole: { label: 'Cart–pole', formula: 'F → x, θ, v, ω', name: 'cart and pole', make: () => cartPole() },
+  pendulum1: { label: 'Pendulum on cart', formula: 'F → x, θ1, v, ω1', name: 'cart and rod', make: () => pendulumOnCart(1) },
+  pendulum2: { label: 'Double pendulum on cart', formula: 'F → x, θ1, θ2, v, ω…', name: 'cart and 2 rods', make: () => pendulumOnCart(2) },
+  pendulum3: { label: 'Triple pendulum on cart', formula: 'F → x, θ1…θ3, v, ω…', name: 'cart and 3 rods', make: () => pendulumOnCart(3) },
   conicalTank: { label: 'Conical tank', formula: 'q → h', name: 'tank', make: () => conicalTank() },
 };
 
-// The generator of each old type, and the mask a project's draw varies
-// (hilsim.js): its physical parameters, never g or a start value.
+// The generator of each old type.
 const OLD_TYPES = {
+  cartPole: (p) => cartPole(p),
+  // links: the number of hinge and rod pairs (1–3; 3 by default).
+  pendulumCart: (p) => pendulumOnCart(Math.min(3, Math.max(1, Math.round(Number(p.links ?? 3)) || 3)), p),
   conicalTank: (p) => conicalTank(p),
 };
 export const isOldPhysics = (type) => Object.hasOwn(OLD_TYPES, type);

@@ -245,47 +245,56 @@ export function mechanismOde(mech) {
     make() {
       const s = new Float64Array(nh), c = new Float64Array(nh), w2 = new Float64Array(nh), tq = new Float64Array(nh);
       const A = new Float64Array(N * N), r = new Float64Array(N), q = new Float64Array(N), one = inputs.length === 1;
+      const dx = Float64Array.from(d, (v) => v[0]), dy = Float64Array.from(d, (v) => v[1]);
+      // Each hinge's reactions: the hinges mounted on what it turns.
+      const kids = Array.from({ length: nh }, (_, j) => Int32Array.from(base.reduce((a, b, k) => (b === j ? [...a, k] : a), [])));
       return (X, o, u, dX, uv) => {
-        for (let j = 0; j < nh; j++) { const th = X[o + np + j], w = X[o + N + np + j]; s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w; }
+        const V = o + N;
+        for (let j = 0; j < nh; j++) { const th = X[o + np + j], w = X[V + np + j]; s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w; }
         // The lower triangle of M(q) and the right-hand side Q.
         for (let p = 0; p < np; p++) {
           for (let k = 0; k <= p; k++) A[p * N + k] = Mpp[p * np + k];
-          let rp = Gp[p] - bf[p] * X[o + N + p];
+          let rp = Gp[p] - bf[p] * X[V + p];
           if (railIn[p] >= 0) rp += one ? u : uv[railIn[p]];
-          for (let k = 0; k < nh; k++) rp += Cpr[p * nh + k] * (d[p][0] * s[k] + d[p][1] * c[k]) * w2[k];
+          for (let k = 0; k < nh; k++) rp += Cpr[p * nh + k] * (dx[p] * s[k] + dy[p] * c[k]) * w2[k];
           r[p] = rp;
         }
         // Each hinge's torque on its follower, less its damping.
         for (let j = 0; j < nh; j++) {
-          const wj = X[o + N + np + j], wb = base[j] >= 0 ? X[o + N + np + base[j]] : 0;
-          tq[j] = (hingeIn[j] >= 0 ? (one ? u : uv[hingeIn[j]]) : 0) - cf[j] * (wj - wb);
+          const b = base[j];
+          tq[j] = (hingeIn[j] >= 0 ? (one ? u : uv[hingeIn[j]]) : 0) - cf[j] * (X[V + np + j] - (b >= 0 ? X[V + np + b] : 0));
         }
         for (let j = 0; j < nh; j++) {
-          const row = (np + j) * N;
-          for (let p = 0; p < np; p++) A[row + p] = Cpr[p * nh + j] * (d[p][0] * c[j] - d[p][1] * s[j]);
-          let rj = Gr[j] * s[j] + tq[j];
+          const row = (np + j) * N, sj = s[j], cj = c[j];
+          for (let p = 0; p < np; p++) A[row + p] = Cpr[p * nh + j] * (dx[p] * cj - dy[p] * sj);
+          let rj = Gr[j] * sj + tq[j];
           for (let k = 0; k < nh; k++) {
-            if (k <= j) A[row + np + k] = Crr[j * nh + k] * (c[j] * c[k] + s[j] * s[k]) + (k === j ? I[j] : 0);
-            rj -= Crr[j * nh + k] * (s[j] * c[k] - c[j] * s[k]) * w2[k];
-            if (base[k] === j) rj -= tq[k];   // the reaction of a hinge mounted on what hinge j turns
+            const C = Crr[j * nh + k];
+            if (k <= j) A[row + np + k] = C * (cj * c[k] + sj * s[k]);
+            rj -= C * (sj * c[k] - cj * s[k]) * w2[k];
           }
+          A[row + np + j] += I[j];
+          const kj = kids[j];
+          for (let i = 0; i < kj.length; i++) rj -= tq[kj[i]];   // the reaction of a hinge mounted on what hinge j turns
           r[np + j] = rj;
         }
         // LDLᵀ in place: L below the diagonal (unit diagonal implied), D on it.
         for (let j = 0; j < N; j++) {
-          let dd = A[j * N + j];
-          for (let k = 0; k < j; k++) dd -= A[j * N + k] * A[j * N + k] * A[k * N + k];
-          A[j * N + j] = dd;
+          const rowj = j * N;
+          let dd = A[rowj + j];
+          for (let k = 0; k < j; k++) dd -= A[rowj + k] * A[rowj + k] * A[k * N + k];
+          A[rowj + j] = dd;
           for (let i = j + 1; i < N; i++) {
-            let e = A[i * N + j];
-            for (let k = 0; k < j; k++) e -= A[i * N + k] * A[j * N + k] * A[k * N + k];
-            A[i * N + j] = e / dd;
+            const rowi = i * N;
+            let e = A[rowi + j];
+            for (let k = 0; k < j; k++) e -= A[rowi + k] * A[rowj + k] * A[k * N + k];
+            A[rowi + j] = e / dd;
           }
         }
         for (let i = 0; i < N; i++) { let e = r[i]; for (let k = 0; k < i; k++) e -= A[i * N + k] * q[k]; q[i] = e; }
         for (let i = 0; i < N; i++) q[i] /= A[i * N + i];
         for (let i = N - 1; i >= 0; i--) { let e = q[i]; for (let k = i + 1; k < N; k++) e -= A[k * N + i] * q[k]; q[i] = e; }
-        for (let i = 0; i < N; i++) { dX[o + i] = X[o + N + i]; dX[o + N + i] = q[i]; }
+        for (let i = 0; i < N; i++) { dX[o + i] = X[V + i]; dX[V + i] = q[i]; }
       };
     },
     // The fastest dynamics, for the step size: 4·√(g / l_min·(1 + hinges)) +

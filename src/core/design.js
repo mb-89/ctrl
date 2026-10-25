@@ -363,6 +363,8 @@ export function defaultDesigns() { return fallback ?? SYNC_DESIGNS; }
 
 // A state for sentences: 'ω (cart and pole)', or its label.
 function stateText(s) {
+  // 'cart.v' (a block's state) or a mechanism's 'cart and pole/ω': 'ω (cart and pole)'.
+  if (s.group) return `${s.name} (${s.group})`;
   return s.label.endsWith(`.${s.name}`) ? `${s.name} (${s.label.slice(0, -s.name.length - 1)})` : s.label;
 }
 

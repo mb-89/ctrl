@@ -21,7 +21,7 @@ const GROUPS = [
   ['Dynamics', ['integrator', 'delay', 'firstOrder', 'secondOrder', 'tf']],
   ['Models', ['fopdt', 'lagChain', 'integratorLag', 'doubleIntegrator', 'inverseResponse']],
   ['Sensors', ['quantizer', 'noise']],
-  ['Physics', ['cartPole', 'pendulumCart', 'tpl:conicalTank']],  // templates (tpl:) insert a masked model
+  ['Physics', ['tpl:cartPole', 'tpl:pendulum1', 'tpl:pendulum2', 'tpl:pendulum3', 'tpl:conicalTank']],  // templates (tpl:) insert a masked model
   ['Mechanics', ['world', 'rail', 'hinge', 'mass', 'rod']],  // parts joined at frame ports (ui/joins.js)
   ['Live', ['external']],  // a plant outside the page (design/output/hil.md)
   ['Nonlinear', ['saturation']],

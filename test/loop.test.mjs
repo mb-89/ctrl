@@ -196,7 +196,7 @@ test('loopModel: the linear loop of the plant seen and the law reproduces the si
   byMagnitude(staticPoles(m)).forEach(([re, im], i) => { const [r2, i2] = byMagnitude(d.poles)[i]; close(re, r2, 1e-9, `pole ${i}`); close(im, i2, 1e-9, `pole ${i}`); });
   const run = evaluateSystem(p, { designs: createDesignStore() });
   const step = Math.round(m.Ts / (run.t[1] - run.t[0]));
-  const x0 = [0, 0, 0.01, 0];   // x, v, θ, ω
+  const x0 = [0, 0.01, 0, 0];   // x, θ, v, ω
   const lin = linearLoop(m, () => 0, 300, x0);
   let worst = 0;
   for (let k = 0; k < 300; k++) worst = Math.max(worst, Math.abs(run.signals.x[k * step] - lin.y1[k]), Math.abs(run.signals.F[k * step] - lin.u[k]) / 100);

@@ -71,49 +71,6 @@ export const ELEMENTS = {
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1, { inf: true }), num('max', 'Max', 1, { inf: true })], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
   noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
-  cartPole: {
-    // Point mass m on a massless pole of length l, hinged on a cart of mass M.
-    // θ = 0 is upright, positive leaning towards +x. b is the cart's friction.
-    label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ, v, ω', outputs: ['x', 'θ', 'v', 'ω'], ports: () => [1, 4],
-    params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
-    ode: {
-      n: 4,
-      states: () => [state('x', 'm'), state('v', 'm/s'), state('θ', 'rad', true), state('ω', 'rad/s')],
-      init: (p) => [0, 0, p.theta0, 0],
-      out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; y[2] = X[o + 1]; y[3] = X[o + 3]; },
-      make(p) {
-        const { M, m, l, g, b } = p, ml = m * l, mg = m * g;
-        return (X, o, u, dX) => {
-          const v = X[o + 1], th = X[o + 2], w = X[o + 3];
-          const s = Math.sin(th), c = Math.cos(th);
-          const a = (u - b * v + ml * w * w * s - mg * s * c) / (M + m * s * s);
-          dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (g * s - a * c) / l;
-        };
-      },
-      bound: (p) => 2 * Math.sqrt(p.g * (p.M + p.m) / (p.M * p.l)) + p.b / p.M,
-    },
-  },
-  pendulumCart: {
-    // A chain of 1–3 rods on a cart (mass M): point masses m1, m2, m3 at the
-    // ends of massless rods l1, l2, l3, each hinged on the one before. Angles
-    // from upright, positive leaning towards +x. Lagrange's equations
-    // M(q) q̈ = f(q, q̇, F) are solved at each evaluation (chainRates).
-    label: 'Pendulum chain on cart', group: 'Physics', formula: 'F → x, θ…, v, ω…',
-    outputs: (p) => ['x', ...links(p).map((i) => `θ${i + 1}`), 'v', ...links(p).map((i) => `ω${i + 1}`)],
-    ports: (p) => [1, 2 * p.links + 2],
-    params: [num('links', 'Links', 3, { min: 1, int: true, max: 3 }), num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }),
-      ...[1, 2, 3].flatMap((i) => [num(`m${i}`, `Mass m${i}`, 0.1, { unit: 'kg', min: 1e-6 }), num(`l${i}`, `Rod l${i}`, 0.25, { unit: 'm', min: 1e-6 })]),
-      num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }),
-      ...[1, 2, 3].map((i) => num(`theta${i}0`, `Start θ${i}₀`, i === 1 ? 0.05 : 0, { unit: 'rad' }))],
-    ode: {
-      n: (p) => 2 * p.links + 2,
-      states: (p) => [state('x', 'm'), ...links(p).map((i) => state(`θ${i + 1}`, 'rad', true)), state('v', 'm/s'), ...links(p).map((i) => state(`ω${i + 1}`, 'rad/s'))],
-      init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
-      out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
-      make: (p) => chainRates(p),
-      bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
-    },
-  },
   // A digital controller: inputs r, y1, y2, …; output u, held between samples.
   // It holds one or more variants (implementations from controllers.js with
   // this same interface); "variant" is the index of the one that runs.
@@ -139,12 +96,6 @@ export const ELEMENTS = {
 };
 
 const VARIANT_LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
-
-const links = (p) => Array.from({ length: p.links }, (_, i) => i);
-
-// A state of a physics block, as ode.states lists it; angle: compared
-// modulo 2π (a pendulum that went round once is where it started).
-const state = (name, unit, angle = false) => ({ name, unit, angle });
 
 // An Equations block's names ("Q, h") and lines ("r = r0 + …").
 const nameList = (text) => String(text ?? '').split(',').map((x) => x.trim()).filter(Boolean);
@@ -192,64 +143,6 @@ function compileEquations(params, consts) {
   });
   const first = inputs.length + 1;
   return { n: first + lines.length, nIn: inputs.length, fs, first, out: outputs.map((n) => slot.get(n)) };
-}
-
-// The chain's rate function for parameters p, allocation-free (the swing-up
-// planner calls it millions of times). Constants are computed once: the mass
-// at or beyond each link μj and its products. Per call: one sin and one cos
-// per angle (differences by the angle-sum identities), the mass matrix
-// M(q) q̈ = r built in a scratch buffer and solved by Cholesky without
-// square roots (LDLᵀ; M(q) is positive definite, so no pivoting).
-function chainRates(p) {
-  const n = p.links, N = n + 1, { g, b } = p;
-  const mu = new Float64Array(n), ml = new Float64Array(n), mgl = new Float64Array(n), mll = new Float64Array(n * n);
-  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += p[`m${i + 1}`]; mu[i] = acc; }
-  for (let j = 0; j < n; j++) {
-    const lj = p[`l${j + 1}`];
-    ml[j] = mu[j] * lj; mgl[j] = mu[j] * g * lj;
-    for (let k = 0; k < n; k++) mll[j * n + k] = mu[Math.max(j, k)] * lj * p[`l${k + 1}`];
-  }
-  const total = p.M + mu[0];
-  const s = new Float64Array(n), c = new Float64Array(n), w2 = new Float64Array(n);
-  const A = new Float64Array(N * N), r = new Float64Array(N), q = new Float64Array(N);
-  return (X, o, u, dX) => {
-    for (let j = 0; j < n; j++) {
-      const th = X[o + 1 + j], w = X[o + n + 2 + j];
-      s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w;
-    }
-    // Lower triangle of M(q) and the right-hand side r.
-    A[0] = total;
-    r[0] = u - b * X[o + n + 1];
-    for (let j = 0; j < n; j++) {
-      const row = (j + 1) * N;
-      A[row] = ml[j] * c[j];
-      r[0] += ml[j] * s[j] * w2[j];
-      let rj = mgl[j] * s[j];
-      for (let k = 0; k < n; k++) {
-        const cjk = c[j] * c[k] + s[j] * s[k], sjk = s[j] * c[k] - c[j] * s[k];   // cos, sin of θj − θk
-        if (k <= j) A[row + k + 1] = mll[j * n + k] * cjk;
-        rj -= mll[j * n + k] * sjk * w2[k];
-      }
-      r[j + 1] = rj;
-    }
-    // LDLᵀ in place: L below the diagonal (unit diagonal implied), D on it.
-    for (let j = 0; j < N; j++) {
-      let d = A[j * N + j];
-      for (let k = 0; k < j; k++) d -= A[j * N + k] * A[j * N + k] * A[k * N + k];
-      A[j * N + j] = d;
-      for (let i = j + 1; i < N; i++) {
-        let e = A[i * N + j];
-        for (let k = 0; k < j; k++) e -= A[i * N + k] * A[j * N + k] * A[k * N + k];
-        A[i * N + j] = e / d;
-      }
-    }
-    for (let i = 0; i < N; i++) { let e = r[i]; for (let k = 0; k < i; k++) e -= A[i * N + k] * q[k]; q[i] = e; }
-    for (let i = 0; i < N; i++) q[i] /= A[i * N + i];
-    for (let i = N - 1; i >= 0; i--) { let e = q[i]; for (let k = i + 1; k < N; k++) e -= A[k * N + i] * q[k]; q[i] = e; }
-    dX[o] = X[o + n + 1];
-    for (let j = 0; j < n; j++) { dX[o + 1 + j] = X[o + n + 2 + j]; dX[o + n + 2 + j] = q[j + 1]; }
-    dX[o + n + 1] = q[0];
-  };
 }
 
 // Output names of a block (physics blocks may depend on their parameters).
@@ -784,7 +677,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const states = [];
   for (const nd of stateNodes) {
     // A mechanism's states are labelled by its level: 'cart and 3 rods/θ1'.
-    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: nd.mech ? `${nd.prefix}${s.name}` : `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
+    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: nd.mech ? `${nd.prefix}${s.name}` : `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j, ...(nd.mech && nd.prefix ? { group: nd.prefix.slice(0, -1) } : {}) }));
     else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: nd.unit && nd.unit !== '1' ? nd.unit : '', angle: !!nd.angle, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
   }
 

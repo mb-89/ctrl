@@ -14,7 +14,7 @@
 // (design/output/designs.md). The physics models are subsystems built by
 // physics.js, so they can be opened.
 
-import { conicalTank } from './physics.js';
+import { conicalTank, cartPole, pendulumOnCart } from './physics.js';
 
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
@@ -379,7 +379,7 @@ export const EXAMPLE_PLANTS = [
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 104 },
-        { id: 'cart', type: 'cartPole', name: 'cart and pole', params: { M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: Math.PI }, x: 400, y: 80 },
+        { id: 'cart', name: 'cart and pole', x: 400, y: 80, ...cartPole({ M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: Math.PI }) },
         sink('x', 640, 84, 'm'), sink('theta', 640, 120, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
@@ -412,7 +412,7 @@ export const EXAMPLE_PLANTS = [
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },
-        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }, x: 400, y: 60 },
+        { id: 'cart', name: 'cart and 3 rods', x: 400, y: 60, ...pendulumOnCart(3, { M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }) },
         sink('x', 640, 64, 'm'), sink('theta1', 640, 100, 'rad'), sink('theta2', 640, 136, 'rad'), sink('theta3', 640, 172, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
