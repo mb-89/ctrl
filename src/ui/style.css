@@ -76,6 +76,12 @@
   --axis-x: light-dark(#d0352b, #ff6259);
   --axis-y: light-dark(#23913a, #4fd46a);
   --axis-z: light-dark(#2a62d4, #5a9dff);
+  /* The parts of 3D views, cel shaded: each colour is the lit band; the bands
+     of half light and shadow are drawn darker from it (src/ui/view3d.js) */
+  --part: light-dark(#e2ddd0, #cdc7b8);             /* a body: castings, covers */
+  --part-dark: light-dark(#59616b, #6c7580);        /* a dark part: bases, motors, flanges */
+  --part-accent: light-dark(#e8692c, #f47a3c);      /* a tool, a part that stands out */
+  --part-line: light-dark(#15191c, #07090a);        /* outlines: silhouettes and hard edges */
 
   /* The screen's palette (canvases read these: src/ui/palette.js) */
   --screen-ink: #ebf0f5;

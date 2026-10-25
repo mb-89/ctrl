@@ -75,6 +75,12 @@ The person: "we shouldn't use textures ... make it cell shaded and then don't us
 - **Every 3D view is cel shaded**: a few flat bands of light per surface (three.js's toon material, which is a shader), dark outlines on silhouettes and hard edges, colours from the design tokens.
 - **No textures, no assets**: shapes are made by code from primitives (boxes, cylinders, spheres, extrusions); the only "texture" allowed is the toon material's light ramp, a handful of bytes made in code at start, never a file. No image, mesh or font files for 3D.
 - Answer to the question: yes, cel shading is a shader. three.js has it built in (the toon material: lighting quantised into bands by a tiny ramp); the outlines are a second, inverted shell drawn in the outline colour, or edge lines; both cost only code. The Canvas2D fallback draws the same look: flat bands and outlines.
+- **Built** (branch feat/toon3d, `src/ui/view3d.js`; robot.md §7 and its "Built so far"): every surface a `MeshToonMaterial` whose ramp is four texels made in code (three bands: shadow, half, lit); a key light that turns with the camera plus an ambient; an inverted hull for silhouettes (1.6 px at every zoom) and 1.2 px ribbons on hard edges (over 30°); the Canvas fallback fills each face in the same band and strokes silhouettes and hard edges. Tokens `--part`, `--part-dark`, `--part-accent`, `--part-line` in both themes. A test fails if the view makes another texture or loads anything. Interpretations:
+  - *A part's colour is a token, chosen by role*: the URDF's colour only says whether a part is light, dark or the accent (saturated), so every robot is drawn in the page's palette and both themes. A URDF with many distinct colours loses them; roles can be added as tokens.
+  - *The key light is fixed to the camera* (upper left, in front), not to the world, so the bands read the same from every side.
+  - *Outlines keep their width on the screen* (in pixels), not in the world, so zooming out never makes them vanish and zooming in never makes them heavy.
+  - *"No gradients" for lines*: the trail's fade (it shows time) is kept, in three steps like the light's bands.
+  - The outlines are near-black in both themes; in the dark theme a silhouette against the ground is carried by the part's colour, the outline shows between parts.
 
 ## 2026-10-25 · v2.7: one design system, after review
 

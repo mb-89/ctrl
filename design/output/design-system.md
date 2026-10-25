@@ -23,6 +23,8 @@ Theme colours are `light-dark()` pairs. The colour scheme in effect picks one: t
 | Screen | `--screen-ink`, `--screen-label`, `--screen-line`, `--screen-mark` | Text, labels, grid and markers drawn on the dark screen |
 | Diagram | `--source`, `--source-line`, `--sink`, `--sink-line` | Blocks that play a signal and blocks that record one |
 | Tags | `--tone-blue`, `-orange`, `-aqua`, `-yellow`, `-magenta`, `-green`, `-slate`, `-red`, each with its `-ink` (white, `--ink-on-tone`, or the lit ink, whichever reads at 4.5:1 or more on it as a fill) | The System library's tag tones (a palette checked for colour-vision deficiency on each theme). Slate took violet's place, which is the selection's |
+| Axes | `--axis-x`, `--axis-y`, `--axis-z` (red, green, blue) | The axes of 3D views: triads, the gizmo |
+| Parts | `--part` (a body), `--part-dark` (bases, motors, flanges), `--part-accent` (a tool, a part that stands out), `--part-line` (outlines) | The parts of 3D views, cel shaded: each colour is the lit band (below, Canvases) |
 | Knob | `--knob-skirt`, `--knob-knurl`, `--knob-cap`, `--knob-cap-line`, `--knob-dot` | The knurled knobs |
 | Type | `--font-ui` (IBM Plex Sans Condensed), `--font-mono` (IBM Plex Mono); `--text-2xs` 10, `--text-xs` 11, `--text-sm` 12, `--text-md` 13, `--text-base` 14, `--text-lg` 18 px | Six sizes (there were 13) |
 | Space | `--space-1` … `--space-8`: 2, 4, 6, 8, 10, 12, 14, 16 px | Gaps, padding and margins; nothing else is written (a hairline of 1 px aside) |
@@ -106,6 +108,8 @@ The lamp's colour says what kind of on it is:
 ### Canvases
 
 The screen, the plots, the levels strip and the saved picture are drawn, not styled: they read the tokens once through [src/ui/palette.js](../../src/ui/palette.js), which names how strongly each colour is drawn (grid, axis, label, cursor, veil …) and how strongly a whole line is (`alpha`: *unselected* while another line is selected, *past* for the earlier runs, *guide* for a line read against the data, *over* for data drawn over data), and holds the one colour table that is data, the spectrogram's colour map. A colour or a strength on a canvas is changed there, like any other.
+
+**3D views are cel shaded** ([decisions.md](decisions.md), v2.8): a surface is drawn in three flat bands of one light (shadow, half, lit), never a gradient, with outlines in `--part-line` on its silhouette and hard edges; a part's token is its lit band, the others are drawn darker from it. A URDF colour only picks the part's role (a saturated colour: accent; else light or dark). No textures and no assets: the light's ramp is four bytes made in code. Lines in 3D (the floor grid, paths, triads, joint axes) are flat colours; a trail fades in three steps. WebGL and the Canvas fallback draw the same bands and outlines (`src/ui/view3d.js`).
 
 The controller's structure diagram is SVG styled by `.cdg`: its text is `--text-2xs` (notes too: the sheet is 276 units wide so they fit), and a part that is 0 or off is drawn as disabled (`--disabled`).
 

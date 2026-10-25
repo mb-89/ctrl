@@ -1,11 +1,11 @@
 // Pictures of the 3D view (ui/view3d.js) in a browser, to look at: a harness
 // page in .harness/ (git-ignored) with a sample arm of boxes, cylinders and a
 // sphere, a dashed circle, a fading trail and frame triads, then screenshots
-// in .harness/shots/: WebGL light and dark, the Canvas fallback forced light
-// and dark, a narrow viewport, a lost and a restored context, a hovered link
+// in .harness/shots/ (or the folder given): WebGL light and dark, the Canvas
+// fallback forced light and dark (820 px wide), a narrow viewport, a lost and a restored context, a hovered link
 // and a click on the view cube. It also times a frame. Not part of npm test.
 //
-//   node tools/view3d-shots.mjs             needs Playwright (global install)
+//   node tools/view3d-shots.mjs [folder]    needs Playwright (global install)
 
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -14,7 +14,7 @@ import { createRequire } from 'node:module';
 import { bundleScript, vendorBlock, MODULES } from '../build.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const OUT = join(ROOT, '.harness'), SHOTS = join(OUT, 'shots');
+const OUT = join(ROOT, '.harness'), SHOTS = process.argv[2] ? join(ROOT, process.argv[2]) : join(OUT, 'shots');
 
 // The sample arm: a pedestal, a shoulder, an upper arm, a forearm, a wrist
 // and a tool, with six joints (z, y, y, x, y, x) posed by forward kinematics.
@@ -140,7 +140,7 @@ async function main() {
   const shot = async (page, name) => { await page.screenshot({ path: join(SHOTS, `${name}.png`) }); report[name] = await page.evaluate(() => window.__view.mode); };
 
   for (const [name, q, scheme] of [['webgl-light', '?theme=light', 'light'], ['webgl-dark', '?theme=dark', 'dark'], ['canvas-light', '?renderer=canvas&theme=light', 'light'], ['canvas-dark', '?renderer=canvas&theme=dark', 'dark']]) {
-    const { page, ctx } = await open(q, 1280, 800, scheme);
+    const { page, ctx } = await open(q, 820, 640, scheme);
     await shot(page, name);
     report[`${name} frame ms`] = await page.evaluate(() => window.__time(60).toFixed(2));
     await ctx.close();

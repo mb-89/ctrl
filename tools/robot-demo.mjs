@@ -4,11 +4,12 @@
 // joint torques along the motion from inverse dynamics, split into their
 // shares. test/robot-circle.test.mjs holds it to the plan's numbers;
 //
-//   node tools/robot-demo.mjs [--shots]
+//   node tools/robot-demo.mjs [--shots [folder]]
 //
 // writes .harness/robot-demo.html (the arm in the 3D view, the dashed circle,
 // the fading trail, the frames; ?canvas forces the fallback, ?theme=dark) and
-// with --shots takes screenshots of it into .harness/shots/.
+// with --shots takes screenshots of it into .harness/shots/ (or the folder
+// given after it) and times a frame.
 
 import { parseUrdf } from '../src/core/urdf.js';
 import { createRbd, dampedInverse, orientationError } from '../src/core/rbd.js';
@@ -152,7 +153,8 @@ body { display: flex; flex-direction: column; height: 100vh; margin: 0; }
   const file = join(ROOT, '.harness/robot-demo.html');
   writeFileSync(file, html);
   console.log(`${file}  ${(html.length / 1024).toFixed(0)} KB`);
-  if (process.argv.includes('--shots')) await shots(file, join(ROOT, '.harness/shots'));
+  const at = process.argv.indexOf('--shots'), folder = process.argv[at + 1];
+  if (at >= 0) await shots(file, join(ROOT, folder && !folder.startsWith('-') ? folder : '.harness/shots'));
 }
 
 async function shots(file, dir) {
@@ -164,7 +166,8 @@ async function shots(file, dir) {
   const cases = [
     ['puma-webgl-light', '?theme=light', 1280], ['puma-webgl-dark', '?theme=dark', 1280],
     ['puma-canvas-light', '?theme=light&canvas', 1280], ['puma-canvas-dark', '?theme=dark&canvas', 1280],
-    ['puma-820-light', '?theme=light', 820], ['puma-820-canvas-dark', '?theme=dark&canvas', 820],
+    ['puma-820-light', '?theme=light', 820], ['puma-820-dark', '?theme=dark', 820],
+    ['puma-820-canvas-light', '?theme=light&canvas', 820], ['puma-820-canvas-dark', '?theme=dark&canvas', 820],
   ];
   for (const [name, query, width] of cases) {
     const page = await browser.newPage({ viewport: { width, height: 760 } });
@@ -175,7 +178,17 @@ async function shots(file, dir) {
     await page.waitForTimeout(600);
     await page.screenshot({ path: `${dir}/${name}.png` });
     const mode = await page.evaluate(() => window.__demo?.view.mode);
-    console.log(name, mode, errors.length ? errors : '');
+    // The cost of a frame: new poses, trail and frames, then a draw; its
+    // JavaScript, then with the draw finished (one pixel read back from WebGL).
+    const ms = await page.evaluate(() => {
+      const gl = document.querySelector('.v3d-gl').getContext('webgl2'), px = new Uint8Array(4), time = (sync) => {
+        const t0 = performance.now();
+        for (let i = 0; i < 60; i++) { window.__demo.show(2 + i / 60); window.__demo.view.renderNow(); if (sync) gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+        return ((performance.now() - t0) / 60).toFixed(2);
+      };
+      return window.__demo.view.mode === 'webgl' ? `${time(false)} ms/frame JS, ${time(true)} ms drawn` : `${time(false)} ms/frame`;
+    });
+    console.log(name, mode, ms, errors.length ? errors : '');
     await page.close();
   }
   await browser.close();
