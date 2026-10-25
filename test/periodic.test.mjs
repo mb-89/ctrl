@@ -2,7 +2,9 @@
 // it should be periodic"; a spike at t = 0 is accepted, at no other time).
 // An eased Sine eases in the run's first period only and joins up where it
 // repeats; wrapJump says where a signal does not; the PUMA no longer jumps at
-// every new cycle. (The first period of every library system is held to its
+// every new cycle; every library input joins up with itself, and a long run
+// of every library system is periodic after its start, with no spike at a
+// wrap. (The first period of every library system is held to its
 // fingerprint in hil-sim.test.mjs.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,6 +13,7 @@ import { SYSTEM_LIBRARY } from '../src/core/systems.js';
 import { PUMA_SYSTEM } from '../src/core/pumasystem.js';
 import { normalizeDiagram } from '../src/core/diagram.js';
 import { simulateSystem } from '../src/core/sim.js';
+import { defaultSampleTime } from '../src/core/project.js';
 
 const ctx = { sampleTime: 1e-3 };
 const close = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg}: ${a} vs ${b} (tol ${tol})`);
@@ -143,12 +146,15 @@ test("the Input tab's line: a jump or a kink where it repeats, quiet where that 
   assert.doesNotMatch(W([step(40, 0.2), step(20, 2.2)]), /\d/);
 });
 
-test("the library's other inputs join up where they repeat", () => {
-  const known = {};
+test('every library input joins up where it repeats: its value, and its slope where it is a smooth motion', () => {
+  // Steps inside a period are deliberate (a step test) and stay; the wrap
+  // itself is not a step. Before inputs 50–52 six did not join (the cases
+  // in the wrapJump test above).
   for (const sys of SYSTEM_LIBRARY) for (const [name, sig] of Object.entries(sys.input.signals)) {
-    if (known[sys.name]?.includes(name)) continue;
     const j = wrapJump(normalizeReference(sig), ctx);
-    assert.ok(j.joins, `${sys.name}: ${name} jumps by ${j.value} (slope ${j.slope})`);
+    assert.ok(Math.abs(j.value) <= 1e-6 * j.span, `${sys.name}: ${name} jumps by ${j.value} where it repeats`);
+    if (j.smooth && j.slope !== null) assert.ok(Math.abs(j.slope) <= 1e-6 * j.rate, `${sys.name}: ${name} kinks by ${j.slope} where it repeats`);
+    assert.ok(j.joins, `${sys.name}: ${name}`);
   }
 });
 
@@ -181,15 +187,109 @@ test('the PUMA does not jump where its circle repeats', () => {
   }
 });
 
+// ---- The library over a long run (inputs 50–52) ----------------------------
+// Every library system but the HIL ones (their plant is outside the page) and
+// the PUMA (the test above, and puma.test.mjs): a run of four
+// periods of its first variant, one run per system, shared by the tests
+// below. Noise plays as shipped: it is seeded, so the run is the same every
+// time, and the two systems that have noise are held to its statistics.
+const LONG = 4;
+const longRuns = new Map();
+function longRun(name) {
+  if (!longRuns.has(name)) {
+    const sys = SYSTEM_LIBRARY.find((s) => s.name === name);
+    const T = Math.max(...Object.values(sys.input.signals).map((s) => s.period));
+    const dt = sys.sim?.sampleTime ?? defaultSampleTime(T);
+    const out = simulateSystem(normalizeDiagram(sys.plant.diagram), sys.input.signals, { duration: LONG * T, sampleTime: dt });
+    longRuns.set(name, { T, dt, N: Math.round(T / dt), s: out.signals });
+  }
+  return longRuns.get(name);
+}
+const LONG_RUN = SYSTEM_LIBRARY.filter((s) => s.name !== PUMA_SYSTEM.name && !JSON.stringify(s.plant).includes('"external"'));
+
+// How a system is held where period 4 is not period 3 sample for sample, and
+// why (the physics, not a jump):
+//   settles     its run approaches its periodic motion by a factor a period
+//               (every output's difference at most 0.3 of the one before)
+//   statistics  each output's mean and rms deviation in period 4 within a
+//               tenth of its rms deviation in period 3 (the largest measured:
+//               5 %, the encoder's ripple torque); for a free shaft's angle,
+//               which a speed loop does not hold, how far it turns instead
+//               of its mean
+// Every other system repeats: period 4 within 1e-4 of each output's span in
+// periods 3 and 4 (the largest measured: 1.5e-5, the triple pendulum's θ3).
+const HELD = {
+  // ζ 0.05 and no controller: a swing it carries into the next period shrinks
+  // to e^(−c·T/2m) = 0.29 a period (its own test below).
+  'Mass–spring–damper': { how: 'settles' },
+  // The relay chatters in a rhythm of its own (13 to 14 ms) that does not fit
+  // the period's samples: a period repeats the one three before it.
+  'DC motor, sliding mode': { how: 'statistics' },
+  // The ripple and the encoder errors follow the shaft's angle, 102.65 turns a
+  // period, so they fall at another phase each period; and the torque noise
+  // (its own test below: without both, periods 2 to 4 agree to 1e-9).
+  'Encoder errors and torque ripple': { how: 'statistics' },
+  // The encoder's noise, and its counts, which fall differently as the angle
+  // turns on (about 27 rad a period); with an ideal encoder period 2 is
+  // period 3 to 1e-8 (observer-example.test.mjs).
+  'DC motor, speed from an encoder': { how: 'statistics', turns: ['angle', 'encoder'] },
+  // On the load's encoder the PID hunts in the play, a limit cycle of about
+  // 31 Hz of its own (what the example shows).
+  'Gear backlash': { how: 'statistics' },
+};
+
+const maxDiff = (x, N, a, b) => { let m = 0; for (let k = 1; k <= N; k++) m = Math.max(m, Math.abs(x[a * N + k] - x[b * N + k])); return m; };
+const periodStats = (x, N, p) => {
+  let s = 0, s2 = 0;
+  for (let k = 1; k <= N; k++) { const v = x[p * N + k]; s += v; s2 += v * v; }
+  const mean = s / N;
+  return { mean, sd: Math.sqrt(Math.max(0, s2 / N - mean * mean)), turn: x[(p + 1) * N] - x[p * N] };
+};
+
+for (const sys of LONG_RUN) {
+  test(`${sys.name}: no spike where its input repeats, and periodic after the start`, () => {
+    const { T, N, s } = longRun(sys.name), held = HELD[sys.name] ?? { how: 'repeats' };
+    for (const [n, x] of Object.entries(s)) {
+      let lo = Infinity, hi = -Infinity;
+      for (const v of x) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      const floor = 1e-9 * (hi - lo) + 1e-12;
+      // No spike at a wrap (a spike at t = 0 is accepted, at no other time):
+      // across T, 2T and 3T an output steps at most twice as far as it does
+      // anywhere in the ten samples on either side. Before inputs 50–52 an
+      // input that ended away from where it started stepped there out of a
+      // standstill, and the loop after it (the variable gain's u by 80 times
+      // its steps around the wrap, the encoder example's voltage by 7 times).
+      for (let p = 1; p < LONG; p++) {
+        const k = p * N, wrap = Math.abs(x[k + 1] - x[k]);
+        let near = 0;
+        for (let j = k - 10; j <= k + 10; j++) if (j !== k) near = Math.max(near, Math.abs(x[j + 1] - x[j]));
+        assert.ok(wrap <= 2 * near + floor, `${n} steps by ${wrap} at ${p * T} s, by at most ${near} around it`);
+      }
+      // Periodic after the start: period 4 against period 3.
+      if (held.how === 'repeats') {
+        let a = Infinity, b = -Infinity;
+        for (let k = 2 * N + 1; k <= 4 * N; k++) { a = Math.min(a, x[k]); b = Math.max(b, x[k]); }
+        const d = maxDiff(x, N, 2, 3);
+        assert.ok(d <= 1e-4 * (b - a) + floor, `${n}: periods 3 and 4 differ by ${d} (span ${b - a})`);
+      } else if (held.how === 'settles') {
+        const d23 = maxDiff(x, N, 1, 2), d34 = maxDiff(x, N, 2, 3);
+        assert.ok(d34 <= 0.3 * d23 + floor, `${n}: periods 3 and 4 differ by ${d34}, 2 and 3 by ${d23}`);
+      } else {
+        const p3 = periodStats(x, N, 2), p4 = periodStats(x, N, 3), tol = 0.1 * p3.sd + floor;
+        assert.ok(Math.abs(p4.sd - p3.sd) <= tol, `${n}: rms deviation ${p4.sd} in period 4, ${p3.sd} in period 3`);
+        if (held.turns?.includes(n)) assert.ok(Math.abs(p4.turn - p3.turn) <= 0.1 * Math.abs(p3.turn), `${n} turns ${p4.turn} in period 4, ${p3.turn} in period 3`);
+        else assert.ok(Math.abs(p4.mean - p3.mean) <= tol, `${n}: mean ${p4.mean} in period 4, ${p3.mean} in period 3`);
+      }
+    }
+  });
+}
+
 test('the mass–spring–damper is let go inside its period: no kick where F repeats, and its light damping makes every period alike', () => {
-  const sys = SYSTEM_LIBRARY.find((s) => s.name === 'Mass–spring–damper');
-  const F = sys.input.signals.F, T = F.period, dt = 0.0025, N = Math.round(T / dt);
-  assert.ok(wrapJump(normalizeReference(F), ctx).joins, 'F ends the period where it starts');
-  const out = simulateSystem(normalizeDiagram(sys.plant.diagram), sys.input.signals, { duration: 5 * T, sampleTime: dt });
-  const { x, v, F: f } = out.signals;
+  const { T, N, s } = longRun('Mass–spring–damper'), { x, v, F: f } = s;
   // Nothing happens at a wrap: F holds, the acceleration does not step (the
-  // second difference of v stays at the rounding of a smooth swing).
-  for (let p = 1; p < 5; p++) {
+  // second difference of v stays at the rounding of a smooth swing; it was
+  // 2.1e-3 when F dropped to 0 there for 0.1 s).
+  for (let p = 1; p < LONG; p++) {
     const k = p * N;
     assert.equal(f[k + 1], f[k], `F at ${p * T} s`);
     assert.ok(Math.abs(v[k + 1] - 2 * v[k] + v[k - 1]) < 1e-4, `v kinks at ${p * T} s`);
@@ -198,9 +298,9 @@ test('the mass–spring–damper is let go inside its period: no kick where F re
   // differ by the swing the damper has not yet taken away: that difference
   // shrinks by e^(−c·T/2m) = e^(−1.25) a period (σ = 0.25 1/s), the physics.
   const diff = (a, b) => { let m = 0; for (let k = 1; k <= N; k++) m = Math.max(m, Math.abs(x[a * N + k] - x[b * N + k])); return m; };
-  const d = [diff(0, 1), diff(1, 2), diff(2, 3), diff(3, 4)];
+  const d = [diff(0, 1), diff(1, 2), diff(2, 3)];
   for (let i = 1; i < d.length; i++) close(d[i] / d[i - 1], Math.exp(-1.25), 0.01, `period ${i + 1} against ${i + 2}`);
-  assert.ok(d[1] < 3e-3 && d[3] < 2.5e-4, `periods 2 and 3 within 3 mm, 4 and 5 within 0.25 mm: ${d}`);
+  assert.ok(d[1] < 3e-3 && d[2] < 1e-3, `periods 2 and 3 within 3 mm, 3 and 4 within 1 mm: ${d}`);
 });
 
 test('the encoder example runs up and back down: no jump where it repeats, its loop the same in every later period', () => {
@@ -210,7 +310,7 @@ test('the encoder example runs up and back down: no jump where it repeats, its l
     Object.assign(d.blocks.find((b) => b.id === 'motor').params, mask);
     return simulateSystem(normalizeDiagram(d), sys.input.signals, { duration: 20, sampleTime: 0.0025 }).signals;
   };
-  const P = 2000, full = run({}), quiet = run({ torqueNoise: 0, ripple: 0, encErrors: 0 });
+  const { N: P, s: full } = longRun(sys.name), quiet = run({ torqueNoise: 0, ripple: 0, encErrors: 0 });
   for (const n of ['speed', 'speed_m', 'V', 'i']) {
     // At each wrap: no step larger than the largest one inside a period (before: V jumped by 87 V, i by 49 A).
     let inner = 0;
@@ -225,7 +325,7 @@ test('the encoder example runs up and back down: no jump where it repeats, its l
 
 test('the conical tank drains back before the period ends: from the second period on every period is the same', () => {
   const sys = SYSTEM_LIBRARY.find((s) => s.name === 'Conical tank, gain scheduling');
-  const Ts = 0.0025, N = 2000;
+  const { dt: Ts, N } = longRun(sys.name);
   const run = (variant, periods) => {
     const d = structuredClone(sys.plant.diagram);
     d.blocks.find((b) => b.type === 'controller').variant = variant;
@@ -235,7 +335,7 @@ test('the conical tank drains back before the period ends: from the second perio
   // The gain-scheduled PI and the PI tuned for empty are back at the start
   // level before the next period's first step, and every period repeats.
   for (const [variant, tol] of [[0, 1e-5], [2, 1e-3]]) {
-    const s = run(variant, 3);
+    const s = variant === 0 ? longRun(sys.name).s : run(variant, 3);
     for (const n of ['h', 'q']) assert.ok(diff(s[n], 1, 2) < tol, `variant ${variant}: ${n} differs by ${diff(s[n], 1, 2)} between periods 2 and 3`);
     close(s.h[N + Math.round(1.5 / Ts) - 1], 0.15, 5e-4, `variant ${variant}: h before the second period's first step`);
   }

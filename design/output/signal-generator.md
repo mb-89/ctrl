@@ -31,6 +31,7 @@ A run is periodic after its start ([inputs 50–52](../input/2026-10-25-52-a-spi
 - **The wrap must not be a step.** Under the Signal column a line in the warning colour says when the signal ends the period away from where it starts ("jumps where it repeats"), or, for a smooth signal, with another slope ("kinks where it repeats"). Steps inside a period are deliberate and stay; steps that return are quiet, and so is a sawtooth (a Ramp still rising at the period's end), which is built to drop there. The line follows the draft, as the preview does. `wrapJump(ref)` in `core/signals.js` measures it (value and slope across the wrap in the steady periods; noise left out); `wrapWarning(ref, name)` is the line.
 - **Later periods are the same, bit for bit**: their time in the period is taken on a picosecond grid, so a step lands on the same sample in every period after the first (the run's own time carries the rounding of its size).
 - A signal written in short (a parameter left out, as the library writes them) plays with the defaults, as the page plays it: `referenceFn` normalizes its components.
+- **The library's inputs all join up** ([decisions](decisions.md), inputs 50–52): an eased circle eases once, and an input that steps or ramps away comes back inside its period, so the line under the Signal column is quiet on every library system; a long run of each has no spike at a wrap and repeats after its start (`test/periodic.test.mjs`).
 
 ## Primitives
 
