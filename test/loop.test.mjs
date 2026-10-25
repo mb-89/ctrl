@@ -279,6 +279,8 @@ test('loopModel on main\'s systems: sliding mode linear only in its boundary lay
   const names = blk(smc, 'ctrl').variants.map((v) => v.name);
   blk(smc, 'ctrl').variant = names.indexOf('Relay (theory)');
   refusal(() => loopModel(smc, 'ctrl', 'origin'), 'not-linear', /an ideal sliding mode switches: it has no linear model/);
+  // Its hint is its own: no operating point makes a relay linear.
+  assert.throws(() => loopModel(smc, 'ctrl', 'origin'), (err) => /boundary layer φ > 0, or analyse another variant/.test(err.hint));
   blk(smc, 'ctrl').variant = names.indexOf('Super-twisting');
   refusal(() => loopModel(smc, 'ctrl', 'origin'), 'not-linear', /super-twisting has no linear model/);
   blk(smc, 'ctrl').variant = names.indexOf('Boundary layer');

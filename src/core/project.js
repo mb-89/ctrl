@@ -436,7 +436,8 @@ export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
   const t = snap ? snap.t : parseOp(at).kind === 'initial' ? 0 : undefined;
   let ctrl;
   try { ctrl = def.linear(variant.params, Ts, { y: Array.from(plant.op.y), ...(t !== undefined ? { t } : {}) }, values); } catch (err) {
-    throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, 'pick an operating point where the law is linear, such as at rest');
+    // The law's own hint where it has one (no point makes a switching law linear).
+    throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'pick an operating point where the law is linear, such as at rest');
   }
   const warnings = [...plant.warnings];
   if (ctrl.note) warnings.push(ctrl.note);

@@ -458,7 +458,7 @@ export const CONTROLLERS = {
     // a = e^(−Ts/Tr): one state, the rf of the sample before. Without a
     // prefilter, no state: u = (K·λ/φ)·(r − y) − (K/φ)·ẏ.
     linear(p, Ts, at) {
-      if (!(p.phi > 0)) throw new Error('an ideal sliding mode switches: it has no linear model; give it a boundary layer φ > 0');
+      if (!(p.phi > 0)) throw Object.assign(new Error('an ideal sliding mode switches: it has no linear model; give it a boundary layer φ > 0'), { hint: 'give it a boundary layer φ > 0, or analyse another variant' });
       const m = Math.max(2, at?.y?.length ?? 2), k = p.K / p.phi;
       const ys = [k * p.lambda, k, ...new Array(m - 2).fill(0)];
       if (!(p.Tr > 0)) return staticLinear(k * p.lambda, ys);
@@ -492,7 +492,7 @@ export const CONTROLLERS = {
         },
       };
     },
-    linear() { throw new Error('super-twisting has no linear model: √|s| has infinite slope at s = 0'); },
+    linear() { throw Object.assign(new Error('super-twisting has no linear model: √|s| has infinite slope at s = 0'), { hint: 'analyse another variant (a sliding mode with a boundary layer is linear inside it)' }); },
   },
 };
 
