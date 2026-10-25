@@ -15,11 +15,11 @@
 // starts, and the model from the record whenever it is needed.
 
 import { controllerBlocks, upstreamSource, drain, autotuneSteps, resultName, tuneContext, runVariant, costScales, runCost, variantCost } from './autotune.js';
-import { openLoop, openLoopPoles, closedLoopSides, frequencyData, loopMargins } from './analysis.js';
+import { analyzeLoop, openLoop, openLoopPoles, closedLoopSides, frequencyData, loopMargins } from './analysis.js';
 import { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } from './diagram.js';
 import { CONTROLLERS } from './controllers.js';
 import { referenceFn, gaussAt } from './signals.js';
-import { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText, discriminationSignal, excitationOf } from './experiment.js';
+import { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, pidLaw, bumpless, fmtNum, budgetText, discriminationSignal, excitationOf, tryCost, tryMargin } from './experiment.js';
 import {
   STRUCTURES, CHOICE, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
   fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded, frf,
@@ -1275,6 +1275,106 @@ export function twinSubsystem(model, { push = false, noise = true, id = 'twin', 
   return { id, type: 'subsystem', name: name ?? `identified ${S.label}`, params: {}, diagram: { blocks, wires } };
 }
 
+// ---- Try on the plant (§11)
+
+// The path from the controller that held (the model's eased-in PI) to a
+// result tuned on the model, in three steps interpolated in log-gains (a gain
+// that starts at 0, the derivative, linearly), each screened on the model,
+// its parameter samples and its places: stable for all, Ms ≤ 2, and
+// predicted to use at most 70 % of the room on the test reference. The path
+// ends at the first step that fails ("the result is bolder than what the
+// model knows: tried up to step 2"). Returns the experiment's plan of kind
+// 'try' and the screening: { plan, steps: [{ n, s, gains, ok, why, J, room }],
+// upto, why }. project, path: the system (its block's limits); src: the
+// identify plan and record the model came from; variant: the result (PI or
+// PID, type pid).
+export const TRY = { steps: [1 / 3, 2 / 3, 1], ms: 2, room: 0.7, samples: 12, monitor: { residuals: 5, room: 0.2 } };
+export function planTry(project, path, model, src, variant) {
+  if (variant?.type !== 'pid') throw new IdentifyError('try-type', `Try on the plant takes PI and PID results; ${variant?.name ?? 'this one'} is a ${variant?.type}`, 'tune a PID or PI on the model');
+  if (!model?.ok || !model.eased) throw new IdentifyError('try-eased', 'Try on the plant starts from the controller that held in the test: identify again, to a test that eased in', '');
+  const { plan, record } = src;
+  const g = readLog(record), Ts = plan.Ts;
+  // The test reference as the tries played it.
+  const refs = g.tries?.find((T) => T.settled) ?? g.tries?.[0];
+  const len = record.log.find((e) => e.kind === 'references')?.test;
+  if (!refs || !len) throw new IdentifyError('try-ref', 'the test that found this model played no try: identify again', '');
+  const r = record.r.slice(refs.iSwitch, refs.iSwitch + len).map((v) => nan(v));
+  const e0 = model.eased, p1 = variant.params;
+  const lim = [Math.max(plan.umin, finite(p1.umin) ? p1.umin : -Infinity), Math.min(plan.umax, finite(p1.umax) ? p1.umax : Infinity)];
+  const mix = (a, b, s) => (a > 0 && b > 0 ? a * (b / a) ** s : a + (b - a) * s);
+  const theta = model.params.theta ?? 0;
+  // The models a step must hold for: the nominal, the samples and the places.
+  const S = STRUCTURES[model.structure], gk = GAIN(S);
+  const models = [model, ...modelSamples(model, TRY.samples).map((p) => ({ ...model, params: p }))];
+  for (const pl of model.where ?? []) if (pl.seen >= GRADE.seen && finite(pl.gain) && finite(pl.scale)) models.push({ ...model, params: { ...model.params, [gk]: pl.gain, [pl.scaleKey]: pl.scale } });
+  const rest = model.holds?.[0] ?? { y: r[0], u: plan.u0 };
+  // The hold u at r(0): the model's rest moved by r(0) − y₀ over its gain.
+  const uHold = S.integrating ? rest.u : rest.u + (r[0] - rest.y) / model.params.K;
+  const predict = (gains, m = model) => {
+    let d;
+    try { d = discretise(m.structure, m.params, Ts); } catch { return null; }
+    const law = () => { const L = pidLaw(gains, uHold, lim[0], lim[1], Ts); return (k, yh) => L.step(r[k], yh); };
+    return simulateSegment(d, { n: r.length, yStart: r[0], uStart: uHold, law });
+  };
+  const resid = model.check ? Math.sqrt(model.check.y.reduce((a, v, k) => (v === null ? a : a + (v - model.check.yhat[k]) ** 2), 0) / Math.max(1, model.check.y.length)) : model.noise?.sigma ?? 0;
+  const room = Math.min(plan.band[1] - r[0], r[0] - plan.band[0]);
+  const monitor = Math.max(TRY.monitor.residuals * resid, TRY.monitor.room * room);
+  const span = Math.max(...r) - Math.min(...r) || 1;
+  const steps = [];
+  let why = null;
+  for (const [j, s] of TRY.steps.entries()) {
+    const gains = { Kp: mix(e0.Kp, p1.Kp, s), Ki: mix(e0.Ki, p1.Ki, s), Kd: (p1.Kd ?? 0) * s, Tf: p1.Tf ?? 0 };
+    const stepVariant = normalizeVariantLike(variant, gains);
+    let bad = null;
+    for (const m of models) {
+      let a;
+      try { const placed = withBlockVariant(project, path, stepVariant); const L = identifiedLoop(placed, path, m); a = analyzeLoop(L.plant, L.ctrl, L.Ts, { points: 200 }); } catch (err) { bad = `the model cannot say (${err.message})`; break; }
+      if (!a.stable) { bad = m === model ? 'unstable on the model' : 'unstable for a model within its bars or one of its places'; break; }
+      if (a.margins.ms > TRY.ms) { bad = `Ms ${fmtNum(a.margins.ms, 3)} above ${TRY.ms}${m === model ? '' : ' for a model within its bars or places'}`; break; }
+    }
+    const pr = predict(gains);
+    let J = null, used = null;
+    if (pr) {
+      J = tryCost(r, Array.from(pr.y), Array.from(pr.u), { R: span, U: plan.umax - plan.umin, lo: plan.umin, hi: plan.umax }).J;
+      used = 1 - tryMargin(r, Array.from(pr.y), plan.band).gRoom;
+      if (!bad && used > TRY.room) bad = `predicted to use ${Math.round(100 * used)} % of the room`;
+    } else bad ??= 'the model cannot be simulated';
+    steps.push({ n: j + 1, s, gains, ok: !bad, why: bad, J, room: used, predicted: pr ? Array.from(pr.y) : null });
+    if (bad) { why = `the result is bolder than what the model knows: ${j ? `tried up to step ${j}` : 'not even its first step'} (step ${j + 1}: ${bad})`; break; }
+  }
+  const ok = steps.filter((x) => x.ok);
+  const tryPlan = {
+    ...structuredClone(plan), kind: 'try', test: { r }, check: { r },
+    eased: { Kp: e0.Kp, Ki: e0.Ki, tauC: e0.tauC ?? 1, theta, lim: [e0.umin ?? plan.umin, e0.umax ?? plan.umax] },
+    steps: ok.map((x) => ({ n: x.n, gains: x.gains, lim, predicted: x.predicted, J: x.J, room: x.room })), monitor,
+  };
+  return { plan: tryPlan, steps: steps.map(({ predicted, ...x }) => x), upto: ok.length, why };
+}
+// The result's variant with other PID gains (a step of the path), for the
+// screening's linear loop.
+function normalizeVariantLike(v, g) { return { ...v, params: { ...v.params, Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, Tf: g.Tf || v.params.Tf } }; }
+function withBlockVariant(project, path, variant) {
+  const p = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: structuredClone(project.system.plant.diagram) } } };
+  const { block } = locate(p.system.plant.diagram, [].concat(path));
+  block.variants = [...block.variants, structuredClone(variant)];
+  block.variant = block.variants.length - 1;
+  return p;
+}
+
+// What Try on the plant ends with (§11): the steps the record shows, and the
+// variant to run: the result when every step was as predicted, else the last
+// step that was ("<name> · tried 2/3"), else none. → { steps, run, name, all }.
+export function tryOutcome(record, tried, variant) {
+  const steps = record.log.filter((e) => e.kind === 'step');
+  const good = steps.filter((e) => e.accepted);
+  const total = tried.plan.steps.length;
+  if (good.length === total && total === TRY.steps.length) return { steps, run: variant, all: true };
+  if (!good.length) return { steps, run: null, all: false };
+  const last = tried.plan.steps[good.length - 1];
+  const name = `${variant.name.slice(0, 31)} · tried ${good.length}/${TRY.steps.length}`;
+  return { steps, run: { ...structuredClone(variant), name, params: { ...variant.params, Kp: last.gains.Kp, Ki: last.gains.Ki, Kd: last.gains.Kd } }, all: false };
+}
+
 // ---- Hide a variation (§13)
 
 // Every physical parameter (flagged vary in the block definitions: masses,
@@ -1418,6 +1518,10 @@ export function identifyRun(project, path = null, settings = {}, { plan: ready =
     }
     if (!exp.state.done) exp.stop();
     const record = compactRecord(exp.record());
+    if (plan.kind === 'try') {
+      const end = exp.state.end;
+      return { ok: end.code === 'done', block: known.block, plan, record, end: { code: end.code, message: end.message }, time: record.y.length * Ts, steps: record.log.filter((e) => e.kind === 'step') };
+    }
     if (recheck) {
       const end = exp.state.end;
       return { ok: end.code === 'done', block: known.block, plan, record, end: { code: end.code, message: end.message }, time: record.y.length * Ts, recheck: recheckFit(recheck.model, record, recheck.record) };

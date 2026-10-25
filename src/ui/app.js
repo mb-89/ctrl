@@ -567,7 +567,12 @@ function startApp() {
   // change goes through tuneEdit. It shows whole runs while it works.
   app.tuneEdit = (fn, from) => { fn(app.project); if (from) adoptRun(from); changed(); };
   app.showLoop = () => display.setData(acquire());  // the loop's own run back on the display
-  app.playRun = (d, past) => { display.play(d, past); controls.render(display.mode); };  // one run swept once
+  // One run swept once. With a live plant the screen is the plant's: a run on
+  // the identified model is not swept there, and counts as swept at once.
+  app.playRun = (d, past) => {
+    if (live?.owns()) { setTimeout(() => app.sweepEnded?.()); return; }
+    display.play(d, past); controls.render(display.mode);
+  };
   app.setRunMode = (m) => { display.setMode(m); controls.render(display.mode); };
   tuneTab = createAutotuneTab($('tab-tune'), app, display);
   // An edit of the project as one undo step (the Identify tab's settings,
@@ -579,6 +584,8 @@ function startApp() {
   // tabs that show it when it is ready or the choice changes.
   app.identifiedFor = (key) => identifyTab.inUse(key);
   app.identifiedChanged = () => { if (app.tab === 'tune') tuneTab.render(); if (app.tab === 'analysis') analysisTab.render(); };
+  // Try on the plant, started from the Auto-tune tab (identification.md §11).
+  app.identifyTry = { start: (path, variant) => identifyTab.tryOnPlant(path, variant), state: (key) => identifyTab.tryState(key) };
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="btn tab" data-tab="${t.key}" aria-selected="${t.key === app.tab}">

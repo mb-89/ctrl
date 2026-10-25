@@ -66,8 +66,10 @@ export function createAutotuneTab(host, app, display) {
       <section class="gcol tuprogress" aria-label="Progress">
         <div class="ghead"><h3 class="label" id="tu-ptitle">Progress</h3>
           <button type="button" class="btn btn-sm" id="tu-fast" aria-pressed="false" title="Pressed, the tune runs at unlimited speed (Speed ∞ in the header) and the speed set before comes back when it ends. Not offered with a live plant: it runs in real time.">Unlimited speed</button>
+          <button class="btn btn-sm" id="tu-try" hidden title="Takes the result to the plant in three steps from the controller that held in Identify's test, each screened on the model first; a monitor falls back to that controller when the plant does not behave as predicted. On a simulated plant: the same on the diagram, as a demonstration.">Try on the plant</button>
           <button class="btn btn-sm" id="tu-start">Start</button></div>
         <div class="note tustatus" id="tu-status" role="status"></div>
+        <div class="note" id="tu-tried" role="status" hidden></div>
         <canvas class="tuplot" id="tu-plot" aria-label="Cost against iteration"></canvas>
         <ul class="lcd list turows wide" id="tu-result"></ul>
       </section>
@@ -632,7 +634,29 @@ export function createAutotuneTab(host, app, display) {
     g.shadowBlur = 0;
   }
 
-  function renderAll() { renderSetup(); renderProgress(); }
+  // Try on the plant (identification.md §11): offered for a PI or PID result
+  // tuned on the model; its screening and steps in a line of their own.
+  function renderTry() {
+    const c = current(), b = $('#tu-try'), line = $('#tu-tried');
+    const res = shown?.placed ?? null;
+    const can = !!c && !job && onModel() && res?.type === 'pid' && (shown?.res?.ok ?? !!shown?.best);
+    const t = c ? app.identifyTry?.state(c.key) : null;
+    b.hidden = !can && !t?.running;
+    b.disabled = !!t?.running;
+    b.textContent = t?.running ? 'Trying…' : 'Try on the plant';
+    line.hidden = !t;
+    if (t) line.innerHTML = `<span class="${t.running ? '' : t.ok ? 'text-ok' : t.ok === false ? 'text-warn' : ''}">${esc(t.text)}</span>`;
+  }
+  app.identifyProgress = () => { if (!host.hidden) renderTry(); };
+  $('#tu-try').onclick = () => {
+    const c = current(), v = shown?.placed;
+    if (!c || !v) return;
+    const why = app.identifyTry.start(c.path, v);
+    if (why) app.toast(`Try on the plant: ${why}`);
+    renderTry();
+  };
+
+  function renderAll() { renderSetup(); renderProgress(); renderTry(); }
 
   $('#tu-fast').onclick = () => { st.unlimited = !st.unlimited; renderButton(); };
   $('#tu-start').onclick = () => {
