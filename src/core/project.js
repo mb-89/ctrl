@@ -454,6 +454,9 @@ export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
     }
   }
   const ctrl = lawOf(id, plant);
+  // A law that updates every k samples is linear at its own, longer Ts.
+  const loopTs = ctrl.Ts ?? Ts;
+  plant.Ts = loopTs;
   const warnings = [...plant.warnings];
   if (ctrl.note) warnings.push(ctrl.note);
   // A lane: the other lanes closed round the plant by their own laws.
@@ -476,7 +479,7 @@ export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
   // Where the linear loop does not hold, for a reader that grades it (the
   // Analysis tab's verdict, Auto-tune's check at the start): u at a limit.
   // (A kink at the operating point is refused above.)
-  return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
+  return { plant, ctrl, Ts: loopTs, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
 }
 
 // The plant lane k sees with the other lanes of its Controller closed round

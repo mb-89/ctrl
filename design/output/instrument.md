@@ -50,7 +50,7 @@ Four channels, in the classic colours: 1 yellow, 2 green, 3 blue, 4 magenta. Eac
 
 ## Measure
 
-(Research: [sliding-mode.md](../research/sliding-mode.md), Recommendation 5: "hard on the actuator" has to be a number the person reads, not an impression of a dense trace.) A channel with Measure on gets **one line under the screen, in its colour**, in every display mode. The plot gives up 15 px per line. The line covers the samples the screen shows: inside the timebase window, up to the sweep while it runs (the samples XY draws), the display-filtered signal when the channel has a filter. A channel that is off shows no line; its Measure stays on, so the line returns with the channel.
+(Research: [sliding-mode.md](../research/sliding-mode.md), Recommendation 5: "hard on the actuator" has to be a number the person reads, not an impression of a dense trace.) Measure is **off by default, always** (the person, [input 42](../input/2026-10-25-42-measure-off-by-default.md): it clutters the traces, and the legend has the values); no library system opens with it on. A channel with Measure on gets **one line under the screen, in its colour**, in every display mode. The plot gives up 15 px per line. The line covers the samples the screen shows: inside the timebase window, up to the sweep while it runs (the samples XY draws), the display-filtered signal when the channel has a filter. A channel that is off shows no line; its Measure stays on, so the line returns with the channel.
 
 | Value | Definition |
 |---|---|

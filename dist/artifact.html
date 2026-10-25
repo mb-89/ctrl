@@ -3986,6 +3986,69 @@ function placedDesign(lin, { w, Ts, outputs = lin.n }) {
   return { values: res.values, rows, warnings: res.warnings, quality: res.quality };
 }
 
+function deadbeatDesign(lin, { track = 1, Ts, umin = -Infinity, umax = Infinity }) {
+  const { n, m, states, outputs } = lin;
+  const labels = outputs.map((o) => o.label);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this block sees has ${n} states; deadbeat here handles up to 40`);
+  if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')})`, lin.warnings.join('; ') || 'wire the controller output to the plant, and the plant to the measurements');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'deadbeat is designed at the origin, which must be an equilibrium with u = 0');
+  refuseKinks(lin, 'deadbeat');
+  const dead = (lin.delay ?? []).flatMap((d, k) => (d > 0 ? [`${fmt(d)} s on ${labels[k]}`] : []));
+  if (dead.length) throw new DesignError('dead-time', `deadbeat places every pole of the loop at z = 0, but the dead time (${and(dead)}) holds inputs this law does not see, so it cannot place theirs`, 'remove the dead time, or use LQR or a PID, which tolerate it');
+  const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
+  if (direct.length) throw new DesignError('states-not-measured', `deadbeat needs measurements of states; ${direct.join(', ')} depends on ${lin.input.label} directly`, 'feed back states only (a Sink of u is fine, an input of the controller is not)');
+  if (m !== n || rank(equilibrate(lin.C).M) < n) {
+    const sole = lin.C.map((row) => { const nz = row.flatMap((v, j) => (Math.abs(v) > 1e-9 ? [j] : [])); return nz.length === 1 ? nz[0] : -1; });
+    const seen = [...new Set(sole.filter((j) => j >= 0))].map((j) => states[j]), missing = states.filter((_, j) => !sole.includes(j));
+    if (missing.length && m <= n) throw new DesignError('states-not-measured', `deadbeat state feedback needs every state measured. This block sees ${seen.length ? seen.map((s) => s.name).join(', ') : 'none of them'} but not ${and(missing.map(stateText))}.`, `wire ${and(missing.map((s) => s.name))} to ${missing.length > 1 ? 'inputs' : 'an input'}`);
+    throw new DesignError('states-not-measured', `deadbeat needs exactly one measurement per state: this block has ${m} measurement${m === 1 ? '' : 's'} (${labels.join(', ')}) for ${n} state${n === 1 ? '' : 's'} (${states.map((s) => s.name).join(', ')})`, 'measure each state once');
+  }
+  if (!(Number.isInteger(track) && track >= 0 && track <= m)) throw new DesignError('bad-track', `r applies to measurement ${track}; this block has ${m} (${labels.join(', ')}); 0 for none`);
+
+  const { Ad, Bd } = c2d(lin.A, lin.B, Ts);
+  const cols = [Bd.map((b) => b[0])];
+  for (let k = 1; k < n; k++) cols.push(Ad.map((row) => row.reduce((s, a, j) => s + a * cols[k - 1][j], 0)));
+  const { M: S } = equilibrate(transpose(cols));
+  if (rank(S, 1e-10 * Math.max(...S.map((r) => Math.hypot(...r)))) < n) throw new DesignError('not-controllable', `${lin.input.label} cannot steer every state of the plant this block sees (${states.map((s) => s.name).join(', ')}) on its own: some combination of them moves the same whatever ${lin.input.label} does, and deadbeat must bring each one to rest, so no K places all ${n} poles at z = 0`, 'check the wiring: parts that u drives alike cannot be steered apart');
+  let An = Ad;
+  for (let k = 1; k < n; k++) An = mul(An, Ad);
+  const w = solve(cols, Array.from({ length: n }, (_, i) => (i === n - 1 ? 1 : 0)));
+  const Kx = An[0].map((_, j) => w.reduce((s, wi, i) => s + wi * An[i][j], 0));
+  const Acl = Ad.map((row, i) => row.map((v, j) => v - Bd[i][0] * Kx[j]));
+  let N = Acl;
+  for (let k = 1; k < n; k++) N = mul(N, Acl);
+  const size = (M) => Math.max(...M.flat().map(Math.abs));
+  const left = size(N) / Math.max(1, size(An));
+  if (!(left < 1e-6)) throw new DesignError('ill-conditioned', `the poles did not all land at z = 0 (${fmt(left)} of the plant's motion is left after ${n} samples): u moves some state too weakly at this sample time`, 'take a longer sample time (Update every), or use LQR');
+  const K = solve(transpose(lin.C), Kx);
+  let kr = 0;
+  const warnings = [];
+  if (track) {
+    const xs = solve(Acl.map((row, i) => row.map((v, j) => (i === j ? 1 : 0) - v)), Bd.map((b) => b[0]));
+    const g = lin.C[track - 1].reduce((s, c, j) => s + c * xs[j], 0);
+    if (Math.abs(g) > 1e-12) kr = 1 / g;
+    else warnings.push(`${labels[track - 1]} has no static gain from r in this loop: kr = 0`);
+  }
+  const sensed = labels.filter((_, k) => lin.sensors?.[k] && (lin.sensors[k].std > 0 || lin.sensors[k].q > 0));
+  if (sensed.length) warnings.push(`quantisers and noise on ${sensed.join(', ')} are not in this design`);
+  const u = [];
+  let x = new Array(n).fill(0);
+  for (let k = 0; k <= n; k++) {
+    const uk = kr - Kx.reduce((s, c, j) => s + c * x[j], 0);
+    u.push(Math.abs(uk) < 1e-12 * Math.abs(kr) ? 0 : uk);
+    x = Ad.map((row, i) => row.reduce((s, a, j) => s + a * x[j], 0) + Bd[i][0] * uk);
+  }
+  const room = Math.min(...u.map((v) => (v > 0 ? umax / v : v < 0 ? umin / v : Infinity)));
+  const rows = [
+    { label: 'K', value: K, labels },
+    { label: 'kr', value: kr, note: track ? `${labels[track - 1]} follows r` : 'r is not used' },
+    { label: 'settles in', value: Number((n * Ts).toPrecision(12)), note: `s: ${n} samples of ${fmt(Ts)} s, every pole at z = 0` },
+    { label: 'u, unit step', value: u.slice(0, n), labels: u.slice(0, n).map((_, k) => `u${k}`), note: `per unit of r; then ${fmt(u[n])}` },
+    ...(Number.isFinite(room) && room > 0 ? [{ label: 'largest step', value: room, note: `of r inside the limits; a larger one is clipped and takes longer than ${n} samples` }] : []),
+  ];
+  return { K, kr, Kx, Ad, Bd, u, steps: n, rows, warnings };
+}
+
 function inverseSeries(path) {
   const { A, b, c, d } = path, n = A.length;
   const P = new Array(n + 1).fill(0), N = new Array(n + 1).fill(0);
@@ -4127,12 +4190,12 @@ function trajectoryDesign(p, ctx) {
   return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }
 
-return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, huLinDesign, speedPIDesign, poleOf, kalmanDesign, placedDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, huLinDesign, speedPIDesign, poleOf, kalmanDesign, placedDesign, deadbeatDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
 
-const { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLinDesign, speedPIDesign, poleOf } = __mods['core/design.js'];
+const { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLinDesign, speedPIDesign, deadbeatDesign, poleOf } = __mods['core/design.js'];
 const { DesignError } = __mods['core/linearize.js'];
 const { planLaw } = __mods['core/planner.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
@@ -4152,6 +4215,7 @@ const WINDUP = [
 ];
 const SHARED = ['Kff', 'Kv', 'Ka', 'aw', 'Tt', 'umin', 'umax'];
 const SWING = [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 })];
+const EVERY = num('every', 'Update every', 1, { int: true, min: 1, tune: false, help: 'u is computed every k samples and held in between: a sample time of k·Ts' });
 const WEIGHTS = [
   vec('Q', 'Weights Q', [1], { min: 0, per: 'measurement', help: 'what an error in each measurement costs, one per measurement; one value weighs them all' }),
   num('R', 'Effort weight R', 1, { positive: true, help: 'how much u costs: larger is gentler' }),
@@ -4260,18 +4324,22 @@ const CONTROLLERS = {
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
-    params: [vec('K', 'Gains K', [1], { per: 'measurement' }), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
+    params: [vec('K', 'Gains K', [1], { per: 'measurement' }), num('kr', 'Prefilter kr', 1), PREFILTER, EVERY, ...LIMITS],
     make(p, Ts) {
       const pre = prefilter(p, Ts);
+      let k = 0, u = 0;
       return {
         step(x) {
-          let u = p.kr * pre(x[0]);
+          const rf = pre(x[0]);
+          if (k++ % (p.every ?? 1)) return u;
+          u = p.kr * rf;
           for (let i = 0; i < p.K.length; i++) u -= p.K[i] * (x[i + 1] ?? 0);
-          return clamp(u, p.umin, p.umax);
+          u = clamp(u, p.umin, p.umax);
+          return u;
         },
       };
     },
-    linear: (p) => staticLinear(p.kr, p.K, p.Tr),
+    linear: (p, Ts) => (p.every > 1 ? { ...staticLinear(p.kr, p.K, p.Tr), Ts: p.every * Ts, note: `the law updates every ${p.every} samples: the loop is analysed at ${p.every} × Ts` } : staticLinear(p.kr, p.K, p.Tr)),
   },
   lqr: {
     label: 'LQR', summary: 'u = kr r − K · y, K from the plant (LQR)',
@@ -4287,6 +4355,21 @@ const CONTROLLERS = {
     },
     manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax } }),
     linear: twinLinear('lqr'),
+  },
+  deadbeat: {
+    label: 'Deadbeat', summary: 'u = kr r − K · y, every pole at z = 0: settles in n samples',
+    designed: true, version: 1, computes: ['K', 'kr'], twin: 'stateFeedback',
+    params: [{ ...EVERY, help: 'the deadbeat runs at k·Ts and settles in n of those samples (n states); longer asks less of u' }, num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }), PREFILTER, ...LIMITS],
+    design(p, ctx) {
+      const d = deadbeatDesign(ctx.linearize('origin'), { track: p.track, Ts: (p.every ?? 1) * ctx.Ts, umin: p.umin, umax: p.umax });
+      return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
+    },
+    make(p, Ts, values) {
+      if (!values) return OFF;
+      return CONTROLLERS.stateFeedback.make(CONTROLLERS.deadbeat.manual(p, values).params, Ts);
+    },
+    manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, every: p.every, umin: p.umin, umax: p.umax } }),
+    linear: twinLinear('deadbeat'),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -4782,10 +4865,11 @@ function gainScheduled(p, { inputs, Ts }) {
   return s.done();
 }
 
-function stateFeedback(p, { inputs }) {
-  const m = p.K.length;
+function stateFeedback(p, { inputs, Ts }) {
+  const m = p.K.length, every = p.every ?? 1;
   const rowY = (i) => 40 + 16 * i;
-  const s = sheet('State feedback', DIAGRAM_WIDTH, rowY(m - 1) + 16);
+  const s = sheet('State feedback', DIAGRAM_WIDTH, rowY(m - 1) + (every > 1 ? 28 : 16));
+  if (every > 1) s.note({ x: 4, y: rowY(m - 1) + 16, text: `u held: updated every ${every} samples${Ts ? `, ${secs(every * Ts)}` : ''}`, anchor: 'start' });
   s.port({ x: 4, y: 14, text: 'r', anchor: 'start' });
   s.wire([[12, 14], [16, 14]]);
   s.block({ x: 39, y: 14, w: 46, h: 16, lines: [kv('Tr', p.Tr > 0 ? secs(p.Tr) : '0')], faint: !(p.Tr > 0), tip: 'Prefilter (Vorfilter) on r; 0 is off' });
@@ -5012,6 +5096,12 @@ function huLin(p, o) {
   return below(below(d, `K near r; far from r it falls to ${far}… (ε ${fmt(p.low)}), so u stays inside`), `K(ε): LQR from the plant at ${p.levels} levels on nested ellipsoids, ${weights(p)}${p.k > 1 ? `, ×${fmt(p.k)}` : ''}`, 'Variable gain (Hu–Lin)');
 }
 
+function deadbeat(p, o) {
+  const v = o.values, m = Math.max(1, o.inputs.length - 1);
+  const d = stateFeedback({ K: v?.K ?? unknown(m), kr: v?.kr ?? UNKNOWN, Tr: p.Tr, every: p.every, umin: p.umin, umax: p.umax }, o);
+  return below(d, `K, kr: poles at z = 0, settles in ${m}${o.Ts ? ` × ${secs(p.every * o.Ts)}` : ' samples'}`, 'Deadbeat');
+}
+
 function scheduledPI(p, o) {
   const v = o.values, n = p.at.length;
   const common = { Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, u0: v?.u0 ?? 0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
@@ -5079,7 +5169,7 @@ function luenbergerPlaced(p, o) {
   return estimator(p, o, 'luenberger', { n, m, lines: ['model from the plant, at its origin; L from the poles', `error poles at s = −${p.w.map(fmt).join(', −')} 1/s`] });
 }
 
-const LAYOUTS = { pid, pidFF, speedPI, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, huLin, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenbergerPlaced, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+const LAYOUTS = { pid, pidFF, speedPI, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, huLin, deadbeat, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenbergerPlaced, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {
   const layout = LAYOUTS[variant.type];
@@ -9517,7 +9607,7 @@ const PUMA_SYSTEM = {
     b_r: { period: 5, components: [{ type: 'sine', params: { amplitude: RADIUS, frequency: 0.2, phase: 0, ease: 0.5 } }] },
   },
   scope: { channels: [
-    { source: 'ea', on: true, scale: 1, offset: 0, measure: true }, { source: 'eb', on: true, scale: 1, offset: 0 },
+    { source: 'ea', on: true, scale: 1, offset: 0 }, { source: 'eb', on: true, scale: 1, offset: 0 },
     { source: 'tau2', on: true, scale: 1, offset: 0 }, { source: 'tau3', on: true, scale: 1, offset: 0 },
   ] },
   ui: { run: 'run', tab: 'plant', setup: 0.42, view: 'Robot' },
@@ -9568,7 +9658,7 @@ const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: '
 const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
 const PERIOD = 5;
 
-const motorBlock = (x, y) => ({
+const motorBlock = (x, y, { current = false } = {}) => ({
   id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x, y,
   diagram: {
     blocks: [
@@ -9582,10 +9672,12 @@ const motorBlock = (x, y) => ({
       { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 530, y: 96 },
       { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 720, y: 112 },
       { id: 'ke', type: 'gain', name: 'Ke (= Kt)', params: { K: 0.5 }, x: 370, y: 290, flip: true },
+      ...(current ? [{ id: 'iout', type: 'outport', name: 'current', params: { port: 2 }, x: 720, y: 20 }] : []),
     ],
     wires: [
       { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'i' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
       { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+      ...(current ? [{ from: 'arm', to: 'iout' }] : []),
     ],
   },
 });
@@ -9823,12 +9915,12 @@ const EXAMPLE_PLANTS = [
   {
     name: 'DC motor, sliding mode',
     summary: 'The motor under sliding-mode control, on its phase portrait. Compare the ideal relay, a boundary layer and super-twisting: a response the load cannot change, and what chattering costs.',
-    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: open Motor and triple J (rotor den [0.06, 0.1]): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (den [0.001, 1]): the relay chatters at 250 Hz and makes about five times the heat.',
+    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure, switched on, counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: open Motor and triple J (rotor den [0.06, 0.1]): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (den [0.001, 1]): the relay chatters at 250 Hz and makes about five times the heat.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
       d: { period: PERIOD, components: [pulse(1, 3.2, 0.5)] },
     },
-    scope: { channels: channels('e', 'speed', { source: 'V', on: false, measure: true }, { source: 'i', on: false, measure: true }), view: { mode: 'xy' } },
+    scope: { channels: channels('e', 'speed', { source: 'V', on: false }, { source: 'i', on: false }), view: { mode: 'xy' } },
     sim: { sampleTime: 0.00025 },
     ui: ui('Motor shaft'),
     diagram: motorDiagram([
@@ -9914,12 +10006,12 @@ const EXAMPLE_PLANTS = [
   {
     name: 'DC motor, speed from an encoder',
     summary: 'A motor whose speed is not measured: only a coarse encoder angle is. Flip the observer from a raw difference to a Luenberger observer and a Kalman filter, and see the noise leave the voltage and the loop hold its speed.',
-    notes: 'A PI holds the speed of the DC motor (the same motor as the position examples) while the reference r steps to 10 rad/s and down to 3 rad/s, and a load of 0.2 N·m brakes it from 3.5 to 4.3 s. The speed is not measured: an encoder counts 1024 steps per turn (6.1 mrad), with a little noise on its signal (σ 1 mrad), and an Observer block makes the speed the PI sees from those counts. Channel 3 is the voltage V, channel 4 the estimate\'s error (estimate − true speed); both carry Measure lines.\n\nIt opens on the raw finite difference: at Ts = 1 ms one count is 6.1 rad/s, so the estimate jumps between whole counts (3.1 rad/s rms of error) and the PI (Kp 2, Ki 40) passes that on: V chatters between its ±12 V limits (σ 6.1 V at 10 rad/s), and since the limits clip it the motor runs at 8.99 rad/s, not 10.\n\nThe Luenberger observer predicts the motor from its model (the page takes the model from the motor\'s blocks) and corrects it with the counts, its error dying out at the poles you place (s = −400 1/s here): 0.47 rad/s of error, V σ 0.96 V, the speed on 10. The Kalman filter takes the same model and computes its gain from the noise: R from the encoder\'s blocks (σ² + q²/12), Q a random push on V of variance 1 V² per sample. Its error is 0.056 rad/s rms and V σ 0.080 V, 55 and 76 times below the difference\'s; its slowest pole is at 101 rad/s. Neither model knows the load: under it the Kalman estimate reads 0.1 rad/s high and the motor runs at 2.90 rad/s, where the faster Luenberger is off by 0.02.\n\nTry: the Luenberger at w = 100 (as calm as the Kalman filter, slower to see the load); the Kalman filter with Q = 100 (it follows the load, with more noise); the difference with Tf = 0.02 s (a filter calms it, with a lag); an encoder of 4096 counts (q = 0.001534). FFT mode on V shows the difference\'s noise spread up to the Nyquist frequency.',
+    notes: 'A PI holds the speed of the DC motor (the same motor as the position examples) while the reference r steps to 10 rad/s and down to 3 rad/s, and a load of 0.2 N·m brakes it from 3.5 to 4.3 s. The speed is not measured: an encoder counts 1024 steps per turn (6.1 mrad), with a little noise on its signal (σ 1 mrad), and an Observer block makes the speed the PI sees from those counts. Channel 3 is the voltage V, channel 4 the estimate\'s error (estimate − true speed); Measure, switched on, reads their rms and ripple.\n\nIt opens on the raw finite difference: at Ts = 1 ms one count is 6.1 rad/s, so the estimate jumps between whole counts (3.1 rad/s rms of error) and the PI (Kp 2, Ki 40) passes that on: V chatters between its ±12 V limits (σ 6.1 V at 10 rad/s), and since the limits clip it the motor runs at 8.99 rad/s, not 10.\n\nThe Luenberger observer predicts the motor from its model (the page takes the model from the motor\'s blocks) and corrects it with the counts, its error dying out at the poles you place (s = −400 1/s here): 0.47 rad/s of error, V σ 0.96 V, the speed on 10. The Kalman filter takes the same model and computes its gain from the noise: R from the encoder\'s blocks (σ² + q²/12), Q a random push on V of variance 1 V² per sample. Its error is 0.056 rad/s rms and V σ 0.080 V, 55 and 76 times below the difference\'s; its slowest pole is at 101 rad/s. Neither model knows the load: under it the Kalman estimate reads 0.1 rad/s high and the motor runs at 2.90 rad/s, where the faster Luenberger is off by 0.02.\n\nTry: the Luenberger at w = 100 (as calm as the Kalman filter, slower to see the load); the Kalman filter with Q = 100 (it follows the load, with more noise); the difference with Tf = 0.02 s (a filter calms it, with a lag); an encoder of 4096 counts (q = 0.001534). FFT mode on V shows the difference\'s noise spread up to the Nyquist frequency.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 10, time: 0.2 } }, { type: 'step', params: { amplitude: -7, time: 2.5 } }] },
       d: { period: PERIOD, components: [pulse(0.2, 3.5, 0.8)] },
     },
-    scope: { channels: channels('r', 'speed', { source: 'V', measure: true }, { source: 'est_error', measure: true }) },
+    scope: { channels: channels('r', 'speed', { source: 'V' }, { source: 'est_error' }) },
     ui: ui('Motor speed'),
     sim: { sampleTime: 0.001 },
     diagram: {
@@ -9982,6 +10074,41 @@ const EXAMPLE_PLANTS = [
         { type: 'text', x: 0, y: -0.78, text: 'speed {speed:5.2} rad/s   estimate {estimate:5.2} rad/s   r {r:4.1} rad/s   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
       ],
     }],
+  },
+  {
+    name: 'DC motor, deadbeat',
+    summary: 'A motor under deadbeat control: it reaches each new angle exactly, in as many samples as it has states. Flip sample times, limits and LQR: what finite settling asks of the voltage, and what a limit does.',
+    notes: 'A deadbeat controller places every pole of the loop at z = 0: after a step of r the motor is at rest at r after n samples, n its three states (current, speed, angle), and stays there, between the samples too. The controller measures all three; its gains K and kr are computed in the page from the motor, at its own sample time. r steps between 0 and 1 rad (up at 0.2 s, down at 1.5 s, every 2.5 s); channel 3 is the voltage V, held between samples, so each of its steps is a sample; channel 4 the current i.\n\nDeadbeat, 100 ms (the block runs at 10 ms; this variant updates every 10 samples): the shaft is at 1 rad 0.3 s after each step and stays, with 8 V, then −1 V, then nothing. Deadbeat, 10 ms, no limit: the same design at 10 ms arrives in 30 ms and asks +655 V, −815 V and +229 V to do it (Auto Scale shows them). Deadbeat, 10 ms, ±12 V: the same gains clipped to the motor\'s 12 V; the law no longer gets what it assumed, the shaft overshoots by 17 % and is within 2 % only after about 0.22 s. LQR (Q 100 on the angle, 1 on the speed, R 1) at 10 ms: a smooth approach within 2 % after 0.5 s, never exactly there, with 9 V.\n\nThe sample time is deadbeat\'s one knob: the settling is always n samples, so a shorter one asks more of u. The Computed box names the largest step that stays inside the limits (1.5 rad at 100 ms, 15 mrad at 10 ms). Zoom in (Horizontal 50 ms/div at 0.1 s) to count the samples.\n\nThe Analysis tab shows what finite settling costs in robustness (at rest): at 100 ms a gain margin of ×1.8 and Ms 2.25, at 10 ms ×1.24, 18° of phase and Ms 5.19, where LQR has 97° and Ms 1.10. Try it: make the rotor 20 % heavier (Motor › rotor den [0.024, 0.1]). The design follows and is exact again; but Copy as numbers first, and the old gains on the heavier motor overshoot by 6 % at 100 ms and need 0.6 s to come within 1 mrad, while LQR\'s old gains do not overshoot. Or set the 100 ms variant\'s Update every to 5 (50 ms): it asks 22 V, and is clipped.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.2, width: 1.3, period: 2.5, count: 0 } }] },
+      d: { period: PERIOD, components: [] },
+    },
+    scope: { channels: channels('r', 'angle', 'V', 'i') },
+    sim: { sampleTime: 0.001 },
+    ui: ui('Motor shaft'),
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad'),
+        src('d', 180, 230, 'N·m'),
+        ctrl(130, 90, 4, 0.01, [
+          { name: 'Deadbeat, 100 ms', type: 'deadbeat', params: { every: 10, umin: -12, umax: 12 } },
+          { name: 'Deadbeat, 10 ms, no limit', type: 'deadbeat', params: { every: 1 } },
+          { name: 'Deadbeat, 10 ms, ±12 V', type: 'deadbeat', params: { every: 1, umin: -12, umax: 12 } },
+          { name: 'LQR', type: 'lqr', params: { Q: [100, 1, 0], R: 1, umin: -12, umax: 12 } },
+        ]),
+        motorBlock(330, 96, { current: true }),
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        sink('angle', 690, 106, 'rad'),
+        sink('speed', 690, 30, 'rad/s'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
+        { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
+        { from: 'int', to: 'ctrl:1' }, { from: 'motor', to: 'ctrl:2' }, { from: 'motor:1', to: 'ctrl:3' },
+      ],
+    },
+    views: motorViews(),
   },
   {
     name: 'Conical tank, gain scheduling',
@@ -10803,6 +10930,8 @@ function loopModel(project, idPath, at = 'origin', { designs } = {}) {
     }
   }
   const ctrl = lawOf(id, plant);
+  const loopTs = ctrl.Ts ?? Ts;
+  plant.Ts = loopTs;
   const warnings = [...plant.warnings];
   if (ctrl.note) warnings.push(ctrl.note);
   if (lane) {
@@ -10820,7 +10949,7 @@ function loopModel(project, idPath, at = 'origin', { designs } = {}) {
   const atLimit = u >= umax - tol || u <= umin + tol;
   if (atLimit) warnings.push(`${plant.input.label} = ${fmt(u)} is at its limit (${fmt(umin)} to ${fmt(umax)}) there: the controller saturates, and the linear loop does not hold`);
   for (const obs of model.through) warnings.push(`the estimates of '${obs}' are read as the states they stand for: the filter's own dynamics are not in this loop`);
-  return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
+  return { plant, ctrl, Ts: loopTs, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
 }
 
 function closeLanes(plant, others, Ts) {
@@ -11100,7 +11229,7 @@ function fromPlant(e) {
 
 const NONLINEAR = new Set(['hinge', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = {
-  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', huLin: 'Variable structure', relay: 'Variable structure', slidingMode: 'Variable structure', superTwisting: 'Variable structure', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference', speedPI: 'PID',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', deadbeat: 'Deadbeat', huLin: 'Variable structure', relay: 'Variable structure', slidingMode: 'Variable structure', superTwisting: 'Variable structure', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference', speedPI: 'PID',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -11109,6 +11238,7 @@ const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta', 'Black box': 'yellow',
   PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green',
   'Variable structure': 'red',
+  Deadbeat: 'slate',
   'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
   'Controller in the plant': 'green', Agent: 'red',
@@ -20023,9 +20153,10 @@ const ABOUT = {
   off: 'No control: the plant gets u = 0. Shows what the plant does on its own.',
   pidFF: 'A PID whose feedforward the page computes from the plant as it is wired: the plant\'s inverse at low frequency (from u to the first measurement, at its origin), so the input a moving reference needs comes from r itself, plus what the PID\'s own parts take away while y follows r (Kp (1 − b), Kd and Kd·Tf). Feedforward chooses the terms: Kff, then Kv, then Ka. Kp, Ki, Kd are yours; change the plant and the feedforward follows. Dead time is left out and reported.',
   pid: 'The workhorse. P reacts to the error, I removes what is left, D damps (on the measurement, filtered by Tf). b weights the reference in P; the prefilter Tr (Vorfilter) smooths reference jumps. Feedforward puts out what following r takes, from r alone: Kff·r, Kv·dr/dt, Ka·d²r/dt². u min/max are the actuator limits; anti-windup (clamping, back-calculation with Tt, or off) keeps the integral from winding up at a limit.',
-  stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
+  stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r. Update every k computes u every k samples and holds it, a longer sample time.',
   lqr: 'State feedback whose gains are computed from the plant as it is wired: the page linearises it at its origin and solves the discrete LQR problem. Q weighs the error of each measurement, R the effort; every state must be measured. Change the plant and the gains follow.',
   huLin: 'The variable gain of Hu and Lin: state feedback whose gain grows as y nears r, computed from the plant as it is wired. The page solves LQR for the weights ε·Q and R at levels ε from the lowest up to 1, each with the largest ellipsoid around r on which its u stays inside the limits; the ellipsoids are nested. At every sample the law takes the highest gain whose ellipsoid holds the error, interpolated between two levels: far from r a gentle gain, near it the full LQR, u near its limit but never past it, so the loop never opens. k above 1 is their saturated high gain: faster, with u at its limit a little. Every state must be measured; the limits must be set.',
+  deadbeat: 'State feedback that puts every pole of the loop at z = 0, computed from the plant as it is wired (linearised at its origin): after a step of r the plant is at rest at r in n samples exactly, n its number of states, and nothing ripples between them. The price is u: it does whatever it takes, so a short sample time asks a huge input, and clipped at a limit it loses its finite settling. Update every k runs it at k·Ts, which asks less. Every state must be measured; a dead time is refused.',
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
   scheduledPI: 'A PI computed from the plant: at each level of the measurement the page finds the input that holds it, linearises the plant there and fits a first-order lag; Kp and Ki then cancel that lag so the loop answers with the time constant Tcl. One level gives a fixed PI, several a gain-scheduled one. It starts with the input that holds the level the plant starts at. The reference feedforward (Kff, Kv, Ka) and the anti-windup are yours, as in the PID.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
@@ -20467,7 +20598,7 @@ const IMPROVE = 250;
 const GOAL_ABOUT = 'The cost of one run: the error r − y (IAE, ITAE or ISE), plus the effort (the swing of u), the overshoot beyond the bound, and the time u sits at a limit. Over one period of the input, the disturbance d included.';
 
 function createAutotuneTab(host, app, display) {
-  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', simc: 'tight', amplitude: 0.1, maxIter: 60, feedforward: false };
+  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', simc: 'tight', amplitude: 0.1, maxIter: 60, feedforward: false, unlimited: false };
   let job = null;   
   let shown = null; 
 
@@ -20492,6 +20623,7 @@ function createAutotuneTab(host, app, display) {
       </section>
       <section class="gcol tuprogress" aria-label="Progress">
         <div class="ghead"><h3 class="label" id="tu-ptitle">Progress</h3>
+          <button type="button" class="btn btn-sm" id="tu-fast" aria-pressed="false" title="Pressed, the tune runs at unlimited speed (Speed ∞ in the header) and the speed set before comes back when it ends. Not offered with a live plant: it runs in real time.">Unlimited speed</button>
           <button class="btn btn-sm" id="tu-start">Start</button></div>
         <div class="note tustatus" id="tu-status" role="status"></div>
         <canvas class="tuplot" id="tu-plot" aria-label="Cost against iteration"></canvas>
@@ -20612,6 +20744,10 @@ function createAutotuneTab(host, app, display) {
     b.textContent = job ? 'Stop' : 'Start';
     b.className = `btn btn-sm${job ? ' btn-danger' : ''}`;
     b.disabled = !job && !!(why ?? whyNot(ctx, st.method));
+    const fast = $('#tu-fast');
+    fast.hidden = !!app.speedLock?.();
+    fast.setAttribute('aria-pressed', String(st.unlimited));
+    fast.disabled = !!job;
   }
 
 
@@ -20636,6 +20772,7 @@ function createAutotuneTab(host, app, display) {
       timer: 0, lookTimer: 0, improveTimer: 0, improvedAt: 0, stepMs: 0, queue: [], playing: false,
       edit: false, ran: false, swept: false, showing: false, applied: Infinity, runs: 0, bests: [display.data], seenBest: null, bestRun: null,
     };
+    if (st.unlimited && !app.speedLock?.() && app.speedSet() !== AS_FAST) { job.speedBefore = app.speedSet(); app.setSpeed(AS_FAST); }
     app.setRunMode('stop');
     if (st.method === 'iterate') display.clearRuns();
     renderAll();
@@ -20816,6 +20953,7 @@ function createAutotuneTab(host, app, display) {
     job = null;
     if (status && shown) shown.status = status;
     if (j.edit) app.endEdit();
+    if (j.speedBefore !== undefined && app.speedSet() === AS_FAST) app.setSpeed(j.speedBefore);
     if (!gone) {
       if (j.swept || j.showing) app.showLoop();
       display.clearRuns();
@@ -20940,6 +21078,7 @@ function createAutotuneTab(host, app, display) {
 
   function renderAll() { renderSetup(); renderProgress(); }
 
+  $('#tu-fast').onclick = () => { st.unlimited = !st.unlimited; renderButton(); };
   $('#tu-start').onclick = () => {
     if (!job) start();
     else end(job.kind === 'iterate' ? 'Stopped. The best gains so far are kept.' : 'Stopped before the result was applied.');
@@ -22563,6 +22702,8 @@ function startApp() {
   app.speedChanged = () => autosave();
   const speed = createSpeed(app);
   app.speed = () => speed.effective();
+  app.speedSet = () => speed.set;
+  app.setSpeed = (v) => speed.setSpeed(v);
   app.timeRan = (t, seconds) => speed.ran(t, seconds);
   app.speedRender = () => speed.render();
   const display = createDisplay($('display'), {

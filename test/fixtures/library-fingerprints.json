@@ -39,6 +39,11 @@
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,encoder,est_error,estimate,i,r,speed",
     "hash": "944cbb0c"
   },
+  "DC motor, deadbeat": {
+    "samples": 5001,
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed",
+    "hash": "9226c00a"
+  },
   "Conical tank, gain scheduling": {
     "samples": 2001,
     "signals": "ctrl.r,ctrl.u,ctrl.y,d,h,q,r",

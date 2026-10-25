@@ -1,0 +1,3 @@
+# The probe looks onto the inside of the circle (2026-10-25)
+
+> And then about the probe task, just because you say 45 degrees, I want to clarify that. The idea is you have this sapphire touching probe, and it's supposed to go around, let's say, a part that is a circle, and that, and because the part is in the middle, you can't really, you would touch it. And so you want a 45 degree angle from the outside onto the part. So when you move around the circle, the tool will always look onto the inside of the circle. I hope I'm making sense. So this is not a constant angle for any of the axes in that sense, right?
