@@ -103,6 +103,10 @@ Type `fcn` stays (files keep loading); its label becomes **Equations**.
 - Refusals: an unknown name ("'l4' is not a parameter of 'cart and 3 rods' (M, m1, …)"); a key that is `t`, `pi`, `e` or a function name; a key twice; a formula in an integer, name or choice field.
 - **Selected, a masked subsystem shows its mask fields** in the Parameters panel (typed, SI prefixes, the wheel), with Open. Inside, a field holding a formula shows it with its value ("l1 → 0.25 m").
 - `plantKey` includes the mask values, so editing one re-designs and moving the block does not (as for any parameter).
+- **The API as built** (2026-10-25; scalar; vectors are robot.md's):
+  - Declare: `{ "type": "subsystem", "mask": [{ "key": "G", "label": "Gear ratio", "unit": "1", "min": 1, "max": 500, "default": 100 }], "params": { "G": 107.8 }, "diagram": … }`. `key` is letters, digits, _ (Greek too), not `t`, `pi`, `e`, `inf` or a function; `unit` defaults to `1`; `min`, `max`, `default` are optional numbers. A value may be a formula in the masks outside (not its siblings) and may be `inf`.
+  - Read: inside, any number field (`ELEMENTS` params without a `kind`; a model block's numbers; each `num`/`den` entry) may be a formula string in the masks' names, innermost first; an Equations line reads them as constants. Integer fields refuse formulas. Saturation and Integrator limits may be `±inf`; other fields must come out finite.
+  - Code: `normalizeDiagram(d, path, { scope, resolve })` checks and keeps formulas as written; `compileDiagram` resolves them (`resolve: true`) before compiling; `maskValues(diagram, idPath)` gives the names' values at a level (a Map, innermost first) and `formulaIn(src, values)` a field's value (the Plant tab's panel uses both); `core/formula.js` has `compileFormula`, `evalFormula`, `isFormula`, `isReserved`, `sentence`.
 
 ### 1.5 Compiler changes every part needs
 
