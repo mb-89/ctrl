@@ -477,7 +477,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (def.ode) {
         // A physics block: its state integrates inside the diagram; one tap
         // node per output reads what the block computed from its state.
-        const k = add({ kind: 'ode', name, short: b.name ?? b.id, ft: false, ode: def.ode, rates: def.ode.make(b.params), p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
+        const k = add({ kind: 'ode', name, short: b.name ?? b.id, ft: false, ode: def.ode, rates: def.ode.make(b.params), p: b.params, inputs: new Array(nIn).fill(-1), uv: nIn > 1 ? new Float64Array(nIn) : null, outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
         outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j, see: -1 }));
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
@@ -539,6 +539,14 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
   }
   if (pending.size) throw new Error(`${path}: algebraic loop through ${[...pending].map((i) => nodes[i].name).join(', ')}; put a block with state (integrator, lag) in the loop${model ? ' (in a model, dead times pass straight through)' : ''}`);
+  // Pass nodes (In, Out, Sink, Terminator) only forward a value: where a
+  // signal comes from is their origin. Every input reads its origin instead,
+  // and pass nodes are not evaluated (a subsystem's ports cost nothing per
+  // step); Sinks are read through (probes below).
+  const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
+  const through = nodes.map((nd, i) => origin(i));
+  for (const nd of nodes) for (let s = 0; s < nd.inputs.length; s++) if (nd.inputs[s] >= 0) nd.inputs[s] = through[nd.inputs[s]];
+  for (let q = order.length - 1; q >= 0; q--) if (nodes[order[q]].kind === 'pass') order.splice(q, 1);
 
   // State offsets, in node order: diagram order, depth first through
   // subsystems, then each block's own order. The same in both modes, so a
@@ -612,8 +620,6 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     return hist[i] + ((nd.histL[i + 1] ?? hist[i + 1]) - hist[i]) * (f - i);
   };
   const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
-  // Where a signal comes from, through Sinks, Ins and Outs (pass nodes).
-  const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
 
   // The outputs of the nodes in list (indices, in evaluation order). The
   // simulation and the model share this; model mode differs in a few cases.
@@ -655,7 +661,11 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   function rates(list, t, X, o, dX) {
     for (let q = 0; q < list.length; q++) {
       const nd = list[q];
-      if (nd.kind === 'ode') { nd.rates(X, o + nd.off, inOf(nd), dX); continue; }
+      if (nd.kind === 'ode') {
+        if (nd.uv) for (let s = 0; s < nd.uv.length; s++) nd.uv[s] = inOf(nd, s);
+        nd.rates(X, o + nd.off, inOf(nd), dX, nd.uv);
+        continue;
+      }
       const { ss } = nd, base = o + nd.off;
       const inp = nd.delay > 0 && !model ? histAt(nd, t - nd.delay) : inOf(nd);
       for (let r = 0; r < ss.n; r++) {
@@ -666,6 +676,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
   }
 
+  // What each probe and the Out read: the origin of their pass node.
+  const probeSrc = probeList.map(([, k]) => origin(k)), outSrc = outNode >= 0 ? origin(outNode) : -1;
   const self = {
     n, bound, warnings, minTs, sampleTimes, states, designs,
     setStep(step) { h = step; },
@@ -692,10 +704,10 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       left = end;
       outputs(order, t, X, o, u);
       if (dX) rates(stateNodes, t, X, o, dX);
-      return outNode >= 0 ? vals[outNode] : 0;
+      return outSrc >= 0 ? vals[outSrc] : 0;
     },
     // Values of the Sources and Sinks after the last eval.
-    probes: () => probeList.map(([name, k]) => [name, vals[k]]),
+    probes: () => probeList.map(([name, k], j) => [name, probeSrc[j] >= 0 ? vals[probeSrc[j]] : 0]),
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) { nd.hist.push(inOf(nd)); if (nd.histL.length < nd.hist.length) nd.histL.push(inOf(nd)); } },
     // Called at the end of a step, before the samples there: what the step
