@@ -16,7 +16,6 @@ import { tf2ss, rootBound } from './poly.js';
 import { eig, csolve } from './linalg.js';
 import { siUnit } from './scale.js';
 import { gaussAt } from './signals.js';
-import { compileExpr } from './expr.js';
 import { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME_RE } from './formula.js';
 import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
 import { OBSERVERS } from './observers.js';
@@ -40,13 +39,33 @@ export const ELEMENTS = {
   outport: { label: 'Out', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [1, 0], formula: 'y' },
   gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
-  integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
+  // The Integrator with a start value and limits (transparent-models.md
+  // §1.3): rate K·u, but 0 where the state sits at a limit and K·u pushes
+  // beyond it; its output is the state clamped to [min, max], so a tank
+  // overflows at its brim and stops when dry. Empty limits (or ±inf): none.
+  // unit and angle label its state for the design layer and the planner.
+  integrator: {
+    label: 'Integrator', group: 'Dynamics', formula: 'K / s',
+    params: [num('K', 'K', 1), num('x0', 'Start x₀', 0), num('min', 'Min', null, { nullable: 'none', inf: true }), num('max', 'Max', null, { nullable: 'none', inf: true }),
+      { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }, num('angle', 'Angle (0/1)', 0, { int: true, min: 0, max: 1 })],
+    ports: () => [1, 1], tf: (p) => ({ num: [p.K], den: [1, 0] }),
+  },
   // The dead time is T_d in labels and formulas (L is the motor's inductance);
   // the key stays L, so files are unaffected. y0 empty (null): before T_d it
   // puts out its input at t = 0, as a pipe that was already flowing; nothing
   // plant-specific has to be typed in for that.
   delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before T_d', 0, { nullable: 'its input at t = 0' })], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
-  fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
+  // Equations (the Function block, generalised; transparent-models.md §1.2):
+  // named inputs, lines "name = formula" in the inputs, the names above, the
+  // masks' parameters and t, and the outputs among those names. A file's
+  // { expr } is { inputs: 'u', eqs: 'y = expr', outputs: 'y' }.
+  fcn: {
+    label: 'Equations', group: 'Math', formula: 'y = f(u, t)',
+    params: [{ key: 'inputs', label: 'Inputs', default: 'u', kind: 'names' }, { key: 'eqs', label: 'Equations', default: 'y = u^2', kind: 'eqs' }, { key: 'outputs', label: 'Outputs', default: 'y', kind: 'names' }],
+    ports: (p) => [nameList(p.inputs).length, nameList(p.outputs).length],
+    outputs: (p) => nameList(p.outputs), inputNames: (p) => nameList(p.inputs),
+    normalize: (params, where, scope) => normalizeEquations(params, where, scope),
+  },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1, { inf: true }), num('max', 'Max', 1, { inf: true })], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
   noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
@@ -150,6 +169,54 @@ const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 // A state of a physics block, as ode.states lists it; angle: compared
 // modulo 2π (a pendulum that went round once is where it started).
 const state = (name, unit, angle = false) => ({ name, unit, angle });
+
+// An Equations block's names ("Q, h") and lines ("r = r0 + …").
+const nameList = (text) => String(text ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+const eqLines = (text) => String(text ?? '').split(/\n|;/).map((x) => x.trim()).filter(Boolean).map((line) => {
+  const at = line.indexOf('=');
+  return at < 0 ? { name: '', src: line, line } : { name: line.slice(0, at).trim(), src: line.slice(at + 1).trim(), line };
+});
+function normalizeEquations(params = {}, where, scope) {
+  const p = params.eqs === undefined && params.expr !== undefined ? { inputs: 'u', eqs: `y = ${params.expr}`, outputs: 'y' } : params;
+  const inputs = nameList(p.inputs ?? 'u'), outputs = nameList(p.outputs ?? 'y'), lines = eqLines(p.eqs ?? 'y = u^2');
+  const seen = new Set();
+  const named = (n, what) => {
+    if (!NAME_RE.test(n)) throw new Error(`${where}.${what}: "${n}" is not a name (letters, digits, _; Greek letters too)`);
+    if (isReserved(n)) throw new Error(`${where}.${what}: "${n}" is the time, a constant or a function; choose another name`);
+    if (seen.has(n)) throw new Error(`${where}.${what}: "${n}" is defined twice`);
+    seen.add(n);
+  };
+  for (const n of inputs) named(n, 'inputs');
+  if (!lines.length) throw new Error(`${where}.eqs: at least one line "name = formula"`);
+  for (const [i, l] of lines.entries()) {
+    if (!l.name) throw new Error(`${where}.eqs line ${i + 1}: "name = formula", not "${l.line}"`);
+    named(l.name, `eqs line ${i + 1}`);
+    let tree;
+    try { tree = parseFormula(l.src); } catch (e) { throw new Error(`${where}.eqs line ${i + 1} (${l.name}): ${e.message}`); }
+    const known = [...inputs, ...lines.slice(0, i).map((x) => x.name)];
+    for (const n of formulaNames(tree)) {
+      if (known.includes(n) || scopeValue(scope, n) !== undefined || ['t', 'pi', 'e', 'inf'].includes(n.toLowerCase())) continue;
+      throw new Error(`${where}.eqs line ${i + 1}: '${n}' is not an input, a name defined above, or a parameter${scope ? ` (${scopeKeys(scope).join(', ')})` : ' (no mask around this block)'}`);
+    }
+  }
+  if (!outputs.length) throw new Error(`${where}.outputs: at least one`);
+  for (const n of outputs) if (!lines.some((l) => l.name === n)) throw new Error(`${where}.outputs: "${n}" is not computed by a line`);
+  return { inputs: inputs.join(', '), eqs: lines.map((l) => `${l.name} = ${l.src}`).join('\n'), outputs: outputs.join(', ') };
+}
+// An Equations block compiled: slots for its inputs, t and its lines; run(v)
+// computes every line in order; out[j] is output j's slot.
+function compileEquations(params, consts) {
+  const inputs = nameList(params.inputs), lines = eqLines(params.eqs), outputs = nameList(params.outputs);
+  const slot = new Map(inputs.map((n, i) => [n, i]));
+  slot.set('t', inputs.length);
+  const fs = lines.map((l, k) => {
+    const f = compileFormula(l.src, (n) => (slot.has(n) ? { slot: slot.get(n) } : consts?.has(n) ? { value: consts.get(n) } : null));
+    slot.set(l.name, inputs.length + 1 + k);
+    return f;
+  });
+  const first = inputs.length + 1;
+  return { n: first + lines.length, nIn: inputs.length, fs, first, out: outputs.map((n) => slot.get(n)) };
+}
 
 // The chain's rate function for parameters p, allocation-free (the swing-up
 // planner calls it millions of times). Constants are computed once: the mass
@@ -354,8 +421,8 @@ function normalizeParams(type, params = {}, where, scope = null, resolve = false
     const out = normalizeBlock('plant', { type, params: numeric }).params;
     return resolve ? out : { ...out, ...kept };
   }
-  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where);  // blocks that check their own (external)
-  const out = {};
+  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where, scope);  // blocks that check their own (external, Equations)
+  const out = {}, values = {};
   for (const p of ELEMENTS[type].params) {
     let v = params[p.key] ?? p.default;
     if (p.kind === 'unit') {
@@ -364,13 +431,10 @@ function normalizeParams(type, params = {}, where, scope = null, resolve = false
     } else if (p.kind === 'name') {
       v = String(v);
       if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
-    } else if (p.kind === 'expr') {
-      v = String(v).trim();
-      try { compileExpr(v, { vars: true }); } catch (e) { throw new Error(`${where}.${p.key}: ${e.message}`); }
     } else if (p.kind === 'signs') {
       v = String(v);
       if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
-    } else if (p.nullable && (params[p.key] === null || params[p.key] === '')) {
+    } else if (p.nullable && (params[p.key] === null || params[p.key] === '' || (params[p.key] === undefined && p.default === null))) {
       v = null;   // empty: the meaning p.nullable names
     } else {
       const raw = v;
@@ -379,10 +443,12 @@ function normalizeParams(type, params = {}, where, scope = null, resolve = false
       if (p.int) v = Math.round(v);
       if (p.min !== undefined && v < p.min) throw new Error(`${where}.${p.key}: at least ${p.min}`);
       if (p.max !== undefined && v > p.max) throw new Error(`${where}.${p.key}: at most ${p.max}`);
+      values[p.key] = v;
       if (isFormula(raw) && !resolve) v = String(raw).trim();
     }
     out[p.key] = v;
   }
+  if (type === 'integrator' && values.min !== undefined && values.max !== undefined && values.min > values.max) throw new Error(`${where}: min ${values.min} is above max ${values.max}`);
   if (type === 'switch') out.position = Math.min(out.position, out.inputs);
   return out;
 }
@@ -485,7 +551,11 @@ export function blockInputNames(diagram, idPath) {
       const out = src.diagram.blocks.find((b) => b.type === 'outport' && b.params.port === f.port + 1);
       return out?.name ? `${out.name} (${src.name ?? src.id})` : (src.name ?? src.id);
     }
-    return outputNames(diagramBlockDef(src.type), src.params)[f.port] || (src.name ?? src.id);
+    const outNames = outputNames(diagramBlockDef(src.type), src.params);
+    // An Equations block with one output is named by its label, as before;
+    // with several, each by its output ("dh (level rate)").
+    if (src.type === 'fcn') return outNames.length > 1 ? `${outNames[f.port]} (${src.name ?? src.id})` : (src.name ?? src.id);
+    return outNames[f.port] || (src.name ?? src.id);
   });
 }
 
@@ -610,7 +680,14 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         continue;
       }
       const node = { name, short: b.name ?? b.id, inputs: new Array(nIn).fill(-1) };
-      if (def.tf) {
+      if (b.type === 'integrator') Object.assign(node, { unit: b.params.unit, angle: !!b.params.angle });
+      // (A diagram given without normalising may leave the new fields out.)
+      const lo = b.params.min ?? -Infinity, hi = b.params.max ?? Infinity, x0 = b.params.x0 ?? 0;
+      if (b.type === 'integrator' && (x0 !== 0 || lo > -Infinity || hi < Infinity)) {
+        // With a start value or limits: its own state node (with the fields
+        // at their defaults it stays the transfer function K/s, bit for bit).
+        Object.assign(node, { kind: 'int', K: b.params.K, lo, hi, x0: Math.min(hi, Math.max(lo, x0)), ft: false, bound: 0 });
+      } else if (def.tf) {
         const tf = def.tf(b.params);
         const ss = tf2ss(tf.num, tf.den);
         // First order (integrator, lag): realised with C = 1, so the state is
@@ -624,11 +701,16 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
       else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, y0: b.params.y0, ft: model || b.params.L <= 0 });
       else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
-      else if (b.type === 'fcn') Object.assign(node, { kind: 'fcn', f: compileExpr(b.params.expr, { vars: true }), env: { u: 0, t: 0 }, ft: true });
+      else if (b.type === 'fcn') {
+        const eq = compileEquations(b.params, b.consts);
+        Object.assign(node, { kind: 'fcn', eq, v: new Float64Array(eq.n), outv: new Float64Array(eq.out.length), ft: true });
+      }
       else if (b.type === 'quantizer') Object.assign(node, { kind: 'quant', q: b.params.q, ft: true });
       else if (b.type === 'noise') Object.assign(node, { kind: 'noise', std: b.params.std, seed: b.params.seed, ft: true });
       const k = add(node);
-      outs[b.id] = [k];
+      // Outputs after the first (an Equations block's) read the block's
+      // values after it is evaluated.
+      outs[b.id] = [k, ...Array.from({ length: nOut - 1 }, (_, j) => add({ kind: 'pick', name: `${name}.${outputNames(def, b.params)[j + 1]}`, ft: true, inputs: [k], parent: k, j: j + 1 }))];
       ins[b.id] = node.inputs.map((_, s) => [k, s]);
     }
     for (const w of d.wires) {
@@ -681,8 +763,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   let n = 0, bound = 0;
   const stateNodes = [];
   for (const nd of nodes) {
-    if (nd.kind !== 'ss' && nd.kind !== 'ode') continue;
-    nd.nx = nd.kind === 'ss' ? nd.ss.n : typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n;
+    if (nd.kind !== 'ss' && nd.kind !== 'ode' && nd.kind !== 'int') continue;
+    nd.nx = nd.kind === 'int' ? 1 : nd.kind === 'ss' ? nd.ss.n : typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n;
     nd.off = n; n += nd.nx; bound = Math.max(bound, nd.bound);
     if (nd.nx > 0) stateNodes.push(nd);
   }
@@ -691,7 +773,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const states = [];
   for (const nd of stateNodes) {
     if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
-    else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: '', angle: false, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
+    else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: nd.unit && nd.unit !== '1' ? nd.unit : '', angle: !!nd.angle, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
   }
 
   const vals = new Float64Array(nodes.length);
@@ -769,7 +851,17 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         // input now while nothing is recorded.
         case 'delay': y = model || nd.L <= 0 ? inOf(nd) : histAt(nd, t - nd.L, nd.y0 ?? (nd.hist.length ? nd.hist[0] : inOf(nd))); break;
         case 'switch': y = inOf(nd, nd.pick); break;
-        case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
+        case 'fcn': {
+          const { eq, v } = nd;
+          for (let s = 0; s < eq.nIn; s++) v[s] = inOf(nd, s);
+          v[eq.nIn] = t;
+          for (let k = 0; k < eq.fs.length; k++) v[eq.first + k] = eq.fs[k](v);
+          for (let j = 0; j < eq.out.length; j++) nd.outv[j] = v[eq.out[j]];
+          y = nd.outv[0];
+          break;
+        }
+        case 'pick': y = nodes[nd.parent].outv[nd.j]; break;
+        case 'int': y = Math.min(nd.hi, Math.max(nd.lo, X[o + nd.off])); break;
         case 'quant': y = model || ideal ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
         case 'noise': y = model || ideal ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
         case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
@@ -792,6 +884,11 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   function rates(list, t, X, o, dX) {
     for (let q = 0; q < list.length; q++) {
       const nd = list[q];
+      if (nd.kind === 'int') {
+        const r = nd.K * inOf(nd), x = X[o + nd.off];
+        dX[o + nd.off] = (x <= nd.lo && r < 0) || (x >= nd.hi && r > 0) ? 0 : r;
+        continue;
+      }
       if (nd.kind === 'ode') {
         if (nd.uv) for (let s = 0; s < nd.uv.length; s++) nd.uv[s] = inOf(nd, s);
         nd.rates(X, o + nd.off, inOf(nd), dX, nd.uv);
@@ -830,7 +927,12 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // The next instant a sampled block is due (Infinity without one).
     nextSample() { let t = Infinity; for (const nd of ctrls) if (nd.next < t) t = nd.next; return t; },
     // Initial state: zero, except for physics blocks with initial conditions.
-    init(X, o) { for (const nd of stateNodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
+    init(X, o) {
+      for (const nd of stateNodes) {
+        if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; });
+        if (nd.kind === 'int') X[o + nd.off] = nd.x0;
+      }
+    },
     eval(t, X, o, u, dX, end = false) {
       left = end;
       outputs(order, t, X, o, u);
@@ -991,7 +1093,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     };
     // What a node's output reads at the same instant: a state block's output
     // reads its state, and its input only through D.
-    const reads = (i) => (nodes[i].kind === 'ode' || (nodes[i].kind === 'ss' && nodes[i].ss.D === 0) ? NONE : deps(i));
+    const reads = (i) => (nodes[i].kind === 'ode' || nodes[i].kind === 'int' || (nodes[i].kind === 'ss' && nodes[i].ss.D === 0) ? NONE : deps(i));
     const users = nodes.map(() => []);
     nodes.forEach((nd, i) => { for (const s of deps(i)) if (s >= 0) users[s].push(i); });
     const walk = (starts, next) => {
