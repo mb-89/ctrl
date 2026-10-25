@@ -180,8 +180,13 @@ test('the report: the bottom line first, then the matrix and the runners-up', ()
   assert.ok(html.indexOf('class="bottom"') < html.indexOf('<table'));
   assert.match(html, /--tone-green: #008300/);
   assert.match(html, /var\(--tone-green, #008300\)/);
-  assert.doesNotMatch(html, /<script|src="http|href="http|@import/);
-  assert.doesNotMatch(renderHtml({ ...r, title: '<script>' }), /<script>/);
+  // Interactive (input 61): two scripts, inline, the matrix (as data) and the
+  // engine; nothing fetched; a static page without them on request.
+  assert.equal((html.match(/<script/g) || []).length, 2);
+  assert.match(html, /<script type="application\/json" id="pugh-matrix">/);
+  assert.doesNotMatch(html, /src="|href="http|@import|fetch\(/);
+  assert.doesNotMatch(renderHtml(r, { interactive: false }), /<script/);
+  assert.doesNotMatch(renderHtml({ ...r, title: '<script>' }, { interactive: false }), /<script>/);
   assert.doesNotMatch(renderHtml(r, { standalone: false }), /<!doctype|<style>/);
 });
 
@@ -223,7 +228,7 @@ test('figures: plotted from series, thinned, at most two per option, bad ones re
   assert.ok(svg.length < 60000, `thinned: ${svg.length} characters`);
   const mx = small();
   mx.candidates[2].figures = [figure(1), figure(2), figure(3), { title: 'ready', svg: '<svg id="mine"></svg>' }];
-  const html = renderHtml(decide(mx));
+  const html = renderHtml(decide(mx), { standalone: false });
   assert.equal((html.match(/<figure>/g) || []).length, 2);
   assert.throws(() => normalizeMatrix({ ...small(), candidates: [{ key: 'D', figures: [{ title: 'x', series: [{ x: [1], y: [1, 2] }] }] }] }), /same length/);
   assert.throws(() => normalizeMatrix({ ...small(), candidates: [{ key: 'D', figures: [{ title: 'x', series: [{ x: [0, 1], y: [1, 2], role: 'hero' }] }] }] }), /role/);
@@ -254,10 +259,153 @@ test('the deadbeat report stays within one page per option', { skip: !chromium &
       await page.close();
       return (pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
     };
-    const full = await pages(renderHtml(res), 'full.html'), base = await pages(renderHtml(res, { sections: false }), 'base.html');
-    const options = res.ranking.length;
+    const full = await pages(renderHtml(res), 'full.html'), base = await pages(renderHtml(res, { sections: false, interactive: false }), 'base.html');   // static: with its script the page draws itself whole
+    console.log(`# page budget: ${full} pages with the sections, ${base} without, ${res.candidates.length} options`);
+    const options = res.candidates.length;   // every option compared has a section (input 64)
     assert.ok(full - base <= options, `${full} pages with the sections, ${base} without: more than one page for each of ${options} options`);
     assert.ok(full <= base + options && full >= base, `${full} pages`);
+  } finally { await browser.close(); }
+});
+
+// ---- Overrides (inputs 61–64) -----------------------------------------------
+
+const withOv = (mx, ...overrides) => decide({ ...mx, overrides });
+const cand = (r, k) => r.candidates.find((c) => c.key === k);
+
+test('overrides: a criterion’s weight and tolerance', () => {
+  const r = withOv(small(), { kind: 'criterion', criterion: 'speed', weight: 0, comment: 'speed does not matter here' });
+  assert.equal(cand(r, 'B').total, 3 + 0 + 1);   // speed's ++ no longer counts
+  assert.equal(r.weights[1], 0);
+  assert.match(r.overrides[0].effect, /speed: weight 2 → 0/);
+  // A wider tolerance turns B's err + (0.85 against 1) into S at tolerance 0.5: 1/1.5 < 0.85.
+  const t = withOv(small(), { kind: 'criterion', criterion: 'err', tolerance: 0.5, comment: 'only big differences count' });
+  assert.equal(cand(small() && decide(small()), 'B').marks.err, 1);
+  assert.equal(cand(t, 'B').marks.err, 0);
+  assert.match(t.overrides[0].effect, /err: tolerance 0.1 → 0.5/);
+});
+
+test('overrides: a cell vetoed (out of the totals and the gates) or nudged', () => {
+  const v = withOv(small(), { kind: 'cell', candidate: 'B', criterion: 'speed', action: 'veto', comment: 'speed test was wrong' });
+  assert.equal(cand(v, 'B').marks.speed, null);
+  assert.equal(cand(v, 'B').toolMarks.speed, 2);
+  assert.equal(cand(v, 'B').total, 3 + 1);
+  const n = withOv(small(), { kind: 'cell', candidate: 'A', criterion: 'cost', action: 'nudge', by: -1, comment: 'too expensive to run' });
+  assert.equal(cand(n, 'A').marks.cost, -2);
+  assert.equal(cand(n, 'A').total, 6 + 0 - 2);
+  // A vetoed cell plays no part in its option's gates.
+  const mx = { ...small(), gates: [{ criterion: 'cost', max: 15 }] };
+  assert.equal(cand(decide(mx), 'A').fits, false);
+  assert.equal(cand(withOv(mx, { kind: 'cell', candidate: 'A', criterion: 'cost', action: 'veto', comment: 'cost is negotiable' }), 'A').fits, true);
+});
+
+test('overrides: an option vetoed or nudged (a step is one mark at the largest weight)', () => {
+  const v = withOv(small(), { kind: 'option', candidate: 'B', action: 'veto', comment: 'unacceptable effort' });
+  assert.equal(cand(v, 'B').fits, false);
+  assert.match(cand(v, 'B').whyNot, /vetoed by the person: unacceptable effort/);
+  assert.equal(v.suggestion.key, 'A');
+  assert.equal(v.before.suggestion, 'B');
+  const n = withOv(small(), { kind: 'option', candidate: 'B', action: 'nudge', by: -1, comment: 'unacceptable effort function' });
+  assert.equal(n.nudgeUnit, 3);
+  assert.equal(cand(n, 'B').total, 8 - 3);
+  assert.deepEqual(n.ranking, ['B', 'A', 'D']);   // 5 = 5: B's tieBreak 1 beats A's 2
+  const n2 = withOv(small(), { kind: 'option', candidate: 'B', action: 'nudge', by: -1, comment: 'a' }, { kind: 'option', candidate: 'B', action: 'nudge', by: -1, comment: 'b' });
+  assert.equal(cand(n2, 'B').total, 2);
+  assert.equal(n2.suggestion.key, 'A');
+  // The nudge is a fixed offset in the sensitivity too.
+  assert.equal(n2.sensitivity.winner, 'A');
+});
+
+test('overrides: the tool’s vetoes, one per reason, each lifted on its own', () => {
+  const mx = { ...small(), gates: [{ criterion: 'cost', max: 15, why: 'too dear' }, { criterion: 'err', maxRatio: 1.05, why: 'main job' }] };
+  mx.candidates[1] = { ...mx.candidates[1], values: { err: 1.2, speed: 10.5, cost: 19 } };   // A fails both gates
+  const r = decide(mx), A = cand(r, 'A');
+  assert.deepEqual(A.vetoes.map((v) => v.id), ['gate0', 'gate1']);
+  assert.equal(A.fits, false);
+  const one = withOv(mx, { kind: 'lift', candidate: 'A', veto: 'gate0', comment: 'the budget can stretch' });
+  assert.equal(cand(one, 'A').fits, false, 'one veto remains');
+  assert.match(one.overrides[0].effect, /1 veto remains/);
+  const both = withOv(mx, { kind: 'lift', candidate: 'A', veto: 'gate0', comment: 'the budget can stretch' }, { kind: 'lift', candidate: 'A', veto: 'gate1', comment: 'close enough' });
+  assert.equal(cand(both, 'A').fits, true);
+  assert.ok(both.ranking.includes('A'));
+  assert.match(both.overrides[1].effect, /it is back in/);
+  // The caller's verdict is a veto too, liftable.
+  const given = { ...small(), candidates: small().candidates.map((c) => (c.key === 'A' ? { ...c, fits: false, whyNot: 'diverges' } : c)) };
+  assert.deepEqual(cand(decide(given), 'A').vetoes.map((v) => v.id), ['given']);
+  assert.equal(cand(withOv(given, { kind: 'lift', candidate: 'A', veto: 'given', comment: 'a model artefact' }), 'A').fits, true);
+  // A lift of a veto that is not there is said, not dropped silently.
+  assert.ok(withOv(small(), { kind: 'lift', candidate: 'A', veto: 'gate9', comment: 'x' }).notes.some((n) => /no veto 'gate9'/.test(n)));
+});
+
+test('overrides: another datum; bad overrides are refused', () => {
+  const r = withOv(small(), { kind: 'datum', candidate: 'B', comment: 'B is what we know' });
+  assert.equal(r.datum.key, 'B');
+  assert.equal(cand(r, 'D').marks.err, -1);   // 1 against 0.85
+  assert.match(r.overrides[0].effect, /the datum: D → B/);
+  const bad = (o, re) => assert.throws(() => withOv(small(), o), (e) => e instanceof PughError && re.test(e.message));
+  bad({ kind: 'cell', candidate: 'A', criterion: 'err', action: 'veto' }, /comment/);
+  bad({ kind: 'cell', candidate: 'A', criterion: 'err', action: 'nudge', by: 0, comment: 'x' }, /by/);
+  bad({ kind: 'option', candidate: 'Z', action: 'veto', comment: 'x' }, /candidate/);
+  bad({ kind: 'criterion', criterion: 'err', comment: 'x' }, /a weight or a tolerance/);
+  bad({ kind: 'nope', comment: 'x' }, /kind/);
+});
+
+// ---- The interactive report in a browser ----------------------------------------
+
+// Drives the report as a person would: a click, the dialog, a comment, the
+// button. The page decides with the engine it carries; the result must equal
+// decide() here on the same matrix and overrides.
+test('the report decides again in the browser, and equals decide() here', { skip: !chromium && 'Playwright is not installed' }, async () => {
+  const mx = { ...small(), gates: [{ criterion: 'cost', max: 15, why: 'too dear' }] };   // A is out: cost 19
+  const dir = mkdtempSync(join(tmpdir(), 'pugh-live-'));
+  const file = join(dir, 'report.html');
+  writeFileSync(file, renderHtml(decide(mx)));
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(pathToFileURL(file).href);
+    await page.waitForSelector('section.pugh.live');
+    const act = async (selector, choice, { comment = 'a reason', weight } = {}) => {
+      await page.click(selector);
+      if (weight !== undefined) await page.fill('#pugh-weight', String(weight));
+      if (comment) await page.fill('#pugh-comment', comment);
+      await page.click(`dialog [data-do="${choice}"]`);
+      await page.waitForFunction(() => !document.querySelector('dialog.pugh-dialog')?.open);
+    };
+    await act('[data-weight="cost"] >> nth=0', 'set', { weight: 2, comment: 'cost matters more' });
+    await act('[data-cell="B|speed"]', 'veto', { comment: 'the speed test was wrong' });
+    await act('[data-act="up"][data-cand="B"]', 'up', { comment: 'easy to maintain' });
+    await act('[data-lift="A|gate0"]', 'lift', { comment: 'the budget can stretch' });
+    await act('[data-act="veto"][data-cand="B"]', 'veto', { comment: 'unacceptable effort' });
+    const state = await page.evaluate(() => ({ overrides: window.pughState.overrides, totals: Object.fromEntries([...document.querySelectorAll('[data-total]')].map((e) => [e.dataset.total, Number(e.dataset.value)])), fits: Object.fromEntries([...document.querySelectorAll('[data-fits]')].map((e) => [e.dataset.fits, e.dataset.value === 'true'])), bottom: document.querySelector('[data-bottom]').textContent }));
+    assert.deepEqual(state.overrides.map((o) => o.kind), ['criterion', 'cell', 'option', 'lift', 'option']);
+    const here = decide({ ...mx, overrides: state.overrides });
+    for (const c of here.candidates) {
+      close(state.totals[c.key], c.total, 1e-12, `${c.key} total`);
+      assert.equal(state.fits[c.key], c.fits, `${c.key} fits`);
+    }
+    assert.equal(state.bottom, bottomLine(here).replace(/\*\*/g, ''));
+    // Undo takes back the last change.
+    await page.click('[data-tool="undo"]');
+    assert.equal(await page.evaluate(() => window.pughState.overrides.length), 4);
+    // Save: the same report, its changes baked in; it reopens with them.
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-tool="save"]')]);
+    const saved = join(dir, 'saved.html');
+    await download.saveAs(saved);
+    const again = await browser.newPage();
+    await again.goto(pathToFileURL(saved).href);
+    await again.waitForSelector('section.pugh.live');
+    const reopened = await again.evaluate(() => window.pughState.overrides);
+    assert.equal(reopened.length, 4);
+    assert.match(await again.textContent('.person'), /Changed by the person/);
+    // Export: the changes as JSON, for the command line.
+    const [exp] = await Promise.all([page.waitForEvent('download'), page.click('[data-tool="export"]')]);
+    const json = join(dir, 'changes.json');
+    await exp.saveAs(json);
+    assert.deepEqual(JSON.parse(readFileSync(json, 'utf8')), reopened);
+    // Keyboard: a weight opens with Enter.
+    await page.focus('[data-weight="err"] >> nth=0');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => document.querySelector('dialog.pugh-dialog').open), true);
   } finally { await browser.close(); }
 });
 
