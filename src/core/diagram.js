@@ -21,6 +21,7 @@ import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
 import { OBSERVERS } from './observers.js';
 import { SYNC_DESIGNS, defaultDesigns } from './design.js';
 import { EXTERNAL_BLOCK } from './hil.js';
+import { COMPONENTS, withPrefix } from './components.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -403,6 +404,7 @@ function normalizeMask(b, where, outer, resolve) {
         out.default = f.default;
         continue;
       }
+      if (k === 'default' && /^-?inf$/i.test(String(f[k]).trim())) { out.default = String(f[k]).trim(); continue; }
       const v = k === 'default' && f.kind === 'toggle' ? toggleValue(f[k]) : Number(f[k]);
       if (Number.isNaN(v)) throw new Error(`${at}.${k}: ${f.kind === 'toggle' && k === 'default' ? '0 or 1 (off or on)' : 'a number'}`);
       out[k] = v;
@@ -512,6 +514,23 @@ function normalizeParams(type, params = {}, where, scope = null, resolve = false
   return out;
 }
 
+// A use of a built-in component (components.js): its mask and diagram put in.
+function useOf(b, at) {
+  const c = typeof b.component === 'string' ? COMPONENTS[b.component] : null;
+  if (!c) throw new Error(`${at}: no component "${b.component}"; built in: ${Object.keys(COMPONENTS).join(', ')}`);
+  if (b.type !== undefined && b.type !== 'subsystem') throw new Error(`${at}: a component's use is a subsystem`);
+  if (b.prefix !== undefined && !/^[A-Za-z][A-Za-z0-9_]{0,5}$/.test(b.prefix)) throw new Error(`${at}.prefix: up to six letters, digits and _, before its Sinks' names (m2_ makes m2_i)`);
+  return { ...b, type: 'subsystem', mask: c.mask, diagram: withPrefix(c.diagram, b.prefix) };
+}
+function useJson(b) {
+  const params = {};
+  for (const f of b.mask) {
+    const v = b.params[f.key], d = f.default ?? (f.kind === 'choice' ? f.options[0] : f.kind === 'toggle' ? 0 : undefined);
+    if (v !== d && !(typeof v === 'number' && typeof d === 'string' && Number(d) === v) && !(v === Infinity && /^inf$/i.test(String(d)))) params[f.key] = v;
+  }
+  return { id: b.id, type: 'subsystem', ...(b.name ? { name: b.name } : {}), component: b.component, ...(b.prefix ? { prefix: b.prefix } : {}), params, x: b.x, y: b.y, ...(b.flip ? { flip: true } : {}) };
+}
+
 // opts.scope: the masks around this level; opts.resolve: formulas become
 // their values (compileDiagram's copy; Equations blocks get the mask names
 // as b.consts).
@@ -525,6 +544,8 @@ export function normalizeDiagram(d, path = 'plant', opts = {}) {
     if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
     ids.add(b.id);
     const at = `${where}(${b.id})`;
+    const ref = b.component;
+    if (ref !== undefined) b = useOf(b, at);
     const m = b.type === 'subsystem' ? normalizeMask(b, at, scope, resolve) : null;
     const out = { id: b.id, type: b.type, params: m ? m.params ?? {} : normalizeParams(b.type, b.params, at, scope, resolve), x: Number(b.x) || 0, y: Number(b.y) || 0 };
     if (b.name) out.name = String(b.name);
@@ -539,6 +560,13 @@ export function normalizeDiagram(d, path = 'plant', opts = {}) {
     if (resolve && b.type === 'switch' && isFormula(b.params?.position)) Object.defineProperty(out, 'fixed', { value: true });
     if (m?.mask) out.mask = m.mask;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`, { scope: m.scope, resolve });
+    if (ref !== undefined) {
+      out.component = ref;
+      if (b.prefix) out.prefix = b.prefix;
+      // Saved by reference: the component and the mask values that differ
+      // from its defaults (servo.md §9); the insides come from the table.
+      Object.defineProperty(out, 'toJSON', { value: () => useJson(out) });
+    }
     if (resolve && b.type === 'fcn' && scope) Object.defineProperty(out, 'consts', { value: scopeMap(scope) });
     if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
@@ -651,18 +679,17 @@ function prune(nodes) {
   const uses = nodes.map(() => []);
   const feeds = (nd) => (nd.kind === 'tap' ? [nd.parent] : nd.inputs);
   nodes.forEach((nd, i) => { for (const s of feeds(nd)) if (s >= 0) uses[s].push(i); });
-  const deadUses = new Map();
-  for (const s of deadEdge) deadUses.set(s, (deadUses.get(s) ?? 0) + 1);
+  const deadUses = new Set(deadEdge);
   // Candidates: whatever reaches an unchosen input; then, until nothing
-  // changes, drop each one that still feeds something compiled.
-  const cand = new Set(), stack = [...deadUses.keys()];
+  // changes, drop each one that still feeds something compiled (a Sink
+  // keeps nothing compiled: it reads off with what feeds it).
+  const cand = new Set(), stack = [...deadUses];
   while (stack.length) { const i = stack.pop(); if (cand.has(i)) continue; cand.add(i); for (const s of feeds(nodes[i])) if (s >= 0) stack.push(s); }
   for (let changed = true; changed;) {
     changed = false;
     for (const i of cand) {
-      const live = uses[i].some((d) => !cand.has(d) && !nodes[d].end);
-      const toOff = deadUses.has(i) || uses[i].some((d) => cand.has(d));
-      if (live || !toOff) { cand.delete(i); changed = true; }
+      const keeps = uses[i].some((d) => !cand.has(d) && !nodes[d].end);
+      if (keeps || !(deadUses.has(i) || uses[i].some((d) => cand.has(d)))) { cand.delete(i); changed = true; }
     }
   }
   for (const i of cand) off.add(i);
@@ -1024,6 +1051,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     n, bound, warnings, minTs, sampleTimes, states, designs,
     // Sinks in a branch a mask switched off: not compiled, they read "off".
     off: offSinks,
+    // Every node not compiled, by name ('Motor/coupling'), for the canvas.
+    offNodes: [...off].map((i) => nodes[i].name),
     setStep(step) { h = step; },
     // Called at each completed step with the state there: a controller whose
     // sample is due reads its inputs and sets its held output; the outputs are
