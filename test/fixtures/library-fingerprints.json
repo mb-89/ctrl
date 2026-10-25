@@ -1,8 +1,8 @@
 {
   "PUMA 560, a circle in space": {
     "samples": 10001,
-    "signals": "a_r,b_r,ctl/servos[1].r,ctl/servos[1].u,ctl/servos[1].y,ctl/servos[2].r,ctl/servos[2].u,ctl/servos[2].y,ctl/servos[3].r,ctl/servos[3].u,ctl/servos[3].y,ctl/servos[4].r,ctl/servos[4].u,ctl/servos[4].y,ctl/servos[5].r,ctl/servos[5].u,ctl/servos[5].y,ctl/servos[6].r,ctl/servos[6].u,ctl/servos[6].y,e,ea,eb,ec,eo,i1,i2,i3,i4,i5,i6,q1,q2,q3,q4,q5,q6,sigma,tau1,tau2,tau3,tau4,tau5,tau6,tauC1,tauC2,tauC3,tauC4,tauC5,tauC6,tauF1,tauF2,tauF3,tauF4,tauF5,tauF6,tauG1,tauG2,tauG3,tauG4,tauG5,tauG6,tauI1,tauI2,tauI3,tauI4,tauI5,tauI6,x,xr,y,yr,z,zr",
-    "hash": "564d7170"
+    "signals": "a_r,b_r,ctl/servos[1].r,ctl/servos[1].u,ctl/servos[1].y,ctl/servos[2].r,ctl/servos[2].u,ctl/servos[2].y,ctl/servos[3].r,ctl/servos[3].u,ctl/servos[3].y,ctl/servos[4].r,ctl/servos[4].u,ctl/servos[4].y,ctl/servos[5].r,ctl/servos[5].u,ctl/servos[5].y,ctl/servos[6].r,ctl/servos[6].u,ctl/servos[6].y,e,ea,eb,ec,eo,m1_i,m1_tau_e,m1_tau_f,m1_tau_m,m1_tau_r,m1_v,m2_i,m2_tau_e,m2_tau_f,m2_tau_m,m2_tau_r,m2_v,m3_i,m3_tau_e,m3_tau_f,m3_tau_m,m3_tau_r,m3_v,m4_i,m4_tau_e,m4_tau_f,m4_tau_m,m4_tau_r,m4_v,m5_i,m5_tau_e,m5_tau_f,m5_tau_m,m5_tau_r,m5_v,m6_i,m6_tau_e,m6_tau_f,m6_tau_m,m6_tau_r,m6_v,q1,q2,q3,q4,q5,q6,sigma,tau1,tau2,tau3,tau4,tau5,tau6,tauC1,tauC2,tauC3,tauC4,tauC5,tauC6,tauG1,tauG2,tauG3,tauG4,tauG5,tauG6,tauI1,tauI2,tauI3,tauI4,tauI5,tauI6,x,xr,y,yr,z,zr",
+    "hash": "23742890"
   },
   "Mass–spring–damper": {
     "samples": 2001,

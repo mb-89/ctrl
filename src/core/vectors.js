@@ -290,7 +290,7 @@ function blockWidths(b, inW, env, force) {
   }
   if (b.type === 'observer') {
     if (grouped(b)) {
-      if (inW[1] === undefined && !force) return null;
+      if (inW[1] === undefined && force !== 2) return null;
       const m = inW[1] ?? 1;
       return { ins: [1, m], outs: [m, m] };
     }
@@ -411,7 +411,7 @@ function widthPass(diagram, opts) {
         const order = sub.diagram.blocks.filter((x) => x.type === 'inport').sort((a, c) => a.params.port - c.params.port);
         const w = fed(parent, sub, order.indexOf(b));
         if (w !== undefined) res = { ins: [], outs: [w] };
-        else if (force) res = { ins: [], outs: [1] };
+        else if (force === 2) res = { ins: [], outs: [1] };
       } else if (b.type === 'inport') res = { ins: [], outs: [1] };
       else if (b.type === 'outport') {
         const w = fed(lv, b, 0);
@@ -423,13 +423,20 @@ function widthPass(diagram, opts) {
         try { res = blockWidths(b, inW, env, force); } catch (e) { throw new Error(`${e.message.startsWith("'") ? '' : `${where(lv, b)}: `}${e.message}`); }
       }
       if (res) { W.set(u.key, res); done.add(u.key); progress = true; }
+      // Forced: one decision, then propagate what follows from it before
+      // forcing another (an input forced to 1 could otherwise be decided
+      // before the width a loop's far side gives it).
+      if (force && progress) return true;
     }
     return progress;
   };
   const done = new Set();
+  // Forcing decides a block with state first (its width from what it has),
+  // and only then an In port nothing feeds a width to yet.
   while (done.size < units.length) {
     if (decide(false)) continue;
-    if (!decide(true)) break;
+    if (decide(1)) continue;
+    if (!decide(2)) break;
   }
   const open = units.filter((u) => !done.has(u.key));
   if (open.length) throw new Error(`the width of ${open.slice(0, 4).map((u) => where(u.lv, u.b)).join(', ')} cannot be told: a loop needs a block with state whose width is declared (an Integrator's x0 or width)`);

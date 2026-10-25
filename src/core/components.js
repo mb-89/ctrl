@@ -11,8 +11,9 @@
 // ---- The Servo motor (servo.md) -------------------------------------------
 // The drive, the torque the motor makes, its friction and ripple, its rotor
 // (the rotor's inertia is inside), the gear and the encoder on the motor
-// shaft. What it turns is outside: a load torque (shaft free) or an inertia
-// it drives through the gear's stiffness (shaft coupled).
+// shaft. What it turns is outside: a load torque (shaft free), an inertia
+// it drives through the gear's stiffness (shaft coupled), or a mechanism
+// that carries the rotor's inertia and turns it rigidly (shaft rigid).
 //   In 1 u (V, or the current i* for a current drive), In 2 τ_L (free) or the
 //   load's θ (coupled), In 3 the load's ω (coupled only).
 //   Out 1 τ (the gear's torque on the load; free: τ_L), Out 2 θ measured
@@ -88,8 +89,15 @@ const SERVO_DIAGRAM = {
     B('sw_bl', 'switch', { inputs: 2, position: '1 + backlash' }, 700, 700, { name: 'backlash' }),
     B('kgear', 'gain', { K: 'k' }, 820, 700, { name: 'gear stiffness k' }),
     B('react', 'gain', { K: '1/G' }, 940, 620, { name: 'gear 1/G (reaction)' }),
-    B('sw_shr', 'switch', { inputs: 2, position: 'shaft' }, 1000, 230, { name: 'shaft' }),
-    B('sw_sht', 'switch', { inputs: 2, position: 'shaft' }, 1380, 700, { name: 'shaft' }),
+    B('sw_shr', 'switch', { inputs: 2, position: 'min(shaft, 2)' }, 1000, 230, { name: 'shaft' }),
+    B('sw_sht', 'switch', { inputs: 3, position: 'shaft' }, 1380, 700, { name: 'shaft' }),
+    // Rigid: the rotor turns with the load (its inertia, G²·Jm, is the
+    // mechanism's): θm = G·θ, ωm = G·ω come in, τ = G·τm goes out.
+    B('thr', 'gain', { K: 'G' }, 120, 820, { name: 'θm = G·θ (rigid)' }),
+    B('wr', 'gain', { K: 'G' }, 120, 880, { name: 'ωm = G·ω (rigid)' }),
+    B('sw_th', 'switch', { inputs: 2, position: '1 + (shaft - 1)*(shaft - 2)/2' }, 1300, 260, { name: 'rotor angle' }),
+    B('sw_w', 'switch', { inputs: 2, position: '1 + (shaft - 1)*(shaft - 2)/2' }, 1160, 260, { name: 'rotor speed' }),
+    B('gtau', 'gain', { K: 'G' }, 1240, 780, { name: 'gear G (rigid)' }),
     B('tau', 'outport', { port: 1 }, 1520, 708, { name: 'τ' }),
     // The encoder on the motor shaft: coupling resonance, angle errors,
     // counts, delay; referred to the output. Speed from its angle, or ideal.
@@ -111,26 +119,28 @@ const SERVO_DIAGRAM = {
   wires: [
     // drive
     { from: 'u', to: 'vlim' }, { from: 'u', to: 'sw_vlim' }, { from: 'vlim', to: 'sw_vlim:1' },
-    { from: 'sw_vlim', to: 'esum' }, { from: 'ke', to: 'esum:1' }, { from: 'esum', to: 'arm' }, { from: 'wm', to: 'ke' },
+    { from: 'sw_vlim', to: 'esum' }, { from: 'ke', to: 'esum:1' }, { from: 'esum', to: 'arm' }, { from: 'sw_w', to: 'ke' },
     { from: 'u', to: 'ilim' }, { from: 'ilim', to: 'iloop' }, { from: 'ilim', to: 'sw_iloop' }, { from: 'iloop', to: 'sw_iloop:1' },
-    { from: 'sw_iloop', to: 'vr' }, { from: 'wm', to: 'vk' }, { from: 'vr', to: 'vsum' }, { from: 'vk', to: 'vsum:1' }, { from: 'sw_vlim', to: 'sw_v' }, { from: 'vsum', to: 'sw_v:1' }, { from: 'sw_v', to: 'v' },
+    { from: 'sw_iloop', to: 'vr' }, { from: 'sw_w', to: 'vk' }, { from: 'vr', to: 'vsum' }, { from: 'vk', to: 'vsum:1' }, { from: 'sw_vlim', to: 'sw_v' }, { from: 'vsum', to: 'sw_v:1' }, { from: 'sw_v', to: 'v' },
     { from: 'arm', to: 'sw_drive' }, { from: 'sw_iloop', to: 'sw_drive:1' }, { from: 'sw_drive', to: 'i' }, { from: 'sw_drive', to: 'kt' }, { from: 'kt', to: 'tau_e' },
     // disturbances
-    { from: 'thm', to: 'zero' }, { from: 'thm', to: 'rip' }, { from: 'zero', to: 'sw_rip' }, { from: 'rip', to: 'sw_rip:1' },
+    { from: 'sw_th', to: 'zero' }, { from: 'sw_th', to: 'rip' }, { from: 'zero', to: 'sw_rip' }, { from: 'rip', to: 'sw_rip:1' },
     { from: 'sw_rip', to: 'tn' }, { from: 'sw_rip', to: 'sw_tn' }, { from: 'tn', to: 'sw_tn:1' }, { from: 'sw_tn', to: 'tau_r' },
     // friction
-    { from: 'wm', to: 'visc' }, { from: 'wm', to: 'coul' }, { from: 'wm', to: 'zero2' }, { from: 'zero2', to: 'sw_coul' }, { from: 'coul', to: 'sw_coul:1' },
+    { from: 'sw_w', to: 'visc' }, { from: 'sw_w', to: 'coul' }, { from: 'sw_w', to: 'zero2' }, { from: 'zero2', to: 'sw_coul' }, { from: 'coul', to: 'sw_coul:1' },
     { from: 'visc', to: 'fsum' }, { from: 'sw_coul', to: 'fsum:1' }, { from: 'fsum', to: 'tau_f' },
     // torque and rotor
     { from: 'kt', to: 'tsum' }, { from: 'sw_tn', to: 'tsum:1' }, { from: 'fsum', to: 'tsum:2' }, { from: 'tsum', to: 'tau_m' },
-    { from: 'tsum', to: 'rsum' }, { from: 'sw_shr', to: 'rsum:1' }, { from: 'rsum', to: 'wm' }, { from: 'wm', to: 'thm' }, { from: 'wm', to: 'gv' },
+    { from: 'tsum', to: 'rsum' }, { from: 'sw_shr', to: 'rsum:1' }, { from: 'rsum', to: 'wm' }, { from: 'sw_w', to: 'thm' }, { from: 'sw_w', to: 'gv' },
     // the shaft
-    { from: 'tl', to: 'tlg' }, { from: 'thm', to: 'gd' }, { from: 'gd', to: 'dsum' }, { from: 'tl', to: 'dsum:1' }, { from: 'dsum', to: 'delta' },
+    { from: 'wm', to: 'sw_w' }, { from: 'wr', to: 'sw_w:1' }, { from: 'thm', to: 'sw_th' }, { from: 'thr', to: 'sw_th:1' },
+    { from: 'w', to: 'wr' }, { from: 'tl', to: 'thr' }, { from: 'tsum', to: 'gtau' },
+    { from: 'tl', to: 'tlg' }, { from: 'sw_th', to: 'gd' }, { from: 'gd', to: 'dsum' }, { from: 'tl', to: 'dsum:1' }, { from: 'dsum', to: 'delta' },
     { from: 'gv', to: 'vsum2' }, { from: 'w', to: 'vsum2:1' }, { from: 'vsum2', to: 'cr' }, { from: 'dsum', to: 'xsum' }, { from: 'cr', to: 'xsum:1' },
     { from: 'xsum', to: 'gap' }, { from: 'xsum', to: 'sw_bl' }, { from: 'gap', to: 'sw_bl:1' }, { from: 'sw_bl', to: 'kgear' }, { from: 'kgear', to: 'react' },
-    { from: 'tlg', to: 'sw_shr' }, { from: 'react', to: 'sw_shr:1' }, { from: 'tl', to: 'sw_sht' }, { from: 'kgear', to: 'sw_sht:1' }, { from: 'sw_sht', to: 'tau' },
+    { from: 'tlg', to: 'sw_shr' }, { from: 'react', to: 'sw_shr:1' }, { from: 'tl', to: 'sw_sht' }, { from: 'kgear', to: 'sw_sht:1' }, { from: 'gtau', to: 'sw_sht:2' }, { from: 'sw_sht', to: 'tau' },
     // the encoder
-    { from: 'thm', to: 'cpl' }, { from: 'thm', to: 'sw_cpl' }, { from: 'cpl', to: 'sw_cpl:1' },
+    { from: 'sw_th', to: 'cpl' }, { from: 'sw_th', to: 'sw_cpl' }, { from: 'cpl', to: 'sw_cpl:1' },
     { from: 'sw_cpl', to: 'err' }, { from: 'sw_cpl', to: 'sw_err' }, { from: 'err', to: 'sw_err:1' },
     { from: 'sw_err', to: 'cnt' }, { from: 'sw_err', to: 'sw_cnt' }, { from: 'cnt', to: 'sw_cnt:1' },
     { from: 'sw_cnt', to: 'edel' }, { from: 'sw_cnt', to: 'sw_del' }, { from: 'edel', to: 'sw_del:1' },
@@ -155,7 +165,7 @@ const SERVO_MASK = [
   F('Jm', 'Rotor inertia', 'kg·m²', 0.02, { min: 1e-12, physical: true }),
   F('G', 'Gear ratio (motor turns per output turn)', '1', 1),
   F('imax', 'Current limit', 'A', 10, { min: 1e-9, under: 'drive:current' }),
-  { key: 'shaft', label: 'Output shaft', kind: 'choice', options: ['free', 'coupled'], default: 'free' },
+  { key: 'shaft', label: 'Output shaft', kind: 'choice', options: ['free', 'coupled', 'rigid'], default: 'free' },
   F('k', 'Gear stiffness (output)', 'N·m/rad', 1000, { min: 1e-9, under: 'shaft:coupled', physical: true }),
   F('c', 'Gear damping (output)', 'N·m·s/rad', 1, { min: 0, under: 'shaft:coupled', physical: true }),
   T('coulomb', 'Coulomb friction'),

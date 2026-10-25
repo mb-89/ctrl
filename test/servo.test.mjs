@@ -231,3 +231,20 @@ test('Gear backlash: the motor encoder holds still, the load anywhere in the pla
     assert.ok(s.pp < 1e-3 && s.flipsPerS < 5, `${variant} without play: p-p ${s.pp}, ${s.flipsPerS}/s`);
   }
 });
+
+// ---- The PUMA's joints (servo.md §15.5) ------------------------------------
+test('the PUMA\'s motors are Servo motors: an effect switched on shows in the path error and the torques', async () => {
+  const { PUMA_SYSTEM } = await import('../src/core/pumasystem.js');
+  const signals = Object.fromEntries(Object.entries(PUMA_SYSTEM.signals).map(([k, r]) => [k, normalizeReference(r)]));
+  const run = (set) => {
+    const d = normalizeDiagram(structuredClone(PUMA_SYSTEM.diagram));
+    const walk = (dd) => { for (const b of dd.blocks) { if (set[b.id]) Object.assign(b.params, set[b.id]); if (b.diagram) walk(b.diagram); } };
+    walk(d);
+    return simulateSystem(normalizeDiagram(d), signals, { duration: 10, sampleTime: 0.001 }).signals;
+  };
+  const rms = (x) => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length);
+  const plain = run({}), ripple = run({ m2: { ripple: 1 } }), counts = run({ m2: { counts: 1, N: 100 } });
+  assert.ok(rms(ripple.e) > 2.5 * rms(plain.e), `ripple: ${rms(ripple.e)} against ${rms(plain.e)} mm`);   // 0.054 against 0.017
+  assert.ok(rms(counts.tau2) > 1.8 * rms(plain.tau2), `counts: τ2 ${rms(counts.tau2)} against ${rms(plain.tau2)}`);   // 76 against 34
+  assert.equal(PUMA_SYSTEM.diagram.blocks.find((b) => b.id === 'puma').diagram.blocks.find((b) => b.id === 'drives').diagram.blocks.filter((b) => b.component === 'servo-motor@1').length, 6);
+});

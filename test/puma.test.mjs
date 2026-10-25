@@ -70,7 +70,7 @@ test('the probe\'s circle moves every joint and stays inside the arm: limits, si
   });
   assert.ok(Math.min(...s.sigma) >= 0.08, `σ_min ${Math.min(...s.sigma)}`);
   assert.ok(Math.min(...s.q5.map(Math.abs)) >= 9 * Math.PI / 180, 'the wrist stays clear of q5 = 0');
-  PUMA560.drive.fuse.forEach((f, k) => assert.ok(peak(s[`i${k + 1}`]) < f, `i${k + 1} ${peak(s[`i${k + 1}`])} A against its fuse ${f} A`));
+  PUMA560.drive.fuse.forEach((f, k) => assert.ok(peak(s[`m${k + 1}_i`]) < f, `m${k + 1}_i ${peak(s[`m${k + 1}_i`])} A against its fuse ${f} A`));
   // Every torque and its shares are signals; the shares add up to the joint torque less friction, which the arm does not see.
   for (let k = 1; k < s.tau1.length; k += 101) for (let j = 1; j <= 6; j++) assert.ok(Math.abs(s[`tauI${j}`][k] + s[`tauC${j}`][k] + s[`tauG${j}`][k] - s[`tau${j}`][k]) < 1e-9, `tau${j} at ${k}`);
 });

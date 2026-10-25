@@ -498,7 +498,7 @@ A circle turned away from the base (rpy (0, 0, π)) would show the damped invers
 - **Channels**: as in §0 (a_r, a, e, i2), Time mode, 0.5 s/div, the record step 1 ms (`sim: { sampleTime: 0.001 }`).
 - **Measure** is on e: rms 0.049 mm with model feedforward.
 - **The selected channel is i2**, so Spectrogram shows the shoulder current. At A's start pose its harmonics over one turn were DC 1.16 A, 1f 1.15 A, 3f 0.21 A, 5f 0.11 A. At this pose i2 runs from −0.12 to 2.40 A. The waist current i1 is the alternative: Coulomb friction makes it nearly a ±2 A square wave, a comb in the spectrogram.
-- **The other signals on offer**: b_r, b, x, y, z, xr, yr, zr, eo (°), sigma, i1…i6.
+- **The other signals on offer**: b_r, b, x, y, z, xr, yr, zr, eo (°), sigma, the motor currents m1_i…m6_i (i1…i6 before the motors became Servo motors, [servo.md](servo.md) §15.6).
 - **XY with channel 1 = a and channel 2 = b draws the tool's circle.** This is a try-this, not the default.
 
 ## 9. Performance, measured

@@ -1,6 +1,6 @@
 # One Servo motor, its errors as switches
 
-Reader: the agent who builds the Servo motor component, rebuilds the motor examples or the PUMA's motors on it, builds the backlash example, or adds an effect to it. The person's words are in [input 18](../input/2026-10-25-18-servo-motor-detail.md) and their answers in [input 23](../input/2026-10-25-23-servo-answers-backlash.md); the research, with sources, is in [../research/servo.md](../research/servo.md). **Built** (2026-10-25, branch `feat/servo`; [§15](#15-built-measured-deviations)): steps 1–4 and 6, with the docs; step 7, the PUMA's joints, is the orchestrator's swap ([§15.5](#155-the-pumas-joints-step-7-how-they-switch)). The rest of this page is the plan it was built from; where the code and this page differ, the code, §15 and [decisions.md](decisions.md) win.
+Reader: the agent who builds the Servo motor component, rebuilds the motor examples or the PUMA's motors on it, builds the backlash example, or adds an effect to it. The person's words are in [input 18](../input/2026-10-25-18-servo-motor-detail.md) and their answers in [input 23](../input/2026-10-25-23-servo-answers-backlash.md); the research, with sources, is in [../research/servo.md](../research/servo.md). **Built** (2026-10-25, branch `feat/servo`; [§15](#15-built-measured-deviations)): every step; the PUMA's joints on a rigid shaft ([§15.6](#156-the-pumas-joints-built-step-7)), the coupled one left for them. The rest of this page is the plan it was built from; where the code and this page differ, the code, §15 and [decisions.md](decisions.md) win.
 
 The person, later ([input 24](../input/2026-10-25-24-backlash-fix-gear-stiffness.md)): "The backlash example should also offer the industrial fix ... make it a bit slower, because 50 Hertz running at our [HIL] with 100 Hertz is ... critical. And ... make it configurable."
 
@@ -547,7 +547,7 @@ Built on `feat/servo` (2026-10-25), from main after the model foundations (masks
 
 ### 15.4 Left
 
-- Step 7, the PUMA's joints (§15.5), when `feat/puma` and this branch are both merged.
+- The PUMA on the coupled shaft (§15.6): its axis loops cannot be designed through it yet.
 - *DC motor with an unbalanced arm* (the HIL simulator's default plant, with Coulomb friction and gravity) and *Variable gain against anti-windup* (a torque-driven axis) keep their own motor blocks: neither was in this plan; both could be Servo motors (a voltage drive with Coulomb on and the arm's gravity outside; a current drive with the current loop as the torque drive's lag).
 - Detail levels as named switch sets (§6), when [detail-levels.md](detail-levels.md) is built.
 - The project's `components` map and making components in the page; mask lists; a "set from fr, ζ" helper; the cascade dual loop (§13).
@@ -562,4 +562,35 @@ Built on `feat/servo` (2026-10-25), from main after the model foundations (masks
 4. **Signals**: the currents become `m1_i … m6_i` (the scope's channel 4 `i2` becomes `m2_i`), the friction `m1_tau_f …` at the motor shaft (×G at the joint, where `tauF1 …` were); τe, τm, δ per motor too. The joint torque `tau` is the gears' torque on the links, which no longer includes the rotors' acceleration torque (§7.3: about 4.9 N·m rms on joint 2).
 5. **Measured, then**: robot.md's numbers again; with the axis loops designed on the plant that runs, the path should come closer to the rigid model than §7.3's 2.82 mrad. A try-this for the notes: "open Motor drives, select Motor 1: switch Backlash on (3′) and watch τ1 knock at each reversal; set β to 15′".
 6. **The HIL simulator** then lists the six motors' Coulomb toggles as the PUMA's effects (`effectsOf`, "Coulomb friction" six times; a name per motor needs the use's name in the effect's name, a one-line change in `effectsOf` if wanted).
+
+### 15.6 The PUMA's joints, built (step 7)
+
+Built after `feat/puma` landed (main 6bd3852), on `feat/servo` restarted from it.
+
+- **The six motors are Servo motors** (`motor(j)` in `src/core/pumasystem.js`): `componentUse('servo-motor@1', { prefix: 'm' + n + '_' })` on a current drive, R, K (kt), b, Jm, G (with its sign), imax from the drive table, **Coulomb friction on**, every other effect off at the realistic sizes of §7.3 (ripple 1 % of kt·imax at 6×; errors 20″ and 10″; counts 1000, 800, 1000, 1000, 1000, 500; the current loop at 400 Hz; noise 0.002 N·m, seed 7 + j; backlash 3′; k and c for 20 Hz with ζ 0.1 at the start pose, `PUMA_GEAR`).
+- **A third shaft, rigid** (`shaft: 'rigid'`, servo-motor@1's third option, no new version: the two others are unchanged bit for bit): the rotor turns with the joint, θm = G·q and ωm = G·q̇ come in, τ = G·τm goes out, and the rotor's inertia G²·Jm stays on the Arm's mass matrix. **Interpretation**: §15.5 planned the coupled shaft, but the gate was "every effect off matches today's run to rounding", which an elastic gear cannot (it is a different plant: the prototype measured +1 mrad on one joint, §7.3); and the coupled shaft cannot run on the PUMA yet (below). So the PUMA's motors are rigid, and the elastic gear stays a choice for when the design layer can design through it.
+- **The controller reads the motors' encoders** (PUMA 560's new Out 2, *q measured*: each motor's θ measured, muxed), as on the real arm; the tool's pose and the 3D view read the arm's true q (Out 1). So an encoder's error moves the tool.
+- **Signals**: the currents are `m1_i … m6_i` (they were `i1 … i6`), the friction at the motor shaft `m1_tau_f …` (×G at the joint; `tauF1 …` at the joint before); each motor also has `_tau_e`, `_tau_m`, `_tau_r`, `_v`. The scope's channels (e_a, e_b, τ2, τ3) and the view's bindings (q, the paths) are unchanged.
+- **Every effect off equals the run before the swap**, over the 10 s period at 1 ms: the path error within 5.5·10⁻¹³ mm (rms 0.0165522 mm both), the joint torques within 7.2·10⁻¹¹ N·m (relative 1.8·10⁻¹¹), the currents within 4.7·10⁻¹² A, the joint angles within 9·10⁻¹⁶ rad; the same step (1 substep). `test/puma.test.mjs` still holds the compiled PUMA to the loop written plainly (10⁻¹²) and to three periods alike. Every other library system runs bit for bit; the PUMA's fingerprint changes (its new Sinks and the rounding).
+- **The effects show in the robot** (the person, input 18: "increase the level of the servos of the robot, and then the same errors would show up in the robot too"); path error e rms (mm) and τ2, τ3 rms (N·m) over the period, 0.0166, 33.68, 5.30 with every effect off:
+
+| Switched on (realistic size unless said) | e rms | e peak | τ2 rms | τ3 rms | substeps |
+|---|---|---|---|---|---|
+| Ripple, Motor 2 | 0.0538 | 0.224 | 33.71 | 5.30 | 1 |
+| Ripple, Motor 1 | 0.0394 | 0.162 | 33.68 | 5.30 | 1 |
+| Ripple, all six | 0.101 | 0.484 | 33.71 | 5.34 | 1 |
+| Ripple, all six, 10 % | 1.05 | 3.86 | 35.93 | 8.42 | 1 |
+| Encoder counts, Motor 2, N 100 | 0.0339 | 0.143 | 76.44 | 5.37 | 1 |
+| Encoder counts, all six | 0.0174 | 0.0442 | 34.70 | 6.15 | 1 |
+| Encoder angle errors, all six | 0.0167 | 0.0370 | 33.68 | 5.30 | 1 |
+| Encoder angle errors, all six, ×10 | 0.0218 | 0.0446 | 33.68 | 5.30 | 1 |
+| Torque noise, all six | 0.0203 | 0.0455 | 33.68 | 5.30 | 1 |
+| Current loop (400 Hz), all six | 0.264 | 1.49 | 33.69 | 5.30 | 6 |
+
+  The encoder's angle errors are small at the joint: they are per motor turn, divided by the gear (60 to 108). The notes carry the try-this (ripple and counts on Motor 2), not a variant: the motors are opened and switched, which is the point. `test/servo.test.mjs` holds the ripple and counts rows to their effect.
+- **What the swap needed elsewhere**:
+  - **The vector width pass forces one decision at a time** (`vectors.js`), a block with state before an In port nothing feeds a width to yet, and a Finite difference observer last: forcing all at once fixed the controller's input q to 1 element before the encoders' Mux gave it 6. Every other system is bit for bit.
+  - **A finite difference looks through a sensor** (`diagram.js`, `sensed`): a measurement read through Gains whose product is 1, quantizers, noise and one-input Equations stands for the state it measures, as a design on the nominal plant takes it (θ measured = (G·q)/G, with its counts and errors). A dead time or a resonance still does not.
+  - **speedPI's b behind a lag** (`design.js`): with the current loop on, ẏ does not move with u at the instant; b is then taken through the lags u drives, Σ A_sj·B_j/(−A_jj), the gain well below the lag's corner (without it the design refused and the arm fell).
+- **The coupled shaft on the PUMA**: switched on (the Arm's armature 0), the axis servos' design refuses ("ẏ is no state of the plant this lane sees") and the arm falls. The encoder reads θm/G of the rotor's own angle, a state times 1/G, and the look-through carries no scale; and the speed loops would be designed on the rotor's inertia alone, through a 20 Hz spring (the wrist's links, 0.0015 kg·m² against a rotor's 0.19 at the joint, sit on springs of 2–26 N·m/rad). Left: a scaled look-through and speed loops designed on the elastic joint (the plant that runs).
 
