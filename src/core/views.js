@@ -6,7 +6,17 @@
 //         { "name": "Cart", "kind": "svg", "svg": "<svg viewBox=…>…<g id=\"cart\">…</g></svg>",
 //           "bind": [ { "select": "#cart", "attr": "transform", "value": "translate({100*y1}, 0)" } ] }
 //         "attr": "text" sets an element's text. Event handlers and links cannot be bound.
-// 3D (URDF, joints bound to signals) is planned the same way.
+//   "3d"  a robot from its URDF, posed by signals (design/output/robot.md §7):
+//         { "name": "Robot", "kind": "3d", "robot": "puma560", "joints": "q",
+//           "paths": [ { "x": "xr", "y": "yr", "z": "zr", "style": "reference", "span": "all" },
+//                      { "x": "x", "y": "y", "z": "z", "style": "actual", "span": "to-now", "fade": 2.5 } ],
+//           "camera": { "target": [0.45, -0.1, 0.55], "view": "iso", "distance": 2.3 } }
+//         robot names one of the diagram's robots (or "urdf" holds the text, for
+//         a Live plant). joints: a Sink's base name ("q": q1 … qn, the movable
+//         joints in order) or { "j1": "q1", … }. Paths are drawn from the
+//         recorded signals: reference dashed in ch1's colour over the whole run,
+//         actual in ch2's, fading over fade seconds behind the instant. It
+//         binds by Sink names, so the Sinks are visible signals.
 //
 // The "2d" kind: A 2D view is a small
 // scene in world coordinates (y up) whose numbers may be formulas in t and
@@ -83,10 +93,32 @@ export function compileBindings(view) {
 }
 const fmtAttr = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(6))) : '0');
 
+const SIGNAL = /^[A-Za-z][A-Za-z0-9_]{0,11}$/;
+function normalize3dView(v, path) {
+  if (!!v.robot === !!v.urdf) throw new Error(`${path}: "robot" (a robot of the diagram) or "urdf" (its text), one of them`);
+  if (v.robot !== undefined && !/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(String(v.robot))) throw new Error(`${path}.robot: the name of a robot in the diagram's robots`);
+  if (v.urdf !== undefined && typeof v.urdf !== 'string') throw new Error(`${path}.urdf: the robot's description as text`);
+  const joints = v.joints ?? 'q';
+  if (typeof joints === 'string' ? !SIGNAL.test(joints) : !(joints && typeof joints === 'object' && Object.values(joints).every((s) => SIGNAL.test(String(s))))) throw new Error(`${path}.joints: a Sink's base name ("q": q1, q2, …) or { "j1": "q1", … }`);
+  const paths = (v.paths ?? []).map((q, i) => {
+    const at = `${path}.paths[${i}]`;
+    for (const k of ['x', 'y', 'z']) if (!SIGNAL.test(String(q?.[k] ?? ''))) throw new Error(`${at}.${k}: a signal's name`);
+    if (!['reference', 'actual'].includes(q.style ?? 'actual')) throw new Error(`${at}.style: "reference" or "actual"`);
+    if (!['all', 'to-now'].includes(q.span ?? 'to-now')) throw new Error(`${at}.span: "all" or "to-now"`);
+    const fade = q.fade === undefined ? null : Number(q.fade);
+    if (fade !== null && !(fade > 0)) throw new Error(`${at}.fade: seconds, above 0`);
+    return { x: q.x, y: q.y, z: q.z, style: q.style ?? 'actual', span: q.span ?? 'to-now', ...(fade ? { fade } : {}) };
+  });
+  const out = { name: String(v.name ?? '3D view'), kind: '3d', ...(v.robot ? { robot: v.robot } : { urdf: v.urdf }), joints: typeof joints === 'string' ? joints : { ...joints }, paths };
+  if (v.camera) out.camera = structuredClone(v.camera);
+  return out;
+}
+
 export function normalizeView(v, path = 'views[0]') {
   if (!v || typeof v !== 'object') throw new Error(`${path}: a view is an object`);
   if (v.kind === 'svg') return normalizeSvgView(v, path);
-  if (v.kind !== '2d') throw new Error(`${path}.kind: "2d" (shapes) or "svg" (an SVG drawing with bindings)`);
+  if (v.kind === '3d') return normalize3dView(v, path);
+  if (v.kind !== '2d') throw new Error(`${path}.kind: "2d" (shapes), "svg" (an SVG drawing with bindings) or "3d" (a robot from its URDF)`);
   const box = v.view ?? [-1, -1, 1, 1];
   if (!Array.isArray(box) || box.length !== 4 || !box.every(Number.isFinite) || box[2] <= box[0] || box[3] <= box[1]) throw new Error(`${path}.view: [xmin, ymin, xmax, ymax]`);
   const check = (shapes, p) => {

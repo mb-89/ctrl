@@ -11,6 +11,8 @@
 //   piCancel(fit, Tcl), scheduledPIDesign(p, ctx)  PI by pole cancellation, at levels of the first measurement
 //   trajectoryDesign(p, ctx)                       a swing-up plan with TV-LQR along it (planner.js)
 //   kalmanDesign(lin, { Q, R, Ts, outputs })       the steady-state Kalman filter of an Observer
+//   placedDesign(lin, { w, Ts, outputs })          a Luenberger observer with its error poles placed
+//   huLinDesign(p, ctx)                            LQR gains on nested ellipsoids, for the Hu–Lin variable gain
 
 import { c2d, dlqr, dlqe, eig, solve, inv, rank, mul, transpose, equilibrate, tzeros } from './linalg.js';
 import { DesignError, operatingPoint, linearize, firstOrderFit, pathRealisation, refuseKinks } from './linearize.js';
@@ -125,10 +127,17 @@ export function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 
     const lins = new Map();
     const ctx = {
       Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs, outputs: block.outputs,
+      lane: block.lane ?? 0, lanes: block.lanes ?? 1, ff: !!block.ff,
       // The plant this block sees (a Model), looking through designed observers.
       model() {
         if (!used.model) used.model = compiled().seen(block.idPath, seeThrough.size ? { seeThrough } : {});
         return used.model;
+      },
+      // The plant lane k (1-based) of the same Controller sees, the other
+      // lanes holding 0 (a trim over all lanes at once: speedPIDesign).
+      laneModel(k) {
+        if (!block.lane) throw new Error(`${block.idPath}: not a lane of a Controller`);
+        return compiled().seen(block.idPath.replace(/\[\d+\]$/, `[${k}]`), seeThrough.size ? { seeThrough } : {});
       },
       // The linear model at an operating point ('origin' unless named).
       linearize(op = 'origin', limits = {}) {
@@ -238,6 +247,9 @@ export function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 
       // The heavy jobs this compile asked for (async: the newest wins).
       const asked = new Set();
       return {
+        // A hand observer looked through (a finite difference: diagram.js
+        // differenceSees): its estimates read the states they stand for.
+        see(idPath, stateIndex) { seeThrough.set(idPath, stateIndex); },
         resolve(block, variant, lib) {
           const def = lib[variant.type];
           // The names it labels its rows with (u, the measurements) are in the
@@ -363,6 +375,8 @@ export function defaultDesigns() { return fallback ?? SYNC_DESIGNS; }
 
 // A state for sentences: 'ω (cart and pole)', or its label.
 function stateText(s) {
+  // 'cart.v' (a block's state) or a mechanism's 'cart and pole/ω': 'ω (cart and pole)'.
+  if (s.group) return `${s.name} (${s.group})`;
   return s.label.endsWith(`.${s.name}`) ? `${s.name} (${s.label.slice(0, -s.name.length - 1)})` : s.label;
 }
 
@@ -434,6 +448,117 @@ export function lqrDesign(lin, { Q, R, track = 1, Ts }) {
   return { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings };
 }
 
+// The Hu–Lin variable-gain controller (design/research/hu-lin.md): the
+// low-gain family of discrete LQR designs, Q·ε and R with ε from p.low up to
+// 1, each with its ellipsoid, the largest level set of V = xᵀP(ε)x on which
+// the linear law cannot reach the limit (Wredenhagen and Bélanger 1994;
+// Megretski 1996; Hu and Lin 2002). V falls under the linear law, so its
+// ellipsoid is invariant, and the ellipsoids are nested: the higher the gain,
+// the smaller. The law (controllers.js) takes, at each sample, the highest
+// level whose ellipsoid holds the error, interpolated between two levels so
+// the gain changes continuously: far from r a low gain, near it the full
+// one, u near the limit and never past it.
+// On one ellipsoid xᵀPx ≤ c the largest |Kx·x| is √(c · Kx P⁻¹ Kxᵀ), so
+// with S = P · (Kx P⁻¹ Kxᵀ) the error e lies inside where eᵀ S e ≤ ū², ū
+// the room the limits leave around the input that holds y at r. S is kept
+// in measurement coordinates (y = C x, every state measured, as lqrDesign
+// checks). The error is e = y − ys·r, ys and us the measurements and the
+// input of the rest where the tracked measurement equals 1.
+// p: { Q, R, low, levels, track, umin, umax }. Returns { values: { m, N, eps,
+// K (N × m), S (N × m × m), ys, us }, rows, warnings }.
+export function huLinDesign(p, ctx) {
+  if (!(Number.isFinite(p.umin) && Number.isFinite(p.umax))) throw new DesignError('no-limits', 'the variable gain keeps u inside its limits, and this variant has none: without a limit its gain would simply be the highest', 'set u min and u max to the actuator\'s limits, or use LQR');
+  const lin = ctx.linearize('origin');
+  const q = Array.isArray(p.Q) ? p.Q : [p.Q], N = p.levels;
+  const eps = Array.from({ length: N }, (_, i) => p.low ** (1 - i / (N - 1)));
+  const designs = eps.map((e) => lqrDesign(lin, { Q: q.map((v) => v * e), R: p.R, track: p.track, Ts: ctx.Ts }));
+  const { n, m, outputs } = lin, labels = outputs.map((o) => o.label);
+  const Ci = inv(lin.C);
+  const S = designs.map((d) => {
+    const Pi = inv(d.P), w = d.Kx.reduce((s, a, i) => s + a * d.Kx.reduce((t, b, j) => t + Pi[i][j] * b, 0), 0);
+    const M = d.P.map((row) => row.map((v) => v * w));
+    return mul(mul(transpose(Ci), M), Ci);
+  });
+  const warnings = [...new Set(designs.flatMap((d) => d.warnings))];
+  // Nested: S grows with the level (S[i+1] − S[i] ≥ 0).
+  for (let i = 0; i + 1 < N; i++) {
+    const Ds = S[i + 1].map((row, a) => row.map((v, b) => (v + S[i + 1][b][a] - S[i][a][b] - S[i][b][a]) / 2));
+    const lo = Math.min(...eig(Ds).map((z) => z.re)), size = Math.max(...S[i + 1].flat().map(Math.abs));
+    if (lo < -1e-6 * size) { warnings.push(`the ellipsoids of ε = ${fmt(eps[i])} and ${fmt(eps[i + 1])} are not nested: there the gain may step back as the error shrinks`); break; }
+  }
+  // The rest where the tracked measurement is 1: A x + B u = 0, C_track x = 1.
+  let ys = new Array(m).fill(0), us = 0;
+  if (p.track) {
+    const M = [...lin.A.map((row, i) => [...row, lin.B[i][0]]), [...lin.C[p.track - 1], 0]];
+    const sol = rank(equilibrate(M).M) === n + 1 ? solve(M, [...new Array(n).fill(0), 1]) : [NaN];
+    if (!sol.every(Number.isFinite)) throw new DesignError('no-rest', `no input holds ${labels[p.track - 1]} at a steady r`, 'set r applies to 0, or track a measurement the plant can hold');
+    ys = mul(lin.C, sol.slice(0, n).map((v) => [v])).map((r) => r[0]);
+    us = sol[n];
+  }
+  // How far the levels reach: the largest step of r whose error lies inside
+  // the lowest level (the low gain never saturates), and inside the highest.
+  const room = Math.min(p.umax, -p.umin);
+  const reach = (Sx) => { const g = ys.reduce((s, a, i) => s + a * ys.reduce((t, b, j) => t + Sx[i][j] * b, 0), 0); return g > 0 && room > 0 ? room / Math.sqrt(g) : Infinity; };
+  const unit = p.track && outputs[p.track - 1].unit ? ` ${outputs[p.track - 1].unit}` : '';
+  const rows = [
+    { label: 'K near r', value: designs[N - 1].K, labels, note: `ε = 1: Q, R as given` },
+    { label: 'K far', value: designs[0].K, labels, note: `ε = ${fmt(p.low)}: Q·ε` },
+    { label: 'levels', value: N, note: `ε = ${fmt(p.low)} … 1, nested ellipsoids` },
+    ...(p.track ? [{ label: 'reach', value: [reach(S[0]), reach(S[N - 1])], labels: ['inside', 'full gain'], note: `steps of ${labels[p.track - 1]}${unit} from rest the levels hold without reaching the limit` }] : []),
+    { label: 'slowest pole', value: designs[N - 1].rows.at(-1).value, note: 'near r' },
+  ];
+  const values = { m, N, eps, K: designs.flatMap((d) => d.K), S: S.flatMap((x) => x.flat()), ys, us };
+  return { values, rows, warnings };
+}
+
+// The speed PI of one lane of a Controller (robot.md §5, §10), from the
+// plant that lane sees at its start state: b = ∂ẏ/∂u, the acceleration of
+// the measured speed per unit u (for a robot joint the inverse of its
+// effective inertia, rotors included), then Kv = 2ζω/b and Ki = ω²/b (a
+// double pole at ω with ζ 1). u0 is the trim of all lanes at once (the
+// torques that hold the start state: a joint's gravity needs all six
+// together) minus Kf times what the ff input reads there, so the loop
+// starts in balance. Measurement 1 must be one state of the plant (looked
+// through a finite difference), measurement 2 the ff input when the block
+// has one.
+export function speedPIDesign(p, ctx) {
+  const mdl = ctx.model(), out = mdl.outputs[0];
+  const yName = ctx.inputs[1] ?? 'y';
+  if (!mdl.n || out?.state === undefined) throw new DesignError('not-a-rate', `${yName} is no state of the plant this lane sees: speedPI needs a measured speed`, 'wire the joint\'s speed (a finite difference of its angle) to input 2');
+  const rateOf = (m, s, u) => { const f = new Float64Array(m.n); m.f(m.x0, u, f); return f[s]; };
+  const bOf = (m) => { const s = m.outputs[0].state, c = m.outputs[0].slope; return (c * (rateOf(m, s, 1) - rateOf(m, s, -1))) / 2; };
+  const b = bOf(mdl);
+  if (!(Math.abs(b) > 1e-12)) throw new DesignError('not-a-rate', `${yName} does not accelerate with ${mdl.input.label} (∂ẏ/∂u = 0): speedPI needs a measured speed`, 'wire the joint\'s speed to input 2');
+  const Kv = (2 * p.zeta * p.omega) / b, Ki = p.integral === 'on' ? (p.omega * p.omega) / b : 0;
+  // The trim over all lanes: B·u = −a0 on the measured speeds' rates.
+  const n = ctx.lanes, lane = ctx.lane || 1;
+  let u0 = 0;
+  const warnings = [];
+  if (n > 1) {
+    const ms = Array.from({ length: n }, (_, k) => (k + 1 === lane ? mdl : ctx.laneModel(k + 1)));
+    if (ms.some((m) => m.n !== mdl.n || m.outputs[0].state === undefined)) throw new DesignError('not-a-rate', `every lane needs a measured speed of the same plant to trim the start state`, 'wire each lane\'s speed to input 2');
+    const rows = ms.map((m) => m.outputs[0].state);
+    const a0 = rows.map((s) => rateOf(mdl, s, 0));
+    const B = rows.map((s) => ms.map((m) => (rateOf(m, s, 1) - rateOf(m, s, -1)) / 2));
+    try { u0 = solve(B, a0.map((v) => -v))[lane - 1]; } catch { warnings.push('u0 = 0: no torques hold the start state'); }
+  } else {
+    const s = out.state;
+    u0 = -rateOf(mdl, s, 0) / (b / out.slope);
+  }
+  let ff0 = 0;
+  if (ctx.ff && mdl.m > 1) { const y = new Float64Array(mdl.m); mdl.y(mdl.x0, u0, y); ff0 = y[mdl.m - 1]; }
+  u0 -= p.Kf * ff0;
+  if (Math.abs(u0) < 1e-9 * Math.max(1, Math.abs(ff0))) u0 = 0;
+  const unit = mdl.input.label;
+  const rows = [
+    { label: 'b', value: b, note: `∂${yName}/∂t per unit ${unit}, at the start state` },
+    { label: 'Kv', value: Kv, note: '2ζω/b' },
+    { label: 'Ki', value: Ki, note: p.integral === 'on' ? 'ω²/b' : 'integral off' },
+    { label: 'u0', value: u0, note: p.Kf ? 'the trim less what the ff input gives at the start' : 'the trim: what holds the start state' },
+  ];
+  return { values: { Kv, Ki, u0, b, lane }, rows, warnings, at: 'the start state' };
+}
+
 // The pole of a pendulum on a cart, from the plant's linearisation at the
 // top, for the energy swing-up: measurements x, θ, v, ω (every state
 // measured, as lqrDesign checks). A rigid pendulum on a cart has
@@ -493,6 +618,49 @@ function stuck(Ad, B, W) {
   return null;
 }
 
+// What every observer designed on the plant needs of the Model it sees
+// (kalmanDesign, placedDesign): measurements of states, at rest at the
+// origin, no kinks there; `what` names the design in the refusals (title
+// in the one about a kink).
+function observerModel(lin, what, title = what) {
+  const { n, m, outputs: meas } = lin;
+  const labels = meas.map((o) => o.label);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; ${what} here handles up to 40`);
+  if (!m) throw new DesignError('no-measurement', 'this observer has no measurement to correct its estimate with', 'wire the measurements to inputs 2, 3, …');
+  if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')}), so there is nothing to estimate`, lin.warnings.join('; ') || 'wire input 1 (u) to what drives the plant, and the plant to the measurements');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, `${what} is designed at the origin, which must be an equilibrium with u = 0`);
+  refuseKinks(lin, title);
+  const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
+  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; ${what} needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  return labels;
+}
+
+// What a designed observer gives once it has its L: the warnings on the
+// Model it was designed on, the estimates row, and the values its
+// Luenberger twin runs on (stateIndex: the state each estimate stands for).
+function observerResult(lin, L, labels, outputs, warnings, what) {
+  const { n, states } = lin, names = states.map((s) => s.name);
+  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
+  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: ${what} does not know that offset`); });
+  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in ${what}`); });
+  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const values = {
+    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
+    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
+  };
+  return {
+    values, warnings, quality: { ok: outputs === n },
+    estimates: { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
+    gain: { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+  };
+}
+
+// The estimate's error in filter form, e⁺ = (I − L C) Ad e: its poles.
+function errorPoles(Ad, C, L) {
+  const ILC = L.map((row, i) => C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * C[k][j], 0)));
+  return eig(mul(ILC, Ad));
+}
+
 // The steady-state Kalman filter of an Observer (designs-in-the-page.md
 // §6.3) on the plant it sees, linearised at the origin, which must be an
 // equilibrium with u = 0. Its estimates are the states the Observer can see
@@ -510,15 +678,9 @@ function stuck(Ad, B, W) {
 // (continuous A, B; flat, row by row), the Luenberger observer that runs
 // the same, plus stateIndex. Returns { values, rows, warnings, quality }.
 export function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
-  const { n, m, states, outputs: meas } = lin;
-  const labels = meas.map((o) => o.label), names = states.map((s) => s.name);
-  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; the filter here handles up to 40`);
-  if (!m) throw new DesignError('no-measurement', 'this observer has no measurement to correct its estimate with', 'wire the measurements to inputs 2, 3, …');
-  if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')}), so there is nothing to estimate`, lin.warnings.join('; ') || 'wire input 1 (u) to what drives the plant, and the plant to the measurements');
-  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'the filter is designed at the origin, which must be an equilibrium with u = 0');
-  refuseKinks(lin, 'the Kalman filter');
-  const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
-  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; the filter needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  const { n, m, states } = lin;
+  const names = states.map((s) => s.name);
+  const labels = observerModel(lin, 'the filter', 'the Kalman filter');
   const q = Array.isArray(Q) ? Q : [Q];
   if (q.length !== 1 && q.length !== n) throw new DesignError('q-length', `Q has ${q.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, `give one value (a push on ${lin.input.label}) or one per state`);
   const given = R !== null && R !== undefined;
@@ -539,9 +701,7 @@ export function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
   const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
   const Qw = q.length === 1 ? Bd.map((a) => Bd.map((b) => q[0] * a[0] * b[0])) : diag(q);
   const { L, converged } = dlqe(Ad, lin.C, Qw, diag(r));
-  // The estimate's error: e⁺ = (I − L C) Ad e.
-  const ILC = L.map((row, i) => lin.C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * lin.C[k][j], 0)));
-  const poles = eig(mul(ILC, Ad));
+  const poles = errorPoles(Ad, lin.C, L);
   const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
   if (!converged || !(radius < 1)) {
     // Why: a mode that does not decay by itself is either not seen by the
@@ -551,22 +711,59 @@ export function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
     throw new DesignError('not-detectable', `the estimate's error would not die out: a pole of the filter stays at |z| = ${fmt(radius)}`, `the measurements may not show every state (${names.join(', ')}); measure more, or raise Q`);
   }
 
-  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
-  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: the filter does not know that offset`); });
-  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this filter`); });
-  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const res = observerResult(lin, L, labels, outputs, warnings, 'the filter');
   const rows = [
-    { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
-    { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+    res.estimates, res.gain,
     { label: 'R', value: r, labels, note: given ? '' : parts.length ? `from ${and(parts)}` : 'none: no sensor blocks' },
     q.length === 1 ? { label: 'Q', value: q[0], note: `a push on ${lin.input.label}, per sample` } : { label: 'Q', value: q, labels: names },
     { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
   ];
-  const values = {
-    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
-    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
-  };
-  return { values, rows, warnings, quality: { ok: outputs === n } };
+  return { values: res.values, rows, warnings: res.warnings, quality: res.quality };
+}
+
+// A Luenberger observer whose error poles are placed (observers.js,
+// luenbergerPlaced) on the plant it sees, at the origin as the Kalman
+// filter: the same model and the same filter form, but L is chosen so that
+// the error e⁺ = (I − L C) Ad e dies out at the rates given, each pole at
+// s = −w (one value: all of them), z = e^(−w·Ts). By Ackermann's formula on
+// the dual pair (Ad, C Ad): L = φ(Ad) O⁻¹ eₙ with O = [C Ad; C Ad²; …; C Adⁿ]
+// and φ(z) = Π (z − zᵢ). One measurement only: with several, L is not fixed
+// by the poles, and the Kalman filter is the one that weighs them.
+// Returns { values, rows, warnings, quality } as kalmanDesign.
+export function placedDesign(lin, { w, Ts, outputs = lin.n }) {
+  const { n, m, states } = lin;
+  const names = states.map((s) => s.name);
+  const labels = observerModel(lin, 'the observer');
+  if (m !== 1) throw new DesignError('one-measurement', `placing the poles fixes L for one measurement; this observer has ${m} (${labels.join(', ')})`, 'measure one signal, or use the Kalman filter, which weighs several');
+  const ws = Array.isArray(w) ? w : [w];
+  if (ws.length !== 1 && ws.length !== n) throw new DesignError('w-length', `w has ${ws.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, 'give one value (every pole there) or one per state');
+  if (!ws.every((v) => v > 0)) throw new DesignError('bad-poles', 'each w must be above 0: a pole at s = −w with w ≤ 0 lets the error grow or stay');
+  const zs = (ws.length === 1 ? new Array(n).fill(ws[0]) : ws).map((v) => Math.exp(-v * Ts));
+  const { Ad } = c2d(lin.A, lin.B, Ts);
+  // O, row by row: C Ad, C Ad², …, C Adⁿ.
+  const O = [];
+  let row = lin.C[0];
+  for (let k = 0; k < n; k++) { row = row.map((_, j) => row.reduce((s, c, i) => s + c * Ad[i][j], 0)); O.push(row); }
+  const { M: S } = equilibrate(O);
+  const big = Math.max(...S.map((r) => Math.hypot(...r)));
+  if (rank(S, 1e-10 * big) < n) throw new DesignError('not-observable', `${labels[0]} does not show every state of the plant this observer sees (${names.join(', ')}), so no L places all ${n} poles`, 'measure another signal, or use the Kalman filter');
+  // φ(Ad) = Π (Ad − zᵢ I).
+  let phi = Ad.map((r, i) => r.map((_, j) => (i === j ? 1 : 0)));
+  for (const z of zs) phi = mul(phi, Ad.map((r, i) => r.map((a, j) => a - (i === j ? z : 0))));
+  const en = Array.from({ length: n }, (_, i) => [i === n - 1 ? 1 : 0]);
+  const L = mul(phi, solve(O, en));
+  // Ackermann is exact in exact arithmetic; a badly conditioned O is not.
+  const poles = errorPoles(Ad, lin.C, L);
+  const want = [...zs].sort((a, b) => a - b), got = poles.map((z) => z.re).sort((a, b) => a - b);
+  const off = Math.max(...poles.map((z) => Math.abs(z.im)), ...want.map((z, i) => Math.abs(z - got[i])));
+  if (!(off < 1e-3)) throw new DesignError('ill-conditioned', `the poles came out up to ${fmt(off)} from where they were placed: ${labels[0]} shows some state too weakly to place its pole there`, 'place the poles closer to the plant\'s own, or use the Kalman filter');
+  const res = observerResult(lin, L, labels, outputs, [], 'the observer');
+  const rows = [
+    res.estimates, res.gain,
+    { label: 'w', value: zs.map((z) => -Math.log(z) / Ts), note: '1/s: each pole of the error at s = −w' },
+    { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
+  ];
+  return { values: res.values, rows, warnings: res.warnings, quality: res.quality };
 }
 
 // The low-frequency inverse of a path (pathRealisation): G(s) = N(s)/P(s)

@@ -15,7 +15,7 @@ export const HANGING = [0, Math.PI, Math.PI, Math.PI, 0, 0, 0, 0];
 // params change the cart and rods (masses, lengths).
 export function tripleModel(params = {}) {
   const d = structuredClone(SYSTEM_LIBRARY.find((s) => s.name.startsWith('Triple')).plant.diagram);
-  Object.assign(d.blocks.find((b) => b.type === 'pendulumCart').params, params);
+  Object.assign(d.blocks.find((b) => b.id === 'cart').params, params);
   return compileDiagram(normalizeDiagram(d), 'plant', { mode: 'model' }).seen('ctrl');
 }
 

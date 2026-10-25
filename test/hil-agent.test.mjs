@@ -158,7 +158,9 @@ test('the plant script: both modes describe the library systems, any model, and 
   assert.equal(reference.mode, 'reference');
   assert.deepEqual(reference.inputs.map((p) => [p.name, p.kind, p.measures]), [['r', 'reference', 'angle']]);
   assert.equal(reference.outputs.at(-1).name, 'V', 'the plant reports its own effort');
-  assert.ok(sameDescription(block('HIL: an external plant, reference mode').params, reference), 'reference mode: the library entry as described');
+  // Reference mode is a switch on the one HIL system: the page takes this
+  // description and wires r straight to the plant (hil-blackbox.test.mjs).
+  assert.ok(reference.outputs.slice(0, 3).every((o, i) => o.name === control.outputs[i].name), 'the same plant, its own effort added');
   const logger = checkDescription(JSON.parse(py(['--describe', '--mode', 'log'])));
   assert.equal(logger.mode, 'log');
   assert.equal(logger.inputs.length, 0);
@@ -171,7 +173,10 @@ test('the plant script: both modes describe the library systems, any model, and 
   for (const name of ['"R"', '"J"', '"mgl"', '"Tc"', 'seed', 'motor', 'pendulum', 'Oven', 'tank']) assert.ok(!raw.includes(name), `describe does not say ${name}`);
   // --list names every model; the model, the seed and --show-params are for the person at the plant, in --help.
   const list = py(['--list']);
-  for (const e of SYSTEM_LIBRARY.filter((s) => !s.plant.diagram.blocks.some((b) => b.type === 'external'))) assert.ok(list.includes(`${e.name}: in `), e.name);
+  // (but those with vector wires, which the simulator does not offer: robot.md §13)
+  const { EXAMPLE_PLANTS } = await import('../src/core/plants.js');
+  const vectors = new Set(EXAMPLE_PLANTS.filter((e) => e.vectors).map((e) => e.name));
+  for (const e of SYSTEM_LIBRARY.filter((s) => !vectors.has(s.name) && !s.plant.diagram.blocks.some((b) => b.type === 'external'))) assert.ok(list.includes(`${e.name}: in `), e.name);
   const help = py(['--help']);
   for (const opt of ['--model', '--random', '--list', '--detail', '--dyno', '--core', '--mode', '--vary', '--seed', '--show-params', '--log', '--bench', '--no-gui', '--slew']) assert.ok(help.includes(opt), opt);
   assert.match(refusal(['--plant', 'heater']), /--plant is gone: .*--model "Oven, badly tuned"/);

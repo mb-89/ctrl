@@ -2,7 +2,8 @@
 // for the Analysis tab: a frame with linear or logarithmic axes, and helpers
 // to draw curves, points and markers in data coordinates.
 
-import { siUnit, num } from './units.js';
+import { num } from './units.js';
+import { siUnit } from '../core/scale.js';
 import { palette as C } from './palette.js';
 
 

@@ -44,7 +44,7 @@
 // computation (a plan; the tab folds it away), `tune: false` one auto-tune
 // leaves alone.
 
-import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, poleOf } from './design.js';
+import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLinDesign, speedPIDesign, poleOf } from './design.js';
 import { DesignError } from './linearize.js';
 import { planLaw } from './planner.js';
 
@@ -146,7 +146,8 @@ function pidCore(Ts, u0 = 0) {
     kff = Kff; kv = Kv; ka = Ka;
     r2 = r1; r1 = rf;
     const e = rf - y;
-    const v = g.Kp * (g.b * rf - y) + I + D + ff;
+    let v = g.Kp * (g.b * rf - y) + I + D + ff;
+    if (g.uff) v += g.uff;   // a feedforward input (a Controller's ff group: speedPI)
     const u = clamp(v, g.umin, g.umax);
     if (!g.Ki) return u;
     if (g.aw === 'back') {
@@ -296,6 +297,39 @@ export const CONTROLLERS = {
     },
     linear: twinLinear('scheduledPI'),
   },
+  speedPI: {
+    // A PI speed loop per lane of a Controller (robot.md §5): r the speed
+    // target, y the measured speed, ff a feedforward input added to u inside
+    // the limits (as an industrial PIDE's FF input), with gain Kf. Kv and Ki
+    // put a double pole at ω (ζ 1) on the plant each lane sees at the start
+    // state, u0 holds that state (design.js, speedPIDesign). limit: ±u per
+    // lane, 0 none.
+    label: 'Speed PI from the plant', summary: 'u = Kv e + Ki ∫e + Kf·ff, Kv, Ki from the plant',
+    designed: true, version: 1, computes: ['Kv', 'Ki', 'u0'],
+    params: [
+      num('omega', 'Bandwidth ω', 30, { unit: 'rad/s', positive: true, help: 'the double pole the speed loop gets' }),
+      num('zeta', 'Damping ζ', 1, { positive: true }),
+      num('Kf', 'Feedforward Kf', 1, { help: 'the gain on the ff input; 0 leaves it out' }),
+      { key: 'integral', label: 'Integral', default: 'on', kind: 'choice', options: { on: 'on: PI', off: 'off: P only' } },
+      vec('limit', 'Limit ±u', [0], { min: 0, per: 'lane', help: 'per lane, or one for all; 0: none' }),
+      ...WINDUP,
+    ],
+    design: (p, ctx) => speedPIDesign(p, ctx),
+    make(p, Ts, values) {
+      if (!values) return OFF;
+      const core = pidCore(Ts, values.u0);
+      const lim = (p.limit[(values.lane || 1) - 1] ?? p.limit[0]) || Infinity;
+      const g = { Kp: values.Kv, Ki: values.Ki, Kd: 0, Tf: 0, b: 1, umin: -lim, umax: lim, aw: p.aw, Tt: p.Tt, uff: 0 };
+      return { step: (x) => { g.uff = p.Kf * (x[2] ?? 0); return core(x[0], x[1] ?? 0, g); } };
+    },
+    linear(p, Ts, at, values) {
+      if (!values) throw noDesign('speedPI');
+      const m = at?.y?.length || 1;
+      const lin = pidLinear({ Kp: values.Kv, Ki: values.Ki, Kd: 0, Tf: 0, b: 1 }, Ts, m);
+      if (m >= 2) lin.D[0][2] = p.Kf;
+      return lin;
+    },
+  },
   pidFF: {
     // A PID whose reference feedforward is computed from the plant this block
     // sees (designs-in-the-page.md §15; design.js, feedforwardDesign): the
@@ -404,6 +438,35 @@ export const CONTROLLERS = {
       return { ...staticLinear(0, Array.from(values.K.subarray(j * m, (j + 1) * m))), note: `the plan's gains at sample ${j} of ${steps} (t = ${((j + Math.round(p.start / Ts)) * Ts).toFixed(2)} s), frozen: along the plan they change every sample` };
     },
   },
+  huLin: {
+    // The Hu–Lin variable gain (design/research/hu-lin.md; design.js,
+    // huLinDesign): LQR gains for Q·ε and R, ε from `low` up to 1, each on
+    // its ellipsoid, nested, inside which its linear law cannot reach the
+    // limits. At each sample the law takes the highest level whose ellipsoid
+    // holds the error, interpolated between two levels (huLinLaw): far from
+    // r the gain is low, and it grows as y nears r, so u stays near the
+    // limit but inside it and the loop never opens. k > 1 is Hu and Lin's
+    // saturated high gain, u = sat(k·K(ε)·e). Every state measured, as LQR.
+    // There is no Copy as numbers: a table of ellipsoids is always computed.
+    label: 'Variable gain (Hu–Lin)', summary: 'u = us·r − K(ε)·(y − ys·r); ε, the gain, grows as y nears r',
+    designed: true, version: 1, computes: ['K', 'S', 'ys', 'us'],
+    params: [
+      ...WEIGHTS,
+      num('low', 'Lowest level ε', 1e-4, { positive: true, max: 1, tune: false, help: 'far from r the weights are ε·Q: smaller reaches farther and starts more gently' }),
+      num('levels', 'Levels', 30, { int: true, min: 2, max: 200, tune: false, help: 'gains between the lowest level and 1, on nested ellipsoids; the law interpolates between them' }),
+      num('k', 'High gain k', 1, { min: 1, help: 'Hu and Lin\'s saturated high gain, u = sat(k·K(ε)·e); 1 keeps u inside the limits' }),
+      num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }),
+      PREFILTER, ...LIMITS,
+    ],
+    design: (p, ctx) => huLinDesign(p, ctx),
+    make(p, Ts, values) { return values ? huLinLaw(p, Ts, values) : OFF; },
+    // Near r the error lies inside the highest level: the LQR there, times k.
+    linear(p, Ts, at, values) {
+      if (!values) throw noDesign('huLin');
+      const K = huLinGain(values, values.N - 1, 0).map((g) => g * p.k);
+      return { ...staticLinear(values.us + K.reduce((s, g, i) => s + g * values.ys[i], 0), K, p.Tr), note: 'the gain near r, where it is highest; farther from r it is lower' };
+    },
+  },
   relay: {
     // On/off control: u0 + d while the error is positive, u0 − d while it is
     // negative, switching only once e passes ±ε (hysteresis), so a noisy
@@ -497,6 +560,52 @@ export const CONTROLLERS = {
     linear() { throw Object.assign(new Error('super-twisting has no linear model: √|s| has infinite slope at s = 0'), { hint: 'analyse another variant (a sliding mode with a boundary layer is linear inside it)' }); },
   },
 };
+
+// The gains of level j, plus lam times the step to level j + 1.
+function huLinGain(v, j, lam) {
+  const K = v.K.slice(j * v.m, (j + 1) * v.m);
+  if (lam) for (let i = 0; i < v.m; i++) K[i] += lam * (v.K[(j + 1) * v.m + i] - K[i]);
+  return K;
+}
+// The level of the error e: eᵀ S_j e, where e lies inside level j's
+// ellipsoid while it is at most ū² (huLinDesign).
+function huLinForm(v, j, e) {
+  const o = j * v.m * v.m;
+  let g = 0;
+  for (let a = 0; a < v.m; a++) for (let b = 0; b < v.m; b++) g += e[a] * v.S[o + a * v.m + b] * e[b];
+  return g;
+}
+// Where e lies among the levels: { j, lam }, the highest level whose
+// ellipsoid holds e (the full gain near r), and how far toward the next it
+// has come (0 on level j's boundary, 1 on level j + 1's). Outside the lowest
+// level: j = 0, lam = 0, the lowest gain (its u may reach the limit there).
+export function huLinLevel(v, e, room) {
+  const lim = room > 0 ? room * room : 0;
+  let above = huLinForm(v, v.N - 1, e);
+  if (above <= lim) return { j: v.N - 1, lam: 0 };
+  for (let j = v.N - 2; j >= 0; j--) {
+    const g = huLinForm(v, j, e);
+    if (g <= lim) return { j, lam: (lim - g) / (above - g) };
+    above = g;
+  }
+  return { j: 0, lam: 0 };
+}
+// The law: u = us·rf − k·K(ε)·(y − ys·rf), held to the limits; ū is the room
+// they leave around us·rf, the input that holds y at rf.
+function huLinLaw(p, Ts, v) {
+  const pre = prefilter(p, Ts), e = new Array(v.m);
+  return {
+    step(x) {
+      const rf = pre(x[0]);
+      for (let i = 0; i < v.m; i++) e[i] = (x[i + 1] ?? 0) - v.ys[i] * rf;
+      const u0 = v.us * rf, { j, lam } = huLinLevel(v, e, Math.min(p.umax - u0, u0 - p.umin));
+      const K = huLinGain(v, j, lam);
+      let u = u0;
+      for (let i = 0; i < v.m; i++) u -= p.k * K[i] * e[i];
+      return clamp(u, p.umin, p.umax);
+    },
+  };
+}
 
 // The sliding variable s = λ·e + ė of both sliding-mode laws, from the inputs
 // [r, y, ẏ]: e = rf − y and ė = ṙf − ẏ, with rf the prefiltered reference and

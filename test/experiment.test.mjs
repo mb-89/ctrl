@@ -570,7 +570,7 @@ test('the sentences say what is true: noise against the room, an edge too near, 
   // not "moves too little" (as first built) but the room, both ways to give it.
   const base = libraryProject('Conical tank');
   const tank = structuredClone(base);
-  tank.system.plant.diagram = varyDiagram(tank.system.plant.diagram, 0.15, 2).diagram;
+  tank.system.plant.diagram = varyDiagram(tank.system.plant.diagram, 0.15, 4).diagram;
   const tk = knownFor(base);
   const tankEnd = end(planExperiment(tk, identifySettings(base, null, { known: tk })), diagramPlant(tank, 'ctrl', { hold: { d: 0 }, noise: 0.001 }));
   assert.match(tankEnd.message, /^h moved 0\.0\d+ m at pushes up to 0\.03 m³\/s, and a larger push could take it beyond half of 'may move within' \(.+ below where it rests\): widen it below -0\.0667 m, or narrow q's range in the Controller tab \(the pushes start at 1 % of it\)$/);

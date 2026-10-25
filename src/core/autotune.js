@@ -137,6 +137,8 @@ export function tuneContext(project, path) {
   const hit = (key && all.find((c) => c.key === key)) || all[0];
   if (!hit) throw new Error('there is no Controller block in the plant');
   const { block } = hit;
+  // A Controller with lanes (robot.md §5) runs one law per lane; a lane at a time is not built yet.
+  if (block.params.lanes > 1) throw new Error(`${hit.where} has ${block.params.lanes} lanes, and Auto-tune does not tune a Controller with lanes yet. Set its variant's design inputs in the Controller tab (they hold for every lane), and read each lane's loop in the Analysis tab`);
   if (block.params.inputs < 2) throw new Error(`${hit.where} needs r on input 1 and the measurement y on input 2`);
   // The cost and the experiments read r and y at the block: both must be wired.
   const { level } = locate(plant.diagram, hit.path);
@@ -309,6 +311,7 @@ const UNTUNABLE = {
   swingUp: 'A swing-up switches between pumping energy and catching the pole; its gains do not act on r − y. Tune its catching gains as a State feedback variant.',
   relay: 'A relay has no gains to tune; the relay method uses one to find Ku and Pu.',
   trajectory: 'A planned swing-up follows a plan computed from the plant: it has no gains of its own to tune. Change its inputs (T, Q, R) in the Controller tab.',
+  huLin: 'The variable gain computes its gains from the plant, a table of them on nested ellipsoids: it has none of its own to tune. Change its inputs (Q, R, the lowest level, k) in the Controller tab.',
 };
 // A variant from the plant whose design has no numbers to start from.
 const undesigned = (v) => `${CONTROLLERS[v.type].label} computes its numbers from the plant, and has none now; see its Computed box in the Controller tab, or tune a hand variant`;

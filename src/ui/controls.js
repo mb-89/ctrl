@@ -3,8 +3,8 @@
 // ("20m", "100 ms", "-0.4").
 
 import { createDial } from './dial.js';
-import { siUnit, num, parseSI } from './units.js';
-import { step125 } from '../core/scale.js';
+import { num, parseSI } from './units.js';
+import { siUnit, step125 } from '../core/scale.js';
 import { withAboveNoise } from '../core/project.js';
 
 export function createControls(root, app) {

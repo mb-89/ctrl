@@ -25,6 +25,7 @@ import { createRecord } from './record.js';
 import { createSpeed } from './speed.js';
 import { speedToJson } from '../core/speed.js';
 import { startLimited } from './limited.js';
+import { startBridge, mcpFiles, mcpZip, MCP_ZIP } from './bridge.js';
 
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
@@ -113,6 +114,19 @@ function startApp() {
     pumpDesigns();
     return acq;
   }
+  // What the screen's run reported (simulateSystem's info, or the loop
+  // path's): its validity reports, warnings, steps, step bound and time.
+  // The status line shows the first report, else the first warning.
+  app.runInfo = () => {
+    const info = acquire().info;
+    if (!info) return null;
+    const { h, substeps, steps, bound, stiffness, ms, warnings = [], validity = [] } = info;
+    return structuredClone({ validity, warnings, h, substeps, steps: steps ?? null, bound: bound ?? null, stiffness: stiffness ?? null, ms: ms ?? null });
+  };
+  app.runNote = () => {
+    const info = acq?.info;
+    return info?.validity?.[0]?.says ?? info?.warnings?.[0] ?? null;
+  };
   function simulateScreen(p) {
     loopNote = '';
     app.systemError = '';
@@ -123,31 +137,33 @@ function startApp() {
       // A variant from the plant still says why it is refused (no model of
       // a plant outside the page).
       try { app.designStatuses = designSystem(p, { designs }); } catch (err) { app.systemError = err.message; }
-      return { t: new Float64Array(0), signals: Object.fromEntries(channelNames(p).map((n) => [n, new Float64Array(0)])) };
+      return { t: new Float64Array(0), signals: Object.fromEntries(channelNames(p).map((n) => [n, new Float64Array(0)])), info: null };
     }
     if (loopReady(p)) {
       const { t, r } = referenceTrace(p);
       const signals = { r };
+      let info = null;
       const cand = p.candidates[Math.max(0, p.selected ? p.candidates.findIndex((c) => c.name === p.selected) : 0)] ?? p.candidates[0];
       try {
         const { result } = evaluateCandidate(p, cand);
         Object.assign(signals, { y: result.y, u: result.u, e: result.e, ym: result.ym, d: result.d });
+        info = result.info;
         loopNote = `loop: ${cand.name}`;
       } catch (err) { app.systemError = err.message; }
-      return { t, signals };
+      return { t, signals, info };
     }
     // No controller yet: the diagram is the whole system. If it cannot run,
     // the signals still show and the Plant tab says why.
     try {
       const sys = evaluateSystem(p, { designs });
       app.designStatuses = sys.info.designs ?? [];
-      return { t: sys.t, signals: sys.signals };
+      return { t: sys.t, signals: sys.signals, info: sys.info };
     } catch (err) {
       app.systemError = err.message;
       const signals = {};
       let t = null;
       for (const name of Object.keys(p.system.signals)) { const tr = referenceTrace(p, name); signals[name] = tr.r; t = tr.t; }
-      return { t, signals };
+      return { t, signals, info: null };
     }
   }
   // How fast this page simulates the screen: its simulated seconds over the
@@ -191,7 +207,7 @@ function startApp() {
     if (JSON.stringify(simOf(p)) !== JSON.stringify(ctx.sim) || JSON.stringify(p.system.signals) !== JSON.stringify(ctx.signals)) return;
     if (JSON.stringify(withVariant(p.system.plant.diagram, ctx.path, variant)) !== JSON.stringify(withVariant(ctx.diagram, ctx.path, variant))) return;
     acqKey = acqKeyOf(p);
-    acq = { t: run.t, signals: run.signals };
+    acq = { t: run.t, signals: run.signals, info: run.info ?? null };
     loopNote = '';
     app.systemError = '';
   }
@@ -347,16 +363,21 @@ function startApp() {
     app.endEdit();
     autosave();
   };
-  // Signal values at the scope's current instant, for 2D views.
-  app.sceneEnv = () => {
+  // The recorded arrays and the index of the scope's current instant, for
+  // views that draw more than one instant (a 3D view's paths); k is null
+  // when nothing is recorded yet.
+  app.sceneRecord = () => {
     const data = live?.data() ?? acquire();  // live: the sweep on the screen
     const t = display.time();
+    if (!(data?.t?.length > 1)) return { data: null, k: null, t };
+    const k = Math.max(0, Math.min(data.t.length - 1, Math.round((t - data.t[0]) / (data.t[1] - data.t[0]))));
+    return { data, k, t: data.t[k] };
+  };
+  // Signal values at the scope's current instant, for 2D views.
+  app.sceneEnv = () => {
+    const { data, k, t } = app.sceneRecord();
     const env = { t };
-    if (data?.t?.length > 1) {
-      const k = Math.max(0, Math.min(data.t.length - 1, Math.round((t - data.t[0]) / (data.t[1] - data.t[0]))));
-      env.t = data.t[k];
-      for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
-    }
+    if (data) for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
     return env;
   };
   // A Sink's new name follows into the channels that showed it.
@@ -489,6 +510,7 @@ function startApp() {
     endEdit: () => app.endEdit(),
     onTime: () => app.onScopeTime?.(),
     liveTag: () => live?.tag(),
+    runNote: () => app.runNote(),
     speed: () => speed.effective(),
     simRate: () => app.simRate({ retime: true }),
     onSweep: (t, seconds) => speed.ran(t, seconds),
@@ -677,6 +699,42 @@ function startApp() {
   $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html', 'use Copy HTML')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
   $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
+  $('dl-plant').addEventListener('click', () => live.api.downloadPlant());
+  const serverFiles = () => mcpFiles($('lt-script').textContent, exportHtml());
+  $('dl-mcp').addEventListener('click', async () => {
+    if (await download(MCP_ZIP, new Blob([mcpZip(serverFiles())], { type: 'application/zip' }), 'application/zip', 'loopTuner.mcpFiles() has its files as text')) toast(`Saved ${MCP_ZIP}: unzip it and run runme.sh (Linux, macOS) or runme.cmd (Windows); its README says how to register it with your agent.`);
+  });
+  // Export ▾: a menu of the file keys above; one menu open at a time.
+  const xBtn = $('export-menu'), xPop = $('export-pop');
+  const xItems = () => [...xPop.querySelectorAll('[role="menuitem"]')].filter((b) => !b.hidden);
+  function closeExport(focusButton = false) {
+    if (xPop.hidden) return;
+    xPop.hidden = true;
+    xBtn.setAttribute('aria-expanded', 'false');
+    if (focusButton) xBtn.focus();
+  }
+  function openExport() {
+    document.dispatchEvent(new MouseEvent('click'));
+    xPop.hidden = false;
+    fitPopover(xPop);
+    xBtn.setAttribute('aria-expanded', 'true');
+    xItems()[0]?.focus();
+  }
+  xBtn.addEventListener('click', (e) => { e.stopPropagation(); if (xPop.hidden) openExport(); else closeExport(); });
+  xBtn.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); openExport(); } });
+  xPop.addEventListener('click', (e) => { e.stopPropagation(); if (e.target.closest('[role="menuitem"]')) closeExport(); });
+  xPop.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    const list = xItems(), i = list.indexOf(document.activeElement);
+    const go = (k) => { e.preventDefault(); list[(k + list.length) % list.length].focus(); };
+    if (e.key === 'ArrowDown') go(i + 1);
+    else if (e.key === 'ArrowUp') go(i - 1);
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(list.length - 1);
+    else if (e.key === 'Escape') { e.preventDefault(); closeExport(true); }
+    else if (e.key === 'Tab') closeExport();
+  });
+  document.addEventListener('click', () => closeExport());
   $('open').addEventListener('click', () => $('file').click());
   $('file').addEventListener('change', async (e) => { const f = e.target.files[0]; if (f) await openFile(f); e.target.value = ''; });
   async function openFile(f) {
@@ -868,6 +926,10 @@ function startApp() {
     },
     // What each running designed variant computed from the plant (status, rows, errors).
     designs: () => { acquire(); return structuredClone(app.designStatuses ?? []); },
+    // What the screen's last run reported: { validity, warnings, h, substeps,
+    // steps, bound, stiffness: { start, end }, ms }; null while nothing runs
+    // offline (a plant outside the page).
+    info: () => app.runInfo(),
     // Resolves, with the statuses, once no design is being computed in the
     // background (a plan) and the display shows the run that uses it.
     whenDesigned: async () => {
@@ -881,6 +943,7 @@ function startApp() {
     // 'initial', { y: [levels] }, { t: seconds }): { plant, ctrl, Ts, … }.
     loopModel: (path, op) => structuredClone(app.loopModel(path, op)),
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
+    mcpFiles: () => serverFiles(),
     live: live.api,  // connect(url), disconnect(), estop(), reset(), hold(on), settings(s), downloadPlant(), plantFiles(), state(): design/output/hil.md
     limited,  // () => { limited, reasons }: ui/limited.js
     record: record.api,  // screen(format), live(format), save(what, format), screenshot(), reference(text, name), clearReferences(), state()
@@ -923,6 +986,8 @@ function startApp() {
   const ui = app.project.ui;
   delete app.project.ui;
   applyUi(ui);
+  // Served by the MCP server (the agentic mode): connect back to it.
+  startBridge(window.loopTuner, { toast });
 }
 
 function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }

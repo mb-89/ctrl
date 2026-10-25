@@ -394,6 +394,28 @@ test('17. varyDiagram with a seed is reproducible and varies only the flagged ph
   assert.ok(Math.abs(res.model.params.kp - kp) < 0.01 * kp, `k′ ${res.model.params.kp} against ${kp}`);
 });
 
+test('17. a masked model (the tank, a cart) varies its physical fields: never g or a start value', () => {
+  const fields = (name, id, seed) => {
+    const { factors, diagram } = varyDiagram(libraryProject(name).system.plant.diagram, 0.15, seed);
+    return { factors: factors.filter((f) => f.path === id), diagram };
+  };
+  const tank = fields('Conical tank', 'tank', 3);
+  assert.deepEqual(tank.factors.map((f) => f.param), ['r0', 'R', 'H', 'a']);
+  assert.ok(tank.factors.every((f) => f.factor >= 0.85 && f.factor <= 1.15 && f.factor !== 1 && f.label.startsWith('tank, ')), tank.factors.map((f) => f.label).join(' | '));
+  const tp = tank.diagram.blocks.find((b) => b.id === 'tank').params;
+  assert.equal(tp.g, 9.81);
+  assert.equal(tp.a, 0.1 * tank.factors.find((f) => f.param === 'a').factor);
+  const cart = fields('Pendulum swing-up', 'cart', 3);
+  assert.deepEqual(cart.factors.map((f) => f.param), ['M', 'm', 'l', 'b']);
+  const cp = cart.diagram.blocks.find((b) => b.id === 'cart').params;
+  assert.equal(cp.g, 9.81);
+  assert.equal(cp.theta0, Math.PI);
+  // A Mechanics part drawn directly flags its mass, length, friction and damping.
+  for (const [type, keys] of Object.entries({ mass: ['m'], rod: ['l', 'm'], rail: ['b'], hinge: ['c'] })) {
+    assert.deepEqual(diagramBlockDef(type).params.filter((q) => q.vary).map((q) => q.key), keys, type);
+  }
+});
+
 // ---- 19. The command line
 
 test('19. node cli.mjs identify prints the sentences; --json parses and gives the same numbers as identify(); --keep stores the record', () => {

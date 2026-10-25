@@ -25,6 +25,7 @@ import {
 } from './fit.js';
 import { cholesky } from './linalg.js';
 import { createStepRunner } from './live.js';
+import { physicalMaskKeys } from './physics.js';
 
 export class IdentifyError extends Error {
   constructor(code, message, hint = '') {
@@ -1183,8 +1184,9 @@ export function twinSubsystem(model, { push = false, noise = true, id = 'twin', 
 // ---- Hide a variation (§13)
 
 // Every physical parameter (flagged vary in the block definitions: masses,
-// lengths, gains, times, friction, areas, a transfer function's denominator)
-// scaled by 1 + share·(2ρ − 1), ρ from a seeded generator, in the order the
+// lengths, gains, times, friction, a transfer function's denominator; and a
+// masked model's physical fields, physicalMaskKeys: a tank's shape, a cart's
+// masses, rods and friction) scaled by 1 + share·(2ρ − 1), ρ from a seeded generator, in the order the
 // blocks are listed (depth first). Two Gain blocks with one value in one
 // subsystem are one physical constant and get one factor (the motor's Kt and
 // Ke, 0.5 each: equal in SI units, or the motor would make energy). Sources,
@@ -1204,7 +1206,22 @@ export function varyDiagram(diagram, share, seed) {
       return drawn.get(kind);
     };
     for (const b of level.blocks) {
-      if (b.type === 'subsystem') { walk(b.diagram, [...path, b.id]); continue; }
+      if (b.type === 'subsystem') {
+        // A masked model (the tank, a cart): its mask's physical fields, each
+        // drawn on its own; the blocks inside refer to them by name.
+        if (b.mask) {
+          const name = b.name ?? b.id;
+          for (const key of physicalMaskKeys(b.mask)) {
+            const x = b.params?.[key];
+            if (!finite(x) || x === 0) continue;
+            const f = 1 + share * (2 * rnd() - 1);
+            b.params[key] = x * f;
+            factors.push({ path: [...path, b.id].join('/'), block: name, param: key, label: `${name}, ${b.mask.find((m) => m.key === key).label}`, value: x, factor: f });
+          }
+        }
+        walk(b.diagram, [...path, b.id]);
+        continue;
+      }
       let def;
       try { def = diagramBlockDef(b.type); } catch { continue; }
       for (const spec of def.params ?? []) {

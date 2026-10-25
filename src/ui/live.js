@@ -64,6 +64,7 @@ export function createLive(app, display, record, panelHost) {
     <p class="note" id="live-mode"></p>
     <details class="lv-set" id="live-settings"><summary class="flabel">Live settings</summary>
       <label class="pf"><span class="flabel">Ramp-in</span><input class="field field-sm" id="live-ramp" aria-label="Ramp-in, % of full scale per second" spellcheck="false" inputmode="decimal"><span class="hint">% of full scale per second: before every loop each reference moves to its first value no faster</span></label>
+      <div class="pf"><span class="flabel">Mode</span><span class="seg" id="live-mode-switch" role="group" aria-label="Who controls the plant"><button type="button" class="btn btn-sm" data-mode="control" aria-pressed="false" title="Control mode: the page's Controller drives the plant's inputs">Page</button><button type="button" class="btn btn-sm" data-mode="reference" aria-pressed="false" title="Reference mode: the plant runs its own controller; the page sends r and records">Plant</button></span><span class="hint">who controls the plant: the page's Controller, or the plant's own (reference mode: the page sends r). Asks the plant to switch while it is stopped</span></div>
       <div id="live-scales"></div>
     </details>
     <p class="note">Agents: <code>loopTuner.help()</code></p>`;
@@ -402,6 +403,21 @@ export function createLive(app, display, record, panelHost) {
     return api.state();
   }
 
+  // The mode switch: the plant changes mode while stopped (a plant that
+  // cannot is started in the other mode instead), and the diagram follows
+  // what it then describes (core/live.js followPorts).
+  async function setMode(mode) {
+    if (!['control', 'reference'].includes(mode)) throw new Error('setMode: "control" or "reference"');
+    if (!external()) { tell('This system has no External plant block.'); return api.state(); }
+    if (!connected()) { tell('Connect the plant first: the mode is the plant\'s, and the page follows what it describes.'); return api.state(); }
+    if (state === 'running' || pending === 'run') { tell('Stop the plant first: its mode changes only while it is stopped.'); return api.state(); }
+    if (modeOf() === mode) return api.state();
+    const r = await ask({ type: 'mode', mode });
+    if (r.error) tell(/no method mode/.test(r.error) ? `This plant cannot switch its mode: start it with --mode ${mode} instead (sh runme.sh --mode ${mode}); the page follows what it describes.` : `The plant did not switch: ${r.error}`);
+    render();
+    return api.state();
+  }
+  $('live-mode-switch').addEventListener('click', (e) => { const b = e.target.closest('[data-mode]'); if (b) setMode(b.dataset.mode); });
   $('live-connect').addEventListener('click', () => { if (on()) disconnect(); else connect(); });
   $('live-reset').addEventListener('click', resetNow);
   $('live-hold').addEventListener('click', () => setHold());
@@ -516,6 +532,8 @@ export function createLive(app, display, record, panelHost) {
     if (document.activeElement !== urlEl) urlEl.value = hit.block.params.url;
     urlEl.disabled = on();
     $('live-mode').innerHTML = modeText();
+    const m = modeOf(), still = connected() && state !== 'running' && pending !== 'run';
+    for (const b of $('live-mode-switch').querySelectorAll('[data-mode]')) { b.setAttribute('aria-pressed', String(b.dataset.mode === m)); b.disabled = !still; }
     renderSettings();
     renderStats();
   }
@@ -575,6 +593,7 @@ export function createLive(app, display, record, panelHost) {
     reset: () => resetNow(),
     hold: (onOff) => setHold(onOff),
     settings: (s) => settings(s),
+    setMode: (mode) => setMode(mode),
     downloadPlant: () => downloadPlant(),
     plantFiles: () => plantFiles(),
     state: () => ({
