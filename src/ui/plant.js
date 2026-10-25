@@ -3,7 +3,8 @@
 // from the library, wired output to input, grouped into subsystems that nest,
 // and subsystems can be saved to the library. See design/output/plant-editor.md.
 
-import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames } from '../core/diagram.js';
+import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames, maskValues, formulaIn } from '../core/diagram.js';
+import { isFormula } from '../core/formula.js';
 import { SYSTEM_LIBRARY } from '../core/systems.js';
 import { num, parseSI } from './units.js';
 import { createScene } from './scene.js';
@@ -39,8 +40,16 @@ function size(b) {
   if (b.type === 'terminator') return [26, 26];
   if (b.type === 'external') return [150, 18 * Math.max(...blockPorts(b)) + 32];  // room for both sides' port labels
   if (b.type === 'switch') { const n = b.params.inputs; return [56, Math.max(40, 18 * n + 8)]; }
+  if (b.type === 'fcn') { const [li, lo] = labelRoom(b); return [130 + li + lo, Math.max(48, 18 * Math.max(...blockPorts(b)) + 12)]; }
   const [ni, no] = blockPorts(b);
   return [130, Math.max(48, 18 * Math.max(ni, no) + 12)];
+}
+// The room an Equations block's port names take inside it, left and right
+// (6.2 canvas units a character).
+function labelRoom(b) {
+  const w = (names) => (names.length ? 10 + 6.2 * Math.max(...names.map((n) => n.length)) : 0);
+  const def = diagramBlockDef(b.type), ins = w(def.inputNames?.(b.params) ?? []), outs = w(outputNames(def, b.params));
+  return b.flip ? [outs, ins] : [ins, outs];
 }
 function geom(b) {
   const [w, h] = size(b);
@@ -266,7 +275,7 @@ export function createPlantEditor(root, app) {
     } else if (b.type === 'gain') {
       const pts = b.flip ? `${b.x + g.w},${b.y} ${b.x + g.w},${b.y + g.h} ${b.x},${cy}` : `${b.x},${b.y} ${b.x},${b.y + g.h} ${b.x + g.w},${cy}`;
       shape = `<polygon class="body" points="${pts}"/>`;
-      text = `<text class="bp" x="${b.x + (b.flip ? g.w * 0.62 : g.w * 0.38)}" y="${cy + 4}" text-anchor="middle">${esc(num(b.params.K, 3))}</text>`
+      text = `<text class="bp" x="${b.x + (b.flip ? g.w * 0.62 : g.w * 0.38)}" y="${cy + 4}" text-anchor="middle">${esc(isFormula(b.params.K) ? b.params.K : num(b.params.K, 3))}</text>`
         + (b.name ? `<text class="bn" x="${cx}" y="${b.y - 5}" text-anchor="middle">${esc(b.name)}</text>` : '');
     } else {
       const round = ['source', 'sink', 'inport', 'outport'].includes(b.type) ? 14 : 5;
@@ -277,7 +286,8 @@ export function createPlantEditor(root, app) {
         text = `<text class="bt" x="${cx}" y="${cy + 4.5}" text-anchor="middle">${esc(title)}</text>`;
       } else {
         const sub = b.type === 'subsystem' ? `${b.diagram.blocks.length} blocks · open ↵` : summary(b);
-        text = `<text class="bt" x="${b.x + 9}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${b.x + 9}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
+        const left = b.x + 9 + (b.type === 'fcn' ? labelRoom(b)[0] : 0);
+        text = `<text class="bt" x="${left}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${left}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
     const outNames = outputNames(def, b.params), inNames = def.inputNames?.(b.params) ?? [];
@@ -286,15 +296,24 @@ export function createPlantEditor(root, app) {
       + g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
       + g.outs.map((p, i) => `<circle class="port out" data-port="out" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('');
     const stack = b.type === 'subsystem' ? `<rect class="stack" x="${b.x + 4}" y="${b.y + 4}" width="${g.w}" height="${g.h}" rx="5"/>` : '';
-    return `<g class="${cls}" data-block="${b.id}">${stack}${shape}${text}${ports}</g>`;
+    const tip = b.type === 'fcn' ? `<title>${esc(b.params.eqs)}</title>` : '';
+    return `<g class="${cls}" data-block="${b.id}">${tip}${stack}${shape}${text}${ports}</g>`;
+  }
+
+  // An Integrator's face: ∫, its K if not 1, its limits when it has them
+  // ("∫ [0, H]") and its start value if not 0.
+  function integratorFace(p) {
+    const v = (x) => (isFormula(x) ? x : num(x, 3));
+    const lim = p.min !== null || p.max !== null ? ` [${p.min === null ? '−∞' : v(p.min)}, ${p.max === null ? '∞' : v(p.max)}]` : '';
+    return `${p.K !== 1 ? `${v(p.K)}·` : ''}∫${lim}${p.x0 !== 0 ? ` · x₀ ${v(p.x0)}` : ''}`;
   }
 
   // The line under a block's title: its formula for physics blocks (their
   // parameters are on the right), else its first parameters, cut to fit.
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector' && b.params[p.key] !== null).slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
-    const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
+    const text = def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? b.params.eqs.split('\n')[0] : b.type === 'integrator' ? integratorFace(b.params) : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector' && b.params[p.key] !== null).slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const room = Math.floor((size(b)[0] - 18 - (b.type === 'fcn' ? labelRoom(b).reduce((a, x) => a + x, 0) : def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
 
@@ -413,11 +432,28 @@ export function createPlantEditor(root, app) {
       const def = diagramBlockDef(b.type);
       let html = `<h3 class="label">${esc(def.label)}</h3><div class="pform">`;
       if (!['source', 'sink', 'inport', 'outport'].includes(b.type)) html += field('name', 'Label', b.name ?? '', 'text', 'optional');
+      // A field holding a formula in the mask's names shows it with its value
+      // here ("l1 → 0.25 m").
+      const values = maskValues(rootDiagram(), path);
+      const valueOf = (x, unit) => { const v = formulaIn(x, values); return `→ ${Number.isFinite(v) ? num(v, 4) : v > 0 ? '∞' : v < 0 ? '−∞' : '?'}${unit && unit !== '1' ? ` ${unit}` : ''}`; };
       for (const p of def.params) {
         if (p.kind === 'hidden') continue;  // set elsewhere (the External block's full scales: Live settings)
         const v = b.params[p.key];
-        const hint = p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}${p.nullable ? ` · empty: ${p.nullable}` : ''}`;
-        html += field(`p:${p.key}`, p.label, p.kind === 'vector' || Array.isArray(v) ? v.join(', ') : p.kind ? v : v === null ? '' : num(v, 6), p.kind ?? 'number', hint);
+        const formulas = p.kind === 'vector' && Array.isArray(v) ? v.filter(isFormula) : !p.kind && isFormula(v) ? [v] : [];
+        const hint = formulas.length ? formulas.map((x) => `${x} ${valueOf(x, Array.isArray(v) ? '' : p.unit)}`).join(' · ') : p.kind === 'vector' ? 'highest power first' : p.kind === 'names' ? 'names, separated by commas' : p.kind === 'eqs' ? 'one per line: name = formula, in the inputs, the names above, the mask\'s parameters and t' : p.kind ? '' : `unit: ${p.unit ?? '1'}${p.nullable ? ` · empty: ${p.nullable}` : ''}`;
+        const text = p.kind === 'vector' || Array.isArray(v) ? v.map((x) => (isFormula(x) ? x : num(x, 6))).join(', ') : p.kind || isFormula(v) ? v : v === null ? '' : num(v, 6);
+        html += field(`p:${p.key}`, p.label, text, p.kind ?? 'number', hint);
+      }
+      // A masked subsystem shows its mask: the parameters every block inside
+      // reads by name.
+      if (b.mask?.length) {
+        html += `</div><h3 class="label">Mask</h3><div class="pform">`;
+        const outer = maskValues(rootDiagram(), path);
+        for (const f of b.mask) {
+          const v = b.params[f.key], range = [f.min !== undefined ? `min ${num(f.min, 6)}` : '', f.max !== undefined ? `max ${num(f.max, 6)}` : ''].filter(Boolean).join(' · ');
+          const shown = isFormula(v) ? `${v} ${(() => { const x = formulaIn(v, outer); return `→ ${Number.isFinite(x) ? num(x, 4) : x > 0 ? '∞' : '−∞'}`; })()}` : '';
+          html += field(`m:${f.key}`, `${f.label}${f.label !== f.key ? ` (${f.key})` : ''}`, isFormula(v) ? v : Number.isFinite(v) ? num(v, 6) : v > 0 ? 'inf' : '-inf', 'number', [shown, `unit: ${f.unit}`, range].filter(Boolean).join(' · '));
+        }
       }
       html += '</div><div class="pbtns">';
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="btn btn-sm" data-act="flip">Flip</button>`;
@@ -447,26 +483,57 @@ export function createPlantEditor(root, app) {
   }
 
   function field(key, label, value, kind, hint) {
-    return `<label class="pf"><span class="flabel">${esc(label)}</span><input class="field field-sm mono" data-f="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false"><span class="hint">${esc(hint)}</span></label>`;
+    // An Equations block's lines are a text area: Enter starts a new line,
+    // Ctrl+Enter or leaving the field commits.
+    const input = kind === 'eqs'
+      ? `<textarea class="field field-sm mono" data-f="${esc(key)}" data-kind="${kind}" rows="${Math.min(8, String(value).split('\n').length + 1)}" spellcheck="false">${esc(value)}</textarea>`
+      : `<input class="field field-sm mono" data-f="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false">`;
+    return `<label class="pf"><span class="flabel">${esc(label)}</span>${input}<span class="hint">${esc(hint)}</span></label>`;
+  }
+
+  // A number typed with an SI prefix, or else a formula in the mask's names
+  // (normalizeDiagram refuses one that reads a name that is not there).
+  const numberOrFormula = (raw) => { const v = parseSI(raw); return Number.isFinite(v) ? v : /^[^<>"{}]{1,80}$/.test(raw) && isFormula(raw) ? raw : NaN; };
+  const valid = (v) => typeof v === 'string' || Number.isFinite(v);
+
+  // The wheel nudges a number field by 5 % (Shift: 1 %), as in the Controller
+  // tab; the display follows at once and the field keeps the focus.
+  function nudge(inp, e) {
+    if (inp.dataset.kind !== 'number') return;
+    const v = parseSI(inp.value.trim());
+    if (!Number.isFinite(v) || v === 0) return;
+    e.preventDefault();
+    inp.value = num(v * (e.shiftKey ? 1.01 : 1.05) ** (e.deltaY < 0 ? 1 : -1), 4);
+    const f = inp.dataset.f;
+    inp.dispatchEvent(new Event('blur'));
+    $(`#pl-props [data-f="${f}"]`)?.focus();
   }
 
   function bindFields(b) {
     $('#pl-props').querySelectorAll('[data-f]').forEach((inp) => {
-      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } });
+      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && (inp.tagName !== 'TEXTAREA' || e.ctrlKey || e.metaKey)) inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } });
+      inp.addEventListener('wheel', (e) => nudge(inp, e), { passive: false });
       inp.addEventListener('blur', () => {
         if (inp.dataset.cancel) { delete inp.dataset.cancel; renderProps(); return; }
         const f = inp.dataset.f, kind = inp.dataset.kind, raw = inp.value.trim();
         if (f === 'libname') { saveName = raw; return; }
-        let value = raw;
+        if (inp.value === inp.defaultValue) return;   // as rendered: a rounded number is not committed
+        let value = kind === 'eqs' ? inp.value : raw;
         const nullable = f.startsWith('p:') && diagramBlockDef(b.type).params.find((p) => p.key === f.slice(2))?.nullable;
         if (kind === 'number' && raw === '' && nullable) value = null;
-        else if (kind === 'number') { value = parseSI(raw); if (!Number.isFinite(value)) { app.toast('Enter a number, e.g. 0.5, 20m, 2k.'); renderProps(); return; } }
-        if (kind === 'vector') { value = raw.split(/[\s,;]+/).filter(Boolean).map(Number); if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas, highest power of s first.'); renderProps(); return; } }
+        else if (kind === 'number') { value = numberOrFormula(raw); if (!valid(value)) { app.toast('Enter a number (0.5, 20m, 2k) or a formula in the mask\'s names (2*m).'); renderProps(); return; } }
+        if (kind === 'vector') { value = raw.split(/[\s,;]+/).filter(Boolean).map(numberOrFormula); if (!value.length || !value.every(valid)) { app.toast('Enter numbers (or formulas) separated by commas, highest power of s first.'); renderProps(); return; } }
         edit((d) => {
           const blk = d.blocks.find((x) => x.id === b.id);
           if (f === 'name') { if (raw) blk.name = raw; else delete blk.name; return; }
+          if (f.startsWith('m:')) { blk.params[f.slice(2)] = value; return; }
           const key = f.slice(2);
           if ((blk.type === 'source' && key === 'signal') || (blk.type === 'sink' && key === 'name')) { renameNamed(blk, value); return false; }
+          // Fewer inputs or outputs of an Equations block drop the wires of the ports that went.
+          if (blk.type === 'fcn' && (key === 'inputs' || key === 'outputs')) {
+            const n = value.split(',').filter((x) => x.trim()).length;
+            d.wires = d.wires.filter((w) => { const e = parseEnd(key === 'inputs' ? w.to : w.from); return e.id !== blk.id || e.port < n; });
+          }
           if (blk.type === 'sum' && key === 'signs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value.length; });
           if (blk.type === 'controller' && key === 'inputs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
           if (blk.type === 'switch' && key === 'inputs') {

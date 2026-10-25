@@ -462,6 +462,7 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .status { display: flex; align-items: center; gap: var(--space-7); font-family: var(--font-mono); font-size: var(--text-sm); white-space: nowrap; overflow: hidden; }
 .status .grow { flex: 1; }
 .status .selline { color: var(--cc); }
+.status .run-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .screen { position: relative; min-height: 0; border-radius: var(--radius-sm); overflow: hidden; background: var(--screen); }
 .screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
 /* The channels under the screen: the same channel keys as in Vertical, with
