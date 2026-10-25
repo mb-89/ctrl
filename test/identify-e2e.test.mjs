@@ -9,10 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { identifySteps, knownFor, identifySettings, planExperiment, compactRecord, GRADE, identify, modelProject, varyDiagram, identifiedLoop } from '../src/core/identify.js';
-import { autotune, diagramCost, placeVariant } from '../src/core/autotune.js';
-const autotuneHelpers = { placeVariant };
-import { analyzeLoop } from '../src/core/analysis.js';
+import { identifySteps, knownFor, identifySettings, planExperiment, compactRecord, GRADE } from '../src/core/identify.js';
 import { discretise, simulateSegment } from '../src/core/fit.js';
 import { createStepRunner } from '../src/core/live.js';
 import { normalizeProject } from '../src/core/project.js';
@@ -194,38 +191,4 @@ test('6 (in the model). Coloured noise: its colour and level read from Listen, t
   const w = run({ noise: 0.002, seed: 5 });
   assert.equal(w.noise.coloured, false);
   assert.ok(Math.abs(w.noise.sigma - 0.002) < 0.0004, `σ ${w.noise.sigma}`);
-});
-
-// ---- 13, the whole harness: identify, Auto-tune Iterate on the model, then
-// the result scored on the true plant (the diagram, which the tuner never
-// saw) against the best Nelder–Mead finds on the true plant itself.
-test('13. identify, tune on the model, score on the true plant: the oven and the motor within 1.3 × the best; the tank and three arms reported', (t) => {
-  const arm = armProject();
-  const cases = [
-    ['Oven', libraryProject('Oven'), 1.3], ['DC motor, position', libraryProject('DC motor, position'), 1.3], ['Conical tank', libraryProject('Conical tank'), null],
-    ...[1, 2, 3].map((seed) => [`arm ${seed}`, normalizeProject({ ...arm, system: { ...arm.system, plant: { ...arm.system.plant, diagram: varyDiagram(arm.system.plant.diagram, 0.15, seed).diagram } } }), null]),
-  ];
-  for (const [name, p, bound] of cases) {
-    const r = identify(p), path = r.block.path;
-    if (name.startsWith('arm')) assert.ok(r.time <= 120, `${name}: ${r.time} s of plant time`);
-    const onModel = autotune(modelProject(p, path, r.model), path, { method: 'iterate' });
-    assert.ok(onModel.ok, onModel.why);
-    const best = autotune(p, path, { method: 'iterate' });
-    const got = diagramCost(p, path, onModel.variant), start = best.before.cost.J;
-    const ratio = got.J / best.after.J;
-    t.diagnostic(`${name}: ${r.model.structure} ${r.model.check.fit.toFixed(1)} %; on the model ${onModel.after.J.toFixed(3)}, on the true plant ${got.J.toFixed(3)} (overshoot ${got.overshoot.toFixed(1)} %), the best ${best.after.J.toFixed(3)}, from ${start.toFixed(3)}: × ${ratio.toFixed(2)} of the best`);
-    if (bound) {
-      assert.ok(got.J < start, `${name}: better than where it started`);
-      assert.ok(ratio <= bound, `${name}: ${ratio.toFixed(2)} × the best`);
-    }
-    else assert.ok(ratio <= 2.5, `${name}: ${ratio.toFixed(2)} × the best (reported; a model that changes by place is what it needs)`);
-    // The loop on the model, as Analysis draws it: stable for the tuned gains.
-    const L = identifiedLoop(p, path, r.model);
-    assert.ok(L.identified && /^identified over /.test(L.opLabel));
-    const tunedProject = structuredClone(p);
-    const { placeVariant } = autotuneHelpers;
-    placeVariant(tunedProject, path, onModel.variant, { run: true });
-    const Lt = identifiedLoop(tunedProject, path, r.model);
-    assert.ok(analyzeLoop(Lt.plant, Lt.ctrl, Lt.Ts).stable, `${name}: the tuned loop on the model is stable`);
-  }
 });

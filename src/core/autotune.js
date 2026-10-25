@@ -131,7 +131,7 @@ export function tuneContext(project, path) {
   // only outputs 0 here, so nothing could be learned from it.
   const ext = externalBlock(plant.diagram);
   if (ext && blockMode(EXTERNAL_BLOCK.normalize(ext.params)) !== 'control') throw new Error(`the plant runs its own controller (External plant ${ext.name ?? ext.id}, reference mode): the page's controllers and Auto-tune are not in the loop`);
-  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, so Auto-tune tunes on its identified model: identify the plant first (Identify tab)`);
+  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, and Auto-tune tunes on an identified model of it: identify the plant first (Identify tab), or tune it live in the Controller tab`);
   const all = controllerBlocks(plant.diagram);
   const key = path ? [].concat(path).join('/') : null;
   const hit = (key && all.find((c) => c.key === key)) || all[0];
@@ -297,15 +297,6 @@ export function runCost(run, key, goal = {}, how = {}) {
   const parts = { error: err, effort, overshoot: OVERSHOOT_WEIGHT * over, saturation: g.saturation * sat / n };
   const J = parts.error + parts.effort + parts.overshoot + parts.saturation;
   return { J: Number.isFinite(J) ? Math.min(J, DIVERGED) : 2 * DIVERGED, diverged: false, parts, overshoot: worst, saturated: sat / n };
-}
-
-// The cost of a variant on a project's own diagram, scaled as a tuning run
-// from its running variant would be: for the score "on the diagram" beside
-// a result tuned on the identified model (identification.md §10).
-export function diagramCost(project, path, variant, goal = {}) {
-  const ctx = tuneContext(project, path), g = { ...GOAL, ...goal };
-  const scales = costScales(runVariant(ctx, ctx.variant), ctx.key, ctx.variant);
-  return variantCost(ctx, normalizeVariant(variant), g, scales);
 }
 
 // The cost of running a variant in the context's experiment.
@@ -1552,15 +1543,15 @@ export function baseName(name) {
 }
 
 // The name for a method's result: "<base> · auto-tuned", "· relay T–L" (by
-// the rule), "· SIMC" or "· SIMC smooth" (by simc). A running variant that
+// the rule), "· SIMC" or "· SIMC smooth" (by simc), then " (model)" when it
+// was tuned on the identified model (model: true). A running variant that
 // already has the name (or a numbered one of it) keeps it: tuning again
 // updates it. Another variant of that name is never overwritten: the new one
 // is numbered.
-// onModel: tuned on the identified model (identification.md §10): "(model)".
-export function resultName(block, method, rule = 'tl', simc = 'tight', { onModel = false } = {}) {
+export function resultName(block, method, rule = 'tl', simc = 'tight', { model = false } = {}) {
   const running = block.variants[block.variant ?? 0];
   const base = baseName(running.name);
-  const suffix = (method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`) + (onModel ? ' (model)' : '');
+  const suffix = (method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`) + (model ? ' (model)' : '');
   const named = (s) => `${base.slice(0, Math.max(0, 40 - s.length))}${s}`;
   const plain = named(suffix);
   if (running.name === plain || (running.name.startsWith(plain) && /^ \d+$/.test(running.name.slice(plain.length)))) return running.name;

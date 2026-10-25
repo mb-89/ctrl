@@ -89,7 +89,7 @@ async function loadCore() {
     return { mods: globalThis.LoopTunerCore, page: () => readFileSync(join(HERE, 'loop-tuner.html'), 'utf8') };
   }
   const mods = {};
-  for (const m of ['project', 'signals', 'autotune', 'ops', 'trace']) mods[`core/${m}.js`] = await import(pathToFileURL(join(HERE, 'src/core', `${m}.js`)).href);
+  for (const m of ['project', 'signals', 'autotune', 'identify', 'ops', 'trace']) mods[`core/${m}.js`] = await import(pathToFileURL(join(HERE, 'src/core', `${m}.js`)).href);
   const { buildHtml } = await import(pathToFileURL(join(HERE, 'build.mjs')).href);
   return { mods, page: buildHtml };
 }
@@ -98,6 +98,7 @@ const { normalizeProject } = CORE.mods['core/project.js'];
 const { normalizeComponent, SIGNALS } = CORE.mods['core/signals.js'];
 const { autotuneSteps, tuneReport, placeVariant, controllerBlocks } = CORE.mods['core/autotune.js'];
 const { parseTrace } = CORE.mods['core/trace.js'];
+const { keptModel, modelTuneSteps } = CORE.mods['core/identify.js'];
 const { parseProject, embedProject, listSystems, findSystem, systemProject, allBlocks, findBlock, projectDesigns, runProject, analyzeProject, autotuneOptions, traceSummary } = CORE.mods['core/ops.js'];
 let basePage = null;
 const pageHtml = (project) => { basePage ??= CORE.page(); return project ? embedProject(basePage, project) : basePage; };
@@ -274,6 +275,7 @@ const tuneArgs = {
   iterations: { type: 'integer', description: 'iterate: at most this many iterations (default 60).' },
   ff: { type: 'boolean', description: 'iterate: also tune the feedforward gains that are 0.' },
   amplitude: { type: 'number', description: 'relay, step: the experiment\'s size, % of the actuator range.' },
+  plant: { type: 'string', enum: ['diagram', 'identified'], description: 'What to tune on: the diagram (default; on the page, the block\'s plant source), or the identified model of the kept test in use (node cli.mjs identify --keep, or the Identify tab\'s Keep) in the plant\'s place with a test push at its input; results "… (model)", scored on the diagram too (plant.onDiagram). The only way for a plant outside the page.' },
 };
 const atArg = {
   description: '"origin" (all states 0, u = 0; default), "initial" (where the run starts), { "y": [levels] } (an equilibrium at these measurement levels, null leaves one free) or { "t": seconds } (a moment of the run).',
@@ -425,7 +427,9 @@ const TOOLS = [
     run: async (a, ctx) => {
       const { name, project } = take(a.project);
       const { path, opts } = autotuneOptions(project, a);
-      const gen = autotuneSteps(project, path, opts);
+      // On the identified model (identification.md §10), as node cli.mjs autotune --plant identified.
+      const kept = a.plant === 'identified' ? keptModel(project, path) : null;
+      const gen = kept ? modelTuneSteps(project, path ?? [kept.key], kept.model, { ...opts, diagram: true }) : autotuneSteps(project, path, opts);
       let step, n = 0, last = Date.now();
       for (;;) {
         step = gen.next();
@@ -442,6 +446,7 @@ const TOOLS = [
       const res = step.value;
       if (res.ok && a.apply) { const p = structuredClone(project); placeVariant(p, res.path, res.variant, { run: res.better }); keep(name, normalizeProject(p)); }
       const rep = tuneReport(res);
+      if (kept && res.push) rep.plant = { on: 'model', test: kept.name, model: kept.model.label, check: kept.model.check?.fit ?? null, grade: kept.model.grade, push: { size: res.push.sign * res.push.size, at: res.push.at }, ...(res.onDiagram ? { onDiagram: { before: res.onDiagram.before.J, after: res.onDiagram.after.J } } : {}) };
       remember('core', name, rep, !!(res.ok && a.apply));
       if (!res.ok) throw new Error(`could not tune ${rep.block}: ${res.why}`);
       return { project: name, applied: !!a.apply, ...rep };
@@ -560,11 +565,11 @@ const TOOLS = [
   },
   {
     name: 'page_autotune', title: 'Auto-tune on the page',
-    description: 'Auto-tunes a Controller block of the page\'s project, as its Auto-tune tab does, and by default applies the result (a variant of its own, running if it scores better; one undo step the user can take back). Refused for an External plant: the page knows only its interface (identify it first). Kept in autotune_history.',
+    description: 'Auto-tunes a Controller block of the page\'s project, as its Auto-tune tab does, and by default applies the result (a variant of its own, running if it scores better; one undo step the user can take back). For an External plant it tunes on the identified model (identify it first in the Identify tab); plant chooses for a simulated one (default: the block\'s plant source). Kept in autotune_history.',
     inputSchema: obj({ ...tuneArgs, apply: { type: 'boolean', description: 'Put the result into the page\'s project (default true).' } }),
     run: async (a) => {
       const goal = Object.fromEntries(['cost', 'effort', 'overshoot'].filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
-      const rep = await pageCall('autotune', [{ block: a.block, method: a.method, goal, rule: a.rule, simc: a.simc, amplitude: a.amplitude === undefined ? undefined : a.amplitude / 100, maxIter: a.iterations, feedforward: !!a.ff, apply: a.apply !== false }], 600000);
+      const rep = await pageCall('autotune', [{ block: a.block, method: a.method, goal, rule: a.rule, simc: a.simc, amplitude: a.amplitude === undefined ? undefined : a.amplitude / 100, maxIter: a.iterations, feedforward: !!a.ff, apply: a.apply !== false, plant: a.plant }], 600000);
       remember('page', 'page', rep, !!(rep.ok && a.apply !== false));
       if (!rep.ok) throw new Error(`could not tune${rep.block ? ` ${rep.block}` : ''}: ${rep.why}`);
       return { applied: a.apply !== false, ...rep };

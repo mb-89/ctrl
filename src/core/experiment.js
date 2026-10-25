@@ -115,6 +115,10 @@ export const EXPERIMENT = {
   // page designs it (identify.js designDiscrimination) and the experiment
   // plays it on the incumbent's output, then a rest of rest × its length.
   discriminate: { rest: 0.5 },
+  // Try on the plant (§11): a step falls back when y strays beyond the
+  // monitor's bound for this long (s); accepted when it used at most `room`
+  // of the room and cost within `cost` of its prediction (g ≥ ease.gMin).
+  tryPlant: { stray: 0.2, room: 0.7, cost: 0.3 },
   // Auto-tune's default goal (autotune.js GOAL, runCost): IAE, effort 0.05,
   // overshoot beyond 10 % at 2 per 100 %, saturation 0.2.
   goal: { effort: 0.05, overshoot: 10, overshootWeight: 2, saturation: 0.2 },
@@ -190,6 +194,25 @@ export function piLaw({ Kp, Ki }, I0, lo, hi, Ts) {
 
 // The integral that makes a PI's first output equal u (a bumpless switch).
 export const bumpless = (g, u, r, y) => u - g.Kp * (r - y);
+
+// The PID Try on the plant runs (§11): controllers.js's PID with setpoint
+// weight 1, no prefilter or feedforward and clamping anti-windup, its
+// derivative on the measurement through a first-order filter Tf: v = Kp e +
+// I + D. Kd 0 is piLaw exactly. Started bumpless (D starts at 0: I = u − Kp e).
+export function pidLaw({ Kp, Ki, Kd = 0, Tf = 0 }, I0, lo, hi, Ts) {
+  let I = I0, D = 0, yPrev = null;
+  return {
+    get I() { return I; },
+    step(r, y) {
+      if (Kd) { if (yPrev === null) yPrev = y; D = (Tf * D - Kd * (y - yPrev)) / (Tf + Ts); yPrev = y; }
+      const e = r - y;
+      const v = Kp * e + I + D;
+      const u = clamp(v, lo, hi);
+      if (Ki && (u === v || Math.sign(Ki * e) !== Math.sign(v - u))) I += Ki * Ts * e;
+      return u;
+    },
+  };
+}
 
 // ---- Scoring a try (§5.4)
 
@@ -1243,10 +1266,84 @@ export function createExperiment(plan) {
     return null;
   }
 
+  // ---- Try on the plant (§11): plan.kind 'try', plan.eased (the PI that
+  // held: { Kp, Ki, tauC, lim }), plan.steps ([{ n, gains: { Kp, Ki, Kd, Tf },
+  // lim, predicted (Δy of the model over the test reference, from rest),
+  // J, room }]), plan.monitor (the |y − ŷ| beyond which a step falls back).
+  // Listen, then the eased-in controller holds y at r(0); each step: a
+  // bumpless switch to its gains, one period of the test reference, a
+  // switch back; it falls back at once when y strays from its prediction
+  // for 0.2 s or leaves the band, and the path ends at the first step that
+  // is not as predicted.
+  function* tryPath() {
+    yield* listen();
+    if (st.done || stopping) return null;
+    if (!inBand(listenInfo.y0)) return finish('outside', `${names.y} is at ${yU(listenInfo.y0)}, outside 'may move within': widen it, or bring the plant inside first`);
+    chips.nudge = '–'; chips.shake = '–';
+    test = testR; check = testR;
+    { let a = Infinity, b = -Infinity; for (const v of test) { a = Math.min(a, v); b = Math.max(b, v); } test.span = b - a > 1e-12 ? b - a : Math.max(Math.abs(r0), 1) * 1e-3; }
+    enter('hold');
+    const g0 = P.eased, lim0 = g0.lim ?? [P.umin, P.umax];
+    switchTo(g0, 'hold', lim0);
+    const s0 = yield* settle(r0, 4 * ((g0.tauC ?? 1) + (g0.theta ?? 0)) + E.hold.slack, `Holding ${names.y} at ${yU(r0)} with the controller that held before`, true);
+    if (s0 === 'left' || s0 === 'away') return finish('band', `${names.y} did not stay in 'may move within' under the controller that held before: the page stopped the plant; identify again`);
+    inc = { gains: g0, tauC: g0.tauC, J: Infinity, n: 0, lim: lim0 };
+    enter('ease');
+    const marks = [];
+    const keepFor = Math.max(1, Math.ceil(E.tryPlant.stray / Ts - 1e-9));
+    for (const step of P.steps) {
+      const status = `Try on the plant, step ${step.n} of ${P.steps.length}`;
+      const s1 = yield* settle(r0, E.ease.settleMax, `${status}: settling`);
+      if (s1 === 'left') return endBand(`${names.y} left 'may move within' before step ${step.n}: the page stopped the plant`);
+      // The bumpless switch to the step's PID.
+      const I = uLast - step.gains.Kp * (r - y);
+      law = pidLaw(step.gains, I, step.lim[0], step.lim[1], Ts);
+      log({ kind: 'law', i, Kp: step.gains.Kp, Ki: step.gains.Ki, umin: step.lim[0], umax: step.lim[1], I, role: 'step' });
+      const iS = i, kS = k, N = test.length, yS = y, pred = step.predicted;
+      rFn = (kk) => test[Math.min(N - 1, kk - kS)];
+      let stray = 0, tripped = null;
+      while (k - kS < N) {
+        if (!inBand(y)) { tripped = 'left'; break; }
+        const j = k - kS, yh = yS + (pred[Math.min(j, pred.length - 1)] - pred[0]);
+        stray = Math.abs(y - yh) > P.monitor ? stray + 1 : 0;
+        if (stray >= keepFor) { tripped = 'stray'; break; }
+        const u = law.step(r, y);
+        meters(u);
+        st.room = roomUsed(y); st.roomMax = Math.max(st.roomMax, st.room);
+        st.status = status;
+        yield u;
+      }
+      const iE = i;
+      // Back to the controller that held, bumplessly, r ramping back to r(0).
+      if (tripped) { ramp = { k0: k, k1: k + Math.max(1, Math.ceil(Math.min(E.ease.recover, 2 * ((g0.tauC ?? 1) + (g0.theta ?? 0))) / Ts - 1e-9)), from: r }; recovering = { k, beyond: beyond(y), inside: 0 }; }
+      aim(r0);
+      switchTo(g0, 'incumbent', lim0);
+      let mark, accepted = false, J = null, gm = null;
+      if (tripped) mark = tripped === 'left' ? '✕ left the range, back to the one that held' : '✕ did not behave as predicted';
+      else {
+        const rr = rec.r.slice(iS, iE), yy = rec.y.slice(iS, iE), uu = rec.u.slice(iS, iE);
+        J = tryCost(rr, yy, uu, { R: test.span, U, lo: P.umin, hi: P.umax }).J;
+        gm = tryMargin(rr, yy, P.band, Math.max(3 * listenInfo.sigma, 2 * listenInfo.q));
+        const used = 1 - gm.gRoom;
+        if (gm.g < E.ease.gMin) mark = gm.gRing !== null && gm.gRing <= gm.gRoom ? '! rang more than predicted' : '! came nearer the edge than predicted';
+        else if (used > E.tryPlant.room) mark = '! used more room than predicted';
+        else if (Math.abs(J - step.J) > E.tryPlant.cost * step.J) mark = J > step.J ? '! cost more than predicted' : '! cost less than predicted';
+        else { mark = '✓ as predicted'; accepted = true; }
+      }
+      marks.push(`step ${step.n} ${mark}`);
+      st.tries.push(mark);
+      log({ kind: 'step', n: step.n, accepted, mark, J, Jpred: step.J, g: gm?.g ?? null, room: gm ? 1 - gm.gRoom : null, i0: iS, iEnd: iE, tripped });
+      if (!accepted) break;
+    }
+    const good = marks.filter((x) => x.includes('✓')).length;
+    return finish('done', `Tried on the plant: ${good} of ${P.steps.length} steps as predicted; the plant is stopped`);
+  }
+
   // ---- The whole test
 
   function* program() {
     if (P.kind === 'recheck') return yield* recheck();
+    if (P.kind === 'try') return yield* tryPath();
     yield* listen();
     if (st.done || stopping) return null;
     const L = listenInfo;
