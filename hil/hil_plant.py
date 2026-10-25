@@ -888,7 +888,7 @@ def main():
     p.add_argument("--setpoint", type=float, default=None, help="--mode log: the setpoint it holds (default: 1 rad, 50 °C)")
     p.add_argument("--host", default="127.0.0.1", help="address to listen on (default 127.0.0.1: this computer only)")
     p.add_argument("--port", type=int, default=8765, help="port (default 8765)")
-    p.add_argument("--rate", type=float, default=100.0, help="cycle rate in Hz (default 100; tested up to 1000)")
+    p.add_argument("--rate", type=float, default=100.0, help="cycle rate in Hz (default 100; up to 200 measured sound with the default watchdog; at 500 or 1000 raise --watchdog and expect late cycles)")
     p.add_argument("--watchdog", type=int, default=10, help="E-stop after this many cycles without u (default 10)")
     p.add_argument("--slew", type=float, default=0.0, metavar="PCT",
                    help="limit how fast each input may change, in %% of its range per second (default 0: no limit; the page ramps in at 10 %%/s itself)")

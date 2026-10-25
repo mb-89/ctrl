@@ -254,7 +254,7 @@ export function liveKey(key, { link, latched = false, display = 'stop' } = {}) {
 export function createLiveLoop(post, env = globalThis) {
   const now = () => env.performance.now();
   let ws = null, desc = null, runner = null, program = null;
-  let running = false, latched = null, lastY = 0, watchdog = 0;
+  let running = false, latched = null, lastY = 0, watchdog = 0, armed = false;
   let stats = null, plantStatus = null, lastStats = 0;
   const empty = () => ({ t: [], rt: [], values: [] });
   let batch = empty(), lastFlush = 0, names = [], lastRamp = null;
@@ -290,12 +290,18 @@ export function createLiveLoop(post, env = globalThis) {
   function stopWatchdog() { if (watchdog) env.clearInterval(watchdog); watchdog = 0; }
   // The page's watchdog: no y for the plant's watchdog cycles means the plant
   // is silent; the controller stops (no more u) until Reset.
+  // It counts from the run's first y (or from start's answer, or a second
+  // after Run at the latest), so a plant that takes a moment to start its
+  // clock is not taken for a silent one.
   function startWatchdog() {
     stopWatchdog();
     lastY = now();
+    const armAt = lastY + 1000;
+    armed = false;
     const cycles = desc?.watchdog ?? WATCHDOG_CYCLES;
     watchdog = env.setInterval(() => {
       if (!running || latched) return;
+      if (!armed) { if (now() < armAt) return; armed = true; }
       const w = pageWatchdog({ now: now(), lastY, rateHz: desc.rate_hz, cycles });
       if (w.trip) {
         latch('page', `plant silent for ${w.silent} cycles`);
@@ -322,6 +328,7 @@ export function createLiveLoop(post, env = globalThis) {
   function onY(m) {
     const at = now();
     lastY = at;
+    armed = true;
     if (!runner || !running) return;
     let res;
     try { res = runner.step(m.t, m.y, !!latched); } catch (err) { latch('page', `the diagram failed: ${err.message}`); call('estop', { reason: 'the page\'s diagram failed' }).catch(() => {}); return; }
@@ -368,6 +375,7 @@ export function createLiveLoop(post, env = globalThis) {
     begin('page');
     // y may come before start's answer: they are answered and counted.
     try { await call('start', startParams(runner.log)); } catch (err) { halt(); throw err; }
+    if (running && !armed) { armed = true; lastY = now(); }
     say('running', desc.name);
   }
 

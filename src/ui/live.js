@@ -226,9 +226,11 @@ export function createLive(app, display, record, panelHost) {
     const rate = desc?.rate_hz ?? 100;
     const every = Math.max(1, Math.ceil((W * rate) / MAX_SWEEP));
     const cap = Math.ceil((W * rate) / every) + 2;
-    if (sweep?.n) done = view(sweep);
+    // A finished sweep of the run is done (it ends a Single); one of the
+    // first ramp only fades behind.
+    if (sweep?.n) { if (sweep.ramp) earlier = view(sweep); else done = view(sweep); }
     const start = sweepStart(t, w0, W);
-    sweep = { w0, W, start, offset: tp - (w0 + (t - start)), every, k: 0, n: 0, cap, t: new Float64Array(cap), cols: names.map(() => new Float64Array(cap)) };
+    sweep = { w0, W, start, ramp: inRamp, offset: tp - (w0 + (t - start)), every, k: 0, n: 0, cap, t: new Float64Array(cap), cols: names.map(() => new Float64Array(cap)) };
   }
   function addSample(t, tp, vals) {
     const [w0, W] = windowOf();
@@ -315,9 +317,11 @@ export function createLive(app, display, record, panelHost) {
   function key(k) {
     const a = liveKey(k, { link: linkState(), latched: !!estop, display: display.mode });
     if (a.why) app.toast(a.why);
-    if (a.display === 'stop' && hold) setHold(false);
+    if (a.display !== 'run' && hold) setHold(false);
     if (a.display && (a.display !== display.mode || a.restart)) display.setMode(a.display, { restart: a.restart });
-    if (a.plant === 'start') { cut(); host.post({ type: 'start' }); }
+    // The live feed takes the screen at once, so the scope never sweeps on
+    // its own while the plant starts.
+    if (a.plant === 'start') { cut(); attach(); host.post({ type: 'start' }); }
     if (a.plant === 'stop') host.post({ type: 'stop' });
     render();
   }

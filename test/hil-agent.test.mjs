@@ -276,3 +276,22 @@ test('hil_plant.py --bench measures a run and ends (when it can run here)', asyn
   assert.ok(res.cycles >= 40 && res.answered >= 0.8 * res.cycles, `${res.answered} of ${res.cycles} answered`);
   assert.match(plant.out(), /bench: [\d.]+ Hz of 200 over/);
 });
+
+test('the page\'s watchdog counts from the run\'s first y or start\'s answer, not from the key', async () => {
+  const sys = await HIL_DIAGRAM();
+  const plant = fakePlant();
+  const out = [];
+  const loop = createLiveLoop((m) => out.push(m), plant.env);
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  loop.handle({ type: 'program', diagram: normalizeDiagram(sys.plant.diagram), signals: Object.fromEntries(Object.entries(sys.input.signals).map(([k, v]) => [k, normalizeReference(v)])) });
+  loop.handle({ type: 'connect', url: 'ws://x' });
+  await wait(20);
+  loop.handle({ type: 'start' });
+  await wait(60);
+  assert.ok(!out.some((m) => m.type === 'estop'), 'not yet: 60 ms after start\'s answer');
+  // The plant answered start but sends no y: 10 cycles (100 ms) later the page trips.
+  await wait(150);
+  const trip = out.find((m) => m.type === 'estop');
+  assert.ok(trip && trip.by === 'page' && /plant silent for 1\d cycles/.test(trip.reason), JSON.stringify(trip));
+  assert.ok(plant.sent.some((m) => m.method === 'estop'), 'and asks the plant to E-stop too');
+});
