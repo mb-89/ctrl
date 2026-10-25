@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: 3D is cel shaded, without textures ([input 25](../input/2026-10-25-25-cel-shaded-3d.md))
+
+The person: "we shouldn't use textures ... make it cell shaded and then don't use textures for anything, either solid colors or some creation function ... the thing that blows up sizes is if you use textures or very heavy assets ... cell shaded is a good style for what we are doing. We're mostly going to do tech ... Would cell shading just, it would be a shader, right?"
+- **Every 3D view is cel shaded**: a few flat bands of light per surface (three.js's toon material, which is a shader), dark outlines on silhouettes and hard edges, colours from the design tokens.
+- **No textures, no assets**: shapes are made by code from primitives (boxes, cylinders, spheres, extrusions); the only "texture" allowed is the toon material's light ramp, a handful of bytes made in code at start, never a file. No image, mesh or font files for 3D.
+- Answer to the question: yes, cel shading is a shader. three.js has it built in (the toon material: lighting quantised into bands by a tiny ramp); the outlines are a second, inverted shell drawn in the outline colour, or edge lines; both cost only code. The Canvas2D fallback draws the same look: flat bands and outlines.
+
 ## 2026-10-25 · v2.7: one design system, after review
 
 Two reviews of the design system's first build (no new words from the person; input 10 still applies: "Pick one … the styles are supposed to be semantic"). The r and d keys were found clear; what still broke "one look per meaning" was fixed, with these interpretations:
