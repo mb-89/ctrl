@@ -81,7 +81,7 @@ export function createPlantEditor(root, app) {
         </div>
         <div class="pview" id="pl-view" tabindex="0" aria-label="Diagram canvas: drag blocks in from the library; drag from an output to an input to wire; Shift-drag to select; double-click a subsystem to open it"></div>
         <div class="pview pscenebox" id="pl-scene" hidden></div>
-        <div class="pview pscenebox piface" id="pl-iface" hidden></div>
+        <div class="pview pscenebox" id="pl-iface" hidden></div>
       </section>
       <section class="pprops" aria-label="Block parameters"><div id="pl-props"></div></section>
     </div>`;
@@ -323,19 +323,19 @@ export function createPlantEditor(root, app) {
     render();
   }
 
-  // The interface, as a table an agent can read too (#pl-iface, a row per
-  // port with data-port, data-side and data-kind).
+  // The interface, built from the design system's parts: a readout panel
+  // (.lcd) listing a row per port (.item, laid out as columns), which an
+  // agent reads too (#pl-iface li[data-side][data-port][data-kind]).
   function renderInterface() {
     const hit = externalHit();
     if (!hit) return;
     const f = interfaceOf(EXTERNAL_BLOCK.normalize(hit.block.params));
     const range = (r, unit) => (r ? `${num(r[0], 4)} … ${num(r[1], 4)} ${esc(unit)}` : '–');
-    const row = (side, p) => `<tr data-side="${side}" data-port="${esc(p.name)}" data-kind="${esc(p.kind)}"><td>${side === 'in' ? 'in' : 'out'}</td><th scope="row">${esc(p.name)}</th><td>${esc(p.unit)}</td><td>${range(p.fullScale, p.unit)}</td><td>${side === 'in' ? `safe ${num(p.safe, 4)} ${esc(p.unit)}` : range(p.hard, p.unit)}</td><td>${esc(p.kind)}${p.measures ? ` of ${esc(p.measures)}` : ''}</td></tr>`;
-    $('#pl-iface').innerHTML = `<div class="ifbox"><h3 class="label">Interface of ${esc(hit.block.name ?? hit.block.id)}</h3>
-      <p class="note">All this page knows of the plant: what it described when it last connected (${esc(f.mode)} mode, ${num(f.rate, 4)} Hz). What is inside is a black box, to be identified before tuning.</p>
-      <table class="iftable" data-mode="${esc(f.mode)}"><thead><tr><th></th><th>Port</th><th>Unit</th><th>Full scale</th><th>Hard range / safe</th><th>Kind</th></tr></thead>
-      <tbody>${f.inputs.map((p) => row('in', p)).join('')}${f.outputs.map((p) => row('out', p)).join('')}</tbody></table>
-      <p class="note">Full scale: what the scope spans. Hard range: beyond it the plant stops itself (E-stop). Safe: what an input is set to when the plant stops.</p></div>`;
+    const row = (side, p) => `<li class="item ifrow" data-side="${side}" data-port="${esc(p.name)}" data-kind="${esc(p.kind)}"><span class="chip">${side}</span><span class="mono">${esc(p.name)}</span><span class="hint">${esc(p.unit)}</span><span class="mono">${range(p.fullScale, p.unit)}</span><span class="mono">${side === 'in' ? `safe ${num(p.safe, 4)} ${esc(p.unit)}` : range(p.hard, p.unit)}</span><span class="hint">${esc(p.kind)}${p.measures ? ` of ${esc(p.measures)}` : ''}</span></li>`;
+    $('#pl-iface').innerHTML = `<div class="iface"><h3 class="label">Interface<span class="mono">${esc(hit.block.name ?? hit.block.id)} · ${esc(f.mode)} mode · ${num(f.rate, 4)} Hz</span></h3>
+      <p class="note">All this page knows of the plant: what it described when it last connected. What is inside is a black box, to be identified before tuning.</p>
+      <ul class="list lcd" data-mode="${esc(f.mode)}"><li class="item ifrow hint" aria-hidden="true"><span></span><span>port</span><span>unit</span><span>full scale</span><span>hard range · safe</span><span>kind</span></li>${f.inputs.map((p) => row('in', p)).join('')}${f.outputs.map((p) => row('out', p)).join('')}</ul>
+      <p class="hint">Full scale: what the scope spans. Hard range: beyond it the plant stops itself (E-stop). Safe: what an input is set to when the plant stops.</p></div>`;
   }
 
   // Views come from the project's JSON; the panel only says what is shown.

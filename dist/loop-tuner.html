@@ -378,12 +378,6 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .plant { height: 100%; min-height: 0; display: grid; grid-template-columns: var(--lib-w, 196px) 10px minmax(0, 1fr) 248px; }
 .plant .pcan { margin-right: var(--space-6); }
 .plsplit { cursor: col-resize; }
-#pl-iface.piface { overflow: auto; background: var(--surface); background-image: none; }
-.ifbox { padding: var(--space-4) var(--space-6); }
-.iftable { border-collapse: collapse; font-family: var(--font-mono); font-size: var(--text-sm); margin: var(--space-3) 0; }
-.iftable th, .iftable td { text-align: left; padding: var(--space-1) var(--space-4) var(--space-1) 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
-.iftable thead th { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--ink-3); font-weight: 600; }
-.iftable td:first-child { color: var(--ink-3); }
 .plib, .pprops { min-height: 0; overflow: auto; }
 .plib > div > .label { margin-bottom: var(--space-2); }
 .lgroup { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-4); }
@@ -393,6 +387,10 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .pview { position: relative; min-height: 0; border-radius: var(--radius-lg); border: 1px solid var(--line-strong); overflow: hidden;
   background-color: var(--surface); background-image: radial-gradient(var(--line-strong) 1px, transparent 1.2px); background-size: 20px 20px; }
 .pscenebox { background-image: none; }
+#pl-iface { overflow: auto; }
+.iface { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
+.iface .lcd { flex: none; }
+.ifrow { display: grid; grid-template-columns: 36px 72px 48px 150px 150px minmax(0, 1fr); column-gap: var(--space-5); font-size: var(--text-sm); }
 .pform { display: flex; flex-direction: column; gap: var(--space-3); margin: var(--space-3) 0; }
 .pf { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: var(--space-1) var(--space-4); }
 .pf > .hint { grid-column: 2; }
@@ -9316,7 +9314,7 @@ const GUIDE = {
     '#toast shows a message for 3 s; its data-last keeps the last one.',
     'Run Control: #k-run (Run/Stop), #k-single, #k-auto. The scope\'s status line (#display .status) has data-run, data-live and data-ramp, and says LIVE, CONNECTED, E-STOP and its reason, OFFLINE, HOLD or "ramping to r0: 2.1 s left".',
     'Plant tab, right-hand panel, #live (data-state, data-mode): #live-download (Download the plant (zip)), #live-connect (Connect / Disconnect), #live-reset, #live-hold, #live-url (where the plant listens), #live-status (data-state; while running data-rate, data-rtt, data-missed, data-late; after an E-stop data-reason), #live-mode (what the page sends), #live-ramp and #live-scale-NAME (Live settings).',
-    'Plant tab, a HIL system: Interface (#pl-rep-iface) shows #pl-iface, the plant\'s interface as a table, a row per port (tr with data-side in or out, data-port, data-kind): unit, full scale, hard range (outputs) or safe value (inputs). It is all the page knows of the plant; live.state() has the same.',
+    'Plant tab, a HIL system: Interface (#pl-rep-iface) shows #pl-iface, the plant\'s interface as a readout panel, a row per port (li with data-side in or out, data-port, data-kind): unit, full scale, hard range (outputs) or safe value (inputs). It is all the page knows of the plant; live.state() has the same.',
     'Save ▾ under the screen: #rc-save.',
   ],
   live: {
@@ -13028,7 +13026,7 @@ function createPlantEditor(root, app) {
         </div>
         <div class="pview" id="pl-view" tabindex="0" aria-label="Diagram canvas: drag blocks in from the library; drag from an output to an input to wire; Shift-drag to select; double-click a subsystem to open it"></div>
         <div class="pview pscenebox" id="pl-scene" hidden></div>
-        <div class="pview pscenebox piface" id="pl-iface" hidden></div>
+        <div class="pview pscenebox" id="pl-iface" hidden></div>
       </section>
       <section class="pprops" aria-label="Block parameters"><div id="pl-props"></div></section>
     </div>`;
@@ -13264,12 +13262,11 @@ function createPlantEditor(root, app) {
     if (!hit) return;
     const f = interfaceOf(EXTERNAL_BLOCK.normalize(hit.block.params));
     const range = (r, unit) => (r ? `${num(r[0], 4)} … ${num(r[1], 4)} ${esc(unit)}` : '–');
-    const row = (side, p) => `<tr data-side="${side}" data-port="${esc(p.name)}" data-kind="${esc(p.kind)}"><td>${side === 'in' ? 'in' : 'out'}</td><th scope="row">${esc(p.name)}</th><td>${esc(p.unit)}</td><td>${range(p.fullScale, p.unit)}</td><td>${side === 'in' ? `safe ${num(p.safe, 4)} ${esc(p.unit)}` : range(p.hard, p.unit)}</td><td>${esc(p.kind)}${p.measures ? ` of ${esc(p.measures)}` : ''}</td></tr>`;
-    $('#pl-iface').innerHTML = `<div class="ifbox"><h3 class="label">Interface of ${esc(hit.block.name ?? hit.block.id)}</h3>
-      <p class="note">All this page knows of the plant: what it described when it last connected (${esc(f.mode)} mode, ${num(f.rate, 4)} Hz). What is inside is a black box, to be identified before tuning.</p>
-      <table class="iftable" data-mode="${esc(f.mode)}"><thead><tr><th></th><th>Port</th><th>Unit</th><th>Full scale</th><th>Hard range / safe</th><th>Kind</th></tr></thead>
-      <tbody>${f.inputs.map((p) => row('in', p)).join('')}${f.outputs.map((p) => row('out', p)).join('')}</tbody></table>
-      <p class="note">Full scale: what the scope spans. Hard range: beyond it the plant stops itself (E-stop). Safe: what an input is set to when the plant stops.</p></div>`;
+    const row = (side, p) => `<li class="item ifrow" data-side="${side}" data-port="${esc(p.name)}" data-kind="${esc(p.kind)}"><span class="chip">${side}</span><span class="mono">${esc(p.name)}</span><span class="hint">${esc(p.unit)}</span><span class="mono">${range(p.fullScale, p.unit)}</span><span class="mono">${side === 'in' ? `safe ${num(p.safe, 4)} ${esc(p.unit)}` : range(p.hard, p.unit)}</span><span class="hint">${esc(p.kind)}${p.measures ? ` of ${esc(p.measures)}` : ''}</span></li>`;
+    $('#pl-iface').innerHTML = `<div class="iface"><h3 class="label">Interface<span class="mono">${esc(hit.block.name ?? hit.block.id)} · ${esc(f.mode)} mode · ${num(f.rate, 4)} Hz</span></h3>
+      <p class="note">All this page knows of the plant: what it described when it last connected. What is inside is a black box, to be identified before tuning.</p>
+      <ul class="list lcd" data-mode="${esc(f.mode)}"><li class="item ifrow hint" aria-hidden="true"><span></span><span>port</span><span>unit</span><span>full scale</span><span>hard range · safe</span><span>kind</span></li>${f.inputs.map((p) => row('in', p)).join('')}${f.outputs.map((p) => row('out', p)).join('')}</ul>
+      <p class="hint">Full scale: what the scope spans. Hard range: beyond it the plant stops itself (E-stop). Safe: what an input is set to when the plant stops.</p></div>`;
   }
 
   function renderViewProps() {

@@ -62,7 +62,7 @@ export const GUIDE = {
     '#toast shows a message for 3 s; its data-last keeps the last one.',
     'Run Control: #k-run (Run/Stop), #k-single, #k-auto. The scope\'s status line (#display .status) has data-run, data-live and data-ramp, and says LIVE, CONNECTED, E-STOP and its reason, OFFLINE, HOLD or "ramping to r0: 2.1 s left".',
     'Plant tab, right-hand panel, #live (data-state, data-mode): #live-download (Download the plant (zip)), #live-connect (Connect / Disconnect), #live-reset, #live-hold, #live-url (where the plant listens), #live-status (data-state; while running data-rate, data-rtt, data-missed, data-late; after an E-stop data-reason), #live-mode (what the page sends), #live-ramp and #live-scale-NAME (Live settings).',
-    'Plant tab, a HIL system: Interface (#pl-rep-iface) shows #pl-iface, the plant\'s interface as a table, a row per port (tr with data-side in or out, data-port, data-kind): unit, full scale, hard range (outputs) or safe value (inputs). It is all the page knows of the plant; live.state() has the same.',
+    'Plant tab, a HIL system: Interface (#pl-rep-iface) shows #pl-iface, the plant\'s interface as a readout panel, a row per port (li with data-side in or out, data-port, data-kind): unit, full scale, hard range (outputs) or safe value (inputs). It is all the page knows of the plant; live.state() has the same.',
     'Save ▾ under the screen: #rc-save.',
   ],
   live: {
