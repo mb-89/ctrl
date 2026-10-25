@@ -11434,7 +11434,7 @@ function createView3d(container, opts = {}) {
   const onTheme = () => view.refreshTheme();
   media?.addEventListener?.('change', onTheme);
   const mo = new MutationObserver(onTheme);
-  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
 
   function restyle() {
     buildGrid();

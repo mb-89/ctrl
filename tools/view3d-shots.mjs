@@ -148,6 +148,32 @@ async function main() {
   {
     const { page, ctx } = await open('?theme=light', 820, 640);
     await shot(page, 'narrow-820');
+    // Fly: W held for half a second moves the eye and the target forward.
+    const before = await page.evaluate(() => window.__view.camera.target);
+    await page.focus('.v3d');
+    await page.keyboard.down('w'); await page.waitForTimeout(500); await page.keyboard.up('w');
+    const after = await page.evaluate(() => window.__view.camera.target);
+    report['fly W 0.5 s'] = `target moved ${Math.hypot(...after.map((v, i) => v - before[i])).toFixed(3)} m`;
+    await shot(page, 'fly-w');
+    await ctx.close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 900, height: 600 }, deviceScaleFactor: 2 });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(`dpr2: ${e.message}`));
+    await page.goto(url('?theme=dark'));
+    await page.waitForTimeout(400);
+    await shot(page, 'webgl-dark-dpr2');
+    await ctx.close();
+  }
+  {
+    // The built page itself: it loads with the vendored script, without errors.
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(`dist: ${e.message}`));
+    await page.goto(pathToFileURL(join(ROOT, 'dist/loop-tuner.html')).href);
+    await page.waitForTimeout(800);
+    report['dist page THREE'] = await page.evaluate(() => `${typeof THREE} r${THREE.REVISION}, frozen ${Object.isFrozen(THREE)}, app ${typeof window.loopTuner}`);
     await ctx.close();
   }
   {

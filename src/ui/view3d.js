@@ -885,7 +885,7 @@ export function createView3d(container, opts = {}) {
   const onTheme = () => view.refreshTheme();
   media?.addEventListener?.('change', onTheme);
   const mo = new MutationObserver(onTheme);
-  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
 
   // Everything drawn in the theme's colours or at the robot's scale.
   function restyle() {
