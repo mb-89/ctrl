@@ -69,7 +69,7 @@ export function createControllerTab(host, app) {
           <div id="ct-params" class="pform ctparams"></div>
           <div id="ct-computed" class="lcd cbox" aria-label="Computed from the plant" aria-live="polite" hidden></div>
         </div>
-        <p class="note" id="ct-about"></p>
+        <details class="more" id="ct-aboutbox"><summary class="disclosure label"><span class="chev"></span>About this type</summary><p class="note" id="ct-about"></p></details>
       </section>
       <section class="gcol" aria-label="Controller library">
         <div class="ghead"><h3 class="label">Library</h3></div>
@@ -176,6 +176,7 @@ export function createControllerTab(host, app) {
       : '<p class="note">No parameters.</p>';
     $('#ct-plan')?.addEventListener('toggle', (e) => { planOpen = e.target.open; });
     $('#ct-about').textContent = ABOUT[v.type] ?? '';
+    $('#ct-aboutbox').hidden = !ABOUT[v.type];
     // The library: designs computed from the plant first, then the hand types.
     const types = Object.keys(lib);
     const group = (title, list) => (list.length ? `<h4 class="label">${title}</h4>` + list.map((t) => `<button class="btn btn-block btn-col" data-add="${t}" title="${esc(ABOUT[t] ?? '')}">${esc(lib[t].label)}<span class="btn-note">${esc(lib[t].summary)}</span></button>`).join('') : '');

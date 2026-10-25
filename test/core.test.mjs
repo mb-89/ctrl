@@ -368,6 +368,17 @@ test('controller variants are validated; view captions keep their width', async 
   assert.deepEqual(a[1].pts[2], [1.5, 1]);
 });
 
+test('library: a short bottom line without numbers, the full description one click away and kept by a whole load', async () => {
+  const { SYSTEM_LIBRARY, applySystem } = await import('../src/core/systems.js');
+  for (const e of SYSTEM_LIBRARY) {
+    assert.ok(e.summary && e.summary.length <= 220, `${e.name}: a short summary`);
+    assert.ok(!/\d/.test(e.summary), `${e.name}: no numbers in the summary`);
+    assert.ok(e.notes.length > e.summary.length, `${e.name}: the notes are the full description`);
+    const p = normalizeProject(applySystem(structuredClone(DEFAULT_PROJECT), e, ['input', 'plant', 'controller']));
+    assert.equal(p.notes, e.notes, `${e.name}: a whole load keeps its description`);
+  }
+});
+
 test('library tags: opposite values look different, and a value looks the same on every card', async () => {
   const { SYSTEM_LIBRARY, TAG_TONES, systemTags } = await import('../src/core/systems.js');
   const seen = new Map();

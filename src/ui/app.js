@@ -721,7 +721,7 @@ function startApp() {
       + `<div class="taglegend hint">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
       + `<div class="tagfilter" role="group" aria-label="Filter by tag">${libraryTags().map((t) => chip(t)).join('')}`
       + `<span class="tagcount hint">${tagFilter.size ? `${shown.size} of ${SYSTEM_LIBRARY.length} <button type="button" class="btn btn-sm" data-tagclear>Clear</button>` : `${SYSTEM_LIBRARY.length} systems · click a tag to filter`}</span></div>`
-      + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div><div class="heading">${esc(e.name)}</div><div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="note">${esc(e.notes)}</div></div>
+      + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div><div class="heading">${esc(e.name)}</div><div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="note">${esc(e.summary)}</div>${e.notes ? `<details class="more"><summary class="disclosure label"><span class="chev"></span>Details</summary><div class="note">${e.notes.split('\n\n').map((p) => `<p>${esc(p)}</p>`).join('')}</div></details>` : ''}</div>
       <div class="sysbtns"><button class="btn btn-sm" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="btn btn-sm" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>` : '')).join('');
   }
   renderLibrary();
@@ -766,7 +766,7 @@ function startApp() {
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
     if (e.key === 'Escape' && display.releaseLine()) return;
-    const onControl = e.target.closest?.('button, [role="slider"], a');
+    const onControl = e.target.closest?.('button, [role="slider"], a, summary');
     if (app.tab === 'input' && !(onControl && ['Enter', ' ', 'Tab'].includes(e.key)) && generator.handleKey(e)) { e.preventDefault(); return; }
     const k = e.key.toLowerCase();
     if (k === 'r') app.toggleRun();

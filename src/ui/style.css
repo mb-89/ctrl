@@ -190,6 +190,14 @@ p.note { margin: var(--space-3) 0; }
 .disclosure { display: flex; align-items: center; gap: var(--space-2); width: 100%; margin: var(--space-1) 0; padding: var(--space-1) 0; border: 0; background: none; cursor: pointer; text-align: left; }
 .disclosure .chev { width: var(--space-5); }
 .disclosure:hover { color: var(--ink); }
+/* The same as a native <details class="more">: details one click away,
+   collapsed by default (progressive disclosure); its <summary> is the
+   .disclosure, the chevron drawn from the open state. */
+summary.disclosure { list-style: none; width: max-content; }
+summary.disclosure::-webkit-details-marker { display: none; }
+summary.disclosure .chev::before { content: '▸'; }
+details[open] > summary.disclosure .chev::before { content: '▾'; }
+.more p { margin: 0 0 var(--space-3); }
 
 /* ==== Button: the instrument's key =========================================
    One look for every button. Variants by meaning: default, .btn-danger (it

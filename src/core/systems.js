@@ -10,7 +10,9 @@ export const SYSTEM_PARTS = ['input', 'plant', 'controller'];
 
 function fromPlant(e) {
   return {
-    name: e.name, notes: e.notes ?? '',
+    // Two levels (progressive disclosure): the summary is the bottom line the
+    // library shows; the notes are the full description, one click away.
+    name: e.name, summary: e.summary ?? '', notes: e.notes ?? '',
     input: { signals: structuredClone(e.signals) },
     plant: { type: 'diagram', diagram: structuredClone(e.diagram), ...(e.views ? { views: structuredClone(e.views) } : {}) },
     ...(e.scope ? { scope: structuredClone(e.scope) } : {}),
@@ -129,6 +131,8 @@ export function applySystem(project, entry, parts) {
   const whole = SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k));
   if (whole) {
     p.title = entry.name;
+    // Its full description comes along, so the Plant tab can show it.
+    if (entry.notes) p.notes = entry.notes; else delete p.notes;
     // A whole system brings its controller, or none: candidates an older
     // project carried do not stay behind.
     // Its record step comes along (a library entry may carry sim.sampleTime);

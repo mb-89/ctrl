@@ -189,7 +189,7 @@ export function createPlantEditor(root, app) {
       html += group(g, types.map((t) => { const def = diagramBlockDef(t); return item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="btn-note">${esc(def.formula)}</span>`); }).join(''));
     }
     html += group('My blocks', lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="hint">Select a subsystem and save it here.</div>');
-    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="btn btn-sm btn-block" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.notes} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="btn-note">plant</span></button>` : '')).join(''));
+    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="btn btn-sm btn-block" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.summary} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="btn-note">plant</span></button>` : '')).join(''));
     $('#pl-lib').innerHTML = html;
     $('#pl-lib').querySelectorAll('[data-fold]').forEach((b) => b.addEventListener('click', () => {
       const n = b.dataset.fold;
@@ -343,9 +343,20 @@ export function createPlantEditor(root, app) {
     const v = plantViews()[rep];
     const used = [...new Set((JSON.stringify(v).match(/[A-Za-z_]\w*/g) ?? []).filter((n) => app.signalNames().includes(n)))];
     $('#pl-props').innerHTML = `<h3 class="label">${esc(v.name)}</h3>
-      <p class="note">A ${v.kind === 'svg' ? 'SVG drawing' : '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}. It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>
-      <p class="note">Views are set in the plant's JSON (<code>system.plant.views</code>); the format is in design/output/plant-views.md.</p>`;
+      <p class="note">A ${v.kind === 'svg' ? 'SVG drawing' : '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}.</p>
+      ${about()}${more('view', 'Details', `<p class="note">It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>
+      <p class="note">Views are set in the plant's JSON (<code>system.plant.views</code>); the format is in design/output/plant-views.md.</p>`)}`;
+    keepOpen();
   }
+
+  // Progressive disclosure: what explains rather than decides sits in a
+  // Details control, collapsed until opened; one stays open across renders.
+  const opened = new Set();
+  const more = (key, label, html) => `<details class="more" data-more="${key}"><summary class="disclosure label"><span class="chev"></span>${label}</summary>${html}</details>`;
+  const keepOpen = () => $('#pl-props').querySelectorAll('[data-more]').forEach((d) => { d.open = opened.has(d.dataset.more); });
+  $('#pl-props').addEventListener('toggle', (e) => { const k = e.target.dataset?.more; if (k) { if (e.target.open) opened.add(k); else opened.delete(k); } }, true);
+  // The loaded system's full description (the library's Details).
+  const about = () => (app.project.notes ? more('about', 'About this system', app.project.notes.split('\n\n').map((p) => `<p class="note">${esc(p)}</p>`).join('')) : '');
 
   let compileMsg = '';
   function render() {
@@ -431,7 +442,8 @@ export function createPlantEditor(root, app) {
     box.innerHTML = `<h3 class="label">Plant</h3>
       <p class="note"><b>Sources</b> ${names.sources.map(esc).join(', ') || 'none'} · <b>Sinks</b> ${names.sinks.map(esc).join(', ') || 'none'}</p>
       ${compileMsg ? `<p class="note text-bad">${esc(compileMsg).replace(/\n/g, '<br>')}</p>` : '<p class="note">The diagram is valid.</p>'}
-      <p class="note">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p>`;
+      ${about()}${more('edit', 'How to edit', '<p class="note">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p>')}`;
+    keepOpen();
   }
 
   function field(key, label, value, kind, hint) {

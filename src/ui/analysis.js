@@ -184,12 +184,14 @@ export function createAnalysisTab(host, app) {
     const caveat = m.atLimit ? `${esc(m.plant.input?.label ?? 'u')} is at its limit there: the controller saturates, and the linear loop does not hold` : '';
     const ok = res.stable && !caveat;
     const plural = (k, w) => `${k} ${w}${k > 1 ? 's' : ''}`;
-    $('#an-verdict').innerHTML = (caveat ? `<div><span class="grade text-warn">! not linear here</span> <span class="muted">${caveat}</span></div>` : '')
+    // The verdict; why, in its tooltip. Where the linear loop does not hold
+    // (u at a limit), it says so first and grades nothing.
+    $('#an-verdict').innerHTML = (caveat ? `<span class="grade text-warn" title="${caveat}">! not linear here</span> ` : '')
       + (res.stable
-        ? `<span class="grade ${caveat ? 'text-warn' : 'text-ok'}">${caveat ? 'as linearised: stable' : '✓ stable'}</span> <span class="muted">every closed-loop pole inside the unit circle</span>`
+        ? `<span class="grade ${caveat ? 'text-warn' : 'text-ok'}" title="Every closed-loop pole inside the unit circle">${caveat ? 'as linearised: stable' : '✓ stable'}</span>`
         : res.marginal
-          ? `<span class="grade text-warn">${caveat ? 'as linearised: marginal' : '! marginal'}</span> <span class="muted">${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows</span>`
-          : `<span class="grade text-bad">${caveat ? 'as linearised: unstable' : '✕ unstable'}</span> <span class="muted">${plural(res.Z, 'closed-loop pole')} outside the unit circle</span>`);
+          ? `<span class="grade text-warn" title="${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows">${caveat ? 'as linearised: marginal' : '! marginal'}</span>`
+          : `<span class="grade text-bad" title="${plural(res.Z, 'closed-loop pole')} outside the unit circle">${caveat ? 'as linearised: unstable' : '✕ unstable'}</span>`);
     const rows = [];
     const row = (k, val, extra = '', title = '') => rows.push(`<tr title="${esc(title)}"><th>${k}</th><td>${val}</td><td>${extra}</td></tr>`);
     const factor = (k) => `×${num(k, 3)}`;
@@ -221,14 +223,20 @@ export function createAnalysisTab(host, app) {
     }
     $('#an-kw').innerHTML = rows.join('');
     const dead = res.L.delaySamples ?? [];
+    // What was analysed and any warning stay in view; how the numbers were
+    // made sits behind Details.
     const notes = [
       `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
+      ...(m.warnings ?? []),
+    ];
+    const details = [
       ...(v.spec?.t !== undefined ? [`Scope time t = ${num(v.spec.t, 4)} s, ${FROM[v.from] ?? 'on the scope'}`] : []),
       ...(dead.some((d) => d > 0) ? [`dead time: ${dead.map((d) => `${num(d, 3)} Ts`).join(', ')}, exact (a part of a sample by the modified z-transform)`] : []),
       `Linear: u is assumed inside its limits${Number.isFinite(st?.uPeak) ? ` (in the step u peaks at ${num(st.uPeak, 3)} per unit of r)` : ''}; the step goes through the prefilter on r, which is outside the loop.`,
-      ...(m.warnings ?? []),
     ];
-    $('#an-notes').innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join('');
+    const wasOpen = $('#an-notes details')?.open ?? false;
+    $('#an-notes').innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join('')
+      + `<details class="more"${wasOpen ? ' open' : ''}><summary class="disclosure label"><span class="chev"></span>Details</summary>${details.map((n) => `<div>${esc(n)}</div>`).join('')}</details>`;
   }
 
   // Root locus in the s-plane (s = ln z / Ts) or the z-plane.

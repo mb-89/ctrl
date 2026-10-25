@@ -485,7 +485,7 @@ export function createAutotuneTab(host, app, display) {
     $('#tu-plot').hidden = (s ? s.method : st.method) !== 'iterate';
     $('#tu-ptitle').textContent = s ? `Progress · ${METHODS[s.method].label}` : 'Progress';
     if (!s) {
-      $('#tu-status').innerHTML = `<span class="muted">Press Start. ${st.method === 'iterate' ? 'Each run tried sweeps across the display at the header\'s Speed; at ∞ it computes as fast as it can and shows each improvement.' : 'The display shows the experiment at the header\'s Speed, then the tuned loop.'}</span>`;
+      $('#tu-status').innerHTML = `<span class="muted" title="${st.method === 'iterate' ? 'Each run tried sweeps across the display at the header\'s Speed; at ∞ it computes as fast as it can and shows each improvement.' : 'The display shows the experiment at the header\'s Speed, then the tuned loop.'}">Press Start.</span>`;
       $('#tu-result').innerHTML = '';
       drawPlot(null);
       return;
