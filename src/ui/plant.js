@@ -3,7 +3,7 @@
 // from the library, wired output to input, grouped into subsystems that nest,
 // and subsystems can be saved to the library. See design/output/plant-editor.md.
 
-import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames, maskValues, formulaIn } from '../core/diagram.js';
+import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames, maskValues, formulaIn, equationSheets } from '../core/diagram.js';
 import { isFormula } from '../core/formula.js';
 import { SYSTEM_LIBRARY } from '../core/systems.js';
 import { TEMPLATES } from '../core/physics.js';
@@ -391,7 +391,8 @@ export function createPlantEditor(root, app) {
 
   // Progressive disclosure: what explains rather than decides sits in a
   // Details control, collapsed until opened; one stays open across renders.
-  const opened = new Set();
+  // A World's equations of motion are open until closed.
+  const opened = new Set(['eom-world']);
   const more = (key, label, html) => `<details class="more" data-more="${key}"><summary class="disclosure label"><span class="chev"></span>${label}</summary>${html}</details>`;
   const keepOpen = () => $('#pl-props').querySelectorAll('[data-more]').forEach((d) => { d.open = opened.has(d.dataset.more); });
   $('#pl-props').addEventListener('toggle', (e) => { const k = e.target.dataset?.more; if (k) { if (e.target.open) opened.add(k); else opened.delete(k); } }, true);
@@ -399,6 +400,7 @@ export function createPlantEditor(root, app) {
   const about = () => (app.project.notes ? more('about', 'About this system', app.project.notes.split('\n\n').map((p) => `<p class="note">${esc(p)}</p>`).join('')) : '');
 
   let compileMsg = '';
+  let compiled = null;   // the last compile of the whole diagram (the equations sheets read it)
   function render() {
     renderReps();
     if (rep >= 0) { renderViewProps(); return; }
@@ -414,8 +416,10 @@ export function createPlantEditor(root, app) {
     try {
       const el = compileDiagram(rootDiagram(), 'plant', { standalone: true, laws: false, sources: Object.fromEntries(Object.keys(app.project.system.signals).map((n) => [n, () => 0])) });
       compileMsg = el.warnings.join('\n');
+      compiled = el;
     } catch (err) {
       compileMsg = err.message;
+      compiled = null;
       // A mechanism names its parts (id paths): those here, or the subsystem holding them.
       if (err.blocks) { for (const b of d.blocks) { const at = [...path, b.id].join('/'); if (err.blocks.some((x) => x === at || x.startsWith(`${at}/`))) errs.add(b.id); } }
       else for (const b of d.blocks) if (err.message.includes(b.name ?? b.id)) errs.add(b.id);
@@ -445,6 +449,19 @@ export function createPlantEditor(root, app) {
     path.forEach((id, i) => { const b = cur.blocks.find((x) => x.id === id); parts.push([b?.name ?? id, i + 1]); cur = b?.diagram ?? cur; });
     $('#pl-crumbs').innerHTML = parts.map(([n, depth], i) => (i < parts.length - 1 ? `<button class="btn btn-sm" data-depth="${depth}" title="Back up to ${esc(n)}">${esc(n)}</button><span class="muted">›</span>` : `<span class="heading" aria-current="location">${esc(n)}</span>`)).join('');
     $('#pl-crumbs').querySelectorAll('[data-depth]').forEach((b) => b.addEventListener('click', () => { path = path.slice(0, Number(b.dataset.depth)); sel.clear(); wireSel = -1; render(); }));
+  }
+
+  // The equations of motion (core/sheet.js) of the mechanism a part belongs
+  // to, or of the one a masked subsystem holds; each coefficient's value on hover.
+  function sheetFold(b) {
+    if (!compiled) return '';
+    let sheets;
+    try { sheets = equationSheets(rootDiagram(), compiled); } catch { return ''; }
+    const here = path.join('/'), inside = [...path, b.id].join('/');
+    const found = diagramBlockDef(b.type).part ? sheets.filter((x) => x.idPath === here && x.parts.includes(b.id)) : b.mask?.length ? sheets.filter((x) => x.idPath === inside) : [];
+    if (found.length !== 1) return '';
+    const h = found[0].sheet.html();
+    return more(b.type === 'world' ? 'eom-world' : 'eom', 'Equations of motion', `<div class="eom" data-sheet="${esc(found[0].name)}"><p class="hint">${esc(h.coords)}</p>${h.rows.map((r) => `<p class="mono">${r}</p>`).join('')}<p class="mono">${h.V}</p><p class="mono">${esc(h.T)}</p><p class="hint">Derived from how the parts are joined, in the names of the parameters; hover a coefficient for its value here.</p></div>`);
   }
 
   // Parameters panel
@@ -489,7 +506,9 @@ export function createPlantEditor(root, app) {
       if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="btn btn-sm" data-act="saveok">Save</button><button class="btn btn-sm" data-act="savecancel">Cancel</button></div>`;
       const role = { sink: ' · recorded: pick it as a scope channel source', source: ' · plays the signal made in the Input tab', terminator: ' · ends a signal without recording it', outport: ' · passes the signal up to the enclosing block', inport: ' · takes the signal from the enclosing block', switch: ' · double-click it on the canvas to move to the next input', controller: ` · runs “${esc(b.variants?.[b.variant]?.name ?? '')}”; double-click it to open the Controller tab` }[b.type] ?? '';
       html += `<p class="note">${esc(def.formula)}${role}</p>`;
+      html += sheetFold(b);
       box.innerHTML = html;
+      keepOpen();
       bindFields(b);
       box.querySelectorAll('[data-act]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.act, b)));
       return;

@@ -612,6 +612,9 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .pdiag .jdot { fill: var(--ink-3); stroke: none; cursor: crosshair; }
 .pdiag .join.sel .jdot { fill: var(--accent-ink); }
 #pl-temp { pointer-events: none; }
+/* The equations of motion (ui/plant.js's sheet fold) */
+.eom p { margin: var(--space-1) 0; font-size: var(--text-xs); line-height: 1.5; }
+.eom .coef { text-decoration: underline dotted; cursor: help; }
 /* A plant's 2D view (ui/scene.js) */
 .pscene { position: absolute; inset: 0; width: 100%; height: 100%; }
 .pscene text { font-family: var(--font-mono); }

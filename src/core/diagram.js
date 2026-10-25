@@ -20,6 +20,7 @@ import { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME
 import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
 import { isOldPhysics, expandPhysics } from './physics.js';
 import { MECH_ELEMENTS, isPart, normalizeJoins, mechanisms, mechanismOde, checkCoord } from './mech.js';
+import { equationSheet } from './sheet.js';
 import { OBSERVERS } from './observers.js';
 import { SYNC_DESIGNS, defaultDesigns } from './design.js';
 import { EXTERNAL_BLOCK } from './hil.js';
@@ -273,6 +274,26 @@ export function maskValues(diagram, idPath = []) {
   }
   return scopeMap(scope);
 }
+// The equations sheets of a diagram's mechanisms (sheet.js), from a compile
+// of it (el): [{ idPath (its level), name, parts (ids), sheet }]. Each sheet
+// reads the parts' parameters as written and their values in the masks
+// around them; a joint's input is named by what is wired into it.
+export function equationSheets(diagram, el) {
+  return el.mechanisms.map((m) => {
+    const ids = m.idPath ? m.idPath.split('/') : [];
+    const lv = ids.reduce((d, id) => d.blocks.find((b) => b.id === id).diagram, diagram);
+    const byId = new Map(lv.blocks.map((b) => [b.id, b]));
+    const values = maskValues(diagram, ids);
+    const inputName = (id) => {
+      const w = lv.wires.find((x) => parseEnd(x.to).id === id);
+      const src = w && byId.get(parseEnd(w.from).id);
+      return !src ? null : src.type === 'source' ? src.params.signal : src.type === 'inport' ? (src.name ?? null) : (src.name ?? src.id);
+    };
+    const sheet = equationSheet(m.mechanism, (id) => byId.get(id).params, (text) => formulaIn(text, values), inputName);
+    return { idPath: m.idPath, name: m.name, parts: m.mechanism.parts.map((b) => b.id), sheet, check: () => sheet.check(m.ode.constants) };
+  });
+}
+
 // The value of a number field's formula in those values (NaN if it cannot be had).
 export function formulaIn(src, values) {
   try { return compileFormula(src, (n) => (values.has(n) ? { value: values.get(n) } : null))(new Float64Array(0)); } catch { return NaN; }
