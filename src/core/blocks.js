@@ -31,6 +31,24 @@ const vec = (key, label, def) => ({ key, label, default: def, kind: 'vector' });
 
 const lag = (t) => [t, 1];
 
+// A polynomial in s, highest power first: [0.01, 1] -> "0.01s + 1",
+// [1, 0, 2] -> "s² + 2". paren: in brackets when it has more than one term.
+const SUP = ['', '', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+export function polyText(c, paren = false) {
+  const n = c.length - 1;
+  const terms = [];
+  c.forEach((v, i) => {
+    const k = n - i;
+    if (v === 0) return;
+    const mag = Number(Math.abs(v).toPrecision(4));
+    const coef = k > 0 && mag === 1 ? '' : String(mag);
+    terms.push([v < 0 ? '−' : '+', `${coef}${k > 0 ? `s${SUP[k] ?? `^${k}`}` : ''}`]);
+  });
+  if (!terms.length) return '0';
+  const text = terms.map(([sg, t], i) => (i ? ` ${sg} ${t}` : sg === '−' ? `−${t}` : t)).join('');
+  return paren && terms.length > 1 ? `(${text})` : text;
+}
+
 const BLOCK_LIST = [
   // Reference and disturbance sources
   {
@@ -93,9 +111,11 @@ const BLOCK_LIST = [
     tf: (p) => ({ num: [p.K * p.Tz, p.K], den: [p.Tp, 1], delay: 0 }),
   },
   {
-    type: 'tf', slots: ['controller', 'actuator', 'plant', 'sensor'], label: 'Transfer function', formula: 'num(s) / den(s) · e^(−Ls)',
-    params: [vec('num', 'num', [1]), vec('den', 'den', [1, 1]), num('delay', 'L', 0, 0.001, 100, 'log0', { unit: 's' })],
+    type: 'tf', slots: ['controller', 'actuator', 'plant', 'sensor'], label: 'Transfer function', formula: 'num(s) / den(s) · e^(−T_d·s)',
+    params: [vec('num', 'num', [1]), vec('den', 'den', [1, 1]), num('delay', 'Dead time T_d', 0, 0.001, 100, 'log0', { unit: 's' })],
     tf: (p) => ({ num: p.num, den: p.den, delay: p.delay }),
+    // Its face in the diagram: the transfer function with its coefficients.
+    summary: (p) => `${polyText(p.num)} / ${polyText(p.den, true)}${p.delay > 0 ? ` · e^(−${Number(p.delay.toPrecision(3))}s)` : ''}`,
   },
 
   // Actuators
@@ -124,8 +144,8 @@ const BLOCK_LIST = [
     params: [gain('K', 'K', 1), tau('tau', 'τ', 1)], tf: (p) => ({ num: [p.K], den: lag(p.tau), delay: 0 }),
   },
   {
-    type: 'fopdt', slots: ['plant'], label: 'First order + dead time', formula: 'K e^(−Ls) / (τ s + 1)',
-    params: [gain('K', 'K', 1), tau('tau', 'τ', 1), num('delay', 'L', 0.5, 0.001, 100, 'log0', { unit: 's' })],
+    type: 'fopdt', slots: ['plant'], label: 'First order + dead time', formula: 'K e^(−T_d·s) / (τ s + 1)',
+    params: [gain('K', 'K', 1), tau('tau', 'τ', 1), num('delay', 'Dead time T_d', 0.5, 0.001, 100, 'log0', { unit: 's' })],
     tf: (p) => ({ num: [p.K], den: lag(p.tau), delay: p.delay }),
   },
   {
@@ -158,12 +178,12 @@ const BLOCK_LIST = [
     params: [gain('K', 'K', 1)], tf: (p) => ({ num: [p.K], den: [1], delay: 0 }),
   },
   {
-    type: 'delay', slots: ['sensor'], label: 'Dead time', formula: 'e^(−Ls)',
-    params: [num('delay', 'L', 0.1, 0.001, 100, 'log0', { unit: 's' })], tf: (p) => ({ num: [1], den: [1], delay: p.delay }),
+    type: 'delay', slots: ['sensor'], label: 'Dead time', formula: 'e^(−T_d·s)',
+    params: [num('delay', 'Dead time T_d', 0.1, 0.001, 100, 'log0', { unit: 's' })], tf: (p) => ({ num: [1], den: [1], delay: p.delay }),
   },
   {
-    type: 'lagDelay', slots: ['sensor'], label: 'Lag + dead time', formula: 'e^(−Ls) / (τ s + 1)',
-    params: [tau('tau', 'τ', 0.1), num('delay', 'L', 0.1, 0.001, 100, 'log0', { unit: 's' })],
+    type: 'lagDelay', slots: ['sensor'], label: 'Lag + dead time', formula: 'e^(−T_d·s) / (τ s + 1)',
+    params: [tau('tau', 'τ', 0.1), num('delay', 'Dead time T_d', 0.1, 0.001, 100, 'log0', { unit: 's' })],
     tf: (p) => ({ num: [1], den: lag(p.tau), delay: p.delay }),
   },
 

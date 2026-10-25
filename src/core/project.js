@@ -2,6 +2,8 @@
 // reference and every slot but the controller), how the display is set, the
 // goal, and the candidates. Each candidate holds its own controller and may
 // override any other slot. design/output/project-format.md describes it.
+// For a diagram, sim.sampleTime is the scope's record step (absent: the
+// window / 2000); Controller blocks sample at their own Ts.
 
 import { SLOTS, normalizeBlock } from './blocks.js';
 import { normalizeReference, migrateReferenceBlock, referenceFn, sampleSignal } from './signals.js';
@@ -189,6 +191,8 @@ export function normalizeScope(scope = {}, period, loop = false) {
     ch.on = !!ch.on;
     const f = normalizeFilter(c.filter, `scope.channels[${i}].filter`);
     if (f) ch.filter = f;
+    // A Measure line under the screen (mean, rms, …); absent is off.
+    if (c.measure === true) ch.measure = true;
     return ch;
   });
   const view = normalizeScopeView(scope.view);
@@ -210,7 +214,9 @@ function normalizeFilter(f, where) {
 // spectra (FFT), as one channel's spectrogram, or XY (channel 1 across, the
 // others against it; delta: they draw channel 1 minus themselves); and which
 // channel, if any, has its values on a second axis at the right; the
-// spectrogram's levels per signal (absent: automatic).
+// spectrogram's levels per signal (absent: automatic); aboveNoise: the
+// spectrogram's colour is dB above the local noise instead of dB of the
+// signal's unit, with levels of its own per signal (noiseLevels).
 export const VIEW_MODES = ['time', 'fft', 'spectrogram', 'xy'];
 function normalizeScopeView(v) {
   if (!v || typeof v !== 'object') return null;
@@ -224,6 +230,9 @@ function normalizeScopeView(v) {
   if ([64, 128, 256, 512, 1024].includes(Number(v.size))) out.size = Number(v.size);
   const levels = normalizeLevels(v.levels);
   if (levels) out.levels = levels;
+  if (v.aboveNoise === true) out.aboveNoise = true;
+  const noiseLevels = normalizeLevels(v.noiseLevels);
+  if (noiseLevels) out.noiseLevels = noiseLevels;
   return Object.keys(out).length ? out : null;
 }
 
@@ -249,16 +258,31 @@ function normalizeLevelPair(l) {
 }
 
 // The scope view with one signal's levels set ([floor, ceiling] in dB) or,
-// with null, back to automatic; the other signals' levels are kept.
-export function withLevels(view, source, pair) {
-  const levels = { ...(view?.levels ?? {}) };
+// with null, back to automatic; the other signals' levels are kept. Levels
+// above the noise (dB above the local noise) are kept apart from absolute
+// ones (dB of the unit), in noiseLevels; which ones follows the view's switch
+// unless aboveNoise is given.
+const levelsKey = (aboveNoise) => (aboveNoise ? 'noiseLevels' : 'levels');
+export function withLevels(view, source, pair, aboveNoise = !!view?.aboveNoise) {
+  const key = levelsKey(aboveNoise), levels = { ...(view?.[key] ?? {}) };
   if (pair) levels[source] = pair; else delete levels[source];
-  const out = { ...(view ?? {}), levels };
-  if (!Object.keys(levels).length) delete out.levels;
+  const out = { ...(view ?? {}), [key]: levels };
+  if (!Object.keys(levels).length) delete out[key];
   return out;
 }
-// A signal's levels in the scope view, or null (automatic).
-export const levelsOf = (view, source) => (view?.levels && Object.hasOwn(view.levels, source) ? view.levels[source] : null);
+// A signal's levels in the scope view, or null (automatic): absolute or
+// above the noise, as the view's switch is unless aboveNoise is given.
+export function levelsOf(view, source, aboveNoise = !!view?.aboveNoise) {
+  const l = view?.[levelsKey(aboveNoise)];
+  return l && Object.hasOwn(l, source) ? l[source] : null;
+}
+// The scope view with the spectrogram's colour switched: dB above the local
+// noise (true) or absolute (false, the default: absent).
+export function withAboveNoise(view, on) {
+  const out = { ...(view ?? {}) };
+  if (on) out.aboveNoise = true; else delete out.aboveNoise;
+  return out;
+}
 
 // Every name a scope channel can show: the signals (one per Source) and the
 // diagram's Sinks; with a closed loop from an older file, also its y, u, e, ym, d.

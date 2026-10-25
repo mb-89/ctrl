@@ -74,16 +74,17 @@ test('the page watchdog trips after 10 silent cycles; link statistics count gaps
 });
 
 // r -> Controller (PID on r and angle) -> External (V, load <- d) -> sinks.
-const LOOP = (variant = { name: 'PID', type: 'pid', params: { Kp: 3, Ki: 2, Kd: 0.1, Tf: 0.02, umin: -12, umax: 12 } }) => normalizeDiagram({
+// A law that reads the speed too (sliding mode) gets it on input 3.
+const LOOP = (variant = { name: 'PID', type: 'pid', params: { Kp: 3, Ki: 2, Kd: 0.1, Tf: 0.02, umin: -12, umax: 12 } }, inputs = ['slidingMode', 'superTwisting'].includes(variant.type) ? 3 : 2) => normalizeDiagram({
   blocks: [
     { id: 'r', type: 'source', params: { signal: 'r' } },
     { id: 'd', type: 'source', params: { signal: 'd' } },
-    { id: 'c', type: 'controller', params: { inputs: 2, Ts: 0.01 }, variants: [variant, { name: 'Off', type: 'off' }], variant: 0 },
+    { id: 'c', type: 'controller', params: { inputs, Ts: 0.01 }, variants: [variant, { name: 'Off', type: 'off' }], variant: 0 },
     { id: 'p', type: 'external', params: externalParams(checkDescription(DESC)) },
     { id: 'angle', type: 'sink', params: { name: 'angle' } },
     { id: 'V', type: 'sink', params: { name: 'V' } },
   ],
-  wires: [{ from: 'r', to: 'c' }, { from: 'c', to: 'p' }, { from: 'd', to: 'p:1' }, { from: 'p', to: 'c:1' }, { from: 'p', to: 'angle' }, { from: 'c', to: 'V' }],
+  wires: [{ from: 'r', to: 'c' }, { from: 'c', to: 'p' }, { from: 'd', to: 'p:1' }, { from: 'p', to: 'c:1' }, { from: 'p', to: 'angle' }, { from: 'c', to: 'V' }, ...(inputs > 2 ? [{ from: 'p:1', to: 'c:2' }] : [])],
 });
 const SIGNALS = {
   r: normalizeReference({ period: 10, components: [{ type: 'step', params: { amplitude: 1, time: 0.05 } }] }),
@@ -317,6 +318,8 @@ const LAW_PARAMS = {
   stateFeedback: { K: [2, 0.3], kr: 2, Tr: 0.1, umin: -5, umax: 5 },
   gainScheduled: { at: [0, 1], Kp: [2, 4], Ki: [1, 2], Tr: 0.1, umin: -5, umax: 5 },
   swingUp: { kE: 1, kx: 0.5, kv: 0.5, thetaS: 0.4, umin: -5, umax: 5 },
+  slidingMode: { lambda: 10, K: 12, phi: 2, Tr: 0.1, umin: -12, umax: 12 },
+  superTwisting: { lambda: 10, k1: 4, k2: 44, Tr: 0.1, umin: -12, umax: 12 },
   difference: { Tf: 0.02 },
 };
 

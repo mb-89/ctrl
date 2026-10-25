@@ -15,6 +15,8 @@ function fromPlant(e) {
     plant: { type: 'diagram', diagram: structuredClone(e.diagram), ...(e.views ? { views: structuredClone(e.views) } : {}) },
     ...(e.scope ? { scope: structuredClone(e.scope) } : {}),
     ...(e.ui ? { ui: structuredClone(e.ui) } : {}),
+    // Its record step, when the system needs its own (sim.sampleTime).
+    ...(e.sim ? { sim: structuredClone(e.sim) } : {}),
     tags: systemTags(e),
   };
 }
@@ -34,11 +36,13 @@ function fromPlant(e) {
 // of one kind in the filter row: Disturbance is violet (red is Nonlinear,
 // beside it on three cards), so XY moved to yellow.
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
-const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
+const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
 export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
 const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta',
   PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
+  // Seven of the eight tones are taken by controller tags: this one is set.
+  'Sliding mode': 'red',
   'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
   Disturbance: 'violet', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
   'Reference mode': 'aqua', 'Controller in the plant': 'green',
@@ -115,7 +119,9 @@ export function applySystem(project, entry, parts) {
     p.title = entry.name;
     // A whole system brings its controller, or none: candidates an older
     // project carried do not stay behind.
-    if (!entry.controller) { p.candidates = []; delete p.selected; delete p.goal; p.sim = {}; }
+    // Its record step comes along (a library entry may carry sim.sampleTime);
+    // without one the scope's default applies.
+    if (!entry.controller) { p.candidates = []; delete p.selected; delete p.goal; p.sim = entry.sim ? structuredClone(entry.sim) : {}; }
     if (entry.scope) {
       p.scope = { ...(p.scope ?? {}), channels: structuredClone(entry.scope.channels) };
       if (entry.scope.view) p.scope.view = structuredClone(entry.scope.view); else delete p.scope.view;

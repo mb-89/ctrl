@@ -19,6 +19,8 @@ The person ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md
  └─────┘      └─────┘           └─────┘          └─────┘          └─────┘
 ```
 
+(Arrows: signal wires. ▪ and the plain lines between parts: frame ports and joins.)
+
 - A **World** (gravity g), a **Rail** (the cart's coordinate x and speed v, friction b) carrying the cart, a **Mass** M, then three pairs of **Hinge** θk (rate ωk) and **Rod** lk with its bob mk at the tip.
 - The parts are joined end to end by thick grey **joins** (a point that moves as one; no signal flows on it). Thin signal wires take x, θ1…θ3, v, ω1…ω3 from the Rail and the Hinges to eight Out ports.
 - Each part's face shows its one-line law: Rail "F − b·v", Hinge "θ from upright", Rod "l, m at tip", World "g ↓".
@@ -62,13 +64,13 @@ with constant rail directions d_p and constant lengths L_bj (the rods from hinge
 - M_pj = Cpr_pj·(d_p,x·cos θ_j − d_p,y·sin θ_j), with Cpr_pj = Σ_b m_b·P_bp·L_bj
 - M_jk = Crr_jk·cos(θ_j − θ_k) (+ Σ I on the diagonal), with Crr_jk = Σ_b m_b·L_bj·L_bk
 - Q_p = F_p − b_p·ṡ_p − g·Σ_b m_b·P_bp·d_p,y + Σ_j Cpr_pj·(d_p,x·sin θ_j + d_p,y·cos θ_j)·ω_j²
-- Q_j = Gr_j·sin θ_j − Σ_k Crr_jk·sin(θ_j − θ_k)·ω_k² + τ_j − c_j·(ω_j − ω_base), minus the same of each hinge whose base it carries; Gr_j = g·Σ_b m_b·L_bj
+- Q_j = Gr_j·sin θ_j − Σ_k Crr_jk·sin(θ_j − θ_k)·ω_k² + τ_j − c_j·(ω_j − ω_base), minus the torque τ_i − c_i·(ω_i − ω_j) of each hinge i mounted on the part hinge j turns (the reaction); Gr_j = g·Σ_b m_b·L_bj
 
 M(q)·q̈ = Q is solved by LDLᵀ without pivoting, as the chain block does today. M is positive definite because every joint must move mass (refused otherwise).
 
 - **One state node per mechanism**: an `ode` node with `states`, `init`, `out` (taps: each joint's coordinate and rate), `make` (allocation-free; several inputs through a `uv` Float64Array) and `bound`. Model mode, structural reduction, `linearize.js` and the planner see an ordinary physics node and do not change.
 - **States**: the rails' coordinates, then the hinges' angles, each in block order, then their rates in the same order. Labels `subsystem/coordinate` (`cart and 3 rods/θ1`); units m, rad (angle flag), m/s, rad/s.
-- **bound** (the fastest dynamics, for the step size), from the structure: 4·√(g / l_min·(1 + hinges)) + Σ b / M_pp + Σ c / M_jj, a uniform rod counting 2l/3. Cart–pole 25.1 (the block said 9.8), triple 50.2 (unchanged). Neither changes a step: the record's Ts and the 5 ms cap bind, and the planner keeps 2 substeps per 10 ms.
+- **bound** (the fastest dynamics, for the step size), from the structure: 4·√(g / l_min·(1 + hinges)) + Σ b / M_pp + Σ c / M_jj, a uniform rod counting 2l/3. Cart–pole 25.1 (the block said 9.8), triple 50.2 (unchanged). Neither changes a step: in the simulation the record's Ts and the Controller's sample time bind, and the planner's 5 ms cap keeps 2 substeps per 10 ms.
 - **Refusals**, each a sentence naming the parts: a closed loop ("a mechanism must be a tree"); a part not joined to the World; two Worlds joined; a part joined the wrong way round ("its base (B) goes on the World's side"); a rail on a part that turns; a joint that moves no mass ("put a Mass on it"); two joints with the same coordinate name.
 - `pose(q)` gives every frame's position (for tests and a later view); `describe()` the equations with numbers; `sheet()` the equations in names (§1.6).
 
@@ -243,7 +245,7 @@ The same plan (peak 15.48895 N in both; at sample 100 they differ by 5·10⁻⁸
 | Swing-up | 0.62 → 1.36 | 0.76 → 1.68 | 0.12 → 0.15 | 1.4 → 2.8 kB |
 | Tank | 0.30 → 1.08 | 0.47 → 1.56 | 0.17 → 0.16 | 1.3 → 2.7 kB |
 
-A wheel notch on the triple re-designs and re-simulates in about 35 ms today ([designs.md](designs.md)); this adds about 1.4 ms. Most of it is formula resolution, building the mechanism and hashing a larger diagram. Caching parsed formulas by their text would recover part of it; not needed now.
+A wheel notch on the triple re-designs and re-simulates in about 35 ms today ([designs.md](designs.md), on feat/designs until it is merged); this adds about 1.4 ms. Most of it is formula resolution, building the mechanism and hashing a larger diagram. Caching parsed formulas by their text would recover part of it; not needed now.
 
 ## 5. Agreement, measured
 
@@ -264,9 +266,9 @@ A wheel notch on the triple re-designs and re-simulates in about 35 ms today ([d
 - It keeps the id, name, position and flip. The old parameters, completed with the old defaults, become the mask values; `links` becomes the number of hinge and rod pairs.
 - The port order is the same, so wires such as `cart:3`, the Controllers' measurement order and the Sinks still fit.
 - There is no version bump (the format stays `loop-tuner/2`). A saved file holds the subsystem from then on.
-- The old types, their `ode` definitions and `chainRates` leave ELEMENTS (about 105 lines). A 15-line table of their defaults stays in `physics.js` for the migration. The `ode` node kind stays: mechanisms and the integrator's state use it.
+- The old types, their `ode` definitions and `chainRates` leave ELEMENTS (about 105 lines). A 15-line table of their defaults stays in `physics.js` for the migration. The `ode` node kind stays (mechanisms use it).
 
-**The System library.** `plants.js` builds the three blocks with the generators, for example `{ id: 'cart', name: 'cart and 3 rods', x: 400, y: 60, ...pendulumOnCart(3, { M: 1, m1: 0.1, l1: 0.25, …, theta10: Math.PI, … }) }`. Nothing else in the entries changes.
+**The System library.** `plants.js` builds the three blocks with the generators, for example `{ id: 'cart', name: 'cart and 3 rods', x: 400, y: 60, ...pendulumOnCart(3, { M: 1, m1: 0.1, l1: 0.25, …, theta10: Math.PI, … }) }`. Nothing else in the entries changes (the tank's top schedule level is the merge's, §3).
 - **Tags**: `systemTags` walks subsystems already. Its nonlinear set gains `hinge`, and an Integrator with a limit (a mechanism of rails alone is linear). Equations counts as Function does today.
 - **Other plants** (motor, oven, encoder, sliding mode) are already built from primitives. The HIL plant may stay a black box (the person's rule).
 
@@ -354,12 +356,13 @@ The behaviour test (`core.test.mjs`: the swing-up, the planned triple swing-up w
 5. **Mechanics core.**
    - `core/mech.js`; World, Rail, Hinge, Mass, Rod in ELEMENTS; `joins` in `normalizeDiagram` and the project format; mechanisms in the compile (one `ode` node each); the refusals; the bound.
    - `test/mechanics.test.mjs` with the oracle (§8.2). No library change yet.
-6. **The carts open.**
-   - `cartPole(p)` and `pendulumOnCart(n, p)`; their migration; `plants.js`; `cartPole`, `pendulumCart` and `chainRates` leave ELEMENTS.
+6. **The canvas for mechanics** (§1.7), before any library plant needs it.
+   - Frame ports, joins drawn, the join gesture, Del, mechanism errors outlined, Group refusing to split a mechanism, the Mechanics group, the parts' faces.
+   - Playwright, on a mechanism written in JSON: it draws; unjoin and rejoin a rod (the error, then the run back); Group refusal.
+7. **The carts open.**
+   - `cartPole(p)` and `pendulumOnCart(n, p)`; their migration; `plants.js`; the template group; `cartPole`, `pendulumCart` and `chainRates` leave ELEMENTS.
    - `physics.test.mjs` carried over; the six state-order edits (§8.6); REFERENCE agreement; the planner's time logged (expect about 3.2 s in Node).
-7. **The canvas for mechanics** (§1.7).
-   - Frame ports, joins drawn, the join gesture, Del, mechanism errors outlined, Group refusing to split a mechanism, the Mechanics and template groups, the parts' faces.
-   - Playwright: open the triple's cart; unjoin and rejoin a rod (the error, then the run back); Group refusal; templates insert and run.
+   - Playwright: open the triple's cart; the templates insert and run.
 8. **The equations sheet.**
    - `core/sheet.js` (inclined rails included); the fold in the panel; hover values.
    - Tests §8.4. Browser check: the triple's sheet wraps in the panel and reads as §0.
@@ -382,7 +385,7 @@ Size, from the prototype: about 650 lines of core (`mech` 240, `sheet` 140, `for
 - **Vessel and Orifice parts** (C's original tank): not needed; the tank is primitives.
 - **A fused evaluator for pass-through slices** (A's interpreter). It would bring the open tank's evaluation from 0.57 µs back to about 0.15 µs. Build it when a plant of primitives becomes planner-critical.
 - **Generated JavaScript (`new Function`)**: never. The page's security policy is expected to refuse it, and the project decided on no eval.
-- **A computed step bound for diagrams of primitives** (the Jacobian's eigenvalues at the start state, B's idea). It would not restore the tank's old step: |λ| ≈ 17 at the start level against the block's hand bound of 282 at 1 cm, and near empty the √h has no finite bound. The record's Ts is the knob if the person wants the old accuracy.
+- **A computed step bound for diagrams of primitives** (the Jacobian's eigenvalues at the start state, B's idea). It would not restore the tank's old step: |λ| is about 13–17 at the start level (depending on the inflow) against the block's hand bound of 282 at 1 cm, and near empty the √h has no finite bound. The record's Ts is the knob if the person wants the old accuracy.
 - **Editing masks in the page** (adding, renaming or removing a mask parameter): JSON and templates only for now. "Make this a parameter" on a field is the natural later gesture.
 - **A Mechanics block with M(q), V and Q typed by hand** (B) and **visible integrators with a Linear-solve block** (A): rejected. In both, the physics the person reads is typed, and an edit can silently break conservation. A 6×6 M(q) for the PUMA cannot be typed. Both were slower than C without generated JavaScript (planner 1.2–1.7 times).
 - **A mechanism view from `pose(q)`; views reading mask values** (§7).
@@ -398,4 +401,4 @@ Size, from the prototype: about 650 lines of core (`mech` 240, `sheet` 140, `for
 - **Old projects migrate on load**, keeping ids and ports; the old types are removed (one physics path).
 - **The open tank steps at its record's Ts** (no hand bound); its level moves by up to 0.7 mm against the old run.
 
-Prototype and benchmarks (session scratch, may be gone): `/tmp/claude-0/-home-user-ctrl/281fed85-1c0b-52ae-b29a-1fd26dd76401/scratchpad/tm/` (`proto/src/core/{mech,formula,sheet,physics}.js`, the patched `diagram.js`; `bench/` with `plan.mjs`, `cost.mjs`, `run5.mjs`, `compile.mjs`, `agree.mjs`, `lqr.mjs`, `sheet.mjs`, `physics_open.test.mjs`). C's general solver: `…/scratchpad/c/mech.js`.
+Prototype and benchmarks (session scratch, may be gone): `/tmp/claude-0/-home-user-ctrl/281fed85-1c0b-52ae-b29a-1fd26dd76401/scratchpad/tm/` (`proto/src/core/{mech,formula,sheet,physics}.js`, the patched `diagram.js`; `bench/` with `plan.mjs`, `cost.mjs`, `run5.mjs`, `compile.mjs`, `agree.mjs`, `lqr.mjs`, `sheet.mjs`, `sheetcheck.mjs`, `physics_open.test.mjs`). C's general solver: `…/scratchpad/c/mech.js`.

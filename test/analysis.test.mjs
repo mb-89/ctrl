@@ -62,6 +62,8 @@ test("each linear law's state space reproduces its step() while u is inside its 
     ['gainScheduled', { at: [0, 1], Kp: [1, 3], Ki: [0.5, 2], Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 1],
     ['gainScheduled', { at: [0, 1], Kp: [1, 3], Ki: [0.5, 2], Tr: 0, Kff: 1.2, Kv: 0.2, Ka: 0.01, u0: 0, umin: -Infinity, umax: Infinity }, 1],
     ['swingUp', { kE: 1, kx: 0, kv: 0, l: 0.5, g: 9.81, thetaS: 0.4, K: [-1, -30, -2, -5], kr: -1, umin: -Infinity, umax: Infinity }, 4],
+    // Inside its boundary layer (|s| < φ) a sliding mode is a PD on [y, ẏ].
+    ['slidingMode', { lambda: 10, K: 12, phi: 2, Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 2],
   ];
   for (const [type, p, m] of cases) {
     // About an operating point: the scheduled PI at y = 0.5 sees small moves only.

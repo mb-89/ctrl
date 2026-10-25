@@ -558,7 +558,7 @@ Test files: `test/linearize.test.mjs`, `test/design.test.mjs`, `test/planner.tes
     - The next evaluate equals the sync result bit for bit.
     - A newer key drops the older job; the stale case is used only when `compatible`.
 12. **Guard.**
-    - Library variants use only designed types, `pid` and `off`: no `stateFeedback`, `gainScheduled`, `swingUp` or `luenberger`.
+    - Library variants use only designed types, `pid`, `off`, `slidingMode` and `superTwisting`: no `stateFeedback`, `gainScheduled`, `swingUp` or `luenberger`. The sliding-mode types hold design inputs (λ, φ, limits) and hand gains (K, k1, k2) only (decisions.md, v2.7).
     - No Dead time has a numeric `y0` other than 0.
     - `plants.js` contains no identifier matching `/^K_/`.
 13. **Behaviour test** (existing): passes with the renamed variants: 'Swing-up + LQR catch', 'LQR only', 'Planned swing-up + TV-LQR', 'LQR only (cannot swing up)'.
