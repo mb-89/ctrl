@@ -39,7 +39,7 @@ export function createGenerator(root, app) {
       </section>
       <section class="gcol gparams" aria-label="Parameters">
         <div class="ghead"><h3 class="label" id="g-mode"></h3>
-          <button class="btn btn-sm btn-primary" id="g-add">Add</button>
+          <button class="btn btn-sm" id="g-add">Add</button>
           <button class="btn btn-sm" id="g-cancel">Cancel</button></div>
         <div class="lcd list plist" id="g-plist"></div>
       </section>
@@ -146,7 +146,7 @@ export function createGenerator(root, app) {
 
   // Digits in a 3 × 4 block; Del, Cancel and Enter as a row of small keys under it.
   const PAD = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '±', 'Del', 'Cancel', 'Enter'];
-  $('#g-keypad').innerHTML = PAD.map((k) => `<button class="btn btn-sm ${/^[\d.±]$/.test(k) ? '' : 'fn'}" data-k="${k}">${k}</button>`).join('');
+  $('#g-keypad').innerHTML = PAD.map((k) => `<button class="btn btn-sm" data-k="${k}">${k}</button>`).join('');
   $('#g-keypad').querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => press(b.dataset.k)));
 
   function press(k) {
@@ -215,10 +215,13 @@ export function createGenerator(root, app) {
 
   function fieldRow(f) {
     return `<button class="item pfield" aria-pressed="${f.key === active}" data-key="${f.key}">
-      <span class="pl">${f.label}</span><span class="pv">${valueHtml(f.key)}</span><span class="pu">${f.unit ?? ''}</span></button>`;
+      <span class="pl">${f.label}</span><span class="pv">${valueHtml(f.key)}</span><span class="pu muted">${f.unit ?? ''}</span></button>`;
   }
 
   function renderSignals() {
+    // The signal edited, resolved first (a project may not have the last one),
+    // so its key is lit from the start.
+    app.signalRef();
     const names = app.sourceNames();
     $('#g-sigs').innerHTML = names.map((n) => `<button class="btn btn-block" data-sig="${n}" aria-pressed="${n === app.signal}" title="Edit the signal ${n}, played by the Source blocks named ${n}"><span class="chip">${n}</span>${app.unitOf(n) === '1' ? '' : app.unitOf(n)}</button>`).join('')
       + '<p class="hint">Add a Source block in the Plant tab for another signal.</p>';

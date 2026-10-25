@@ -133,7 +133,7 @@ export function createControls(root, app) {
     const b = document.createElement('button');
     b.className = 'btn btn-ch';
     b.style.setProperty('--cc', `var(--ch-${n})`);
-    b.textContent = String(i + 1);
+    b.innerHTML = `<span class="num">${i + 1}</span>`;
     b.title = `Channel ${i + 1}: select; press again to turn off`;
     b.addEventListener('click', () => app.channelKey(i));
     keys.append(b);

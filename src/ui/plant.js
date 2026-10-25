@@ -383,9 +383,9 @@ export function createPlantEditor(root, app) {
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="btn btn-sm" data-act="flip">Flip</button>`;
       if (b.type === 'subsystem') html += `<button class="btn btn-sm" data-act="open">Open</button><button class="btn btn-sm" data-act="save">Save to library</button>`;
       if (b.type === 'source') html += `<button class="btn btn-sm" data-act="signal">Edit signal ${esc(b.params.signal)}</button>`;
-      if (b.type === 'controller') html += `<button class="btn btn-sm btn-primary" data-act="controller">Open in the Controller tab</button>`;
+      if (b.type === 'controller') html += `<button class="btn btn-sm" data-act="controller">Open in the Controller tab</button>`;
       html += '</div>';
-      if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="btn btn-sm btn-primary" data-act="saveok">Save</button><button class="btn btn-sm" data-act="savecancel">Cancel</button></div>`;
+      if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="btn btn-sm" data-act="saveok">Save</button><button class="btn btn-sm" data-act="savecancel">Cancel</button></div>`;
       const role = { sink: ' · recorded: pick it as a scope channel source', source: ' · plays the signal made in the Input tab', terminator: ' · ends a signal without recording it', outport: ' · passes the signal up to the enclosing block', inport: ' · takes the signal from the enclosing block', switch: ' · double-click it on the canvas to move to the next input', controller: ` · runs “${esc(b.variants?.[b.variant]?.name ?? '')}”; double-click it to open the Controller tab` }[b.type] ?? '';
       html += `<p class="note">${esc(def.formula)}${role}</p>`;
       box.innerHTML = html;
@@ -394,7 +394,7 @@ export function createPlantEditor(root, app) {
       return;
     }
     if (sel.size > 1) {
-      box.innerHTML = `<h3 class="label">${sel.size} blocks</h3><div class="pbtns"><button class="btn btn-sm btn-primary" data-act="group">Group into subsystem</button><button class="btn btn-sm btn-danger" data-act="delete">Delete</button></div><p class="note">Grouping keeps the wires: those that cross the boundary become the subsystem's In and Out ports.</p>`;
+      box.innerHTML = `<h3 class="label">${sel.size} blocks</h3><div class="pbtns"><button class="btn btn-sm" data-act="group">Group into subsystem</button><button class="btn btn-sm btn-danger" data-act="delete">Delete</button></div><p class="note">Grouping keeps the wires: those that cross the boundary become the subsystem's In and Out ports.</p>`;
       box.querySelectorAll('[data-act]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.act)));
       return;
     }

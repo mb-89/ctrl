@@ -248,7 +248,7 @@ export function createAnalysisTab(host, app) {
         p.line([0, -R * c], [0, R * s], { color: C().gridFaint, width: 1, dash: [3, 4] });
         p.line([0, -R * c], [0, -R * s], { color: C().gridFaint, width: 1, dash: [3, 4] });
       }
-      g.globalAlpha = 0.55;
+      g.globalAlpha = C().alpha.guide;
       for (const { poles } of res.locus) for (const z of poles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'dot', color: C_L(), size: 2.4 }); }
       g.globalAlpha = 1;
       for (const z of res.olPoles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'x', color: C_U(), size: 5 }); }
@@ -282,7 +282,7 @@ export function createAnalysisTab(host, app) {
         const dy = py < top ? top - py : py > P.b - 8 ? P.b - 8 - py : 0;
         plots.mag.text(at(c.w), y, label, { color: C_U(), dx: c.at === 'nyquist' ? -5 : 5, dy, align: c.at === 'nyquist' ? 'right' : 'left' });
       }
-      if (cursorW) plots.mag.line([cursorW, cursorW], [a.y0, a.y1], { color: C().ink, width: 1, alpha: 0.6 });
+      if (cursorW) plots.mag.line([cursorW, cursorW], [a.y0, a.y1], { color: C().ink, width: 1, alpha: C().alpha.guide });
     });
     const [p0, p1] = extent(fd.phase, 0.08);
     const b = plots.phase.frame({ x0: fd.w[0], x1: fd.w.at(-1), xlog: true, y0: Math.min(p0, -190), y1: Math.max(p1, -80), xlabel: `ω rad/s · Nyquist ${num(Math.PI / m.Ts, 3)}`, ylabel: '∠L °' });
@@ -294,7 +294,7 @@ export function createAnalysisTab(host, app) {
         plots.phase.line([c.w, c.w], [ph, ph - c.pm], { color: C_CL(), width: 1.5 });
         plots.phase.text(c.w, ph - c.pm / 2, res.Z === 0 ? `PM ${num(c.pm, 3)}°` : `${num(c.pm, 3)}° from −180°`, { color: C_CL(), dx: -5, align: 'right' });
       }
-      if (cursorW) plots.phase.line([cursorW, cursorW], [b.y0, b.y1], { color: C().ink, width: 1, alpha: 0.6 });
+      if (cursorW) plots.phase.line([cursorW, cursorW], [b.y0, b.y1], { color: C().ink, width: 1, alpha: C().alpha.guide });
     });
     // The readout gives the phase the curve shows (unwrapped), not atan2's.
     const L = cursorW ? respondAt(res.L, cursorW) : null;
@@ -313,7 +313,7 @@ export function createAnalysisTab(host, app) {
       // The Ms circle: |1 + L| = 1/Ms, the closest approach to −1.
       const ring = th.map((a) => squash(-1 + Math.cos(a) / g.ms, Math.sin(a) / g.ms));
       p.line(ring.map((q) => q[0]), ring.map((q) => q[1]), { color: C_U(), width: 1.2, dash: [4, 3] });
-      p.line(xs, ys.map((y) => -y), { color: C_L(), width: 1.2, dash: [5, 4], alpha: 0.6 });
+      p.line(xs, ys.map((y) => -y), { color: C_L(), width: 1.2, dash: [5, 4], alpha: C().alpha.guide });
       p.line(xs, ys, { color: C_L(), width: 1.8 });
       p.mark(-1, 0, { shape: '+', color: C().mark, size: 6, width: 2 });
       if (cursorW) { const at = respondAt(res.L, cursorW), q = squash(at.re, at.im); p.mark(q[0], q[1], { shape: 'o', color: C().mark, size: 5 }); }
@@ -338,7 +338,7 @@ export function createAnalysisTab(host, app) {
     p.frame({ x0: 0, x1: t.at(-1), y0, y1, xunit: 's', ylabel: 'y (r = 1)' });
     p.clip(() => {
       p.line([0, t.at(-1)], [1, 1], { color: C().axis, width: 1, dash: [4, 3] });
-      if (Math.abs(st.yf - 1) > 1e-3) p.line([0, t.at(-1)], [st.yf, st.yf], { color: C_CL(), width: 1, dash: [2, 3], alpha: 0.7 });
+      if (Math.abs(st.yf - 1) > 1e-3) p.line([0, t.at(-1)], [st.yf, st.yf], { color: C_CL(), width: 1, dash: [2, 3], alpha: C().alpha.guide });
       p.line(t, y, { color: C_CL(), width: 1.8 });
     });
     $('#an-step-read').textContent = `final ${num(st.yf, 3)} · overshoot ${num(st.overshoot, 3)} %${st.settled ? '' : ' · not settled'}`;

@@ -12,7 +12,7 @@ What the screen shows is what is simulated and swept: from t = 0 to the right ed
 
 - 10 × 8 divisions, dotted graticule with ticked centre axes. Time labels below the plot; the active channel's values on the left, in its colour (the active channel is the selected line, or else the Vertical channel). The margin widens to the longest value label, so a label such as −0.0121 keeps its sign.
 - The screen is dark in both page themes; the panel around it follows the theme.
-- Status line on top: run state, timebase, position, and which line is selected. Channel badges below: source and scale.
+- Status line on top: run state, timebase, position, and which line is selected. Channel keys below: the same channel keys as under Vertical (lit in the channel's colour while it is on, the selected one marked under its number, the same press), each with its source and scale.
 - A coloured marker in the left margin shows each channel's zero level.
 - Hovering the plot shows a cursor with t and every active channel's value.
 - **The scope's instant**, which the 2D views and the Analysis tab's Scope time follow: the time under the cursor where the screen shows time across (Time, Spectrogram) or the XY sample under it; else the sweep while running; else where the cursor last pointed (until the next run); else the right edge. In FFT mode the cursor is a frequency and does not move it.
@@ -44,7 +44,7 @@ Four channels, in the classic colours: 1 yellow, 2 green, 3 blue, 4 magenta. Eac
 - **Channel 1 shows r; channels 2–4 start with no source ("none").** Nothing the person adds is put on the scope by itself. (The person, 2026-10-24.) Picking a source switches the channel on; "none" switches it off. A closed-loop system from the library starts with r, y, u, e.
 - A channel whose source has no data shows "no signal" and draws nothing.
 
-- A channel key selects that channel for the Vertical knobs; pressing the selected channel's key again turns it off; pressing an off channel turns it on and selects it.
+- A channel key selects that channel for the Vertical knobs; pressing the selected channel's key again turns it off; pressing an off channel turns it on and selects it. The keys under the screen are the same keys and do the same (decisions.md, v2.7 after review).
 - **Scale** knob: 1-2-5 steps. **Position** knob: 0.1 division per detent; double-click (the knob's push) sets it to 0.
 - **Measure** key (Vertical, beside R axis): a Measure line under the screen for the selected channel ([below](#measure)).
 
@@ -180,7 +180,7 @@ Endless rotary encoders, like a scope's: every detent is one step. Drag up or ri
 
 ## A limited environment
 
-Where the page runs in a limited environment, such as a file preview's sandbox (SharePoint's HTML viewer), a warning shows right below the header, full width, in the warning colour (`--warn`), with ⚠ and the words "Warning: limited environment". It says the performance is degraded, names what is lost there (saving and the autosave, downloads, Live/HIL, possibly the speed), what was found, and what to do: **download this file and open it in your browser**. It stays visible the whole time; there is no hiding it. Everything that works there keeps working. It sits in the header's flow, so it covers no control, and it wraps at phone width.
+Where the page runs in a limited environment, such as a file preview's sandbox (SharePoint's HTML viewer), a warning shows right below the header, full width, filled in the warning lamp's colour (a `.banner` with `data-lamp="warn"`, design-system.md), with ⚠ and the words "Warning: limited environment". It says the performance is degraded, names what is lost there (saving and the autosave, downloads, Live/HIL, possibly the speed), what was found, and what to do: **download this file and open it in your browser**. It stays visible the whole time; there is no hiding it. Everything that works there keeps working. It sits in the header's flow, so it covers no control, and it wraps at phone width.
 
 - **It is in the page's HTML from the start**, so it shows where no script runs. An inline check before the first paint hides it where the environment is full, so it never flashes. The page's start then fills in the reasons (`src/ui/limited.js`; `loopTuner.limited()` returns them).
 - **The rule.** In a known host (the hosted build's `window.__ltHost`), never limited. Otherwise limited by any of these: an opaque origin in a frame, or served from a site (a sandbox without `allow-same-origin`; a file opened directly also has one, and does not count); no localStorage in a frame; a readable frame `sandbox` without `allow-downloads`; a Blob worker that cannot be made, or that fails at once (a `worker-src 'none'` policy). No storage in a window of its own (a private window, a browser setting) does not count: the page is already open directly.

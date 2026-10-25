@@ -66,7 +66,7 @@ const fontFaces = () => FONT_FILES.map(([family, weight, file]) => `@font-face{f
 const FONTS = () => `<style id="lt-fonts" data-license="${FONT_LICENSE}">\n${fontFaces()}\n</style>`;
 
 const ICON = {
-  logo: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4 17 H8 V7 H20" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.45"/><path d="M4 17 H8 C10 4 12 4.5 14 8.2 C15.5 11 17 6.5 20 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  logo: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4 17 H8 V7 H20" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="1.5 1.5"/><path d="M4 17 H8 C10 4 12 4.5 14 8.2 C15.5 11 17 6.5 20 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
   undo: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3 L2.5 6.5 L6 10 M2.5 6.5 H10 a3.5 3.5 0 0 1 0 7 H7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   redo: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 L13.5 6.5 L10 10 M13.5 6.5 H6 a3.5 3.5 0 0 0 0 7 H9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   lock: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7 V5 a2.5 2.5 0 0 1 5 0 V7" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
@@ -82,7 +82,7 @@ const HELP = `
   <span><kbd>A</kbd></span><span>Auto Scale: fit the timebase and every channel to the data</span>
   <span>Knobs</span><span>Drag, scroll, or focus and use the arrow keys. Double-click a Position knob to zero it. Click a readout to type a value (20m, 100 ms).</span>
   <span>Lit keys</span><span>A key that is lit is on or chosen, everywhere on the page: the display mode, the open tab, the signal or variant you edit. Run/Stop is lit green while running and red while stopped; Single amber while it sweeps.</span>
-  <span>Channel keys</span><span>Lit in the channel's colour while the channel is on. Press one to select it for the Vertical knobs (a bar under its number marks it); press the selected one again to turn it off</span>
+  <span>Channel keys</span><span>Under Vertical and under the screen, the same keys: lit in the channel's colour while the channel is on. Press one to select it for the Vertical knobs (a bar under its number marks it); press the selected one again to turn it off</span>
   <span>Wheel</span><span>On the plot: zoom time and values around the cursor. On the time axis or the value axis: that axis only.</span>
   <span>Drag</span><span>Pan. Click a trace or its marker first to move and zoom that line alone; <kbd>Esc</kbd> releases it.</span>
   <span><kbd>Shift</kbd> + drag</span><span>Zoom to the marked box; a flat band zooms time only, a narrow band values only</span>

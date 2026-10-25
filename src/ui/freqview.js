@@ -139,7 +139,7 @@ function drawFft(v) {
     if (!s) continue;
     g.strokeStyle = colors[i];
     g.lineWidth = i === line ? 2.4 : 1.4;
-    g.globalAlpha = line !== null && i !== line ? 0.55 : 1;
+    g.globalAlpha = line !== null && i !== line ? C().alpha.unselected : 1;
     g.beginPath();
     let col = null, mn = 0, mx = 0, started = false;
     for (let j = 0; j < s.f.length; j++) {
@@ -159,7 +159,7 @@ function drawFft(v) {
     const fl = designFilter({ ...fc, dt: dtOf(data) });
     const fs = Array.from({ length: 200 }, (_, j) => f0 + ((f1 - f0) * j) / 199);
     const { mag } = filterResponse(fl, fs, dtOf(data));
-    g.strokeStyle = colors[ai]; g.setLineDash([5, 4]); g.lineWidth = 1.2; g.globalAlpha = 0.8;
+    g.strokeStyle = colors[ai]; g.setLineDash([5, 4]); g.lineWidth = 1.2; g.globalAlpha = C().alpha.over;
     g.beginPath();
     fs.forEach((f, j) => { const y = P.t + (-20 * Math.log10(Math.max(mag[j], 1e-9)) / DB_PER_DIV) * P.dy; if (j) g.lineTo(fx(f), y); else g.moveTo(fx(f), y); });
     g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
@@ -332,7 +332,7 @@ function drawSpectrogram(v) {
   }
   // The channel's time trace over it, on the right axis.
   const k = sig ? v.k : -1;
-  g.strokeStyle = colors[i]; g.lineWidth = 1.4; g.globalAlpha = 0.9;
+  g.strokeStyle = colors[i]; g.lineWidth = 1.4; g.globalAlpha = C().alpha.over;
   g.beginPath();
   let started = false;
   for (let j = 0; j <= k; j++) {

@@ -209,7 +209,6 @@ function startApp() {
     app.endEdit();
     changed({ data: false });
   };
-  app.selectChannel = (i) => { app.channel = i; changed({ data: false }); };
   const refs = () => sig().components;
   app.addComponent = (comp) => { app.beginEdit(); refs().push(normalizeComponent(comp)); app.endEdit(); changed(); toast(`Added ${SIGNALS[comp.type].label} to ${app.signal}(t)`); };
   app.replaceComponent = (i, comp) => { app.beginEdit(); refs()[i] = normalizeComponent(comp); app.endEdit(); changed(); };
@@ -360,7 +359,7 @@ function startApp() {
   app.timeRan = (t, seconds) => speed.ran(t, seconds);
   app.speedRender = () => speed.render();
   const display = createDisplay($('display'), {
-    onSelectChannel: (i) => app.selectChannel(i),
+    onChannelKey: (i) => app.channelKey(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
     onStopped: () => { controls.render(display.mode); live?.mode('stop'); app.sweepEnded?.(); },  // a Single ended
     edit: (fn) => app.editScope(fn),
@@ -566,7 +565,7 @@ function startApp() {
       + `<div class="tagfilter" role="group" aria-label="Filter by tag">${libraryTags().map((t) => chip(t)).join('')}`
       + `<span class="tagcount hint">${tagFilter.size ? `${shown.size} of ${SYSTEM_LIBRARY.length} <button type="button" class="btn btn-sm" data-tagclear>Clear</button>` : `${SYSTEM_LIBRARY.length} systems · click a tag to filter`}</span></div>`
       + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div><div class="heading">${esc(e.name)}</div><div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="note">${esc(e.notes)}</div></div>
-      <div class="sysbtns"><button class="btn btn-sm btn-primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="btn btn-sm" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>` : '')).join('');
+      <div class="sysbtns"><button class="btn btn-sm" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="btn btn-sm" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>` : '')).join('');
   }
   renderLibrary();
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };

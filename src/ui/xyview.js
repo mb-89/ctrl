@@ -184,7 +184,7 @@ export function drawXY(v) {
   (v.past ?? []).forEach((d, age) => {
     if (seen.has(d) || d.t.length !== t.length) return;
     seen.add(d);
-    g.globalAlpha = 0.5 * (1 - (age + 1) / v.runs);
+    g.globalAlpha = C().alpha.past * (1 - (age + 1) / v.runs);
     g.lineWidth = 1.2;
     for (const i of ys) { g.strokeStyle = colors[i]; path(d, i, j0, Math.min(t.length - 1, Math.floor(w1 / dt + 1e-9)), scope.channels[i]); }
   });
@@ -195,7 +195,7 @@ export function drawXY(v) {
   for (const i of ys) {
     const ch = scope.channels[i], sel = i === v.line;
     g.strokeStyle = colors[i]; g.lineWidth = sel ? 2.6 : 1.6; g.shadowColor = colors[i]; g.shadowBlur = sel ? 9 : 5;
-    g.globalAlpha = dim && !sel ? 0.55 : 1;
+    g.globalAlpha = dim && !sel ? C().alpha.unselected : 1;
     path(data, i, j0, j1, ch);
     // The beam: a bright dot where the figure is now.
     const y = ySignal(data, scope, i, v.unitLabel);

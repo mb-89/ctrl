@@ -277,7 +277,7 @@ export function createDisplay(root, handlers) {
     past.forEach((d, age) => {
       if (seen.has(d)) return;
       seen.add(d);
-      ctx.globalAlpha = 0.5 * (1 - (age + 1) / RUNS);
+      ctx.globalAlpha = C().alpha.past * (1 - (age + 1) / RUNS);
       ctx.lineWidth = 1.2;
       for (const i of order) {
         const ch = scope.channels[i], v = sig(d, i);
@@ -288,7 +288,7 @@ export function createDisplay(root, handlers) {
     });
     // References: on the channels showing their names, only the part on screen.
     if (refs.length) {
-      ctx.setLineDash([6, 4]); ctx.lineWidth = 1.3; ctx.globalAlpha = 0.6;
+      ctx.setLineDash([6, 4]); ctx.lineWidth = 1.3; ctx.globalAlpha = C().alpha.guide;
       const first = (t, x) => { let lo = 0, hi = t.length - 1; while (lo < hi) { const mid = (lo + hi) >> 1; if (t[mid] < x) lo = mid + 1; else hi = mid; } return lo; };
       for (const ref of refs) {
         const a = Math.max(0, first(ref.t, xt(P.l)) - 1), b = Math.min(ref.t.length - 1, first(ref.t, xt(P.r)) + 1);
@@ -310,7 +310,7 @@ export function createDisplay(root, handlers) {
       ctx.lineWidth = sel ? 2.6 : 1.6;
       ctx.shadowColor = CH()[i];
       ctx.shadowBlur = sel ? 9 : 5;
-      ctx.globalAlpha = line !== null && !sel ? 0.55 : 1;
+      ctx.globalAlpha = line !== null && !sel ? C().alpha.unselected : 1;
       // While sweeping, only what has happened so far: nothing ahead of the scan line.
       trace(ctx, data.t, v, ch, 0, k);
     }
@@ -443,14 +443,15 @@ export function createDisplay(root, handlers) {
 
   function renderBadges() {
     if (!scope || !data) return;
+    // The same channel keys as in Vertical (lit while on, the selected one
+    // marked under its number, the same press), with the source and its scale.
     badges.innerHTML = scope.channels.map((ch, i) => {
       const has = !!data.signals[ch.source];
-      const cls = ['btn btn-sm btn-ch chbtn', ch.on ? '' : 'off', has ? '' : 'nosig'].filter(Boolean).join(' ');
-      return `<button class="${cls}" data-ch="${i}" style="--cc: var(--ch-${i + 1})" aria-current="${i === selected}" title="Channel ${i + 1}: ${ch.source ? `${ch.source} in ${unitLabel(ch.source)}` : 'no source; pick one under Vertical'}">
-        <span class="num">${i + 1}</span><span class="src">${ch.source || '—'}</span>
-        <span class="val">${has ? `${num(ch.scale)} ${unitLabel(ch.source)}/div` : ch.source ? 'no signal' : 'none'}</span></button>`;
+      return `<button class="btn btn-sm btn-ch chbtn" data-ch="${i}" style="--cc: var(--ch-${i + 1})" aria-pressed="${!!ch.on}" aria-current="${i === selected}" title="Channel ${i + 1}: ${ch.source ? `${ch.source} in ${unitLabel(ch.source)}` : 'no source; pick one under Vertical'} · press to select, again to turn off">
+        <span class="num">${i + 1}</span><span class="mono">${ch.source || '—'}</span>
+        <span class="btn-note">${has ? `${num(ch.scale)} ${unitLabel(ch.source)}/div` : ch.source ? 'no signal' : 'none'}</span></button>`;
     }).join('');
-    badges.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => handlers.onSelectChannel(Number(b.dataset.ch))));
+    badges.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => handlers.onChannelKey(Number(b.dataset.ch))));
   }
 
   // Sweep. Simulated time runs at the header's speed (handlers.speed(): a

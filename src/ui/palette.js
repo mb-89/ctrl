@@ -43,6 +43,13 @@ export function palette() {
     ch: [t.ch1, t.ch2, t.ch3, t.ch4],
     accent: t.accent, inkOnLit: t.inkOnLit, ok: t.ok, warn: t.warn, bad: t.bad,
     mono: mono || 'monospace',
+    // How strongly a whole line is drawn (globalAlpha) when it is not the
+    // point: unselected while another line is selected; past, the newest
+    // earlier run (older ones fade further); guide, a line read against the
+    // data (a saved reference, a cursor, the final value, the root locus,
+    // Nyquist's ω < 0 half); over, data drawn over other data (a filter's
+    // response, the time trace over the spectrogram).
+    alpha: Object.freeze({ unselected: 0.55, past: 0.5, guide: 0.6, over: 0.85 }),
   });
   return cached;
 }

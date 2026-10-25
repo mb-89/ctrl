@@ -63,7 +63,7 @@ export function createAutotuneTab(host, app, display) {
       </section>
       <section class="gcol tuprogress" aria-label="Progress">
         <div class="ghead"><h3 class="label" id="tu-ptitle">Progress</h3>
-          <button class="btn btn-sm btn-primary" id="tu-start">Start</button></div>
+          <button class="btn btn-sm" id="tu-start">Start</button></div>
         <div class="note tustatus" id="tu-status" role="status"></div>
         <canvas class="tuplot" id="tu-plot" aria-label="Cost against iteration"></canvas>
         <ul class="lcd list turows wide" id="tu-result"></ul>
@@ -177,7 +177,7 @@ export function createAutotuneTab(host, app, display) {
     const { ctx, why } = context();
     const b = $('#tu-start');
     b.textContent = job ? 'Stop' : 'Start';
-    b.className = `btn btn-sm ${job ? 'btn-danger' : 'btn-primary'}`;
+    b.className = `btn btn-sm${job ? ' btn-danger' : ''}`;
     b.disabled = !job && !!(why ?? whyNot(ctx, st.method));
   }
 
@@ -556,7 +556,7 @@ export function createAutotuneTab(host, app, display) {
     g.textAlign = 'right'; g.textBaseline = 'middle';
     g.fillText(num(10 ** top, 2), P.l - 4, P.t + 4);
     g.fillText(num(10 ** bot, 2), P.l - 4, P.b - 4);
-    g.fillStyle = fade(C().ch[2], 0.6);
+    g.fillStyle = fade(C().ch[2], C().alpha.guide);
     for (const h of history) for (const v of h.tried) if (v < 100) g.fillRect(x(h.iteration) - 1, y(v) - 1, 2.5, 2.5);
     g.strokeStyle = C().ch[1]; g.lineWidth = 1.8; g.shadowColor = C().ch[1]; g.shadowBlur = 5;
     g.beginPath();

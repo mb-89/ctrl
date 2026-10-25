@@ -254,9 +254,17 @@ export function createControllerTab(host, app) {
     inp.value = controllers().length ? current().block.variants[i].name : '';
     name.replaceWith(inp);
     inp.focus(); inp.select();
-    const done = (ok) => { if (ok && inp.value.trim()) edit((blk) => { blk.variants[i].name = inp.value.trim().slice(0, 40); }); else render(); };
-    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); });
-    inp.addEventListener('blur', () => done(true), { once: true });
+    // Once: Enter or Esc redraws the list, which blurs the field. From the
+    // keyboard, focus goes back to the renamed row, so the place is kept.
+    let finished = false;
+    const done = (ok, refocus) => {
+      if (finished) return;
+      finished = true;
+      if (!(ok && inp.value.trim() && edit((blk) => { blk.variants[i].name = inp.value.trim().slice(0, 40); }))) render();
+      if (refocus) $(`#ct-vars [data-v="${i}"]`)?.focus();
+    };
+    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true, true); if (e.key === 'Escape') done(false, true); });
+    inp.addEventListener('blur', () => done(true, false), { once: true });
   }
 
   return {

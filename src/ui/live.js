@@ -263,7 +263,7 @@ export function createLive(app, display, controlsRoot, record) {
 runme.ps1        Windows: right-click › Run with PowerShell</pre>
     <p>With uv already there: <code>${RUN_PY}</code>. With Python: <code>pip install websockets</code>, then <code>python3 hil_plant.py</code>. <code>--help</code> lists its options (port, rate, watchdog, and how far its plant varies from nominal: up to ±15 %, unknown to this page).</p>
     <p class="hint" id="lv-dlg-note"></p>
-    <p class="lv-btns"><button class="btn btn-primary" id="lv-dl-zip">Download hil-plant.zip</button><button class="btn" id="lv-dl">Download hil_plant.py</button><button class="btn" id="lv-copy-py">Copy the script</button><button class="btn" id="lv-close">Close</button></p>
+    <p class="lv-btns"><button class="btn" id="lv-dl-zip">Download hil-plant.zip</button><button class="btn" id="lv-dl">Download hil_plant.py</button><button class="btn" id="lv-copy-py">Copy the script</button><button class="btn" id="lv-close">Close</button></p>
   </div>`;
   document.getElementById('lt-shell').append(dlg);
   const closeDlg = () => { dlg.hidden = true; };
