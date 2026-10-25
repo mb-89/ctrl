@@ -316,6 +316,7 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .status { display: flex; align-items: center; gap: var(--space-7); font-family: var(--font-mono); font-size: var(--text-sm); white-space: nowrap; overflow: hidden; }
 .status .grow { flex: 1; }
 .status .selline { color: var(--cc); }
+.status .run-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .screen { position: relative; min-height: 0; border-radius: var(--radius-sm); overflow: hidden; background: var(--screen); }
 .screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
 .chbar { display: flex; gap: var(--space-3); align-items: center; overflow-x: auto; padding: var(--space-2); margin: calc(-1 * var(--space-2)); }
@@ -1649,7 +1650,21 @@ function step125(v, dir) {
   return ladder[Math.max(0, Math.min(ladder.length - 1, i + dir))];
 }
 
-return { ceil125, step125 };
+const PREFIXES = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n'], [1e-12, 'p']];
+
+function si(v, digits = 3) {
+  if (v === 0) return '0 ';
+  if (!Number.isFinite(v)) return '— ';
+  const a = Math.abs(v);
+  const [f, p] = PREFIXES.find(([f]) => a >= f * 0.9995) ?? PREFIXES[PREFIXES.length - 1];
+  return `${Number((v / f).toPrecision(digits))} ${p}`;
+}
+
+function siUnit(v, unit, digits) {
+  return `${si(v, digits)}${unit}`.replace(/ $/, '');
+}
+
+return { ceil125, step125, si, siUnit };
 })();
 // ---- core/speed.js
 __mods['core/speed.js'] = (() => {
@@ -2068,7 +2083,162 @@ function compileExpr(src, opts = {}) {
   return (t) => { env.t = t; const v = f(env); return Number.isFinite(v) ? v : 0; };
 }
 
-return { EXPR_HELP, compileExpr };
+return { FN1, FN2, FN3, EXPR_HELP, compileExpr };
+})();
+// ---- core/formula.js
+__mods['core/formula.js'] = (() => {
+
+const { FN1, FN2, FN3 } = __mods['core/expr.js'];
+const { siUnit } = __mods['core/scale.js'];
+const CONST = { pi: Math.PI, e: Math.E, inf: Infinity };
+const ARITY = (name) => (Object.hasOwn(FN1, name) ? 1 : Object.hasOwn(FN2, name) ? 2 : Object.hasOwn(FN3, name) ? 3 : 0);
+const LETTER = 'A-Za-z_Ͱ-Ͽἀ-῿';
+const NAME_RE = new RegExp(`^[${LETTER}][${LETTER}0-9]*$`);
+
+const isReserved = (key) => { const k = String(key).toLowerCase(); return k === 't' || Object.hasOwn(CONST, k) || ARITY(k) > 0; };
+
+const isFormula = (v) => typeof v === 'string' && v.trim() !== '' && !Number.isFinite(Number(v));
+
+function tokenize(src) {
+  const toks = [];
+  const re = new RegExp(`\\s*(?:(\\d+\\.?\\d*(?:e[-+]?\\d+)?|\\.\\d+(?:e[-+]?\\d+)?)|([${LETTER}][${LETTER}0-9]*)|(\\*\\*|[-+*/^(),]))`, 'gy');
+  re.lastIndex = 0;
+  while (re.lastIndex < src.length) {
+    const at = re.lastIndex;
+    if (/^\s*$/.test(src.slice(at))) break;
+    const m = re.exec(src);
+    if (!m) throw new Error(`unexpected "${src.slice(at).trim()[0]}" at ${at + 1}`);
+    if (m[1] !== undefined) toks.push({ k: 'num', v: Number(m[1]) });
+    else if (m[2] !== undefined) toks.push({ k: 'id', v: m[2] });
+    else toks.push({ k: 'op', v: m[3] === '**' ? '^' : m[3] });
+  }
+  return toks;
+}
+
+function parseFormula(src) {
+  const toks = tokenize(String(src));
+  let i = 0;
+  const peek = () => toks[i];
+  const take = (v) => { const tk = toks[i]; if (!tk || (v && tk.v !== v)) throw new Error(tk ? `expected "${v}" near "${tk.v}"` : `expected "${v}" at the end`); i++; return tk; };
+  function expr() {
+    let a = term();
+    while (peek()?.k === 'op' && (peek().v === '+' || peek().v === '-')) { const op = take().v; a = { k: 'op', op, a, b: term() }; }
+    return a;
+  }
+  function term() {
+    let a = unary();
+    for (;;) {
+      const tk = peek();
+      const explicit = tk?.k === 'op' && (tk.v === '*' || tk.v === '/');
+      const implicit = tk && (tk.k === 'num' || tk.k === 'id' || (tk.k === 'op' && tk.v === '('));
+      if (!explicit && !implicit) return a;
+      const op = explicit ? take().v : '*';
+      a = { k: 'op', op, a, b: unary() };
+    }
+  }
+  function unary() {
+    if (peek()?.k === 'op' && (peek().v === '-' || peek().v === '+')) { const neg = take().v === '-', a = unary(); return neg ? { k: 'neg', a } : a; }
+    return power();
+  }
+  function power() {
+    const a = atom();
+    if (peek()?.k === 'op' && peek().v === '^') { take(); return { k: 'op', op: '^', a, b: unary() }; }
+    return a;
+  }
+  function atom() {
+    const tk = peek();
+    if (!tk) throw new Error('the formula ends too early');
+    if (tk.k === 'num') { take(); return { k: 'num', v: tk.v }; }
+    if (tk.k === 'op' && tk.v === '(') { take(); const a = expr(); take(')'); return a; }
+    if (tk.k === 'id') {
+      take();
+      const f = tk.v.toLowerCase(), arity = ARITY(f);
+      if (!arity || peek()?.v !== '(') return { k: 'name', v: tk.v };
+      take('(');
+      const args = [expr()];
+      while (args.length < arity) { take(','); args.push(expr()); }
+      take(')');
+      return { k: 'call', f, args };
+    }
+    throw new Error(`unexpected "${tk.v}"`);
+  }
+  if (!toks.length) throw new Error('enter a formula');
+  const tree = expr();
+  if (i < toks.length) throw new Error(`unexpected "${toks[i].v}"`);
+  return tree;
+}
+
+function formulaNames(tree, out = []) {
+  if (tree.k === 'name') { if (!out.includes(tree.v)) out.push(tree.v); }
+  else if (tree.k === 'neg') formulaNames(tree.a, out);
+  else if (tree.k === 'op') { formulaNames(tree.a, out); formulaNames(tree.b, out); }
+  else if (tree.k === 'call') for (const a of tree.args) formulaNames(a, out);
+  return out;
+}
+
+const unknown = (name) => Object.assign(new Error(`unknown name "${name}"`), { code: 'unknown-name', name });
+
+function compileFormula(src, resolve = () => null) {
+  const tree = typeof src === 'string' ? parseFormula(src) : src;
+  const C = (v) => ({ c: true, v, f: () => v });
+  const build = (n) => {
+    if (n.k === 'num') return C(n.v);
+    if (n.k === 'name') {
+      let r = resolve(n.v);
+      const low = n.v.toLowerCase();
+      if (!r && low === 't' && n.v !== 't') r = resolve('t');
+      if (!r && Object.hasOwn(CONST, low)) r = { value: CONST[low] };
+      if (!r) throw unknown(n.v);
+      if (r.slot === undefined) return C(r.value);
+      const s = r.slot;
+      return { c: false, f: (v) => v[s] };
+    }
+    if (n.k === 'neg') {
+      const a = build(n.a);
+      if (a.c) return C(-a.v);
+      const fa = a.f;
+      return { c: false, f: (v) => -fa(v) };
+    }
+    if (n.k === 'call') {
+      const args = n.args.map(build), fn = (n.args.length === 1 ? FN1 : n.args.length === 2 ? FN2 : FN3)[n.f];
+      if (args.every((a) => a.c)) return C(fn(...args.map((a) => a.v)));
+      const [a, b, c] = args.map((x) => x.f);
+      if (args.length === 1) return { c: false, f: (v) => fn(a(v)) };
+      if (args.length === 2) return { c: false, f: (v) => fn(a(v), b(v)) };
+      return { c: false, f: (v) => fn(a(v), b(v), c(v)) };
+    }
+    const a = build(n.a), b = build(n.b);
+    const op = { '+': (x, y) => x + y, '-': (x, y) => x - y, '*': (x, y) => x * y, '/': (x, y) => x / y, '^': Math.pow }[n.op];
+    if (a.c && b.c) return C(op(a.v, b.v));
+    const fa = a.f, fb = b.f, ca = a.v, cb = b.v;
+    switch (n.op) {
+      case '+': return { c: false, f: a.c ? (v) => ca + fb(v) : b.c ? (v) => fa(v) + cb : (v) => fa(v) + fb(v) };
+      case '-': return { c: false, f: a.c ? (v) => ca - fb(v) : b.c ? (v) => fa(v) - cb : (v) => fa(v) - fb(v) };
+      case '*': return { c: false, f: a.c ? (v) => ca * fb(v) : b.c ? (v) => fa(v) * cb : (v) => fa(v) * fb(v) };
+      case '/': return { c: false, f: a.c ? (v) => ca / fb(v) : b.c ? (v) => fa(v) / cb : (v) => fa(v) / fb(v) };
+      default: return { c: false, f: (v) => Math.pow(fa(v), fb(v)) };
+    }
+  };
+  const out = build(tree);
+  const f = out.f;
+  f.constant = out.c;
+  return f;
+}
+
+function evalFormula(src, values = {}) {
+  const get = values instanceof Map ? (n) => (values.has(n) ? { value: values.get(n) } : null) : (n) => (Object.hasOwn(values, n) ? { value: values[n] } : null);
+  return compileFormula(src, get)(new Float64Array(0));
+}
+
+function sentence(text, valueOf) {
+  return String(text).replace(/\{([^{}:]+)(?::([^{}]*))?\}/g, (_, src, unit) => {
+    const v = valueOf(src.trim());
+    if (!Number.isFinite(v)) return v > 0 ? '∞' : v < 0 ? '−∞' : '?';
+    return unit !== undefined && unit.trim() !== '1' ? siUnit(v, unit.trim()) : String(Number(v.toPrecision(3)));
+  });
+}
+
+return { NAME_RE, isReserved, isFormula, parseFormula, formulaNames, compileFormula, evalFormula, sentence };
 })();
 // ---- core/signals.js
 __mods['core/signals.js'] = (() => {
@@ -6562,16 +6732,14 @@ function vectorExtras(type, params = {}, where = 'block') {
       extra.unit = units.join(',');
     }
   } else if (type === 'integrator') {
-    const x0 = take('x0'), width = take('width'), unit = take('unit'), angle = take('angle');
-    if (x0 !== undefined && !(typeof x0 === 'number' && x0 === 0)) extra.x0 = numOrList(x0, `${where}.x0`);
+    const width = take('width');
+    if (Array.isArray(base.x0)) extra.x0 = numOrList(take('x0'), `${where}.x0`);
     if (width !== undefined && Number(width) !== 1) {
       const w = Math.round(Number(width));
       if (!(w >= 1 && w <= 4096)) throw new Error(`${where}.width: a whole number, at least 1`);
       extra.width = w;
     }
     if (extra.x0 !== undefined && extra.width !== undefined && typeof extra.x0 !== 'number' && extra.x0.length !== extra.width) throw new Error(`${where}: x0 has ${extra.x0.length} values but width is ${extra.width}`);
-    if (unit !== undefined && String(unit).trim() && String(unit).trim() !== '1') extra.unit = String(unit).trim();
-    if (angle !== undefined && Number(angle)) extra.angle = 1;
   } else if (type === 'controller') {
     const lanes = take('lanes'), ff = take('ff');
     if (lanes !== undefined && Number(lanes) !== 1) {
@@ -6588,7 +6756,7 @@ function needsPass(d) {
   for (const b of d.blocks) {
     if (VECTOR_ELEMENTS[b.type]) return true;
     const p = b.params ?? {};
-    if (p.derivatives || p.lanes > 1 || p.ff || (b.type === 'integrator' && (Array.isArray(p.x0) || p.x0 || p.width > 1 || p.angle || (p.unit && p.unit !== '1'))) || (b.type === 'sink' && String(p.name).includes(','))) return true;
+    if (p.derivatives || p.lanes > 1 || p.ff || (b.type === 'integrator' && (Array.isArray(p.x0) || p.width > 1)) || (b.type === 'sink' && String(p.name).includes(','))) return true;
     if (b.type === 'subsystem' && needsPass(b.diagram)) return true;
   }
   return false;
@@ -6856,8 +7024,7 @@ function expandLevel(lv, cx) {
     const n = b.type === 'sink' || b.type === 'terminator' ? w.ins[0] : w.outs[0] ?? 1;
     const nIn = w.ins.length;
     const allScalar = w.ins.every((x) => x === 1) && w.outs.every((x) => x === 1);
-    const extras = b.type === 'integrator' && (b.params.x0 || b.params.angle || (b.params.unit && b.params.unit !== '1'));
-    if (allScalar && !extras && !(b.type === 'sink' && String(b.params.name).includes(','))) {
+    if (allScalar && !(b.type === 'integrator' && Array.isArray(b.params.x0)) && !(b.type === 'sink' && String(b.params.name).includes(','))) {
       blocks.push(b);
       ins[b.id] = Array.from({ length: nIn }, (_, g) => [end(b.id, g)]);
       outs[b.id] = w.outs.map((_, g) => [end(b.id, g)]);
@@ -6902,40 +7069,26 @@ function elementCopy(b, id, k, n, label) {
     return copy;
   }
   if (b.type === 'integrator') {
-    const x0 = p.x0 === undefined ? 0 : at(p.x0, k);
-    if (n === 1 && !(x0 !== 0 || p.angle || (p.unit && p.unit !== '1'))) return copy;
-    copy.type = 'xintegrator';
-    copy.params = { K: p.K, x0, unit: p.unit ?? '1', angle: p.angle ? 1 : 0, state: n > 1 ? `${label}${k + 1}` : label };
-    if (copy.type === 'xintegrator') copy.name = label;
+    const { width, ...rest } = p;
+    copy.params = { ...rest, x0: p.x0 === undefined ? 0 : at(p.x0, k) };
+    if (n > 1) copy.name = `${label}${k + 1}`;
     return copy;
   }
   if (b.type === 'noise') { copy.params = { ...p, seed: p.seed + k }; return copy; }
   return copy;
 }
 
-const XINTEGRATOR = {
-  label: 'Integrator', group: null, formula: 'K / s', params: [num('K', 'K', 1)], ports: () => [1, 1], outputs: ['x'],
-  normalize: (p) => p,
-  ode: {
-    n: 1,
-    states: (p) => [{ name: p.state, unit: p.unit, angle: !!p.angle }],
-    init: (p) => [p.x0],
-    out: (X, o, p, y) => { y[0] = X[o]; },
-    make(p) { const K = p.K; return (X, o, u, dX) => { dX[o] = K * u; }; },
-    bound: () => 0,
-  },
-};
-VECTOR_ELEMENTS.xintegrator = XINTEGRATOR;
-
-return { parseSizes, parseValue, numOrList, at, widthOf, VECTOR_ELEMENTS, vectorExtras, robotsOf, normalizeRobots, mimoContext, makeMimo, flattenVectors, XINTEGRATOR };
+return { parseSizes, parseValue, numOrList, at, widthOf, VECTOR_ELEMENTS, vectorExtras, robotsOf, normalizeRobots, mimoContext, makeMimo, flattenVectors };
 })();
 // ---- core/diagram.js
 __mods['core/diagram.js'] = (() => {
 
 const { BLOCKS, blockDef, normalizeBlock } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
+const { eig, csolve } = __mods['core/linalg.js'];
+const { siUnit } = __mods['core/scale.js'];
 const { gaussAt } = __mods['core/signals.js'];
-const { compileExpr } = __mods['core/expr.js'];
+const { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME_RE } = __mods['core/formula.js'];
 const { CONTROLLERS, normalizeVariant, makeLaw } = __mods['core/controllers.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
 const { SYNC_DESIGNS, defaultDesigns } = __mods['core/design.js'];
@@ -6956,10 +7109,21 @@ const ELEMENTS = {
   outport: { label: 'Out', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [1, 0], formula: 'y' },
   gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
-  integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
+  integrator: {
+    label: 'Integrator', group: 'Dynamics', formula: 'K / s',
+    params: [num('K', 'K', 1), num('x0', 'Start x₀', 0), num('min', 'Min', null, { nullable: 'none', inf: true }), num('max', 'Max', null, { nullable: 'none', inf: true }),
+      { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }, num('angle', 'Angle (0/1)', 0, { int: true, min: 0, max: 1 })],
+    ports: () => [1, 1], tf: (p) => ({ num: [p.K], den: [1, 0] }),
+  },
   delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before T_d', 0, { nullable: 'its input at t = 0' })], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
-  fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
-  saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
+  fcn: {
+    label: 'Equations', group: 'Math', formula: 'y = f(u, t)',
+    params: [{ key: 'inputs', label: 'Inputs', default: 'u', kind: 'names' }, { key: 'eqs', label: 'Equations', default: 'y = u^2', kind: 'eqs' }, { key: 'outputs', label: 'Outputs', default: 'y', kind: 'names' }],
+    ports: (p) => [nameList(p.inputs).length, nameList(p.outputs).length],
+    outputs: (p) => nameList(p.outputs), inputNames: (p) => nameList(p.inputs),
+    normalize: (params, where, scope) => normalizeEquations(params, where, scope),
+  },
+  saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1, { inf: true }), num('max', 'Max', 1, { inf: true })], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
   noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
   cartPole: {
@@ -7041,6 +7205,51 @@ const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
 const state = (name, unit, angle = false) => ({ name, unit, angle });
 
+const nameList = (text) => String(text ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+const eqLines = (text) => String(text ?? '').split(/\n|;/).map((x) => x.trim()).filter(Boolean).map((line) => {
+  const at = line.indexOf('=');
+  return at < 0 ? { name: '', src: line, line } : { name: line.slice(0, at).trim(), src: line.slice(at + 1).trim(), line };
+});
+function normalizeEquations(params = {}, where, scope) {
+  const p = params.eqs === undefined && params.expr !== undefined ? { inputs: 'u', eqs: `y = ${params.expr}`, outputs: 'y' } : params;
+  const inputs = nameList(p.inputs ?? 'u'), outputs = nameList(p.outputs ?? 'y'), lines = eqLines(p.eqs ?? 'y = u^2');
+  const seen = new Set();
+  const named = (n, what) => {
+    if (!NAME_RE.test(n)) throw new Error(`${where}.${what}: "${n}" is not a name (letters, digits, _; Greek letters too)`);
+    if (isReserved(n)) throw new Error(`${where}.${what}: "${n}" is the time, a constant or a function; choose another name`);
+    if (seen.has(n)) throw new Error(`${where}.${what}: "${n}" is defined twice`);
+    seen.add(n);
+  };
+  for (const n of inputs) named(n, 'inputs');
+  if (!lines.length) throw new Error(`${where}.eqs: at least one line "name = formula"`);
+  for (const [i, l] of lines.entries()) {
+    if (!l.name) throw new Error(`${where}.eqs line ${i + 1}: "name = formula", not "${l.line}"`);
+    named(l.name, `eqs line ${i + 1}`);
+    let tree;
+    try { tree = parseFormula(l.src); } catch (e) { throw new Error(`${where}.eqs line ${i + 1} (${l.name}): ${e.message}`); }
+    const known = [...inputs, ...lines.slice(0, i).map((x) => x.name)];
+    for (const n of formulaNames(tree)) {
+      if (known.includes(n) || scopeValue(scope, n) !== undefined || ['t', 'pi', 'e', 'inf'].includes(n.toLowerCase())) continue;
+      throw new Error(`${where}.eqs line ${i + 1}: '${n}' is not an input, a name defined above, or a parameter${scope ? ` (${scopeKeys(scope).join(', ')})` : ' (no mask around this block)'}`);
+    }
+  }
+  if (!outputs.length) throw new Error(`${where}.outputs: at least one`);
+  for (const n of outputs) if (!lines.some((l) => l.name === n)) throw new Error(`${where}.outputs: "${n}" is not computed by a line`);
+  return { inputs: inputs.join(', '), eqs: lines.map((l) => `${l.name} = ${l.src}`).join('\n'), outputs: outputs.join(', ') };
+}
+function compileEquations(params, consts) {
+  const inputs = nameList(params.inputs), lines = eqLines(params.eqs), outputs = nameList(params.outputs);
+  const slot = new Map(inputs.map((n, i) => [n, i]));
+  slot.set('t', inputs.length);
+  const fs = lines.map((l, k) => {
+    const f = compileFormula(l.src, (n) => (slot.has(n) ? { slot: slot.get(n) } : consts?.has(n) ? { value: consts.get(n) } : null));
+    slot.set(l.name, inputs.length + 1 + k);
+    return f;
+  });
+  const first = inputs.length + 1;
+  return { n: first + lines.length, nIn: inputs.length, fs, first, out: outputs.map((n) => slot.get(n)) };
+}
+
 function chainRates(p) {
   const n = p.links, N = n + 1, { g, b } = p;
   const mu = new Float64Array(n), ml = new Float64Array(n), mgl = new Float64Array(n), mll = new Float64Array(n * n);
@@ -7119,10 +7328,104 @@ function parseEnd(end) {
   return { id, port: port === undefined ? 0 : Number(port) };
 }
 
-function normalizeParams(type, params = {}, where) {
-  if (diagramBlockDef(type).model) return normalizeBlock('plant', { type, params }).params;
-  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where);  
-  const out = {};
+const scopeValue = (scope, name) => { for (let s = scope; s; s = s.outer) if (s.values.has(name)) return s.values.get(name); return undefined; };
+const scopeKeys = (scope) => { const out = []; for (let s = scope; s; s = s.outer) for (const k of s.values.keys()) if (!out.includes(k)) out.push(k); return out; };
+const scopeMap = (scope) => new Map(scopeKeys(scope).map((k) => [k, scopeValue(scope, k)]));
+function unknownName(name, scope) {
+  return scope ? `'${name}' is not a parameter of '${scope.label}' (${scopeKeys(scope).join(', ')})` : `'${name}' is not a parameter here: outside a masked subsystem a formula uses numbers, pi, e and inf`;
+}
+function formulaValue(src, scope, where) {
+  let tree;
+  try { tree = parseFormula(src); } catch (e) { throw new Error(`${where}: ${e.message}`); }
+  for (const name of formulaNames(tree)) {
+    if (scopeValue(scope, name) === undefined && !['pi', 'e', 'inf'].includes(name.toLowerCase())) throw new Error(`${where}: ${unknownName(name, scope)}`);
+  }
+  return compileFormula(tree, (n) => { const v = scopeValue(scope, n); return v === undefined ? null : { value: v }; })(new Float64Array(0));
+}
+function fieldNumber(raw, p, scope, where) {
+  if (!isFormula(raw)) return Number(raw);
+  if (p.int) throw new Error(`${where}: a whole number, not a formula`);
+  const v = formulaValue(raw, scope, where);
+  if (Number.isNaN(v) || (!Number.isFinite(v) && !p.inf)) throw new Error(`${where}: ${String(raw).trim()} = ${Number.isNaN(v) ? 'not a number' : v > 0 ? 'inf' : '-inf'}; it must be finite`);
+  return v;
+}
+function normalizeMask(b, where, outer, resolve) {
+  const given = b.params && typeof b.params === 'object' ? Object.keys(b.params) : [];
+  if (b.mask === undefined || b.mask === null) {
+    if (given.length) throw new Error(`${where}: parameters (${given.join(', ')}) need a mask that lists them`);
+    return { scope: outer };
+  }
+  if (!Array.isArray(b.mask)) throw new Error(`${where}.mask: a list of { key, label, unit }`);
+  const keys = new Set();
+  const mask = b.mask.map((f, i) => {
+    const at = `${where}.mask[${i}]`, key = String(f?.key ?? '');
+    if (!NAME_RE.test(key)) throw new Error(`${at}: a key such as m, l1 or θ0 (letters, digits, _)`);
+    if (isReserved(key)) throw new Error(`${at}: "${key}" is the time, a constant or a function; choose another key`);
+    if (keys.has(key)) throw new Error(`${at}: the key "${key}" twice`);
+    keys.add(key);
+    const unit = String(f.unit ?? '1').trim() || '1';
+    if (unit.length > 12 || /[<>"{}]/.test(unit)) throw new Error(`${at}.unit: a short unit such as m, N, rad/s, or 1`);
+    const out = { key, label: String(f.label ?? key), unit };
+    for (const k of ['min', 'max', 'default']) {
+      if (f[k] === undefined || f[k] === null || f[k] === '') continue;
+      const v = Number(f[k]);
+      if (Number.isNaN(v)) throw new Error(`${at}.${k}: a number`);
+      out[k] = v;
+    }
+    if (out.min !== undefined && out.max !== undefined && out.min > out.max) throw new Error(`${at}: min ${out.min} is above max ${out.max}`);
+    return out;
+  });
+  for (const k of given) if (!keys.has(k)) throw new Error(`${where}.params: "${k}" is not on the mask (${[...keys].join(', ')})`);
+  const label = b.name ?? b.id, values = new Map(), params = {};
+  for (const f of mask) {
+    const raw = b.params?.[f.key] ?? f.default;
+    const at = `${where}.params.${f.key}`;
+    if (raw === undefined || raw === null || raw === '') throw new Error(`${at}: needs a value`);
+    const v = isFormula(raw) ? formulaValue(raw, outer, at) : Number(raw);
+    if (Number.isNaN(v)) throw new Error(`${at}: expected a number or a formula`);
+    if (f.min !== undefined && v < f.min) throw new Error(`${at}: ${v} is below its min ${f.min}`);
+    if (f.max !== undefined && v > f.max) throw new Error(`${at}: ${v} is above its max ${f.max}`);
+    values.set(f.key, v);
+    params[f.key] = resolve || !isFormula(raw) ? v : String(raw).trim();
+  }
+  return { mask, params, scope: { label, values, outer } };
+}
+
+function hasFormulas(d) {
+  return d.blocks.some((b) => {
+    if (b.type === 'subsystem') return b.mask?.length > 0 || hasFormulas(b.diagram);
+    const def = ELEMENTS[b.type] ?? (BLOCKS.plant[b.type] ? { params: BLOCKS.plant[b.type].params } : null);
+    return !!def?.params?.some((p) => (!p.kind && isFormula(b.params?.[p.key])) || (p.kind === 'vector' && Array.isArray(b.params?.[p.key]) && b.params[p.key].some(isFormula)));
+  });
+}
+
+function maskValues(diagram, idPath = []) {
+  let scope = null, d = diagram;
+  for (const id of idPath) {
+    const b = d.blocks.find((x) => x.id === id);
+    if (!b?.diagram) break;
+    scope = normalizeMask(b, id, scope, true).scope;
+    d = b.diagram;
+  }
+  return scopeMap(scope);
+}
+function formulaIn(src, values) {
+  try { return compileFormula(src, (n) => (values.has(n) ? { value: values.get(n) } : null))(new Float64Array(0)); } catch { return NaN; }
+}
+
+function normalizeParams(type, params = {}, where, scope = null, resolve = false) {
+  if (diagramBlockDef(type).model) {
+    const def = diagramBlockDef(type), numeric = { ...params }, kept = {};
+    for (const p of def.params) {
+      const v = params[p.key], at = `${where}.${p.key}`;
+      if (p.kind === 'vector' && Array.isArray(v) && v.some(isFormula)) { numeric[p.key] = v.map((x, j) => fieldNumber(x, p, scope, `${at}[${j}]`)); kept[p.key] = v.map((x) => (isFormula(x) ? String(x).trim() : Number(x))); }
+      else if (p.kind !== 'vector' && isFormula(v)) { numeric[p.key] = fieldNumber(v, p, scope, at); kept[p.key] = String(v).trim(); }
+    }
+    const out = normalizeBlock('plant', { type, params: numeric }).params;
+    return resolve ? out : { ...out, ...kept };
+  }
+  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where, scope);  
+  const out = {}, values = {};
   for (const p of ELEMENTS[type].params) {
     let v = params[p.key] ?? p.default;
     if (p.kind === 'unit') {
@@ -7131,28 +7434,30 @@ function normalizeParams(type, params = {}, where) {
     } else if (p.kind === 'name') {
       v = String(v);
       if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
-    } else if (p.kind === 'expr') {
-      v = String(v).trim();
-      try { compileExpr(v, { vars: true }); } catch (e) { throw new Error(`${where}.${p.key}: ${e.message}`); }
     } else if (p.kind === 'signs') {
       v = String(v);
       if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
-    } else if (p.nullable && (params[p.key] === null || params[p.key] === '')) {
+    } else if (p.nullable && (params[p.key] === null || params[p.key] === '' || (params[p.key] === undefined && p.default === null))) {
       v = null;   
     } else {
-      v = Number(v);
-      if (!Number.isFinite(v)) throw new Error(`${where}.${p.key}: expected a number`);
+      const raw = v;
+      v = fieldNumber(raw, p, scope, `${where}.${p.key}`);
+      if (Number.isNaN(v) || (!Number.isFinite(v) && !isFormula(raw))) throw new Error(`${where}.${p.key}: expected a number`);
       if (p.int) v = Math.round(v);
       if (p.min !== undefined && v < p.min) throw new Error(`${where}.${p.key}: at least ${p.min}`);
       if (p.max !== undefined && v > p.max) throw new Error(`${where}.${p.key}: at most ${p.max}`);
+      values[p.key] = v;
+      if (isFormula(raw) && !resolve) v = String(raw).trim();
     }
     out[p.key] = v;
   }
+  if (type === 'integrator' && values.min !== undefined && values.max !== undefined && values.min > values.max) throw new Error(`${where}: min ${values.min} is above max ${values.max}`);
   if (type === 'switch') out.position = Math.min(out.position, out.inputs);
   return out;
 }
 
-function normalizeDiagram(d, path = 'plant') {
+function normalizeDiagram(d, path = 'plant', opts = {}) {
+  const { scope = null, resolve = false } = opts;
   if (!d || !Array.isArray(d.blocks)) throw new Error(`${path}: a diagram needs "blocks" and "wires"`);
   const ids = new Set();
   const blocks = d.blocks.map((b, i) => {
@@ -7160,11 +7465,15 @@ function normalizeDiagram(d, path = 'plant') {
     if (!b.id || typeof b.id !== 'string' || /[:/]/.test(b.id)) throw new Error(`${where}: needs an "id" without ":" or "/"`);
     if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
     ids.add(b.id);
-    const { base, extra } = vectorExtras(b.type, b.params, `${where}(${b.id})`);
-    const out = { id: b.id, type: b.type, params: { ...normalizeParams(b.type, base, `${where}(${b.id})`), ...extra }, x: Number(b.x) || 0, y: Number(b.y) || 0 };
+    const at = `${where}(${b.id})`;
+    const m = b.type === 'subsystem' ? normalizeMask(b, at, scope, resolve) : null;
+    const { base, extra } = m ? { base: b.params, extra: {} } : vectorExtras(b.type, b.params, at);
+    const out = { id: b.id, type: b.type, params: m ? m.params ?? {} : { ...normalizeParams(b.type, base, at, scope, resolve), ...extra }, x: Number(b.x) || 0, y: Number(b.y) || 0 };
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
-    if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
+    if (m?.mask) out.mask = m.mask;
+    if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`, { scope: m.scope, resolve });
+    if (resolve && b.type === 'fcn' && scope) Object.defineProperty(out, 'consts', { value: scopeMap(scope) });
     if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
       const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
@@ -7235,7 +7544,9 @@ function blockInputNames(diagram, idPath) {
       const out = src.diagram.blocks.find((b) => b.type === 'outport' && b.params.port === f.port + 1);
       return out?.name ? `${out.name} (${src.name ?? src.id})` : (src.name ?? src.id);
     }
-    return outputNames(diagramBlockDef(src.type), src.params)[f.port] || (src.name ?? src.id);
+    const outNames = outputNames(diagramBlockDef(src.type), src.params);
+    if (src.type === 'fcn') return outNames.length > 1 ? `${outNames[f.port]} (${src.name ?? src.id})` : (src.name ?? src.id);
+    return outNames[f.port] || (src.name ?? src.id);
   });
 }
 
@@ -7246,6 +7557,7 @@ const fmt = (v) => String(Number(Number(v).toPrecision(3)));
 const NONE = [];
 
 function compileDiagram(diagram, path = 'plant', opts = {}) {
+  if (hasFormulas(diagram)) diagram = normalizeDiagram(diagram, path, { resolve: true });
   diagram = flattenVectors(diagram, { ports: blockPorts });
   const model = opts.mode === 'model';
   const standalone = opts.standalone || model;
@@ -7335,7 +7647,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         continue;
       }
       if (def.ode) {
-        const k = add({ kind: 'ode', name, short: b.name ?? b.id, ft: false, ode: def.ode, rates: def.ode.make(b.params), p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
+        const k = add({ kind: 'ode', name, short: b.name ?? b.id, ft: false, ode: def.ode, rates: def.ode.make(b.params), p: b.params, inputs: new Array(nIn).fill(-1), uv: nIn > 1 ? new Float64Array(nIn) : null, outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
         outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j, see: -1 }));
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
@@ -7347,7 +7659,11 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         continue;
       }
       const node = { name, short: b.name ?? b.id, inputs: new Array(nIn).fill(-1) };
-      if (def.tf) {
+      if (b.type === 'integrator') Object.assign(node, { unit: b.params.unit, angle: !!b.params.angle });
+      const lo = b.params.min ?? -Infinity, hi = b.params.max ?? Infinity, x0 = b.params.x0 ?? 0;
+      if (b.type === 'integrator' && (x0 !== 0 || lo > -Infinity || hi < Infinity)) {
+        Object.assign(node, { kind: 'int', K: b.params.K, lo, hi, x0: Math.min(hi, Math.max(lo, x0)), ft: false, bound: 0 });
+      } else if (def.tf) {
         const tf = def.tf(b.params);
         const ss = tf2ss(tf.num, tf.den);
         if (ss.n === 1) { ss.B[0] *= ss.C[0]; ss.C[0] = 1; }
@@ -7358,11 +7674,14 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
       else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, y0: b.params.y0, ft: model || b.params.L <= 0 });
       else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
-      else if (b.type === 'fcn') Object.assign(node, { kind: 'fcn', f: compileExpr(b.params.expr, { vars: true }), env: { u: 0, t: 0 }, ft: true });
+      else if (b.type === 'fcn') {
+        const eq = compileEquations(b.params, b.consts);
+        Object.assign(node, { kind: 'fcn', eq, v: new Float64Array(eq.n), outv: new Float64Array(eq.out.length), ft: true });
+      }
       else if (b.type === 'quantizer') Object.assign(node, { kind: 'quant', q: b.params.q, ft: true });
       else if (b.type === 'noise') Object.assign(node, { kind: 'noise', std: b.params.std, seed: b.params.seed, ft: true });
       const k = add(node);
-      outs[b.id] = [k];
+      outs[b.id] = [k, ...Array.from({ length: nOut - 1 }, (_, j) => add({ kind: 'pick', name: `${name}.${outputNames(def, b.params)[j + 1]}`, ft: true, inputs: [k], parent: k, j: j + 1 }))];
       ins[b.id] = node.inputs.map((_, s) => [k, s]);
     }
     for (const w of d.wires) {
@@ -7395,19 +7714,23 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
   }
   if (pending.size) throw new Error(`${path}: algebraic loop through ${[...pending].map((i) => nodes[i].name).join(', ')}; put a block with state (integrator, lag) in the loop${model ? ' (in a model, dead times pass straight through)' : ''}`);
+  const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
+  const through = nodes.map((nd, i) => origin(i));
+  for (const nd of nodes) for (let s = 0; s < nd.inputs.length; s++) if (nd.inputs[s] >= 0) nd.inputs[s] = through[nd.inputs[s]];
+  for (let q = order.length - 1; q >= 0; q--) if (nodes[order[q]].kind === 'pass') order.splice(q, 1);
 
   let n = 0, bound = 0;
   const stateNodes = [];
   for (const nd of nodes) {
-    if (nd.kind !== 'ss' && nd.kind !== 'ode') continue;
-    nd.nx = nd.kind === 'ss' ? nd.ss.n : typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n;
+    if (nd.kind !== 'ss' && nd.kind !== 'ode' && nd.kind !== 'int') continue;
+    nd.nx = nd.kind === 'int' ? 1 : nd.kind === 'ss' ? nd.ss.n : typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n;
     nd.off = n; n += nd.nx; bound = Math.max(bound, nd.bound);
     if (nd.nx > 0) stateNodes.push(nd);
   }
   const states = [];
   for (const nd of stateNodes) {
     if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
-    else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: '', angle: false, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
+    else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: nd.unit && nd.unit !== '1' ? nd.unit : '', angle: !!nd.angle, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
   }
 
   const vals = new Float64Array(nodes.length);
@@ -7430,15 +7753,15 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     nd.after = ctrls.filter((c) => c !== nd && mark[c.i]).map((c) => c.i);
   }
 
-  const through = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
   const stateOut = (i) => {
-    const nd = nodes[through(i)];
+    const nd = nodes[origin(i)];
     if (!nd) return null;
     if (nd.kind === 'tap' && nodes[nd.parent].kind === 'ode' && nodes[nd.parent].nx === 1) return nodes[nd.parent];
     if (nd.kind === 'ss' && nd.nx === 1 && nd.ss.C[0] === 1 && nd.ss.D === 0) return nd;
+    if (nd.kind === 'int' && nd.lo === -Infinity && nd.hi === Infinity) return nd;
     return null;
   };
-  const gainOne = (nd) => (nd.kind === 'ode' ? nd.p.K === 1 && nd.ode === ELEMENTS.xintegrator.ode : nd.ss.A[0] === 0 && nd.ss.B[0] === 1);
+  const gainOne = (nd) => (nd.kind === 'int' ? nd.K === 1 : nd.kind === 'ss' && nd.ss.A[0] === 0 && nd.ss.B[0] === 1);
   function differenceSees(nd) {
     const m = nd.inputs.length - 1, idx = new Int32Array(2 * m).fill(-1);
     for (let k = 0; k < m; k++) {
@@ -7473,6 +7796,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
   let h = 0;
   let left = false;
+  let ideal = false;
   const histAt = (nd, tau, y0 = 0) => {
     const hist = nd.hist;
     if (tau < 0 || !hist.length) return y0;
@@ -7481,7 +7805,6 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     return hist[i] + ((nd.histL[i + 1] ?? hist[i + 1]) - hist[i]) * (f - i);
   };
   const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
-  const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
 
   function outputs(list, t, X, o, u) {
     for (let q = 0; q < list.length; q++) {
@@ -7496,9 +7819,19 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
         case 'delay': y = model || nd.L <= 0 ? inOf(nd) : histAt(nd, t - nd.L, nd.y0 ?? (nd.hist.length ? nd.hist[0] : inOf(nd))); break;
         case 'switch': y = inOf(nd, nd.pick); break;
-        case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
-        case 'quant': y = model ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
-        case 'noise': y = model ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
+        case 'fcn': {
+          const { eq, v } = nd;
+          for (let s = 0; s < eq.nIn; s++) v[s] = inOf(nd, s);
+          v[eq.nIn] = t;
+          for (let k = 0; k < eq.fs.length; k++) v[eq.first + k] = eq.fs[k](v);
+          for (let j = 0; j < eq.out.length; j++) nd.outv[j] = v[eq.out[j]];
+          y = nd.outv[0];
+          break;
+        }
+        case 'pick': y = nodes[nd.parent].outv[nd.j]; break;
+        case 'int': y = Math.min(nd.hi, Math.max(nd.lo, X[o + nd.off])); break;
+        case 'quant': y = model || ideal ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
+        case 'noise': y = model || ideal ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
         case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
         case 'mimo': for (let s = 0; s < nd.uv.length; s++) nd.uv[s] = inOf(nd, s); nd.fn(nd.uv, nd.outv, t); y = nd.outv.length ? nd.outv[0] : 0; break;
         case 'tap': y = nd.see >= 0 ? X[o + nd.see] : nodes[nd.parent].outv[nd.j]; break;
@@ -7517,7 +7850,16 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   function rates(list, t, X, o, dX) {
     for (let q = 0; q < list.length; q++) {
       const nd = list[q];
-      if (nd.kind === 'ode') { nd.rates(X, o + nd.off, inOf(nd), dX); continue; }
+      if (nd.kind === 'int') {
+        const r = nd.K * inOf(nd), x = X[o + nd.off];
+        dX[o + nd.off] = (x <= nd.lo && r < 0) || (x >= nd.hi && r > 0) ? 0 : r;
+        continue;
+      }
+      if (nd.kind === 'ode') {
+        if (nd.uv) for (let s = 0; s < nd.uv.length; s++) nd.uv[s] = inOf(nd, s);
+        nd.rates(X, o + nd.off, inOf(nd), dX, nd.uv);
+        continue;
+      }
       const { ss } = nd, base = o + nd.off;
       const inp = nd.delay > 0 && !model ? histAt(nd, t - nd.delay) : inOf(nd);
       for (let r = 0; r < ss.n; r++) {
@@ -7528,6 +7870,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
   }
 
+  const probeSrc = probeList.map(([, k]) => origin(k)), outSrc = outNode >= 0 ? origin(outNode) : -1;
   const self = {
     n, bound, warnings, minTs, sampleTimes, states, designs, validity,
     setStep(step) { h = step; },
@@ -7545,14 +7888,19 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (since.length) self.eval(t, X, o, u, null);
     },
     nextSample() { let t = Infinity; for (const nd of ctrls) if (nd.next < t) t = nd.next; return t; },
-    init(X, o) { for (const nd of stateNodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
+    init(X, o) {
+      for (const nd of stateNodes) {
+        if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; });
+        if (nd.kind === 'int') X[o + nd.off] = nd.x0;
+      }
+    },
     eval(t, X, o, u, dX, end = false) {
       left = end;
       outputs(dX ? rateOrder : order, t, X, o, u);
       if (dX) rates(stateNodes, t, X, o, dX);
-      return outNode >= 0 ? vals[outNode] : 0;
+      return outSrc >= 0 ? vals[outSrc] : 0;
     },
-    probes: () => probeList.map(([name, k]) => [name, vals[k]]),
+    probes: () => probeList.map(([name, k], j) => [name, probeSrc[j] >= 0 ? vals[probeSrc[j]] : 0]),
     record() { for (const nd of delays) { nd.hist.push(inOf(nd)); if (nd.histL.length < nd.hist.length) nd.histL.push(inOf(nd)); } },
     recordLeft() { for (const nd of delays) nd.histL.push(inOf(nd)); },
     snapshot(t, X, o = 0) {
@@ -7588,6 +7936,48 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       return { sinks, sources, ctrls };
     },
   };
+
+  const jacobian = (X0, t) => {
+    const X = Float64Array.from(X0), f0 = new Float64Array(n), f1 = new Float64Array(n);
+    const J = Array.from({ length: n }, () => new Array(n).fill(0));
+    ideal = true;
+    try {
+      self.eval(t, X, 0, 0, f0);
+      for (let j = 0; j < n; j++) {
+        const x = X[j], dx = (x + 1e-6 * Math.max(1, Math.abs(x))) - x;
+        X[j] = x + dx;
+        self.eval(t, X, 0, 0, f1);
+        X[j] = x;
+        for (let i = 0; i < n; i++) J[i][j] = (f1[i] - f0[i]) / dx;
+      }
+    } finally { ideal = false; }
+    self.eval(t, X, 0, 0, null);
+    return J;
+  };
+  self.stiffness = (X0, t = 0) => {
+    if (!n) return { bound: 0, state: null };
+    const J = jacobian(X0, t);
+    if (!J.every((row) => row.every(Number.isFinite))) return { bound: 0, state: null, note: 'the rates are not finite at this state' };
+    let top = { re: 0, im: 0 }, mag = 0;
+    for (const z of eig(J)) { const a = Math.hypot(z.re, z.im); if (a > mag) { mag = a; top = z; } }
+    let state = null;
+    if (mag > 0) {
+      const s = 1 + 1e-7;
+      const v = csolve(J.map((row, i) => row.map((a, j) => a - (i === j ? top.re * s : 0))), J.map((row, i) => row.map((a, j) => (i === j ? -top.im * s : 0))), new Array(n).fill(1), new Array(n).fill(0));
+      if (v) { let k = 0; for (let i = 1; i < n; i++) if (Math.hypot(v.xr[i], v.xi[i]) > Math.hypot(v.xr[k], v.xi[k])) k = i; state = states[k]?.label ?? null; }
+    }
+    return { bound: mag, state };
+  };
+  {
+    const X0 = new Float64Array(n);
+    self.init(X0, 0);
+    const s = self.stiffness(X0, 0);
+    self.blockBound = bound;
+    self.stiff = s;
+    self.bound = s.bound > bound * (1 + 1e-6) ? s.bound : bound;
+  }
+  self.stiffWarning = (hmax, need, ran, T) => `${self.stiff.state ? `'${self.stiff.state}' needs` : 'this plant needs'} steps of ${siUnit(hmax, 's')}; this ${siUnit(T, 's')} screen would take ${siUnit(need, '', 3)} steps; it ran ${siUnit(ran, '', 3)}: inaccurate. Shorten the screen`;
+
   if (!model) return self;
 
   const owner = new Int32Array(n);   
@@ -7618,7 +8008,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (nd.kind === 'switch') return [nd.inputs[nd.pick]];
       return nd.inputs;
     };
-    const reads = (i) => (nodes[i].kind === 'ode' || (nodes[i].kind === 'ss' && nodes[i].ss.D === 0) ? NONE : deps(i));
+    const reads = (i) => (nodes[i].kind === 'ode' || nodes[i].kind === 'int' || (nodes[i].kind === 'ss' && nodes[i].ss.D === 0) ? NONE : deps(i));
     const users = nodes.map(() => []);
     nodes.forEach((nd, i) => { for (const s of deps(i)) if (s >= 0) users[s].push(i); });
     const walk = (starts, next) => {
@@ -7730,7 +8120,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       states: Array.from(keep, (g) => ({ ...states[g] })),
       outputs: labels.map((label) => ({ label, angle: false, unit: '' })),
       delay, sensors, through: [...through],
-      bound: Math.max(0, ...kept.map((nd) => nd.bound)),
+      bound: Math.max(self.bound, ...kept.map((nd) => nd.bound)),
       warnings: notes,
       f(x, u, dx) {
         evaluate(x, u, sliceF);
@@ -7810,7 +8200,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   return self;
 }
 
-return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
+return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, maskValues, formulaIn, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
 })();
 // ---- core/sim.js
 __mods['core/sim.js'] = (() => {
@@ -7819,6 +8209,7 @@ const { blockDef, SLOTS } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
 const { compileDiagram, plantDiagram, wrapPlant } = __mods['core/diagram.js'];
 const { referenceFn } = __mods['core/signals.js'];
+const { siUnit } = __mods['core/scale.js'];
 const MAX_SAMPLES = 200000;
 const MAX_STEPS = 400000;
 const BLOWUP = 1e8;
@@ -8016,10 +8407,14 @@ function gaussian(seed) {
 
 const ns = (x) => Math.round(x * 1e9);
 const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a; };
-function stepPlan(T, bound, sampleTimes = [], K = 1, warnings = []) {
+function stepPlan(T, bound, sampleTimes = [], K = 1, warnings = [], who = null) {
   const hmax = bound > 0 ? 0.5 / bound : T;
   let need = Math.max(1, Math.ceil(T / hmax - 1e-9));
-  if (K * need > MAX_STEPS) { need = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
+  if (K * need > MAX_STEPS) {
+    const ran = Math.max(1, Math.floor(MAX_STEPS / K));
+    warnings.push(`${who ? `'${who}' needs` : 'this plant needs'} steps of ${siUnit(hmax, 's')}; this ${siUnit(K * T, 's')} screen would take ${siUnit(K * need, '')} steps; it ran ${siUnit(K * ran, '')}: inaccurate. Shorten the screen`);
+    need = ran;
+  }
   if (!sampleTimes.length) return { m: need, split: false };
   let g = ns(T);
   for (const Ts of sampleTimes) g = gcd(g, ns(Ts));
@@ -8032,7 +8427,9 @@ const substeps = (...a) => stepPlan(...a).m;
 
 const onGrid = (t) => Math.round(t * 1e9) / 1e9;
 
-function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
+function simulateSystem(diagram, signals, sim, opts = {}) {
+  const { designs, until } = opts;
+  const t0 = globalThis.performance?.now() ?? Date.now();
   const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
   let K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
   if (until !== undefined) {
@@ -8042,7 +8439,8 @@ function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
   const el = compileDiagram(diagram, 'plant', { sources, standalone: true, designs });
   const warnings = [...el.warnings];
-  const { m, split } = stepPlan(Ts, el.bound, el.sampleTimes, K, warnings);
+  const bound = Math.max(el.bound, Number(opts.bound) || 0);
+  const { m, split } = stepPlan(Ts, bound, el.sampleTimes, K, warnings, el.stiff.state);
   const h = Ts / m, N = el.n;
   el.setStep(h);
   const X = new Float64Array(N), Xt = new Float64Array(N);
@@ -8090,7 +8488,16 @@ function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
       el.record();
     }
   }
-  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, validity: el.validity } };
+  const end = unstable ? null : el.stiffness(X, K * Ts);
+  if (end && !(opts.bound > 0) && end.bound > bound * (1 + 1e-6) && stepPlan(Ts, end.bound, el.sampleTimes, K).m > m) {
+    const again = simulateSystem(diagram, signals, sim, { ...opts, bound: end.bound });
+    again.info.warnings.unshift(`stiffer later in the run: ${end.state ? `'${end.state}'` : 'the plant'} needs steps of ${siUnit(0.5 / end.bound, 's')} at ${siUnit(K * Ts, 's')}, against ${siUnit(h, 's')} at the start; run again with them`);
+    again.info.stiffness.start = el.stiff;
+    again.info.ms = (globalThis.performance?.now() ?? Date.now()) - t0;
+    return again;
+  }
+  const ms = (globalThis.performance?.now() ?? Date.now()) - t0;
+  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, bound, stiffness: { start: el.stiff, end }, ms, validity: el.validity } };
   if (until !== undefined) res.snapshot = unstable ? null : el.snapshot(K * Ts, X);
   return res;
 }
@@ -9464,6 +9871,7 @@ function systemTags(e) {
       if (b.diagram) walk(b.diagram);
       const onlyDisplays = d.wires.filter((w) => w.from.split(':')[0] === b.id).every((w) => ['sink', 'terminator'].includes(d.blocks.find((x) => x.id === w.to.split(':')[0])?.type));
       if (NONLINEAR.has(b.type) && !(b.type === 'fcn' && onlyDisplays)) nonlinear = true;
+      if (b.type === 'integrator' && [b.params?.min, b.params?.max].some((v) => v !== null && v !== undefined && !/^\s*[-+]?inf\s*$/i.test(String(v)))) nonlinear = true;
     }
   };
   walk(e.diagram);
@@ -13090,6 +13498,7 @@ const GUIDE = {
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
     M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
     M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
+    M('loopTuner.info()', '', 'What the screen\'s last run reported: validity reports (a model used outside where it holds), warnings (a stiff plant and the step it needs, a run made again because the plant grew stiffer, a signal that diverged, an input not connected), the integration step h, steps, the step bound (the blocks\' own and the Jacobian\'s largest eigenvalue at the start), the Jacobian\'s at the start and the end, and the run\'s ms. The status line under the screen shows the first report or warning.', 'loopTuner.info()', '{ validity, warnings, h, substeps, steps, bound, stiffness: { start, end }, ms } or null'),
     M('loopTuner.whenDesigned()', '', 'Resolves once no design is being computed in the background (a plan for the planned swing-up takes seconds; meanwhile the block runs u = 0 or its previous plan) and the display shows the run that uses it. Await it before judging a run.', 'await loopTuner.whenDesigned()', 'a promise of designs()'),
     M('loopTuner.loopModel(path, op)', 'path: a Controller block\'s id path; op: "origin" (at rest), "initial" (the start), { y: [levels] } or { t: seconds }', 'The loop the Controller closes, as the Analysis tab draws it: the plant it sees linearised at op, and the running variant\'s own law, as state space. Refused, with the reason, where there is none (a relay, a kink at op, a plant outside the page).', 'loopTuner.loopModel("ctrl", "initial")', '{ plant: { A, B, C, D, delay, ... }, ctrl: { A, B, C, D }, Ts, opLabel, variantName, warnings }'),
     M('loopTuner.live.state()', '', 'The live link: state ("offline", "connecting", "open", "running"), pending ("run" or "stop" while the plant has not answered a key yet), message (the last message the page showed), estop ({ by, reason } or null), mode ("control", "reference", "log"), the plant\'s ports, ramp ({ left, to } while the references ramp in), link and plant figures, hold.', 'loopTuner.live.state().state'),
@@ -13174,20 +13583,6 @@ return { AGENT_NOTE, GUIDE, apiList, guideText };
 // ---- ui/units.js
 __mods['ui/units.js'] = (() => {
 
-const PREFIXES = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n']];
-
-function si(v, digits = 3) {
-  if (v === 0) return '0 ';
-  if (!Number.isFinite(v)) return '— ';
-  const a = Math.abs(v);
-  const [f, p] = PREFIXES.find(([f]) => a >= f * 0.9995) ?? PREFIXES[PREFIXES.length - 1];
-  return `${Number((v / f).toPrecision(digits))} ${p}`;
-}
-
-function siUnit(v, unit, digits) {
-  return `${si(v, digits)}${unit}`.replace(/ $/, '');
-}
-
 function num(v, digits = 4) {
   if (!Number.isFinite(v)) return '—';
   if (v === 0) return '0';
@@ -13199,13 +13594,13 @@ function num(v, digits = 4) {
 function parseSI(text, unit = '') {
   let s = String(text).trim().replace(/,/g, '.').replace(/−/g, '-').replace(/\/div$/, '').trim();
   if (unit && s.endsWith(unit)) s = s.slice(0, -unit.length).trim();
-  const m = s.match(/^([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*([GMkmuµn]?)$/i);
+  const m = s.match(/^([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*([GMkmuµnp]?)$/i);
   if (!m) return NaN;
-  const f = { G: 1e9, M: 1e6, k: 1e3, K: 1e3, m: 1e-3, u: 1e-6, U: 1e-6, 'µ': 1e-6, n: 1e-9, N: 1e-9, '': 1 }[m[2]];
+  const f = { G: 1e9, M: 1e6, k: 1e3, K: 1e3, m: 1e-3, u: 1e-6, U: 1e-6, 'µ': 1e-6, n: 1e-9, N: 1e-9, p: 1e-12, '': 1 }[m[2]];
   return Number(m[1]) * f;
 }
 
-return { si, siUnit, num, parseSI };
+return { num, parseSI };
 })();
 // ---- ui/palette.js
 __mods['ui/palette.js'] = (() => {
@@ -13331,7 +13726,8 @@ __mods['ui/freqview.js'] = (() => {
 
 const { amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, AUTO_LEVELS, spectrogramWindow, levelHistogram, autoLevels, levelRange, spectrogramNoise, aboveNoise } = __mods['core/spectrum.js'];
 const { levelsOf } = __mods['core/project.js'];
-const { siUnit, num } = __mods['ui/units.js'];
+const { num } = __mods['ui/units.js'];
+const { siUnit } = __mods['core/scale.js'];
 const { palette: C, HEAT_STOPS: STOPS } = __mods['ui/palette.js'];
 const DIVX = 10, DIVY = 8, DB_PER_DIV = 10;
 
@@ -14020,8 +14416,8 @@ return { measure, measureValue, measureLine };
 // ---- ui/display.js
 __mods['ui/display.js'] = (() => {
 
-const { siUnit, num } = __mods['ui/units.js'];
-const { step125 } = __mods['core/scale.js'];
+const { num } = __mods['ui/units.js'];
+const { siUnit, step125 } = __mods['core/scale.js'];
 const { channelSignal, drawFrequency, freqRange, nyquist } = __mods['ui/freqview.js'];
 const { withLevels, levelsOf, withAboveNoise } = __mods['core/project.js'];
 const { drawXY, vOfX, valueLabel, valueTargets, xyStatus, xyFrame, xyNearest } = __mods['ui/xyview.js'];
@@ -14390,6 +14786,8 @@ function createDisplay(root, handlers) {
     const state = { run: ['run', 'Run'], stop: ['stop', 'Stop'], single: ['single', 'Single'] }[mode];
     const tb = scope.timebase;
     const live = handlers.liveTag?.();
+    const runNote = live ? null : handlers.runNote?.();
+    status.dataset.note = runNote ?? '';
     status.dataset.run = mode;
     status.dataset.live = live?.state ?? 'none';
     status.dataset.ramp = live?.ramp ? 'yes' : 'no';
@@ -14404,6 +14802,7 @@ function createDisplay(root, handlers) {
       ${vm === 'xy' ? `<span class="badge">${xyStatus(scope, unitLabel, visible)}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="muted">pos ${siUnit(tb.position, 's', 4)}</span>
+      ${runNote ? `<span class="badge badge-outline" data-lamp="warn">Warning</span><span class="run-note" title="${esc(runNote)}">${esc(runNote)}</span>` : ''}
       ${line !== null ? `<span class="selline" style="--cc: var(--ch-${line + 1})">line ${line + 1} selected · Esc to release</span>` : ''}
       <span class="grow"></span>
       ${mode !== 'stop' ? `<span class="muted">t ${siUnit(run ? run.t : tScan, 's', 3)}</span>` : ''}`;
@@ -14796,7 +15195,8 @@ return { createDisplay };
 // ---- ui/plots.js
 __mods['ui/plots.js'] = (() => {
 
-const { siUnit, num } = __mods['ui/units.js'];
+const { num } = __mods['ui/units.js'];
+const { siUnit } = __mods['core/scale.js'];
 const { palette: C } = __mods['ui/palette.js'];
 function niceTicks(lo, hi, n = 6) {
   const span = hi - lo;
@@ -15247,8 +15647,8 @@ return { createAnalysisTab };
 __mods['ui/controls.js'] = (() => {
 
 const { createDial } = __mods['ui/dial.js'];
-const { siUnit, num, parseSI } = __mods['ui/units.js'];
-const { step125 } = __mods['core/scale.js'];
+const { num, parseSI } = __mods['ui/units.js'];
+const { siUnit, step125 } = __mods['core/scale.js'];
 const { withAboveNoise } = __mods['core/project.js'];
 function createControls(root, app) {
   root.innerHTML = `
@@ -16893,7 +17293,8 @@ return { orbitBasis, eyeOf, dirAngles, VIEWS, VIEW_KEYS, viewAngles, orbitBy, pi
 // ---- ui/plant.js
 __mods['ui/plant.js'] = (() => {
 
-const { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames } = __mods['core/diagram.js'];
+const { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames, maskValues, formulaIn } = __mods['core/diagram.js'];
+const { isFormula } = __mods['core/formula.js'];
 const { SYSTEM_LIBRARY } = __mods['core/systems.js'];
 const { num, parseSI } = __mods['ui/units.js'];
 const { createScene } = __mods['ui/scene.js'];
@@ -16926,8 +17327,14 @@ function size(b) {
   if (b.type === 'terminator') return [26, 26];
   if (b.type === 'external') return [150, 18 * Math.max(...blockPorts(b)) + 32];  
   if (b.type === 'switch') { const n = b.params.inputs; return [56, Math.max(40, 18 * n + 8)]; }
+  if (b.type === 'fcn') { const [li, lo] = labelRoom(b); return [130 + li + lo, Math.max(48, 18 * Math.max(...blockPorts(b)) + 12)]; }
   const [ni, no] = blockPorts(b);
   return [130, Math.max(48, 18 * Math.max(ni, no) + 12)];
+}
+function labelRoom(b) {
+  const w = (names) => (names.length ? 10 + 6.2 * Math.max(...names.map((n) => n.length)) : 0);
+  const def = diagramBlockDef(b.type), ins = w(def.inputNames?.(b.params) ?? []), outs = w(outputNames(def, b.params));
+  return b.flip ? [outs, ins] : [ins, outs];
 }
 function geom(b) {
   const [w, h] = size(b);
@@ -17145,7 +17552,7 @@ function createPlantEditor(root, app) {
     } else if (b.type === 'gain') {
       const pts = b.flip ? `${b.x + g.w},${b.y} ${b.x + g.w},${b.y + g.h} ${b.x},${cy}` : `${b.x},${b.y} ${b.x},${b.y + g.h} ${b.x + g.w},${cy}`;
       shape = `<polygon class="body" points="${pts}"/>`;
-      text = `<text class="bp" x="${b.x + (b.flip ? g.w * 0.62 : g.w * 0.38)}" y="${cy + 4}" text-anchor="middle">${esc(num(b.params.K, 3))}</text>`
+      text = `<text class="bp" x="${b.x + (b.flip ? g.w * 0.62 : g.w * 0.38)}" y="${cy + 4}" text-anchor="middle">${esc(isFormula(b.params.K) ? b.params.K : num(b.params.K, 3))}</text>`
         + (b.name ? `<text class="bn" x="${cx}" y="${b.y - 5}" text-anchor="middle">${esc(b.name)}</text>` : '');
     } else {
       const round = ['source', 'sink', 'inport', 'outport'].includes(b.type) ? 14 : 5;
@@ -17156,7 +17563,8 @@ function createPlantEditor(root, app) {
         text = `<text class="bt" x="${cx}" y="${cy + 4.5}" text-anchor="middle">${esc(title)}</text>`;
       } else {
         const sub = b.type === 'subsystem' ? `${b.diagram.blocks.length} blocks · open ↵` : summary(b);
-        text = `<text class="bt" x="${b.x + 9}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${b.x + 9}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
+        const left = b.x + 9 + (b.type === 'fcn' ? labelRoom(b)[0] : 0);
+        text = `<text class="bt" x="${left}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${left}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
     const outNames = outputNames(def, b.params), inNames = def.inputNames?.(b.params) ?? [];
@@ -17165,13 +17573,20 @@ function createPlantEditor(root, app) {
       + g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
       + g.outs.map((p, i) => `<circle class="port out" data-port="out" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('');
     const stack = b.type === 'subsystem' ? `<rect class="stack" x="${b.x + 4}" y="${b.y + 4}" width="${g.w}" height="${g.h}" rx="5"/>` : '';
-    return `<g class="${cls}" data-block="${b.id}">${stack}${shape}${text}${ports}</g>`;
+    const tip = b.type === 'fcn' ? `<title>${esc(b.params.eqs)}</title>` : '';
+    return `<g class="${cls}" data-block="${b.id}">${tip}${stack}${shape}${text}${ports}</g>`;
+  }
+
+  function integratorFace(p) {
+    const v = (x) => (isFormula(x) ? x : num(x, 3));
+    const lim = p.min !== null || p.max !== null ? ` [${p.min === null ? '−∞' : v(p.min)}, ${p.max === null ? '∞' : v(p.max)}]` : '';
+    return `${p.K !== 1 ? `${v(p.K)}·` : ''}∫${lim}${p.x0 !== 0 ? ` · x₀ ${v(p.x0)}` : ''}`;
   }
 
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector' && b.params[p.key] !== null).slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
-    const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
+    const text = def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? b.params.eqs.split('\n')[0] : b.type === 'integrator' ? integratorFace(b.params) : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector' && b.params[p.key] !== null).slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const room = Math.floor((size(b)[0] - 18 - (b.type === 'fcn' ? labelRoom(b).reduce((a, x) => a + x, 0) : def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
 
@@ -17279,11 +17694,24 @@ function createPlantEditor(root, app) {
       const def = diagramBlockDef(b.type);
       let html = `<h3 class="label">${esc(def.label)}</h3><div class="pform">`;
       if (!['source', 'sink', 'inport', 'outport'].includes(b.type)) html += field('name', 'Label', b.name ?? '', 'text', 'optional');
+      const values = maskValues(rootDiagram(), path);
+      const valueOf = (x, unit) => { const v = formulaIn(x, values); return `→ ${Number.isFinite(v) ? num(v, 4) : v > 0 ? '∞' : v < 0 ? '−∞' : '?'}${unit && unit !== '1' ? ` ${unit}` : ''}`; };
       for (const p of def.params) {
         if (p.kind === 'hidden') continue;  
         const v = b.params[p.key];
-        const hint = p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}${p.nullable ? ` · empty: ${p.nullable}` : ''}`;
-        html += field(`p:${p.key}`, p.label, p.kind === 'vector' || Array.isArray(v) ? v.join(', ') : p.kind ? v : v === null ? '' : num(v, 6), p.kind ?? 'number', hint);
+        const formulas = p.kind === 'vector' && Array.isArray(v) ? v.filter(isFormula) : !p.kind && isFormula(v) ? [v] : [];
+        const hint = formulas.length ? formulas.map((x) => `${x} ${valueOf(x, Array.isArray(v) ? '' : p.unit)}`).join(' · ') : p.kind === 'vector' ? 'highest power first' : p.kind === 'names' ? 'names, separated by commas' : p.kind === 'eqs' ? 'one per line: name = formula, in the inputs, the names above, the mask\'s parameters and t' : p.kind ? '' : `unit: ${p.unit ?? '1'}${p.nullable ? ` · empty: ${p.nullable}` : ''}`;
+        const text = p.kind === 'vector' || Array.isArray(v) ? v.map((x) => (isFormula(x) ? x : num(x, 6))).join(', ') : p.kind || isFormula(v) ? v : v === null ? '' : num(v, 6);
+        html += field(`p:${p.key}`, p.label, text, p.kind ?? 'number', hint);
+      }
+      if (b.mask?.length) {
+        html += `</div><h3 class="label">Mask</h3><div class="pform">`;
+        const outer = maskValues(rootDiagram(), path);
+        for (const f of b.mask) {
+          const v = b.params[f.key], range = [f.min !== undefined ? `min ${num(f.min, 6)}` : '', f.max !== undefined ? `max ${num(f.max, 6)}` : ''].filter(Boolean).join(' · ');
+          const shown = isFormula(v) ? `${v} ${(() => { const x = formulaIn(v, outer); return `→ ${Number.isFinite(x) ? num(x, 4) : x > 0 ? '∞' : '−∞'}`; })()}` : '';
+          html += field(`m:${f.key}`, `${f.label}${f.label !== f.key ? ` (${f.key})` : ''}`, isFormula(v) ? v : Number.isFinite(v) ? num(v, 6) : v > 0 ? 'inf' : '-inf', 'number', [shown, `unit: ${f.unit}`, range].filter(Boolean).join(' · '));
+        }
       }
       html += '</div><div class="pbtns">';
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="btn btn-sm" data-act="flip">Flip</button>`;
@@ -17313,26 +17741,50 @@ function createPlantEditor(root, app) {
   }
 
   function field(key, label, value, kind, hint) {
-    return `<label class="pf"><span class="flabel">${esc(label)}</span><input class="field field-sm mono" data-f="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false"><span class="hint">${esc(hint)}</span></label>`;
+    const input = kind === 'eqs'
+      ? `<textarea class="field field-sm mono" data-f="${esc(key)}" data-kind="${kind}" rows="${Math.min(8, String(value).split('\n').length + 1)}" spellcheck="false">${esc(value)}</textarea>`
+      : `<input class="field field-sm mono" data-f="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false">`;
+    return `<label class="pf"><span class="flabel">${esc(label)}</span>${input}<span class="hint">${esc(hint)}</span></label>`;
+  }
+
+  const numberOrFormula = (raw) => { const v = parseSI(raw); return Number.isFinite(v) ? v : /^[^<>"{}]{1,80}$/.test(raw) && isFormula(raw) ? raw : NaN; };
+  const valid = (v) => typeof v === 'string' || Number.isFinite(v);
+
+  function nudge(inp, e) {
+    if (inp.dataset.kind !== 'number') return;
+    const v = parseSI(inp.value.trim());
+    if (!Number.isFinite(v) || v === 0) return;
+    e.preventDefault();
+    inp.value = num(v * (e.shiftKey ? 1.01 : 1.05) ** (e.deltaY < 0 ? 1 : -1), 4);
+    const f = inp.dataset.f;
+    inp.dispatchEvent(new Event('blur'));
+    $(`#pl-props [data-f="${f}"]`)?.focus();
   }
 
   function bindFields(b) {
     $('#pl-props').querySelectorAll('[data-f]').forEach((inp) => {
-      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } });
+      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && (inp.tagName !== 'TEXTAREA' || e.ctrlKey || e.metaKey)) inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } });
+      inp.addEventListener('wheel', (e) => nudge(inp, e), { passive: false });
       inp.addEventListener('blur', () => {
         if (inp.dataset.cancel) { delete inp.dataset.cancel; renderProps(); return; }
         const f = inp.dataset.f, kind = inp.dataset.kind, raw = inp.value.trim();
         if (f === 'libname') { saveName = raw; return; }
-        let value = raw;
+        if (inp.value === inp.defaultValue) return;   
+        let value = kind === 'eqs' ? inp.value : raw;
         const nullable = f.startsWith('p:') && diagramBlockDef(b.type).params.find((p) => p.key === f.slice(2))?.nullable;
         if (kind === 'number' && raw === '' && nullable) value = null;
-        else if (kind === 'number') { value = parseSI(raw); if (!Number.isFinite(value)) { app.toast('Enter a number, e.g. 0.5, 20m, 2k.'); renderProps(); return; } }
-        if (kind === 'vector') { value = raw.split(/[\s,;]+/).filter(Boolean).map(Number); if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas, highest power of s first.'); renderProps(); return; } }
+        else if (kind === 'number') { value = numberOrFormula(raw); if (!valid(value)) { app.toast('Enter a number (0.5, 20m, 2k) or a formula in the mask\'s names (2*m).'); renderProps(); return; } }
+        if (kind === 'vector') { value = raw.split(/[\s,;]+/).filter(Boolean).map(numberOrFormula); if (!value.length || !value.every(valid)) { app.toast('Enter numbers (or formulas) separated by commas, highest power of s first.'); renderProps(); return; } }
         edit((d) => {
           const blk = d.blocks.find((x) => x.id === b.id);
           if (f === 'name') { if (raw) blk.name = raw; else delete blk.name; return; }
+          if (f.startsWith('m:')) { blk.params[f.slice(2)] = value; return; }
           const key = f.slice(2);
           if ((blk.type === 'source' && key === 'signal') || (blk.type === 'sink' && key === 'name')) { renameNamed(blk, value); return false; }
+          if (blk.type === 'fcn' && (key === 'inputs' || key === 'outputs')) {
+            const n = value.split(',').filter((x) => x.trim()).length;
+            d.wires = d.wires.filter((w) => { const e = parseEnd(key === 'inputs' ? w.to : w.from); return e.id !== blk.id || e.port < n; });
+          }
           if (blk.type === 'sum' && key === 'signs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value.length; });
           if (blk.type === 'controller' && key === 'inputs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value; });
           if (blk.type === 'switch' && key === 'inputs') {
@@ -19860,35 +20312,47 @@ function startApp() {
     pumpDesigns();
     return acq;
   }
+  app.runInfo = () => {
+    const info = acquire().info;
+    if (!info) return null;
+    const { h, substeps, steps, bound, stiffness, ms, warnings = [], validity = [] } = info;
+    return structuredClone({ validity, warnings, h, substeps, steps: steps ?? null, bound: bound ?? null, stiffness: stiffness ?? null, ms: ms ?? null });
+  };
+  app.runNote = () => {
+    const info = acq?.info;
+    return info?.validity?.[0]?.says ?? info?.warnings?.[0] ?? null;
+  };
   function simulateScreen(p) {
     loopNote = '';
     app.systemError = '';
     app.designStatuses = [];
     if (p.system.plant?.type === 'diagram' && findExternal(p.system.plant.diagram)) {
       try { app.designStatuses = designSystem(p, { designs }); } catch (err) { app.systemError = err.message; }
-      return { t: new Float64Array(0), signals: Object.fromEntries(channelNames(p).map((n) => [n, new Float64Array(0)])) };
+      return { t: new Float64Array(0), signals: Object.fromEntries(channelNames(p).map((n) => [n, new Float64Array(0)])), info: null };
     }
     if (loopReady(p)) {
       const { t, r } = referenceTrace(p);
       const signals = { r };
+      let info = null;
       const cand = p.candidates[Math.max(0, p.selected ? p.candidates.findIndex((c) => c.name === p.selected) : 0)] ?? p.candidates[0];
       try {
         const { result } = evaluateCandidate(p, cand);
         Object.assign(signals, { y: result.y, u: result.u, e: result.e, ym: result.ym, d: result.d });
+        info = result.info;
         loopNote = `loop: ${cand.name}`;
       } catch (err) { app.systemError = err.message; }
-      return { t, signals };
+      return { t, signals, info };
     }
     try {
       const sys = evaluateSystem(p, { designs });
       app.designStatuses = sys.info.designs ?? [];
-      return { t: sys.t, signals: sys.signals };
+      return { t: sys.t, signals: sys.signals, info: sys.info };
     } catch (err) {
       app.systemError = err.message;
       const signals = {};
       let t = null;
       for (const name of Object.keys(p.system.signals)) { const tr = referenceTrace(p, name); signals[name] = tr.r; t = tr.t; }
-      return { t, signals };
+      return { t, signals, info: null };
     }
   }
   let simTiming = { key: '', duration: 0, ms: [], again: null, at: 0, timer: 0 };
@@ -19920,7 +20384,7 @@ function startApp() {
     if (JSON.stringify(simOf(p)) !== JSON.stringify(ctx.sim) || JSON.stringify(p.system.signals) !== JSON.stringify(ctx.signals)) return;
     if (JSON.stringify(withVariant(p.system.plant.diagram, ctx.path, variant)) !== JSON.stringify(withVariant(ctx.diagram, ctx.path, variant))) return;
     acqKey = acqKeyOf(p);
-    acq = { t: run.t, signals: run.signals };
+    acq = { t: run.t, signals: run.signals, info: run.info ?? null };
     loopNote = '';
     app.systemError = '';
   }
@@ -20161,6 +20625,7 @@ function startApp() {
     endEdit: () => app.endEdit(),
     onTime: () => app.onScopeTime?.(),
     liveTag: () => live?.tag(),
+    runNote: () => app.runNote(),
     speed: () => speed.effective(),
     simRate: () => app.simRate({ retime: true }),
     onSweep: (t, seconds) => speed.ran(t, seconds),
@@ -20488,6 +20953,7 @@ function startApp() {
       return { speed: speedToJson(speed.set), effective: speedToJson(speed.effective()), achieved: speed.achieved(), simulation: Number.isFinite(sim) ? sim : null, locked: speed.locked() };
     },
     designs: () => { acquire(); return structuredClone(app.designStatuses ?? []); },
+    info: () => app.runInfo(),
     whenDesigned: async () => {
       for (;;) {
         acquire();

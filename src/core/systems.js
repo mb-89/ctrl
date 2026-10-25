@@ -68,10 +68,12 @@ export function systemTags(e) {
     for (const b of d.blocks) {
       blocks.push(b);
       if (b.diagram) walk(b.diagram);
-      // A Function block that only feeds Sinks (an energy shown on the
+      // An Equations block that only feeds Sinks (an energy shown on the
       // scope, say) leaves the dynamics linear.
       const onlyDisplays = d.wires.filter((w) => w.from.split(':')[0] === b.id).every((w) => ['sink', 'terminator'].includes(d.blocks.find((x) => x.id === w.to.split(':')[0])?.type));
       if (NONLINEAR.has(b.type) && !(b.type === 'fcn' && onlyDisplays)) nonlinear = true;
+      // An Integrator with a limit (a tank's brim and bottom) is nonlinear.
+      if (b.type === 'integrator' && [b.params?.min, b.params?.max].some((v) => v !== null && v !== undefined && !/^\s*[-+]?inf\s*$/i.test(String(v)))) nonlinear = true;
     }
   };
   walk(e.diagram);

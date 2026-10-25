@@ -13,6 +13,7 @@ import { blockDef, SLOTS } from './blocks.js';
 import { tf2ss, rootBound } from './poly.js';
 import { compileDiagram, plantDiagram, wrapPlant } from './diagram.js';
 import { referenceFn } from './signals.js';
+import { siUnit } from './scale.js';
 
 const MAX_SAMPLES = 200000;
 const MAX_STEPS = 400000;
@@ -245,10 +246,16 @@ function gaussian(seed) {
 // plus the cuts. Returns { m, split }.
 const ns = (x) => Math.round(x * 1e9);
 const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a; };
-export function stepPlan(T, bound, sampleTimes = [], K = 1, warnings = []) {
+// When the step cap binds, the warning names who needs the step (who: a
+// state's label, from el.stiff) and what the screen would take.
+export function stepPlan(T, bound, sampleTimes = [], K = 1, warnings = [], who = null) {
   const hmax = bound > 0 ? 0.5 / bound : T;
   let need = Math.max(1, Math.ceil(T / hmax - 1e-9));
-  if (K * need > MAX_STEPS) { need = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
+  if (K * need > MAX_STEPS) {
+    const ran = Math.max(1, Math.floor(MAX_STEPS / K));
+    warnings.push(`${who ? `'${who}' needs` : 'this plant needs'} steps of ${siUnit(hmax, 's')}; this ${siUnit(K * T, 's')} screen would take ${siUnit(K * need, '')} steps; it ran ${siUnit(K * ran, '')}: inaccurate. Shorten the screen`);
+    need = ran;
+  }
   if (!sampleTimes.length) return { m: need, split: false };
   let g = ns(T);
   for (const Ts of sampleTimes) g = gcd(g, ns(Ts));
@@ -274,7 +281,15 @@ const onGrid = (t) => Math.round(t * 1e9) / 1e9;
 // and return the run there as `snapshot` ({ t, X, held, inputs, sources },
 // diagram.js el.snapshot), for a model at a moment of the run; null if the
 // run diverged before it.
-export function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
+// info: { h, substeps, split, steps, unstable, warnings, designs, bound,
+// stiffness, ms }: bound is the step bound the run used (el.bound, the
+// blocks' own and the Jacobian's largest |λ|); stiffness { start, end } the
+// Jacobian's at the start and the end state. Where the end is stiffer than
+// the step taken, the run is made once more with the end's bound and says so.
+// opts.bound: a step bound to take at least (that second run).
+export function simulateSystem(diagram, signals, sim, opts = {}) {
+  const { designs, until } = opts;
+  const t0 = globalThis.performance?.now() ?? Date.now();
   const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
   let K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
   if (until !== undefined) {
@@ -284,7 +299,8 @@ export function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
   const el = compileDiagram(diagram, 'plant', { sources, standalone: true, designs });
   const warnings = [...el.warnings];
-  const { m, split } = stepPlan(Ts, el.bound, el.sampleTimes, K, warnings);
+  const bound = Math.max(el.bound, Number(opts.bound) || 0);
+  const { m, split } = stepPlan(Ts, bound, el.sampleTimes, K, warnings, el.stiff.state);
   const h = Ts / m, N = el.n;
   el.setStep(h);
   const X = new Float64Array(N), Xt = new Float64Array(N);
@@ -334,7 +350,18 @@ export function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
       el.record();
     }
   }
-  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, validity: el.validity } };
+  // Stiffer later in the run (a nonlinear plant away from its start): run
+  // again with the end's bound, once. Live cannot, and keeps the start's.
+  const end = unstable ? null : el.stiffness(X, K * Ts);
+  if (end && !(opts.bound > 0) && end.bound > bound * (1 + 1e-6) && stepPlan(Ts, end.bound, el.sampleTimes, K).m > m) {
+    const again = simulateSystem(diagram, signals, sim, { ...opts, bound: end.bound });
+    again.info.warnings.unshift(`stiffer later in the run: ${end.state ? `'${end.state}'` : 'the plant'} needs steps of ${siUnit(0.5 / end.bound, 's')} at ${siUnit(K * Ts, 's')}, against ${siUnit(h, 's')} at the start; run again with them`);
+    again.info.stiffness.start = el.stiff;
+    again.info.ms = (globalThis.performance?.now() ?? Date.now()) - t0;
+    return again;
+  }
+  const ms = (globalThis.performance?.now() ?? Date.now()) - t0;
+  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, bound, stiffness: { start: el.stiff, end }, ms, validity: el.validity } };
   if (until !== undefined) res.snapshot = unstable ? null : el.snapshot(K * Ts, X);
   return res;
 }

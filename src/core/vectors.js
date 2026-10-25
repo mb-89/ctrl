@@ -146,7 +146,7 @@ export const VECTOR_ELEMENTS = { ...SIGNAL_BLOCKS, ...MATH_BLOCKS, ...ROBOT_BLOC
 // Fields a block keeps only when given (so files without them are unchanged):
 //   source      derivatives 1 or 2: outputs ṙ (and r̈) beside r
 //   sink        name "x, y, z" (one per element) and unit "m, m, rad"
-//   integrator  x0 (a number or a list), width, unit, angle 0/1
+//   integrator  x0 as a list (one start value per element), width
 //   controller  lanes (one law per element), ff 1 (a feedforward input group)
 // vectorExtras splits the params into what the block's own normalisation
 // takes and these extras, checked here.
@@ -178,16 +178,14 @@ export function vectorExtras(type, params = {}, where = 'block') {
       extra.unit = units.join(',');
     }
   } else if (type === 'integrator') {
-    const x0 = take('x0'), width = take('width'), unit = take('unit'), angle = take('angle');
-    if (x0 !== undefined && !(typeof x0 === 'number' && x0 === 0)) extra.x0 = numOrList(x0, `${where}.x0`);
+    const width = take('width');
+    if (Array.isArray(base.x0)) extra.x0 = numOrList(take('x0'), `${where}.x0`);
     if (width !== undefined && Number(width) !== 1) {
       const w = Math.round(Number(width));
       if (!(w >= 1 && w <= 4096)) throw new Error(`${where}.width: a whole number, at least 1`);
       extra.width = w;
     }
     if (extra.x0 !== undefined && extra.width !== undefined && typeof extra.x0 !== 'number' && extra.x0.length !== extra.width) throw new Error(`${where}: x0 has ${extra.x0.length} values but width is ${extra.width}`);
-    if (unit !== undefined && String(unit).trim() && String(unit).trim() !== '1') extra.unit = String(unit).trim();
-    if (angle !== undefined && Number(angle)) extra.angle = 1;
   } else if (type === 'controller') {
     const lanes = take('lanes'), ff = take('ff');
     if (lanes !== undefined && Number(lanes) !== 1) {
@@ -206,7 +204,7 @@ function needsPass(d) {
   for (const b of d.blocks) {
     if (VECTOR_ELEMENTS[b.type]) return true;
     const p = b.params ?? {};
-    if (p.derivatives || p.lanes > 1 || p.ff || (b.type === 'integrator' && (Array.isArray(p.x0) || p.x0 || p.width > 1 || p.angle || (p.unit && p.unit !== '1'))) || (b.type === 'sink' && String(p.name).includes(','))) return true;
+    if (p.derivatives || p.lanes > 1 || p.ff || (b.type === 'integrator' && (Array.isArray(p.x0) || p.width > 1)) || (b.type === 'sink' && String(p.name).includes(','))) return true;
     if (b.type === 'subsystem' && needsPass(b.diagram)) return true;
   }
   return false;
@@ -503,8 +501,7 @@ function expandLevel(lv, cx) {
     const n = b.type === 'sink' || b.type === 'terminator' ? w.ins[0] : w.outs[0] ?? 1;
     const nIn = w.ins.length;
     const allScalar = w.ins.every((x) => x === 1) && w.outs.every((x) => x === 1);
-    const extras = b.type === 'integrator' && (b.params.x0 || b.params.angle || (b.params.unit && b.params.unit !== '1'));
-    if (allScalar && !extras && !(b.type === 'sink' && String(b.params.name).includes(','))) {
+    if (allScalar && !(b.type === 'integrator' && Array.isArray(b.params.x0)) && !(b.type === 'sink' && String(b.params.name).includes(','))) {
       blocks.push(b);
       ins[b.id] = Array.from({ length: nIn }, (_, g) => [end(b.id, g)]);
       outs[b.id] = w.outs.map((_, g) => [end(b.id, g)]);
@@ -553,30 +550,12 @@ function elementCopy(b, id, k, n, label) {
     return copy;
   }
   if (b.type === 'integrator') {
-    const x0 = p.x0 === undefined ? 0 : at(p.x0, k);
-    if (n === 1 && !(x0 !== 0 || p.angle || (p.unit && p.unit !== '1'))) return copy;
-    copy.type = 'xintegrator';
-    copy.params = { K: p.K, x0, unit: p.unit ?? '1', angle: p.angle ? 1 : 0, state: n > 1 ? `${label}${k + 1}` : label };
-    if (copy.type === 'xintegrator') copy.name = label;
+    // Its element of x0; its state is labelled by the element ("Arm/q3").
+    const { width, ...rest } = p;
+    copy.params = { ...rest, x0: p.x0 === undefined ? 0 : at(p.x0, k) };
+    if (n > 1) copy.name = `${label}${k + 1}`;
     return copy;
   }
   if (b.type === 'noise') { copy.params = { ...p, seed: p.seed + k }; return copy; }
   return copy;
 }
-
-// An Integrator element with a start value, a unit or the angle flag
-// (until the Integrator itself has them: transparent-models.md §1.3): ẋ = K·u,
-// x(0) = x0. Its state is labelled by the element ("Arm/q.q3").
-export const XINTEGRATOR = {
-  label: 'Integrator', group: null, formula: 'K / s', params: [num('K', 'K', 1)], ports: () => [1, 1], outputs: ['x'],
-  normalize: (p) => p,
-  ode: {
-    n: 1,
-    states: (p) => [{ name: p.state, unit: p.unit, angle: !!p.angle }],
-    init: (p) => [p.x0],
-    out: (X, o, p, y) => { y[0] = X[o]; },
-    make(p) { const K = p.K; return (X, o, u, dX) => { dX[o] = K * u; }; },
-    bound: () => 0,
-  },
-};
-VECTOR_ELEMENTS.xintegrator = XINTEGRATOR;
