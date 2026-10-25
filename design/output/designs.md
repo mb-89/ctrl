@@ -170,6 +170,20 @@ The Analysis tab is its own workstream (on main: `core/analysis.js`, `ui/analysi
   - Refusals (`DesignError`, with a sentence and a hint): `no-diagram`, `no-block`, `not-a-controller`, `no-design` (a plan not made yet, or the design's own refusal), `not-linear` (a swing-up pumping energy), `diverged`.
 - **Discretising is the tab's job** (`discretePlant` on main): a zero-order hold at Ts, and each measurement's `delay[k]` as round(delay / Ts) unit delays, exact when the dead time is a whole number of samples (the tank's 0.1 s pipe at 20 ms).
 - **Checked** (`test/loop.test.mjs`): the linear loop formed this way follows the nonlinear run. The cart–pole on LQR from 0.01 rad matches to 1e-6 m. The tank's scheduled PI with a 1 cm step at 0.45 m, through the pipe's 5 samples of dead time, matches to 0.07 mm. The cart–pole loop's poles equal LQR's own to 1e-9. The snapshot run equals the full run bit for bit up to t.
+- **On the library** (headless Chromium after the merge, the running variant at rest; the Node figures for the other variants agree):
+
+  | System · variant | At rest | Elsewhere |
+  |---|---|---|
+  | DC motor · P, too aggressive | stable; gain ×1.63, PM 14.6° at 25.7 rad/s, Ms 4.69; step 66.6 % | PD: PM 36.4°, Ms 2.51 |
+  | Following a sine · P | stable; gain ×16.3, PM 74.5°, Ms 1.21 | PID: PM 20°, step 29.5 % |
+  | DC motor, sliding mode · Relay (theory) | refused: "an ideal sliding mode switches: it has no linear model; give it a boundary layer φ > 0" | Boundary layer: gain ×12.9, PM 40.5° at 108 rad/s; Super-twisting refused (√\|s\| has infinite slope at s = 0) |
+  | Encoder errors · PI speed | marginal (the angle's integrator, cancelled by the derivative, stays on the circle); gain ×0.59 … ×1.47, PM −11.9° at 423 rad/s, P 1; notes: the origin is not at rest | mid-sweep (scope time): unstable, at a point that is no equilibrium |
+  | Conical tank · Gain-scheduled PI | at h = 0: notes name the kink and u at its limit; at the start (h = 0.15 m): gain ×3.39, PM 60.9°, Ms 1.56, dead time 5 Ts exact | PI tuned for full at the start: unstable (Z 2), as it rings in the run |
+  | Pendulum swing-up · Swing-up + LQR catch | the catch: gain ×0.349 … ×12.2, PM 60.4° at 15.7 rad/s, Ms 1.09, P 1 | at the start and mid-swing refused: "the swing-up pumps energy at θ = −3.14 rad" |
+  | Triple pendulum · Planned swing-up + TV-LQR | "its plan is not made yet" until it settles, then the upright LQR: gain ×0.553 … ×3.34, PM 42°, Ms 1.43, P 3 | along the plan: its gains of that sample, frozen, with a note |
+  | Oven · PID, badly tuned | unstable as linearised (Z 2; stable for gain ×0 … ×0.742): the run's limit cycle, held by the heater's limits; u at its limit noted | — |
+  | HIL: external motor | refused: "the plant runs outside the page (External plant 'motor'): the page has no model of it" | — |
+  | Mass–spring–damper | no Controller block, said so | — |
 - **Not yet**: an Observer's own dynamics in the loop. A Controller on a Kalman filter's estimates sees the states they stand for, and the observer types have no `linear`; L through the filter needs it as part of the controller, with u fed to it from the cut.
 
 Where this differs from the plan (§12): `linear` takes `at` before `values`, `linear(p, Ts, at, values)`, the contract main's Analysis tab already uses for the hand types (`at.y` for the scheduled PI and the swing-up). `loopModel` and `el.snapshot`'s `inputs` and `sources` are additions: the first is what main's tab asks `app.loopModel` for, the second gives an Observer's u and the Sources at t.
