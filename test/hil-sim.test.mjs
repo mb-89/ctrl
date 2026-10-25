@@ -52,7 +52,7 @@ function withSinks(diagram, loop) {
 }
 
 test('the plant is the page\'s simulation of the same model, sample for sample, for every library system', () => {
-  assert.equal(simModels().length, 11, 'every library system but the HIL ones');
+  assert.equal(simModels().length, 12, 'every library system but the HIL ones');
   for (const e of simModels()) {
     const { diffs, compared } = samePlant(e);
     assert.ok(compared > 50, e.name);

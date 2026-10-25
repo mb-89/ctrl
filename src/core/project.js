@@ -439,6 +439,9 @@ export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
     // The law's own hint where it has one (no point makes a switching law linear).
     throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'pick an operating point where the law is linear, such as at rest');
   }
+  // A law that updates every k samples is linear at its own, longer Ts.
+  const loopTs = ctrl.Ts ?? Ts;
+  plant.Ts = loopTs;
   const warnings = [...plant.warnings];
   if (ctrl.note) warnings.push(ctrl.note);
   const { umin = -Infinity, umax = Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
@@ -448,7 +451,7 @@ export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
   // Where the linear loop does not hold, for a reader that grades it (the
   // Analysis tab's verdict, Auto-tune's check at the start): u at a limit.
   // (A kink at the operating point is refused above.)
-  return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
+  return { plant, ctrl, Ts: loopTs, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
 }
 
 // The least-used palette slot, earliest first, so a colour follows its

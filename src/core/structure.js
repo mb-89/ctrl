@@ -215,10 +215,11 @@ function gainScheduled(p, { inputs, Ts }) {
   return s.done();
 }
 
-function stateFeedback(p, { inputs }) {
-  const m = p.K.length;
+function stateFeedback(p, { inputs, Ts }) {
+  const m = p.K.length, every = p.every ?? 1;
   const rowY = (i) => 40 + 16 * i;
-  const s = sheet('State feedback', DIAGRAM_WIDTH, rowY(m - 1) + 16);
+  const s = sheet('State feedback', DIAGRAM_WIDTH, rowY(m - 1) + (every > 1 ? 28 : 16));
+  if (every > 1) s.note({ x: 4, y: rowY(m - 1) + 16, text: `u held: updated every ${every} samples${Ts ? `, ${secs(every * Ts)}` : ''}`, anchor: 'start' });
   s.port({ x: 4, y: 14, text: 'r', anchor: 'start' });
   s.wire([[12, 14], [16, 14]]);
   s.block({ x: 39, y: 14, w: 46, h: 16, lines: [kv('Tr', p.Tr > 0 ? secs(p.Tr) : '0')], faint: !(p.Tr > 0), tip: 'Prefilter (Vorfilter) on r; 0 is off' });
@@ -448,6 +449,12 @@ function lqr(p, o) {
   return below(d, `K, kr: LQR from the plant at its origin, ${weights(p)}`, 'LQR');
 }
 
+function deadbeat(p, o) {
+  const v = o.values, m = Math.max(1, o.inputs.length - 1);
+  const d = stateFeedback({ K: v?.K ?? unknown(m), kr: v?.kr ?? UNKNOWN, Tr: p.Tr, every: p.every, umin: p.umin, umax: p.umax }, o);
+  return below(d, `K, kr: poles at z = 0, settles in ${m}${o.Ts ? ` × ${secs(p.every * o.Ts)}` : ' samples'}`, 'Deadbeat');
+}
+
 function scheduledPI(p, o) {
   const v = o.values, n = p.at.length;
   const common = { Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, u0: v?.u0 ?? 0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
@@ -513,7 +520,7 @@ function luenbergerPlaced(p, o) {
   return estimator(p, o, 'luenberger', { n, m, lines: ['model from the plant, at its origin; L from the poles', `error poles at s = −${p.w.map(fmt).join(', −')} 1/s`] });
 }
 
-const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenbergerPlaced, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, deadbeat, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenbergerPlaced, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 // def: the type's library entry, for the generic picture of a type without its own.
 export function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {
