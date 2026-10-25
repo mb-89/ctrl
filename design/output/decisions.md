@@ -2,6 +2,10 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the main-job gate measures against the datum ([input 71](../input/2026-10-25-71-gate-against-the-datum.md))
+
+- Asked whether the gate (vetoed beyond ×2 the datum's following or rejection error) should keep measuring against the controller set up now, which makes it strict against a strong datum and lenient against a weak one, or against a fixed yardstick (the tuned PID), the person chose the datum, as built. No change to the code.
+
 ## 2026-10-25 · v2.9: the benchmark is named by the plant; the datum is the controller set up now ([input 70](../input/2026-10-25-70-benchmark-named-by-the-system-datum-is-current.md))
 
 The person: "I don't think it makes sense if you name the benchmark by a certain controller, because the point is to compare all the controllers. So just name the controller benchmark by the system that we are actually running. And the datum is the controller that is currently set up. That's kind of implicit. But we're not testing a deadbeat controller on a DC motor. We're testing all the controllers we have on the DC motor." Built ([benchmark.md](benchmark.md) §0 and §2.8; the prototype; [pugh.md](pugh.md)):
