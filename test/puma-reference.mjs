@@ -4,7 +4,7 @@
 // on the robot core (rbd.js), with no blocks and no compiler. test/puma.test.mjs
 // holds the library system's compiled run to it.
 //
-//   pumaReference({ variant: 0 | 1 | 2, T: 5 }) → { t, q (per sample, 6), p, pd, e }
+//   pumaReference({ variant: 0 | 1 | 2, T: 10 }) → { t, q (per sample, 6), p, pd, e }
 //
 // variant 0: PI + model feedforward; 1: PI, no model; 2: P only, no model.
 // The same steps as simulateSystem: RK4 at the 1 ms record step with the
@@ -20,7 +20,7 @@ import { PUMA_SYSTEM, PUMA_START } from '../src/core/pumasystem.js';
 
 const DEG = Math.PI / 180, N = 6;
 
-export function pumaReference({ variant = 0, T = 5, signals } = {}) {
+export function pumaReference({ variant = 0, T = 10, signals } = {}) {
   const D = PUMA560.drive, Ts = 0.001, h = Ts, K = Math.round(T / Ts);
   const model = parseUrdf(PUMA560.urdfProbe), tool = 'tip';
   const arm = createRbd(model, { armature: PUMA560.armature }), kin = createRbd(model);
