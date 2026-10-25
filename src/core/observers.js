@@ -19,7 +19,7 @@
 // (kalmanModel), and the page computes its gain L from it, Q and R.
 
 import { c2d, dlqe } from './linalg.js';
-import { kalmanDesign } from './design.js';
+import { kalmanDesign, placedDesign } from './design.js';
 import { normalizeVariant } from './controllers.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
@@ -104,6 +104,23 @@ export const OBSERVERS = {
     // A file from before the design layer typed its model in (A, B, C with Q
     // and R): it opens as the Kalman filter on that model.
     migrate: (v) => (['A', 'B', 'C'].some((k) => v.params?.[k] !== undefined) && v.params?.L === undefined ? { ...v, type: 'kalmanModel' } : v),
+  },
+  luenbergerPlaced: {
+    // A Luenberger observer on the plant this Observer sees, as the Kalman
+    // filter (the same model, the same filter form), but with L placed so
+    // the estimate's error dies out at the rates you give (design.js,
+    // placedDesign): fast poles follow the measurement and its noise, slow
+    // ones trust the model. One measurement.
+    label: 'Luenberger observer, placed poles', summary: 'x̂ = prediction + L (y − C x̂), model from the plant, L from the poles',
+    designed: true, version: 1, computes: ['A', 'B', 'C', 'L'], twin: 'luenberger',
+    params: [vec('w', 'Error poles at s = −w', [100], { unit: '1/s', help: 'how fast the estimate\'s error dies out: one value puts every pole there; or one per state' })],
+    check(p) { return p.w.every((v) => v > 0) ? '' : 'w: each above 0'; },
+    design(p, ctx) {
+      const d = placedDesign(ctx.linearize('origin'), { w: p.w, Ts: ctx.Ts, outputs: ctx.outputs });
+      return { values: d.values, rows: d.rows, warnings: d.warnings, quality: d.quality };
+    },
+    make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.luenbergerPlaced.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
+    manual: (p, values) => OBSERVERS.kalman.manual(p, values),
   },
   kalmanModel: {
     // The steady-state Kalman filter on a model you give (ẋ = A x + B u,

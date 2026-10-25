@@ -35,6 +35,7 @@ const ABOUT = {
   slidingMode: 'Sliding mode (inputs r, y, ẏ): drives s = λ·e + ė to zero by switching u = u0 ± K. On the line s = 0 the error decays as e^(−λt) whatever the inertia or the load, so λ sets how the loop settles. φ = 0 is the textbook relay: robust, but it chatters at the sampling rate, hard on the actuator. φ > 0 is a boundary layer: proportional inside |s| < φ (a stiff PD, Kp = K·λ/φ, Kd = K/φ), smooth, but a load leaves an error. Needs a clean ẏ; put a differentiator in the diagram, not in the law.',
   superTwisting: 'Super-twisting, a second-order sliding mode (inputs r, y, ẏ): u = k1·√|s|·sign(s) + v, with the integral part v rising at k2 by the sign of s. The voltage is continuous and v rejects a constant load; actuator dynamics leave a small ripple, and a long reaching phase winds v up, so s overshoots the line before it slides. Size k1, k2 for the weakest plant.',
   kalmanModel: 'A Kalman filter on a model you give: ẋ = A x + B u, y = C x, row by row. The page discretises it at Ts and computes the steady-state gain L from Q (the variance of the noise on each state) and R (on each measurement). For a plant the page cannot see, such as an External plant; on a plant it can see, the Kalman filter from the plant computes the model as well.',
+  luenbergerPlaced: 'A Luenberger observer whose model comes from the plant as it is wired (linearised at its origin), as the Kalman filter\'s does, but whose gain L you set by where the estimate\'s error dies out: each pole at s = −w. Fast poles follow the measurement closely, and its noise with it; slow ones trust the model and lag behind what it does not know, such as a load. One measurement; Copy as numbers gives the Luenberger observer it runs.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
 };
@@ -446,7 +447,7 @@ function rowHtml(r) {
     return `<div class="ctabwrap"><table class="ctab"><thead><tr>${r.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${r.table.map((row) => `<tr>${row.map((x) => `<td>${val(x, 3)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   }
   const value = Array.isArray(r.value)
-    ? (r.labels ? r.value.map((x, i) => `<span class="cpair"><i class="muted">${esc(r.labels[i] ?? '')}</i>${val(x)}</span>`).join('') : r.value.map(val).join(', '))
+    ? (r.labels ? r.value.map((x, i) => `<span class="cpair"><i class="muted">${esc(r.labels[i] ?? '')}</i>${val(x)}</span>`).join('') : r.value.map((x) => val(x)).join(', '))
     : val(r.value);
   return `<div class="crow"><span class="muted">${esc(r.label)}</span><span class="cv mono">${value}${r.note ? ` <span class="muted">${esc(r.note)}</span>` : ''}</span></div>`;
 }

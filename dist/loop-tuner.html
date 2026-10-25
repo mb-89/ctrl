@@ -3713,16 +3713,45 @@ function stuck(Ad, B, W) {
   return null;
 }
 
-function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
-  const { n, m, states, outputs: meas } = lin;
-  const labels = meas.map((o) => o.label), names = states.map((s) => s.name);
-  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; the filter here handles up to 40`);
+function observerModel(lin, what, title = what) {
+  const { n, m, outputs: meas } = lin;
+  const labels = meas.map((o) => o.label);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; ${what} here handles up to 40`);
   if (!m) throw new DesignError('no-measurement', 'this observer has no measurement to correct its estimate with', 'wire the measurements to inputs 2, 3, …');
   if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')}), so there is nothing to estimate`, lin.warnings.join('; ') || 'wire input 1 (u) to what drives the plant, and the plant to the measurements');
-  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'the filter is designed at the origin, which must be an equilibrium with u = 0');
-  refuseKinks(lin, 'the Kalman filter');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, `${what} is designed at the origin, which must be an equilibrium with u = 0`);
+  refuseKinks(lin, title);
   const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
-  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; the filter needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; ${what} needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  return labels;
+}
+
+function observerResult(lin, L, labels, outputs, warnings, what) {
+  const { n, states } = lin, names = states.map((s) => s.name);
+  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
+  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: ${what} does not know that offset`); });
+  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in ${what}`); });
+  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const values = {
+    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
+    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
+  };
+  return {
+    values, warnings, quality: { ok: outputs === n },
+    estimates: { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
+    gain: { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+  };
+}
+
+function errorPoles(Ad, C, L) {
+  const ILC = L.map((row, i) => C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * C[k][j], 0)));
+  return eig(mul(ILC, Ad));
+}
+
+function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
+  const { n, m, states } = lin;
+  const names = states.map((s) => s.name);
+  const labels = observerModel(lin, 'the filter', 'the Kalman filter');
   const q = Array.isArray(Q) ? Q : [Q];
   if (q.length !== 1 && q.length !== n) throw new DesignError('q-length', `Q has ${q.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, `give one value (a push on ${lin.input.label}) or one per state`);
   const given = R !== null && R !== undefined;
@@ -3742,8 +3771,7 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
   const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
   const Qw = q.length === 1 ? Bd.map((a) => Bd.map((b) => q[0] * a[0] * b[0])) : diag(q);
   const { L, converged } = dlqe(Ad, lin.C, Qw, diag(r));
-  const ILC = L.map((row, i) => lin.C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * lin.C[k][j], 0)));
-  const poles = eig(mul(ILC, Ad));
+  const poles = errorPoles(Ad, lin.C, L);
   const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
   if (!converged || !(radius < 1)) {
     const Ct = transpose(lin.C), mode = stuck(transpose(Ad), Ct, transpose(Qw));
@@ -3751,22 +3779,47 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
     throw new DesignError('not-detectable', `the estimate's error would not die out: a pole of the filter stays at |z| = ${fmt(radius)}`, `the measurements may not show every state (${names.join(', ')}); measure more, or raise Q`);
   }
 
-  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
-  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: the filter does not know that offset`); });
-  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this filter`); });
-  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const res = observerResult(lin, L, labels, outputs, warnings, 'the filter');
   const rows = [
-    { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
-    { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+    res.estimates, res.gain,
     { label: 'R', value: r, labels, note: given ? '' : parts.length ? `from ${and(parts)}` : 'none: no sensor blocks' },
     q.length === 1 ? { label: 'Q', value: q[0], note: `a push on ${lin.input.label}, per sample` } : { label: 'Q', value: q, labels: names },
     { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
   ];
-  const values = {
-    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
-    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
-  };
-  return { values, rows, warnings, quality: { ok: outputs === n } };
+  return { values: res.values, rows, warnings: res.warnings, quality: res.quality };
+}
+
+function placedDesign(lin, { w, Ts, outputs = lin.n }) {
+  const { n, m, states } = lin;
+  const names = states.map((s) => s.name);
+  const labels = observerModel(lin, 'the observer');
+  if (m !== 1) throw new DesignError('one-measurement', `placing the poles fixes L for one measurement; this observer has ${m} (${labels.join(', ')})`, 'measure one signal, or use the Kalman filter, which weighs several');
+  const ws = Array.isArray(w) ? w : [w];
+  if (ws.length !== 1 && ws.length !== n) throw new DesignError('w-length', `w has ${ws.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, 'give one value (every pole there) or one per state');
+  if (!ws.every((v) => v > 0)) throw new DesignError('bad-poles', 'each w must be above 0: a pole at s = −w with w ≤ 0 lets the error grow or stay');
+  const zs = (ws.length === 1 ? new Array(n).fill(ws[0]) : ws).map((v) => Math.exp(-v * Ts));
+  const { Ad } = c2d(lin.A, lin.B, Ts);
+  const O = [];
+  let row = lin.C[0];
+  for (let k = 0; k < n; k++) { row = row.map((_, j) => row.reduce((s, c, i) => s + c * Ad[i][j], 0)); O.push(row); }
+  const { M: S } = equilibrate(O);
+  const big = Math.max(...S.map((r) => Math.hypot(...r)));
+  if (rank(S, 1e-10 * big) < n) throw new DesignError('not-observable', `${labels[0]} does not show every state of the plant this observer sees (${names.join(', ')}), so no L places all ${n} poles`, 'measure another signal, or use the Kalman filter');
+  let phi = Ad.map((r, i) => r.map((_, j) => (i === j ? 1 : 0)));
+  for (const z of zs) phi = mul(phi, Ad.map((r, i) => r.map((a, j) => a - (i === j ? z : 0))));
+  const en = Array.from({ length: n }, (_, i) => [i === n - 1 ? 1 : 0]);
+  const L = mul(phi, solve(O, en));
+  const poles = errorPoles(Ad, lin.C, L);
+  const want = [...zs].sort((a, b) => a - b), got = poles.map((z) => z.re).sort((a, b) => a - b);
+  const off = Math.max(...poles.map((z) => Math.abs(z.im)), ...want.map((z, i) => Math.abs(z - got[i])));
+  if (!(off < 1e-3)) throw new DesignError('ill-conditioned', `the poles came out up to ${fmt(off)} from where they were placed: ${labels[0]} shows some state too weakly to place its pole there`, 'place the poles closer to the plant\'s own, or use the Kalman filter');
+  const res = observerResult(lin, L, labels, outputs, [], 'the observer');
+  const rows = [
+    res.estimates, res.gain,
+    { label: 'w', value: zs.map((z) => -Math.log(z) / Ts), note: '1/s: each pole of the error at s = −w' },
+    { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
+  ];
+  return { values: res.values, rows, warnings: res.warnings, quality: res.quality };
 }
 
 function inverseSeries(path) {
@@ -3910,7 +3963,7 @@ function trajectoryDesign(p, ctx) {
   return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }
 
-return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, poleOf, kalmanDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, poleOf, kalmanDesign, placedDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
@@ -4574,7 +4627,7 @@ function off() {
 }
 
 function estimator(p, { inputs }, kind, { n = p.B.length, m = p.C.length / p.B.length, lines = [] } = {}) {
-  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, 95 + 11 * (kind === 'kalman' ? lines.length : 1));
+  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, 95 + 11 * (lines.length || 1));
   s.port({ x: 4, y: 36, text: 'u', anchor: 'start', tip: `Plant input: ${inputs[0] ?? 'not connected'}` });
   s.wire([[12, 36], [24, 36]]);
   s.block({ x: 74, y: 36, w: 100, h: 28, lines: [[['predict', 'k']], [['Ad·x̂ + Bd·u', '']]], tip: 'Predict: the model, discretised at Ts, carries the estimate one sample ahead with the input u' });
@@ -4589,7 +4642,7 @@ function estimator(p, { inputs }, kind, { n = p.B.length, m = p.C.length / p.B.l
   s.port({ x: 4, y: 70, text: 'y', anchor: 'start', tip: `Measurements: ${inputs.slice(1).join(', ') || 'none'}` });
   s.wire([[12, 70], [190, 70], [190, 50]]);
   s.note({ x: 4, y: 87, text: `${Number.isNaN(n) ? 'the states it sees' : `${n} state${n === 1 ? '' : 's'}`}, ${m} measurement${m === 1 ? '' : 's'}`, anchor: 'start' });
-  if (kind === 'kalman') lines.forEach((text, i) => s.note({ x: 4, y: 98 + 11 * i, text, anchor: 'start' }));
+  if (lines.length) lines.forEach((text, i) => s.note({ x: 4, y: 98 + 11 * i, text, anchor: 'start' }));
   else s.note({ x: 4, y: 98, text: `L ${p.L.map(fmt).join(' ')}`, anchor: 'start' });
   return s.done();
 }
@@ -4757,7 +4810,13 @@ function kalmanModel(p, o) {
   return estimator(p, o, 'kalman', { lines });
 }
 
-const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+function luenbergerPlaced(p, o) {
+  const v = o.values;
+  const n = v ? v.B.length : UNKNOWN, m = v ? v.C.length / v.B.length : Math.max(1, o.inputs.length - 1);
+  return estimator(p, o, 'luenberger', { n, m, lines: ['model from the plant, at its origin; L from the poles', `error poles at s = −${p.w.map(fmt).join(', −')} 1/s`] });
+}
+
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenbergerPlaced, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {
   const layout = LAYOUTS[variant.type];
@@ -4772,7 +4831,7 @@ return { DIAGRAM_WIDTH, fmt, limitsText, NOTE_CHAR, describeVariant, DESCRIBED_T
 __mods['core/observers.js'] = (() => {
 
 const { c2d, dlqe } = __mods['core/linalg.js'];
-const { kalmanDesign } = __mods['core/design.js'];
+const { kalmanDesign, placedDesign } = __mods['core/design.js'];
 const { normalizeVariant } = __mods['core/controllers.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
@@ -4843,6 +4902,18 @@ const OBSERVERS = {
     make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.kalman.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
     manual: (p, values) => ({ type: 'luenberger', params: { A: [...values.A], B: [...values.B], C: [...values.C], L: [...values.L] } }),
     migrate: (v) => (['A', 'B', 'C'].some((k) => v.params?.[k] !== undefined) && v.params?.L === undefined ? { ...v, type: 'kalmanModel' } : v),
+  },
+  luenbergerPlaced: {
+    label: 'Luenberger observer, placed poles', summary: 'x̂ = prediction + L (y − C x̂), model from the plant, L from the poles',
+    designed: true, version: 1, computes: ['A', 'B', 'C', 'L'], twin: 'luenberger',
+    params: [vec('w', 'Error poles at s = −w', [100], { unit: '1/s', help: 'how fast the estimate\'s error dies out: one value puts every pole there; or one per state' })],
+    check(p) { return p.w.every((v) => v > 0) ? '' : 'w: each above 0'; },
+    design(p, ctx) {
+      const d = placedDesign(ctx.linearize('origin'), { w: p.w, Ts: ctx.Ts, outputs: ctx.outputs });
+      return { values: d.values, rows: d.rows, warnings: d.warnings, quality: d.quality };
+    },
+    make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.luenbergerPlaced.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
+    manual: (p, values) => OBSERVERS.kalman.manual(p, values),
   },
   kalmanModel: {
     label: 'Kalman filter, own model', summary: 'x̂ = model prediction + L (y − C x̂), L from your model, Q and R',
@@ -7340,32 +7411,33 @@ const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: '
 const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
 const PERIOD = 5;
 
+const motorBlock = (x, y) => ({
+  id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x, y,
+  diagram: {
+    blocks: [
+      { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+      { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 330, y: 220 },
+      { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+      { id: 'arm', type: 'tf', name: 'armature 1/(Ls + R)', params: { num: [1], den: [0.01, 1], delay: 0 }, x: 190, y: 96 },
+      sink('i', 360, 20, 'A'),
+      { id: 'kt', type: 'gain', name: 'Kt (= Ke)', params: { K: 0.5 }, x: 370, y: 100 },
+      { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 460, y: 104 },
+      { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 530, y: 96 },
+      { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 720, y: 112 },
+      { id: 'ke', type: 'gain', name: 'Ke (= Kt)', params: { K: 0.5 }, x: 370, y: 290, flip: true },
+    ],
+    wires: [
+      { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'i' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
+      { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+    ],
+  },
+});
 const motorDiagram = (variants, { inputs = 2, Ts = 0.01 } = {}) => ({
       blocks: [
         src('r', 30, 112, 'rad'),
         src('d', 180, 230, 'N·m'),
         ctrl(130, 90, inputs, Ts, variants),
-        {
-          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
-          diagram: {
-            blocks: [
-              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
-              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 330, y: 220 },
-              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'tf', name: 'armature 1/(Ls + R)', params: { num: [1], den: [0.01, 1], delay: 0 }, x: 190, y: 96 },
-              sink('i', 360, 20, 'A'),
-              { id: 'kt', type: 'gain', name: 'Kt (= Ke)', params: { K: 0.5 }, x: 370, y: 100 },
-              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 460, y: 104 },
-              { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 530, y: 96 },
-              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 720, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke (= Kt)', params: { K: 0.5 }, x: 370, y: 290, flip: true },
-            ],
-            wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'i' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
-              { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'ke', to: 'sum:1' },
-            ],
-          },
-        },
+        motorBlock(330, 96),
         { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
         sink('angle', 690, 106, 'rad'),
         sink('speed', 690, 30, 'rad/s'),
@@ -7586,6 +7658,78 @@ const EXAMPLE_PLANTS = [
         { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
       ],
     },
+  },
+  {
+    name: 'DC motor, speed from an encoder',
+    summary: 'A motor whose speed is not measured: only a coarse encoder angle is. Flip the observer from a raw difference to a Luenberger observer and a Kalman filter, and see the noise leave the voltage and the loop hold its speed.',
+    notes: 'A PI holds the speed of the DC motor (the same motor as the position examples) while the reference r steps to 10 rad/s and down to 3 rad/s, and a load of 0.2 N·m brakes it from 3.5 to 4.3 s. The speed is not measured: an encoder counts 1024 steps per turn (6.1 mrad), with a little noise on its signal (σ 1 mrad), and an Observer block makes the speed the PI sees from those counts. Channel 3 is the voltage V, channel 4 the estimate\'s error (estimate − true speed); both carry Measure lines.\n\nIt opens on the raw finite difference: at Ts = 1 ms one count is 6.1 rad/s, so the estimate jumps between whole counts (3.1 rad/s rms of error) and the PI (Kp 2, Ki 40) passes that on: V chatters between its ±12 V limits (σ 6.1 V at 10 rad/s), and since the limits clip it the motor runs at 8.99 rad/s, not 10.\n\nThe Luenberger observer predicts the motor from its model (the page takes the model from the motor\'s blocks) and corrects it with the counts, its error dying out at the poles you place (s = −400 1/s here): 0.47 rad/s of error, V σ 0.96 V, the speed on 10. The Kalman filter takes the same model and computes its gain from the noise: R from the encoder\'s blocks (σ² + q²/12), Q a random push on V of variance 1 V² per sample. Its error is 0.056 rad/s rms and V σ 0.080 V, 55 and 76 times below the difference\'s; its slowest pole is at 101 rad/s. Neither model knows the load: under it the Kalman estimate reads 0.1 rad/s high and the motor runs at 2.90 rad/s, where the faster Luenberger is off by 0.02.\n\nTry: the Luenberger at w = 100 (as calm as the Kalman filter, slower to see the load); the Kalman filter with Q = 100 (it follows the load, with more noise); the difference with Tf = 0.02 s (a filter calms it, with a lag); an encoder of 4096 counts (q = 0.001534). FFT mode on V shows the difference\'s noise spread up to the Nyquist frequency.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 10, time: 0.2 } }, { type: 'step', params: { amplitude: -7, time: 2.5 } }] },
+      d: { period: PERIOD, components: [pulse(0.2, 3.5, 0.8)] },
+    },
+    scope: { channels: channels('r', 'speed', { source: 'V', measure: true }, { source: 'est_error', measure: true }) },
+    ui: ui('Motor speed'),
+    sim: { sampleTime: 0.001 },
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad/s'),
+        src('d', 180, 230, 'N·m'),
+        ctrl(130, 90, 2, 0.001, [
+          { name: 'PI speed', type: 'pid', params: { Kp: 2, Ki: 40, umin: -12, umax: 12 } },
+        ]),
+        motorBlock(330, 96),
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        { id: 'jitter', type: 'noise', name: 'encoder noise', params: { std: 0.001, seed: 5 }, x: 640, y: 96 },
+        { id: 'enc', type: 'quantizer', name: 'encoder 1024 counts/turn', params: { q: (2 * Math.PI) / 1024 }, x: 780, y: 96 },
+        sink('encoder', 920, 106, 'rad'),
+        {
+          id: 'obs', type: 'observer', name: 'speed estimator', params: { inputs: 2, outputs: 3, Ts: 0.001 }, x: 780, y: 260, flip: true,
+          variants: [
+            { name: 'Finite difference', type: 'difference', params: { Tf: 0 } },
+            { name: 'Luenberger, placed poles', type: 'luenbergerPlaced', params: { w: [400] } },
+            { name: 'Kalman filter', type: 'kalman', params: { Q: [1], R: null } },
+          ],
+          variant: 0,
+        },
+        sink('estimate', 600, 340, 'rad/s'),
+        { id: 'esum', type: 'sum', params: { signs: '+-' }, x: 600, y: 420 },
+        sink('est_error', 720, 428, 'rad/s'),
+        sink('speed', 690, 30, 'rad/s'),
+        sink('angle', 640, 20, 'rad'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
+        { from: 'int', to: 'jitter' }, { from: 'jitter', to: 'enc' }, { from: 'enc', to: 'encoder' },
+        { from: 'ctrl', to: 'obs' }, { from: 'enc', to: 'obs:1' }, { from: 'obs:1', to: 'ctrl:1' }, { from: 'obs:1', to: 'estimate' },
+        { from: 'obs:1', to: 'esum' }, { from: 'motor', to: 'esum:1' }, { from: 'esum', to: 'est_error' },
+        { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
+      ],
+    },
+    views: [{
+      name: 'Motor speed', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+      shapes: [
+        { type: 'group', x: -0.5, y: 0.05, shapes: [
+          { type: 'circle', cx: 0, cy: 0, r: 0.45, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+          ...ticks(0.45),
+          { type: 'group', angle: 'angle', shapes: [
+            { type: 'circle', cx: 0, cy: 0, r: 0.36, fill: 'ink' },
+            { type: 'circle', cx: 0, cy: 0.2, r: 0.1, fill: 'ch2' },
+            { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.43, stroke: 'ch2', lineWidth: 5 },
+          ] },
+          { type: 'circle', cx: 0, cy: 0, r: 0.05, fill: 'muted' },
+        ] },
+        { type: 'line', x1: 0.15, y1: -0.3, x2: 0.15, y2: 0.5, stroke: 'muted', lineWidth: 1 },
+        { type: 'line', x1: '0.15 + 0.04*r', y1: -0.3, x2: '0.15 + 0.04*r', y2: 0.5, stroke: 'ch1', lineWidth: 3 },
+        { type: 'rect', x: 0.15, y: 0.18, w: '0.04*speed', h: 0.16, fill: 'ch2' },
+        { type: 'rect', x: 0.15, y: -0.22, w: '0.04*estimate', h: 0.16, fill: 'ch4' },
+        { type: 'text', x: 0.55, y: 0.42, text: 'speed', size: 12, fill: 'muted' },
+        { type: 'text', x: 0.55, y: 0.02, text: 'estimate', size: 12, fill: 'muted' },
+        { type: 'text', x: 0.15, y: -0.38, text: '0', size: 11, fill: 'muted' },
+        { type: 'text', x: 0.95, y: -0.38, text: '20 rad/s', size: 11, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.78, text: 'speed {speed:5.2} rad/s   estimate {estimate:5.2} rad/s   r {r:4.1} rad/s   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
+      ],
+    }],
   },
   {
     name: 'Conical tank, gain scheduling',
@@ -8670,7 +8814,7 @@ function fromPlant(e) {
 
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = {
-  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -8679,7 +8823,7 @@ const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta', 'Black box': 'yellow',
   PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
   'Sliding mode': 'red',
-  'Kalman filter': 'slate', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
   'Reference mode': 'aqua', 'Controller in the plant': 'green',
 };
@@ -12319,7 +12463,7 @@ const GUIDE = {
     M('loopTuner.speed(x?)', 'x: a factor, or -1 for as fast as possible', 'How fast simulated time runs; held at 1 while a plant is connected.', 'loopTuner.speed(10)', '{ speed, effective, achieved, simulation, locked }'),
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
     M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
-    M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
+    M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter, a Luenberger observer\'s placed poles) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
     M('loopTuner.info()', '', 'What the screen\'s last run reported: validity reports (a model used outside where it holds), warnings (a stiff plant and the step it needs, a run made again because the plant grew stiffer, a signal that diverged, an input not connected), the integration step h, steps, the step bound (the blocks\' own and the Jacobian\'s largest eigenvalue at the start), the Jacobian\'s at the start and the end, and the run\'s ms. The status line under the screen shows the first report or warning.', 'loopTuner.info()', '{ validity, warnings, h, substeps, steps, bound, stiffness: { start, end }, ms } or null'),
     M('loopTuner.whenDesigned()', '', 'Resolves once no design is being computed in the background (a plan for the planned swing-up takes seconds; meanwhile the block runs u = 0 or its previous plan) and the display shows the run that uses it. Await it before judging a run.', 'await loopTuner.whenDesigned()', 'a promise of designs()'),
     M('loopTuner.loopModel(path, op)', 'path: a Controller block\'s id path; op: "origin" (at rest), "initial" (the start), { y: [levels] } or { t: seconds }', 'The loop the Controller closes, as the Analysis tab draws it: the plant it sees linearised at op, and the running variant\'s own law, as state space. Refused, with the reason, where there is none (a relay, a kink at op, a plant outside the page).', 'loopTuner.loopModel("ctrl", "initial")', '{ plant: { A, B, C, D, delay, ... }, ctrl: { A, B, C, D }, Ts, opLabel, variantName, warnings }'),
@@ -17017,6 +17161,7 @@ const ABOUT = {
   slidingMode: 'Sliding mode (inputs r, y, ẏ): drives s = λ·e + ė to zero by switching u = u0 ± K. On the line s = 0 the error decays as e^(−λt) whatever the inertia or the load, so λ sets how the loop settles. φ = 0 is the textbook relay: robust, but it chatters at the sampling rate, hard on the actuator. φ > 0 is a boundary layer: proportional inside |s| < φ (a stiff PD, Kp = K·λ/φ, Kd = K/φ), smooth, but a load leaves an error. Needs a clean ẏ; put a differentiator in the diagram, not in the law.',
   superTwisting: 'Super-twisting, a second-order sliding mode (inputs r, y, ẏ): u = k1·√|s|·sign(s) + v, with the integral part v rising at k2 by the sign of s. The voltage is continuous and v rejects a constant load; actuator dynamics leave a small ripple, and a long reaching phase winds v up, so s overshoots the line before it slides. Size k1, k2 for the weakest plant.',
   kalmanModel: 'A Kalman filter on a model you give: ẋ = A x + B u, y = C x, row by row. The page discretises it at Ts and computes the steady-state gain L from Q (the variance of the noise on each state) and R (on each measurement). For a plant the page cannot see, such as an External plant; on a plant it can see, the Kalman filter from the plant computes the model as well.',
+  luenbergerPlaced: 'A Luenberger observer whose model comes from the plant as it is wired (linearised at its origin), as the Kalman filter\'s does, but whose gain L you set by where the estimate\'s error dies out: each pole at s = −w. Fast poles follow the measurement closely, and its noise with it; slow ones trust the model and lag behind what it does not know, such as a load. One measurement; Copy as numbers gives the Luenberger observer it runs.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
 };
@@ -17374,7 +17519,7 @@ function rowHtml(r) {
     return `<div class="ctabwrap"><table class="ctab"><thead><tr>${r.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${r.table.map((row) => `<tr>${row.map((x) => `<td>${val(x, 3)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   }
   const value = Array.isArray(r.value)
-    ? (r.labels ? r.value.map((x, i) => `<span class="cpair"><i class="muted">${esc(r.labels[i] ?? '')}</i>${val(x)}</span>`).join('') : r.value.map(val).join(', '))
+    ? (r.labels ? r.value.map((x, i) => `<span class="cpair"><i class="muted">${esc(r.labels[i] ?? '')}</i>${val(x)}</span>`).join('') : r.value.map((x) => val(x)).join(', '))
     : val(r.value);
   return `<div class="crow"><span class="muted">${esc(r.label)}</span><span class="cv mono">${value}${r.note ? ` <span class="muted">${esc(r.note)}</span>` : ''}</span></div>`;
 }
