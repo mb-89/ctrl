@@ -49,7 +49,8 @@ test('knownFor reads u, y, r, Ts and the other inputs from the project, never as
   const oven = knownFor(libraryProject('Oven'));
   assert.deepEqual([oven.u.name, oven.u.unit, oven.u.min, oven.u.max, oven.u.u0, oven.u.from], ['P', '%', 0, 100, 0, 'controller']);
   assert.deepEqual([oven.y.name, oven.y.unit, oven.y.hard], ['T', '°C', null]);
-  assert.deepEqual([oven.r.lo, oven.r.hi, oven.r.source, oven.r.samples.length, oven.Ts], [0, 60, 'r', 250, 0.02]);
+  // The oven's cycle is 10 s since inputs 50–52 (the test, then a ramp back down): 500 samples at 20 ms.
+  assert.deepEqual([oven.r.lo, oven.r.hi, oven.r.source, oven.r.samples.length, oven.Ts], [0, 60, 'r', 500, 0.02]);
   assert.deepEqual(oven.others, [{ name: 'd', value: 0 }]);
   assert.equal(oven.live, false);
   // A simulated plant starts from the running variant's start output: the
