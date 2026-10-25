@@ -43,8 +43,10 @@ Reader: whoever picks the next piece of work.
 5. **One Servo motor** ([servo.md](servo.md), designed, not built; the person's [input 18](../input/2026-10-25-18-servo-motor-detail.md)). In its §11 steps:
    - the minimal mask (numbers, toggles, a choice) and switches resolved at compile time;
    - built-in components stored by reference (`component`, `params`), opened read-only, Edit a copy into My blocks;
-   - the DC motor examples, then the encoder example, on the component;
-   - the PUMA's Motor drives on it, with or after robot.md's motors.
+   - the DC motor examples, then the encoder example, on the component (free shaft);
+   - the eigenvalue step bound (shared with detail-levels.md §5);
+   - the coupled shaft with backlash, and the new **Gear backlash** example ([input 20](../input/2026-10-25-20-servo-answers-backlash.md));
+   - the PUMA's Motor drives on it (rotor inertia in the motors, Coulomb on), with or after robot.md's motors.
 
    Shares the mask with [transparent-models.md](transparent-models.md) and [detail-levels.md](detail-levels.md): whichever reaches it first builds it.
 

@@ -2,6 +2,24 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: the servo motor, answered; the rotor in the motor, backlash ([input 20](../input/2026-10-25-20-servo-answers-backlash.md))
+
+The person: "put the rotor's inertia into the motor. That's where they belong ... set ... the stiffness of the connections and the backlash ... to non-problematic values first. But especially backlash is an interesting thing for us ... we should have one example that exemplifies a backlash simulation." On sizes: "You can exaggerate the error sizes in the example for the spectrogram. You don't have to exaggerate it in the robot." The robot opens with Coulomb friction.
+- **Decided** ([servo.md](servo.md)):
+  - The Servo motor's rotor is inside it.
+  - The motor connects in one of two ways (the mask choice `shaft`):
+    - **free**, with a load torque in, for the lone motors (the DC motor examples and the encoder example; they stay within 1.4·10⁻¹⁴ and 6·10⁻¹² of main);
+    - **coupled**, through an elastic gear (k, c) with backlash as a switch, for anything that drives an inertia (the robot's links, the new Gear backlash example).
+  - The PUMA's armature (G²·Jm) leaves the arm's plant mass matrix for the six motors; the controller's model keeps it.
+  - The robot opens with Coulomb on and every other error off at realistic sizes, and the encoder example keeps its exaggerated ones.
+  - A new example, **Gear backlash**: a load-encoder loop hunts in the play at about 31 Hz, ±10.7 mrad with 1°; on the motor encoder it holds still, β/2 off. Its notes say the Servo motor simulates backlash.
+- **Interpretations:**
+  - "Non-problematic" stiffness is a two-mass resonance about ten times above the loop's bandwidth with ζ 0.1 (50 Hz on the PUMA and in the example).
+  - A lone motor is not coupled to anything: coupling the library's motors measured up to 0.9 % changes, the relay's switching moved, and they ran 4–5 times slower.
+  - Backlash is a spring and damper in contact, nothing in the gap, never pulling, built from one Function block.
+  - The coupled shaft needs the eigenvalue step bound from detail-levels.md §5; the prototype stands in for it.
+- **Open for the person:** a dual-loop fix as a variant of the backlash example, or only the try-this; the PUMA's gear stiffness (50 Hz chosen, robot joints with harmonic drives sit at 10–30 Hz).
+
 ## 2026-10-25 · v2.8: one servo motor, its errors as detail ([input 18](../input/2026-10-25-18-servo-motor-detail.md))
 
 The person: "make them high detail toggles in our servo motor ... the servo motor can also run speed controlled ... we show them in the spectrogram thing, but we could also just increase the level of the servos of the robot, and then the same errors would show up in the robot too ... it would also be reuse. So think about that."
@@ -14,7 +32,7 @@ The person: "make them high detail toggles in our servo motor ... the servo moto
   - **The encoder example.** Its "flexible shaft" is the encoder's coupling (sensor side), which is what main computes. Rebuilt, it differs by 2.2·10⁻¹² relative, because the motor now owns its friction (proven exact with the friction put back); the test tolerance is 10⁻⁹. The DC motor examples: 1.4·10⁻¹⁴.
   - **Storage.** A use is stored as a reference plus mask values (`component: "servo-motor@1"`, `params`), opens read-only, and Edit a copy makes a My block. Built-in components are versioned.
   - **Detail levels**, when built, are named sets of these switches.
-  - **Open for the person:** what the robot opens with (Coulomb only, or more); realistic or visible error sizes; when to add the two-mass shaft and backlash.
+  - **Open for the person:** what the robot opens with, error sizes, the two-mass shaft and backlash: answered in input 20 (the entry above).
 
 ## 2026-10-25 · v2.8: a warning in a limited environment ([input 16](../input/2026-10-25-16-limited-environment-banner.md))
 
