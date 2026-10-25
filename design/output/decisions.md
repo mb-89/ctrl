@@ -2,6 +2,14 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: a warning in a limited environment ([input 16](../input/2026-10-25-16-limited-environment-banner.md))
+
+The person: the page will be put into SharePoint, whose HTML preview is a sandbox; "if you detect that you're running in a sandbox, there should be a warning label that's really impossible to miss right below the header ... running in a limited environment ... For optimal performance, please download and run directly in the browser". (Person: "a small thing ... not that important".)
+- **Detect, then warn right below the header**, in words a tester understands, with what to do (download the file, open it in the browser). Interpretation: the signs are those the person named (no local storage; external resources cannot load) plus those a sandbox shows (an opaque origin, a sandboxed frame, no downloads, no workers), each checked without breaking the page.
+- **It works even where scripts do not run**: the warning is in the page's HTML from the start and the page's own script removes it when the environment is full (interpretation: a preview may run no script at all; then the static warning is all the person sees, which is the right message).
+- **Hosts the page knows are not limited**: inside the claude.ai artifact viewer (downloads through its capability) no warning shows.
+- Built on its own branch (feat/limited-env); [instrument.md](instrument.md) gets the rule.
+
 ## 2026-10-25 · v2.8: the PUMA's torques are signals ([input 15](../input/2026-10-25-15-puma-torques.md))
 
 The person: "what would be quite important is that we get signals for the [torques]. That's actually the thing that's special ... maybe we can have in the [oscilloscope] two signals for the error and then [torques] of two joints, because that's really something that we struggle with usually, calculating the [torques], simulating the [torques]. And then by increasing the complexity of the model, we would see ... the change first and foremost in the [torques] and the efforts, and not necessarily in the control values".
