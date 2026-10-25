@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { zeros, eye, mul, add, transpose, solve, inv, det, expm, c2d, eig, dare, dlqr, dlqe, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank } from '../src/core/linalg.js';
+import { zeros, eye, mul, add, transpose, solve, inv, det, cholesky, cholSolve, expm, c2d, eig, dare, dlqr, dlqe, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank } from '../src/core/linalg.js';
 import { polyMul } from '../src/core/poly.js';
 
 const close = (actual, expected, tol, what = '') => assert.ok(Math.abs(actual - expected) <= tol, `${what} ${actual} vs ${expected} (tol ${tol})`);
@@ -37,6 +37,26 @@ test('matrix basics: mul, solve, inv, det, transpose', () => {
   assert.deepEqual(zeros(2, 3), [[0, 0, 0], [0, 0, 0]]);
   assert.equal(det([[1, 2], [2, 4]]), 0);
   assert.throws(() => solve([[1, 2], [2, 4]], [1, 1]), /singular/);
+});
+
+test('cholesky: L·Lᵀ = A with L lower; cholSolve equals LU\'s solve; a matrix that is not positive definite is refused', () => {
+  // A = M·Mᵀ + I from pseudo-random M: symmetric positive definite.
+  const rnd = lcg(17);
+  const M = Array.from({ length: 6 }, () => Array.from({ length: 6 }, rnd));
+  const A = add(mul(M, transpose(M)), eye(6));
+  const L = cholesky(A);
+  L.forEach((r, i) => r.forEach((v, j) => { if (j > i) assert.equal(v, 0, `L[${i}][${j}]`); }));
+  closeM(mul(L, transpose(L)), A, 1e-12, 'L·Lᵀ');
+  const b = Array.from({ length: 6 }, rnd);
+  const x = cholSolve(L, b), xl = solve(A, b);
+  x.forEach((v, i) => close(v, xl[i], 1e-10, 'x'));
+  // A matrix right-hand side: the inverse.
+  closeM(mul(A, cholSolve(L, eye(6))), eye(6), 1e-10, 'A·A⁻¹');
+  // log det from the diagonal.
+  close(2 * L.reduce((s, r, i) => s + Math.log(r[i]), 0), Math.log(det(A)), 1e-9, 'log det');
+  assert.deepEqual(cholesky([[4]]), [[2]]);
+  assert.throws(() => cholesky([[1, 2], [2, 1]]), /not positive definite/);
+  assert.throws(() => cholesky([[0, 0], [0, 1]]), /not positive definite/);
 });
 
 test('expm matches a rotation and a diagonal', () => {

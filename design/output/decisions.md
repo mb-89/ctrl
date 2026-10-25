@@ -2,6 +2,18 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · Identify, being built: the numerics (§18 step 2)
+
+Built on branch `feat/identify` from [identification.md](identification.md) (no new words from the person): `cholesky`, `cholSolve` (linalg.js) and `src/core/fit.js`. Where the build made the design more precise, or measured it wrong:
+
+- **θ is fitted in samples, bounded below by 0, not in logs.** The design put positive parameters in logs; θ = 0 is a common answer that logs cannot reach. Gains keep their start's sign; τ, f, ζ and k′ are fitted in logs.
+- **The bars follow the loop on closed-loop segments.** σ̂²(JᵀJ)⁻¹ assumes white residuals; the replay's residual is the measurement noise filtered by the loop (S·v), lifted where the loop rings and removed where its integral acts. Measured on a resonance under a brisk PI over 40 seeds: f covered by its ±2σ in 31 of 40, K's bar 1.6× too wide. The covariance now uses the replayed loop's noise transfer S, found by one extra replay with a small error at the segment's start (cov = A⁻¹ σv² (SᵀJ)ᵀ(SᵀJ) A⁻¹, A = JᵀJ); every parameter is then covered in 36–40 of 40. On open-loop segments it is σ̂²(JᵀJ)⁻¹ exactly, as designed. Still assumed: the measurement noise is white (the floor); with coloured noise the bars understate (the design already says the bars understate when the structure is wrong).
+- **A segment starts from the settled mean, not one sample.** Under a gentle loop, one noisy start sample is an offset the replay carries for seconds: it moved K by 9σ in one seed. The segment builder (step 5) passes the mean over the settle as `yStart`.
+- **"What is left looks like noise"**: at most one of 25 lags outside ±2.58/√N and none beyond 1.5 × the band (white residuals fail this in about 3 % of records; "all 25 inside" would fail 22 %). The autocorrelation removes no mean (Ljung), so an offset is a pattern; the cross-correlation with past u removes u's mean (its level is arbitrary). Both stay hints, never verdicts.
+- **Choosing**: the fewest parameters within 1 point of the best Check fit, then BIC; **a BIC difference below 2 decides nothing**, and the structure listed first (lag, two lags, resonance, integrator · lag, integrator · resonance) wins. A resonance with ζ ≥ 1 is exactly two lags, so on such a plant the two fit alike and BIC alone would choose by rounding.
+- **Levenberg–Marquardt**: forward-difference Jacobians (p + 1 replays per iteration, as costed), Marquardt scaling, Nielsen's damping, bounds by projection; it yields after each iteration so the page can slice it by work, never by time. Measured: every structure recovers its parameters from noise-free data to 1e-6 (open and closed loop; the design asks 1 %), against a fine-step simulation that shares no code with the fit.
+- **Coloured noise in closed loop** (AR(1), a = 0.9 at 20 ms): fitting the model to the measured u puts the noise the controller fed back into the plant and finds the dead time 70 % long; the replay of the law is unbiased (10 seeds, within 2.5 standard errors).
+
 ## 2026-10-24 · v2.7: time control, after review
 
 Two reviews of the first build (no new words from the person). What changed, and the interpretations it took:

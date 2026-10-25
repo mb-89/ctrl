@@ -1,6 +1,6 @@
 # Identify: finding the plant by experiment
 
-Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24, not built.** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
+Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; being built on branch `feat/identify` in the steps of §18 (done: 0, the record; 2, the numerics in `src/core/fit.js`).** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
 
 The person's words ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)):
 
@@ -456,7 +456,7 @@ The Check is never used for fitting. It is graded in §7.
 - **Open loop** (Nudge, rests): u as applied. The plant's `applied` echo is used when it sends one; otherwise the page's clamped u.
 - **Closed loop** (Hold, tries, Shake, Check): the law, with its parameters, switching samples, the integral at the segment's start, the reference samples and the excitation s(k).
 
-**The replay of a candidate model over a segment** is incremental about the segment's start: ŷ = y_start + Δŷ, with the model at rest at the start.
+**The replay of a candidate model over a segment** is incremental about the segment's start: ŷ = y_start + Δŷ, with the model at rest at the start. y_start is the settled mean before the segment, not one noisy sample: under a gentle loop a noisy start is an offset the replay carries for seconds (built: one sample's noise moved K by 9σ).
 - Open-loop segments are driven by the applied u.
 - Closed-loop segments are driven by **the same law fed by ŷ**, with the same clamps.
 
@@ -484,7 +484,7 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
 
 ### 6.3 Fitting
 
-- **Method.** Levenberg–Marquardt on the replay residuals, with positive parameters in logs. K's sign is fixed by the first look.
+- **Method.** Levenberg–Marquardt on the replay residuals, with positive parameters in logs. K's sign is fixed by the first look. θ is fitted in samples and bounded below by 0 (logs cannot reach θ = 0, a common answer).
 - **Starts.** Two per structure:
   - from the first look;
   - from the kernel estimate (§6.8): its sum gives the gain, its first significant tap θ, its decay the time scale, and its oscillation f and ζ.
@@ -497,13 +497,14 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
 ### 6.4 Choosing the structure
 
 - Every candidate is scored on the Check (§7).
-- The page takes the **fewest parameters within 1 point of the best Check fit**, with BIC on the fitting data as the tie-break.
+- The page takes the **fewest parameters within 1 point of the best Check fit**, with BIC on the fitting data as the tie-break. A BIC difference below 2 decides nothing; then the structure listed first in §6.2 wins (a resonance with ζ ≥ 1 is exactly two lags, and two lags read more easily).
 - A fit is marked ✕ ("not supported by the data") when it is unstable (other than the integrator), when ζ > 5, or when a time constant exceeds 10 × the test's length.
 - The tester may click another candidate. That choice is saved as `structure`.
 
 ### 6.5 Uncertainty
 
 - **Covariance:** σ̂²(JᵀJ)⁻¹, with σ̂² the residual variance per weighted sample. So the bars grow when the model misses.
+  - That holds on open-loop segments. On closed-loop segments the replay leaves the measurement noise filtered by the loop (S·v), so the covariance is (JᵀJ)⁻¹ (σv² (SᵀJ)ᵀ(SᵀJ)) (JᵀJ)⁻¹, with S the replayed loop's noise transfer at the fit (one extra replay per segment) and σv² scaled from σ̂². Built and measured: under a brisk PI the plain formula covered f in 31 of 40 seeds and overstated K's bar 1.6×; with S every parameter is covered in 36–40 of 40.
 - **In the sentences:** ±2σ, rounded to the digits that matter.
 - **The bands** come from 50 seeded parameter samples.
 - These bars understate the truth when the structure is wrong (Schoukens & Ljung 2019). So the where-spread and the distortion are shown beside them, never folded into them.
@@ -555,6 +556,7 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
 - **Pattern in what is left**:
   - the residuals' autocorrelation over lags 1–25 within ±2.58/√N;
   - their cross-correlation with past u over lags 0–25.
+  - "A pattern" is two or more lags outside the band, or one beyond 1.5 × it (white residuals show one in about 3 % of records). The autocorrelation removes no mean (Ljung), so an offset is a pattern; the cross-correlation uses u less its mean.
   - In words: "what is left looks like noise", or "what is left has a pattern".
 
 **Grades** (thresholds are named constants in the code; they inform and never block):
@@ -774,18 +776,28 @@ export function identify(project, path, settings)           // Node and CLI: the
 //   frf?: [{ level, f, G, sd, noise, distortion }], kernel?: { g, sd, Ts }, eased: { Kp, Ki, tauC },
 //   sentences, grade, warnings, connection }
 
-// src/core/fit.js (no DOM)
+// src/core/fit.js (no DOM; built in step 2)
+// A segment: { y, yStart, uStart, u (open loop: as applied) | law (closed loop: () => (k, ŷ) => u), weight }
 export const STRUCTURES                                    // lag, lags, resonance, intLag, intRes:
-                                                           //   { params, tf(p), chain(p), start(firstLook | kernel) }
-export function discretise(structure, p, Ts)              // exact ZOH with a fractional input delay
-export function lm(residual, p0, { maxIter = 60 })         // Levenberg–Marquardt, deterministic
-export function fitStructure(segments, structure, starts)  // → { p, cov, cost, chi2dof }
-export function tcKernel(u, y, { n, decimate, integrating }) // → { g, sd, hyper }
-export function multisine({ N, lines, detect, peak, seed })  // → Float64Array (one period)
-export function frf(U, Y, { excited, detect })             // → { G, sd, noise, distortion }
+                                                           //   { name, label, glyph, integrating, params, tf(p), ss(p),
+                                                           //     chain(p, { sd, units }), start(guess), times(p) }
+export function discretise(structure, p, Ts)              // exact ZOH with a fractional input delay → { Phi, G0, G1, C, m, f }
+export function simulateSegment(d, segment)               // → { y, u }: the replay at rest about the segment's start
+export function* lmSteps(residual, p0, { maxIter = 60, lower, upper }) // Levenberg–Marquardt, deterministic, yields
+export const lm                                            //   per iteration; lm drains it
+export function* fitStructureSteps(segments, structure, starts, { Ts, maxIter }) // → { p, cov, sd, cost,
+export const fitStructure                                  //   chi2dof, bic, n, np, start, iterations, converged }
+export function noiseTransfer(d, segment)                 // the replayed loop's noise transfer S (impulse response)
+export function parameterCov(J, A, parts, s2)             // σ̂²A⁻¹, or with S on closed-loop segments (§6.5)
+export function unsupported(structure, p, { length })     // the ✕ reason, or null (§6.4)
+export function chooseStructure(candidates)               // → { index, why } (§6.4); CHOICE holds the thresholds
+export function tcKernel(u, y, { n, decimate, integrating }) // → { g, sd, hyper }            (step 3)
+export function multisine({ N, lines, detect, peak, seed })  // → Float64Array (one period)  (step 3)
+export function frf(U, Y, { excited, detect })             // → { G, sd, noise, distortion } (step 3)
 export function fitPercent(y, yhat)
-export function whiteness(res, lags = 25)
-export function crossCorrelation(res, u, lags = 25)
+export function noiseCeiling(y, floor)
+export function whiteness(res, lags = 25)                   // → { r, band, outside, worst, white }
+export function crossCorrelation(res, u, lags = 25)         // → { r, band, outside, worst, independent }
 
 // src/core/linalg.js gains cholesky(A) and cholSolve(L, b) (the kernel, LM).
 // src/core/live.js gains createStepRunner(diagram, signals, { Ts, sources }), shared with createLiveRunner:

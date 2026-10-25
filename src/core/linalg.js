@@ -1,4 +1,5 @@
-// Linear algebra for analysing and designing loops: matrix basics, the matrix
+// Linear algebra for analysing and designing loops: matrix basics (with the
+// Cholesky factorisation, for least squares and fits), the matrix
 // exponential and zero-order-hold discretisation, eigenvalues of a general
 // real matrix, discrete LQR and Kalman gains (Riccati equations), and the
 // frequency response, stability margins, root locus and zeros of SISO models.
@@ -144,6 +145,52 @@ export function det(A) {
   square(A, 'det');
   const { M, sign, singular } = lu(A);
   return singular ? 0 : M.reduce((d, r, i) => d * r[i], sign);
+}
+
+// Cholesky factor of a symmetric positive definite A: the lower triangle L
+// (zeros above the diagonal) with A = L·Lᵀ. Only the lower triangle of A is
+// read. Throws when A is not positive definite (a pivot ≤ 0 or not finite),
+// so a caller can add damping and try again. log det A = 2 Σ ln L[i][i].
+export function cholesky(A) {
+  const n = square(A, 'cholesky');
+  const L = zeros(n, n);
+  for (let j = 0; j < n; j++) {
+    const Lj = L[j];
+    let d = A[j][j];
+    for (let k = 0; k < j; k++) d -= Lj[k] * Lj[k];
+    if (!(d > 0) || !Number.isFinite(d)) throw new Error(`cholesky: matrix is not positive definite (pivot ${j + 1} is ${d})`);
+    const djj = Math.sqrt(d);
+    Lj[j] = djj;
+    for (let i = j + 1; i < n; i++) {
+      const Li = L[i];
+      let s = A[i][j];
+      for (let k = 0; k < j; k++) s -= Li[k] * Lj[k];
+      Li[j] = s / djj;
+    }
+  }
+  return L;
+}
+
+// Solves L·Lᵀ·X = B for the Cholesky factor L of cholesky(A): forward, then
+// back substitution. B is a vector (the result is a vector) or a matrix with
+// as many rows as L.
+export function cholSolve(L, b) {
+  const n = square(L, 'cholSolve');
+  if (b.length !== n) throw new Error(`cholSolve: right-hand side must have ${n} rows`);
+  const vec = isVector(b);
+  const X = vec ? Array.from(b, (v) => [v]) : b.map((r) => Array.from(r));
+  const m = n ? X[0].length : 0;
+  for (let i = 0; i < n; i++) {
+    const Li = L[i], Xi = X[i];
+    for (let k = 0; k < i; k++) { const f = Li[k]; if (f !== 0) for (let j = 0; j < m; j++) Xi[j] -= f * X[k][j]; }
+    for (let j = 0; j < m; j++) Xi[j] /= Li[i];
+  }
+  for (let i = n - 1; i >= 0; i--) {
+    const Xi = X[i];
+    for (let k = i + 1; k < n; k++) { const f = L[k][i]; if (f !== 0) for (let j = 0; j < m; j++) Xi[j] -= f * X[k][j]; }
+    for (let j = 0; j < m; j++) Xi[j] /= L[i][i];
+  }
+  return vec ? X.map((r) => r[0]) : X;
 }
 
 // ---- Matrix exponential and discretisation
