@@ -6,6 +6,11 @@
 // carries its samples in "points": [[t, v], ...].
 // Each type's d(q, ctx, comp, k) gives its k-th time derivative (k = 1, 2) as
 // { fn, warn }: warn is a sentence when the derivative is not the true one.
+// A component's function, and its derivatives', is called as f(t, n): t the
+// time in the period, n the period's index from the run's start (0 for the
+// first). Only an eased Sine reads n: it eases in the first period and runs
+// on its steady phase in every later one, so a long run is periodic after
+// its start.
 
 import { compileExpr } from './expr.js';
 
@@ -49,17 +54,20 @@ export const SIGNALS = {
     label: 'Sine', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('frequency', 'Frequency', 5, 'Hz', { min: 0 }), p('phase', 'Phase', 0, '°'),
       p('ease', 'Ease', 0, 's', { min: 0, help: 'the phase rate rises from 0 over this time, so speed and acceleration start at 0' })],
     // With ease the phase, not the amplitude, is eased, so a pair of sines
-    // still draws its circle exactly. Ease 0 keeps the plain expression.
+    // still draws its circle exactly. It eases once, in the run's first
+    // period (n = 0); every later period runs on the steady phase, so a sine
+    // with a whole number of cycles per period joins up where it repeats.
+    // Ease 0 keeps the plain expression.
     fn: (q) => {
       if (!(q.ease > 0)) return (t) => (t >= q.time ? q.amplitude * Math.sin(2 * Math.PI * q.frequency * (t - q.time) + (q.phase * Math.PI) / 180) : 0);
       const w = 2 * Math.PI * q.frequency, ph = (q.phase * Math.PI) / 180;
-      return (t) => (t >= q.time ? q.amplitude * Math.sin(easedPhase(t - q.time, w, q.ease)[0] + ph) : 0);
+      return (t, n = 0) => (t >= q.time ? q.amplitude * Math.sin(easedPhase(t - q.time, w, q.ease, n > 0)[0] + ph) : 0);
     },
     d: (q, ctx, comp, k) => {
       const w = 2 * Math.PI * q.frequency, ph = (q.phase * Math.PI) / 180, A = q.amplitude;
-      return { fn: (t) => {
+      return { fn: (t, n = 0) => {
         if (t < q.time) return 0;
-        const [f, df, ddf] = q.ease > 0 ? easedPhase(t - q.time, w, q.ease) : [w * (t - q.time), w, 0];
+        const [f, df, ddf] = q.ease > 0 ? easedPhase(t - q.time, w, q.ease, n > 0) : [w * (t - q.time), w, 0];
         return k === 1 ? A * Math.cos(f + ph) * df : A * (Math.cos(f + ph) * ddf - Math.sin(f + ph) * df * df);
       } };
     },
@@ -136,8 +144,10 @@ function slope(pts, t) {
 
 // The eased phase at time u after the start, and its two derivatives: the
 // phase rate rises from 0 to w along a quintic smoothstep over Te seconds.
-export function easedPhase(u, w, Te) {
-  if (u >= Te) return [w * (u - Te / 2), w, 0];
+// steady: the phase it settles on, w·(u − Te/2), from u = 0 (a period after
+// the first: the ease is over).
+export function easedPhase(u, w, Te, steady = false) {
+  if (steady || u >= Te) return [w * (u - Te / 2), w, 0];
   const s = u / Te;
   return [w * Te * (2.5 * s ** 4 - 3 * s ** 5 + s ** 6), w * (10 * s ** 3 - 15 * s ** 4 + 6 * s ** 5), (w / Te) * (30 * s ** 2 - 60 * s ** 3 + 30 * s ** 4)];
 }
@@ -207,16 +217,27 @@ export function componentFn(comp, ctx) {
 // r(t): the sum of the enabled components, repeated every period. Each
 // repetition covers (k·T, (k+1)·T], so a screen that shows exactly one period
 // ends on the last value of that period rather than the first of the next.
+// t is the run's time (0 at its start): the first period is the only one an
+// eased Sine eases in; from the second on every period is the same.
 // r.derivative(k), k = 1 or 2, is the k-th time derivative of the same
 // signal, repeated the same way; it carries .warnings, a list of sentences.
+// The components are normalized here (a parameter left out takes its
+// default), so a signal written in short, as the library's are, plays as the
+// page plays it; a normalized one is unchanged by it.
 export function referenceFn(ref, ctx) {
-  const on = ref.components.filter((c) => c.enabled !== false);
+  const on = ref.components.map(normalizeComponent).filter((c) => c.enabled !== false);
   const T = ref.period ?? Infinity;
   const sum = (fns) => (t) => {
-    let tp = t;
-    if (Number.isFinite(T) && t > T * (1 + 1e-12)) tp = t - Math.ceil(t / T - 1 - 1e-9) * T;
+    let tp = t, n = 0;
+    if (Number.isFinite(T) && t > T * (1 + 1e-12)) {
+      n = Math.ceil(t / T - 1 - 1e-9);
+      // A later period's time on a picosecond grid: t carries the rounding of
+      // its own size, which would put a step a sample early or late in some
+      // periods; on the grid every later period is the same, bit for bit.
+      tp = n > 0 ? Math.round((t - n * T) * 1e12) / 1e12 : t;
+    }
     let s = 0;
-    for (const f of fns) s += f(tp);
+    for (const f of fns) s += f(tp, n);
     return s;
   };
   const r = sum(on.map((c) => componentFn(c, ctx)));
@@ -228,6 +249,62 @@ export function referenceFn(ref, ctx) {
     return dr;
   };
   return r;
+}
+
+// Where a signal repeats: does it join up with itself? For a reference, the
+// jump from the end of a period to the start of the next, in the steady
+// periods (from the second on, where an eased Sine has eased in; the run's
+// start at t = 0 is not a wrap). Noise is left out: it is held per sample,
+// not a motion.
+//   → { value, slope, span, rate, smooth, joins }
+//   value   r at the start of a period less r at the end of the one before
+//   slope   the same for ṙ (the left limit at the end); null without a ṙ
+//   span    max − min of r over a period; rate: max |ṙ| (0 if not smooth)
+//   smooth  no step and no corner inside the period (ṙ and r̈ are the true
+//           ones): a smooth motion, whose slope must join up too
+//   joins   the value within a millionth of the span and, where smooth, the
+//           slope within a millionth of the rate
+export function wrapJump(ref, ctx = { sampleTime: 1e-3 }) {
+  const T = Number(ref.period);
+  const on = (ref.components ?? []).map(normalizeComponent).filter((c) => c.enabled !== false && c.type !== 'noise');
+  if (!(T > 0) || !Number.isFinite(T) || !on.length) return { value: 0, slope: 0, span: 0, rate: 0, smooth: true, joins: true };
+  const fns = on.map((c) => componentFn(c, ctx));
+  const at = (fs, t, n) => fs.reduce((s, f) => s + f(t, n), 0);
+  const value = at(fns, 0, 2) - at(fns, T, 1);
+  let d1 = null, smooth = false;
+  try {
+    d1 = on.map((c) => SIGNALS[c.type].d(c.params, ctx, c, 1));
+    smooth = d1.every((d) => !d.warn) && on.every((c) => !SIGNALS[c.type].d(c.params, ctx, c, 2).warn);
+    d1 = d1.map((d) => d.fn);
+  } catch { d1 = null; }
+  // ṙ at the end: a smooth signal's at T; else its left limit there (a
+  // component's ṙ is right-continuous at its corners).
+  const slope = d1 ? at(d1, 0, 2) - at(d1, smooth ? T : T * (1 - 1e-10), 1) : null;
+  let lo = Infinity, hi = -Infinity, rate = 0;
+  const N = 1000;
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * T, v = at(fns, t, 1);
+    lo = Math.min(lo, v); hi = Math.max(hi, v);
+    if (smooth && d1) rate = Math.max(rate, Math.abs(at(d1, t, 1)));
+  }
+  const span = hi - lo;
+  const joins = Math.abs(value) <= 1e-6 * span && (!smooth || slope === null || Math.abs(slope) <= 1e-6 * rate);
+  return { value, slope, span, rate, smooth, joins };
+}
+
+// The Input tab's line where a signal does not join up with itself: one
+// sentence, or '' where it joins, or where the jump is what was built: a
+// sawtooth (a Ramp still rising at the period's end drops there by design).
+// Steps that return join, so they stay quiet.
+export function wrapWarning(ref, name = 'r', ctx) {
+  const j = wrapJump(ref, ctx);
+  if (j.joins) return '';
+  const T = Number(ref.period);
+  const saw = ref.components.map(normalizeComponent).some((c) => c.enabled !== false && c.type === 'ramp' && c.params.time < T && c.params.time + c.params.rise >= T * (1 - 1e-9));
+  if (saw) return '';
+  return Math.abs(j.value) > 1e-6 * j.span
+    ? `${name}(t) jumps where it repeats: it ends the period away from where it starts, so every later period begins with a step; bring it back before the period ends.`
+    : `${name}(t) kinks where it repeats: its slope at the end of the period is not the one it starts with; a sine joins up with a whole number of cycles per period.`;
 }
 
 export function describeComponent(comp) {

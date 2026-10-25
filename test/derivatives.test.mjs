@@ -108,18 +108,28 @@ test('derivatives of every type', () => {
   assert.throws(() => referenceFn(ref([ramp]), ctx).derivative(3), /k must be 1 or 2/);
 });
 
-test('derivatives repeat with the period, as r does', () => {
-  const T = 2;
-  const r = referenceFn(ref([sine({ amplitude: 1, time: 0.1, frequency: 0.7, phase: 10, ease: 0.4 })], T), ctx);
+test('r and its derivatives repeat with the period; the ease is the first period\'s alone', () => {
+  const T = 2, q = { amplitude: 1, time: 0.1, frequency: 0.7, phase: 10, ease: 0.4 };
+  const r = referenceFn(ref([sine(q)], T), ctx);
   const v = r.derivative(1), a = r.derivative(2);
-  for (const t of ts(0, T, 23)) for (const k of [1, 2, 3]) {
-    close(v(t + k * T), v(t), 1e-9, `ṙ at ${t} + ${k}T`);
-    close(a(t + k * T), a(t), 1e-8, `r̈ at ${t} + ${k}T`);
+  // From the second period on, every period is the same.
+  for (const t of ts(0, T, 23)) for (const k of [2, 3]) {
+    close(r(t + k * T), r(t + T), 1e-12, `r at ${t} + ${k}T`);
+    close(v(t + k * T), v(t + T), 1e-9, `ṙ at ${t} + ${k}T`);
+    close(a(t + k * T), a(t + T), 1e-8, `r̈ at ${t} + ${k}T`);
+  }
+  // After the ease the first period is the steady one too.
+  for (const t of ts(q.time + q.ease, T, 11)) {
+    close(v(t + T), v(t), 1e-9, `ṙ at ${t} + T`);
+    close(a(t + T), a(t), 1e-8, `r̈ at ${t} + T`);
   }
   // (k·T, (k+1)·T]: the sample at T is still the first period's.
-  const once = referenceFn(ref([sine({ amplitude: 1, time: 0.1, frequency: 0.7, phase: 10, ease: 0.4 })], 100), ctx).derivative(1);
+  const once = referenceFn(ref([sine(q)], 100), ctx).derivative(1);
   assert.equal(v(T), once(T));
-  close(v(T + 0.3), once(0.3), 1e-12, "the second period starts again");
+  // The second period starts again at the sine's start time, on its steady phase.
+  const w = 2 * Math.PI * q.frequency, ph = (q.phase * Math.PI) / 180;
+  assert.equal(v(T + 0.05), 0, 'before its start time');
+  close(v(T + 0.3), w * Math.cos(w * (0.3 - q.time - q.ease / 2) + ph), 1e-12, 'the steady phase in the second period');
   const ramp = referenceFn(ref([{ type: 'ramp', params: { amplitude: 1, time: 0, rise: 2 } }], T), ctx).derivative(1);
   assert.equal(ramp(T), 0, 'at T the ramp is over: the first period');
   assert.equal(ramp(T + 0.5), 0.5, 'then it starts again');
