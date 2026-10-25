@@ -44,7 +44,7 @@
 // computation (a plan; the tab folds it away), `tune: false` one auto-tune
 // leaves alone.
 
-import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, poleOf } from './design.js';
+import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, speedPIDesign, poleOf } from './design.js';
 import { DesignError } from './linearize.js';
 import { planLaw } from './planner.js';
 
@@ -144,7 +144,8 @@ function pidCore(Ts, u0 = 0) {
     kff = Kff; kv = Kv; ka = Ka;
     r2 = r1; r1 = rf;
     const e = rf - y;
-    const v = g.Kp * (g.b * rf - y) + I + D + ff;
+    let v = g.Kp * (g.b * rf - y) + I + D + ff;
+    if (g.uff) v += g.uff;   // a feedforward input (a Controller's ff group: speedPI)
     const u = clamp(v, g.umin, g.umax);
     if (!g.Ki) return u;
     if (g.aw === 'back') {
@@ -293,6 +294,39 @@ export const CONTROLLERS = {
         : { type: 'gainScheduled', params: { at: [...values.at], Kp: [...values.Kp], Ki: [...values.Ki], ...common } };
     },
     linear: twinLinear('scheduledPI'),
+  },
+  speedPI: {
+    // A PI speed loop per lane of a Controller (robot.md §5): r the speed
+    // target, y the measured speed, ff a feedforward input added to u inside
+    // the limits (as an industrial PIDE's FF input), with gain Kf. Kv and Ki
+    // put a double pole at ω (ζ 1) on the plant each lane sees at the start
+    // state, u0 holds that state (design.js, speedPIDesign). limit: ±u per
+    // lane, 0 none.
+    label: 'Speed PI from the plant', summary: 'u = Kv e + Ki ∫e + Kf·ff, Kv, Ki from the plant',
+    designed: true, version: 1, computes: ['Kv', 'Ki', 'u0'],
+    params: [
+      num('omega', 'Bandwidth ω', 30, { unit: 'rad/s', positive: true, help: 'the double pole the speed loop gets' }),
+      num('zeta', 'Damping ζ', 1, { positive: true }),
+      num('Kf', 'Feedforward Kf', 1, { help: 'the gain on the ff input; 0 leaves it out' }),
+      { key: 'integral', label: 'Integral', default: 'on', kind: 'choice', options: { on: 'on: PI', off: 'off: P only' } },
+      vec('limit', 'Limit ±u', [0], { min: 0, per: 'lane', help: 'per lane, or one for all; 0: none' }),
+      ...WINDUP,
+    ],
+    design: (p, ctx) => speedPIDesign(p, ctx),
+    make(p, Ts, values) {
+      if (!values) return OFF;
+      const core = pidCore(Ts, values.u0);
+      const lim = (p.limit[(values.lane || 1) - 1] ?? p.limit[0]) || Infinity;
+      const g = { Kp: values.Kv, Ki: values.Ki, Kd: 0, Tf: 0, b: 1, umin: -lim, umax: lim, aw: p.aw, Tt: p.Tt, uff: 0 };
+      return { step: (x) => { g.uff = p.Kf * (x[2] ?? 0); return core(x[0], x[1] ?? 0, g); } };
+    },
+    linear(p, Ts, at, values) {
+      if (!values) throw noDesign('speedPI');
+      const m = at?.y?.length || 1;
+      const lin = pidLinear({ Kp: values.Kv, Ki: values.Ki, Kd: 0, Tf: 0, b: 1 }, Ts, m);
+      if (m >= 2) lin.D[0][2] = p.Kf;
+      return lin;
+    },
   },
   pidFF: {
     // A PID whose reference feedforward is computed from the plant this block

@@ -463,6 +463,13 @@ function pidFF(p, o) {
   return below(d, `Kff, Kv, Ka: the plant's inverse at its origin, with the PID's Kp (1 − b) and Kd; order ${p.order}`, 'PID + feedforward from the plant');
 }
 
+// The speed PI of a lane: a PI on the speed error, the ff input added with Kf.
+function speedPI(p, o) {
+  const v = o.values, lim = (p.limit[(v?.lane || 1) - 1] ?? p.limit[0]) || Infinity;
+  const d = pid({ Kp: v?.Kv ?? UNKNOWN, Ki: v?.Ki ?? UNKNOWN, Kd: 0, Tf: 0, b: 1, Tr: 0, Kff: 0, Kv: 0, Ka: 0, u0: v?.u0 ?? 0, umin: -lim, umax: lim, aw: p.aw, Tt: p.Tt }, o);
+  return below(d, `Kv, Ki, u0 from the plant at the start (ω ${fmt(p.omega)} rad/s, ζ ${fmt(p.zeta)}); + Kf ${fmt(p.Kf)}·ff`, 'Speed PI from the plant');
+}
+
 function swingUpLqr(p, o) {
   const v = o.values;
   const d = swingUp({ ...p, K: v?.K ?? unknown(4), kr: v?.kr ?? UNKNOWN }, o);
@@ -506,7 +513,7 @@ function kalmanModel(p, o) {
   return estimator(p, o, 'kalman', { lines });
 }
 
-const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+const LAYOUTS = { pid, pidFF, speedPI, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 // def: the type's library entry, for the generic picture of a type without its own.
 export function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {

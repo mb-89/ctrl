@@ -426,7 +426,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (b.type === 'source') {
         // A derivative output (vectors.js) reads the signal's ṙ or r̈ (signals.js) and is no probe.
         const d = b.params.derivative ?? 0, base = opts.sources?.[b.params.signal];
-        const fn = d ? base?.derivative?.(d) : base;
+        let fn = base;
+        if (d && base?.derivative) { try { fn = base.derivative(d); } catch (e) { throw new Error(`${path}: ${name}: ${e.message}`); } warnings.push(...(fn.warnings ?? []).map((w) => `${path}: ${b.params.signal}: ${w}`)); }
+        else if (d) fn = null;
         if (!fn && !model && !d) warnings.push(`${path}: no signal "${b.params.signal}" for ${name}`);
         const k = add({ kind: 'src', name, signal: d ? null : b.params.signal, at: 0, ft: false, fn: fn ?? (() => 0) });
         if (!d) probeList.push([b.params.signal, k]);
@@ -471,7 +473,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (b.type === 'controller' || b.type === 'observer') {
         const lib = VARIANT_LIBS[b.type];
         const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
-        const k = add({ kind: 'ctrl', name, idPath, ft: false, observer: b.type === 'observer', variant: v, lib, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: null, next: 0, k: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
+        const k = add({ kind: 'ctrl', name, idPath, ft: false, observer: b.type === 'observer', variant: v, lib, lane: b.params.lane ?? 0, lanes: b.params.lanes ?? 1, ff: !!b.params.ff, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: null, next: 0, k: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
         nodes[k].taps = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j, see: -1 })) : [];
         outs[b.id] = b.type === 'observer' ? nodes[k].taps : [k];
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
@@ -589,6 +591,56 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   // its integration grid.
   const sampleTimes = [...new Set(ctrls.map((nd) => nd.Ts))];
 
+  // What a node's value reads at the same instant: its inputs, except for a
+  // block whose output is its state (it reads X) and a sampled block (it
+  // holds); a tap reads its parent.
+  const readsNow = (nd) => (nd.kind === 'tap' ? [nd.parent] : nd.kind === 'ctrl' || nd.kind === 'src' || nd.kind === 'ext' || nd.kind === 'ode' || (nd.kind === 'ss' && !nd.ft) ? NONE : nd.inputs);
+  const closure = (starts) => {
+    const mark = new Uint8Array(nodes.length), stack = [];
+    const push = (i) => { if (i >= 0 && !mark[i]) { mark[i] = 1; stack.push(i); } };
+    starts.forEach(push);
+    while (stack.length) readsNow(nodes[stack.pop()]).forEach(push);
+    return mark;
+  };
+  // The rate slice (robot.md §10): what the state rates, the Out and the
+  // External plants read. RK4's stages evaluate only these; what only Sinks
+  // and sampled blocks read is evaluated when a step is done (eval with no
+  // dX), which is when they are read.
+  const rateNeed = closure([...stateNodes.flatMap((nd) => nd.inputs), outNode, ...externals.flatMap((k) => nodes[k].inputs)]);
+  const rateOrder = order.filter((i) => rateNeed[i]);
+  // The sampled blocks each one reads through blocks without state: after a
+  // sample, the outputs are evaluated again only before a block that reads
+  // one sampled since (and once at the end), not after every sample.
+  for (const nd of ctrls) {
+    const mark = closure(nd.inputs);
+    nd.after = ctrls.filter((c) => c !== nd && mark[c.i]).map((c) => c.i);
+  }
+
+  // A finite difference looked through (robot.md §10): estimate k reads the
+  // state measurement k is (an Integrator's output), and its rate estimate
+  // the state that Integrator integrates with gain 1. null when a
+  // measurement is not such a state: the design then holds the estimates.
+  const through = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
+  const stateOut = (i) => {
+    const nd = nodes[through(i)];
+    if (!nd) return null;
+    if (nd.kind === 'tap' && nodes[nd.parent].kind === 'ode' && nodes[nd.parent].nx === 1) return nodes[nd.parent];
+    if (nd.kind === 'ss' && nd.nx === 1 && nd.ss.C[0] === 1 && nd.ss.D === 0) return nd;
+    return null;
+  };
+  const gainOne = (nd) => (nd.kind === 'ode' ? nd.p.K === 1 && nd.ode === ELEMENTS.xintegrator.ode : nd.ss.A[0] === 0 && nd.ss.B[0] === 1);
+  function differenceSees(nd) {
+    const m = nd.inputs.length - 1, idx = new Int32Array(2 * m).fill(-1);
+    for (let k = 0; k < m; k++) {
+      const s = stateOut(nd.inputs[k + 1]);
+      if (!s) return null;
+      idx[k] = s.off;
+      const r = gainOne(s) ? stateOut(s.inputs[0]) : null;
+      if (r) idx[m + k] = r.off;
+    }
+    return idx;
+  }
+
   // Laws, made once every node exists. A hand variant is made from its
   // parameters; a designed one from the values its design computes from the
   // plant this block sees (a model-mode compile of this same diagram, so a
@@ -602,13 +654,17 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
     const job = (opts.designs ?? defaultDesigns()).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }), { guest: !opts.designs && defaultDesigns() !== SYNC_DESIGNS });
     for (const nd of ctrls) {
-      if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
+      if (!nd.lib[nd.variant.type].designed) {
+        nd.law = makeLaw(nd.variant, nd.Ts, nd.lib);
+        if (nd.observer && nd.variant.type === 'difference') { const idx = differenceSees(nd); if (idx) job.see?.(nd.idPath, idx); }
+        continue;
+      }
       const inputs = blockInputNames(diagram, nd.idPath);
       // What u is called: the Sink that records a Controller's output (for an
       // Observer, what feeds its u), else what the Controller tab calls it.
       const fed = nd.observer ? nd.inputs[0] : nd.i;
       const sink = fed >= 0 ? probeList.find(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === fed) : null;
-      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: sink?.[0] ?? (nd.observer ? inputs[0] : 'u'), outputs: nd.outv.length };
+      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: sink?.[0] ?? (nd.observer ? inputs[0] : 'u'), outputs: nd.outv.length, lane: nd.lane, lanes: nd.lanes, ff: nd.ff };
       const status = job.resolve(block, nd.variant, nd.lib);
       nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
       designs.push(status);
@@ -697,14 +753,17 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // is due at k·Ts, computed from k (no sum that drifts), so a step that
     // lands on k·Ts (simulateSystem's grid) samples exactly there.
     sample(t, X, o, u) {
+      const since = [];
       for (const nd of ctrls) {
         if (!nd.law || t < nd.next - 1e-9) continue;
+        if (since.length && nd.after.some((c) => since.includes(c))) { self.eval(t, X, o, u, null); since.length = 0; }
         for (let s = 0; s < nd.x.length; s++) nd.x[s] = inOf(nd, s);
         const y = nd.law.step(nd.x);
         if (nd.observer) nd.outv.set(y.subarray ? y.subarray(0, nd.outv.length) : y.slice(0, nd.outv.length)); else nd.u = y;
         while (nd.next <= t + 1e-9) nd.next = ++nd.k * nd.Ts;
-        self.eval(t, X, o, u, null);
+        since.push(nd.i);
       }
+      if (since.length) self.eval(t, X, o, u, null);
     },
     // The next instant a sampled block is due (Infinity without one).
     nextSample() { let t = Infinity; for (const nd of ctrls) if (nd.next < t) t = nd.next; return t; },
@@ -712,7 +771,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     init(X, o) { for (const nd of stateNodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
     eval(t, X, o, u, dX, end = false) {
       left = end;
-      outputs(order, t, X, o, u);
+      outputs(dX ? rateOrder : order, t, X, o, u);
       if (dX) rates(stateNodes, t, X, o, dX);
       return outNode >= 0 ? vals[outNode] : 0;
     },

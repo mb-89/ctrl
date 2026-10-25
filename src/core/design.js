@@ -125,10 +125,17 @@ export function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 
     const lins = new Map();
     const ctx = {
       Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs, outputs: block.outputs,
+      lane: block.lane ?? 0, lanes: block.lanes ?? 1, ff: !!block.ff,
       // The plant this block sees (a Model), looking through designed observers.
       model() {
         if (!used.model) used.model = compiled().seen(block.idPath, seeThrough.size ? { seeThrough } : {});
         return used.model;
+      },
+      // The plant lane k (1-based) of the same Controller sees, the other
+      // lanes holding 0 (a trim over all lanes at once: speedPIDesign).
+      laneModel(k) {
+        if (!block.lane) throw new Error(`${block.idPath}: not a lane of a Controller`);
+        return compiled().seen(block.idPath.replace(/\[\d+\]$/, `[${k}]`), seeThrough.size ? { seeThrough } : {});
       },
       // The linear model at an operating point ('origin' unless named).
       linearize(op = 'origin', limits = {}) {
@@ -238,6 +245,9 @@ export function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 
       // The heavy jobs this compile asked for (async: the newest wins).
       const asked = new Set();
       return {
+        // A hand observer looked through (a finite difference: diagram.js
+        // differenceSees): its estimates read the states they stand for.
+        see(idPath, stateIndex) { seeThrough.set(idPath, stateIndex); },
         resolve(block, variant, lib) {
           const def = lib[variant.type];
           // The names it labels its rows with (u, the measurements) are in the
@@ -432,6 +442,54 @@ export function lqrDesign(lin, { Q, R, track = 1, Ts }) {
     { label: 'slowest pole', value: slowest(poles, Ts) },
   ];
   return { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings };
+}
+
+// The speed PI of one lane of a Controller (robot.md §5, §10), from the
+// plant that lane sees at its start state: b = ∂ẏ/∂u, the acceleration of
+// the measured speed per unit u (for a robot joint the inverse of its
+// effective inertia, rotors included), then Kv = 2ζω/b and Ki = ω²/b (a
+// double pole at ω with ζ 1). u0 is the trim of all lanes at once (the
+// torques that hold the start state: a joint's gravity needs all six
+// together) minus Kf times what the ff input reads there, so the loop
+// starts in balance. Measurement 1 must be one state of the plant (looked
+// through a finite difference), measurement 2 the ff input when the block
+// has one.
+export function speedPIDesign(p, ctx) {
+  const mdl = ctx.model(), out = mdl.outputs[0];
+  const yName = ctx.inputs[1] ?? 'y';
+  if (!mdl.n || out?.state === undefined) throw new DesignError('not-a-rate', `${yName} is no state of the plant this lane sees: speedPI needs a measured speed`, 'wire the joint\'s speed (a finite difference of its angle) to input 2');
+  const rateOf = (m, s, u) => { const f = new Float64Array(m.n); m.f(m.x0, u, f); return f[s]; };
+  const bOf = (m) => { const s = m.outputs[0].state, c = m.outputs[0].slope; return (c * (rateOf(m, s, 1) - rateOf(m, s, -1))) / 2; };
+  const b = bOf(mdl);
+  if (!(Math.abs(b) > 1e-12)) throw new DesignError('not-a-rate', `${yName} does not accelerate with ${mdl.input.label} (∂ẏ/∂u = 0): speedPI needs a measured speed`, 'wire the joint\'s speed to input 2');
+  const Kv = (2 * p.zeta * p.omega) / b, Ki = p.integral === 'on' ? (p.omega * p.omega) / b : 0;
+  // The trim over all lanes: B·u = −a0 on the measured speeds' rates.
+  const n = ctx.lanes, lane = ctx.lane || 1;
+  let u0 = 0;
+  const warnings = [];
+  if (n > 1) {
+    const ms = Array.from({ length: n }, (_, k) => (k + 1 === lane ? mdl : ctx.laneModel(k + 1)));
+    if (ms.some((m) => m.n !== mdl.n || m.outputs[0].state === undefined)) throw new DesignError('not-a-rate', `every lane needs a measured speed of the same plant to trim the start state`, 'wire each lane\'s speed to input 2');
+    const rows = ms.map((m) => m.outputs[0].state);
+    const a0 = rows.map((s) => rateOf(mdl, s, 0));
+    const B = rows.map((s) => ms.map((m) => (rateOf(m, s, 1) - rateOf(m, s, -1)) / 2));
+    try { u0 = solve(B, a0.map((v) => -v))[lane - 1]; } catch { warnings.push('u0 = 0: no torques hold the start state'); }
+  } else {
+    const s = out.state;
+    u0 = -rateOf(mdl, s, 0) / (b / out.slope);
+  }
+  let ff0 = 0;
+  if (ctx.ff && mdl.m > 1) { const y = new Float64Array(mdl.m); mdl.y(mdl.x0, u0, y); ff0 = y[mdl.m - 1]; }
+  u0 -= p.Kf * ff0;
+  if (Math.abs(u0) < 1e-9 * Math.max(1, Math.abs(ff0))) u0 = 0;
+  const unit = mdl.input.label;
+  const rows = [
+    { label: 'b', value: b, note: `∂${yName}/∂t per unit ${unit}, at the start state` },
+    { label: 'Kv', value: Kv, note: '2ζω/b' },
+    { label: 'Ki', value: Ki, note: p.integral === 'on' ? 'ω²/b' : 'integral off' },
+    { label: 'u0', value: u0, note: p.Kf ? 'the trim less what the ff input gives at the start' : 'the trim: what holds the start state' },
+  ];
+  return { values: { Kv, Ki, u0, b, lane }, rows, warnings, at: 'the start state' };
 }
 
 // The pole of a pendulum on a cart, from the plant's linearisation at the

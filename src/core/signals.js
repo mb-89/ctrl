@@ -4,6 +4,8 @@
 //   { "period": 1, "components": [ { "type": "step", "params": { "amplitude": 1, "time": 0.1 } } ] }
 // A component may be switched off with "enabled": false; an Arb component
 // carries its samples in "points": [[t, v], ...].
+// Each type's d(q, ctx, comp, k) gives its k-th time derivative (k = 1, 2) as
+// { fn, warn }: warn is a sentence when the derivative is not the true one.
 
 import { compileExpr } from './expr.js';
 
@@ -13,16 +15,22 @@ export const SIGNALS = {
   dc: {
     label: 'DC', params: [p('level', 'Level', 1, '')],
     fn: (q) => () => q.level,
+    d: () => ({ fn: () => 0 }),
     describe: (q) => `level ${q.level}`,
   },
   step: {
     label: 'Step', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Time', 0.1, 's', { min: 0 })],
     fn: (q) => (t) => (t >= q.time ? q.amplitude : 0),
+    d: (q) => ({ fn: () => 0, warn: `the step at ${q.time.toFixed(2)} s has no finite derivative: use a ramp or an eased sine` }),
     describe: (q) => `${q.amplitude} at ${q.time} s`,
   },
   ramp: {
     label: 'Ramp', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0.1, 's', { min: 0 }), p('rise', 'Rise time', 0.5, 's', { min: 1e-9 })],
     fn: (q) => (t) => (t < q.time ? 0 : t >= q.time + q.rise ? q.amplitude : (q.amplitude * (t - q.time)) / q.rise),
+    // Its slope inside the ramp; the corners' impulses in r̈ are left out.
+    d: (q, ctx, comp, k) => (k === 1
+      ? { fn: (t) => (t < q.time || t >= q.time + q.rise ? 0 : q.amplitude / q.rise) }
+      : { fn: () => 0, warn: `the ramp's corners at ${q.time.toFixed(2)} s and ${(q.time + q.rise).toFixed(2)} s have no finite second derivative: their impulses are left out` }),
     describe: (q) => `${q.amplitude} over ${q.rise} s from ${q.time} s`,
   },
   square: {
@@ -34,12 +42,28 @@ export const SIGNALS = {
       if (q.count > 0 && k >= q.count) return 0;
       return t - q.time - k * q.period < q.width ? q.amplitude : 0;
     },
+    d: (q) => ({ fn: () => 0, warn: `the step at ${q.time.toFixed(2)} s has no finite derivative: use a ramp or an eased sine` }),
     describe: (q) => (q.count === 1 ? `pulse ${q.amplitude} for ${q.width} s at ${q.time} s` : `${q.amplitude}, ${q.width}/${q.period} s${q.count ? `, ${q.count}×` : ''}`),
   },
   sine: {
-    label: 'Sine', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('frequency', 'Frequency', 5, 'Hz', { min: 0 }), p('phase', 'Phase', 0, '°')],
-    fn: (q) => (t) => (t >= q.time ? q.amplitude * Math.sin(2 * Math.PI * q.frequency * (t - q.time) + (q.phase * Math.PI) / 180) : 0),
-    describe: (q) => `${q.amplitude}, ${q.frequency} Hz`,
+    label: 'Sine', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('frequency', 'Frequency', 5, 'Hz', { min: 0 }), p('phase', 'Phase', 0, '°'),
+      p('ease', 'Ease', 0, 's', { min: 0, help: 'the phase rate rises from 0 over this time, so speed and acceleration start at 0' })],
+    // With ease the phase, not the amplitude, is eased, so a pair of sines
+    // still draws its circle exactly. Ease 0 keeps the plain expression.
+    fn: (q) => {
+      if (!(q.ease > 0)) return (t) => (t >= q.time ? q.amplitude * Math.sin(2 * Math.PI * q.frequency * (t - q.time) + (q.phase * Math.PI) / 180) : 0);
+      const w = 2 * Math.PI * q.frequency, ph = (q.phase * Math.PI) / 180;
+      return (t) => (t >= q.time ? q.amplitude * Math.sin(easedPhase(t - q.time, w, q.ease)[0] + ph) : 0);
+    },
+    d: (q, ctx, comp, k) => {
+      const w = 2 * Math.PI * q.frequency, ph = (q.phase * Math.PI) / 180, A = q.amplitude;
+      return { fn: (t) => {
+        if (t < q.time) return 0;
+        const [f, df, ddf] = q.ease > 0 ? easedPhase(t - q.time, w, q.ease) : [w * (t - q.time), w, 0];
+        return k === 1 ? A * Math.cos(f + ph) * df : A * (Math.cos(f + ph) * ddf - Math.sin(f + ph) * df * df);
+      } };
+    },
+    describe: (q) => `${q.amplitude}, ${q.frequency} Hz${q.ease > 0 ? `, eased over ${q.ease} s` : ''}`,
   },
   chirp: {
     label: 'Chirp', params: [p('amplitude', 'Amplitude', 1, ''), p('time', 'Start', 0, 's', { min: 0 }), p('f0', 'Start freq.', 1, 'Hz', { min: 0 }), p('f1', 'End freq.', 20, 'Hz', { min: 0 }), p('duration', 'Duration', 1, 's', { min: 1e-9 })],
@@ -48,11 +72,24 @@ export const SIGNALS = {
       const s = t - q.time;
       return q.amplitude * Math.sin(2 * Math.PI * (q.f0 * s + ((q.f1 - q.f0) * s * s) / (2 * q.duration)));
     },
+    d: (q, ctx, comp, k) => ({ fn: (t) => {
+      if (t < q.time || t >= q.time + q.duration) return 0;
+      const s = t - q.time, f = 2 * Math.PI * (q.f0 * s + ((q.f1 - q.f0) * s * s) / (2 * q.duration));
+      const df = 2 * Math.PI * (q.f0 + ((q.f1 - q.f0) * s) / q.duration), ddf = (2 * Math.PI * (q.f1 - q.f0)) / q.duration;
+      return k === 1 ? q.amplitude * Math.cos(f) * df : q.amplitude * (Math.cos(f) * ddf - Math.sin(f) * df * df);
+    } }),
     describe: (q) => `${q.amplitude}, ${q.f0} → ${q.f1} Hz over ${q.duration} s`,
   },
   fn: {
     label: 'Function', params: [],
     fn: (q, ctx, comp) => compileExpr(comp.expr),
+    // 5-point central differences with h = 10 µs.
+    d: (q, ctx, comp, k) => {
+      const f = compileExpr(comp.expr), h = 1e-5;
+      return { fn: k === 1
+        ? (t) => (f(t - 2 * h) - 8 * f(t - h) + 8 * f(t + h) - f(t + 2 * h)) / (12 * h)
+        : (t) => (-f(t - 2 * h) + 16 * f(t - h) - 30 * f(t) + 16 * f(t + h) - f(t + 2 * h)) / (12 * h * h) };
+    },
     describe: (q, comp) => `y = ${comp.expr}`,
   },
   noise: {
@@ -60,6 +97,7 @@ export const SIGNALS = {
     // Held per sample and derived from (seed, sample index), so any time
     // evaluates to the same value in the page and in Node.
     fn: (q, ctx) => (t) => q.std * gaussAt(q.seed, Math.floor(t / ctx.sampleTime + 1e-9)),
+    d: () => { throw new Error('noise has no derivative: switch the Noise component off, or take ṙ and r̈ from a signal without it'); },
     describe: (q) => `σ ${q.std}, seed ${q.seed}`,
   },
   arb: {
@@ -67,6 +105,12 @@ export const SIGNALS = {
     fn: (q, ctx, comp) => {
       const pts = comp.points ?? [];
       return (t) => q.gain * interp(pts, t - q.shift);
+    },
+    // Piecewise slopes; the corners' impulses in r̈ are left out.
+    d: (q, ctx, comp, k) => {
+      const pts = comp.points ?? [];
+      if (k === 2) return { fn: () => 0, warn: pts.length > 1 ? `the Arb's corners have no finite second derivative: their impulses are left out` : undefined };
+      return { fn: (t) => q.gain * slope(pts, t - q.shift) };
     },
     describe: (q, comp) => `${(comp.points ?? []).length} points${comp.name ? ` from ${comp.name}` : ''}`,
   },
@@ -80,6 +124,22 @@ function interp(pts, t) {
   while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (pts[mid][0] <= t) lo = mid; else hi = mid; }
   const [t0, v0] = pts[lo], [t1, v1] = pts[hi];
   return t1 === t0 ? v1 : v0 + ((v1 - v0) * (t - t0)) / (t1 - t0);
+}
+
+function slope(pts, t) {
+  if (pts.length < 2 || t < pts[0][0] || t >= pts[pts.length - 1][0]) return 0;
+  let lo = 0, hi = pts.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (pts[mid][0] <= t) lo = mid; else hi = mid; }
+  const [t0, v0] = pts[lo], [t1, v1] = pts[hi];
+  return t1 === t0 ? 0 : (v1 - v0) / (t1 - t0);
+}
+
+// The eased phase at time u after the start, and its two derivatives: the
+// phase rate rises from 0 to w along a quintic smoothstep over Te seconds.
+export function easedPhase(u, w, Te) {
+  if (u >= Te) return [w * (u - Te / 2), w, 0];
+  const s = u / Te;
+  return [w * Te * (2.5 * s ** 4 - 3 * s ** 5 + s ** 6), w * (10 * s ** 3 - 15 * s ** 4 + 6 * s ** 5), (w / Te) * (30 * s ** 2 - 60 * s ** 3 + 30 * s ** 4)];
 }
 
 function hash32(a) {
@@ -147,16 +207,27 @@ export function componentFn(comp, ctx) {
 // r(t): the sum of the enabled components, repeated every period. Each
 // repetition covers (k·T, (k+1)·T], so a screen that shows exactly one period
 // ends on the last value of that period rather than the first of the next.
+// r.derivative(k), k = 1 or 2, is the k-th time derivative of the same
+// signal, repeated the same way; it carries .warnings, a list of sentences.
 export function referenceFn(ref, ctx) {
-  const fns = ref.components.filter((c) => c.enabled !== false).map((c) => componentFn(c, ctx));
+  const on = ref.components.filter((c) => c.enabled !== false);
   const T = ref.period ?? Infinity;
-  return (t) => {
+  const sum = (fns) => (t) => {
     let tp = t;
     if (Number.isFinite(T) && t > T * (1 + 1e-12)) tp = t - Math.ceil(t / T - 1 - 1e-9) * T;
     let s = 0;
     for (const f of fns) s += f(tp);
     return s;
   };
+  const r = sum(on.map((c) => componentFn(c, ctx)));
+  r.derivative = (k) => {
+    if (k !== 1 && k !== 2) throw new Error(`derivative: k must be 1 or 2, not ${k}`);
+    const ds = on.map((c) => SIGNALS[c.type].d(c.params, ctx, c, k));
+    const dr = sum(ds.map((d) => d.fn));
+    dr.warnings = [...new Set(ds.map((d) => d.warn).filter(Boolean))];
+    return dr;
+  };
+  return r;
 }
 
 export function describeComponent(comp) {
