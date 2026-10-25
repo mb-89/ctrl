@@ -86,7 +86,7 @@ Reader: whoever picks the next piece of work.
 
 ## Backlog, at the very end (the person, 2026-10-24)
 
-- **Controller benchmark with a Pugh matrix and a report.** Once a plant is identified (and we trust the model), tune every controller type the library knows on it (PID with feedforward and anti-windup, state feedback/LQR, gain scheduling, sliding mode variants, …), score each against criteria (following, disturbance rejection, overshoot, robustness to the plant's ±15 % variation, effort and actuator wear, noise sensitivity, complexity) in a Pugh matrix against a datum (the PID), pick the best and produce a report. The person: "If we have nothing else … you can try to do that benchmark mode on your own." Input file 10.
+- **Controller benchmark with a Pugh matrix and a report.** Once a plant is identified (and we trust the model), tune every controller type the library knows on it (PID with feedforward and anti-windup, state feedback/LQR, gain scheduling, sliding mode variants, …), score each against criteria (following, disturbance rejection, overshoot, robustness to the plant's ±15 % variation, effort and actuator wear, noise sensitivity, complexity) in a Pugh matrix against a datum (the PID), pick the best and produce a report. The person: "If we have nothing else … you can try to do that benchmark mode on your own." Input file 10. **Designed 2026-10-25** ([benchmark.md](benchmark.md), inputs 29 and 35), prototyped in Node; built after the overhaul.
 - **Detail levels** ([detail-levels.md](detail-levels.md), designed and answered): at the very end; "If we get everything else done, then we can add detail levels" (2026-10-25, input 14).
 
 ## Later, from the PUMA notes (2026-10-25, input 14)
