@@ -144,7 +144,7 @@ test("the Input tab's line: a jump or a kink where it repeats, quiet where that 
 });
 
 test("the library's other inputs join up where they repeat", () => {
-  const known = { 'DC motor, speed from an encoder': ['r'], 'Conical tank, gain scheduling': ['r'], 'Oven, badly tuned': ['r'] };
+  const known = { 'Conical tank, gain scheduling': ['r'], 'Oven, badly tuned': ['r'] };
   for (const sys of SYSTEM_LIBRARY) for (const [name, sig] of Object.entries(sys.input.signals)) {
     if (known[sys.name]?.includes(name)) continue;
     const j = wrapJump(normalizeReference(sig), ctx);

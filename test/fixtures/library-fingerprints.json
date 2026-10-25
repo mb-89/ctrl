@@ -37,7 +37,7 @@
   "DC motor, speed from an encoder": {
     "samples": 5001,
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,encoder,est_error,estimate,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
-    "hash": "5bfad072"
+    "hash": "30accc48"
   },
   "DC motor, deadbeat": {
     "samples": 5001,

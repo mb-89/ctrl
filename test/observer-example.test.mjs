@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeDiagram } from '../src/core/diagram.js';
+import { simulateSystem } from '../src/core/sim.js';
 import { normalizeVariant } from '../src/core/controllers.js';
 import { OBSERVERS } from '../src/core/observers.js';
 import { createDesignStore } from '../src/core/design.js';
@@ -70,9 +71,9 @@ test('observer example: the estimates track the true speed; the Kalman filter be
   assert.ok(kalman.worst < 0.3, `Kalman: |estimate − speed| up to ${kalman.worst}`);
   assert.ok(placed.worst < 2, `Luenberger: up to ${placed.worst}`);
   assert.ok(diff.worst > 6, `the difference jumps by a count (6.1 rad/s): up to ${diff.worst}`);
-  // The notes' numbers: error rms 3.1, 0.47, 0.056 rad/s; V σ 6.1, 0.96, 0.080 V.
+  // The notes' numbers: error rms 3.1, 0.47, 0.058 rad/s; V σ 6.1, 0.96, 0.080 V.
   const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.05 * b, `${what}: ${a}, not about ${b}`);
-  near(diff.err, 3.1, 'difference error'); near(placed.err, 0.47, 'Luenberger error'); near(kalman.err, 0.056, 'Kalman error');
+  near(diff.err, 3.1, 'difference error'); near(placed.err, 0.47, 'Luenberger error'); near(kalman.err, 0.058, 'Kalman error');
   near(diff.V, 6.1, 'difference V'); near(placed.V, 0.96, 'Luenberger V'); near(kalman.V, 0.080, 'Kalman V');
   assert.ok(diff.err / kalman.err > 20, `speed error: ${diff.err / kalman.err} times`);
   assert.ok(diff.V / kalman.V > 20, `u noise: ${diff.V / kalman.V} times`);
@@ -145,4 +146,28 @@ test('placed poles: a scalar plant gives the closed form; refusals in sentences'
   assert.equal(un.error.message, 'sum does not show every state of the plant this observer sees (lag, lag2), so no L places all 2 poles');
   const len = lag(one, [{ from: 'ctrl', to: 'lag' }, { from: 'lag', to: 'ctrl:1' }, { from: 'lag', to: 'obs:1' }], [50, 60]);
   assert.equal(len.error.message, 'w has 2 values; the plant this observer sees has 1 state (lag)');
+});
+
+test('observer example: the run repeats; r is back at 0 and the motor at rest where the input repeats', () => {
+  // The encoder's noise and counts off (a Gain of 1 for the quantizer; the
+  // Kalman filter keeps its R), so what is left is the loop: over three periods
+  // the motor stops before each wrap and period 2 is period 3. With the encoder
+  // as shipped the periods differ by its noise and its counts only: the angle,
+  // which a speed loop does not hold, turns on by the same amount each period.
+  const T = entry.input.signals.r.period, N = Math.round(T / entry.sim.sampleTime);
+  for (const variant of [0, 1, 2]) {
+    const d = structuredClone(entry.plant.diagram), obs = d.blocks.find((b) => b.id === 'obs');
+    obs.variant = variant;
+    obs.variants[2].params.R = [0.001 ** 2 + (2 * Math.PI / 1024) ** 2 / 12];
+    d.blocks.find((b) => b.id === 'jitter').params.std = 0;
+    Object.assign(d.blocks.find((b) => b.id === 'enc'), { type: 'gain', params: { K: 1 } });
+    const { signals: s } = simulateSystem(normalizeDiagram(d), entry.input.signals, { duration: 3 * T, sampleTime: entry.sim.sampleTime }, { designs: createDesignStore() });
+    assert.equal(s.r[N], 0, 'r ends the period where it starts');
+    for (const n of ['speed', 'V', 'i']) assert.ok(Math.abs(s[n][N]) < 1e-4, `${n} at the end of the first period: ${s[n][N]}`);
+    for (const n of ['speed', 'V', 'i', 'estimate', 'est_error']) {
+      let m = 0;
+      for (let k = 1; k <= N; k++) m = Math.max(m, Math.abs(s[n][N + k] - s[n][2 * N + k]));
+      assert.ok(m < 1e-8, `variant ${variant}: ${n} differs by ${m} between periods 2 and 3`);
+    }
+  }
 });
