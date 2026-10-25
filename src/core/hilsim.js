@@ -471,9 +471,18 @@ export function simPlant(opts = {}) {
   }
   sourcePlays.hilu0 = { input: inputOf.hilu0 ?? 0 };
   sourcePlays.hilsafe = { value: 0 };
+  // Outputs an input reaches without a state between (an ideal current
+  // drive's i is its i*): the plant reports them with the input of the cycle
+  // that ended, the page's record after a new one.
+  const trim = (v) => { const i = v.findIndex((x) => x !== 0); return i < 0 ? [] : v.slice(i); };
+  const holds = (b) => ['integrator', 'controller', 'observer'].includes(b.type) || (b.type === 'delay' && b.params.L > 0) || !!diagramBlockDef(b.type).ode
+    || (diagramBlockDef(b.type).model && !(b.type === 'tf' && trim(b.params.num).length >= trim(b.params.den).length));
+  const stateful = new Set([...flat.leaves].filter(([, b]) => holds(b)).map(([k]) => k));
+  const reached = flat.reach([...inputKeys], new Set([...stateful].filter((k) => !inputKeys.has(k))));
+  const direct = outputs.filter((o) => { const s = sinks.find((x) => x.name === o.name) ?? later.find((x) => x.name === o.name); return s?.src && reached.has(s.src.key) && !stateful.has(s.src.key); }).map((o) => o.name);
   return {
     name: `Simulated plant${mode === 'control' ? '' : `, ${mode} mode`}`,
-    mode, rate, inputs, outputs, diagram: final, sources: sourcePlays, signals, loop: ownLoop, gate: !!ctrl && mode !== 'control',
+    mode, rate, inputs, outputs, direct, diagram: final, sources: sourcePlays, signals, loop: ownLoop, gate: !!ctrl && mode !== 'control',
     draws: { system: entry.name, seed: opts.seed ?? 1, vary: Number(opts.vary ?? 0.15), effects: draw.effects, params: draw.params, ranges: from },
   };
 }

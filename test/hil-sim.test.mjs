@@ -39,7 +39,11 @@ function samePlant(entry, opts = {}) {
   for (let k = 0; k < page.t.length - 1; k++) {
     plant.advance(1 / rate, spec.inputs.map((p) => (p.kind === 'effort' && ctrl ? page.signals[`${ctrl.id}.u`][k] : page.signals[p.name][k])));
     const y = plant.outputs();
-    spec.outputs.forEach((o, j) => { compared++; if (!Object.is(y[j], page.signals[o.name][k + 1])) diffs++; });
+    // An output the input reaches without a state between (an ideal current
+    // drive's i, and v = R·i + K·ω) is the plant's with the input of the
+    // cycle that ended; the page records it after the new one, so no record
+    // of the page is that value: those are left out (spec.direct).
+    spec.outputs.forEach((o, j) => { if (spec.direct.includes(o.name)) return; compared++; if (!Object.is(y[j], page.signals[o.name][k + 1])) diffs++; });
   }
   return { diffs, compared, spec };
 }
@@ -52,7 +56,7 @@ function withSinks(diagram, loop) {
 }
 
 test('the plant is the page\'s simulation of the same model, sample for sample, for every library system', () => {
-  assert.equal(simModels().length, 10, 'every library system but the HIL ones');
+  assert.equal(simModels().length, 11, 'every library system but the HIL ones');
   for (const e of simModels()) {
     const { diffs, compared } = samePlant(e);
     assert.ok(compared > 50, e.name);

@@ -179,3 +179,55 @@ test('the encoder example on the Servo motor runs as main\'s to 10⁻⁹ (the mo
   assert.equal(b.info.substeps, a.info.substeps);
   assert.ok(worst(a, b) < 1e-9, `${worst(a, b)}`);
 });
+
+// ---- Gear backlash (servo.md §7.4, §12.5) -------------------------------------
+const GB = SYSTEM_LIBRARY.find((e) => e.name === 'Gear backlash');
+const HOLDS = [[1.0, 1.5], [2.25, 2.75], [3.5, 4.0], [4.75, 5.0]];   // the last half of each hold
+function backlash({ variant = 0, feedback = 1, motor = {} } = {}) {
+  const p = normalizeProject(applySystem(normalizeProject({}), GB, SYSTEM_PARTS.filter((k) => GB[k])));
+  const d = p.system.plant.diagram;
+  d.blocks.find((b) => b.id === 'ctrl').variant = variant;
+  d.blocks.find((b) => b.id === 'fb').params.position = feedback;
+  Object.assign(d.blocks.find((b) => b.id === 'motor').params, motor);
+  p.scope.timebase = autoTimebase(p);
+  const r = evaluateSystem(normalizeProject(p));
+  // Per hold: the load error's peak to peak, its largest size, and how often
+  // the gear's torque changes sign (twice per cycle of hunting).
+  let pp = 0, eMax = 0, n = 0, flips = 0;
+  for (const [a, b] of HOLDS) {
+    let lo = Infinity, hi = -Infinity, last = 0;
+    for (let k = 0; k < r.t.length; k++) if (r.t[k] >= a && r.t[k] < b) {
+      const e = r.signals.e[k]; lo = Math.min(lo, e); hi = Math.max(hi, e); eMax = Math.max(eMax, Math.abs(e)); n++;
+      const tq = r.signals.tau[k], sg = Math.abs(tq) > 1e-3 ? Math.sign(tq) : 0;
+      if (sg && last && sg !== last) flips++;
+      if (sg) last = sg;
+    }
+    pp = Math.max(pp, hi - lo);
+  }
+  return { pp, eMax, flipsPerS: flips / (n * (r.t[1] - r.t[0])), run: r };
+}
+const BETA = Math.PI / 180;
+
+test('Gear backlash: the load-encoder loop hunts, with PID and with PD; the amplitude follows the play', () => {
+  for (const variant of [0, 1]) {
+    const h = backlash({ variant });
+    assert.ok(h.pp > 0.8 * BETA, `${variant}: p-p ${h.pp}`);           // 20.6 mrad
+    assert.ok(h.flipsPerS >= 20, `${variant}: ${h.flipsPerS} sign changes/s`);   // 62
+  }
+  const quarter = backlash({ motor: { beta: BETA / 4 } }), full = backlash();
+  assert.ok(Math.abs(quarter.pp / full.pp - 0.25) < 0.05, `${quarter.pp} against ${full.pp}`);   // 5.12 against 20.6
+});
+
+test('Gear backlash: the motor encoder holds still, the load anywhere in the play; the dual loop holds; no play settles all', () => {
+  const m = backlash({ feedback: 2 });
+  assert.ok(m.pp < 1e-3 && m.flipsPerS === 0, `motor encoder p-p ${m.pp}`);
+  assert.ok(m.eMax <= BETA / 2 + 1e-4, `off by ${m.eMax}, at most half the play`);
+  for (const motor of [{}, { k: 70.2, c: 0.1117 }]) {   // 50 Hz and 20 Hz
+    const d = backlash({ variant: 2, motor });
+    assert.ok(d.pp < 0.5e-3 && d.flipsPerS === 0, `dual loop ${JSON.stringify(motor)}: p-p ${d.pp}, ${d.flipsPerS}/s`);
+  }
+  for (const variant of [0, 1, 2]) {
+    const s = backlash({ variant, motor: { backlash: 0 } });
+    assert.ok(s.pp < 1e-3 && s.flipsPerS < 5, `${variant} without play: p-p ${s.pp}, ${s.flipsPerS}/s`);
+  }
+});

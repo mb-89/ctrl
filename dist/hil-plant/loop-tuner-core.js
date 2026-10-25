@@ -6983,6 +6983,84 @@ const EXAMPLE_PLANTS = [
     },
   },
   {
+    name: 'Gear backlash',
+    summary: 'A motor turning a load arm through a gearhead with play (backlash). Watch the load-encoder loop hunt, the motor encoder hold the load off by the play, and the industrial fix, a dual loop, hold it still.',
+    notes: 'A motor turns a load arm through a 20:1 gearhead with 1° of play (backlash). The Servo motor simulates it: its rotor and the load are two bodies joined by the gear\'s stiffness, and between the teeth there is a gap where no torque passes (select Motor: Backlash and β on its mask; open it to see the dead zone). The controller holds the load\'s angle with the load\'s own encoder; r steps between 0 and 1 rad. Every step ends in hunting: the motor crosses the gap, knocks the load, overshoots, crosses back, and the load rattles by about ±10 mrad, about 31 times a second (the torque τ changes sign about 60 times a second). Pick PD: it still hunts, so it is backlash inside a loop, not the integral winding up.\n\nNow double-click the Switch "feedback from" (or set its position to 2): the controller reads the motor\'s encoder. The hunting stops, but the motor\'s encoder cannot see the play, so the load stays wherever it came to rest in it, up to half the play (8.7 mrad) away from r.\n\nThe industrial fix, Dual loop: position from the load\'s encoder, damping from the motor\'s speed, which the play cannot cut off (dual-loop feedback, as industrial drives run it). Back on the load encoder it holds the load to about 0.1 mrad and nothing rattles.\n\nTry: Motor\'s β at a quarter (0.0044 rad): the hunting shrinks with it. Backlash off: every variant settles. Press XY (δ across, τ up): the flat part is the play, the slopes the gear\'s spring. Make the gear softer, 20 Hz (Motor\'s k to 70, c to 0.11): the load-encoder PID goes unstable even without play, and the dual loop still holds.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
+    },
+    scope: { channels: channels('delta', 'tau', 'e', 'i') },
+    sim: { sampleTime: 0.0005 },
+    ui: ui('Gear and load'),
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad'),
+        ctrl(150, 90, 3, 0.001, [
+          { name: 'PID', type: 'pid', params: { Kp: 16, Ki: 100, Kd: 0.76, Tf: 0.003, umin: -5, umax: 5 } },
+          { name: 'PD', type: 'pid', params: { Kp: 16, Kd: 0.76, Tf: 0.003, umin: -5, umax: 5 } },
+          { name: 'Dual loop', type: 'stateFeedback', params: { K: [16, 0.76], kr: 16, umin: -5, umax: 5 } },
+        ]),
+        componentUse('servo-motor@1', {
+          id: 'motor', name: 'Motor', x: 380, y: 90,
+          params: { drive: 'current', imax: 5, R: 1, L: 0.001, K: 0.05, b: 1e-5, Jm: 2e-5, G: 20, shaft: 'coupled', k: 438.65, c: 0.27925, backlash: 1, beta: 0.0174533 },
+        }),
+        {
+          id: 'load', type: 'subsystem', name: 'Load arm', x: 700, y: 96,
+          mask: [{ key: 'JL', label: 'Load inertia', unit: 'kg·m²', min: 1e-9 }, { key: 'bL', label: 'Bearing viscous friction', unit: 'N·m·s/rad', min: 0 }, { key: 'TcL', label: 'Bearing Coulomb friction', unit: 'N·m', min: 0 }],
+          params: { JL: 0.01, bL: 0.005, TcL: 0.02 },
+          diagram: {
+            blocks: [
+              { id: 'tau', type: 'inport', name: 'τ', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 140, y: 104 },
+              { id: 'w', type: 'integrator', name: 'load 1/JL', params: { K: '1/JL' }, x: 220, y: 96 },
+              { id: 'q', type: 'integrator', name: 'load angle', params: { K: 1 }, x: 400, y: 96 },
+              { id: 'fr', type: 'fcn', name: 'bearing friction', params: { inputs: 'u', eqs: 'y = bL*u + TcL*tanh(u/0.01)', outputs: 'y' }, x: 220, y: 220, flip: true },
+              { id: 'th', type: 'outport', name: 'θ_L', params: { port: 1 }, x: 560, y: 112 },
+              { id: 'om', type: 'outport', name: 'ω_L', params: { port: 2 }, x: 560, y: 30 },
+            ],
+            wires: [
+              { from: 'tau', to: 'sum' }, { from: 'fr', to: 'sum:1' }, { from: 'sum', to: 'w' }, { from: 'w', to: 'q' }, { from: 'w', to: 'fr' },
+              { from: 'q', to: 'th' }, { from: 'w', to: 'om' },
+            ],
+          },
+        },
+        { id: 'fb', type: 'switch', name: 'feedback from', params: { inputs: 2, position: 1 }, x: 240, y: 260, flip: true },
+        { id: 'esum', type: 'sum', params: { signs: '+-' }, x: 150, y: 360 },
+        sink('e', 220, 363, 'rad'),
+        sink('theta_L', 900, 106, 'rad'),
+        sink('theta_m', 900, 180, 'rad'),
+        sink('tau', 700, 20, 'N·m'),
+        sink('i_ref', 380, 20, 'A'),
+        sink('omega_m', 700, 260, 'rad/s'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'ctrl', to: 'i_ref' },
+        { from: 'motor', to: 'load' }, { from: 'load', to: 'motor:1' }, { from: 'load:1', to: 'motor:2' },
+        { from: 'load', to: 'fb' }, { from: 'motor:1', to: 'fb:1' }, { from: 'fb', to: 'ctrl:1' }, { from: 'motor:2', to: 'ctrl:2' }, { from: 'motor:2', to: 'omega_m' },
+        { from: 'r', to: 'esum' }, { from: 'load', to: 'esum:1' }, { from: 'esum', to: 'e' },
+        { from: 'load', to: 'theta_L' }, { from: 'motor:1', to: 'theta_m' }, { from: 'motor', to: 'tau' },
+      ],
+    },
+    views: [{
+      name: 'Gear and load', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+      shapes: [
+        { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        ...ticks(0.62),
+        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: 0.66, x2: 0, y2: 0.8, stroke: 'ch1', lineWidth: 5 }] },
+        { type: 'group', angle: 'theta_L', shapes: [
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.58, stroke: 'ch3', lineWidth: 8 },
+          { type: 'circle', cx: 0, cy: 0.5, r: 0.08, fill: 'ch3' },
+        ] },
+        { type: 'group', angle: 'theta_m', shapes: [
+          { type: 'circle', cx: 0, cy: 0, r: 0.22, fill: 'ink' },
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.3, stroke: 'ch2', lineWidth: 5 },
+        ] },
+        { type: 'circle', cx: 0, cy: 0, r: 0.06, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.82, text: 'load {theta_L*1000:6.1} mrad   gear {theta_m*1000:6.1} mrad   e {e*1000:6.2} mrad   τ {tau:5.2} N·m', size: 13 },
+      ],
+    }],
+  },
+  {
     name: 'Conical tank, gain scheduling',
     summary: 'A tank that widens upwards: quick when nearly empty, slow when full. Compare a gain-scheduled PI with fixed ones: why one set of gains cannot fit a plant that changes.',
     notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other.\n\nThe page computes the PI gains from the tank itself at each level (pole cancellation), and the gain-scheduled PI looks them up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
@@ -7296,6 +7374,7 @@ const SIMULATOR = {
   'Encoder errors and torque ripple': {
     physics: [...MOTOR_PHYSICS, phys('ωc', 'motor.wc', 'rad/s'), phys('ζc', 'motor.zc', '1')],
   },
+  'Gear backlash': { physics: [...MOTOR_PHYSICS, phys('k', 'motor.k', 'N·m/rad'), phys('c', 'motor.c', 'N·m·s/rad'), phys('JL', 'load.JL', 'kg·m²')] },
   'Conical tank, gain scheduling': {
     physics: [phys('r0', 'tank.r0', 'm'), phys('R', 'tank.R', 'm'), phys('H', 'tank.H', 'm'), phys('a', 'tank.a', 'm²'), phys('Td', 'pipe.L', 's')],
     effects: [{ name: 'pipe dead time', at: 'pipe', off: 'pass' }],
@@ -8545,9 +8624,15 @@ function simPlant(opts = {}) {
   }
   sourcePlays.hilu0 = { input: inputOf.hilu0 ?? 0 };
   sourcePlays.hilsafe = { value: 0 };
+  const trim = (v) => { const i = v.findIndex((x) => x !== 0); return i < 0 ? [] : v.slice(i); };
+  const holds = (b) => ['integrator', 'controller', 'observer'].includes(b.type) || (b.type === 'delay' && b.params.L > 0) || !!diagramBlockDef(b.type).ode
+    || (diagramBlockDef(b.type).model && !(b.type === 'tf' && trim(b.params.num).length >= trim(b.params.den).length));
+  const stateful = new Set([...flat.leaves].filter(([, b]) => holds(b)).map(([k]) => k));
+  const reached = flat.reach([...inputKeys], new Set([...stateful].filter((k) => !inputKeys.has(k))));
+  const direct = outputs.filter((o) => { const s = sinks.find((x) => x.name === o.name) ?? later.find((x) => x.name === o.name); return s?.src && reached.has(s.src.key) && !stateful.has(s.src.key); }).map((o) => o.name);
   return {
     name: `Simulated plant${mode === 'control' ? '' : `, ${mode} mode`}`,
-    mode, rate, inputs, outputs, diagram: final, sources: sourcePlays, signals, loop: ownLoop, gate: !!ctrl && mode !== 'control',
+    mode, rate, inputs, outputs, direct, diagram: final, sources: sourcePlays, signals, loop: ownLoop, gate: !!ctrl && mode !== 'control',
     draws: { system: entry.name, seed: opts.seed ?? 1, vary: Number(opts.vary ?? 0.15), effects: draw.effects, params: draw.params, ranges: from },
   };
 }

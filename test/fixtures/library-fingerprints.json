@@ -24,6 +24,11 @@
     "signals": "V,ctrl.r,ctrl.u,ctrl.y,i,r,speed,speed_m,tau_e,tau_f,tau_m,tau_r,v",
     "hash": "a356789d"
   },
+  "Gear backlash": {
+    "samples": 10001,
+    "signals": "ctrl.r,ctrl.u,ctrl.y,delta,e,i,i_ref,omega_m,r,tau,tau_e,tau_f,tau_m,tau_r,theta_L,theta_m,v",
+    "hash": "41f167c"
+  },
   "Conical tank, gain scheduling": {
     "samples": 2001,
     "signals": "ctrl.r,ctrl.u,ctrl.y,d,h,q,r",
