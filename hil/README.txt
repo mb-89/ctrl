@@ -4,9 +4,10 @@ Loop Tuner: the external plant for Live (HIL) mode
 What it is
   hil_plant.py is a plant that runs outside the page, in real time, on your
   computer: a simulated DC motor swinging an unbalanced arm, at 100 Hz. It
-  stands in for real hardware. It is the plant of the systems "HIL: external
-  motor" and "HIL: external motor, reference mode" in Loop Tuner's System
-  library. It listens on ws://127.0.0.1:8765 (this computer only), sends its
+  stands in for real hardware. It is the plant of the systems "HIL: an
+  external plant" and "HIL: an external plant, reference mode" in Loop
+  Tuner's System library, which know only the inputs and outputs it
+  describes: to the page it is a black box, identified before tuning. It listens on ws://127.0.0.1:8765 (this computer only), sends its
   outputs every cycle and applies the inputs the page sends back.
 
 Start it
@@ -32,7 +33,7 @@ Start it
   s stop, r run, e E-stop, x reset, q quit.
 
 Then, in Loop Tuner
-  System library > HIL: external motor > Load. Plant tab: Connect. Nothing
+  System library > HIL: an external plant > Load. Plant tab: Connect. Nothing
   moves yet: the plant stays stopped until Run. Run starts it: the
   reference first ramps to its first value (at most 10 % of its full scale
   per second), then the loop runs and the arm follows. Stop stops it; Single
@@ -40,8 +41,10 @@ Then, in Loop Tuner
 
 Safety, on both sides
   The plant clamps every input to its limits. If it hears nothing for 10
-  cycles, if the page goes away while running, if the arm turns more than a
-  full turn, if an output is not a number, if its own cycle fails, or if
+  cycles, if the page goes away while running, if an output leaves its hard
+  range (the arm: angle beyond 2.5 rad either way, speed beyond 60 rad/s,
+  current beyond 10 A; the heater: T above 110 °C), if an output is not a
+  number, if its own cycle fails, or if
   STOP is pressed (in its window, in its console, or the page's E-STOP), it
   applies its safe inputs (0 V) and stays stopped until Reset. Who pressed
   STOP resets it: a STOP pressed here only here, the page's E-STOP only on
@@ -68,6 +71,9 @@ The plant the page does not know
   Loop Tuner is told the ports, their units and full scales, never the
   physics: it has to identify the plant, as with a real device.
   --plant heater runs a second, simpler plant (a heater and a temperature).
+  It has no disturbance input, as a rig without a dynamometer has none;
+  --dyno offers one (the motor's load torque, "load"), which the page then
+  shows as one more described input.
 
 More
   --log FILE.csv   every cycle (t, outputs, inputs, r and e) and every event
@@ -80,9 +86,12 @@ The protocol, in a paragraph
   JSON-RPC 2.0 over a WebSocket, one message per text frame; the plant is the
   server and owns the clock. The page asks "describe" (name, rate_hz,
   watchdog_cycles, inputs [{name, unit, min, max, safe, kind}], outputs
-  [{name, unit, min, max}], running, estop), then "start" (params {log:
+  [{name, unit, min, max, hard_min, hard_max}], running, estop; min ... max
+  is a full scale, hard_min ... hard_max where the plant E-stops), then
+  "start" (params {log:
   [{name, unit}]}: what each answer also carries for the plant's log),
-  "stop", "reset" and "estop". Every cycle the plant sends y {seq, t, y: [...]}
+  "stop", "reset" and "estop". Every cycle the plant sends y {seq, t, y:
+  [...], applied: [...]} (applied: the inputs it applied, after its clamps)
   and the page answers at once with u {seq, u: [...], log: [...]}, values in
   the units "describe" gave (null for an output that is not a number). The
   plant also sends estop {reason, t}, running {running, by, reason}
@@ -95,8 +104,9 @@ The protocol, in a paragraph
 Real hardware in its place
   Keep the server, the cycle, the watchdog and the window of hil_plant.py and
   replace the Motor class with your device's I/O: its ports (name, unit, full
-  scale, safe value) are the description, advance(span, u) applies the inputs
-  for a span of time, outputs() reads the measurements, and safe(u) puts the
+  scale, safe value; for an output its hard range) are the description,
+  advance(span, u) applies the inputs for a span of time, outputs() reads
+  the measurements, and safe(u) puts the
   safe inputs on the device at once (hil_plant.py calls it on every E-stop,
   stop, failed cycle and shutdown: it must not fail). Give the device a
   watchdog of its own as well (its drive goes safe when nobody writes to it

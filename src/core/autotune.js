@@ -130,7 +130,7 @@ export function tuneContext(project, path) {
   // only outputs 0 here, so nothing could be learned from it.
   const ext = externalBlock(plant.diagram);
   if (ext && blockMode(EXTERNAL_BLOCK.normalize(ext.params)) !== 'control') throw new Error(`the plant runs its own controller (External plant ${ext.name ?? ext.id}, reference mode): the page's controllers and Auto-tune are not in the loop`);
-  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}); Auto-tune simulates the loop and has no model of it (identification is not built yet). Tune it live in the Controller tab`);
+  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, and Auto-tune needs an identified model of it (Identify, not built yet). Until then, tune it live in the Controller tab`);
   const all = controllerBlocks(plant.diagram);
   const key = path ? [].concat(path).join('/') : null;
   const hit = (key && all.find((c) => c.key === key)) || all[0];

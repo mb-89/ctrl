@@ -242,7 +242,9 @@ test('2D views compile and move with the signals; library parts combine', async 
   assert.equal(mixed.system.signals.r.components[0].type, 'square', 'the input stays from the motor');
   assert.equal(mixed.system.plant.views[0].name, 'Cart and triple pendulum');
   assert.deepEqual(mixed.scope.channels.map((c) => c.source), ['r', '', '', 'd'], 'a whole load brings the system scope; a plant load keeps what still exists');
-  assert.ok(SYSTEM_LIBRARY.every((s) => s.plant.views?.length || s.scope?.view?.mode), 'every system has a view, or opens the scope in a frequency view');
+  const hil = (s) => s.plant.diagram.blocks.some((b) => b.type === 'external');
+  assert.ok(SYSTEM_LIBRARY.every((s) => s.plant.views?.length || s.scope?.view?.mode || hil(s)), 'every system has a view, or opens the scope in a frequency view, or is a HIL system (a black box: no picture)');
+  assert.ok(SYSTEM_LIBRARY.filter(hil).every((s) => !s.plant.views?.length && s.ui.view === 'Interface'), 'a HIL system has no picture: it opens on its interface');
   const { loopReady } = await import('../src/core/project.js');
   const fromLoop = normalizeProject(applySystem(EXAMPLES[0], msd, ['input', 'plant']));
   assert.equal(fromLoop.candidates.length, 0, 'a whole load leaves no controller of an older project behind');
@@ -250,7 +252,7 @@ test('2D views compile and move with the signals; library parts combine', async 
   // A system with an External plant opens stopped: nothing runs until the
   // plant is connected and Run is pressed (design/output/hil.md).
   const live = (s) => JSON.stringify(s.plant.diagram ?? {}).includes('"type":"external"');
-  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === (live(s) ? 'stop' : 'run') && (!s.ui.view || s.plant.views.some((v) => v.name === s.ui.view))), 'every system opens running (a live one stopped), on a view it has');
+  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === (live(s) ? 'stop' : 'run') && (!s.ui.view || s.plant.views.some((v) => v.name === s.ui.view) || (live(s) && s.ui.view === 'Interface'))), 'every system opens running (a live one stopped), on a view it has (a live one on its interface)');
   assert.equal(SYSTEM_LIBRARY.filter(live).length, 2, 'two live systems: control and reference mode');
   assert.equal(SYSTEM_LIBRARY.find((s) => s.name.includes('badly tuned'))?.ui.tab, 'tune', 'the system made for Auto-tune opens on that tab');
   assert.deepEqual(p.ui, { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' }, 'a whole load brings how the system opens');
@@ -454,8 +456,9 @@ test('System library tags: every tag listed once, grouped; filtering keeps syste
   assert.equal(new Set(tags.map((t) => t.label)).size, tags.length);
   assert.ok(tags.findIndex((t) => t.kind === 'plant') < tags.findIndex((t) => t.kind === 'feature'));
   assert.deepEqual(filterByTags([]), SYSTEM_LIBRARY.map((e, i) => i));
-  const lin = filterByTags(['Linear']), non = filterByTags(['Nonlinear']);
-  assert.ok(lin.length && non.length && lin.length + non.length === SYSTEM_LIBRARY.length, 'every system is linear or nonlinear');
+  const lin = filterByTags(['Linear']), non = filterByTags(['Nonlinear']), box = filterByTags(['Black box']);
+  assert.ok(lin.length && non.length && lin.length + non.length + box.length === SYSTEM_LIBRARY.length, 'every system is linear, nonlinear, or a black box (HIL)');
+  assert.deepEqual(box.map((i) => SYSTEM_LIBRARY[i].name), ['HIL: an external plant', 'HIL: an external plant, reference mode'], 'the page does not know what is inside a HIL plant');
   const both = filterByTags(['Nonlinear', 'Disturbance']);
   assert.ok(both.every((i) => non.includes(i) && SYSTEM_LIBRARY[i].tags.some((t) => t.label === 'Disturbance')));
 });

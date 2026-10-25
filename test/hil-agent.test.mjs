@@ -84,17 +84,16 @@ test('the guide for agents: every method with its arguments and an example, the 
 
 const HIL_DIAGRAM = async () => {
   const { SYSTEM_LIBRARY } = await import('../src/core/systems.js');
-  return SYSTEM_LIBRARY.find((s) => s.name === 'HIL: external motor');
+  return SYSTEM_LIBRARY.find((s) => s.name === 'HIL: an external plant');
 };
 
 test('full scales around the library plant: the channels and the references take them', async () => {
   const sys = await HIL_DIAGRAM();
   const { scales, refs } = liveScales(sys.plant.diagram);
-  assert.deepEqual(refs.sort(), ['d', 'r']);
+  assert.deepEqual(refs.sort(), ['r'], 'no disturbance the plant does not offer');
   assert.deepEqual(scales.angle.map((v) => Number(v.toFixed(4))), [-3.1416, 3.1416]);
   assert.deepEqual(scales.r, scales.angle, 'r is compared with angle: its full scale');
   assert.deepEqual(scales.V, [-12, 12]);
-  assert.deepEqual(scales.d, [-0.2, 0.2], 'd drives the load input');
   assert.deepEqual(liveScales(null), { scales: {}, refs: [] });
 });
 
@@ -153,12 +152,12 @@ test('the plant script: both modes describe the library systems, a second plant,
   const block = (name) => normalizeDiagram(SYSTEM_LIBRARY.find((s) => s.name === name).plant.diagram).blocks.find((b) => b.type === 'external');
   const control = checkDescription(JSON.parse(py(['--describe'])));
   assert.equal(control.mode, 'control');
-  assert.ok(sameDescription(block('HIL: external motor').params, control), 'control mode: the library entry as described');
+  assert.ok(sameDescription(block('HIL: an external plant').params, control), 'control mode: the library entry as described');
   const reference = checkDescription(JSON.parse(py(['--describe', '--mode', 'reference'])));
   assert.equal(reference.mode, 'reference');
-  assert.deepEqual(reference.inputs.map((p) => [p.name, p.kind, p.measures]), [['r', 'reference', 'angle'], ['load', 'disturbance', '']]);
+  assert.deepEqual(reference.inputs.map((p) => [p.name, p.kind, p.measures]), [['r', 'reference', 'angle']]);
   assert.equal(reference.outputs.at(-1).name, 'V', 'the plant reports its own effort');
-  assert.ok(sameDescription(block('HIL: external motor, reference mode').params, reference), 'reference mode: the library entry as described');
+  assert.ok(sameDescription(block('HIL: an external plant, reference mode').params, reference), 'reference mode: the library entry as described');
   const logger = checkDescription(JSON.parse(py(['--describe', '--mode', 'log'])));
   assert.equal(logger.mode, 'log');
   assert.equal(logger.inputs.length, 0);
@@ -218,7 +217,7 @@ test('hil_plant.py: STOP, reset, run and stop at its own keys reach the page; r 
     const m = JSON.parse(e.data);
     if (m.id !== undefined && waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); return; }
     notes.push(m);
-    if (m.method === 'y') ws.send(uMessage(m.params.seq, [1.5, 0], [0.4, 0.4 - m.params.y[0]]));
+    if (m.method === 'y') ws.send(uMessage(m.params.seq, [1.5], [0.4, 0.4 - m.params.y[0]]));
   };
   const key = (k) => plant.proc.stdin.write(`${k}\n`);
   try {
@@ -252,9 +251,9 @@ test('hil_plant.py: STOP, reset, run and stop at its own keys reach the page; r 
   }
   const log = readFileSync(logPath, 'utf8');
   rmSync(logPath, { force: true });
-  assert.match(log, /^t \[s\],angle \[rad\],speed \[rad\/s\],current \[A\],V \[V\],load \[N·m\],r \[rad\],e \[rad\],event/m, 'the log names r and e, declared at start');
+  assert.match(log, /^t \[s\],angle \[rad\],speed \[rad\/s\],current \[A\],V \[V\],r \[rad\],e \[rad\],event/m, 'the log names r and e, declared at start');
   for (const ev of ['start by the page', 'E-STOP: STOP pressed at the plant', 'reset by the plant', 'start by the plant', 'stop by the plant']) assert.ok(log.includes(ev), ev);
-  assert.match(log, /\n0\.\d+,[-\d.e]+,[-\d.e]+,[-\d.e]+,1\.5,0,0\.4,[-\d.e]+,\r?\n/, 'cycles with u and the page\'s r and e');
+  assert.match(log, /\n0\.\d+,[-\d.e]+,[-\d.e]+,[-\d.e]+,1\.5,0\.4,[-\d.e]+,\r?\n/, 'cycles with u and the page\'s r and e');
 });
 
 test('hil_plant.py --bench measures a run and ends (when it can run here)', async (t) => {
@@ -262,7 +261,7 @@ test('hil_plant.py --bench measures a run and ends (when it can run here)', asyn
   const plant = await startPlant(['--bench', '0.5', '--rate', '200']);
   if (!plant) { t.skip('neither python3 with websockets nor uv with websockets in its cache'); return; }
   const ws = new WebSocket(`ws://127.0.0.1:${plant.port}`);
-  ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.method === 'y') ws.send(uMessage(m.params.seq, [0, 0])); };
+  ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.method === 'y') ws.send(uMessage(m.params.seq, [0])); };
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
   ws.send(rpcRequest(1, 'start'));
   const code = await new Promise((r) => { plant.proc.on('exit', r); setTimeout(() => r('timeout'), 20000); });

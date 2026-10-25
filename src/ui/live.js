@@ -16,7 +16,7 @@
 // agent with only a browser can read the page. See design/output/hil.md.
 
 import { HIL_URL, externalParams, sameDescription, samePorts, findExternal, blockMode, RAMP_DEFAULT } from '../core/hil.js';
-import { createLiveLoop, liveKey, liveScales, liveProblem, keptWires } from '../core/live.js';
+import { createLiveLoop, liveKey, liveScales, liveProblem, followPorts } from '../core/live.js';
 import { normalizeDiagram } from '../core/diagram.js';
 import { sweepStart } from '../core/trace.js';
 import { zipFiles } from '../core/zip.js';
@@ -79,16 +79,24 @@ export function createLive(app, display, record, panelHost) {
   }
   // Gives the block the plant's ports (keeping the page's own settings);
   // wires to ports that are gone, or into inputs whose name or kind changed,
-  // go (core/live.js keptWires). Returns how many went, or false.
+  // go, and the Sinks and the scope's channels follow the outputs (core/live.js
+  // followPorts), all one undo step. Returns how many wires into inputs went,
+  // or false.
   function takePorts(dsc) {
-    let dropped = 0;
+    let dropped = 0, renamed = {};
+    app.beginEdit();
     const ok = editExternal((b, lv) => {
       const was = b.params;
       b.params = externalParams(dsc, b.params);
-      const before = lv.wires.length;
-      lv.wires = keptWires(lv.wires, b.id, was, b.params);
-      dropped = before - lv.wires.length;
+      const into = (ws) => ws.filter((w) => w.to.split(':')[0] === b.id).length;
+      const before = into(lv.wires);
+      ({ blocks: lv.blocks, wires: lv.wires, renamed } = followPorts(lv, b.id, was, b.params));
+      dropped = before - into(lv.wires);
+      // The channels on a renamed Sink follow it (setPlant clears those on
+      // names that went).
+      for (const ch of app.project.scope.channels) if (renamed[ch.source]) ch.source = renamed[ch.source];
     });
+    app.endEdit();
     return ok ? dropped : false;
   }
   const wentText = (n) => (n ? `; ${n} wire${n > 1 ? 's' : ''} into inputs that changed went` : '');
@@ -218,7 +226,7 @@ export function createLive(app, display, record, panelHost) {
 
   async function connect(url) {
     const hit = external();
-    if (!hit) { tell('This system has no External plant block: add one from the Live group in the Plant tab, or load “HIL: external motor”.'); return api.state(); }
+    if (!hit) { tell('This system has no External plant block: add one from the Live group in the Plant tab, or load “HIL: an external plant”.'); return api.state(); }
     if (!window.WebSocket) { tell('This browser has no WebSocket.'); return api.state(); }
     if (on()) return api.state();
     if (url && url !== hit.block.params.url && !editExternal((b) => { b.params.url = url; })) return api.state();
@@ -330,7 +338,7 @@ export function createLive(app, display, record, panelHost) {
     const was = !!ramp;
     ramp = m.ramp ?? null;
     if (was !== !!ramp) render(); else if (ramp) renderStats();
-    record.live.samples(m.names, m.t, m.values);
+    record.live.samples(m.names, m.t, m.values, m.units);
   }
 
   // ---- Keys

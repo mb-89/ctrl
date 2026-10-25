@@ -7,6 +7,7 @@ import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, 
 import { SYSTEM_LIBRARY } from '../core/systems.js';
 import { num, parseSI } from './units.js';
 import { createScene } from './scene.js';
+import { findExternal, interfaceOf, EXTERNAL_BLOCK } from '../core/hil.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -80,6 +81,7 @@ export function createPlantEditor(root, app) {
         </div>
         <div class="pview" id="pl-view" tabindex="0" aria-label="Diagram canvas: drag blocks in from the library; drag from an output to an input to wire; Shift-drag to select; double-click a subsystem to open it"></div>
         <div class="pview pscenebox" id="pl-scene" hidden></div>
+        <div class="pview pscenebox piface" id="pl-iface" hidden></div>
       </section>
       <section class="pprops" aria-label="Block parameters"><div id="pl-props"></div></section>
     </div>`;
@@ -96,7 +98,7 @@ export function createPlantEditor(root, app) {
   let gesture = null;
   let lastClick = { id: null, t: 0 };
   let saveName = null;           // library name being typed for a subsystem
-  let rep = -1;                  // -1: the block diagram; otherwise a 2D view index
+  let rep = -1;                  // -1: the block diagram; -2: a HIL plant's interface; otherwise a 2D view index
   const folded = new Set(loadJson(FOLD_KEY, ['Models', 'Sensors', 'Physics', 'Nonlinear', 'Structure']));
   const scene = createScene($('#pl-scene'), app);
 
@@ -198,7 +200,7 @@ export function createPlantEditor(root, app) {
     $('#pl-lib').querySelectorAll('[data-add]').forEach((b) => {
       b.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', b.dataset.add); e.dataTransfer.effectAllowed = 'copy'; });
       b.addEventListener('click', () => {
-        if (rep >= 0) showRep(-1);
+        if (rep !== -1) showRep(-1);
         const r = viewEl.getBoundingClientRect(), v = view();
         addFrom(b.dataset.add, (r.width / 2 - v.x) / v.k, (r.height / 2 - v.y) / v.k);
       });
@@ -297,10 +299,15 @@ export function createPlantEditor(root, app) {
   }
 
   const plantViews = () => app.project.system.plant?.views ?? [];
+  // A plant outside the page is a black box (input 20): no picture, its
+  // interface instead, as the plant described it.
+  const externalHit = () => findExternal(rootDiagram());
+  const IFACE = -2;
   function renderReps() {
     const vs = plantViews();
-    if (rep >= vs.length) rep = -1;
-    $('#pl-reps').innerHTML = `<button class="btn btn-sm" data-rep="-1" role="tab" aria-selected="${rep < 0}">Diagram</button>`
+    if (rep >= vs.length || (rep === IFACE && !externalHit())) rep = -1;
+    $('#pl-reps').innerHTML = `<button class="btn btn-sm" data-rep="-1" role="tab" aria-selected="${rep === -1}">Diagram</button>`
+      + (externalHit() ? `<button class="btn btn-sm" data-rep="${IFACE}" role="tab" aria-selected="${rep === IFACE}" id="pl-rep-iface" title="The plant's interface: all the page knows of it">Interface</button>` : '')
       + vs.map((v, i) => `<button class="btn btn-sm" data-rep="${i}" role="tab" aria-selected="${rep === i}" title="A view of this plant, from its JSON">${esc(v.name)}</button>`).join('');
     $('#pl-reps').querySelectorAll('[data-rep]').forEach((b) => b.addEventListener('click', () => showRep(Number(b.dataset.rep))));
   }
@@ -308,11 +315,27 @@ export function createPlantEditor(root, app) {
   function showRep(i) {
     rep = i;
     const inView = rep >= 0;
-    viewEl.hidden = inView;
+    viewEl.hidden = rep !== -1;
     $('#pl-scene').hidden = !inView;
-    for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = inView;
+    $('#pl-iface').hidden = rep !== IFACE;
+    for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = rep !== -1;
     if (inView) scene.show(plantViews()[rep]); else scene.stop();
     render();
+  }
+
+  // The interface, as a table an agent can read too (#pl-iface, a row per
+  // port with data-port, data-side and data-kind).
+  function renderInterface() {
+    const hit = externalHit();
+    if (!hit) return;
+    const f = interfaceOf(EXTERNAL_BLOCK.normalize(hit.block.params));
+    const range = (r, unit) => (r ? `${num(r[0], 4)} … ${num(r[1], 4)} ${esc(unit)}` : '–');
+    const row = (side, p) => `<tr data-side="${side}" data-port="${esc(p.name)}" data-kind="${esc(p.kind)}"><td>${side === 'in' ? 'in' : 'out'}</td><th scope="row">${esc(p.name)}</th><td>${esc(p.unit)}</td><td>${range(p.fullScale, p.unit)}</td><td>${side === 'in' ? `safe ${num(p.safe, 4)} ${esc(p.unit)}` : range(p.hard, p.unit)}</td><td>${esc(p.kind)}${p.measures ? ` of ${esc(p.measures)}` : ''}</td></tr>`;
+    $('#pl-iface').innerHTML = `<div class="ifbox"><h3 class="label">Interface of ${esc(hit.block.name ?? hit.block.id)}</h3>
+      <p class="note">All this page knows of the plant: what it described when it last connected (${esc(f.mode)} mode, ${num(f.rate, 4)} Hz). What is inside is a black box, to be identified before tuning.</p>
+      <table class="iftable" data-mode="${esc(f.mode)}"><thead><tr><th></th><th>Port</th><th>Unit</th><th>Full scale</th><th>Hard range / safe</th><th>Kind</th></tr></thead>
+      <tbody>${f.inputs.map((p) => row('in', p)).join('')}${f.outputs.map((p) => row('out', p)).join('')}</tbody></table>
+      <p class="note">Full scale: what the scope spans. Hard range: beyond it the plant stops itself (E-stop). Safe: what an input is set to when the plant stops.</p></div>`;
   }
 
   // Views come from the project's JSON; the panel only says what is shown.
@@ -328,6 +351,11 @@ export function createPlantEditor(root, app) {
   function render() {
     renderReps();
     if (rep >= 0) { renderViewProps(); return; }
+    if (rep === IFACE) {
+      renderInterface();
+      $('#pl-props').innerHTML = `<h3 class="label">Interface</h3><p class="note">The plant runs outside the page; it has no picture here. Its ports come from its description (describe) each time it connects, and the External block, its Sinks and the scope's channels follow them. Connect and Run are in the Live section above.</p>`;
+      return;
+    }
     const d = level();
     // Validity of the whole diagram, shown in the parameters panel.
     compileMsg = '';
@@ -708,14 +736,14 @@ export function createPlantEditor(root, app) {
   let first = true;
   return {
     render() { renderLibrary(); render(); },
-    shown() { renderLibrary(); if (rep >= 0) showRep(rep); else render(); if (first) { first = false; fit(); } },
+    shown() { renderLibrary(); if (rep !== -1) showRep(rep); else render(); if (first) { first = false; fit(); } },
     hidden() { scene.stop(); },
     // The representation by name ('' or unknown: the diagram); shown when the tab is.
-    view(name) { rep = plantViews().findIndex((v) => v.name === name); },
-    viewName() { return rep >= 0 ? plantViews()[rep]?.name ?? '' : ''; },
+    view(name) { rep = name === 'Interface' && externalHit() ? IFACE : plantViews().findIndex((v) => v.name === name); },
+    viewName() { return rep >= 0 ? plantViews()[rep]?.name ?? '' : rep === IFACE ? 'Interface' : ''; },
     fit,
     handleKey,
-    reset() { path = []; sel.clear(); wireSel = -1; first = true; if (rep >= 0) { rep = -1; scene.stop(); viewEl.hidden = false; $('#pl-scene').hidden = true; for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = false; } },
+    reset() { path = []; sel.clear(); wireSel = -1; first = true; if (rep !== -1) { rep = -1; scene.stop(); viewEl.hidden = false; $('#pl-scene').hidden = true; $('#pl-iface').hidden = true; for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = false; } },
   };
 }
 
