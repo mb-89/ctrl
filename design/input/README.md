@@ -47,3 +47,4 @@ The person's own words, verbatim, one file per conversation, dated, with the ima
 | [2026-10-25-39-puma-flagship-opens.md](2026-10-25-39-puma-flagship-opens.md) | The PUMA is the flagship example: opening the HTML, it is what runs |
 | [2026-10-25-40-puma-probe-at-45-degrees.md](2026-10-25-40-puma-probe-at-45-degrees.md) | The PUMA's tool becomes a pointer with a red ball tip (like a probe's) that touches the circle at 45° from outside rather than from the top, so every axis moves visibly |
 | [2026-10-25-41-tool-orientation-changes.md](2026-10-25-41-tool-orientation-changes.md) | So the tool frame's orientation changes along the circle (today it stays fixed) |
+| [2026-10-25-42-measure-off-by-default.md](2026-10-25-42-measure-off-by-default.md) | The scope's Measure is off by default, always (it clutters the traces; the legend has the values); it stays, for whoever switches it on |

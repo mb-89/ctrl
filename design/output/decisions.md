@@ -2,6 +2,10 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: Measure off by default ([input 42](../input/2026-10-25-42-measure-off-by-default.md))
+
+- "I want it off by default. It creates an irritating noise when looking at the traces ... by default it should always be off." The key stays; a channel starts without it, and the three systems that switched it on (sliding mode on V and i, the encoder example on V and the estimate's error, the PUMA on ea) no longer do; their notes say to switch it on where it reads something. A test holds every library system to opening with Measure off.
+
 ## 2026-10-25 · v2.9: the PUMA is the flagship; the page opens on it ([input 39](../input/2026-10-25-39-puma-flagship-opens.md))
 
 - "This should be the flagship example. So if we open the HTML, that's the thing that should be running." A page with no project inside opens the System library's first system; the PUMA is now first, so the page opens on it, running, and the library shows it on top. This replaces "the page opens the Mass–spring–damper" (v1). **Interpretation:** the flagship also heads the library list; the other systems keep their order, simple to complex.
