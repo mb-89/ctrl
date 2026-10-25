@@ -25,6 +25,7 @@ import { createRecord } from './record.js';
 import { createSpeed } from './speed.js';
 import { speedToJson } from '../core/speed.js';
 import { startLimited } from './limited.js';
+import { startBridge } from './bridge.js';
 
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
@@ -923,6 +924,8 @@ function startApp() {
   const ui = app.project.ui;
   delete app.project.ui;
   applyUi(ui);
+  // Served by the MCP server (the agentic mode): connect back to it.
+  startBridge(window.loopTuner, { toast });
 }
 
 function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }

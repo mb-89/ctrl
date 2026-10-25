@@ -10,7 +10,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer, stopAll, MODERN } from '../tools/mcp-client.mjs';
 
-const TOOLS = ['list_systems', 'list_projects', 'load_system', 'get_project', 'set_project', 'list_blocks', 'get_block', 'set_params', 'run', 'autotune', 'analyze', 'designs', 'identify', 'save_project', 'export_html'];
+const CORE_TOOLS = ['list_systems', 'list_projects', 'load_system', 'get_project', 'set_project', 'list_blocks', 'get_block', 'set_params', 'run', 'autotune', 'autotune_history', 'analyze', 'designs', 'identify', 'save_project', 'export_html'];
+const PAGE_TOOLS = ['page_status', 'page_open', 'page_load_system', 'page_get_project', 'page_set_project', 'page_set_gains', 'page_set_variant', 'page_control', 'page_signals', 'page_autotune', 'page_analyze', 'page_designs', 'page_live', 'page_screenshot'];
+const TOOLS = [...CORE_TOOLS, ...PAGE_TOOLS];
 const SYSTEMS = ['DC motor, position control', 'Oven, badly tuned'];
 const cli = (...args) => JSON.parse(execFileSync(process.execPath, ['cli.mjs', ...args]).toString());
 const without = (o, ...keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));

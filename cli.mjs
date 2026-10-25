@@ -5,7 +5,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { buildHtml } from './build.mjs';
-import { readProject as readOps, writeProject as writeOps, extractJson as extractOps, findSystem, systemProject, projectDesigns, autotuneOptions, runProject, analyzeProject, parseAt } from './src/node/ops.mjs';
+import { parseProject, extractJson as extractOps, findSystem, systemProject, projectDesigns, autotuneOptions, runProject, analyzeProject, parseAt } from './src/core/ops.js';
 import { SLOTS, BLOCKS, blockDef, normalizeBlock } from './src/core/blocks.js';
 import { METRICS, METRIC } from './src/core/metrics.js';
 import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, uniqueName, nextColor, describeController, fmt, loopReady, referenceTrace } from './src/core/project.js';
@@ -81,8 +81,13 @@ function fail(msg) { console.error(`error: ${msg}`); process.exit(1); }
 
 // The shared operations throw; here an error ends the command.
 const must = (f) => { try { return f(); } catch (e) { fail(e.message); } };
-const readProject = (path) => must(() => readOps(path));
-const writeProject = (path, project) => writeOps(path, project);
+function readProject(path) {
+  if (!path) fail('give a project file (.json or .html)');
+  let text;
+  try { text = readFileSync(path, 'utf8'); } catch { fail(`cannot read ${path}`); }
+  return must(() => parseProject(text, path));
+}
+const writeProject = (path, project) => writeFileSync(path, /\.html?$/i.test(path) ? buildHtml({ project }) : JSON.stringify(project, null, 2) + '\n');
 const extractJson = (html, path) => must(() => extractOps(html, path));
 
 const clean = (m) => Object.fromEntries(Object.entries(m).filter(([k]) => k !== 'events').map(([k, v]) => [k, typeof v === 'number' && !Number.isFinite(v) ? null : v]));

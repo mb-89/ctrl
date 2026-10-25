@@ -1,20 +1,19 @@
 // What the command line (cli.mjs) and the MCP server (mcp.mjs) both do with
-// a project, on the same core the page runs: read and write project files,
-// find a library system, run a project and measure its loops, analyse a loop
-// at an operating point, the designs, Auto-tune's options. Each function
-// throws an Error with the sentence the core gives; each adapter reports it
-// its own way. Node only: the page never loads this file.
+// a project: read a project file's text and put a project into a page, find
+// a library system, run a project and measure its loops, analyse a loop at
+// an operating point, the designs, Auto-tune's options. Each function throws
+// an Error with the sentence the core gives; each adapter reports it its own
+// way. Pure, so it rides in the page's core too: the MCP server's download
+// runs on the core cut from the page (core/hilsim.js simulatorCore).
 
-import { readFileSync, writeFileSync } from 'node:fs';
-import { buildHtml } from '../../build.mjs';
-import { normalizeProject, simOf, autoTimebase, defaultSampleTime, loopModel, loopReady, evaluateProject } from '../core/project.js';
-import { DEFAULT_PROJECT } from '../core/examples.js';
-import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../core/systems.js';
-import { compileDiagram } from '../core/diagram.js';
-import { simulateSystem } from '../core/sim.js';
-import { computeMetrics } from '../core/metrics.js';
-import { analyzeLoop, stepInfo } from '../core/analysis.js';
-import { controllerBlocks, upstreamSource, costScales, runCost, GOAL, METHODS, RULES, SIMC, COSTS } from '../core/autotune.js';
+import { normalizeProject, simOf, autoTimebase, defaultSampleTime, loopModel, loopReady, evaluateProject } from './project.js';
+import { DEFAULT_PROJECT } from './examples.js';
+import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from './systems.js';
+import { compileDiagram } from './diagram.js';
+import { simulateSystem } from './sim.js';
+import { computeMetrics } from './metrics.js';
+import { analyzeLoop, stepInfo } from './analysis.js';
+import { controllerBlocks, upstreamSource, costScales, runCost, GOAL, METHODS, RULES, SIMC, COSTS } from './autotune.js';
 
 // ---- Project files: .json, or an exported .html page with the project inside
 
@@ -24,17 +23,22 @@ export function extractJson(html, path) {
   return m[1];
 }
 
-export function readProject(path) {
-  if (!path) throw new Error('give a project file (.json or .html)');
-  let text;
-  try { text = readFileSync(path, 'utf8'); } catch { throw new Error(`cannot read ${path}`); }
+// A project file's text (path says which kind: .html or .json), normalised.
+export function parseProject(text, path) {
   const raw = /\.html?$/i.test(path) ? extractJson(text, path) : text;
   try { return normalizeProject(JSON.parse(raw)); } catch (e) { throw new Error(`${path}: ${e.message}`); }
 }
 
-// .html: the standalone page with the project inside; anything else: JSON.
-export function writeProject(path, project) {
-  writeFileSync(path, /\.html?$/i.test(path) ? buildHtml({ project }) : JSON.stringify(project, null, 2) + '\n');
+// A page with this project inside (as Export HTML makes it): the page's
+// first project script (the shell's; the script's own copies come later)
+// and its title replaced.
+export function embedProject(html, project) {
+  const json = JSON.stringify(project, null, 2).replace(/</g, '\\u003c');
+  const tag = '<script type="application/json" id="loop-tuner-project">';
+  const a = html.indexOf(tag), b = html.indexOf('</script>', a);
+  if (a < 0 || b < 0) throw new Error('the page has no place for a project');
+  const title = String(project.title ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return `${html.slice(0, a)}${tag}\n${json}\n${html.slice(b)}`.replace(/<title>[^<]*<\/title>/, `<title>${title ? `${title} · ` : ''}Loop Tuner</title>`);
 }
 
 // ---- The System library
@@ -243,4 +247,32 @@ export function autotuneOptions(project, o = {}) {
   const path = o.block ? String(o.block).split('/') : null;
   if (path && !controllerBlocks(project.system.plant?.diagram).some((c) => c.key === o.block)) throw new Error(`block ${o.block}: no Controller block there; blocks: ${controllerBlocks(project.system.plant?.diagram).map((c) => c.key).join(', ') || 'none'}`);
   return { path, opts: { method, goal, rule: o.rule, simc: o.simc, amplitude, maxIter: o.iterations ? Number(o.iterations) : undefined, feedforward: !!o.ff } };
+}
+
+// ---- Traces (the screen, the live record) for an agent
+
+// A saved trace (core/trace.js parseTrace's { t, signals, units }) in brief:
+// its span and, per signal, unit, min, max, mean and last value within
+// [from, to]; with signals, those downsampled to points. Summaries first, so
+// an agent reads a few numbers before it asks for samples.
+export function traceSummary(trace, { from = -Infinity, to = Infinity, signals = [], points = 200 } = {}) {
+  const names = Object.keys(trace.signals);
+  const missing = signals.filter((x) => !names.includes(x));
+  if (missing.length) throw new Error(`no signal ${missing.map((x) => `"${x}"`).join(', ')}; signals: ${names.join(', ')}`);
+  let i0 = 0, i1 = trace.t.length;
+  while (i0 < i1 && trace.t[i0] < from - 1e-9) i0++;
+  while (i1 > i0 && trace.t[i1 - 1] > to + 1e-9) i1--;
+  const t = Array.from(trace.t.slice(i0, i1));
+  const stats = names.map((name) => {
+    const v = trace.signals[name];
+    let n = 0, lo = Infinity, hi = -Infinity, sum = 0, last = null;
+    for (let k = i0; k < i1; k++) if (Number.isFinite(v[k])) { n++; lo = Math.min(lo, v[k]); hi = Math.max(hi, v[k]); sum += v[k]; last = v[k]; }
+    return { name, unit: trace.units?.[name] ?? '1', min: n ? round(lo) : null, max: n ? round(hi) : null, mean: n ? round(sum / n) : null, last: n ? round(last) : null };
+  });
+  const out = { samples: t.length, span: t.length ? [round(t[0]), round(t.at(-1))] : null, signals: stats };
+  if (signals.length && t.length) {
+    const sliced = Object.fromEntries(signals.map((n) => [n, trace.signals[n].slice(i0, i1)]));
+    out.traces = downsample(t, sliced, signals, Math.min(2000, Math.max(2, Number(points) || 200)));
+  }
+  return out;
 }
