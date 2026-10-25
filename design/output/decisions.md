@@ -2,6 +2,14 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: the PUMA's robot core and 3D view, built ([robot.md](robot.md))
+
+Steps 3 and 8 of the plan (the core, the renderer) and a kinematic demonstration, on feat/robot; what was measured and the deviations are in robot.md under "Built so far".
+- **three.js r185.1 is vendored** (unmodified, checksummed, licence in the page, inlined by the build as its own script block that the provenance and standalone tests verify and set apart). Interpretation of input 14 ("I don't really care how we do it ... it needs to be 3D"): a library gives the best real 3D fastest; the Canvas2D fallback, the screen-space lines, picking and the CAD navigation are ours, so the view works where WebGL does not.
+- **The gear ratios carry their published signs.** Interpretation: the plan's unsigned ratios would apply joints 1 and 3's forward and reverse friction the wrong way round; "the physics can't be wrong" decides.
+- **The core is torque-based** (joint torques in; accelerations and the torque split out: inertial, Coriolis and centrifugal, gravity, friction), so the reusable servo model being designed separately drives the arm, and every torque share can become a signal (input 15).
+- **The reference values for the physics tests were computed by running the toolbox** and are stored with the script that made them; the test-only closed-form IK is the oracle for the kinematics.
+
 ## 2026-10-25 · v2.8: the PUMA's torques are signals ([input 15](../input/2026-10-25-15-puma-torques.md))
 
 The person: "what would be quite important is that we get signals for the [torques]. That's actually the thing that's special ... maybe we can have in the [oscilloscope] two signals for the error and then [torques] of two joints, because that's really something that we struggle with usually, calculating the [torques], simulating the [torques]. And then by increasing the complexity of the model, we would see ... the change first and foremost in the [torques] and the efforts, and not necessarily in the control values".
