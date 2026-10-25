@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { buildHtml, reportStyle } from '../build.mjs';
+import { buildHtml, reportStyle } from '../tools/build.mjs';
 import { decide, renderHtml } from '../src/core/pugh.js';
 
 const ui = new URL('../src/ui/', import.meta.url);
@@ -23,7 +23,7 @@ const CODE_COLOUR = new RegExp(String.raw`['"\x60]#[0-9a-f]{3,8}['"\x60]|(?<![\w
 // Code without its comments.
 const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const modules = readdirSync(ui).filter((x) => x.endsWith('.js') && x !== 'palette.js').map((f) => [f, code(readFileSync(new URL(f, ui), 'utf8'))]);
-const shell = ['build.mjs', code(readFileSync(new URL('../build.mjs', import.meta.url), 'utf8'))];
+const shell = ['tools/build.mjs', code(readFileSync(new URL('../tools/build.mjs', import.meta.url), 'utf8'))];
 const around = (s, i) => s.slice(Math.max(0, i - 40), i + 30).replace(/\s+/g, ' ');
 
 test('every colour in the style sheet is a token in its one token block', () => {

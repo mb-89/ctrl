@@ -442,7 +442,7 @@ The view's pan and zoom per level stay in memory only, as today.
 ### 9.2 How the build places it
 
 **Placement:**
-- `build.mjs` reads the manifest, checks each file's sha256, and refuses to build on a mismatch.
+- `tools/build.mjs` reads the manifest, checks each file's sha256, and refuses to build on a mismatch.
 - It appends the section **inside `lt-script`, at the end of the bundle, after `ui/app.js`**.
 - It is not passed through the comment stripper.
 
@@ -659,7 +659,7 @@ Each step ends with `npm test` passing and a commit.
 - **Layout in a Worker** (a Blob from the page's own text, as Live does). Only if a level exceeds the budget.
 - **Interactive (history-dependent) layout**, ELK wrapping, and a top-to-bottom direction.
 - **Signal names on wires** (except robot.md's frame labels), comments on the canvas, copy and paste (roadmap).
-- **A CLI command that draws a diagram** for agents (`node cli.mjs layout --svg`); easy once `layoutLevel` exists.
+- **A CLI command that draws a diagram** for agents (`./runme.sh cli layout --svg`); easy once `layoutLevel` exists.
 
 ## 14. Files (session scratch, may be gone)
 

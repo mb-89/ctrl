@@ -2,6 +2,14 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the root holds a readme and two runmes ([input 74](../input/2026-10-25-74-root-readme-runme.md))
+
+The person, after cloning the repository: "in the root folder, we're gonna have a readme, a runme ps1 and a runme sh. That's always true for all my projects, actually. And the user runs them and they install everything. Build MJS, CLI MJS, MCP MJS, put them somewhere else. Everything goes through readme and runme." Built:
+- **`runme.sh` and `runme.ps1` in the root** install what Loop Tuner needs (Node.js 18 or later through the system's package manager, Homebrew or winget, as the MCP download's runmes do; uv, for the external plant, as the plant's runmes do, its failure said and not fatal), build the page and open it. No command is needed; `--help` lists the others and installs nothing: `build`, `open`, `test` (`test-slow`), `mcp` (the server's own runme), `plant` (the built plant's runme in `dist/hil-plant/`, building it first when it is missing), `cli` (the command line).
+- **The scripts moved**: `build.mjs` and `cli.mjs` to `tools/`, `mcp.mjs` to `mcp/`, beside its README and runmes. The MCP download is unchanged (`mcp.mjs` beside the core, as before); in the repository the server finds `src/` and `tools/build.mjs` one folder up.
+- **The docs go through runme**: README.md starts with it; AGENTS.md's commands are `./runme.sh cli …`; CLAUDE.md says so; the design documents name the new paths. The decision log keeps the old names where it records what was.
+- Interpretation: AGENTS.md, CLAUDE.md and package.json stay in the root, since agents and npm look for them there; no script does. `npm test` still works and is what `./runme.sh test` runs, without needing npm.
+
 ## 2026-10-25 · v2.9: the main-job gate measures against the datum ([input 71](../input/2026-10-25-71-gate-against-the-datum.md))
 
 - Asked whether the gate (vetoed beyond ×2 the datum's following or rejection error) should keep measuring against the controller set up now, which makes it strict against a strong datum and lenient against a weak one, or against a fixed yardstick (the tuned PID), the person chose the datum, as built. No change to the code.

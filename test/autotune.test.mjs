@@ -511,18 +511,18 @@ test('the command line tunes a Controller block and saves the result', () => {
   const dir = mkdtempSync(join(tmpdir(), 'lt-'));
   const file = join(dir, 'oven.json');
   writeFileSync(file, JSON.stringify(system('Oven')));
-  const out = JSON.parse(execFileSync('node', ['cli.mjs', 'autotune', file, '--method', 'step', '--save', '--json']).toString());
+  const out = JSON.parse(execFileSync('node', ['tools/cli.mjs', 'autotune', file, '--method', 'step', '--save', '--json']).toString());
   assert.ok(out.ok && out.better && out.K > 0.9 && out.after.cost.J < out.before.cost.J, JSON.stringify(out));
   const saved = JSON.parse(readFileSync(file, 'utf8')).system.plant.diagram.blocks.find((b) => b.id === 'ctrl');
   assert.equal(saved.variants[saved.variant].name, 'PID, badly tuned · SIMC');
-  assert.match(execFileSync('node', ['cli.mjs', 'autotune', file, '--method', 'relay', '--rule', 'zn']).toString(), /Ku 5/);
+  assert.match(execFileSync('node', ['tools/cli.mjs', 'autotune', file, '--method', 'relay', '--rule', 'zn']).toString(), /Ku 5/);
   // The motor ramps: the step test fits an integrator, and Smooth names its result.
   const motor = join(dir, 'motor.json');
   writeFileSync(motor, JSON.stringify(system('DC motor')));
-  const m = JSON.parse(execFileSync('node', ['cli.mjs', 'autotune', motor, '--method', 'step', '--simc', 'smooth', '--json']).toString());
+  const m = JSON.parse(execFileSync('node', ['tools/cli.mjs', 'autotune', motor, '--method', 'step', '--simc', 'smooth', '--json']).toString());
   assert.ok(m.ok && m.better && m.model === 'integrating' && m.kp > 1.3 && m.simc === 'smooth', JSON.stringify(m));
   assert.equal(m.after.variant.name, 'P, too aggressive · SIMC smooth');
-  assert.match(execFileSync('node', ['cli.mjs', 'autotune', motor, '--method', 'step']).toString(), /ramps: k′ 1\.4/);
+  assert.match(execFileSync('node', ['tools/cli.mjs', 'autotune', motor, '--method', 'step']).toString(), /ramps: k′ 1\.4/);
 });
 
 test('Iterate tunes the feedforward gains that are not 0; asked to, also those at 0, from a fit of u to the reference', async () => {

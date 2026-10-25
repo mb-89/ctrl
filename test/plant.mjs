@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rpcRequest } from '../src/core/hil.js';
 import { simulatorCore } from '../src/core/hilsim.js';
-import { bundleScript } from '../build.mjs';
+import { bundleScript } from '../tools/build.mjs';
 
 export const SCRIPT = fileURLToPath(new URL('../hil/hil_plant.py', import.meta.url));
 

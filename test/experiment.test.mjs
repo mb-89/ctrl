@@ -16,7 +16,7 @@ import { knownFor, identifySettings, planExperiment, IdentifyError, defaultBand,
 import { makeLaw, normalizeVariant } from '../src/core/controllers.js';
 import { runCost } from '../src/core/autotune.js';
 import { multisine, multisineLines } from '../src/core/fit.js';
-import { bundleScript } from '../build.mjs';
+import { bundleScript } from '../tools/build.mjs';
 import { createArm, drawArm, armAt, NOMINAL } from './fixtures/arm.mjs';
 import { transferPlant, lag, integrator, unstable, unwired, swapped, libraryProject, runExperiment, diagramPlant } from './fixtures/plants.mjs';
 
@@ -606,7 +606,7 @@ test('the fixtures stay out of the page: no plant numbers or test code in the bu
   for (const word of ['W_EPS', 'w_eps', 'drawArm', 'createArm', 'armProject', 'armSubsystem', 'transferPlant', 'diagramPlant', 'runExperiment', 'contSim', 'fixtures', 'NOMINAL']) {
     assert.equal(code.includes(word), false, word);
   }
-  const build = readFileSync(new URL('../build.mjs', import.meta.url), 'utf8');
+  const build = readFileSync(new URL('../tools/build.mjs', import.meta.url), 'utf8');
   assert.ok(!/test\//.test(build.slice(build.indexOf('const MODULES'), build.indexOf('];', build.indexOf('const MODULES')))));
   assert.ok(code.includes("__mods['core/experiment.js']") && code.includes("__mods['core/identify.js']"));
 });

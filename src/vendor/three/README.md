@@ -4,7 +4,7 @@ Reader: whoever updates or checks the 3D renderer that the page carries inlined.
 
 - **Version**: three.js r185, npm package `three` 0.185.1.
 - **Source**: the npm package `three` 0.185.1 (`npm pack three@0.185.1`), its files `build/three.core.min.js`, `build/three.module.min.js` and `LICENSE`.
-- **Unmodified**: the three files here are byte for byte those of the package. The page's build (`build.mjs`, `vendorScript`) inlines them as one classic script, `<script id="lt-vendor-three">`, with the full licence text on top; its only change is mechanical: the core's export list becomes an object, the module's import from the core a destructuring of it, and the module's exports `globalThis.THREE`, a frozen namespace with every export of both files.
+- **Unmodified**: the three files here are byte for byte those of the package. The page's build (`tools/build.mjs`, `vendorScript`) inlines them as one classic script, `<script id="lt-vendor-three">`, with the full licence text on top; its only change is mechanical: the core's export list becomes an object, the module's import from the core a destructuring of it, and the module's exports `globalThis.THREE`, a frozen namespace with every export of both files.
 - **Checksums** (sha256; `build.mjs` refuses to build and `test/vendor.test.mjs` fails if a file differs):
 
 | File | sha256 |
@@ -14,4 +14,4 @@ Reader: whoever updates or checks the 3D renderer that the page carries inlined.
 | LICENSE | `8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc` |
 
 - **In Node** (tests): `import * as THREE from '../src/vendor/three/three.module.min.js'`.
-- **To update**: replace the three files from the new package, put their sha256 here and in `build.mjs`, run `node build.mjs` and `npm test`.
+- **To update**: replace the three files from the new package, put their sha256 here and in `tools/build.mjs`, run `./runme.sh build` and `npm test`.

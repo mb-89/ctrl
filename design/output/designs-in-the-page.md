@@ -49,7 +49,7 @@ Flaws from the verdicts, and how this plan fixes them:
 
 Checked against HEAD `f3a9895`:
 - `planner.js`, `linalg.js` and `observers.js` are committed.
-- `planner.js` is **not** in `build.mjs` MODULES.
+- `planner.js` is **not** in `tools/build.mjs` MODULES.
 - `tools/` does not exist.
 - `controllers.js` has no `trajectory` type, and `ui/controller.js:136` filters `trajectory` out of the library.
 - `ui/plant.js:333` compiles the diagram for validation, so it must not trigger designs.
@@ -468,7 +468,7 @@ values === null:  u = 0
 - **Variant list glyphs:** "computed", "⟳ 43 %", "!".
 - **Library:** two groups. "From the plant": LQR, PI from the plant, Swing-up + LQR catch, Planned swing-up, Kalman. "By hand": PID, State feedback, Gain-scheduled PI, Swing-up, Luenberger, Finite difference. Remove the `trajectory` filter at `ui/controller.js:136`.
 - **JSON, save, autosave, Copy JSON, Export HTML:** the project never contains computed values (they live only in the store and statuses). `normalizeVariant` refuses `computes` keys with the sentence in §6.1.
-- **CLI:** `node cli.mjs design <project> [--block <idPath>] [--json]` prints every running designed variant's status and rows, synchronously. `tools/triple-swingup.mjs` stays deleted.
+- **CLI:** `./runme.sh cli design <project> [--block <idPath>] [--json]` prints every running designed variant's status and rows, synchronously. `tools/triple-swingup.mjs` stays deleted.
 - **Browser API:** `window.loopTuner.designs()` returns the statuses; `await window.loopTuner.whenDesigned()` resolves when no job is pending (for Playwright and agents).
 - **Auto-tune (later):** skips parameters flagged `tune: false`.
 
@@ -566,7 +566,7 @@ Test files: `test/linearize.test.mjs`, `test/design.test.mjs`, `test/planner.tes
     - A scalar plant matches the closed-form steady-state gain.
     - R from the sensors = σ² + q²/12.
     - Look-through: LQR on a Kalman's x̂ designs the same K as on the true states.
-15. **CLI.** `node cli.mjs design <triple>` prints `ok` and K; `--json` parses.
+15. **CLI.** `./runme.sh cli design <triple>` prints `ok` and K; `--json` parses.
 16. **Bundle.** `bundleScript()` parses with the new modules (MODULES order).
 
 ## 12. Implementation steps (each one agent, `npm test` green at the end)
@@ -610,7 +610,7 @@ Test files: `test/linearize.test.mjs`, `test/design.test.mjs`, `test/planner.tes
 9. **`trajectory`:**
    - `trajectoryDesign` and the `trajectory` type; heavy entries in the sync store
    - the triple pendulum starts hanging with re-timed signals and notes
-   - `cli.mjs design`
+   - `tools/cli.mjs design`
 
    Tests 7 (trajectory part), 10, 15.
 10. **Async in the page.**

@@ -5,7 +5,7 @@
 // from one frame port to the other makes it run; Group refuses a selection
 // that holds part of a mechanism. Screenshots light and dark. Not part of npm test.
 //
-//   node build.mjs && node tools/mech-check.mjs [screenshot folder]
+//   node tools/build.mjs && node tools/mech-check.mjs [screenshot folder]
 //
 // Needs Playwright with Chromium (PLAYWRIGHT names the module if it is not
 // resolvable from here). Exits non-zero if a step is wrong.

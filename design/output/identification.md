@@ -1,6 +1,6 @@
 # Identify: finding the plant by experiment
 
-Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; being built on branch `feat/identify` in the steps of §18 (done: 0, the record; 1, the protocol and the plant (§15), built 2026-10-25; 2, the numerics in `src/core/fit.js`; 3, the kernel, the multisine and the frequency response, also in `fit.js`; 4, the experiment: `src/core/identify.js` and `src/core/experiment.js`; 5, the runner and the whole test in Node: `createStepRunner`, the hidden `experiment` law, the model from the record, `identify()` and `node cli.mjs identify`, measured below in "Measured: the whole test in Node"; 6, the tab, §4.1; 7, live, §5.11 and §14.1; input 56, the onset test and the discriminating test, §6.10; 8, the Shake, §5.12; 9, Auto-tune and Analysis on the model, §10.1 and §12.1; 10, Try on the plant, §11.1; 11, Compare, Hide a variation and the Unknown oven, §13.1; 12, the docs and the MCP server's `identify`).** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
+Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; being built on branch `feat/identify` in the steps of §18 (done: 0, the record; 1, the protocol and the plant (§15), built 2026-10-25; 2, the numerics in `src/core/fit.js`; 3, the kernel, the multisine and the frequency response, also in `fit.js`; 4, the experiment: `src/core/identify.js` and `src/core/experiment.js`; 5, the runner and the whole test in Node: `createStepRunner`, the hidden `experiment` law, the model from the record, `identify()` and `./runme.sh cli identify`, measured below in "Measured: the whole test in Node"; 6, the tab, §4.1; 7, live, §5.11 and §14.1; input 56, the onset test and the discriminating test, §6.10; 8, the Shake, §5.12; 9, Auto-tune and Analysis on the model, §10.1 and §12.1; 10, Try on the plant, §11.1; 11, Compare, Hide a variation and the Unknown oven, §13.1; 12, the docs and the MCP server's `identify`).** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
 
 The person's words ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)):
 
@@ -713,7 +713,7 @@ The judges measured χ²/dof 0.25–0.32 on badly wrong models at 0.15–0.25 V,
 
 ## Measured: the whole test in Node (step 5)
 
-`identify()` runs the experiment as the block's hidden law in a copy of the diagram (`createStepRunner`, the r Source playing `reference(k)`, d held at 0) and computes the model from the record as Keep stores it; `node cli.mjs identify` prints it. Wall time 4–9 s per run in Node, CLI start included; the fits take 1–4 s of it.
+`identify()` runs the experiment as the block's hidden law in a copy of the diagram (`createStepRunner`, the r Source playing `reference(k)`, d held at 0) and computes the model from the record as Keep stores it; `./runme.sh cli identify` prints it. Wall time 4–9 s per run in Node, CLI start included; the fits take 1–4 s of it.
 
 **The command line on the library's oven and motor** (their own diagrams, which have no noise, so the residuals of any approximate model are a pattern and the grade is !):
 
@@ -829,13 +829,13 @@ The tank shows the limit of one linear model across a strongly nonlinear range. 
 
 ### 10.1 Built (step 9)
 
-`twinOp`, `twinSubsystem`, `twinDiagram`, `modelPush`, `twinProject`, `modelTuneSteps` and `keptModel` in `src/core/identify.js`; `resultName(…, { model })` in `autotune.js`; `src/ui/plantsource.js`; the Auto-tune tab; `node cli.mjs autotune --plant identified`; the MCP server's `autotune` with `plant`. Reconciled from two builds ([decisions.md](decisions.md), v2.9). Where the build made §10 more precise:
+`twinOp`, `twinSubsystem`, `twinDiagram`, `modelPush`, `twinProject`, `modelTuneSteps` and `keptModel` in `src/core/identify.js`; `resultName(…, { model })` in `autotune.js`; `src/ui/plantsource.js`; the Auto-tune tab; `./runme.sh cli autotune --plant identified`; the MCP server's `autotune` with `plant`. Reconciled from two builds ([decisions.md](decisions.md), v2.9). Where the build made §10 more precise:
 
 - **One choice per block**, `system.identify[key].source` ("identified"; absent: the diagram), set from "Plant: [the diagram | the model]" in Auto-tune's Controller column and in Analysis, or from Identify's **Use for Auto-tune and Analysis** (lit while in use). The line under the keys names the model ("T · test 1: two lags, ! explains 99 %", "the test just run, not kept"), and on a live plant measured on an earlier connection says the plant may have changed. On a plant outside the page only the model is offered; without one both tabs say in red "… identify the plant first (Identify tab)".
 - **The twin** rests at the first hold (Equations "u − u₀" and "y₀ + y"); its dead time follows its dynamics, so it agrees with the exact replay to 3e-7 (test 11 asserts 2e-6 with a dead time too). The plant is cut off: u's wires into it, an External block and the Sinks that showed it go; the measurement's Sink shows the twin.
 - **The push** is a step of 20 % of the u between the reference's levels (for a plant that settles, at least r's span over K), at least 1 % of u's range: where d plays, from d's first step, the way d pushes (oven: +12.3 % at 3.6 s; motor: +0.24 V at 3.2 s); else in the middle of r's longest still stretch, against r's step into it (the arm: at 1.75 s, pushing down after r's step up).
 - **Auto-tune runs unchanged on the twin project** (Iterate, Relay, Step); results are "· auto-tuned (model)", "· relay T–L (model)", "· SIMC (model)"; the status ends "119 runs on the model (…). Cost on the model 0.0974 · on the diagram 0.11 (it started at 1.28 there)", and the result list has a Diagram row. On a plant outside the page the result is added, not run (Try on the plant, step 10).
-- **Agents**: `node cli.mjs autotune <project> --plant identified` (the kept test in use; `--json` carries `plant`), the MCP `autotune` tool's `plant: "identified"`, and in the page `loopTuner.autotune({ plant })` and `loopTuner.plantSource(block, v)`.
+- **Agents**: `./runme.sh cli autotune <project> --plant identified` (the kept test in use; `--json` carries `plant`), the MCP `autotune` tool's `plant: "identified"`, and in the page `loopTuner.autotune({ plant })` and `loopTuner.plantSource(block, v)`.
 - **Measured (test 13, the whole harness)**: identified through a sensor (noise, an encoder), tuned with Iterate on the model, scored noise-free on the true plant against Iterate on the plant itself:
 
 | | Oven | Motor | Tank | Arms 1–5 (±15 %) |
@@ -1106,8 +1106,8 @@ export function crossCorrelation(res, u, lags = 25)         // → { r, band, ou
 ```
 
 **CLI and browser:**
-- `node cli.mjs identify <project> [--block ctrl] [--band lo,hi] [--budget 120] [--vary 0.15 --seed 7] [--json] [--keep]` runs the same core, gives the same numbers, and prints the sentences. `--keep` stores the record in the project. Built in step 5, with `--structure <name>` (the tester's choice of candidate); it prints the sentences, the chain with its bars, the candidates with their Check fits and marks, the Check against the noise ceiling and the kernel, the places, the gentlest controller that held, notes, and with `--vary` the factors drawn. `--keep` stores the plan and the record (named "angle · test n": no clock in the core), makes it the one in use, and stores the flags given as the settings.
-- `node cli.mjs autotune <project> --plant identified` tunes on the kept record in use.
+- `./runme.sh cli identify <project> [--block ctrl] [--band lo,hi] [--budget 120] [--vary 0.15 --seed 7] [--json] [--keep]` runs the same core, gives the same numbers, and prints the sentences. `--keep` stores the record in the project. Built in step 5, with `--structure <name>` (the tester's choice of candidate); it prints the sentences, the chain with its bars, the candidates with their Check fits and marks, the Check against the noise ceiling and the kernel, the places, the gentlest controller that held, notes, and with `--vary` the factors drawn. `--keep` stores the plan and the record (named "angle · test n": no clock in the core), makes it the one in use, and stores the flags given as the settings.
+- `./runme.sh cli autotune <project> --plant identified` tunes on the kept record in use.
 - In the page: `window.loopTuner.identify({ block, band, budget, vary, keep })` returns a Promise of the report, and `loopTuner.identified(block?)` returns the model in use. Both are documented in the page's Help (For agents) and in AGENTS.md.
 
 ## 17. Tests
@@ -1168,7 +1168,7 @@ Fixtures live in `test/fixtures/`, are not shipped, and carry no plant numbers i
     - `varyDiagram` with a seed is reproducible and varies only flagged parameters. Built (step 5): and keeps the motor's Kt = Ke one constant; `identify()` on the varied motor finds k′ within 1 % of the drawn Kt/(R·b + Kt·Ke).
     - The Compare table equals `linearizeBlock` at each level.
 18. **The plant changed.** Check again against another arm draw says "the plant has changed".
-19. **CLI.** `node cli.mjs identify` prints the sentences; `--json` parses; it gives the same numbers as `identify()`. Built (step 5), with `--keep` storing the record that recomputes the same model.
+19. **CLI.** `./runme.sh cli identify` prints the sentences; `--json` parses; it gives the same numbers as `identify()`. Built (step 5), with `--keep` storing the record that recomputes the same model.
 
 ## 18. Implementation steps
 
@@ -1196,7 +1196,7 @@ Each step is one agent, with `npm test` green at the end.
    - `createStepRunner` (shared with the live runner) and the hidden `experiment` type.
    - The r Source played from `reference(k)`; other Sources held.
    - `identifySteps`: segments, replay, choice, grade, where, size, sentences.
-   - `identify()` and `cli.mjs identify`.
+   - `identify()` and `tools/cli.mjs identify`.
    - Tests 12, 13 (identify part), 19.
 6. **The Identify tab.**
    - `UI_TABS` gains `identify` after `controller`.

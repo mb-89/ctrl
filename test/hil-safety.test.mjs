@@ -14,7 +14,7 @@ import { checkDescription, externalParams } from '../src/core/hil.js';
 import { normalizeDiagram } from '../src/core/diagram.js';
 import { normalizeReference } from '../src/core/signals.js';
 import { SCRIPT, UV, startPlant, connectPlant, coreFile, pyProbe } from './plant.mjs';
-import { buildHtml } from '../build.mjs';
+import { buildHtml } from '../tools/build.mjs';
 
 const DESC = {
   protocol: 'loop-tuner-hil/1', name: 'fake', rate_hz: 100, running: false, estop: null,

@@ -6,7 +6,7 @@
 // host's save adapter.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildHtml, vendorBlock } from '../build.mjs';
+import { buildHtml, vendorBlock } from '../tools/build.mjs';
 
 const FORBIDDEN = [
   /github|gitlab|bitbucket/i, /mb-89/i, /markus/i, /gmail/i, /[\w.+-]+@[\w-]+\.[a-z]{2,}/i,

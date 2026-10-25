@@ -24,7 +24,7 @@ import { simulatorCore, CORE_FILE } from '../core/hilsim.js';
 import { num, parseSI } from './units.js';
 
 const MAX_SWEEP = 200000;
-// The plant's files (hil/), put into the bundle by build.mjs.
+// The plant's files (hil/), put into the bundle by tools/build.mjs.
 const HIL_FILES = typeof __HIL_FILES === 'object' ? __HIL_FILES : {};
 const ZIP_NAME = 'hil-plant.zip';
 

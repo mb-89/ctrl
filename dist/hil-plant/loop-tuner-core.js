@@ -18969,7 +18969,7 @@ function keptModel(project, path = null) {
   const all = controllerBlocks(project.system.plant?.diagram);
   const key = path ? [].concat(path).join('/') : all[0]?.key;
   const s = project.system.identify?.[key] ?? {}, kept = s.kept ?? [];
-  if (!kept.length) throw new IdentifyError('no-model', 'identify the plant first: no test is kept for this block', 'node cli.mjs identify <project> --keep, or Keep in the Identify tab');
+  if (!kept.length) throw new IdentifyError('no-model', 'identify the plant first: no test is kept for this block', './runme.sh cli identify <project> --keep, or Keep in the Identify tab');
   const i = Math.min(kept.length - 1, Math.max(0, s.use ?? kept.length - 1));
   const model = drain(identifySteps(kept[i].record, { plan: kept[i].plan, structure: s.structure ?? null }));
   if (!model.ok) throw new IdentifyError('no-model', `the kept test “${kept[i].name}” gives no model: ${model.sentences[0] ?? ''}`, 'identify the plant again');

@@ -1,8 +1,8 @@
 # The MCP server
 
-Reader: a person or agent who wants to work with Loop Tuner through MCP, and whoever changes `mcp.mjs`.
+Reader: a person or agent who wants to work with Loop Tuner through MCP, and whoever changes `mcp/mcp.mjs`.
 
-`mcp.mjs` is Loop Tuner as an MCP server (Model Context Protocol, stdio, Node 18+, no dependencies). It does two things:
+`mcp/mcp.mjs` (`./runme.sh mcp`; `mcp.mjs` in its download) is Loop Tuner as an MCP server (Model Context Protocol, stdio, Node 18+, no dependencies). It does two things:
 
 - **The core alone**: tools that load, run, measure, auto-tune and analyse projects in the server's memory, with no page (input 09: an agent tunes through MCP; input 29: "make it runnable as an MCP ... before the overhaul").
 - **The agentic mode** (inputs 30, 31): it also serves the Loop Tuner page on this computer, at `http://127.0.0.1:8766/` by default. Open that page and it connects back, and the `page_` tools act on it. The agent and the person see the same page and the same data, so they can identify and tune a plant together and talk it over.
@@ -13,7 +13,7 @@ Register it once:
 - **Claude Desktop**, in `claude_desktop_config.json`: `{ "mcpServers": { "loop-tuner": { "command": "node", "args": ["/path/to/mcp.mjs"] } } }`
 - **Any client**: the command `node /path/to/mcp.mjs`, stdio transport. Options: `--port N` (the page's port; a taken port falls back to a free one), `--no-page`.
 
-**It explains itself** (input 36), on start (on stderr, since stdout is the protocol) and in `node mcp.mjs --help` and its README.md, in the same words as README.md here. It covers what an MCP server is, in two sentences; how to connect an agent (Claude Code's `claude mcp add` line, the JSON for Claude Desktop, VS Code and Cursor, the command for any client), with its own path filled in; the page's address, where the agent works on the same page; and what to ask.
+**It explains itself** (input 36), on start (on stderr, since stdout is the protocol) and in `./runme.sh mcp --help` and its README.md, in the same words as README.md here. It covers what an MCP server is, in two sentences; how to connect an agent (Claude Code's `claude mcp add` line, the JSON for Claude Desktop, VS Code and Cursor, the command for any client), with its own path filled in; the page's address, where the agent works on the same page; and what to ask.
 
 **Without this repository**: the page's **Export ▾ › MCP server** saves `loop-tuner-mcp.zip`. It holds `mcp.mjs`, the page's own core (`loop-tuner-core.js`, cut from the page's script, as the HIL plant's zip carries it), the page itself, `README.md`, and `runme.sh` / `runme.cmd` / `runme.ps1`. The HIL plant's zip has the same three runme scripts and a README.md. One click on runme does everything: it installs Node.js if it is missing (the system's package manager on Linux, Homebrew on macOS, winget on Windows; never pip), starts the server, opens the page in the default browser (`--no-open` not to) and prints the explanation. No option is needed; `runme --help` lists them all and installs nothing. The same `mcp.mjs` runs from the source and from the zip: it loads the core from `src/` or from `loop-tuner-core.js` beside it. `test/mcp-zip.test.mjs` checks that both answer alike.
 
@@ -27,19 +27,19 @@ Every one of these tools takes an optional `project`: the name of a project in m
 
 | Tool | Does | Same as |
 |---|---|---|
-| `list_systems` | The System library: names, tags, notes; `tag` filters. | `node cli.mjs systems` |
+| `list_systems` | The System library: names, tags, notes; `tag` filters. | `./runme.sh cli systems` |
 | `list_projects` | The projects in memory and the default. | |
-| `load_system` | A library entry (`system`, or the start of its name) or a project file (`path`: `.json`, or an exported `.html`) into memory under a name (`as`). Returns the Controller blocks, their variants, the signals and the timebase. | `node cli.mjs new --system` |
+| `load_system` | A library entry (`system`, or the start of its name) or a project file (`path`: `.json`, or an exported `.html`) into memory under a name (`as`). Returns the Controller blocks, their variants, the signals and the timebase. | `./runme.sh cli new --system` |
 | `get_project`, `set_project` | The project as the file stores it; replace it (normalised as the page loads a file, so a designed variant holding computed numbers is refused). | |
 | `list_blocks`, `get_block` | The diagram's blocks by id path (`ctrl`, `motor/ctrl`) with their variants; one block whole. | |
 | `set_params` | `block` with `params` (the running variant's, `variant`'s, or a plain block's own), `blockParams` (a Controller's own: `Ts`, …) and `select` (make `variant` run); or `signal` with `components` and/or `period`. An unknown name is refused, listing the names there are. | |
-| `run` | Simulates for the timebase (or `duration`), says what the run reported (validity, warnings, the integration step and its bound), and measures each Controller block's loop: Auto-tune's cost J with its parts, overshoot, settling, rise time, IAE, ISE, ITAE, the peak and variation of u, and time saturated. Lists every signal; `signals` come back downsampled to `points` (default 200, at most 2000). | `node cli.mjs run --json` |
-| `autotune` | `method` iterate, relay or step; `rule`, `simc`, the goal (`cost`, `effort`, `overshoot`), `iterations`, `ff`, `amplitude`. `apply` keeps the result as a variant of its own (default: report only). Reports progress; cancellable. | `node cli.mjs autotune --json [--save]` |
+| `run` | Simulates for the timebase (or `duration`), says what the run reported (validity, warnings, the integration step and its bound), and measures each Controller block's loop: Auto-tune's cost J with its parts, overshoot, settling, rise time, IAE, ISE, ITAE, the peak and variation of u, and time saturated. Lists every signal; `signals` come back downsampled to `points` (default 200, at most 2000). | `./runme.sh cli run --json` |
+| `autotune` | `method` iterate, relay or step; `rule`, `simc`, the goal (`cost`, `effort`, `overshoot`), `iterations`, `ff`, `amplitude`. `apply` keeps the result as a variant of its own (default: report only). Reports progress; cancellable. | `./runme.sh cli autotune --json [--save]` |
 | `autotune_history` | Every Auto-tune run since the server started, core and page alike: where, project, method, block, cost before and after, better, applied. `index` returns one run's whole report. | |
-| `analyze` | The Analysis tab's numbers at `at` (`"origin"`, `"initial"`, `{ "y": [levels] }`, `{ "t": s }`): stable or not, unstable pole counts, gain margins up and down (dB), phase margin and crossover, delay margin, Ms, Mt, least damping, closed-loop poles (s and z, ωn, ζ), the linear step. | `node cli.mjs analyze --json` |
-| `designs` | What each running designed variant computed from the plant: status, warnings, refusal. | `node cli.mjs design --json` |
-| `identify` | Identify's whole test on a simulated plant (`block`, `band`, `budget`, `vary`, `structure`; `keep` stores the record in the project in memory, for `autotune` with `plant: "identified"`): the same report as `node cli.mjs identify --json`, without the record. A live plant is identified on the page. | |
-| `save_project`, `export_html` | Write `.json`, or the standalone page with the project inside. | `node cli.mjs html` |
+| `analyze` | The Analysis tab's numbers at `at` (`"origin"`, `"initial"`, `{ "y": [levels] }`, `{ "t": s }`): stable or not, unstable pole counts, gain margins up and down (dB), phase margin and crossover, delay margin, Ms, Mt, least damping, closed-loop poles (s and z, ωn, ζ), the linear step. | `./runme.sh cli analyze --json` |
+| `designs` | What each running designed variant computed from the plant: status, warnings, refusal. | `./runme.sh cli design --json` |
+| `identify` | Identify's whole test on a simulated plant (`block`, `band`, `budget`, `vary`, `structure`; `keep` stores the record in the project in memory, for `autotune` with `plant: "identified"`): the same report as `./runme.sh cli identify --json`, without the record. A live plant is identified on the page. | |
+| `save_project`, `export_html` | Write `.json`, or the standalone page with the project inside. | `./runme.sh cli html` |
 
 ### On the page (the agentic mode)
 
@@ -62,7 +62,7 @@ How it works: the server adds one line to the page it serves, `<meta name="loop-
 
 A result is the tool's JSON (`structuredContent`), repeated as text; `page_screenshot` returns an image. A refusal, whether by the arguments' schema, by the core or by the page, is a tool error (`isError`) carrying the core's sentence and its hint, the one the command line prints. For example, `analyze` on the sliding-mode motor answers "ctrl: Relay (theory): an ideal sliding mode switches: it has no linear model; …". `page_autotune` against an External plant says it needs an identified model. An unknown tool or a malformed request is a JSON-RPC error. `null` in place of a number means infinite (a gain margin with no limit) or not measured.
 
-The command line, the server and the page share one module, `src/core/ops.js`. It is pure, so it rides in the page's core and the downloaded server runs it too. `cli.mjs` gained `run` and `analyze` from it, and `test/mcp.test.mjs` checks that the server's numbers equal the command line's on two library systems.
+The command line, the server and the page share one module, `src/core/ops.js`. It is pure, so it rides in the page's core and the downloaded server runs it too. `tools/cli.mjs` gained `run` and `analyze` from it, and `test/mcp.test.mjs` checks that the server's numbers equal the command line's on two library systems.
 
 ## HIL with an agent
 

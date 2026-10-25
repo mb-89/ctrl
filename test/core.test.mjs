@@ -8,7 +8,7 @@ import { normalizeProject, evaluateCandidate, evaluateProject } from '../src/cor
 import { computeMetrics } from '../src/core/metrics.js';
 import { runTune } from '../src/core/tune.js';
 import { EXAMPLES } from '../src/core/examples-v1.js';
-import { buildHtml, bundleScript } from '../build.mjs';
+import { buildHtml, bundleScript } from '../tools/build.mjs';
 import { referenceFn, normalizeReference, parseWaveform } from '../src/core/signals.js';
 import { referenceTrace, autoTimebase, simOf, fitChannel } from '../src/core/project.js';
 import { DEFAULT_PROJECT } from '../src/core/examples.js';
@@ -75,7 +75,7 @@ test('auto-tune finds a feasible PID for the third-order example and is reproduc
 });
 
 test('the v1 example loops stay out of the page: their gains were computed offline from their plants', async () => {
-  const { buildHtml } = await import('../build.mjs');
+  const { buildHtml } = await import('../tools/build.mjs');
   const html = buildHtml();
   for (const ex of EXAMPLES) {
     assert.ok(!html.includes(ex.notes), `${ex.title}: its notes are in the page`);
@@ -101,11 +101,11 @@ test('the bundle parses and the CLI round-trips a project through HTML', () => {
   assert.doesNotThrow(() => new Function(bundleScript()));
   const dir = mkdtempSync(join(tmpdir(), 'lt-'));
   const json = join(dir, 'p.json'), html = join(dir, 'p.html');
-  execFileSync('node', ['cli.mjs', 'new', '--example', '0', '-o', json]);
-  execFileSync('node', ['cli.mjs', 'try', json, '--from', 'P only', '--set', 'Kp=2', '--name', 'P2', '--save']);
-  execFileSync('node', ['cli.mjs', 'html', json, '-o', html]);
+  execFileSync('node', ['tools/cli.mjs', 'new', '--example', '0', '-o', json]);
+  execFileSync('node', ['tools/cli.mjs', 'try', json, '--from', 'P only', '--set', 'Kp=2', '--name', 'P2', '--save']);
+  execFileSync('node', ['tools/cli.mjs', 'html', json, '-o', html]);
   assert.ok(readFileSync(html, 'utf8').includes('"P2"'));
-  const out = JSON.parse(execFileSync('node', ['cli.mjs', 'eval', html, '--json']).toString());
+  const out = JSON.parse(execFileSync('node', ['tools/cli.mjs', 'eval', html, '--json']).toString());
   assert.ok(out.candidates.some((c) => c.name === 'P2' && c.controller.params.Kp === 2));
   assert.ok(buildHtml({ fragment: true }).startsWith('<title>'));
 });

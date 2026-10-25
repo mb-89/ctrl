@@ -4,7 +4,7 @@
 import { zipFiles } from '../core/zip.js';
 import { simulatorCore, CORE_FILE } from '../core/hilsim.js';
 
-// mcp.mjs and mcp/'s files, put into the bundle by build.mjs.
+// mcp.mjs and mcp/'s files, put into the bundle by tools/build.mjs.
 const MCP_FILES = typeof __MCP_FILES === 'object' ? __MCP_FILES : {};
 export const MCP_ZIP = 'loop-tuner-mcp.zip';
 

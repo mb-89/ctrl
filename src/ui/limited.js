@@ -1,7 +1,7 @@
 // A limited environment: a file preview (SharePoint's, for one) shows the page
 // in a sandbox without storage, downloads or workers. The page's HTML carries a
 // warning right below the header; the check below runs inline before the first
-// paint (build.mjs puts this module's code there) and hides the warning where
+// paint (tools/build.mjs puts this module's code there) and hides the warning where
 // the environment is full. Where no script runs, the warning stays.
 // design/output/instrument.md, "A limited environment"; the research in
 // design/research/limited-environment.md.

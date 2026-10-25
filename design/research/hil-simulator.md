@@ -7,7 +7,7 @@ Reader: whoever changes how the external HIL simulator runs the page's JavaScrip
 ## How this was measured (2026-10-25)
 
 - In the build container: 4 cores, load average below 1, Linux x86_64; Node 22.22 (V8 12.4), Python 3.13 by uv, `mini-racer` 0.14.1 (V8 inside Python), `quickjs` 1.19.4 (QuickJS inside Python), `nodejs-wheel-binaries` 24.19 (Node from PyPI, run as a child process), Bun 1.4.4 (JavaScriptCore), headless Chromium 153.
-- **The code run is the page's own**: the core modules of the page's bundle (`build.mjs`'s `bundleScript`, everything before its first `ui/` module, 384 KB), so every runtime ran the same text the page runs.
+- **The code run is the page's own**: the core modules of the page's bundle (`tools/build.mjs`'s `bundleScript`, everything before its first `ui/` module, 384 KB), so every runtime ran the same text the page runs.
 - **The plant**: a library system's diagram with its Controller block replaced by a Source `u` (the page's u), compiled with `compileDiagram` and stepped one cycle at a time with the page's RK4, in as many substeps as the diagram's step bound asks (the triple pendulum: 2 at 100 Hz; the encoder example: 20 at 100 Hz, its 70 Hz shaft and 2 ms armature).
 - **The loop**: as `hil_plant.py` runs it, absolute deadlines (start + k·dt) and `asyncio.sleep`, one call into the engine per cycle, 15 s per run. Node: the same loop with `setTimeout`. "Calc" is the time of one cycle's call, as the Python plant sees it (with the crossing into the engine); "late" is how late a cycle began.
 

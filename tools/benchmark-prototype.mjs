@@ -25,7 +25,7 @@ import { diagramBlockDef, parseEnd, compileDiagram, blockPorts } from '../src/co
 import { analyzeLoop } from '../src/core/analysis.js';
 import { simulateSystem } from '../src/core/sim.js';
 import { decide, SYMBOL, renderHtml } from '../src/core/pugh.js';
-import { reportStyle } from '../build.mjs';
+import { reportStyle } from './build.mjs';
 import { tuneContext, withVariant, runVariant, loopSignals, costScales, runCost, iterate, autotune, tuningSpace, drain, GOAL } from '../src/core/autotune.js';
 
 const args = process.argv.slice(2);

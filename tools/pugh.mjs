@@ -8,7 +8,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { decide, renderMarkdown, renderHtml, bottomLine, PughError } from '../src/core/pugh.js';
-import { reportStyle } from '../build.mjs';
+import { reportStyle } from './build.mjs';
 
 const args = process.argv.slice(2), valueOf = (flag) => { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : null; };
 const outFile = valueOf('-o'), ovFile = valueOf('--overrides');

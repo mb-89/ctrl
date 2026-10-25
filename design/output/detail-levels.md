@@ -76,7 +76,7 @@ With `"level": 3` beside `levels`, the Board would run level 3 whatever the glob
   - Live (`live.js` `build`). Its `update()` compares the applied diagram, so changing the global level, an override or Clear during Live rebuilds;
   - the v1 loop path (`sim.js`, via `plantDiagram`);
   - the model compiles of the design layer (`project.js` and the closure in `compileDiagram`, the design layer from feat/designs);
-  - `cli.mjs`.
+  - `tools/cli.mjs`.
   
   The editors (Plant tab, Controller tab) keep editing the stored diagram.
 - `simOf(project)` gains `detail`, so the acquisition key (`acqKeyOf` in `app.js`, which hashes `simOf(p)`) changes with the global level and the screen runs again. Overrides sit in the plant, which the key already hashes (`p.system`).
@@ -556,7 +556,7 @@ With this, a subsystem of 4 levels without `level` runs level 2, one with `"leve
    - `Model.bound` is the larger of its kept blocks' bounds and the model compile's `el.bound` (the whole model's eigenvalue, held Controllers), an interpretation of "through `el.bound`";
    - the end-of-run check runs again only when the end's bound changes the step plan, with "stiffer later in the run: 'x' needs steps of 3.3 ms at 2 s, against 10 ms at the start; run again with them"; the HIL simulator (`hilsim.js`) keeps the start's bound as Live does, so a plant stiffer later would differ there from the page (no library plant is);
    - when the step cap binds: "'int' needs steps of 500 ns; this 10 s screen would take 20 M steps; it ran 400 k: inaccurate. Shorten the screen", naming the state that the fastest mode moves most (one step of inverse iteration); the level's name joins it in step 6;
-   - `info`: `{ h, substeps, split, steps, unstable, warnings, designs, bound, stiffness: { start, end }, ms }` (`validity` comes with the Valid range block, step 3); the acquisition keeps it in both branches (the loop path's own info); the status line shows the first validity report, else the first warning, as a Warning badge and the sentence (`data-note`); `loopTuner.info()`; `node cli.mjs run [--json]` prints it. Checked in Chromium.
+   - `info`: `{ h, substeps, split, steps, unstable, warnings, designs, bound, stiffness: { start, end }, ms }` (`validity` comes with the Valid range block, step 3); the acquisition keeps it in both branches (the loop path's own info); the status line shows the first validity report, else the first warning, as a Warning badge and the sentence (`data-note`); `loopTuner.info()`; `./runme.sh cli run [--json]` prints it. Checked in Chromium.
 
    Step 2's shared prerequisites are **built** too (transparent-models.md steps 2 and 3), with this step's additions: `inf`, formulas in transfer-function coefficients, `min` and `max` on mask fields (refused beyond them on load, by the wheel and when typed), `sentence()` with SI prefixes and `p`.
 2. **Shared prerequisites, from [transparent-models.md](transparent-models.md):**

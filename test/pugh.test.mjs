@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { reportStyle } from '../build.mjs';
+import { reportStyle } from '../tools/build.mjs';
 import { decide, markOf, worseRatio, normalizeMatrix, renderMarkdown, renderHtml, bottomLine, mainReason, plotSvg, PughError } from '../src/core/pugh.js';
 
 const require = createRequire(import.meta.url);

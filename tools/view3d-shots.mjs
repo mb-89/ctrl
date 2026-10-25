@@ -11,7 +11,7 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
-import { bundleScript, vendorBlock, MODULES } from '../build.mjs';
+import { bundleScript, vendorBlock, MODULES } from './build.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, '.harness'), SHOTS = process.argv[2] ? join(ROOT, process.argv[2]) : join(OUT, 'shots');

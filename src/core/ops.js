@@ -1,4 +1,4 @@
-// What the command line (cli.mjs) and the MCP server (mcp.mjs) both do with
+// What the command line (tools/cli.mjs) and the MCP server (mcp/mcp.mjs) both do with
 // a project: read a project file's text and put a project into a page, find
 // a library system, run a project and measure its loops, analyse a loop at
 // an operating point, the designs, Auto-tune's options. Each function throws

@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "description": "Tune feedback loops in the browser; the same simulation runs in Node for agents.",
   "type": "module",
-  "bin": { "loop-tuner": "cli.mjs" },
+  "bin": { "loop-tuner": "tools/cli.mjs" },
   "scripts": {
-    "build": "node build.mjs",
+    "build": "node tools/build.mjs",
     "test": "node --test test/*.test.mjs",
     "test:slow": "node --test test/planner.slow.mjs"
   },

@@ -5,7 +5,7 @@
 // and dark, 1440 and 390 px wide; no console errors, nothing wider than the
 // viewport. Screenshots into the folder given. Not part of npm test.
 //
-//   node build.mjs && node tools/identify-model-check.mjs [screenshot folder]
+//   node tools/build.mjs && node tools/identify-model-check.mjs [screenshot folder]
 
 import { mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';

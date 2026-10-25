@@ -5,20 +5,20 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { buildHtml } from './build.mjs';
-import { parseProject, extractJson as extractOps, findSystem, systemProject, projectDesigns, autotuneOptions, runProject, analyzeProject, parseAt } from './src/core/ops.js';
-import { SLOTS, BLOCKS, blockDef, normalizeBlock } from './src/core/blocks.js';
-import { METRICS, METRIC } from './src/core/metrics.js';
-import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, uniqueName, nextColor, describeController, fmt, loopReady, referenceTrace } from './src/core/project.js';
-import { SIGNALS, normalizeComponent, describeComponent } from './src/core/signals.js';
-import { runTune, tunableParams } from './src/core/tune.js';
-import { DEFAULT_PROJECT } from './src/core/examples.js';
-import { EXAMPLES } from './src/core/examples-v1.js';
-import { SYSTEM_LIBRARY } from './src/core/systems.js';
-import { autotune, tuneReport, placeVariant, tunedValues, controllerBlocks, RULES, SIMC, tauCSource } from './src/core/autotune.js';
-import { identify, withBar, BUDGETS, GRADE, keptModel, modelTune } from './src/core/identify.js';
-import { STRUCTURES, paramInfo } from './src/core/fit.js';
+import { parseProject, extractJson as extractOps, findSystem, systemProject, projectDesigns, autotuneOptions, runProject, analyzeProject, parseAt } from '../src/core/ops.js';
+import { SLOTS, BLOCKS, blockDef, normalizeBlock } from '../src/core/blocks.js';
+import { METRICS, METRIC } from '../src/core/metrics.js';
+import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, uniqueName, nextColor, describeController, fmt, loopReady, referenceTrace } from '../src/core/project.js';
+import { SIGNALS, normalizeComponent, describeComponent } from '../src/core/signals.js';
+import { runTune, tunableParams } from '../src/core/tune.js';
+import { DEFAULT_PROJECT } from '../src/core/examples.js';
+import { EXAMPLES } from '../src/core/examples-v1.js';
+import { SYSTEM_LIBRARY } from '../src/core/systems.js';
+import { autotune, tuneReport, placeVariant, tunedValues, controllerBlocks, RULES, SIMC, tauCSource } from '../src/core/autotune.js';
+import { identify, withBar, BUDGETS, GRADE, keptModel, modelTune } from '../src/core/identify.js';
+import { STRUCTURES, paramInfo } from '../src/core/fit.js';
 
-const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command> [options]
+const HELP = `Loop Tuner: tune SISO feedback loops. Usage: ./runme.sh cli <command> [options] (or node tools/cli.mjs)
 
   new [--example <n|title>] [--system <name>] [-o file]
                                         write a starter project (default: a step at 0.1 s, no loop yet),

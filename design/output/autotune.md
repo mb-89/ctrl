@@ -112,7 +112,7 @@ The PID is in Skogestad's series form; this code's PID is parallel, so (his eq. 
 
 ## The step method on the library
 
-`node cli.mjs autotune <system> --method step` (Tight), the same goal as below. Before: main at `a4eec40`; after: this revision.
+`./runme.sh cli autotune <system> --method step` (Tight), the same goal as below. Before: main at `a4eec40`; after: this revision.
 
 | System (running variant) | Before | After |
 |---|---|---|
@@ -147,7 +147,7 @@ The default goal (IAE, effort 0.05, overshoot ≤ 10 %) scores every result the 
 | Relay, no overshoot | 0.25 | 15 % |
 | Step response, SIMC (K 1.0, τ 0.52 s, θ 0.24 s) | 0.149 | 5 % |
 
-Measured with `node cli.mjs autotune` on the oven's 10 s cycle (the test, then a ramp back down: [inputs 50–52](../input/2026-10-25-52-a-spike-only-at-the-start.md)). On the 5 s run before: 1.28; Iterate 0.12 in 37 iterations (Kp 3.17, Ki 6.57, Kd 0.36, 9 %); Ziegler–Nichols 0.20 (Ku 5.0, Pu 0.86 s, 14 %), Tyreus–Luyben 0.17, no overshoot 0.22 (14 %), SIMC 0.15. Iterate still does best; Tyreus–Luyben and SIMC are now level, and Ziegler–Nichols and no overshoot cost more.
+Measured with `./runme.sh cli autotune` on the oven's 10 s cycle (the test, then a ramp back down: [inputs 50–52](../input/2026-10-25-52-a-spike-only-at-the-start.md)). On the 5 s run before: 1.28; Iterate 0.12 in 37 iterations (Kp 3.17, Ki 6.57, Kd 0.36, 9 %); Ziegler–Nichols 0.20 (Ku 5.0, Pu 0.86 s, 14 %), Tyreus–Luyben 0.17, no overshoot 0.22 (14 %), SIMC 0.15. Iterate still does best; Tyreus–Luyben and SIMC are now level, and Ziegler–Nichols and no overshoot cost more.
 
 The rules give a sound loop in one experiment; the optimiser, which knows the goal, does best on it. A rule can also do worse than what runs: on the conical tank a relay rule's fixed PID is unstable at the level the tank starts at (h = 0.15 m), and is not run (below).
 
@@ -176,7 +176,7 @@ With Identify ([identification.md](identification.md)) the tab tunes on the diag
 
 ## For agents
 
-- `node cli.mjs autotune <project> [--block ctrl] [--method iterate|relay|step] [--rule tl|zn|calm] [--simc tight|smooth] [--cost IAE|ITAE|ISE] [--effort 0.05] [--overshoot 10] [--iterations 60] [--ff] [--amplitude 10] [--save] [--json]`: the same core, the same numbers as the tab; `--save` puts the result into the block as a variant of its own (running if it scores better).
+- `./runme.sh cli autotune <project> [--block ctrl] [--method iterate|relay|step] [--rule tl|zn|calm] [--simc tight|smooth] [--cost IAE|ITAE|ISE] [--effort 0.05] [--overshoot 10] [--iterations 60] [--ff] [--amplitude 10] [--save] [--json]`: the same core, the same numbers as the tab; `--save` puts the result into the block as a variant of its own (running if it scores better).
 - In the page, `window.loopTuner.autotune({ block, method, goal, rule, simc, amplitude, maxIter, feedforward, apply })` runs a method at once and returns the same report as `--json`; applied (the default), it is one undo step.
 
 ## Not yet

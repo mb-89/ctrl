@@ -13,7 +13,7 @@ import { normalizeDiagram } from '../src/core/diagram.js';
 import { SYSTEM_LIBRARY } from '../src/core/systems.js';
 import { EXAMPLE_PLANTS } from '../src/core/plants.js';
 import { plantFiles } from '../src/ui/live.js';
-import { bundleScript } from '../build.mjs';
+import { bundleScript } from '../tools/build.mjs';
 import { libraryFingerprints } from '../tools/library-fingerprints.mjs';
 
 const FINGERPRINTS = JSON.parse(readFileSync(new URL('./fixtures/library-fingerprints.json', import.meta.url), 'utf8'));

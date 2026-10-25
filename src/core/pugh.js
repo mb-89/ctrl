@@ -653,7 +653,7 @@ function pughEngine() {
   // Its look is the host's one style sheet (input 65: "one master style
   // sheet. Everything goes through there"): the report writes classes only
   // (.rpt…, .btn, .dialog, the plots' .rpt-plot), never a colour, a size or a
-  // style of its own. Loop Tuner's sheet is src/ui/style.css; build.mjs's
+  // style of its own. Loop Tuner's sheet is src/ui/style.css; tools/build.mjs's
   // reportStyle() hands it over as opts.style, and the report embeds it.
   // Without it the page is plain HTML. A saved report carries the same sheet.
   const MAX_FIGURES = 2;

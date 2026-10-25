@@ -14,7 +14,7 @@ const CORE_TOOLS = ['list_systems', 'list_projects', 'load_system', 'get_project
 const PAGE_TOOLS = ['page_status', 'page_open', 'page_load_system', 'page_get_project', 'page_set_project', 'page_set_gains', 'page_set_variant', 'page_control', 'page_signals', 'page_autotune', 'page_analyze', 'page_designs', 'page_live', 'page_screenshot'];
 const TOOLS = [...CORE_TOOLS, ...PAGE_TOOLS];
 const SYSTEMS = ['DC motor, position control', 'Oven, badly tuned'];
-const cli = (...args) => JSON.parse(execFileSync(process.execPath, ['cli.mjs', ...args]).toString());
+const cli = (...args) => JSON.parse(execFileSync(process.execPath, ['tools/cli.mjs', ...args]).toString());
 const without = (o, ...keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 // A run as it compares: its wall-clock time (info.ms) set aside.
 const steady = (r) => ({ ...r, info: r.info && { ...r.info, ms: null } });
@@ -68,7 +68,7 @@ test('mcp: a 2026-07-28 client carries the version on every request; discover, v
 for (const system of SYSTEMS) {
   test(`mcp: every tool on "${system}", the command line's results`, async () => {
     const file = join(dir, `${system.split(',')[0].replace(/\W+/g, '-')}.json`);
-    execFileSync(process.execPath, ['cli.mjs', 'new', '--system', system, '-o', file]);
+    execFileSync(process.execPath, ['tools/cli.mjs', 'new', '--system', system, '-o', file]);
     const s = startServer();
     assert.ok((await s.call('list_systems')).systems.some((x) => x.name === system));
     assert.ok((await s.call('list_systems', { tag: 'PID' })).systems.every((x) => x.tags.includes('PID')));

@@ -13,7 +13,7 @@ import { GUIDE, apiList, guideText } from '../src/core/guide.js';
 import { checkDescription, sameDescription, rpcRequest, uMessage, startParams } from '../src/core/hil.js';
 import { normalizeDiagram } from '../src/core/diagram.js';
 import { normalizeReference } from '../src/core/signals.js';
-import { bundleScript } from '../build.mjs';
+import { bundleScript } from '../tools/build.mjs';
 import { runPlant, startPlant } from './plant.mjs';
 
 
@@ -65,7 +65,7 @@ test('the guide for agents: every method with its arguments and an example, the 
   for (const part of ['Setup, step by step', 'Protocol.', 'Safety.', 'What messages mean', 'Modes.']) assert.ok(text.includes(part), part);
   assert.ok(GUIDE.live.setup.length >= 6, 'the whole setup, step by step');
   // Every id the guide names is one the page makes.
-  const page = bundleScript() + readFileSync(new URL('../build.mjs', import.meta.url), 'utf8');
+  const page = bundleScript() + readFileSync(new URL('../tools/build.mjs', import.meta.url), 'utf8');
   for (const id of new Set(GUIDE.dom.join(' ').match(/#[a-z][a-z-]*[a-z]/g))) {
     const bare = id.slice(1);
     if (bare === 'live-scale' || bare === 'display') continue;  // (#live-scale-NAME: one per reference)

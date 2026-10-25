@@ -3,7 +3,7 @@
 // in the hosted build with a host. Writes a screenshot of each case, light and
 // dark, at phone and desktop width.
 //
-//   node build.mjs && node tools/limited-check.mjs [screenshot folder]
+//   node tools/build.mjs && node tools/limited-check.mjs [screenshot folder]
 //
 // Needs Playwright with Chromium (PLAYWRIGHT names the module if it is not
 // resolvable from here). Exits non-zero if a case is wrong.

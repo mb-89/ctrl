@@ -5,15 +5,16 @@
 //   node build.mjs            -> dist/loop-tuner.html (standalone) and dist/artifact.html (page fragment)
 //   import { buildHtml } ...  -> used by the CLI to embed a project
 
-import { stripComments } from './tools/strip-comments.mjs';
-import { AGENT_NOTE } from './src/core/guide.js';
-import { simulatorCore, CORE_FILE } from './src/core/hilsim.js';
+import { stripComments } from './strip-comments.mjs';
+import { AGENT_NOTE } from '../src/core/guide.js';
+import { simulatorCore, CORE_FILE } from '../src/core/hilsim.js';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const ROOT = dirname(fileURLToPath(import.meta.url));
+// The repository's root: this file lives in tools/.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const MODULES = [
   'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/speed.js', 'core/blocks.js', 'core/expr.js', 'core/formula.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/linearize.js', 'core/planner.js', 'core/design.js', 'core/spectrum.js', 'core/fit.js', 'core/experiment.js', 'core/controllers.js', 'core/structure.js', 'core/observers.js', 'core/hil.js', 'core/components.js', 'core/xml.js', 'core/urdf.js', 'core/rbd.js', 'core/puma560.js', 'core/mech.js', 'core/sheet.js', 'core/physics.js', 'core/mathblocks.js', 'core/robotblocks.js', 'core/vectors.js', 'core/diagram.js', 'core/sim.js', 'core/pumasystem.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/hilsim.js', 'core/analysis.js', 'core/autotune.js', 'core/ops.js',
   'core/ramp.js', 'core/live.js', 'core/identify.js', 'core/trace.js', 'core/zip.js', 'core/guide.js',
@@ -27,8 +28,8 @@ export const MODULES = [
 const HIL_FILES = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README.md'];
 // The MCP server's download (Export ▾) the same way: mcp.mjs and mcp/'s
 // files, as __MCP_FILES (ui/bridge.js zips them with the page and its core).
-const MCP_FILES = { 'mcp.mjs': 'mcp.mjs', 'README.md': 'mcp/README.md', 'runme.sh': 'mcp/runme.sh', 'runme.cmd': 'mcp/runme.cmd', 'runme.ps1': 'mcp/runme.ps1' };
-const hilFiles = () => `// hil/: the external plant, offered under Live\nconst __HIL_FILES = ${JSON.stringify(Object.fromEntries(HIL_FILES.map((f) => [f, readFileSync(join(ROOT, 'hil', f), 'utf8')])))};\n// mcp.mjs and mcp/: the MCP server, offered under Export\nconst __MCP_FILES = ${JSON.stringify(Object.fromEntries(Object.entries(MCP_FILES).map(([name, f]) => [name, readFileSync(join(ROOT, f), 'utf8')])))};`;
+const MCP_FILES = { 'mcp.mjs': 'mcp/mcp.mjs', 'README.md': 'mcp/README.md', 'runme.sh': 'mcp/runme.sh', 'runme.cmd': 'mcp/runme.cmd', 'runme.ps1': 'mcp/runme.ps1' };
+const hilFiles = () => `// hil/: the external plant, offered under Live\nconst __HIL_FILES = ${JSON.stringify(Object.fromEntries(HIL_FILES.map((f) => [f, readFileSync(join(ROOT, 'hil', f), 'utf8')])))};\n// mcp/: the MCP server, offered under Export\nconst __MCP_FILES = ${JSON.stringify(Object.fromEntries(Object.entries(MCP_FILES).map(([name, f]) => [name, readFileSync(join(ROOT, f), 'utf8')])))};`;
 
 // Each module runs in its own function scope; its exports go into a registry
 // and its imports are read back from it. A harness may bundle other modules

@@ -5,7 +5,7 @@
 // Python) stay outside the page.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildHtml, vendorBlock } from '../build.mjs';
+import { buildHtml, vendorBlock } from '../tools/build.mjs';
 
 test('the built page is standalone: nothing is loaded from elsewhere at run time', () => {
   for (const [name, html] of Object.entries({ standalone: buildHtml(), hosted: buildHtml({ fragment: true }) })) {

@@ -88,9 +88,10 @@ async function loadCore() {
     vm.runInThisContext(readFileSync(coreFile, 'utf8'), { filename: 'loop-tuner-core.js' });
     return { mods: globalThis.LoopTunerCore, page: () => readFileSync(join(HERE, 'loop-tuner.html'), 'utf8') };
   }
-  const mods = {};
-  for (const m of ['project', 'signals', 'autotune', 'identify', 'ops', 'trace']) mods[`core/${m}.js`] = await import(pathToFileURL(join(HERE, 'src/core', `${m}.js`)).href);
-  const { buildHtml } = await import(pathToFileURL(join(HERE, 'build.mjs')).href);
+  // In the repository this file lives in mcp/, beside src/ and tools/.
+  const repo = join(HERE, '..'), mods = {};
+  for (const m of ['project', 'signals', 'autotune', 'identify', 'ops', 'trace']) mods[`core/${m}.js`] = await import(pathToFileURL(join(repo, 'src/core', `${m}.js`)).href);
+  const { buildHtml } = await import(pathToFileURL(join(repo, 'tools', 'build.mjs')).href);
   return { mods, page: buildHtml };
 }
 const CORE = await loadCore();

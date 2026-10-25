@@ -5,7 +5,7 @@
 // templates insert and the diagram stays valid. Screenshots light and dark.
 // Not part of npm test.
 //
-//   node build.mjs && node tools/transparent-check.mjs [screenshot folder]
+//   node tools/build.mjs && node tools/transparent-check.mjs [screenshot folder]
 //
 // Needs Playwright with Chromium (PLAYWRIGHT names the module if it is not
 // resolvable from here). Exits non-zero if a step is wrong.

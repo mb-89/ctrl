@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { startServer, stopAll } from '../tools/mcp-client.mjs';
-import { buildHtml, bundleScript } from '../build.mjs';
+import { buildHtml, bundleScript } from '../tools/build.mjs';
 import { simulatorCore } from '../src/core/hilsim.js';
 
 const require = createRequire(import.meta.url);
@@ -29,7 +29,7 @@ function folder(files) {
   return dir;
 }
 const fromSource = () => ({
-  'mcp.mjs': readFileSync(new URL('mcp.mjs', root), 'utf8'),
+  'mcp.mjs': readFileSync(new URL('mcp/mcp.mjs', root), 'utf8'),
   ...Object.fromEntries(['README.md', 'runme.sh', 'runme.cmd', 'runme.ps1'].map((f) => [f, readFileSync(new URL(`mcp/${f}`, root), 'utf8')])),
   'loop-tuner-core.js': simulatorCore(bundleScript()),
   'loop-tuner.html': buildHtml(),
@@ -133,7 +133,7 @@ test('runme --help lists the options and installs nothing', () => {
 });
 
 test('the MCP server explains itself when it starts: what MCP is, the page\'s address, the connect lines with its path', async () => {
-  const me = fileURLToPath(new URL('mcp.mjs', root));
+  const me = fileURLToPath(new URL('mcp/mcp.mjs', root));
   const child = spawn(process.execPath, [me, '--port', '0'], { stdio: ['pipe', 'pipe', 'pipe'] });
   let err = '';
   child.stderr.setEncoding('utf8');

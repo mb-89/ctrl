@@ -121,8 +121,8 @@ test('the command line: autotune --plant identified tunes on the kept test\'s mo
   const dir = mkdtempSync(join(tmpdir(), 'lt-model-'));
   const file = join(dir, 'oven.json');
   writeFileSync(file, JSON.stringify(oven.p));
-  const cli = (...a) => execFileSync(process.execPath, ['cli.mjs', ...a], { encoding: 'utf8' });
-  assert.throws(() => execFileSync(process.execPath, ['cli.mjs', 'autotune', file, '--plant', 'identified'], { stdio: 'pipe' }), /identify the plant first/);
+  const cli = (...a) => execFileSync(process.execPath, ['tools/cli.mjs', ...a], { encoding: 'utf8' });
+  assert.throws(() => execFileSync(process.execPath, ['tools/cli.mjs', 'autotune', file, '--plant', 'identified'], { stdio: 'pipe' }), /identify the plant first/);
   cli('identify', file, '--keep');
   const rep = JSON.parse(cli('autotune', file, '--plant', 'identified', '--method', 'step', '--json'));
   assert.ok(rep.ok && rep.plant.on === 'model' && rep.plant.onDiagram.after < rep.plant.onDiagram.before);

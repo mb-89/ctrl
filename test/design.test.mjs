@@ -495,15 +495,15 @@ test('cli: node cli.mjs design prints what the running designed variants compute
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const file = join(mkdtempSync(join(tmpdir(), 'lt-')), 'triple.json');
-  execFileSync('node', ['cli.mjs', 'new', '--system', 'Triple pendulum', '-o', file]);
-  const text = execFileSync('node', ['cli.mjs', 'design', file]).toString();
+  execFileSync('node', ['tools/cli.mjs', 'new', '--system', 'Triple pendulum', '-o', file]);
+  const text = execFileSync('node', ['tools/cli.mjs', 'design', file]).toString();
   assert.match(text, /^Triple pendulum: 1 designed variant running/);
   assert.match(text, /ctrl · controller · Planned swing-up \+ TV-LQR \(trajectory\): ok · /);
   assert.match(text, /K at the origin +x -6\.99 +θ1 -497\.8/);
   // JSON, on a system that designs in milliseconds (one plan per test file is enough).
   const single = join(mkdtempSync(join(tmpdir(), 'lt-')), 'pendulum.json');
-  execFileSync('node', ['cli.mjs', 'new', '--system', 'Pendulum swing-up', '-o', single]);
-  const json = JSON.parse(execFileSync('node', ['cli.mjs', 'design', single, '--json', '--block', 'ctrl']).toString());
+  execFileSync('node', ['tools/cli.mjs', 'new', '--system', 'Pendulum swing-up', '-o', single]);
+  const json = JSON.parse(execFileSync('node', ['tools/cli.mjs', 'design', single, '--json', '--block', 'ctrl']).toString());
   assert.equal(json.title, 'Pendulum swing-up');
   assert.deepEqual(json.designs.map((d) => [d.path, d.type, d.status]), [['ctrl', 'swingUpLqr', 'ok']]);
   assert.ok(json.designs[0].rows.some((r) => r.label === 'K' && r.value.length === 4));

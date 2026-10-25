@@ -1,5 +1,5 @@
 // Complete textbook loops (version 1 files, still loadable), for the command
-// line (node cli.mjs examples, new --example) and the tests. Not in the page:
+// line (runme.sh cli examples, new --example) and the tests. Not in the page:
 // their candidates' gains (Z–N PI Kp 3.6, Ki 1.19; SIMC PI Kp 1.25, Ki 0.25)
 // were computed offline from their plants, which the page never stores
 // (design/output/decisions.md, v2.7: inputs only). build.mjs does not bundle

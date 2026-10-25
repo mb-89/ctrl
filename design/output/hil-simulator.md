@@ -24,10 +24,10 @@ V8 in Python through `mini-racer`, chosen over Node.js, QuickJS, Node from PyPI 
 
 ## 2. The core, from the page
 
-- **What the file is**: the core modules of the page's bundle (`build.mjs`'s `bundleScript`, from its first `core/` module to its first `ui/` module), in the same IIFE, with a two-line prelude (`structuredClone` as a JSON round trip, which V8 outside a browser lacks) and a last line `globalThis.LoopTunerCore = __mods`. `simulatorCore(script)` in `src/core/hilsim.js` makes it; the page and `build.mjs` both call it, so the cut is written once.
+- **What the file is**: the core modules of the page's bundle (`tools/build.mjs`'s `bundleScript`, from its first `core/` module to its first `ui/` module), in the same IIFE, with a two-line prelude (`structuredClone` as a JSON round trip, which V8 outside a browser lacks) and a last line `globalThis.LoopTunerCore = __mods`. `simulatorCore(script)` in `src/core/hilsim.js` makes it; the page and `tools/build.mjs` both call it, so the cut is written once.
 - **In the page**: `plantFiles()` (ui/live.js) adds `loop-tuner-core.js`, made from the page's own `<script id="lt-script">`, to the files of `hil/`; `plantZip()` zips them, and `loopTuner.live.plantFiles()` returns them. An exported page carries its core, so its zip matches it. (The Live worker cuts the same script at the same `ui/` boundary, keeping the bundle's head.)
-- **In the repository**: `node build.mjs` also writes `dist/hil-plant/`, the zip's contents unpacked (the core included), to run and test from: `sh dist/hil-plant/runme.sh`. The tests make the core with the same function.
-- **The plant finds it** beside itself (`loop-tuner-core.js`), or at `--core PATH`. Missing, it says how to get it (download the zip from the page, or `node build.mjs`) and ends.
+- **In the repository**: `./runme.sh build` also writes `dist/hil-plant/`, the zip's contents unpacked (the core included), to run and test from: `sh dist/hil-plant/runme.sh`. The tests make the core with the same function.
+- **The plant finds it** beside itself (`loop-tuner-core.js`), or at `--core PATH`. Missing, it says how to get it (download the zip from the page, or `./runme.sh build`) and ends.
 - **No provenance**: the file is the page's own stripped code (test/provenance.test.mjs covers the page; the zip's test checks the file is the page's core, byte for byte).
 
 ## 3. Flags

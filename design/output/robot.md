@@ -61,7 +61,7 @@ Reader: the agent who builds the PUMA example (vector signals, the URDF, the rig
   | Gains per lane (ω 30, ζ 1) | b 0.2495, 0.2260, 1.171, 5.192, 5.836, 5.152; Kv 240.5, 265.5, 51.2, 11.6, 10.3, 11.7; Ki 3608, 3982, 768, 173, 154, 175; u0 without the model 0, 35.71, 7.84, 0, 0, 0 N·m |
   | Inside the arm | every joint ≥ 15° inside its range, σ_min ≥ 0.175, currents under the fuses, no report; a circle of 0.3 m reports j2 leaving its range |
   | The reference path | a circle of 0.15 m to 10⁻⁹ |
-  | A 5 s run (compile, six designs, 5 000 RK4 steps at 1 ms) | 0.44–0.60 s in Node (`node cli.mjs run`: 0.58 s with its output); the plan's target ≤ 0.6 s |
+  | A 5 s run (compile, six designs, 5 000 RK4 steps at 1 ms) | 0.44–0.60 s in Node (`./runme.sh cli run`: 0.58 s with its output); the plan's target ≤ 0.6 s |
 - **Deviations from the plan, with reasons**:
   - **The 3D view binds to visible Sinks** (q, x, y, z, xr, yr, zr), not hidden probes: what the person prefers in the end (input 14), and the Live form already binds by name. Deleting a Sink a view uses does not warn yet (roadmap).
   - **The circle's frame is placed from a Constant start pose through Forward kinematics**, not by an Initial value block: a latch is state the model compile would see at the wrong instant; the start pose is then on two blocks (the Arm's Integrator and this Constant) until masks take lists.
@@ -673,7 +673,7 @@ Older files load unchanged.
    - Tags: Nonlinear, MIMO (a Controller with lanes > 1), 3D, Feedforward.
    - Tests 12, 15–17.
    - Log the 5 s run's time (target ≤ 0.6 s in Node).
-   - `node cli.mjs run` and `design` print the statuses and validity.
+   - `./runme.sh cli run` and `design` print the statuses and validity.
 8. **The 3D view.**
    - `kind: "3d"` in `core/views.js` (normalising, bindings, both forms).
    - `ui/view3d.js`: WebGL1, the Canvas2D fallback, context loss, ribbons, picking, CAD navigation, gizmo and view cube, tokens.

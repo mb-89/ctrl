@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { startServer, stopAll } from '../tools/mcp-client.mjs';
-import { buildHtml } from '../build.mjs';
+import { buildHtml } from '../tools/build.mjs';
 
 const require = createRequire(import.meta.url);
 let chromium = null;

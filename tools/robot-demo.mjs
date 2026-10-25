@@ -96,7 +96,7 @@ async function main() {
   const { dirname, join } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const build = await import('../build.mjs');
+  const build = await import('./build.mjs');
   const run = circleFollow();
   const n = run.rbd.n, steps = run.t.length - 1;
   // Every 10th sample is enough for the picture (10 ms).

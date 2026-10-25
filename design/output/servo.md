@@ -484,7 +484,7 @@ For the coordinator to weigh (interpretations, not blocking):
 
 ## 15. Built, measured, deviations
 
-Built on `feat/servo` (2026-10-25), from main after the model foundations (masks, formulas, the eigenvalue step bound). `npm test`, `npm run test:slow` and `node build.mjs` were green at every commit.
+Built on `feat/servo` (2026-10-25), from main after the model foundations (masks, formulas, the eigenvalue step bound). `npm test`, `npm run test:slow` and `./runme.sh build` were green at every commit.
 
 ### 15.1 What is built
 

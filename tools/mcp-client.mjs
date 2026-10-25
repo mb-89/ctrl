@@ -21,7 +21,7 @@ export const stopAll = () => { for (const c of children) c.kill(); };
 // answer to initialize (unless initialize is false). onMessage sees every
 // message, both ways; args go to the server (default: the page on a free
 // port), script is the server to start (default this repository's).
-export function startServer({ modern = true, initialize = true, onMessage = () => {}, args = ['--port', '0'], script = join(ROOT, 'mcp.mjs') } = {}) {
+export function startServer({ modern = true, initialize = true, onMessage = () => {}, args = ['--port', '0'], script = join(ROOT, 'mcp', 'mcp.mjs') } = {}) {
   const child = spawn(process.execPath, [script, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
   children.add(child);
   child.on('exit', () => children.delete(child));

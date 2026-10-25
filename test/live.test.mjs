@@ -17,7 +17,7 @@ import { normalizeReference } from '../src/core/signals.js';
 import { normalizeProject, evaluateSystem } from '../src/core/project.js';
 import { createRecorder, traceToCsv, traceToJson, traceToCsvParts, traceToJsonParts, parseTrace, traceWindow, sweepStart, refShift, refSteps } from '../src/core/trace.js';
 import { zipFiles, crc32 } from '../src/core/zip.js';
-import { bundleScript } from '../build.mjs';
+import { bundleScript } from '../tools/build.mjs';
 import { runPlant, startPlant } from './plant.mjs';
 
 const DESC = {

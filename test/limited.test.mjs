@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { limitedVerdict, limitedProbe } from '../src/ui/limited.js';
-import { buildHtml } from '../build.mjs';
+import { buildHtml } from '../tools/build.mjs';
 
 const full = { host: false, localStorage: true, sessionStorage: true, opaqueOrigin: false, file: false, framed: false, downloads: null, workers: true };
 const verdict = (p) => limitedVerdict({ ...full, ...p });

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
-import { buildHtml, vendorBlock, vendorScript, readVendorThree, THREE_FILES } from '../build.mjs';
+import { buildHtml, vendorBlock, vendorScript, readVendorThree, THREE_FILES } from '../tools/build.mjs';
 import * as THREE from '../src/vendor/three/three.module.min.js';
 
 const DIR = new URL('../src/vendor/three/', import.meta.url);

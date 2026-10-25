@@ -29,7 +29,7 @@ import { libraryProject, runExperiment, transferPlant, lag, unstable } from './f
 import { createArm, drawArm } from './fixtures/arm.mjs';
 import { armProject } from './fixtures/arm-project.mjs';
 
-const CLI = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+const CLI = fileURLToPath(new URL('../tools/cli.mjs', import.meta.url));
 const json = (x) => JSON.parse(JSON.stringify(x));
 
 // One identify() of the library's motor (36 s of plant time), shared.
