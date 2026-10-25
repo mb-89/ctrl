@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: two HIL examples, alone and with the agent ([input 31](../input/2026-10-25-31-agentic-hil-example.md))
+
+The person: "I can then tell the agent, hey, I have a system here. Help me with tuning it. Help me with figuring it out ... how about we talk about this identification? What do you see? And the agent can look into the data too ... we don't need a [HIL] example for a controller in the plant and a [HIL] example with no controller in the plant ... This is just a flip we can switch ... the two examples we could have would be a [HIL] without an agent and a [HIL] in that agentic mode ... a [HIL] system that the agent and we do not see. So we have to ... identify it together and tune it together."
+- **The agentic mode is for working together**: the agent sees what the person sees and can read the data itself (the live record and the screen's signals, identification experiments, fitted models with their uncertainty and validation, Auto-tune runs, Analysis), so the two can discuss an identification or a tuning and act on it.
+- **Reference mode is a switch, not an example**: one HIL example; the plant's mode (the page controls, or the plant controls itself and the page sends references) is chosen with a switch in the Live settings. Interpretation: the switch asks the plant to change mode while it is stopped; a plant that cannot is started with its mode flag, and the page follows what the plant describes.
+- **Two HIL examples**: *HIL: an external plant* (the person alone) and *HIL with an agent* (the agentic mode: the MCP server hosts the page, the HIL simulator runs a plant drawn at random, and the person and the agent identify and tune it together; the notes say how to start both and what to ask).
+
 ## 2026-10-25 · v2.9: an agentic mode: the MCP server hosts the page; one Export menu ([input 30](../input/2026-10-25-30-mcp-hosts-the-page-export-menu.md))
 
 The person: "we have a way to run this thing in an agentic mode. And then there is an MCP server that also hosts the web page ... the MCP server is something independent from our [HIL] plant, because the [HIL] plant really is only an example ... We have save JSON, export HTML, copy JSON, copy HTML. You can put that all into one export menu. You can also put the download for the [HIL] plant there ... a download button for the [HIL] server, and ... for the MCP server, and the MCP server would just host the same ... page locally, but it would also allow the agent to connect to it ... if it slows down the Puma, then don't spawn an agent to do it."
