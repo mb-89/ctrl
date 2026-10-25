@@ -11,7 +11,10 @@
 // Only inputs are stored here: physics, hand gains (PID, the energy pump),
 // and the weights, levels and limits of designed variants. Every gain,
 // table and start value those compute comes from the plant, in the page
-// (design/output/designs.md).
+// (design/output/designs.md). The physics models are subsystems built by
+// physics.js, so they can be opened.
+
+import { conicalTank, cartPole, pendulumOnCart } from './physics.js';
 
 import { PUMA_SYSTEM } from './pumasystem.js';
 
@@ -525,7 +528,7 @@ export const EXAMPLE_PLANTS = [
         // The pipe was already flowing: before 0.1 s it delivers what the pump gives at t = 0.
         { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: null }, x: 320, y: 96 },
         { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
-        { id: 'tank', type: 'conicalTank', name: 'tank', params: { r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }, x: 510, y: 90 },
+        { id: 'tank', name: 'tank', x: 510, y: 90, ...conicalTank({ r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }) },
         sink('h', 720, 106, 'm'),
         sink('q', 320, 20, 'm³/s'),
       ],
@@ -570,7 +573,7 @@ export const EXAMPLE_PLANTS = [
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 104 },
-        { id: 'cart', type: 'cartPole', name: 'cart and pole', params: { M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: Math.PI }, x: 400, y: 80 },
+        { id: 'cart', name: 'cart and pole', x: 400, y: 80, ...cartPole({ M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: Math.PI }) },
         sink('x', 640, 84, 'm'), sink('theta', 640, 120, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
@@ -603,7 +606,7 @@ export const EXAMPLE_PLANTS = [
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },
-        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }, x: 400, y: 60 },
+        { id: 'cart', name: 'cart and 3 rods', x: 400, y: 60, ...pendulumOnCart(3, { M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }) },
         sink('x', 640, 64, 'm'), sink('theta1', 640, 100, 'rad'), sink('theta2', 640, 136, 'rad'), sink('theta3', 640, 172, 'rad'),
         sink('F', 330, 20, 'N'),
       ],

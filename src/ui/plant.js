@@ -4,9 +4,11 @@
 // and subsystems can be saved to the library. See design/output/plant-editor.md.
 
 import { wireWidths } from '../core/vectors.js';
-import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames, maskValues, formulaIn } from '../core/diagram.js';
+import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames, maskValues, formulaIn, equationSheets } from '../core/diagram.js';
 import { isFormula } from '../core/formula.js';
 import { SYSTEM_LIBRARY } from '../core/systems.js';
+import { TEMPLATES } from '../core/physics.js';
+import { isPartType, framePorts, framesSvg, joinsSvg, join, dropParts, splitJoins, partFace } from './joins.js';
 import { num, parseSI } from './units.js';
 import { createScene } from './scene.js';
 import { createRobotScene } from './robotscene.js';
@@ -21,7 +23,8 @@ const GROUPS = [
   ['Dynamics', ['integrator', 'delay', 'firstOrder', 'secondOrder', 'tf']],
   ['Models', ['fopdt', 'lagChain', 'integratorLag', 'doubleIntegrator', 'inverseResponse']],
   ['Sensors', ['quantizer', 'noise']],
-  ['Physics', ['cartPole', 'pendulumCart', 'conicalTank']],
+  ['Physics', ['tpl:cartPole', 'tpl:pendulum1', 'tpl:pendulum2', 'tpl:pendulum3', 'tpl:conicalTank']],  // templates (tpl:) insert a masked model
+  ['Mechanics', ['world', 'rail', 'hinge', 'mass', 'rod']],  // parts joined at frame ports (ui/joins.js)
   ['Live', ['external']],  // a plant outside the page (design/output/hil.md)
   ['Nonlinear', ['saturation', 'friction']],
   // Vector blocks on a robot of the diagram's robots (design/output/robot.md §1).
@@ -47,6 +50,7 @@ function size(b) {
   if (b.type === 'sum') return [34, 34];
   if (b.type === 'gain') return [58, 40];
   if (['source', 'sink', 'inport', 'outport'].includes(b.type)) return [70, 28];
+  if (isPartType(b.type)) return { world: [90, 44], mass: [80, 44], rod: [160, 44] }[b.type] ?? [130, 52];
   if (diagramBlockDef(b.type).ode) return [150, Math.max(60, 18 * blockPorts(b)[1] + 12)];
   if (b.type === 'controller') return [150, Math.max(60, 18 * blockPorts(b)[0] + 12)];
   if (b.type === 'terminator') return [26, 26];
@@ -122,6 +126,7 @@ export function createPlantEditor(root, app) {
   let path = [];                 // ids of the subsystems we are inside
   let sel = new Set();           // selected block ids at this level
   let wireSel = -1;              // selected wire index at this level
+  let joinSel = -1;              // selected join index at this level (Mechanics)
   const views = {};              // per level: { x, y, k }
   let gesture = null;
   let lastClick = { id: null, t: 0 };
@@ -194,6 +199,12 @@ export function createPlantEditor(root, app) {
     if (!template) for (const p of diagramBlockDef(type).params) b.params[p.key] = p.default;
     if (type === 'source') b.params.signal = freeName('r', new Set([...all.sources, ...all.sinks]), 'r');
     if (type === 'sink') b.params.name = freeName('y', new Set([...all.sinks, ...all.sources]));
+    // A joint's coordinate and rate get names no other joint here has (θ2, ω2).
+    if ((type === 'rail' || type === 'hinge') && !template) {
+      const used = new Set(d.blocks.flatMap((x) => (x.type === 'rail' || x.type === 'hinge' ? [x.params.name, x.params.rate] : [])));
+      const [c, r] = type === 'rail' ? ['x', 'v'] : ['θ', 'ω'];
+      for (let k = 1; used.has(b.params.name) || used.has(b.params.rate); k++) { b.params.name = `${c}${k}`; b.params.rate = `${r}${k}`; }
+    }
     if (type === 'inport' || type === 'outport') b.params.port = d.blocks.filter((x2) => x2.type === type).length + 1;
     if (type === 'subsystem' && !b.diagram) b.diagram = { blocks: [{ id: 'in', type: 'inport', params: { port: 1 }, x: 30, y: 60 }, { id: 'out', type: 'outport', params: { port: 1 }, x: 260, y: 60 }], wires: [{ from: 'in', to: 'out' }] };
     const base = type === 'source' ? b.params.signal : type === 'sink' ? b.params.name : { firstOrder: 'lag', secondOrder: 'so', integrator: 'int', subsystem: 'sub', saturation: 'sat' }[type] ?? type;
@@ -217,7 +228,10 @@ export function createPlantEditor(root, app) {
     };
     let html = '<h3 class="label">Library</h3>';
     for (const [g, types] of GROUPS) {
-      html += group(g, types.map((t) => { const def = diagramBlockDef(t); return item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="btn-note">${esc(def.formula)}</span>`); }).join(''));
+      html += group(g, types.map((t) => {
+        const tpl = t.startsWith('tpl:') ? TEMPLATES[t.slice(4)] : null, def = tpl ?? diagramBlockDef(t);
+        return item(tpl ? t : `type:${t}`, esc(def.label), `${def.label}: ${def.formula}.${tpl ? ' A subsystem you can open; its parameters are on its mask.' : ''} Drag onto the canvas, or click to add.`, `<span class="btn-note">${esc(def.formula)}</span>`);
+      }).join(''));
     }
     html += group('My blocks', lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="hint">Select a subsystem and save it here.</div>');
     html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="btn btn-sm btn-block" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.summary} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="btn-note">plant</span></button>` : '')).join(''));
@@ -245,6 +259,11 @@ export function createPlantEditor(root, app) {
     let added = null;
     edit((d) => {
       if (data.startsWith('type:')) added = newBlock(d, data.slice(5), x, y);
+      else if (data.startsWith('tpl:')) {
+        const tpl = TEMPLATES[data.slice(4)];
+        if (!tpl) return false;
+        added = newBlock(d, 'subsystem', x, y, { ...tpl.make(), name: tpl.name });
+      }
       else if (data.startsWith('lib:')) {
         const e = (app.project.library ?? [])[Number(data.slice(4))];
         if (!e) return false;
@@ -258,7 +277,7 @@ export function createPlantEditor(root, app) {
   viewEl.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
   viewEl.addEventListener('drop', (e) => {
     const data = e.dataTransfer.getData('text/plain');
-    if (!data || !/^(type|lib):/.test(data)) return;
+    if (!data || !/^(type|lib|tpl):/.test(data)) return;
     e.preventDefault();
     const p = toWorld(e);
     addFrom(data, p.x, p.y);
@@ -316,7 +335,8 @@ export function createPlantEditor(root, app) {
     const ports = g.outs.map((p, i) => (outNames[i] ? `<text class="pn" x="${p.x + (b.flip ? 8 : -8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'start' : 'end'}">${esc(outNames[i])}</text>` : '')).join('')
       + g.ins.map((p, i) => (inNames[i] ? `<text class="pn" x="${p.x + (b.flip ? -8 : 8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'end' : 'start'}">${esc(inNames[i])}</text>` : '')).join('')
       + g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
-      + g.outs.map((p, i) => `<circle class="port out" data-port="out" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('');
+      + g.outs.map((p, i) => `<circle class="port out" data-port="out" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
+      + (def.part ? framesSvg(framePorts(b, g.w, g.h)) : '');
     const stack = b.type === 'subsystem' ? `<rect class="stack" x="${b.x + 4}" y="${b.y + 4}" width="${g.w}" height="${g.h}" rx="5"/>` : '';
     const tip = b.type === 'fcn' ? `<title>${esc(b.params.eqs)}</title>` : '';
     return `<g class="${cls}" data-block="${b.id}">${tip}${stack}${shape}${text}${ports}</g>`;
@@ -334,7 +354,8 @@ export function createPlantEditor(root, app) {
   // parameters are on the right), else its first parameters, cut to fit.
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = lawOf(def, b.params) ?? (def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? b.params.eqs.split('\n')[0] : b.type === 'integrator' ? integratorFace(b.params) : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector' && b.params[p.key] !== null).slice(0, 3).map((p) => { const v = b.params[p.key]; return `${p.label} ${typeof v === 'number' ? num(v, 3) : Array.isArray(v) ? JSON.stringify(v) : v}`; }).join(' · ') || def.formula);
+    const v = (x) => (isFormula(x) ? x : num(x, 3));
+    const text = lawOf(def, b.params) ?? (def.part ? partFace(b, v) : def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? b.params.eqs.split('\n')[0] : b.type === 'integrator' ? integratorFace(b.params) : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector' && b.params[p.key] !== null).slice(0, 3).map((p) => { const v = b.params[p.key]; return `${p.label} ${typeof v === 'number' ? num(v, 3) : Array.isArray(v) ? JSON.stringify(v) : v}`; }).join(' · ') || def.formula);
     const room = Math.floor((size(b)[0] - 18 - (b.type === 'fcn' || isVector(def) ? labelRoom(b).reduce((a, x) => a + x, 0) : def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
@@ -397,7 +418,8 @@ export function createPlantEditor(root, app) {
 
   // Progressive disclosure: what explains rather than decides sits in a
   // Details control, collapsed until opened; one stays open across renders.
-  const opened = new Set();
+  // A World's equations of motion are open until closed.
+  const opened = new Set(['eom-world']);
   const more = (key, label, html) => `<details class="more" data-more="${key}"><summary class="disclosure label"><span class="chev"></span>${label}</summary>${html}</details>`;
   const keepOpen = () => $('#pl-props').querySelectorAll('[data-more]').forEach((d) => { d.open = opened.has(d.dataset.more); });
   $('#pl-props').addEventListener('toggle', (e) => { const k = e.target.dataset?.more; if (k) { if (e.target.open) opened.add(k); else opened.delete(k); } }, true);
@@ -405,6 +427,7 @@ export function createPlantEditor(root, app) {
   const about = () => (app.project.notes ? more('about', 'About this system', app.project.notes.split('\n\n').map((p) => `<p class="note">${esc(p)}</p>`).join('')) : '');
 
   let compileMsg = '';
+  let compiled = null;   // the last compile of the whole diagram (the equations sheets read it)
   function render() {
     renderReps();
     if (rep >= 0) { renderViewProps(); return; }
@@ -420,9 +443,13 @@ export function createPlantEditor(root, app) {
     try {
       const el = compileDiagram(rootDiagram(), 'plant', { standalone: true, laws: false, sources: Object.fromEntries(Object.keys(app.project.system.signals).map((n) => [n, () => 0])) });
       compileMsg = el.warnings.join('\n');
+      compiled = el;
     } catch (err) {
       compileMsg = err.message;
-      for (const b of d.blocks) if (err.message.includes(b.name ?? b.id)) errs.add(b.id);
+      compiled = null;
+      // A mechanism names its parts (id paths): those here, or the subsystem holding them.
+      if (err.blocks) { for (const b of d.blocks) { const at = [...path, b.id].join('/'); if (err.blocks.some((x) => x === at || x.startsWith(`${at}/`))) errs.add(b.id); } }
+      else for (const b of d.blocks) if (err.message.includes(b.name ?? b.id)) errs.add(b.id);
     }
     const v = view();
     const byId = Object.fromEntries(d.blocks.map((b) => [b.id, b]));
@@ -443,12 +470,14 @@ export function createPlantEditor(root, app) {
       at ??= { x: pts[0].x + 10, y: pts[0].y };
       return `<g class="wire vec${i === wireSel ? ' sel' : ''}" data-wire="${i}"><path class="hit" d="${dd}"/><path class="line" d="${dd}"/><path class="core" d="${dd}" marker-end="url(#pl-arrow)"/><text class="wn" x="${at.x.toFixed(1)}" y="${(at.y - 5).toFixed(1)}" text-anchor="middle">${n}</text></g>`;
     }).join('');
+    const frames = new Map(d.blocks.filter((b) => isPartType(b.type)).flatMap((b) => { const [w, h] = size(b); return framePorts(b, w, h).map((p) => [p.key, p]); }));
+    const joinsHtml = joinsSvg(d.joins, (key) => frames.get(key), joinSel);
     svg.innerHTML = `<defs><marker id="pl-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="arrowhead"/></marker></defs>
-      <g transform="translate(${v.x},${v.y}) scale(${v.k})">${wires}${d.blocks.map((b) => blockSvg(b, errs)).join('')}<g id="pl-temp"></g></g>`;
+      <g transform="translate(${v.x},${v.y}) scale(${v.k})">${wires}${joinsHtml}${d.blocks.map((b) => blockSvg(b, errs)).join('')}<g id="pl-temp"></g></g>`;
     renderCrumbs();
     renderProps();
     $('#pl-group').disabled = sel.size === 0;
-    $('#pl-del').disabled = sel.size === 0 && wireSel < 0;
+    $('#pl-del').disabled = sel.size === 0 && wireSel < 0 && joinSel < 0;
   }
 
   function renderCrumbs() {
@@ -457,6 +486,19 @@ export function createPlantEditor(root, app) {
     path.forEach((id, i) => { const b = cur.blocks.find((x) => x.id === id); parts.push([b?.name ?? id, i + 1]); cur = b?.diagram ?? cur; });
     $('#pl-crumbs').innerHTML = parts.map(([n, depth], i) => (i < parts.length - 1 ? `<button class="btn btn-sm" data-depth="${depth}" title="Back up to ${esc(n)}">${esc(n)}</button><span class="muted">›</span>` : `<span class="heading" aria-current="location">${esc(n)}</span>`)).join('');
     $('#pl-crumbs').querySelectorAll('[data-depth]').forEach((b) => b.addEventListener('click', () => { path = path.slice(0, Number(b.dataset.depth)); sel.clear(); wireSel = -1; render(); }));
+  }
+
+  // The equations of motion (core/sheet.js) of the mechanism a part belongs
+  // to, or of the one a masked subsystem holds; each coefficient's value on hover.
+  function sheetFold(b) {
+    if (!compiled) return '';
+    let sheets;
+    try { sheets = equationSheets(rootDiagram(), compiled); } catch { return ''; }
+    const here = path.join('/'), inside = [...path, b.id].join('/');
+    const found = diagramBlockDef(b.type).part ? sheets.filter((x) => x.idPath === here && x.parts.includes(b.id)) : b.mask?.length ? sheets.filter((x) => x.idPath === inside) : [];
+    if (found.length !== 1) return '';
+    const h = found[0].sheet.html();
+    return more(b.type === 'world' ? 'eom-world' : 'eom', 'Equations of motion', `<div class="eom" data-sheet="${esc(found[0].name)}"><p class="hint">${esc(h.coords)}</p>${h.rows.map((r) => `<p class="mono">${r}</p>`).join('')}<p class="mono">${h.V}</p><p class="mono">${esc(h.T)}</p><p class="hint">Derived from how the parts are joined, in the names of the parameters; hover a coefficient for its value here.</p></div>`);
   }
 
   // Parameters panel
@@ -503,7 +545,9 @@ export function createPlantEditor(root, app) {
       if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="btn btn-sm" data-act="saveok">Save</button><button class="btn btn-sm" data-act="savecancel">Cancel</button></div>`;
       const role = { sink: ' · recorded: pick it as a scope channel source', source: ' · plays the signal made in the Input tab', terminator: ' · ends a signal without recording it', outport: ' · passes the signal up to the enclosing block', inport: ' · takes the signal from the enclosing block', switch: ' · double-click it on the canvas to move to the next input', controller: ` · runs “${esc(b.variants?.[b.variant]?.name ?? '')}”; double-click it to open the Controller tab` }[b.type] ?? '';
       html += `<p class="note">${esc(def.formula)}${role}</p>`;
+      html += sheetFold(b);
       box.innerHTML = html;
+      keepOpen();
       bindFields(b);
       box.querySelectorAll('[data-act]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.act, b)));
       return;
@@ -517,7 +561,7 @@ export function createPlantEditor(root, app) {
     box.innerHTML = `<h3 class="label">Plant</h3>
       <p class="note"><b>Sources</b> ${names.sources.map(esc).join(', ') || 'none'} · <b>Sinks</b> ${names.sinks.map(esc).join(', ') || 'none'}</p>
       ${compileMsg ? `<p class="note text-bad">${esc(compileMsg).replace(/\n/g, '<br>')}</p>` : '<p class="note">The diagram is valid.</p>'}
-      ${about()}${more('edit', 'How to edit', '<p class="note">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p>')}`;
+      ${about()}${more('edit', 'How to edit', '<p class="note">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p><p class="note">Mechanics parts (World, Rail, Hinge, Mass, Rod) meet at their frame ports, the small squares on their bottom edge: drag from one to another, or onto a join\'s dot, to join them (a join is one point; no signal flows on it). Select a join and press <kbd>Del</kbd> to remove it.</p>')}`;
     keepOpen();
   }
 
@@ -645,6 +689,7 @@ export function createPlantEditor(root, app) {
   }
 
   function remove() {
+    if (joinSel >= 0 && !sel.size) { const k = joinSel; joinSel = -1; edit((d) => { d.joins.splice(k, 1); if (!d.joins.length) delete d.joins; }); return; }
     if (!sel.size && wireSel < 0) return;
     // A system keeps at least one Source: the last one cannot be deleted.
     const doomed = level().blocks.filter((b) => b.type === 'source' && sel.has(b.id));
@@ -657,6 +702,7 @@ export function createPlantEditor(root, app) {
       if (sel.size) {
         d.blocks = d.blocks.filter((b) => !sel.has(b.id));
         d.wires = d.wires.filter((w) => !sel.has(parseEnd(w.from).id) && !sel.has(parseEnd(w.to).id));
+        dropParts(d, sel);
       } else d.wires.splice(wireSel, 1);
     });
     sel.clear(); wireSel = -1;
@@ -668,13 +714,15 @@ export function createPlantEditor(root, app) {
   // feeds the outside.
   function group() {
     if (!sel.size) return;
+    const split = splitJoins(level(), sel);
+    if (split.refusal) { app.toast(split.refusal); return; }
     let made = null;
     edit((d) => {
       const inside = (end) => sel.has(parseEnd(end).id);
       const chosen = d.blocks.filter((b) => sel.has(b.id));
       const minX = Math.min(...chosen.map((b) => b.x)), minY = Math.min(...chosen.map((b) => b.y));
       const maxX = Math.max(...chosen.map((b) => b.x + size(b)[0])), maxY = Math.max(...chosen.map((b) => b.y + size(b)[1]));
-      const inner = { blocks: chosen.map((b) => ({ ...b, x: b.x - minX + 140, y: b.y - minY + 40 })), wires: [] };
+      const inner = { blocks: chosen.map((b) => ({ ...b, x: b.x - minX + 140, y: b.y - minY + 40 })), wires: [], ...(split.inside.length ? { joins: split.inside } : {}) };
       const outer = [];
       const inPorts = new Map(), outPorts = new Map();
       for (const w of d.wires) {
@@ -704,9 +752,16 @@ export function createPlantEditor(root, app) {
       const id = uniqueId(d, 'sub');
       made = { id, type: 'subsystem', name: 'Subsystem', params: {}, x: Math.round((minX + maxX) / 2 - 65), y: Math.round((minY + maxY) / 2 - 24), diagram: inner };
       d.blocks = d.blocks.filter((b) => !sel.has(b.id)).concat([made]);
+      if (split.outside.length) d.joins = split.outside; else delete d.joins;
       d.wires = outer.map((w) => ({ from: w.from.replace(/^@sub:(\d+)$/, (_, k) => (k === '0' ? id : `${id}:${k}`)), to: w.to.replace(/^@sub:(\d+)$/, (_, k) => (k === '0' ? id : `${id}:${k}`)) }));
     });
     if (made) { sel = new Set([made.id]); render(); app.toast('Grouped into a subsystem. Double-click it to open; Save to library keeps it.'); }
+  }
+
+  // A frame port's place on the canvas (the join gesture starts there).
+  function framePortAt(key) {
+    for (const b of level().blocks) if (isPartType(b.type)) { const [w, h] = size(b); const p = framePorts(b, w, h).find((x) => x.key === key); if (p) return p; }
+    return null;
   }
 
   function fit() {
@@ -726,6 +781,16 @@ export function createPlantEditor(root, app) {
     viewEl.focus({ preventScroll: true });
     const t = e.target;
     const p = toWorld(e);
+    // A frame port starts a join; a join is selected (Del removes it).
+    const frameEl = t.closest?.('[data-frame]');
+    if (frameEl) {
+      const at = framePortAt(frameEl.dataset.frame);
+      gesture = { kind: 'join', from: frameEl.dataset.frame, start: at ?? p };
+      svg.setPointerCapture(e.pointerId);
+      return;
+    }
+    const joinEl = t.closest?.('[data-join]');
+    if (joinEl) { sel.clear(); wireSel = -1; joinSel = Number(joinEl.dataset.join); render(); return; }
     const portEl = t.closest?.('[data-port]');
     if (portEl?.dataset.port === 'out') {
       gesture = { kind: 'wire', from: portEl.dataset.k === '0' ? portEl.dataset.block : `${portEl.dataset.block}:${portEl.dataset.k}`, start: p };
@@ -733,7 +798,7 @@ export function createPlantEditor(root, app) {
       return;
     }
     const wireEl = t.closest?.('[data-wire]');
-    if (wireEl) { sel.clear(); wireSel = Number(wireEl.dataset.wire); render(); return; }
+    if (wireEl) { sel.clear(); joinSel = -1; wireSel = Number(wireEl.dataset.wire); render(); return; }
     const blkEl = t.closest?.('[data-block]');
     if (blkEl) {
       // A single-model plant becomes a diagram before its blocks can move.
@@ -755,7 +820,7 @@ export function createPlantEditor(root, app) {
       lastClick = { id, t: now };
       if (e.shiftKey) { if (sel.has(id)) sel.delete(id); else sel.add(id); }
       else if (!sel.has(id)) sel = new Set([id]);
-      wireSel = -1;
+      wireSel = -1; joinSel = -1;
       gesture = { kind: 'move', last: p, moved: false };
       svg.setPointerCapture(e.pointerId);
       render();
@@ -788,7 +853,7 @@ export function createPlantEditor(root, app) {
       return;
     }
     const temp = svg.querySelector('#pl-temp');
-    if (gesture.kind === 'wire') {
+    if (gesture.kind === 'wire' || gesture.kind === 'join') {
       temp.innerHTML = `<path class="wire-temp" d="M${gesture.start.x},${gesture.start.y} L${p.x},${p.y}"/>`;
       return;
     }
@@ -811,7 +876,13 @@ export function createPlantEditor(root, app) {
       }
       return;
     }
-    if (g.kind === 'pan') { if (!g.moved) { sel.clear(); wireSel = -1; } render(); return; }
+    if (g.kind === 'pan') { if (!g.moved) { sel.clear(); wireSel = -1; joinSel = -1; } render(); return; }
+    if (g.kind === 'join') {
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      const to = hit?.closest?.('[data-frame]')?.dataset.frame ?? (hit?.closest?.('.jdot') ? Number(hit.closest('.jdot').dataset.join) : null);
+      if (to !== null && to !== undefined) edit((d) => join(d, g.from, to)); else render();
+      return;
+    }
     if (g.kind === 'wire') {
       const target = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-port="in"]');
       if (target) {
@@ -844,10 +915,10 @@ export function createPlantEditor(root, app) {
 
   // Keys while the Plant tab is open. Returns true when the key was used.
   function handleKey(e) {
-    if ((e.key === 'Delete' || e.key === 'Backspace') && (sel.size || wireSel >= 0)) { remove(); return true; }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && (sel.size || wireSel >= 0 || joinSel >= 0)) { remove(); return true; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') { group(); return true; }
     if (e.key === 'Escape') {
-      if (sel.size || wireSel >= 0) { sel.clear(); wireSel = -1; render(); return true; }
+      if (sel.size || wireSel >= 0 || joinSel >= 0) { sel.clear(); wireSel = -1; joinSel = -1; render(); return true; }
       if (path.length) { path = path.slice(0, -1); render(); return true; }
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { sel = new Set(level().blocks.map((b) => b.id)); render(); return true; }

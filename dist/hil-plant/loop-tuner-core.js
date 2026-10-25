@@ -2813,6 +2813,7 @@ function defaultDesigns() { return fallback ?? SYNC_DESIGNS; }
 
 
 function stateText(s) {
+  if (s.group) return `${s.name} (${s.group})`;
   return s.label.endsWith(`.${s.name}`) ? `${s.name} (${s.label.slice(0, -s.name.length - 1)})` : s.label;
 }
 
@@ -5414,6 +5415,564 @@ const PUMA560 = {
 
 return { PUMA560 };
 })();
+// ---- core/mech.js
+__mods['core/mech.js'] = (() => {
+
+const { NAME_RE, isReserved } = __mods['core/formula.js'];
+const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
+const coord = (key, label, def) => ({ key, label, default: def, kind: 'coord' });
+
+const MECH_ELEMENTS = {
+  world: { label: 'World', group: 'Mechanics', formula: 'g ↓', part: true, frames: () => ['W'], params: [num('g', 'g', 9.81, { unit: 'm/s²' })], ports: () => [0, 0] },
+  rail: {
+    label: 'Rail', group: 'Mechanics', formula: 'F − b·v', part: true, joint: true, frames: () => ['B', 'F'],
+    params: [coord('name', 'Coordinate', 'x'), coord('rate', 'Rate', 'v'), num('b', 'Friction b', 0, { unit: 'N·s/m', min: 0 }), num('incline', 'Incline α', 0, { unit: 'rad' }),
+      num('x0', 'Start s₀', 0, { unit: 'm' }), num('v0', 'Start ṡ₀', 0, { unit: 'm/s' }), num('force', 'Force input (0/1)', 1, { int: true, min: 0, max: 1 })],
+    ports: (p) => [p.force ? 1 : 0, 2], outputs: (p) => [p.name, p.rate], inputNames: (p) => (p.force ? ['F'] : []),
+  },
+  hinge: {
+    label: 'Hinge', group: 'Mechanics', formula: 'θ from upright', part: true, joint: true, frames: () => ['B', 'F'],
+    params: [coord('name', 'Coordinate', 'θ'), coord('rate', 'Rate', 'ω'), num('c', 'Damping c', 0, { unit: 'N·m·s/rad', min: 0 }),
+      num('theta0', 'Start θ₀', 0, { unit: 'rad' }), num('omega0', 'Start ω₀', 0, { unit: 'rad/s' }), num('torque', 'Torque input (0/1)', 0, { int: true, min: 0, max: 1 })],
+    ports: (p) => [p.torque ? 1 : 0, 2], outputs: (p) => [p.name, p.rate], inputNames: (p) => (p.torque ? ['τ'] : []),
+  },
+  mass: { label: 'Mass', group: 'Mechanics', formula: 'm', part: true, frames: () => ['F'], params: [num('m', 'Mass m', 1, { unit: 'kg', min: 0 })], ports: () => [0, 0] },
+  rod: {
+    label: 'Rod', group: 'Mechanics', formula: 'l, m at tip', part: true, frames: () => ['B', 'T'],
+    params: [num('l', 'Length l', 0.5, { unit: 'm', min: 0 }), num('m', 'Mass m', 0, { unit: 'kg', min: 0 }), { key: 'at', label: 'Mass at', default: 'tip', kind: 'choice', options: ['tip', 'uniform'] }],
+    ports: () => [0, 0],
+  },
+};
+const isPart = (type) => Object.hasOwn(MECH_ELEMENTS, type);
+
+function checkCoord(v, where) {
+  const s = String(v ?? '').trim();
+  if (!NAME_RE.test(s) || s.length > 8) throw new Error(`${where}: a short name such as x, θ1 or ω1 (letters, digits, _)`);
+  if (isReserved(s)) throw new Error(`${where}: "${s}" is the time, a constant or a function; choose another name`);
+  return s;
+}
+
+const label = (b) => `'${b.name ?? b.id}'`;
+const err = (message, blocks) => Object.assign(new Error(message), { code: 'mechanism', blocks });
+
+function parseFrame(end) {
+  const s = String(end), at = s.lastIndexOf(':');
+  return at < 0 ? { id: s, port: '' } : { id: s.slice(0, at), port: s.slice(at + 1) };
+}
+
+function normalizeJoins(joins, blocks, path) {
+  if (joins === undefined || joins === null) return undefined;
+  if (!Array.isArray(joins)) throw new Error(`${path}.joins: a list of joins, each a list of frame ports such as ["world:W", "rail:B"]`);
+  const byId = new Map(blocks.map((b) => [b.id, b])), used = new Map();
+  return joins.map((j, i) => {
+    const at = `${path}.joins[${i}]`;
+    if (!Array.isArray(j) || j.length < 2) throw new Error(`${at}: a join holds two frame ports or more`);
+    return j.map((end) => {
+      const { id, port } = parseFrame(end), b = byId.get(id);
+      if (!b) throw new Error(`${at}: no block "${id}"`);
+      const frames = MECH_ELEMENTS[b.type]?.frames(b.params) ?? [];
+      if (!frames.includes(port)) throw new Error(`${at}: ${label(b)} has no frame port "${port}"${frames.length ? ` (its frame ports: ${frames.join(', ')})` : ' (only Mechanics parts have frame ports)'}`);
+      const key = `${id}:${port}`;
+      if (used.has(key)) throw new Error(`${at}: ${key} is already in join ${used.get(key) + 1}; a port is in one join (one point)`);
+      used.set(key, i);
+      return key;
+    });
+  });
+}
+
+function mechanisms(blocks, joins = []) {
+  const parts = blocks.filter((b) => isPart(b.type));
+  if (!parts.length) return [];
+  const frameOf = new Map();
+  joins.forEach((j, i) => { for (const key of j) frameOf.set(key, i); });
+  let next = joins.length;
+  const atFrame = new Map();   
+  for (const b of parts) {
+    for (const port of MECH_ELEMENTS[b.type].frames(b.params)) {
+      const key = `${b.id}:${port}`;
+      if (!frameOf.has(key)) frameOf.set(key, next++);
+      const f = frameOf.get(key);
+      if (!atFrame.has(f)) atFrame.set(f, []);
+      atFrame.get(f).push({ part: b, port });
+    }
+  }
+  const seen = new Set(), out = [];
+  for (const world of parts.filter((b) => b.type === 'world')) {
+    if (seen.has(world.id)) continue;
+    const reached = new Map(), mine = [world], rails = [], hinges = [], bodies = [], base = [];
+    seen.add(world.id);
+    const start = frameOf.get(`${world.id}:W`);
+    reached.set(start, { c: [0, 0], rails: [], rods: [], hinge: -1 });
+    const queue = [start];
+    while (queue.length) {
+      const f = queue.shift(), fr = reached.get(f);
+      for (const { part: b, port } of atFrame.get(f)) {
+        if (b === world && port === 'W') continue;
+        if (seen.has(b.id)) {
+          if (mine.includes(b)) continue;
+          throw err(`${label(b)} is in two mechanisms`, [b.id]);
+        }
+        if (b.type === 'world') throw err(`${label(world)} and ${label(b)} are joined: one World per mechanism`, [world.id, b.id]);
+        const frames = MECH_ELEMENTS[b.type].frames(b.params);
+        if (frames.length === 2 && port !== frames[0]) throw err(`${label(b)} is joined the wrong way round: its base (${frames[0]}) goes on the World's side`, [b.id]);
+        seen.add(b.id); mine.push(b);
+        const p = b.params;
+        if (b.type === 'mass') { bodies.push({ part: b, m: p.m, I: 0, hinge: -1, c: [...fr.c], rails: [...fr.rails], rods: [...fr.rods] }); continue; }
+        let g;
+        if (b.type === 'rail') {
+          if (fr.hinge >= 0) throw err(`${label(b)} sits on a part that turns (${label(hinges[fr.hinge])}): a rail's base must not turn (the World or another rail)`, [b.id, hinges[fr.hinge].id]);
+          rails.push(b);
+          g = { c: [...fr.c], rails: [...fr.rails, rails.length - 1], rods: [...fr.rods], hinge: -1 };
+        } else if (b.type === 'hinge') {
+          hinges.push(b); base.push(fr.hinge);
+          g = { c: [...fr.c], rails: [...fr.rails], rods: [...fr.rods], hinge: hinges.length - 1 };
+        } else {
+          const along = (k) => (fr.hinge < 0 ? { c: [fr.c[0], fr.c[1] + k * p.l], rods: [...fr.rods] } : { c: [...fr.c], rods: [...fr.rods, { part: b, hinge: fr.hinge, f: k }] });
+          const tip = along(1);
+          g = { c: tip.c, rails: [...fr.rails], rods: tip.rods, hinge: fr.hinge };
+          if (p.m > 0) {
+            if (p.at === 'uniform') { const mid = along(0.5); bodies.push({ part: b, m: p.m, I: (p.m * p.l * p.l) / 12, hinge: fr.hinge, c: mid.c, rails: [...fr.rails], rods: mid.rods }); }
+            else bodies.push({ part: b, m: p.m, I: 0, hinge: -1, c: tip.c, rails: [...fr.rails], rods: tip.rods });
+          }
+        }
+        const gi = frameOf.get(`${b.id}:${frames[1]}`);
+        if (reached.has(gi)) throw err(`a mechanism must be a tree: ${label(b)} closes a loop`, [b.id]);
+        reached.set(gi, g);
+        queue.push(gi);
+      }
+    }
+    const order = (list) => list.slice().sort((a, b) => blocks.indexOf(a) - blocks.indexOf(b));
+    const rs = order(rails), hs = order(hinges);
+    const ri = rails.map((b) => rs.indexOf(b)), hi = hinges.map((b) => hs.indexOf(b));
+    for (const body of bodies) {
+      body.rails = body.rails.map((r) => ri[r]);
+      body.rods = body.rods.map((r) => ({ ...r, hinge: hi[r.hinge] }));
+      if (body.hinge >= 0) body.hinge = hi[body.hinge];
+    }
+    const baseOrdered = new Array(hs.length);
+    hinges.forEach((b, j) => { baseOrdered[hi[j]] = base[j] < 0 ? -1 : hi[base[j]]; });
+    const joints = order([...rs, ...hs]);
+    const names = new Map();
+    for (const jn of joints) for (const k of ['name', 'rate']) {
+      const nm = jn.params[k];
+      if (names.has(nm)) throw err(`${label(names.get(nm))} and ${label(jn)} both name a coordinate or rate ${nm}`, [names.get(nm).id, jn.id]);
+      names.set(nm, jn);
+    }
+    if (joints.length || bodies.length) out.push({ world, parts: mine, rails: rs, hinges: hs, joints, base: baseOrdered, bodies });
+  }
+  const loose = parts.filter((b) => !seen.has(b.id));
+  if (loose.length) throw err(`${loose.map(label).join(', ')} ${loose.length === 1 ? 'is' : 'are'} not joined to a World`, loose.map((b) => b.id));
+  return out;
+}
+
+function constants(mech) {
+  const g = mech.world.params.g, np = mech.rails.length, nh = mech.hinges.length;
+  const d = mech.rails.map((r) => [Math.cos(r.params.incline), Math.sin(r.params.incline)]);
+  const Mpp = new Float64Array(np * np), Cpr = new Float64Array(np * nh), Crr = new Float64Array(nh * nh), I = new Float64Array(nh), Gp = new Float64Array(np), Gr = new Float64Array(nh);
+  for (const b of mech.bodies) {
+    const L = new Float64Array(nh);
+    for (const r of b.rods) L[r.hinge] += r.f * r.part.params.l;
+    const P = new Float64Array(np);
+    for (const p of b.rails) P[p] = 1;
+    for (let p = 0; p < np; p++) {
+      for (let q = 0; q < np; q++) Mpp[p * np + q] += b.m * P[p] * P[q] * (d[p][0] * d[q][0] + d[p][1] * d[q][1]);
+      for (let j = 0; j < nh; j++) Cpr[p * nh + j] += b.m * P[p] * L[j];
+      Gp[p] -= g * b.m * P[p] * d[p][1];
+    }
+    for (let j = 0; j < nh; j++) {
+      for (let k = 0; k < nh; k++) Crr[j * nh + k] += b.m * L[j] * L[k];
+      Gr[j] += g * b.m * L[j];
+    }
+    if (b.hinge >= 0) I[b.hinge] += b.I;
+  }
+  return { g, np, nh, d, Mpp, Cpr, Crr, I, Gp, Gr };
+}
+
+function mechanismOde(mech) {
+  const K = constants(mech), { np, nh, d, Mpp, Cpr, Crr, I, Gp, Gr } = K, N = np + nh;
+  const joints = [...mech.rails, ...mech.hinges];
+  const outAt = mech.joints.map((b) => joints.indexOf(b));
+  const inputs = mech.joints.filter((b) => (b.type === 'rail' ? b.params.force : b.params.torque));
+  const railIn = new Int32Array(np).fill(-1), hingeIn = new Int32Array(nh).fill(-1);
+  inputs.forEach((b, k) => { if (b.type === 'rail') railIn[mech.rails.indexOf(b)] = k; else hingeIn[mech.hinges.indexOf(b)] = k; });
+  const bf = Float64Array.from(mech.rails, (r) => r.params.b), cf = Float64Array.from(mech.hinges, (h) => h.params.c);
+  const base = Int32Array.from(mech.base);
+  for (let p = 0; p < np; p++) if (!(Mpp[p * np + p] > 0)) throw err(`${label(mech.rails[p])} moves no mass: put a Mass on it`, [mech.rails[p].id]);
+  for (let j = 0; j < nh; j++) if (!(Crr[j * nh + j] + I[j] > 0)) throw err(`${label(mech.hinges[j])} moves no mass: put a Rod with a mass, or a Mass, on it`, [mech.hinges[j].id]);
+  const ode = {
+    n: 2 * N, mechanism: mech, constants: K, nIn: inputs.length, inputs,
+    states: () => [
+      ...mech.rails.map((b) => ({ name: b.params.name, unit: 'm', angle: false })), ...mech.hinges.map((b) => ({ name: b.params.name, unit: 'rad', angle: true })),
+      ...mech.rails.map((b) => ({ name: b.params.rate, unit: 'm/s', angle: false })), ...mech.hinges.map((b) => ({ name: b.params.rate, unit: 'rad/s', angle: false })),
+    ],
+    init: () => [...mech.rails.map((b) => b.params.x0), ...mech.hinges.map((b) => b.params.theta0), ...mech.rails.map((b) => b.params.v0), ...mech.hinges.map((b) => b.params.omega0)],
+    out: (X, o, p, y) => { for (let k = 0; k < outAt.length; k++) { y[2 * k] = X[o + outAt[k]]; y[2 * k + 1] = X[o + N + outAt[k]]; } },
+    make() {
+      const s = new Float64Array(nh), c = new Float64Array(nh), w2 = new Float64Array(nh), tq = new Float64Array(nh);
+      const A = new Float64Array(N * N), r = new Float64Array(N), q = new Float64Array(N), one = inputs.length === 1;
+      const dx = Float64Array.from(d, (v) => v[0]), dy = Float64Array.from(d, (v) => v[1]);
+      const kids = Array.from({ length: nh }, (_, j) => Int32Array.from(base.reduce((a, b, k) => (b === j ? [...a, k] : a), [])));
+      return (X, o, u, dX, uv) => {
+        const V = o + N;
+        for (let j = 0; j < nh; j++) { const th = X[o + np + j], w = X[V + np + j]; s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w; }
+        for (let p = 0; p < np; p++) {
+          for (let k = 0; k <= p; k++) A[p * N + k] = Mpp[p * np + k];
+          let rp = Gp[p] - bf[p] * X[V + p];
+          if (railIn[p] >= 0) rp += one ? u : uv[railIn[p]];
+          for (let k = 0; k < nh; k++) rp += Cpr[p * nh + k] * (dx[p] * s[k] + dy[p] * c[k]) * w2[k];
+          r[p] = rp;
+        }
+        for (let j = 0; j < nh; j++) {
+          const b = base[j];
+          tq[j] = (hingeIn[j] >= 0 ? (one ? u : uv[hingeIn[j]]) : 0) - cf[j] * (X[V + np + j] - (b >= 0 ? X[V + np + b] : 0));
+        }
+        for (let j = 0; j < nh; j++) {
+          const row = (np + j) * N, sj = s[j], cj = c[j];
+          for (let p = 0; p < np; p++) A[row + p] = Cpr[p * nh + j] * (dx[p] * cj - dy[p] * sj);
+          let rj = Gr[j] * sj + tq[j];
+          for (let k = 0; k < nh; k++) {
+            const C = Crr[j * nh + k];
+            if (k <= j) A[row + np + k] = C * (cj * c[k] + sj * s[k]);
+            rj -= C * (sj * c[k] - cj * s[k]) * w2[k];
+          }
+          A[row + np + j] += I[j];
+          const kj = kids[j];
+          for (let i = 0; i < kj.length; i++) rj -= tq[kj[i]];   
+          r[np + j] = rj;
+        }
+        for (let j = 0; j < N; j++) {
+          const rowj = j * N;
+          let dd = A[rowj + j];
+          for (let k = 0; k < j; k++) dd -= A[rowj + k] * A[rowj + k] * A[k * N + k];
+          A[rowj + j] = dd;
+          for (let i = j + 1; i < N; i++) {
+            const rowi = i * N;
+            let e = A[rowi + j];
+            for (let k = 0; k < j; k++) e -= A[rowi + k] * A[rowj + k] * A[k * N + k];
+            A[rowi + j] = e / dd;
+          }
+        }
+        for (let i = 0; i < N; i++) { let e = r[i]; for (let k = 0; k < i; k++) e -= A[i * N + k] * q[k]; q[i] = e; }
+        for (let i = 0; i < N; i++) q[i] /= A[i * N + i];
+        for (let i = N - 1; i >= 0; i--) { let e = q[i]; for (let k = i + 1; k < N; k++) e -= A[k * N + i] * q[k]; q[i] = e; }
+        for (let i = 0; i < N; i++) { dX[o + i] = X[V + i]; dX[V + i] = q[i]; }
+      };
+    },
+    bound: () => {
+      const lens = [];
+      for (const b of mech.parts) if (b.type === 'rod' && b.params.l > 0) lens.push(b.params.at === 'uniform' ? (2 * b.params.l) / 3 : b.params.l);
+      let w = nh && lens.length ? 4 * Math.sqrt((K.g / Math.min(...lens)) * (1 + nh)) : 0;
+      for (let p = 0; p < np; p++) w += bf[p] / Mpp[p * np + p];
+      for (let j = 0; j < nh; j++) w += cf[j] / (Crr[j * nh + j] + I[j]);
+      return w;
+    },
+    pose(X, o = 0) {
+      const at = (b) => {
+        let x = b.c[0], y = b.c[1];
+        for (const p of b.rails) { x += X[o + p] * d[p][0]; y += X[o + p] * d[p][1]; }
+        for (const rr of b.rods) { const th = X[o + np + rr.hinge], l = rr.f * rr.part.params.l; x += l * Math.sin(th); y += l * Math.cos(th); }
+        return [x, y];
+      };
+      return mech.bodies.map((b) => ({ id: b.part.id, m: b.m, I: b.I, hinge: b.hinge, angle: b.hinge >= 0 ? X[o + np + b.hinge] : 0, at: at(b) }));
+    },
+  };
+  return ode;
+}
+
+return { MECH_ELEMENTS, isPart, checkCoord, parseFrame, normalizeJoins, mechanisms, constants, mechanismOde };
+})();
+// ---- core/sheet.js
+__mods['core/sheet.js'] = (() => {
+
+const { NAME_RE } = __mods['core/formula.js'];
+const poly = (entries = []) => new Map(entries);
+const cnum = (c) => (c ? poly([['', c]]) : poly());
+const csym = (s) => poly([[s, 1]]);
+const key = (syms) => syms.filter(Boolean).sort().join('*');
+function add(a, b, k = 1) {
+  const out = new Map(a);
+  for (const [m, c] of b) { const v = (out.get(m) ?? 0) + k * c; if (Math.abs(v) < 1e-15) out.delete(m); else out.set(m, v); }
+  return out;
+}
+function mul(a, b) {
+  let out = poly();
+  for (const [ma, ca] of a) for (const [mb, cb] of b) out = add(out, poly([[key([...ma.split('*'), ...mb.split('*')]), ca * cb]]));
+  return out;
+}
+const isZero = (p) => p.size === 0;
+
+function param(raw) {
+  if (typeof raw === 'number') return cnum(raw);
+  const s = String(raw).trim();
+  if (s !== '' && Number.isFinite(Number(s))) return cnum(Number(s));
+  return csym(NAME_RE.test(s) ? s : `(${s})`);
+}
+
+const fmtNum = (v) => String(Number(v.toPrecision(6)));
+const SUP = { 2: '²', 3: '³', 4: '⁴' };
+function symsText(m) {
+  if (!m) return '';
+  const count = new Map();
+  for (const s of m.split('*')) count.set(s, (count.get(s) ?? 0) + 1);
+  return [...count].map(([s, n]) => `${s.startsWith('cos(') || s.startsWith('sin(') ? s.replace(/^(cos|sin)\((.*)\)$/, '$1 $2') : s}${n > 1 ? SUP[n] ?? `^${n}` : ''}`).join('·');
+}
+function polyText(p) {
+  const terms = [...p].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  if (!terms.length) return [1, '0'];
+  const counts = terms.map(([m]) => { const c = new Map(); for (const s of m ? m.split('*') : []) c.set(s, (c.get(s) ?? 0) + 1); return c; });
+  const common = new Map([...counts[0]].map(([s, n]) => [s, Math.min(...counts.map((c) => c.get(s) ?? 0))]).filter(([, n]) => n > 0));
+  const commonSyms = [...common].flatMap(([s, n]) => Array(n).fill(s));
+  const sign = terms.every(([, c]) => c < 0) ? -1 : 1;
+  const same = terms.every(([, c]) => Math.abs(c - terms[0][1]) < 1e-15 * Math.abs(c));
+  const k = same ? Math.abs(terms[0][1]) : 1;
+  const rest = terms.map(([m, c], i) => {
+    const left = new Map(counts[i]);
+    for (const [s, n] of common) left.set(s, left.get(s) - n);
+    const syms = [...left].flatMap(([s, n]) => Array(n).fill(s));
+    const v = (sign * c) / k, t = symsText(key(syms));
+    const mag = Math.abs(v), body = t ? `${Math.abs(mag - 1) < 1e-15 ? '' : `${fmtNum(mag)}·`}${t}` : fmtNum(mag);
+    return { neg: v < 0, body };
+  });
+  if (terms.length === 1) {
+    const [m, c] = terms[0], mag = Math.abs(c), t = symsText(m);
+    return [c < 0 ? -1 : 1, [Math.abs(mag - 1) < 1e-15 && t ? '' : fmtNum(mag), t].filter(Boolean).join('·')];
+  }
+  const head = [k !== 1 ? fmtNum(k) : '', symsText(key(commonSyms))].filter(Boolean).join('·');
+  const inner = rest.map((r, i) => (i ? `${r.neg ? ' − ' : ' + '}${r.body}` : `${r.neg ? '−' : ''}${r.body}`)).join('');
+  return [sign, head ? `${head}·(${inner})` : `(${inner})`];
+}
+function polyValue(p, value) {
+  let s = 0;
+  for (const [m, c] of p) { let t = c; for (const sym of m ? m.split('*') : []) t *= value(sym); s += t; }
+  return s;
+}
+
+
+function equationSheet(mech, raw, value, inputName = () => null) {
+  const np = mech.rails.length, nh = mech.hinges.length;
+  const g = param(raw(mech.world.id).g);
+  const dir = mech.rails.map((r) => {
+    const a = raw(r.id).incline;
+    if (typeof a === 'number' || Number.isFinite(Number(a))) { const v = Number(a); return v === 0 ? [cnum(1), cnum(0)] : [cnum(Math.cos(v)), cnum(Math.sin(v))]; }
+    const t = NAME_RE.test(String(a).trim()) ? String(a).trim() : `(${String(a).trim()})`;
+    return [csym(`cos(${t})`), csym(`sin(${t})`)];
+  });
+  const Mpp = [], Cpr = [], Crr = [], I = [], Gp = [], Gr = [];
+  for (let p = 0; p < np; p++) { Mpp.push(Array.from({ length: np }, () => poly())); Cpr.push(Array.from({ length: nh }, () => poly())); Gp.push(poly()); }
+  for (let j = 0; j < nh; j++) { Crr.push(Array.from({ length: nh }, () => poly())); I.push(poly()); Gr.push(poly()); }
+  for (const b of mech.bodies) {
+    const m = param(raw(b.part.id).m);
+    const L = Array.from({ length: nh }, () => poly());
+    for (const r of b.rods) L[r.hinge] = add(L[r.hinge], mul(cnum(r.f), param(raw(r.part.id).l)));
+    const P = new Set(b.rails);
+    for (let p = 0; p < np; p++) {
+      if (!P.has(p)) continue;
+      for (let q = 0; q < np; q++) if (P.has(q)) Mpp[p][q] = add(Mpp[p][q], mul(m, add(mul(dir[p][0], dir[q][0]), mul(dir[p][1], dir[q][1]))));
+      for (let j = 0; j < nh; j++) Cpr[p][j] = add(Cpr[p][j], mul(m, L[j]));
+      Gp[p] = add(Gp[p], mul(mul(g, m), dir[p][1]), -1);
+    }
+    for (let j = 0; j < nh; j++) {
+      for (let k = 0; k < nh; k++) Crr[j][k] = add(Crr[j][k], mul(m, mul(L[j], L[k])));
+      Gr[j] = add(Gr[j], mul(g, mul(m, L[j])));
+    }
+    if (b.hinge >= 0 && b.I > 0) { const l = param(raw(b.part.id).l); I[b.hinge] = add(I[b.hinge], mul(cnum(1 / 12), mul(m, mul(l, l)))); }
+  }
+
+  const coord = (b) => b.params.name, rate = (b) => b.params.rate;
+  const dot = (s) => { const [first, ...rest] = [...s]; return `${first}\u0307${rest.join('')}`; };
+  const joints = [...mech.rails, ...mech.hinges];
+  const term = (c, trig, v) => ({ c, trig, v });
+  const rows = [];
+  for (let p = 0; p < np; p++) {
+    const lhs = [], rhs = [];
+    for (let q = 0; q < np; q++) lhs.push(term(Mpp[p][q], '', dot(rate(mech.rails[q]))));
+    for (let j = 0; j < nh; j++) {
+      const th = coord(mech.hinges[j]), w = dot(rate(mech.hinges[j]));
+      lhs.push(term(mul(Cpr[p][j], dir[p][0]), `cos ${th}`, w), term(mul(Cpr[p][j], dir[p][1]), `sin ${th}`, w));
+      lhs.at(-1).c = mul(lhs.at(-1).c, cnum(-1));
+    }
+    const r = mech.rails[p], rr = raw(r.id);
+    if (r.params.force) rhs.push(term(cnum(1), '', inputName(r.id) ?? `F_${r.name ?? r.id}`));
+    if (r.params.b) rhs.push(term(mul(param(rr.b), cnum(-1)), '', rate(r)));
+    rhs.push(term(Gp[p], '', ''));
+    for (let k = 0; k < nh; k++) {
+      const th = coord(mech.hinges[k]), w2 = `${rate(mech.hinges[k])}²`;
+      rhs.push(term(mul(Cpr[p][k], dir[p][0]), `sin ${th}`, w2), term(mul(Cpr[p][k], dir[p][1]), `cos ${th}`, w2));
+    }
+    rows.push({ of: coord(r), lhs, rhs });
+  }
+  for (let j = 0; j < nh; j++) {
+    const h = mech.hinges[j], th = coord(h), lhs = [], rhs = [];
+    for (let p = 0; p < np; p++) {
+      const v = dot(rate(mech.rails[p]));
+      lhs.push(term(mul(Cpr[p][j], dir[p][0]), `cos ${th}`, v), term(mul(mul(Cpr[p][j], dir[p][1]), cnum(-1)), `sin ${th}`, v));
+    }
+    for (let k = 0; k < nh; k++) {
+      const c = k === j ? add(Crr[j][j], I[j]) : Crr[j][k];
+      lhs.push(term(c, k === j ? '' : `cos(${th} − ${coord(mech.hinges[k])})`, dot(rate(mech.hinges[k]))));
+    }
+    rhs.push(term(Gr[j], `sin ${th}`, ''));
+    for (let k = 0; k < nh; k++) if (k !== j) rhs.push(term(mul(Crr[j][k], cnum(-1)), `sin(${th} − ${coord(mech.hinges[k])})`, `${rate(mech.hinges[k])}²`));
+    const torque = (k, sign) => {
+      const hk = mech.hinges[k], b = mech.base[k], out = [];
+      if (hk.params.torque) out.push(term(cnum(sign), '', inputName(hk.id) ?? `τ_${hk.name ?? hk.id}`));
+      if (hk.params.c) out.push(term(mul(param(raw(hk.id).c), cnum(-sign)), '', b >= 0 ? `(${rate(hk)} − ${rate(mech.hinges[b])})` : rate(hk)));
+      return out;
+    };
+    rhs.push(...torque(j, 1));
+    mech.base.forEach((b, k) => { if (b === j) rhs.push(...torque(k, -1)); });
+    rows.push({ of: th, lhs, rhs });
+  }
+  const V = [...mech.rails.map((r, p) => term(mul(Gp[p], cnum(-1)), '', coord(r))), ...mech.hinges.map((h, j) => term(Gr[j], `cos ${coord(h)}`, ''))];
+
+  const valueOf = (sym) => { const m = /^(cos|sin)\((.*)\)$/.exec(sym); return m ? Math[m[1]](value(m[2].replace(/^\((.*)\)$/, '$1'))) : value(sym.replace(/^\((.*)\)$/, '$1')); };
+  const side = (terms, html) => {
+    const parts = terms.filter((t) => !isZero(t.c)).map((t) => {
+      const [sign, text] = polyText(t.c);
+      const factors = [text === '1' && (t.trig || t.v) ? '' : text, t.trig, t.v].filter(Boolean);
+      let body = factors.join('·');
+      if (html) {
+        const esc = (s) => s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+        const coef = text === '1' && (t.trig || t.v) ? '' : `<span class="coef" title="${esc(`${text} = ${fmtNum(Math.abs(polyValue(t.c, valueOf)))}`)}">${esc(text)}</span>`;
+        body = [coef, ...[t.trig, t.v].filter(Boolean).map(esc)].filter(Boolean).join('·');
+      }
+      return { sign, body };
+    });
+    if (!parts.length) return '0';
+    return parts.map((x, i) => (i ? `${x.sign < 0 ? ' − ' : ' + '}${x.body}` : `${x.sign < 0 ? '−' : ''}${x.body}`)).join('');
+  };
+  const coords = joints.map((b) => (b.type === 'rail' ? `${coord(b)} (rail), rate ${rate(b)}` : `${coord(b)} (hinge, from upright), rate ${rate(b)}`)).join('; ');
+  const render = (html) => ({
+    coords,
+    rows: rows.map((r) => `${side(r.lhs, html)} = ${side(r.rhs, html)}`),
+    V: `V = ${side(V, html)}`,
+    T: 'T = ½·q̇ᵀ·M(q)·q̇',
+  });
+  return {
+    ...render(false),
+    html: () => render(true),
+    text: () => { const r = render(false); return [r.coords, ...r.rows, r.V, r.T].join('\n'); },
+    check(K) {
+      let worst = 0;
+      const cmp = (p, v) => { const a = polyValue(p, valueOf), m = Math.max(Math.abs(v), Math.abs(a)); if (m > 1e-300) worst = Math.max(worst, Math.abs(a - v) / m); };
+      for (let p = 0; p < np; p++) {
+        for (let q = 0; q < np; q++) cmp(Mpp[p][q], K.Mpp[p * np + q]);
+        for (let j = 0; j < nh; j++) cmp(Cpr[p][j], K.Cpr[p * nh + j]);
+        cmp(Gp[p], K.Gp[p]);
+      }
+      for (let j = 0; j < nh; j++) {
+        for (let k = 0; k < nh; k++) cmp(Crr[j][k], K.Crr[j * nh + k]);
+        cmp(I[j], K.I[j]);
+        cmp(Gr[j], K.Gr[j]);
+      }
+      return worst;
+    },
+  };
+}
+
+return { equationSheet };
+})();
+// ---- core/physics.js
+__mods['core/physics.js'] = (() => {
+
+const field = (key, label, unit, def, extra = {}) => ({ key, label, unit, default: def, ...extra });
+
+const TANK_MASK = [
+  field('r0', 'Bottom radius r0', 'm', 0.05, { min: 1e-4 }), field('R', 'Top radius R', 'm', 0.5, { min: 1e-4 }),
+  field('H', 'Height H', 'm', 1, { min: 1e-3 }), field('a', 'Outlet area a', 'm²', 0.1, { min: 0 }),
+  field('g', 'g', 'm/s²', 9.81), field('h0', 'Start level h₀', 'm', 0.25, { min: 0 }),
+];
+const CART_POLE_MASK = [
+  field('M', 'Cart M', 'kg', 1, { min: 1e-6 }), field('m', 'Bob m', 'kg', 0.2, { min: 1e-6 }), field('l', 'Length l', 'm', 0.5, { min: 1e-6 }),
+  field('g', 'g', 'm/s²', 9.81), field('b', 'Friction b', 'N·s/m', 0.1, { min: 0 }), field('theta0', 'Start θ₀', 'rad', 0.05),
+];
+const chainMask = (n) => [
+  field('M', 'Cart M', 'kg', 1, { min: 1e-6 }),
+  ...Array.from({ length: n }, (_, i) => [field(`m${i + 1}`, `Mass m${i + 1}`, 'kg', 0.1, { min: 1e-6 }), field(`l${i + 1}`, `Rod l${i + 1}`, 'm', 0.25, { min: 1e-6 })]).flat(),
+  field('g', 'g', 'm/s²', 9.81), field('b', 'Friction b', 'N·s/m', 0.1, { min: 0 }),
+  ...Array.from({ length: n }, (_, i) => field(`theta${i + 1}0`, `Start θ${i + 1}₀`, 'rad', i === 0 ? 0.05 : 0)),
+];
+
+const values = (mask, p = {}) => Object.fromEntries(mask.map((f) => [f.key, p[f.key] ?? f.default]));
+const masked = (mask, p, diagram) => ({ type: 'subsystem', mask: mask.map((f) => ({ ...f })), params: values(mask, p), diagram });
+const port = (id, type, name, n, x, y) => ({ id, type, name, params: { port: n }, x, y });
+
+function conicalTank(p = {}) {
+  return masked(TANK_MASK, p, {
+    blocks: [
+      port('q', 'inport', 'q', 1, 20, 66),
+      { id: 'net', type: 'sum', name: 'net inflow', params: { signs: '+-' }, x: 130, y: 63 },
+      { id: 'rate', type: 'fcn', name: 'level rate', params: { inputs: 'Q, h', eqs: 'r = r0 + (R - r0)*h/H\nA = pi*r^2\ndh = Q/A', outputs: 'dh' }, x: 210, y: 50 },
+      { id: 'level', type: 'integrator', name: 'h', params: { K: 1, x0: 'h0', min: 0, max: 'H', unit: 'm', angle: 0 }, x: 460, y: 56 },
+      { id: 'outlet', type: 'fcn', name: 'outlet (Torricelli)', params: { inputs: 'h', eqs: 'qout = a*sqrt(2*g*h)', outputs: 'qout' }, x: 250, y: 170, flip: true },
+      port('o_1', 'outport', 'h', 1, 660, 66),
+    ],
+    wires: [
+      { from: 'q', to: 'net' }, { from: 'net', to: 'rate' }, { from: 'level', to: 'rate:1' }, { from: 'rate', to: 'level' },
+      { from: 'level', to: 'o_1' }, { from: 'level', to: 'outlet' }, { from: 'outlet', to: 'net:1' },
+    ],
+  });
+}
+
+function cartChain(n, p, names) {
+  const theta = (k) => names.theta(k), omega = (k) => names.omega(k);
+  const blocks = [
+    port('F', 'inport', 'F', 1, 20, 40),
+    { id: 'world', type: 'world', name: 'world', params: { g: 'g' }, x: 20, y: 200 },
+    { id: 'rail', type: 'rail', name: 'rail', params: { name: 'x', rate: 'v', b: 'b', force: 1 }, x: 130, y: 120 },
+    { id: 'cart', type: 'mass', name: 'cart', params: { m: 'M' }, x: 150, y: 260 },
+  ];
+  const wires = [{ from: 'F', to: 'rail' }, { from: 'rail', to: 'o_1' }, { from: 'rail:1', to: `o_${n + 2}` }];
+  const joins = [['world:W', 'rail:B'], ['rail:F', 'cart:F', `${names.hinge(1)}:B`]];
+  for (let k = 1; k <= n; k++) {
+    const h = names.hinge(k), r = names.rod(k), x = 130 + 220 * k;
+    blocks.push({ id: h, type: 'hinge', name: n === 1 ? 'hinge' : `hinge ${k}`, params: { name: theta(k), rate: omega(k), theta0: names.theta0(k) }, x, y: 120 });
+    blocks.push({ id: r, type: 'rod', name: n === 1 ? 'pole' : `rod ${k}`, params: { l: names.l(k), m: names.m(k), at: 'tip' }, x: x + 110, y: 200 });
+    wires.push({ from: h, to: `o_${k + 1}` }, { from: `${h}:1`, to: `o_${n + k + 2}` });
+    joins.push([`${h}:F`, `${r}:B`]);
+    if (k < n) joins.push([`${r}:T`, `${names.hinge(k + 1)}:B`]);
+  }
+  const outs = ['x', ...Array.from({ length: n }, (_, i) => theta(i + 1)), 'v', ...Array.from({ length: n }, (_, i) => omega(i + 1))];
+  outs.forEach((nm, i) => blocks.push(port(`o_${i + 1}`, 'outport', nm, i + 1, 360 + 220 * n, 20 + 36 * i)));
+  return { blocks, wires, joins };
+}
+
+function cartPole(p = {}) {
+  return masked(CART_POLE_MASK, p, cartChain(1, p, {
+    theta: () => 'θ', omega: () => 'ω', hinge: () => 'hinge', rod: () => 'pole', theta0: () => 'theta0', l: () => 'l', m: () => 'm',
+  }));
+}
+
+function pendulumOnCart(n, p = {}) {
+  return masked(chainMask(n), p, cartChain(n, p, {
+    theta: (k) => `θ${k}`, omega: (k) => `ω${k}`, hinge: (k) => `hinge${k}`, rod: (k) => `rod${k}`, theta0: (k) => `theta${k}0`, l: (k) => `l${k}`, m: (k) => `m${k}`,
+  }));
+}
+
+const TEMPLATES = {
+  cartPole: { label: 'Cart–pole', formula: 'F → x, θ, v, ω', name: 'cart and pole', make: () => cartPole() },
+  pendulum1: { label: 'Pendulum on cart', formula: 'F → x, θ1, v, ω1', name: 'cart and rod', make: () => pendulumOnCart(1) },
+  pendulum2: { label: 'Double pendulum on cart', formula: 'F → x, θ1, θ2, v, ω…', name: 'cart and 2 rods', make: () => pendulumOnCart(2) },
+  pendulum3: { label: 'Triple pendulum on cart', formula: 'F → x, θ1…θ3, v, ω…', name: 'cart and 3 rods', make: () => pendulumOnCart(3) },
+  conicalTank: { label: 'Conical tank', formula: 'q → h', name: 'tank', make: () => conicalTank() },
+};
+
+const OLD_TYPES = {
+  cartPole: (p) => cartPole(p),
+  pendulumCart: (p) => pendulumOnCart(Math.min(3, Math.max(1, Math.round(Number(p.links ?? 3)) || 3)), p),
+  conicalTank: (p) => conicalTank(p),
+};
+const isOldPhysics = (type) => Object.hasOwn(OLD_TYPES, type);
+
+function expandPhysics(b) {
+  const sub = OLD_TYPES[b.type](b.params ?? {});
+  return { id: b.id, ...(b.name ? { name: b.name } : {}), x: b.x, y: b.y, ...(b.flip ? { flip: true } : {}), ...sub };
+}
+
+const physicalMaskKeys = (mask) => mask.filter((f) => f.key !== 'g' && !/^Start\b/.test(f.label)).map((f) => f.key);
+
+return { conicalTank, cartPole, pendulumOnCart, TEMPLATES, isOldPhysics, expandPhysics, physicalMaskKeys };
+})();
 // ---- core/mathblocks.js
 __mods['core/mathblocks.js'] = (() => {
 
@@ -6432,6 +6991,9 @@ const { siUnit } = __mods['core/scale.js'];
 const { gaussAt } = __mods['core/signals.js'];
 const { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME_RE } = __mods['core/formula.js'];
 const { CONTROLLERS, normalizeVariant, makeLaw } = __mods['core/controllers.js'];
+const { isOldPhysics, expandPhysics } = __mods['core/physics.js'];
+const { MECH_ELEMENTS, isPart, normalizeJoins, mechanisms, mechanismOde, checkCoord } = __mods['core/mech.js'];
+const { equationSheet } = __mods['core/sheet.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
 const { SYNC_DESIGNS, defaultDesigns } = __mods['core/design.js'];
 const { EXTERNAL_BLOCK } = __mods['core/hil.js'];
@@ -6468,63 +7030,6 @@ const ELEMENTS = {
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1, { inf: true }), num('max', 'Max', 1, { inf: true })], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
   noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
-  cartPole: {
-    label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ, v, ω', outputs: ['x', 'θ', 'v', 'ω'], ports: () => [1, 4],
-    params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
-    ode: {
-      n: 4,
-      states: () => [state('x', 'm'), state('v', 'm/s'), state('θ', 'rad', true), state('ω', 'rad/s')],
-      init: (p) => [0, 0, p.theta0, 0],
-      out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; y[2] = X[o + 1]; y[3] = X[o + 3]; },
-      make(p) {
-        const { M, m, l, g, b } = p, ml = m * l, mg = m * g;
-        return (X, o, u, dX) => {
-          const v = X[o + 1], th = X[o + 2], w = X[o + 3];
-          const s = Math.sin(th), c = Math.cos(th);
-          const a = (u - b * v + ml * w * w * s - mg * s * c) / (M + m * s * s);
-          dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (g * s - a * c) / l;
-        };
-      },
-      bound: (p) => 2 * Math.sqrt(p.g * (p.M + p.m) / (p.M * p.l)) + p.b / p.M,
-    },
-  },
-  pendulumCart: {
-    label: 'Pendulum chain on cart', group: 'Physics', formula: 'F → x, θ…, v, ω…',
-    outputs: (p) => ['x', ...links(p).map((i) => `θ${i + 1}`), 'v', ...links(p).map((i) => `ω${i + 1}`)],
-    ports: (p) => [1, 2 * p.links + 2],
-    params: [num('links', 'Links', 3, { min: 1, int: true, max: 3 }), num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }),
-      ...[1, 2, 3].flatMap((i) => [num(`m${i}`, `Mass m${i}`, 0.1, { unit: 'kg', min: 1e-6 }), num(`l${i}`, `Rod l${i}`, 0.25, { unit: 'm', min: 1e-6 })]),
-      num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }),
-      ...[1, 2, 3].map((i) => num(`theta${i}0`, `Start θ${i}₀`, i === 1 ? 0.05 : 0, { unit: 'rad' }))],
-    ode: {
-      n: (p) => 2 * p.links + 2,
-      states: (p) => [state('x', 'm'), ...links(p).map((i) => state(`θ${i + 1}`, 'rad', true)), state('v', 'm/s'), ...links(p).map((i) => state(`ω${i + 1}`, 'rad/s'))],
-      init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
-      out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
-      make: (p) => chainRates(p),
-      bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
-    },
-  },
-  conicalTank: {
-    label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
-    params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
-    ode: {
-      n: 1,
-      states: () => [state('h', 'm')],
-      init: (p) => [Math.min(p.H, p.h0)],
-      out: (X, o, p, y) => { y[0] = Math.min(p.H, Math.max(0, X[o])); },
-      make(p) {
-        const { r0, H } = p, slope = (p.R - r0) / H, out = p.a * Math.sqrt(2 * p.g);
-        return (X, o, u, dX) => {
-          const h = Math.min(H, Math.max(0, X[o]));
-          const r = r0 + slope * h;
-          const flow = u - out * Math.sqrt(h);
-          dX[o] = (h <= 0 && flow < 0) || (h >= H && flow > 0) ? 0 : flow / (Math.PI * r * r);
-        };
-      },
-      bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
-    },
-  },
   controller: {
     label: 'Controller', group: 'Control', formula: 'u = C(r, y)',
     params: [num('inputs', 'Inputs (r, y…)', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.01, { unit: 's', min: 1e-4 })],
@@ -6537,15 +7042,12 @@ const ELEMENTS = {
     outputs: (p) => (p.groups ? ['ŷ', 'ẏ'].flatMap((c) => Array.from({ length: p.groups[1] }, (_, i) => `${c}${i + 1}`)) : Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`)),
   },
   external: EXTERNAL_BLOCK,
+  ...MECH_ELEMENTS,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
   ...VECTOR_ELEMENTS,
 };
 
 const VARIANT_LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
-
-const links = (p) => Array.from({ length: p.links }, (_, i) => i);
-
-const state = (name, unit, angle = false) => ({ name, unit, angle });
 
 const nameList = (text) => String(text ?? '').split(',').map((x) => x.trim()).filter(Boolean);
 const eqLines = (text) => String(text ?? '').split(/\n|;/).map((x) => x.trim()).filter(Boolean).map((line) => {
@@ -6590,56 +7092,6 @@ function compileEquations(params, consts) {
   });
   const first = inputs.length + 1;
   return { n: first + lines.length, nIn: inputs.length, fs, first, out: outputs.map((n) => slot.get(n)) };
-}
-
-function chainRates(p) {
-  const n = p.links, N = n + 1, { g, b } = p;
-  const mu = new Float64Array(n), ml = new Float64Array(n), mgl = new Float64Array(n), mll = new Float64Array(n * n);
-  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += p[`m${i + 1}`]; mu[i] = acc; }
-  for (let j = 0; j < n; j++) {
-    const lj = p[`l${j + 1}`];
-    ml[j] = mu[j] * lj; mgl[j] = mu[j] * g * lj;
-    for (let k = 0; k < n; k++) mll[j * n + k] = mu[Math.max(j, k)] * lj * p[`l${k + 1}`];
-  }
-  const total = p.M + mu[0];
-  const s = new Float64Array(n), c = new Float64Array(n), w2 = new Float64Array(n);
-  const A = new Float64Array(N * N), r = new Float64Array(N), q = new Float64Array(N);
-  return (X, o, u, dX) => {
-    for (let j = 0; j < n; j++) {
-      const th = X[o + 1 + j], w = X[o + n + 2 + j];
-      s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w;
-    }
-    A[0] = total;
-    r[0] = u - b * X[o + n + 1];
-    for (let j = 0; j < n; j++) {
-      const row = (j + 1) * N;
-      A[row] = ml[j] * c[j];
-      r[0] += ml[j] * s[j] * w2[j];
-      let rj = mgl[j] * s[j];
-      for (let k = 0; k < n; k++) {
-        const cjk = c[j] * c[k] + s[j] * s[k], sjk = s[j] * c[k] - c[j] * s[k];   
-        if (k <= j) A[row + k + 1] = mll[j * n + k] * cjk;
-        rj -= mll[j * n + k] * sjk * w2[k];
-      }
-      r[j + 1] = rj;
-    }
-    for (let j = 0; j < N; j++) {
-      let d = A[j * N + j];
-      for (let k = 0; k < j; k++) d -= A[j * N + k] * A[j * N + k] * A[k * N + k];
-      A[j * N + j] = d;
-      for (let i = j + 1; i < N; i++) {
-        let e = A[i * N + j];
-        for (let k = 0; k < j; k++) e -= A[i * N + k] * A[j * N + k] * A[k * N + k];
-        A[i * N + j] = e / d;
-      }
-    }
-    for (let i = 0; i < N; i++) { let e = r[i]; for (let k = 0; k < i; k++) e -= A[i * N + k] * q[k]; q[i] = e; }
-    for (let i = 0; i < N; i++) q[i] /= A[i * N + i];
-    for (let i = N - 1; i >= 0; i--) { let e = q[i]; for (let k = i + 1; k < N; k++) e -= A[k * N + i] * q[k]; q[i] = e; }
-    dX[o] = X[o + n + 1];
-    for (let j = 0; j < n; j++) { dX[o + 1 + j] = X[o + n + 2 + j]; dX[o + n + 2 + j] = q[j + 1]; }
-    dX[o + n + 1] = q[0];
-  };
 }
 
 function outputNames(def, params) {
@@ -6735,6 +7187,7 @@ function normalizeMask(b, where, outer, resolve) {
 
 function hasFormulas(d) {
   return d.blocks.some((b) => {
+    if (isOldPhysics(b.type)) return true;   
     if (b.type === 'subsystem') return b.mask?.length > 0 || hasFormulas(b.diagram);
     const def = ELEMENTS[b.type] ?? (BLOCKS.plant[b.type] ? { params: BLOCKS.plant[b.type].params } : null);
     return !!def?.params?.some((p) => (!p.kind && isFormula(b.params?.[p.key])) || (p.kind === 'vector' && Array.isArray(b.params?.[p.key]) && b.params[p.key].some(isFormula)));
@@ -6751,6 +7204,22 @@ function maskValues(diagram, idPath = []) {
   }
   return scopeMap(scope);
 }
+function equationSheets(diagram, el) {
+  return el.mechanisms.map((m) => {
+    const ids = m.idPath ? m.idPath.split('/') : [];
+    const lv = ids.reduce((d, id) => d.blocks.find((b) => b.id === id).diagram, diagram);
+    const byId = new Map(lv.blocks.map((b) => [b.id, b]));
+    const values = maskValues(diagram, ids);
+    const inputName = (id) => {
+      const w = lv.wires.find((x) => parseEnd(x.to).id === id);
+      const src = w && byId.get(parseEnd(w.from).id);
+      return !src ? null : src.type === 'source' ? src.params.signal : src.type === 'inport' ? (src.name ?? null) : (src.name ?? src.id);
+    };
+    const sheet = equationSheet(m.mechanism, (id) => byId.get(id).params, (text) => formulaIn(text, values), inputName);
+    return { idPath: m.idPath, name: m.name, parts: m.mechanism.parts.map((b) => b.id), sheet, check: () => sheet.check(m.ode.constants) };
+  });
+}
+
 function formulaIn(src, values) {
   try { return compileFormula(src, (n) => (values.has(n) ? { value: values.get(n) } : null))(new Float64Array(0)); } catch { return NaN; }
 }
@@ -6782,6 +7251,11 @@ function normalizeParams(type, params = {}, where, scope = null, resolve = false
     } else if (p.kind === 'name') {
       v = String(v);
       if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
+    } else if (p.kind === 'coord') {
+      v = checkCoord(v, `${where}.${p.key}`);
+    } else if (p.kind === 'choice') {
+      v = String(v);
+      if (!p.options.includes(v)) throw new Error(`${where}.${p.key}: one of ${p.options.join(', ')}`);
     } else if (p.kind === 'signs') {
       v = String(v);
       if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
@@ -6808,8 +7282,9 @@ function normalizeDiagram(d, path = 'plant', opts = {}) {
   const { scope = null, resolve = false } = opts;
   if (!d || !Array.isArray(d.blocks)) throw new Error(`${path}: a diagram needs "blocks" and "wires"`);
   const ids = new Set();
-  const blocks = d.blocks.map((b, i) => {
+  const blocks = d.blocks.map((given, i) => {
     const where = `${path}.blocks[${i}]`;
+    const b = isOldPhysics(given.type) ? expandPhysics(given) : given;
     if (!b.id || typeof b.id !== 'string' || /[:/]/.test(b.id)) throw new Error(`${where}: needs an "id" without ":" or "/"`);
     if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
     ids.add(b.id);
@@ -6822,7 +7297,10 @@ function normalizeDiagram(d, path = 'plant', opts = {}) {
     if (m?.mask) out.mask = m.mask;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`, { scope: m.scope, resolve });
     if (resolve && b.type === 'fcn' && scope) Object.defineProperty(out, 'consts', { value: scopeMap(scope) });
-    if (b.type === 'controller' || b.type === 'observer') {
+    if ((b.type === 'controller' || b.type === 'observer') && resolve && Array.isArray(b.variants) && b.variants.length) {
+      out.variants = b.variants;
+      out.variant = b.variant ?? 0;
+    } else if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
       const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
       out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib, { inputs: out.params.inputs }));
@@ -6847,7 +7325,8 @@ function normalizeDiagram(d, path = 'plant', opts = {}) {
     taken.add(w.to);
   }
   const robots = path === 'plant' ? normalizeRobots(d.robots) : undefined;
-  return robots ? { robots, blocks, wires } : { blocks, wires };
+  const joins = normalizeJoins(d.joins, blocks, path);
+  return { ...(robots ? { robots } : {}), blocks, wires, ...(joins ? { joins } : {}) };
 }
 
 function wrapPlant(block) {
@@ -6890,7 +7369,7 @@ function blockInputNames(diagram, idPath) {
     if (src.type === 'source') return src.params.signal;
     if (src.type === 'subsystem') {
       const out = src.diagram.blocks.find((b) => b.type === 'outport' && b.params.port === f.port + 1);
-      return out?.name ? `${out.name} (${src.name ?? src.id})` : (src.name ?? src.id);
+      return out?.name ? (src.mask ? out.name : `${out.name} (${src.name ?? src.id})`) : (src.name ?? src.id);
     }
     const outNames = outputNames(diagramBlockDef(src.type), src.params);
     if (src.type === 'fcn') return outNames.length > 1 ? `${outNames[f.port]} (${src.name ?? src.id})` : (src.name ?? src.id);
@@ -6919,6 +7398,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   const ctrlNodes = [];  
   const validity = [];
   const mctx = mimoContext(diagram.robots, { model, report: (text) => { if (!validity.includes(text) && validity.length < 50) validity.push(text); } });
+  const mechList = [];   
 
   function level(d, prefix, ids, root) {
     const outs = {}, ins = {};
@@ -6977,6 +7457,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       const def = diagramBlockDef(b.type);
       const [nIn, nOut] = blockPorts(b);
+      if (def.part) { outs[b.id] = []; ins[b.id] = []; continue; }
       if (b.type === 'controller' || b.type === 'observer') {
         const lib = VARIANT_LIBS[b.type];
         const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
@@ -7032,6 +7513,20 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       outs[b.id] = [k, ...Array.from({ length: nOut - 1 }, (_, j) => add({ kind: 'pick', name: `${name}.${outputNames(def, b.params)[j + 1]}`, ft: true, inputs: [k], parent: k, j: j + 1 }))];
       ins[b.id] = node.inputs.map((_, s) => [k, s]);
     }
+    let mechs;
+    try { mechs = mechanisms(d.blocks, d.joins); } catch (e) { throw Object.assign(new Error(`${path}${prefix ? ` (${prefix.slice(0, -1)})` : ''}: ${e.message}`), { code: e.code, blocks: (e.blocks ?? []).map((id) => `${ids}${id}`) }); }
+    for (const mech of mechs) {
+      let ode;
+      try { ode = mechanismOde(mech); } catch (e) { throw Object.assign(new Error(`${path}${prefix ? ` (${prefix.slice(0, -1)})` : ''}: ${e.message}`), { code: e.code, blocks: (e.blocks ?? []).map((id) => `${ids}${id}`) }); }
+      const name = prefix ? prefix.slice(0, -1) : (mech.world.name ?? mech.world.id);
+      const k = add({ kind: 'ode', name, prefix, short: name, mech, ft: false, ode, rates: ode.make(), p: null, inputs: new Array(ode.nIn).fill(-1), uv: ode.nIn > 1 ? new Float64Array(ode.nIn) : null, outv: new Float64Array(2 * mech.joints.length), bound: ode.bound() });
+      mechList.push({ name, idPath: ids.slice(0, -1), node: k, mechanism: mech, ode });
+      mech.joints.forEach((jn, j) => {
+        outs[jn.id] = [0, 1].map((r) => add({ kind: 'tap', name: `${prefix}${jn.params[r ? 'rate' : 'name']}`, ft: false, parent: k, j: 2 * j + r, see: -1 }));
+        const slot = ode.inputs.indexOf(jn);
+        ins[jn.id] = slot >= 0 ? [[k, slot]] : [];
+      });
+    }
     for (const w of d.wires) {
       const f = parseEnd(w.from), t = parseEnd(w.to);
       const src = outs[f.id][f.port], [dst, slot] = ins[t.id][t.port];
@@ -7077,7 +7572,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   }
   const states = [];
   for (const nd of stateNodes) {
-    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
+    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: nd.mech ? `${nd.prefix}${s.name}` : `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j, ...(nd.mech && nd.prefix ? { group: nd.prefix.slice(0, -1) } : {}) }));
     else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: nd.unit && nd.unit !== '1' ? nd.unit : '', angle: !!nd.angle, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
   }
 
@@ -7223,6 +7718,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   const probeSrc = probeList.map(([, k]) => origin(k)), outSrc = outNode >= 0 ? origin(outNode) : -1;
   const self = {
     n, bound, warnings, minTs, sampleTimes, states, designs, validity, looked,
+    mechanisms: mechList.map(({ node, ...m }) => ({ ...m, offset: nodes[node].off })),
     setStep(step) { h = step; },
     sample(t, X, o, u) {
       const since = [];
@@ -7552,7 +8048,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   return self;
 }
 
-return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, maskValues, formulaIn, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
+return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, maskValues, equationSheets, formulaIn, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
 })();
 // ---- core/sim.js
 __mods['core/sim.js'] = (() => {
@@ -8122,6 +8618,7 @@ return { PUMA_SYSTEM };
 // ---- core/plants.js
 __mods['core/plants.js'] = (() => {
 
+const { conicalTank, cartPole, pendulumOnCart } = __mods['core/physics.js'];
 const { PUMA_SYSTEM } = __mods['core/pumasystem.js'];
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
@@ -8570,7 +9067,7 @@ const EXAMPLE_PLANTS = [
         ]),
         { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: null }, x: 320, y: 96 },
         { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
-        { id: 'tank', type: 'conicalTank', name: 'tank', params: { r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }, x: 510, y: 90 },
+        { id: 'tank', name: 'tank', x: 510, y: 90, ...conicalTank({ r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }) },
         sink('h', 720, 106, 'm'),
         sink('q', 320, 20, 'm³/s'),
       ],
@@ -8615,7 +9112,7 @@ const EXAMPLE_PLANTS = [
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 104 },
-        { id: 'cart', type: 'cartPole', name: 'cart and pole', params: { M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: Math.PI }, x: 400, y: 80 },
+        { id: 'cart', name: 'cart and pole', x: 400, y: 80, ...cartPole({ M: 1, m: 0.2, l: 0.5, g: 9.81, b: 0.1, theta0: Math.PI }) },
         sink('x', 640, 84, 'm'), sink('theta', 640, 120, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
@@ -8647,7 +9144,7 @@ const EXAMPLE_PLANTS = [
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },
-        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }, x: 400, y: 60 },
+        { id: 'cart', name: 'cart and 3 rods', x: 400, y: 60, ...pendulumOnCart(3, { M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }) },
         sink('x', 640, 64, 'm'), sink('theta1', 640, 100, 'rad'), sink('theta2', 640, 136, 'rad'), sink('theta3', 640, 172, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
@@ -9664,7 +10161,7 @@ function fromPlant(e) {
   };
 }
 
-const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
+const NONLINEAR = new Set(['hinge', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = {
   pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', huLin: 'Variable structure', relay: 'Variable structure', slidingMode: 'Variable structure', superTwisting: 'Variable structure', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference', speedPI: 'PID',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
@@ -9759,6 +10256,7 @@ const { compileDiagram, normalizeDiagram, parseEnd, outputNames, diagramBlockDef
 const { simulateSystem, stepPlan } = __mods['core/sim.js'];
 const { referenceFn } = __mods['core/signals.js'];
 const { EXAMPLE_PLANTS } = __mods['core/plants.js'];
+const { physicalMaskKeys } = __mods['core/physics.js'];
 const CORE_FILE = 'loop-tuner-core.js';
 function simulatorCore(script) {
   const a = script.indexOf('\n// ---- core/'), b = script.indexOf('\n// ---- ui/');
@@ -9804,9 +10302,6 @@ function paramAt(diagram, at) {
 }
 
 const PHYSICAL = {
-  cartPole: ['M', 'm', 'l', 'b'],
-  pendulumCart: (p) => ['M', 'b', ...Array.from({ length: p.links }, (_, i) => [`m${i + 1}`, `l${i + 1}`]).flat()],
-  conicalTank: ['r0', 'R', 'H', 'a'],
   firstOrder: ['K', 'tau'], fopdt: ['K', 'tau', 'delay'], secondOrder: ['K', 'wn', 'zeta'], lagChain: ['K', 'tau'], integratorLag: ['K', 'tau'],
   doubleIntegrator: ['K'], inverseResponse: ['K', 'Tz', 'tau1', 'tau2'],
   tf: (p) => [...p.num.map((v, i) => (v ? `num[${i}]` : null)), ...p.den.map((v, i) => (v ? `den[${i}]` : null))].filter(Boolean),
@@ -9815,7 +10310,11 @@ const PHYSICAL = {
 function typePhysics(diagram, prefix = '') {
   const out = [];
   for (const b of diagram.blocks) {
-    if (b.type === 'subsystem') { out.push(...typePhysics(b.diagram, `${prefix}${b.id}/`)); continue; }
+    if (b.type === 'subsystem') {
+      if (b.mask) for (const k of physicalMaskKeys(b.mask)) if (typeof b.params?.[k] === 'number') out.push({ name: `${prefix}${b.id}.${k}`, at: `${prefix}${b.id}.${k}`, unit: b.mask.find((f) => f.key === k).unit });
+      out.push(...typePhysics(b.diagram, `${prefix}${b.id}/`));
+      continue;
+    }
     const keys = typeof PHYSICAL[b.type] === 'function' ? PHYSICAL[b.type](b.params) : PHYSICAL[b.type] ?? [];
     for (const k of keys) {
       const at = `${prefix}${b.id}.${k}`;
@@ -9995,7 +10494,8 @@ function simPlant(opts = {}) {
         const raw = names[src.port];
         const name = fresh(raw ?? (src.port ? `${b.id}${src.port}` : b.id));
         const unit = b.type === 'source' ? b.params.unit : OUTPUT_UNITS[String(raw ?? '').replace(/\d+$/, '')] ?? '1';
-        s = { key: null, name, unit, src };
+        const w = own.wires.find((x) => { const t = parseEnd(x.to); return t.id === ctrl.id && t.port === j; });
+        s = { key: null, name, unit, src, end: w?.from };
         added.push(s);
       }
       if (!measured.includes(s)) measured.push(s);
@@ -10007,6 +10507,7 @@ function simPlant(opts = {}) {
     for (const s of list) {
       const id = `hil_${s.name}`;
       out.blocks.push({ id, type: 'sink', params: { name: s.name, unit: s.unit }, x: 0, y: 0 });
+      if (s.end) { out.wires.push({ from: s.end, to: id }); continue; }
       const [path, ...rest] = s.src.key.split('/');
       if (rest.length) throw new Error(`${entry.name}: a measurement inside a subsystem needs a Sink`);
       out.wires.push({ from: s.src.port ? `${path}:${s.src.port}` : path, to: id });

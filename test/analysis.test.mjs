@@ -146,16 +146,16 @@ test('the gain interval includes the crossings at z = 1 and z = −1', async () 
 
 test("the library pendulum's catch loop: its gain interval is the poles' stable range on both sides", async () => {
   const { EXAMPLE_PLANTS } = await import('../src/core/plants.js');
-  const { ELEMENTS } = await import('../src/core/diagram.js');
+  const { normalizeDiagram, compileDiagram } = await import('../src/core/diagram.js');
   const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = await import('../src/core/systems.js');
   const { DEFAULT_PROJECT } = await import('../src/core/examples.js');
   const { normalizeProject, loopModel } = await import('../src/core/project.js');
   const entry = EXAMPLE_PLANTS.find((e) => e.name === 'Pendulum swing-up');
-  const cart = entry.diagram.blocks.find((b) => b.type === 'cartPole').params;
-  // The cart–pole block linearised upright by central differences; its state
-  // is [x, v, θ, ω], the controller reads [x, θ, v, ω].
-  const rates = ELEMENTS.cartPole.ode.make(cart);
-  const f = (X, u) => { const d = new Array(4); rates(X, 0, u, d); return d; };
+  const cart = entry.diagram.blocks.find((b) => b.id === 'cart');
+  // The cart and pole (compiled alone: In → cart → Out) linearised upright by
+  // central differences; its state is [x, θ, v, ω], as the controller reads it.
+  const el = compileDiagram(normalizeDiagram({ blocks: [{ id: 'in', type: 'inport', params: { port: 1 } }, cart, { id: 'out', type: 'outport', params: { port: 1 } }], wires: [{ from: 'in', to: 'cart' }, { from: 'cart', to: 'out' }] }));
+  const f = (X, u) => { const d = new Float64Array(4); el.eval(0, Float64Array.from(X), 0, u, d); return Array.from(d); };
   const h = 1e-6, A = [[], [], [], []], B = [];
   for (let j = 0; j < 4; j++) {
     const xp = [0, 0, 0, 0], xm = [0, 0, 0, 0]; xp[j] = h; xm[j] = -h;
@@ -164,7 +164,7 @@ test("the library pendulum's catch loop: its gain interval is the poles' stable 
   }
   const up = f([0, 0, 0, 0], h), down = f([0, 0, 0, 0], -h);
   for (let i = 0; i < 4; i++) B.push([(up[i] - down[i]) / (2 * h)]);
-  const cartPole = { A, B, C: [[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], D: [[0], [0], [0], [0]] };
+  const cartPole = { A, B, C: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], D: [[0], [0], [0], [0]] };
   // The library's swing-up catches with LQR gains computed from the plant
   // (the design layer); its law, linear where it catches, upright.
   const project = normalizeProject(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY.find((e) => e.name === entry.name), SYSTEM_PARTS));

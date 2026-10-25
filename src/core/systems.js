@@ -38,7 +38,7 @@ function fromPlant(e) {
 // of one kind in the filter row: Disturbance is slate (red is Nonlinear,
 // beside it on three cards), so XY moved to yellow. No tone is violet: in the
 // page violet means selected (design/output/design-system.md).
-const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
+const NONLINEAR = new Set(['hinge', 'saturation', 'quantizer', 'fcn', 'switch']);
 // A type's tags; a function reads the variant (a PI from the plant at one
 // level is a plain PI, at several it is scheduled).
 const VARIANT_TAGS = {
