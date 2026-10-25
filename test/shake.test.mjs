@@ -87,3 +87,24 @@ test('9. a measured period with a lost cycle is played once more and left out of
   assert.equal(model.frf[0].periods, 4, 'four whole periods kept');
   assert.ok(model.frf[0].within >= 0.8);
 });
+
+// The Shake tells a peak from lags (input 56): its lines are kept where the
+// shape fitted at the pause has its peak or corners, and among the close
+// candidates the one whose magnitude follows the points wins. On the arm
+// (seed 2, ±15 %) two lags led on the Check (73.5 %, the resonance 71.8 %);
+// the points rise to a peak near 1 Hz, which only the resonance makes.
+test('the Shake\'s points choose the resonance on the arm where two lags led on the Check', async (t) => {
+  const { armProject } = await import('./fixtures/arm-project.mjs');
+  const { drawArm, armAt } = await import('./fixtures/arm.mjs');
+  const { identify, SHAPE } = await import('../src/core/identify.js');
+  const { model } = identify(armProject(drawArm(2)), null, { budget: 300 });
+  const at0 = model.frf.find((x) => Math.abs(x.place) < 0.1);
+  const mags = at0.G.map((g) => Math.hypot(...g));
+  assert.ok(Math.max(...mags.slice(0, 3)) > 1.2 * mags[0], `the points rise to a peak: ${mags.slice(0, 4).map((m) => m.toFixed(3))}`);
+  assert.equal(model.structure, 'resonance', model.chosen);
+  assert.match(model.chosen, /the Shake's points follow/);
+  assert.ok(model.shaped.misses.resonance <= SHAPE.clear * model.shaped.misses.lags);
+  const truth = armAt(drawArm(2), 0.25);
+  assert.ok(Math.abs(model.params.f - truth.f) < 0.25 * truth.f, `f ${model.params.f} against ${truth.f} at 0.25 rad`);
+  t.diagnostic(`${model.chosen}; f ${model.params.f.toFixed(2)} Hz (the arm's at 0.25 rad: ${truth.f.toFixed(2)}), ζ ${model.params.zeta.toFixed(2)}`);
+});

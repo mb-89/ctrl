@@ -1110,6 +1110,27 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
       } else chosenWhy += `; the test that tells ${STRUCTURES[win].label} from ${STRUCTURES[other].label} (${test}) did not either (${pctText(fitsD[win])} % against ${pctText(fitsD[other])} %)`;
     }
   }
+  // The Shake's points (§6.7, input 56): where they show a shape one of the
+  // close candidates cannot make (a magnitude that rises to a peak), the one
+  // whose shape they follow is chosen.
+  let shaped = null;
+  if (g.shakes?.length) {
+    const best = candidates[index];
+    const close = candidates.filter((c) => !c.unsupported && c.grade !== '✕' && finite(c.fit) && c.fit >= best.fit - SHAPE.within);
+    if (close.length > 1) {
+      const pts = shakeResponses(record, g.shakes, best, Ts);
+      const misses = close.map((c) => ({ c, miss: shapeMiss(pts, c, Ts) })).filter((x) => finite(x.miss)).sort((x, y) => x.miss - y.miss);
+      if (misses.length > 1) {
+        const [w, o] = misses;
+        const off = (m) => pctText(100 * (Math.exp(m) - 1));
+        shaped = { misses: Object.fromEntries(misses.map((x) => [x.c.structure, x.miss])), chosen: w.miss <= SHAPE.clear * o.miss ? w.c.structure : null };
+        if (shaped.chosen && w.c !== best) {
+          index = candidates.indexOf(w.c);
+          chosenWhy = `the one whose shape the Shake's points follow (its magnitude off by ${off(w.miss)} % against ${off(o.miss)} % for ${STRUCTURES[o.c.structure].label}), within ${SHAPE.within} points of the best on the Check`;
+        }
+      }
+    }
+  }
   if (structure && candidates.some((c) => c.structure === structure)) { index = candidates.findIndex((c) => c.structure === structure); chosenWhy = 'your choice'; }
   const chosen = candidates[index];
   const S = STRUCTURES[chosen.structure];
@@ -1200,7 +1221,7 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
     fit: chosen.fitted, check: checkOut,
     where, holds: seg.holds.map((h) => ({ y: h.y, u: h.u })), whereSpread: { spread, flagged }, size, sizeNote,
     kernel: kernel ? { g: Array.from(kernel.g), sd: Array.from(kernel.sd), Ts: kernel.Ts, decimate: kernel.decimate, integrating: kernel.integrating, rate: kernel.rate ? { value: kernel.rate.value, sd: kernel.rate.sd } : null, fit: kernelFit } : null,
-    eased: easedFrom(g, plan), discrimination, frf: shakes, distortion,
+    eased: easedFrom(g, plan), discrimination, shaped, frf: shakes, distortion,
     grade: grade.mark, why: grade.why, warnings,
     segments: { open: seg.open ? [seg.open.i0, seg.open.i1] : null, closed: seg.closed.map((c) => [c.i0, c.i1]), check: seg.check ? [seg.check.from, seg.check.i1] : null, fitted: seg.F },
   };
@@ -1734,6 +1755,39 @@ function shakeResponses(record, shakes, model, Ts) {
     });
   }
   return out;
+}
+
+// The Shake's shape test (input 56): among the candidates within `within`
+// points of the best on the Check, one whose magnitude follows the Shake's
+// points with at most `clear` of the next one's miss is chosen. The miss is
+// the rms of log|Ĝ| − log|G| over the points clear of their noise (|Ĝ| above
+// `snr` σ), with the gain and the time scale taken out at each place (the
+// best of a log grid of `scales` from 1/span to span; the arm's gain and
+// frequency change with its angle): what is left is the shape, which tells
+// a peak from lags.
+export const SHAPE = { within: 3, clear: 0.6, snr: 3, span: 3, scales: 41 };
+function shapeMiss(pts, cand, Ts) {
+  const p0 = cand.p ?? cand.params, S = STRUCTURES[cand.structure];
+  const scaled = (k) => Object.fromEntries(Object.entries(p0).map(([key, v]) => [key, ['tau', 'tau1', 'tau2'].includes(key) ? v * k : key === 'f' ? v / k : v]));
+  const models = [];
+  for (let i = 0; i < SHAPE.scales; i++) {
+    const k = SHAPE.span ** (2 * i / (SHAPE.scales - 1) - 1);
+    try { models.push(discretise(S.name, scaled(k), Ts)); } catch { /* a scale the model cannot take */ }
+  }
+  if (!models.length) return NaN;
+  let ss = 0, n = 0;
+  for (const x of pts) {
+    const use = x.f.map((f, j) => ({ f, m: Math.hypot(...x.G[j]) })).filter((q, j) => q.m > SHAPE.snr * x.sd[j]);
+    if (use.length < 3) continue;
+    let best = Infinity;
+    for (const d of models) {
+      const r = use.map((q) => { const z = discreteAt(d, 2 * Math.PI * q.f * Ts); return Math.log(q.m) - Math.log(Math.hypot(z[0], z[1])); });
+      const c = r.reduce((a, v) => a + v, 0) / r.length;
+      best = Math.min(best, r.reduce((a, v) => a + (v - c) ** 2, 0));
+    }
+    ss += best; n += use.length;
+  }
+  return n ? Math.sqrt(ss / n) : NaN;
 }
 
 // ---- Telling two shapes apart (input 56)

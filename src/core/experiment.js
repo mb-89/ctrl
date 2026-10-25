@@ -109,7 +109,7 @@ export const EXPERIMENT = {
   // the largest push proven; three transient periods at ¼, ½ and 1 × that,
   // each raised only while the one before used at most `room` of the room
   // there; then `measured` periods; a period with a gap is played once more.
-  shake: { minN: 256, maxN: 8192, fmax: 0.4, band: 10, lines: 60, push: 0.5, ramp: [0.25, 0.5, 1], measured: 4, room: 0.5, repeat: 1 },
+  shake: { minN: 256, maxN: 8192, fmax: 0.4, band: 10, lines: 60, push: 0.5, ramp: [0.25, 0.5, 1], measured: 4, room: 0.5, repeat: 1, resolve: 5 },
   check: { stair: 0.125 },
   // The test that tells two shapes apart (input 56), after the Check: the
   // page designs it (identify.js designDiscrimination) and the experiment
@@ -1119,15 +1119,21 @@ export function createExperiment(plan) {
   // and the high end of the test reference.
   function shakeDesign() {
     const Sh = E.shake, tc = inc?.tauC ?? gentle?.tauC ?? 1, th = gentle?.theta ?? look?.theta ?? 0;
+    // Where the shape fitted at the pause puts its peak or corners (Hz): the
+    // odd harmonics nearest them are always excited (a peak on a line left
+    // out would not show), and for a peak the period is long enough for lines
+    // a fifth of its frequency apart.
+    const fc = cornersOf(supplied), fPeak = supplied?.params?.f;
     let N = Sh.minN;
-    while (N * Ts < 2 * 4 * (tc + th) && N < Sh.maxN) N *= 2;
+    while ((N * Ts < 2 * 4 * (tc + th) || (fPeak > 0 && N * Ts * fPeak < Sh.resolve)) && N < Sh.maxN) N *= 2;
     const fTop = Math.min(Sh.fmax / Ts, Sh.band / (2 * Math.PI * (tc + th)));
     const kmax = Math.max(3, Math.floor(fTop * N * Ts));
-    const lines = multisineLines({ N, kmax, count: Sh.lines, seed: P.seed });
+    const keep = [...new Set(fc.map((f) => 2 * Math.round((f * N * Ts - 1) / 2) + 1))].filter((k) => k >= 1 && k <= kmax);
+    const lines = multisineLines({ N, kmax, count: Sh.lines, seed: P.seed, keep });
     const base = multisine({ N, lines: lines.excited, peak: 1, seed: P.seed });
     const peak = Math.max(E.nudge.a0 * U, Sh.push * proven);
     const periods = Sh.ramp.length + Sh.measured;
-    return { N, kmax, lines, base, peak, periods };
+    return { N, kmax, keep, lines, base, peak, periods };
   }
   function* shake() {
     const Sh = E.shake, d = shakeDesign();
@@ -1171,7 +1177,7 @@ export function createExperiment(plan) {
         // A period the plant lost cycles in is played once more.
         if (rec.gaps.length > gapsBefore && extra < Sh.repeat && p >= Sh.ramp.length) extra++;
       }
-      log({ kind: 'shake', i0, iStart: iS, iEnd: i, place, N: d.N, kmax: d.kmax, seed: P.seed, starts, amps, left: out });
+      log({ kind: 'shake', i0, iStart: iS, iEnd: i, place, N: d.N, kmax: d.kmax, keep: d.keep, seed: P.seed, starts, amps, left: out });
       if (out) {
         // The excitation stops at once; the incumbent holds; the Shake ends.
         return 'left';
@@ -1523,10 +1529,19 @@ export function createExperiment(plan) {
 // What the experiment added to the incumbent's output, from its log entry
 // (a Shake place, or the test that tells two shapes apart), for the replay:
 // { from (the record index of its first sample), values }.
+// The frequencies (Hz) where a fitted shape has its peak or corners: a
+// resonance's f, a lag's 1/(2πτ). Empty without a fit.
+export function cornersOf(fit) {
+  const p = fit?.params;
+  if (!p) return [];
+  const out = [p.f, ...['tau', 'tau1', 'tau2'].map((k) => (p[k] > 0 ? 1 / (2 * Math.PI * p[k]) : NaN))];
+  return out.filter((f) => Number.isFinite(f) && f > 0);
+}
+
 export function excitationOf(e, Ts) {
   if (e.kind === 'discriminate') return { from: e.iStart, values: discriminationSignal(e, Ts) };
   if (e.kind !== 'shake') return null;
-  const lines = multisineLines({ N: e.N, kmax: e.kmax, count: EXPERIMENT.shake.lines, seed: e.seed });
+  const lines = multisineLines({ N: e.N, kmax: e.kmax, count: EXPERIMENT.shake.lines, seed: e.seed, keep: e.keep ?? [] });
   const base = multisine({ N: e.N, lines: lines.excited, peak: 1, seed: e.seed });
   const values = new Float64Array(Math.max(0, e.iEnd - e.iStart));
   e.starts.forEach((s, p) => { for (let j = 0; j < e.N; j++) { const at = s - e.iStart + j; if (at >= 0 && at < values.length) values[at] = e.amps[p] * base[j]; } });
