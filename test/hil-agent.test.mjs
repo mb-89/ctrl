@@ -158,7 +158,9 @@ test('the plant script: both modes describe the library systems, any model, and 
   assert.equal(reference.mode, 'reference');
   assert.deepEqual(reference.inputs.map((p) => [p.name, p.kind, p.measures]), [['r', 'reference', 'angle']]);
   assert.equal(reference.outputs.at(-1).name, 'V', 'the plant reports its own effort');
-  assert.ok(sameDescription(block('HIL: an external plant, reference mode').params, reference), 'reference mode: the library entry as described');
+  // Reference mode is a switch on the one HIL system: the page takes this
+  // description and wires r straight to the plant (hil-blackbox.test.mjs).
+  assert.ok(reference.outputs.slice(0, 3).every((o, i) => o.name === control.outputs[i].name), 'the same plant, its own effort added');
   const logger = checkDescription(JSON.parse(py(['--describe', '--mode', 'log'])));
   assert.equal(logger.mode, 'log');
   assert.equal(logger.inputs.length, 0);

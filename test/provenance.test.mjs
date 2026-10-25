@@ -33,8 +33,13 @@ test('the built page carries no provenance (names, accounts, repositories, sessi
   const pages = Object.fromEntries(Object.entries({ standalone: buildHtml(), hosted: buildHtml({ fragment: true }), exported: buildHtml({ project: { title: 'x' } }) }).map(([k, v]) => [k, ownText(k, v)]));
   for (const [name, html] of Object.entries(pages)) {
     for (const re of FORBIDDEN) {
-      const m = re.exec(html);
-      assert.equal(m, null, `${name}: ${re} matches "…${m && snippet(html, m)}…"`);
+      // The MCP server the page carries (Export › Download the MCP server)
+      // names the protocol revisions it speaks, which MCP names by dates:
+      // identifiers of the protocol, not when or where this was made. Only
+      // those two statements are set aside, exactly as mcp.mjs writes them.
+      const page = re.source.includes('20\\d\\d') ? html.replace(/const (MODERN|LEGACY) = \[(?:'20\d\d-\d\d-\d\d'(?:, )?)+\];/g, '') : html;
+      const m = re.exec(page);
+      assert.equal(m, null, `${name}: ${re} matches "…${m && snippet(page, m)}…"`);
     }
   }
   // The standalone page does not even name the host it was first shown in.

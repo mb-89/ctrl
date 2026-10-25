@@ -1,0 +1,3 @@
+# A deadbeat example; the benchmark's Pugh matrix (2026-10-25)
+
+> And then I guess while you're at it, you can also do that in parallel. How about something that shows a deadbeat controller? That would also be cool. Again, if we ever get around to building the benchmark, I guess we're going to get around to it anyway. The question is if I can ship it tomorrow, but we're going to get around to it. That would be cool to compare these controllers. Like you have a big matrix where you compare which controller can I use for this plant, how good are the results. Again, PUG matrix, P-U-G-H, right? To make a decision on which controller to use in which plant.
