@@ -2,6 +2,11 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the PUMA without the part; why it turns back ([input 53](../input/2026-10-25-53-no-part-and-why-turn-around.md))
+
+- **The part is gone**: drawn as it was, it did not show why the probe needs an angle, and the person does not need it. The probe keeps its 45° inward lean.
+- **Why the circle turns back instead of going on** (the person asked: a singularity, or a good initial condition?): neither. To look inward all the way round, the tool turns a full turn about the circle's axis per lap, and joint 6 turns the probe (±266°: about one and a half turns). A full turn of the tool cannot be undone by joints that swing back and forth within their stops: going on, joint 6 reaches its stop in the second lap. Round and back returns every joint each period. Ways to go on, put to the person: drop the inward lean (the stylus at a fixed lean, which the part's removal allows), or give the arm an endless joint 6 (no longer a PUMA 560). Until they choose, it stays round and back.
+
 ## 2026-10-25 · v2.9: every controller industry ready, bumpless by one wrapper ([input 49](../input/2026-10-25-49-bumpless-wrapper-industry-ready.md))
 
 - A rule for every controller the page proposes: "The control law should be industry ready, and that means it needs a bumpless mode switch." It is given by one wrapper round the law (differentiate its output, integrate once at the end), which does not need to know the law inside; laws without integral action fade the offset the wrapper absorbed. Built after the overhaul, with changes applied mid-run (roadmap.md).
