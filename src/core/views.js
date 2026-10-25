@@ -16,7 +16,9 @@
 //         joints in order) or { "j1": "q1", … }. Paths are drawn from the
 //         recorded signals: reference dashed in ch1's colour over the whole run,
 //         actual in ch2's, fading over fade seconds behind the instant. It
-//         binds by Sink names, so the Sinks are visible signals.
+//         binds by Sink names, so the Sinks are visible signals. "part":
+//         { "radius", "height", "drop" } draws a cylinder to work on at the
+//         centre of the reference path, its top drop below the path.
 //
 // The "2d" kind: A 2D view is a small
 // scene in world coordinates (y up) whose numbers may be formulas in t and
@@ -111,6 +113,13 @@ function normalize3dView(v, path) {
   });
   const out = { name: String(v.name ?? '3D view'), kind: '3d', ...(v.robot ? { robot: v.robot } : { urdf: v.urdf }), joints: typeof joints === 'string' ? joints : { ...joints }, paths };
   if (v.camera) out.camera = structuredClone(v.camera);
+  // A part to work on, drawn at the centre of the reference path: a
+  // cylinder of radius r and height h, its top at the path's height less drop.
+  if (v.part !== undefined) {
+    const { radius, height, drop = 0 } = v.part ?? {};
+    if (!(radius > 0 && height > 0 && drop >= 0)) throw new Error(`${path}.part: { "radius", "height" } in m, above 0 (and "drop", the top below the path)`);
+    out.part = { radius: Number(radius), height: Number(height), drop: Number(drop) };
+  }
   return out;
 }
 
