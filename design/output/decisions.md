@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: progressive disclosure ([input 19](../input/2026-10-25-19-progressive-disclosure.md))
+
+The person: the System library's descriptions "are too long. Look at how long the DC motor thing is ... There should be a bottom line that you show in the library, and then the model can have a detailed description ... so we can click and see a detailed description of it ... In general, think about progressive disclosure ... On a user interface, in general, what you need to show is what's actionable and needed for a decision. The details you can hide behind the details button"; "the fact that the oven ... has an overshoot of 67 and 52 degrees, that doesn't matter ... to decide which model to show, I don't need to know the numeric values of stuff like this. This is similar in the other examples."
+- **A rule for the whole interface**: each place shows what is actionable and needed for the decision made there; the rest sits one click away (a Details control). Numbers that do not help the decision move to the details.
+- **The System library**: each system shows its name, its tags and a bottom line that answers the person's four questions, "what is the model? Which features does it present? What can you try out with this model? What can you learn from it?" (short, in plain words, no numbers); a Details control opens the full description (the system's notes). Interpretation: the full description stays with the system (its notes), shown on demand in the library and in the Plant tab, not deleted.
+- Applied by a worker to the library first, then to the other tabs where the same applies (help texts, notes, status lines, Auto-tune and Analysis readouts).
+
 ## 2026-10-25 · v2.8: one servo motor, its errors as detail ([input 18](../input/2026-10-25-18-servo-motor-detail.md))
 
 The person: "make them high detail toggles in our servo motor ... the servo motor can also run speed controlled ... we show them in the spectrogram thing, but we could also just increase the level of the servos of the robot, and then the same errors would show up in the robot too ... it would also be reuse. So think about that."
