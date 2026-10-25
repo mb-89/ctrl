@@ -13,6 +13,7 @@ The person: "we shouldn't use textures ... make it cell shaded and then don't us
   - *The key light is fixed to the camera* (upper left, in front), not to the world, so the bands read the same from every side.
   - *Outlines keep their width on the screen* (in pixels), not in the world, so zooming out never makes them vanish and zooming in never makes them heavy.
   - *"No gradients" for lines*: the trail's fade (it shows time) is kept, in three steps like the light's bands.
+  - *The Canvas fallback paints whole shapes* (after review, the person: "these jagged edges, they are really irritating ... I'd prefer if that was fixed"; and "if you used something like 3.js, I would have expected that this just falls out of it natively ... my idea is you just give the system the URDF file and then you have a running model"). In WebGL three.js settles what is in front per pixel, so nothing is tuned per model. The fallback, for machines without WebGL, cannot use three.js (it has no renderer without a GPU); it now draws each convex primitive whole, ordered where shapes overlap, which needs no tuning either: any URDF of boxes, cylinders and spheres works as it is. Interpretation: where shapes cross, the nearer one covers the other cleanly; the exact line where they meet is drawn only by WebGL.
   - The outlines are near-black in both themes; in the dark theme a silhouette against the ground is carried by the part's colour, the outline shows between parts.
 
 ## 2026-10-25 · v2.7: one design system, after review

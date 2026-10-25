@@ -507,8 +507,12 @@ export function robotBounds(meshes) {
 // ---- Canvas2D painter: the mesh triangles projected with the camera's
 // matrices, each filled flat in its band of the key light (as the toon
 // material bands it), back faces dropped, silhouettes and hard edges stroked
-// in the outline colour, drawn far to near with the lines (paths, triads,
-// axes) sorted among them.
+// in the outline colour. Every shape is convex (a box, a cylinder, a
+// sphere), so its front faces never hide one another: each shape is drawn
+// whole, then its outline, in an order where a shape in front of another
+// comes after it (paintOrder); the lines (paths, triads, axes) go in between
+// by depth. Sorting single triangles instead toothed the edges where shapes
+// cross.
 // project: [x, y] pixels and the view depth, or null behind the eye.
 export function projector(camera, w, h) {
   const THREE = T(), m = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse), e = m.elements;
@@ -517,6 +521,74 @@ export function projector(camera, w, h) {
     if (cw <= camera.near) return null;
     return [((e[0] * x + e[4] * y + e[8] * z + e[12]) / cw + 1) * 0.5 * w, (1 - (e[1] * x + e[5] * y + e[9] * z + e[13]) / cw) * 0.5 * h, cw];
   };
+}
+
+// A shape on the screen for the painter: its front triangles flat, nine
+// numbers each (x, y in pixels, the view depth, for each corner), their box
+// on the screen, and a depth to fall back on.
+export function screenShape(tris, depth) {
+  const box = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < tris.length; i += 3) {
+    box[0] = Math.min(box[0], tris[i]); box[1] = Math.min(box[1], tris[i + 1]);
+    box[2] = Math.max(box[2], tris[i]); box[3] = Math.max(box[3], tris[i + 1]);
+  }
+  return { tris, box, depth };
+}
+// The view depth of triangle t (offset into tris) at screen point (x, y), or
+// NaN outside it; depth interpolates as 1/z does on the screen.
+export function depthAt(tris, t, x, y) {
+  const ax = tris[t], ay = tris[t + 1], bx = tris[t + 3], by = tris[t + 4], cx = tris[t + 6], cy = tris[t + 7];
+  const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+  if (Math.abs(d) < 1e-12) return NaN;
+  const l0 = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d, l1 = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d, l2 = 1 - l0 - l1;
+  if (l0 < -1e-9 || l1 < -1e-9 || l2 < -1e-9) return NaN;
+  return 1 / (l0 / tris[t + 2] + l1 / tris[t + 5] + l2 / tris[t + 8]);
+}
+// Where two shapes overlap on the screen, which is in front: > 0 if a, < 0
+// if b, 0 if they do not overlap. Points of each one's triangles (the
+// centre, and near each corner and each edge's middle, so that two large
+// faces that overlap only at their corners still meet) that fall on the
+// other vote by comparing the two depths there.
+const SAMPLES = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [0.5, 0.5, 0], [0, 0.5, 0.5], [0.5, 0, 0.5]].map((w) => w.map((v) => 0.1 / 3 + 0.9 * v));
+SAMPLES.push([1 / 3, 1 / 3, 1 / 3]);
+export function frontOf(a, b) {
+  if (a.box[0] > b.box[2] || b.box[0] > a.box[2] || a.box[1] > b.box[3] || b.box[1] > a.box[3]) return 0;
+  let votes = 0;
+  const poll = (p, q, sign) => {
+    for (let t = 0; t < p.tris.length; t += 9) for (const [w0, w1, w2] of SAMPLES) {
+      const x = w0 * p.tris[t] + w1 * p.tris[t + 3] + w2 * p.tris[t + 6], y = w0 * p.tris[t + 1] + w1 * p.tris[t + 4] + w2 * p.tris[t + 7];
+      if (x < q.box[0] || x > q.box[2] || y < q.box[1] || y > q.box[3]) continue;
+      for (let u = 0; u < q.tris.length; u += 9) {
+        const zq = depthAt(q.tris, u, x, y);
+        if (zq !== zq) continue;
+        const zp = depthAt(p.tris, t, x, y);
+        votes += zp < zq ? sign : -sign;
+        break;
+      }
+    }
+  };
+  poll(a, b, 1);
+  poll(b, a, -1);
+  return votes;
+}
+// The order to paint shapes in, far to near: a shape in front of another
+// where they overlap comes after it; among the shapes free to go next, the
+// farthest; a cycle is broken at its farthest shape.
+export function paintOrder(shapes) {
+  const n = shapes.length, behind = shapes.map(() => new Set()), ahead = shapes.map(() => new Set());
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    const f = frontOf(shapes[i], shapes[j]);
+    if (f > 0) { behind[i].add(j); ahead[j].add(i); } else if (f < 0) { behind[j].add(i); ahead[i].add(j); }
+  }
+  const done = new Array(n).fill(false), order = [];
+  while (order.length < n) {
+    let pick = -1;
+    for (let i = 0; i < n; i++) if (!done[i] && [...behind[i]].every((j) => done[j]) && (pick < 0 || shapes[i].depth > shapes[pick].depth)) pick = i;
+    if (pick < 0) for (let i = 0; i < n; i++) if (!done[i] && (pick < 0 || shapes[i].depth > shapes[pick].depth)) pick = i;
+    done[pick] = true;
+    order.push(pick);
+  }
+  return order;
 }
 
 // ---- The view
@@ -784,7 +856,7 @@ export function createView3d(container, opts = {}) {
     }
     // The light, in world coordinates: from the key light towards its target.
     const L = unit(sub(key.getWorldPosition(new THREE.Vector3()).toArray(), key.target.getWorldPosition(new THREE.Vector3()).toArray()));
-    const items = [], outline = cssOf(theme.outline), eps = 1e-6 * state.distance;
+    const outline = cssOf(theme.outline), shapes = [];
     const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
     for (const mesh of robot.meshes) {
       if (!mesh.visible) continue;
@@ -796,7 +868,8 @@ export function createView3d(container, opts = {}) {
         wp[3 * i] = va.x; wp[3 * i + 1] = va.y; wp[3 * i + 2] = va.z;
         sp[i] = project(va.x, va.y, va.z);
       }
-      const n = idx ? idx.count : nv, depth = new Float64Array(n / 3).fill(NaN);   // NaN: not drawn
+      const n = idx ? idx.count : nv, front = new Uint8Array(n / 3), tris = [], fills = [];
+      let zSum = 0;
       for (let k = 0; k < n; k += 3) {
         const i0 = idx ? idx.getX(k) : k, i1 = idx ? idx.getX(k + 1) : k + 1, i2 = idx ? idx.getX(k + 2) : k + 2;
         const a = sp[i0], b = sp[i1], c = sp[i2];
@@ -807,23 +880,25 @@ export function createView3d(container, opts = {}) {
         const lit = (ambient.intensity + key.intensity * toonBand(nrm.x * L[0] + nrm.y * L[1] + nrm.z * L[2])) / Math.PI;
         tmpColor.copy(base).multiplyScalar(lit).add(em);
         tmpColor.r = Math.min(1, tmpColor.r); tmpColor.g = Math.min(1, tmpColor.g); tmpColor.b = Math.min(1, tmpColor.b);
-        depth[k / 3] = (a[2] + b[2] + c[2]) / 3;
-        items.push({ z: depth[k / 3], tri: [a, b, c], fill: tmpColor.getStyle(), alpha: mat.opacity });
+        front[k / 3] = 1;
+        tris.push(...a, ...b, ...c);
+        fills.push(tmpColor.getStyle());
+        zSum += a[2] + b[2] + c[2];
       }
+      if (!fills.length) continue;
       // An edge between a drawn and a hidden triangle is the silhouette; one
-      // between two drawn ones at a fold is a hard edge. Each is drawn just
-      // after its nearer drawn triangle; a silhouette is stroked across its
-      // edge, so 1.5 times the width shows about as much outside as WebGL's.
-      const E = mesh.userData.edges;
+      // between two drawn ones at a fold is a hard edge. A silhouette is
+      // stroked across its edge, so 1.5 times the width shows about as much
+      // outside as WebGL's.
+      const E = mesh.userData.edges, edges = [];
       for (let e = 0; e < E.length; e += 5) {
-        const a = sp[E[e]], b = sp[E[e + 1]], d0 = depth[E[e + 2]], d1 = E[e + 3] >= 0 ? depth[E[e + 3]] : NaN;
-        const f0 = d0 === d0, f1 = d1 === d1;
+        const a = sp[E[e]], b = sp[E[e + 1]], f0 = front[E[e + 2]] === 1, f1 = E[e + 3] >= 0 && front[E[e + 3]] === 1;
         if (!a || !b || !(f0 || f1) || (f0 && f1 && !E[e + 4])) continue;
-        const silhouette = f0 !== f1;
-        items.push({ z: (f0 && f1 ? Math.min(d0, d1) : f0 ? d0 : d1) - eps, seg: [a, b], stroke: outline, width: silhouette ? 1.5 * OUTLINE.silhouette : OUTLINE.edge, alpha: mat.opacity, off: 0 });
+        edges.push({ seg: [a, b], width: f0 !== f1 ? 1.5 * OUTLINE.silhouette : OUTLINE.edge });
       }
+      shapes.push({ ...screenShape(Float64Array.from(tris), zSum / tris.length * 3), fills, edges, alpha: mat.opacity });
     }
-    // Lines, cut into segments sorted with the triangles; a dashed line's
+    // Lines, cut into segments sorted by depth; a dashed line's
     // pattern runs on along it (its offset is the length drawn before). The
     // frame triads go on top, as in WebGL.
     const lineItems = (m, out) => {
@@ -840,24 +915,34 @@ export function createView3d(container, opts = {}) {
         out.push({ z: Math.min(a[2], b[2]) - 1e-4 * state.distance, seg: [a, b], stroke: col, width: L2.width, alpha: al, dash: L2.dash > 0, off });
       }
     };
-    for (const m of [...[...paths.values()].map((p) => p.mesh), ...axisLines]) if (m) lineItems(m, items);
-    items.sort((p, q2) => q2.z - p.z);
-    const top = [];
+    const lines = [], top = [];
+    for (const m of [...[...paths.values()].map((p) => p.mesh), ...axisLines]) if (m) lineItems(m, lines);
+    lines.sort((p, q2) => q2.z - p.z);
     frameLines.forEach((m) => lineItems(m, top));
-    for (const it of [...items, ...top]) {
+    const stroke = (it) => {
       g.globalAlpha = it.alpha;
-      if (it.tri) {
-        const [a, b, c] = it.tri;
-        g.fillStyle = it.fill; g.strokeStyle = it.fill; g.lineWidth = 0.6;
-        g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.closePath(); g.fill(); g.stroke();
-      } else {
-        g.strokeStyle = it.stroke; g.lineWidth = it.width;
-        g.setLineDash(it.dash ? CANVAS_DASH : []);
-        g.lineDashOffset = it.dash ? it.off : 0;
-        g.lineCap = it.dash ? 'butt' : 'round';
-        g.beginPath(); g.moveTo(it.seg[0][0], it.seg[0][1]); g.lineTo(it.seg[1][0], it.seg[1][1]); g.stroke();
+      g.strokeStyle = it.stroke; g.lineWidth = it.width;
+      g.setLineDash(it.dash ? CANVAS_DASH : []);
+      g.lineDashOffset = it.dash ? it.off : 0;
+      g.lineCap = it.dash ? 'butt' : 'round';
+      g.beginPath(); g.moveTo(it.seg[0][0], it.seg[0][1]); g.lineTo(it.seg[1][0], it.seg[1][1]); g.stroke();
+    };
+    // Each shape whole, then its outline; before it, the lines farther than
+    // its middle.
+    let li = 0;
+    for (const i of paintOrder(shapes)) {
+      const sh = shapes[i], T9 = sh.tris;
+      while (li < lines.length && lines[li].z > sh.depth) stroke(lines[li++]);
+      g.globalAlpha = sh.alpha; g.lineWidth = 0.6; g.setLineDash([]); g.lineCap = 'round';
+      for (let t = 0, f = 0; t < T9.length; t += 9, f++) {
+        g.fillStyle = sh.fills[f]; g.strokeStyle = sh.fills[f];
+        g.beginPath(); g.moveTo(T9[t], T9[t + 1]); g.lineTo(T9[t + 3], T9[t + 4]); g.lineTo(T9[t + 6], T9[t + 7]); g.closePath(); g.fill(); g.stroke();
       }
+      g.strokeStyle = outline;
+      for (const e of sh.edges) { g.lineWidth = e.width; g.beginPath(); g.moveTo(e.seg[0][0], e.seg[0][1]); g.lineTo(e.seg[1][0], e.seg[1][1]); g.stroke(); }
     }
+    while (li < lines.length) stroke(lines[li++]);
+    top.forEach(stroke);
     g.setLineDash([]);
     g.globalAlpha = 1;
   }

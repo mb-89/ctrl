@@ -318,3 +318,27 @@ test('no texture but the light\'s ramp, and nothing loaded: shapes and colours a
     assert.equal(m.children[0].material.side, THREE.BackSide);
   }
 });
+
+test('the painter orders whole shapes: in front where they overlap comes later, never by single triangles', () => {
+  // A screen rectangle as two triangles, its depth at each corner from z(x, y).
+  const rect = (x0, y0, x1, y1, z) => V.screenShape(Float64Array.from([
+    x0, y0, z(x0, y0), x1, y1, z(x1, y1), x1, y0, z(x1, y0),
+    x0, y0, z(x0, y0), x0, y1, z(x0, y1), x1, y1, z(x1, y1),
+  ]), z((x0 + x1) / 2, (y0 + y1) / 2));
+  // Depth inside a triangle, interpolated as 1/z on the screen; NaN outside.
+  const t = Float64Array.from([0, 0, 1, 10, 0, 1, 0, 10, 4]);
+  near(V.depthAt(t, 0, 0, 0), 1); near(V.depthAt(t, 0, 0, 5), 1 / (0.5 / 1 + 0.5 / 4), 1e-12);
+  assert.ok(Number.isNaN(V.depthAt(t, 0, 9, 9)));
+  const far = rect(0, 0, 100, 100, () => 5), near_ = rect(50, 50, 150, 150, () => 2), apart = rect(300, 300, 320, 320, () => 1);
+  assert.ok(V.frontOf(near_, far) > 0 && V.frontOf(far, near_) < 0);
+  assert.equal(V.frontOf(far, apart), 0, 'apart on the screen: no say');
+  // A small shape whose middle is farther than a big one's, yet in front of
+  // it where they overlap (the wrist on a long forearm): it comes after.
+  const long = rect(0, 0, 400, 40, (x) => 1 + x / 50), knob = rect(360, 10, 380, 30, () => 5.3);   // the long one is 5.6 deep there
+  assert.ok(knob.depth > long.depth);
+  assert.deepEqual(V.paintOrder([knob, long]), [1, 0]);
+  assert.deepEqual(V.paintOrder([near_, apart, far]), [2, 0, 1], 'far to near otherwise');
+  // A cycle (each in front of the next somewhere) still paints each once.
+  const a = rect(0, 0, 100, 20, (x) => (x < 50 ? 1 : 3)), b = rect(0, 0, 20, 100, () => 2);
+  assert.deepEqual(V.paintOrder([a, b, far]).sort(), [0, 1, 2]);
+});
