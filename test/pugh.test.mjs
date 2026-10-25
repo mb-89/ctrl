@@ -183,6 +183,12 @@ test('the report: the bottom line first, then the matrix and the runners-up', ()
   assert.match(html, /^<!doctype html>/);
   assert.match(html, /<strong>B<\/strong>/);
   assert.ok(html.indexOf('class="rpt-bottom"') < html.indexOf('<table'));
+  // What it is, first (input 68): a heading and a line on what was compared.
+  assert.match(html, /<h1>Decision: Small<\/h1>\s*<p class="dim rpt-sub">3 options compared on 3 criteria against the datum, D; 3 in\.<\/p>/);
+  assert.match(renderHtml(decide({ ...small(), kind: 'Controller benchmark' })), /<h1>Controller benchmark: Small<\/h1>/);
+  // Nothing outside the table but the bottom line, the keys, the
+  // sensitivity and what opens.
+  assert.doesNotMatch(html.replace(/<script[\s\S]*?<\/script>/g, ''), /<h2/);
   const noScripts = (x) => x.replace(/<script[\s\S]*?<\/script>/g, '');
   assert.equal((noScripts(html).match(/<style/g) || []).length, 1);
   assert.match(html, /<style id="rpt-style" data-license="IBM Plex/);
@@ -195,7 +201,7 @@ test('the report: the bottom line first, then the matrix and the runners-up', ()
   // twice (no better/worse lines, no count of vetoes, no weighted or veto row).
   const vetoedA = renderHtml(decide({ ...small(), gates: [{ criterion: 'cost', max: 15, why: 'too dear' }] }), { style: reportStyle() });
   const sections = [...vetoedA.matchAll(/<details class="rpt-opt([^"]*)" data-section="(\w+)" data-fits="(\w+)"/g)].map((m) => [m[2], m[1].trim(), m[3]]);
-  assert.deepEqual(sections, [['D', 'in', 'true'], ['B', 'in', 'true'], ['A', 'out', 'false']]);
+  assert.deepEqual(sections, [['D', '', 'true'], ['B', '', 'true'], ['A', 'out', 'false']]);
   const rowOf = (k) => vetoedA.match(new RegExp(`data-section="${k}"[^>]*><summary class="rpt-grid">(.*?)</summary>`))[1];
   assert.deepEqual(rowOf('B').replace(/<[^>]+>/g, ' ').trim().split(/\s+/), ['B', '+8', '+', '++', '+']);
   assert.deepEqual(rowOf('A').replace(/<[^>]+>/g, ' ').trim().split(/\s+/), ['A', '+5', '×', '++', 'S', '−']);
@@ -258,38 +264,49 @@ test('figures: plotted from series, thinned, at most two per option, bad ones re
   assert.throws(() => normalizeMatrix({ ...small(), candidates: [{ key: 'D', figures: [{ title: 'x', series: [{ x: [0, 1], y: [1, 2], role: 'hero' }] }] }] }), /role/);
 });
 
-// The page budget (input 59): at most one printed page per option compared,
-// the matrix aside. Measured by printing to PDF (A4) in Chromium and
-// counting pages: the report with the per-option sections against the same
-// report without them. The deadbeat motor's matrix (13 candidates, 6 fit)
-// with two figures for each option that fits, of the size the benchmark
+// One page with nothing open (input 68), and the page budget with
+// everything open (input 59: at most one printed page per option, the
+// matrix aside). Measured by printing to PDF (A4) in Chromium and counting
+// pages. The deadbeat motor's matrix (13 options, 6 in) with the example's
+// two changes and two figures for every option, of the size the benchmark
 // draws (400 points, two panels, five series), synthetic curves.
-test('the deadbeat report stays within one page per option', { skip: !chromium && 'Playwright is not installed' }, async () => {
+const deadbeat = () => {
   const mx = JSON.parse(readFileSync(new URL('./fixtures/pugh-deadbeat.json', import.meta.url), 'utf8'));
-  const first = decide(mx);
-  // Figures for every option (input 62); only those that fit show them.
   for (const c of mx.candidates) c.figures = [figure(1), figure(2)];
-  const res = decide(mx);
-  assert.ok(first.ranking.length < 13);
+  mx.kind = 'Controller benchmark';
+  mx.overrides = [
+    { kind: 'option', candidate: 'c10', action: 'nudge', by: -1, comment: 'unacceptable effort: the relay slams the full voltage, the motor would not last' },
+    { kind: 'cell', candidate: 'c3', criterion: 'noise', action: 'veto', comment: 'the noise level is a placeholder until the current sensor is chosen' },
+  ];
+  return mx;
+};
+test('the deadbeat report: one page with nothing open, at most a page per option with everything open', { skip: !chromium && 'Playwright is not installed' }, async () => {
+  const res = decide(deadbeat());
   assert.equal(res.candidates.length, 13);
   assert.equal(res.suggestion.label, 'State feedback');
   const dir = mkdtempSync(join(tmpdir(), 'pugh-'));
+  const file = join(dir, 'report.html');
+  writeFileSync(file, renderHtml(res, { style: reportStyle() }));
   const browser = await chromium.launch();
   try {
-    const pages = async (html, name) => {
-      const file = join(dir, name);
-      writeFileSync(file, html);
-      const page = await browser.newPage();
-      await page.goto(pathToFileURL(file).href);
-      const pdf = await page.pdf({ format: 'A4', preferCSSPageSize: true });
-      await page.close();
-      return (pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
-    };
-    const style = reportStyle(), full = await pages(renderHtml(res, { style }), 'full.html'), base = await pages(renderHtml(res, { style, sections: false, interactive: false }), 'base.html');   // static: with its script the page draws itself whole
-    console.log(`# page budget: ${full} pages with the sections, ${base} without, ${res.candidates.length} options`);
-    const options = res.candidates.length;   // every option compared has a section (input 64)
-    assert.ok(full - base <= options, `${full} pages with the sections, ${base} without: more than one page for each of ${options} options`);
-    assert.ok(full <= base + options && full >= base, `${full} pages`);
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(pathToFileURL(file).href);
+    await page.waitForSelector('section.rpt.live');
+    const pages = async () => ((await page.pdf({ format: 'A4', preferCSSPageSize: true })).toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+    // Nothing open: the heading, the bottom line, the keys, the changes as
+    // a line, the sensitivity and the table, on one A4 page and on one
+    // screen of 1440 × 900 (the page does not scroll, nor does the table).
+    assert.equal(await page.evaluate(() => document.querySelectorAll('section.rpt details[open]').length), 0);
+    const screen = await page.evaluate(() => ({ height: document.documentElement.scrollHeight, table: [...document.querySelectorAll('.rpt-scroll')].filter((b) => b.scrollWidth > b.clientWidth + 1).length }));
+    assert.ok(screen.height <= 900, `${screen.height} px high at 1440 × 900`);
+    assert.equal(screen.table, 0, 'the table scrolls at 1440 px');
+    const closed = await pages();
+    assert.equal(closed, 1, `${closed} A4 pages with nothing open`);
+    // Everything open: at most a page per option more.
+    await page.evaluate(() => document.querySelectorAll('section.rpt details').forEach((d) => { d.open = true; }));
+    const all = await pages();
+    console.log(`# page budget: ${closed} page with nothing open, ${all} with everything open, ${res.candidates.length} options`);
+    assert.ok(all > closed && all - closed <= res.candidates.length, `${all} pages with everything open`);
   } finally { await browser.close(); }
 });
 
@@ -456,7 +473,7 @@ test('the report decides again in the browser, and equals decide() here', { skip
     await again.waitForSelector('section.rpt.live');
     const reopened = await again.evaluate(() => window.pughState.overrides);
     assert.equal(reopened.length, 4);
-    assert.match(await again.textContent('.rpt-person'), /Changed by the person/);
+    assert.match(await again.textContent('.rpt-person > summary'), /^4 changes by you/);
     // Export: the changes as JSON, for the command line.
     const [exp] = await Promise.all([page.waitForEvent('download'), page.click('[data-tool="export"]')]);
     const json = join(dir, 'changes.json');
@@ -478,11 +495,18 @@ test('the report decides again in the browser, and equals decide() here', { skip
     assert.notEqual(await bg(page), light);
     await page.emulateMedia({ media: 'print' });
     assert.equal(await bg(page), light, 'print is light whatever the theme');
-    // On paper the options that are in print open, the vetoed ones a line.
-    const shown = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('details.rpt-opt')].map((d) => [d.dataset.section, d.querySelector('.rpt-panel').checkVisibility()])));
-    const inNow = await page.evaluate(() => window.pughState.result.candidates.filter((c) => c.fits).map((c) => c.key));
-    for (const [k, v] of Object.entries(shown)) assert.equal(v, inNow.includes(k), `${k} printed ${v ? 'open' : 'closed'}`);
+    // Paper shows what is open (input 68): B, opened above, prints its
+    // panel; the rows left closed print as a line.
+    const shown = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('details.rpt-opt')].map((d) => [d.dataset.section, [d.open, d.querySelector('.rpt-panel').checkVisibility()]])));
+    assert.deepEqual(shown.B, [true, true]);
+    for (const [k, [isOpen, seen]] of Object.entries(shown)) assert.equal(seen, isOpen, `${k} printed as it is`);
     await page.emulateMedia({ media: 'screen' });
+    // Print with everything open: every <details> open while printing,
+    // then back as it was.
+    await page.evaluate(() => { window.print = () => { window.allOpen = [...document.querySelectorAll('section.rpt details')].every((d) => d.open); window.dispatchEvent(new Event('afterprint')); }; });
+    await page.click('[data-tool="print-all"]');
+    assert.equal(await page.evaluate(() => window.allOpen), true);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('details.rpt-opt[open]')].map((d) => d.dataset.section)), ['B', 'A'].filter((k) => shown[k][0]));
     // Save keeps the theme chosen.
     const [dark] = await Promise.all([page.waitForEvent('download'), page.click('[data-tool="save"]')]);
     const darkFile = join(dir, 'dark.html');

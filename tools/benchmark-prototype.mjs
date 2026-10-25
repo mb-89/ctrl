@@ -715,7 +715,7 @@ function matrixOf(b, datumIndex = -1) {
   const keyOf = (i) => `c${i}`;
   const pid = b.rows.findIndex((r) => r.type === 'pid' && !r.loaded && !r.plantChange), loadedRow = b.rows.findIndex((r) => r.loaded);
   return {
-    title: b.name,
+    title: b.name, kind: 'Controller benchmark',
     criteria: CRITERIA.map((cr) => ({ key: cr.key, label: cr.label, weight: cr.w, better: 'lower', tolerance: cr.tol, floor: cr.abs })),
     candidates: b.rows.map((r, i) => ({
       key: keyOf(i), label: r.name,
