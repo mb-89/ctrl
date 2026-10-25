@@ -2,6 +2,14 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: detail levels, answered ([input 13](../input/2026-10-25-13-detail-levels-answers.md))
+
+The person answered the four questions of [detail-levels.md](detail-levels.md) §14:
+- **Earlier runs stay visible as they are; levels are compared by Single runs.** "if I want to compare levels, what I would do is that I would run a number of single runs and compare the traces. So we don't need to change anything about the system." The display's fading is unchanged; the roadmap question on fading at high speed is closed with no change (interpretation: "for now").
+- **A global level and local overrides, not a cap.** "a global level that sets everything that I didn't set by hand. Then I have a local override where I can locally override the level of an individual block. And then I have a ... clear button where I clear the local overrides and everything is put back onto the global level." The level that runs in a subsystem is its own override if it has one, else the global level, in both cases at most the highest level it has ("if I say global level is 4, but one element only has 2 detail levels, then it can only go to level 2"). Interpretation: an override may be above the global level; there is no separate "Highest" (a global level at the largest number does that).
+- **The Detail setting is in the Plant tab**, not the header.
+- **The op-amp example misbehaves the way an electrical engineer knows**: "I guess it should ring, but I'm not 100% sure." Interpretation: the classic one, an op-amp follower driving a capacitive load (a cable) rings, more as the capacitance grows, because the output resistance and the load add a pole inside the loop.
+
 ## 2026-10-25 · v2.8: the diagram lays itself out ([input 11](../input/2026-10-25-11-diagram-auto-layout.md))
 
 The person: "it's not necessary that we place things in arbitrary positions ... sorts everything from left to right. And draws the lines automatically ... drop new elements onto lines, and then they get connected"; today's lines "sometimes go in weird loops. And you can't drag the lines individually"; "if you can find an auto router, I would be fine with that ... there is an existing solution for something like this, and we don't have to reinvent it."
