@@ -3,7 +3,8 @@
 # runme.ps1 > Run with PowerShell, or in a terminal:
 #   powershell -ExecutionPolicy Bypass -File runme.ps1      (options go to mcp.mjs)
 # Node.js comes from winget (OpenJS.NodeJS.LTS). Started here, the server
-# serves the page and prints how to register it with your agent's client.
+# serves the page, opens it in the default browser and explains how to
+# connect an agent. No option is needed; every option: runme.cmd --help.
 $ErrorActionPreference = 'Stop'
 function Stop-WithMessage([string]$text) {
   Write-Host $text -ForegroundColor Red
@@ -17,6 +18,13 @@ function Test-Node {
 }
 try {
   Set-Location $PSScriptRoot
+  # --help installs nothing.
+  if ($args -contains '--help' -or $args -contains '-h') {
+    if (Get-Command node -ErrorAction SilentlyContinue) { node mcp.mjs --help }
+    else { Write-Host 'runme [options]: installs Node.js if it is missing, then starts the MCP server (mcp.mjs). Node.js is not installed yet, so its options cannot be listed here: README.md has them.' }
+    if ($env:RUNME_FROM_CMD -ne '1') { Read-Host 'Press Enter to close' | Out-Null }
+    exit 0
+  }
   if (-not (Test-Node)) {
     Write-Host "Loop Tuner's MCP server needs Node.js 18 or later; installing it with winget ..."
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {

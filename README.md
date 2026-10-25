@@ -26,16 +26,22 @@ The design, its decisions and what comes next are in [design/output](design/outp
 
 ## Use it from an agent (MCP)
 
-`mcp.mjs` is an MCP server (Model Context Protocol, over stdio, Node 18+, no dependencies) on the same core: an agent loads a system or a project file, runs it and reads the loop's numbers, auto-tunes, analyses, and saves the project or the page with it inside. It also serves the page at `http://127.0.0.1:8766/`: open that, and the agent works on the page you see (the **agentic mode**: you look at the same data, identify and tune together; the library's **HIL with an agent** is made for it). Register it with your client:
+**What an MCP server is**: it gives an AI agent tools. MCP, the Model Context Protocol, is how agent apps (MCP clients) start a program like `mcp.mjs` and call what it offers. This one runs Loop Tuner's core (Node 18+, stdio, no dependencies): an agent loads a system or a project file, runs it and reads the loop's numbers, auto-tunes, analyses, and saves the project or the page with it inside. It also serves the page at `http://127.0.0.1:8766/`. Open that page, and the agent works on the page you see (the **agentic mode**: you look at the same data, identify and tune together; the library's **HIL with an agent** is made for it).
+
+**Connect an agent**: register the server once with your MCP client. After that, the client starts it by itself whenever the agent needs it.
 
 - **Claude Code**: `claude mcp add loop-tuner -- node /path/to/mcp.mjs`
-- **Claude Desktop** (`claude_desktop_config.json`):
+- **Claude Desktop**: Settings › Developer › Edit Config (`claude_desktop_config.json`):
   ```json
   { "mcpServers": { "loop-tuner": { "command": "node", "args": ["/path/to/mcp.mjs"] } } }
   ```
-- **Any client**: the command `node /path/to/mcp.mjs`, stdio transport.
+- **VS Code**: `.vscode/mcp.json`: `{ "servers": { "loop-tuner": { "type": "stdio", "command": "node", "args": ["/path/to/mcp.mjs"] } } }`
+- **Cursor**: `~/.cursor/mcp.json`, as Claude Desktop's.
+- **Any other client**: the command `node /path/to/mcp.mjs`, stdio transport.
 
-Without this repository: the page's **Export ▾ › MCP server** saves `loop-tuner-mcp.zip` (the server, the page and its core, a README, and runme scripts that install Node.js if it is missing and print the lines to register it). Then ask in plain words ("load the DC motor, run it, auto-tune it and tell me the margins"; on the page: "what do you see in this step response?"). The tools, example sessions and the limits are in [design/output/mcp.md](design/output/mcp.md); how to tune well is in [AGENTS.md](AGENTS.md).
+`node mcp.mjs --help` prints the same, with the path filled in; so does the server on start (on stderr, since stdout is the protocol).
+
+**Without this repository**: the page's **Export ▾ › MCP server** saves `loop-tuner-mcp.zip`. Click `runme` in it: it installs Node.js if it is missing, starts the server, opens the page and prints these lines with its folder's path. **What to ask**: "help me tune this system", "let's look at this identification together", "why does this loop ring?". The tools, example sessions and the limits are in [design/output/mcp.md](design/output/mcp.md); how to tune well is in [AGENTS.md](AGENTS.md).
 
 ## Build and test
 
@@ -75,7 +81,7 @@ node tools/view3d-shots.mjs         # the 3D view's own checks in headless Chrom
 | `src/core/guide.js` | The page's guide for agents: `window.loopTuner.help()`, `.api`, and the Help dialog's For agents. |
 | `src/core/trace.js`, `src/ui/record.js` | Saving traces: the screen or the live record (a ring buffer of every live signal) as CSV, JSON or PNG, and back as references; where live and saved time lands on the screen. |
 | `src/core/zip.js` | A stored zip, for the plant's download. |
-| `hil/` | The external plant of the HIL systems: `hil_plant.py` (`uv run hil_plant.py`; a window with STOP, Run/Stop, Reset and where it listens, or a console; it simulates any library model with the page's own core, `loop-tuner-core.js`, in V8: `--model`, `--random`, `--list`, `--vary`, `--detail`, `--seed`, `--show-params`, `--dyno`, `--mode reference`, `--log`, `--bench`), `runme.sh`, `runme.cmd` (Windows: a double-click runs `runme.ps1`), `runme.ps1`, `README.txt`; the page offers them with its own core as `hil-plant.zip`, and `node build.mjs` writes the same into `dist/hil-plant/`. |
+| `hil/` | The external plant of the HIL systems: `hil_plant.py` (`uv run hil_plant.py`; a window with STOP, Run/Stop, Reset and where it listens, or a console; it simulates any library model with the page's own core, `loop-tuner-core.js`, in V8: `--model`, `--random`, `--list`, `--vary`, `--detail`, `--seed`, `--show-params`, `--dyno`, `--mode reference`, `--log`, `--bench`), `runme.sh`, `runme.cmd` (Windows: a double-click runs `runme.ps1`), `runme.ps1`, `README.md`; the page offers them with its own core as `hil-plant.zip`, and `node build.mjs` writes the same into `dist/hil-plant/`. |
 | `src/core/hilsim.js` | The HIL simulator's core: a library system's plant as an external plant (its interface from the model, the seeded variation and effects, stepped on the page's grid), and the cut of the page's core for the zip ([design/output/hil-simulator.md](design/output/hil-simulator.md)). |
 | `src/ui/` | The page: display, controls, dial, signal generator, app wiring. |
 | `build.mjs` | Bundles core and UI into one HTML file. |

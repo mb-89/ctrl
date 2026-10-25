@@ -1,6 +1,6 @@
 #!/bin/sh
 # Loop Tuner's external plant (Live mode): installs what it needs, then runs.
-# Linux and macOS:  sh runme.sh      (options go to hil_plant.py: sh runme.sh --help)
+# Linux and macOS:  sh runme.sh      (no option needed; every option: sh runme.sh --help)
 # It needs uv (https://docs.astral.sh/uv/), which brings Python and what the
 # plant needs (websockets, and mini-racer: V8, which runs the page's code in
 # loop-tuner-core.js). If uv is missing it installs it into ~/.local/bin with
@@ -13,6 +13,16 @@ set -e
 cd "$(dirname "$0")"
 PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 have() { command -v "$1" >/dev/null 2>&1; }
+# --help installs nothing: the plant's options, from whatever Python is here.
+case " $* " in *" --help "*|*" -h "*)
+  echo "sh runme.sh [options]: installs uv if it is missing, then starts the plant (hil_plant.py)"
+  echo "with these options; with none, the default model with its physics varied by up to 15 %."
+  echo
+  if have python3; then exec python3 hil_plant.py --help
+  elif have uv; then exec uv run --python-preference only-managed hil_plant.py --help
+  else echo "(Python is not installed yet: run sh runme.sh once, or read README.md, for the options.)"; exit 0
+  fi;;
+esac
 if ! have uv; then
   echo "Installing uv, the Python runner (https://docs.astral.sh/uv/) ..."
   if ! have curl && ! have wget; then

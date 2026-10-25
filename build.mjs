@@ -24,10 +24,10 @@ export const MODULES = [
 // the bundle as __HIL_FILES (ui/live.js zips them), so an exported page has
 // them too. They are kept as written (no comment stripping), so they must
 // carry no provenance either (test/provenance.test.mjs).
-const HIL_FILES = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README.txt'];
+const HIL_FILES = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README.md'];
 // The MCP server's download (Export ▾) the same way: mcp.mjs and mcp/'s
 // files, as __MCP_FILES (ui/bridge.js zips them with the page and its core).
-const MCP_FILES = { 'mcp.mjs': 'mcp.mjs', 'README.txt': 'mcp/README.txt', 'runme.sh': 'mcp/runme.sh', 'runme.cmd': 'mcp/runme.cmd', 'runme.ps1': 'mcp/runme.ps1' };
+const MCP_FILES = { 'mcp.mjs': 'mcp.mjs', 'README.md': 'mcp/README.md', 'runme.sh': 'mcp/runme.sh', 'runme.cmd': 'mcp/runme.cmd', 'runme.ps1': 'mcp/runme.ps1' };
 const hilFiles = () => `// hil/: the external plant, offered under Live\nconst __HIL_FILES = ${JSON.stringify(Object.fromEntries(HIL_FILES.map((f) => [f, readFileSync(join(ROOT, 'hil', f), 'utf8')])))};\n// mcp.mjs and mcp/: the MCP server, offered under Export\nconst __MCP_FILES = ${JSON.stringify(Object.fromEntries(Object.entries(MCP_FILES).map(([name, f]) => [name, readFileSync(join(ROOT, f), 'utf8')])))};`;
 
 // Each module runs in its own function scope; its exports go into a registry
