@@ -1,6 +1,6 @@
 # Identify: finding the plant by experiment
 
-Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; being built on branch `feat/identify` in the steps of §18 (done: 0, the record; 1, the protocol and the plant (§15), built 2026-10-25; 2, the numerics in `src/core/fit.js`; 3, the kernel, the multisine and the frequency response, also in `fit.js`; 4, the experiment: `src/core/identify.js` and `src/core/experiment.js`; 5, the runner and the whole test in Node: `createStepRunner`, the hidden `experiment` law, the model from the record, `identify()` and `node cli.mjs identify`, measured below in "Measured: the whole test in Node"; 6, the tab, §4.1; 7, live, §5.11 and §14.1; input 56, the onset test and the discriminating test, §6.10; 8, the Shake, §5.12).** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
+Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; being built on branch `feat/identify` in the steps of §18 (done: 0, the record; 1, the protocol and the plant (§15), built 2026-10-25; 2, the numerics in `src/core/fit.js`; 3, the kernel, the multisine and the frequency response, also in `fit.js`; 4, the experiment: `src/core/identify.js` and `src/core/experiment.js`; 5, the runner and the whole test in Node: `createStepRunner`, the hidden `experiment` law, the model from the record, `identify()` and `node cli.mjs identify`, measured below in "Measured: the whole test in Node"; 6, the tab, §4.1; 7, live, §5.11 and §14.1; input 56, the onset test and the discriminating test, §6.10; 8, the Shake, §5.12; 9, Auto-tune and Analysis on the model, §10.1 and §12.1).** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
 
 The person's words ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)):
 
@@ -826,6 +826,25 @@ The twin's output feeds the Controller's measurement input. The real plant (or t
 
 The tank shows the limit of one linear model across a strongly nonlinear range. The Where plot flags it ("behaves differently at different places"), and the opt-in **On the plant** search (§11) beat it there: 0.085 against 0.220.
 
+### 10.1 Built (step 9)
+
+`src/core/identify.js` (`twinOp`, `twinDiagram`, `modelPush`, `twinProject`, `modelTuneSteps`, `keptModel`), `src/ui/plantsource.js`, the Auto-tune tab. Where the build made §10 more precise ([decisions.md](decisions.md), v2.9):
+
+- **One shared choice per block**, for the page session: "Plant: [the diagram | the model]" in Auto-tune's Controller column and in Analysis, and **Use for Auto-tune and Analysis** in Identify's model column (lit while it is in use). The line under the keys names the model ("T · test 1: two lags, ! explains 99 %", or "the test just run, not kept"), and on a live plant measured on an earlier connection, "! Measured on an earlier connection: the plant may have changed. Check again tells (Identify tab)." On a plant outside the page only the model is offered.
+- **The twin** rests at the first hold (u₀, y₀: Equations "u − u₀" and "y₀ + y" around the chain); the plant is cut off (u's wires into it, an External block, and the Sinks that showed it go; the measurement's Sink shows the twin).
+- **The push** is a step of 20 % of the u between the reference's levels (for a plant that settles, at least r's span over K), at least 1 % of u's range, from where d first steps (else 60 % of the period), its sign leaving the controller the larger share of its range. Oven: +12.3 % at 3.6 s; motor: +0.24 V at 3.2 s.
+- **Auto-tune runs unchanged on the twin project** (Iterate, Relay, Step); results are "· auto-tuned (model)", "· relay T–L (model)", "· SIMC (model)"; the status ends "119 runs on the model (the test just run, not kept: two lags, ! explains 99 %). Cost on the model 0.0974 · on the diagram 0.11 (it started at 1.28 there)", and the result list has a Diagram row. On a plant outside the page the result is added, not run (Try on the plant, step 10).
+- **The command line**: `node cli.mjs autotune <project> --plant identified` tunes on the kept test in use (`keptModel`), prints the model, the push and the cost on the diagram, and `--json` carries them as `plant`. In the page, `loopTuner.autotune({ plant: "identified" })` and `loopTuner.plantSource(block, v)`.
+- **Measured (test 13, the whole harness)**: identified through a sensor, tuned with Iterate on the model, scored noise-free on the true plant against Iterate on the plant itself:
+
+| | Oven | Motor | Tank | Arms 1–5 (±15 %) |
+|---|---|---|---|---|
+| Model, Check fit | two lags, 99 % | integrator · lag, 99.9 % | lag, 92.5 % | resonance, 79–85 % |
+| Plant time | 112 s | 51 s | 72 s | 79–85 s |
+| Cost tuned on the model, on the plant | 0.135 | 0.116 | 0.121 | 0.380–0.396 |
+| Tuned on the plant itself | 0.120 | 0.114 | 0.073 | 0.367–0.376 |
+| Ratio | 1.13 | 1.01 | 1.66 (reported) | 1.02–1.07 |
+
 ## 11. Try on the plant (HIL)
 
 On a simulated plant the same key runs the same procedure at the header's speed, as a demonstration.
@@ -873,6 +892,15 @@ The step is then "✕ did not behave as predicted".
 - **Measured points.** When a Shake ran, the Bode plot shows the measured points with their bars.
 - **Notes** carry the grade and the where sentence.
 - **On HIL** only the identified model exists. Designed variants (LQR, PI from the plant) reading the identified model on HIL come later (§19).
+
+### 12.1 Built (step 9)
+
+`identifiedLoop`, `loopRanges` and `measuredPoints` in `src/core/identify.js`; `app.loopModel(path, 'identified')` and `loopTuner.loopModel(path, "identified")`; the Analysis tab.
+
+- **The loop** is the chosen structure's `linearModel` with the running variant's linear law, read in the middle of the range the test visited (where u at a limit is judged); the operating-point keys hide on the model. A variant from the plant is refused with a sentence.
+- **Ranges** in brackets after the gain, phase and delay margins and Ms, over the 50 parameter samples and the places the test sat at: the motor's gain margin ×1.6 (×1.58 … ×1.65); the notes say how many of those variants are unstable with the running law (all 53 for the badly tuned oven, which is unstable on the diagram too).
+- **The Shake's points** on the Bode plot, L·Ĝ/G_d at each excited line with 2σ bars (the simulated arm at 5 min: 12 points at two places).
+- Checked in Chromium (`tools/identify-model-check.mjs`): the oven and the motor identified, tuned on the model and read in Analysis, light and dark, 1440 and 390 px, no console errors, nothing beyond the viewport.
 
 ## 13. Simulated plants: the teaching comparison
 
@@ -990,7 +1018,7 @@ export function identify(project, path, settings)           // Node and CLI: the
                                                             //   → { ok, block, plan, settings, vary, record, model, end, time, tries }
 // the later steps
 export function planTry(known, model, steps, incumbent)     // → Plan of kind 'try' (§11)
-export function twinDiagram(diagram, path, model, opts)     // → a diagram with the twin in the plant's place
+export function twinDiagram(diagram, path, model, { push })  // built in step 9 (§10.1): → { diagram, twin, cut, kept }
 
 // IdentifiedModel (built) = { version, ok, Ts, names, band, end, structure, label, glyph, params, sd, cov, chosen
 //   (why), chain: [{ kind, key, label, value, sd, unit, tip }], candidates: [{ structure, label, glyph, params, sd,
@@ -1099,7 +1127,7 @@ Fixtures live in `test/fixtures/`, are not shipped, and carry no plant numbers i
     - Keep round-trips through the project file with no computed fields; computed keys are refused with the sentence.
     - A kept record recomputes the same model bit for bit.
     - Built (step 5): the motor's record kept, through JSON and `normalizeProject`, gives the model `identify()` gave, the same JSON text; two runs give the same record and model; a computed key anywhere (beside the settings, in a kept test, in its record or plan) is refused with the sentence; the closed-loop replay fed the measured y gives back every u.
-13. **End to end, the acceptance test** (E2's harness): oven, motor, tank and five arms. Identify, then Auto-tune Iterate on the model, then score the result noise-free on the true plant. The identify part is built (step 5, `test/identify-e2e.test.mjs`; numbers in "Measured" above): each model against the true plant's step and, per place, its linearisation.
+13. **End to end, the acceptance test** (E2's harness): oven, motor, tank and five arms. Identify, then Auto-tune Iterate on the model, then score the result noise-free on the true plant. The identify part is built (step 5, `test/identify-e2e.test.mjs`; numbers in "Measured" above): each model against the true plant's step and, per place, its linearisation. The whole harness is built (step 9, `test/identify-tune-e2e.test.mjs`, `test/identify-tune-arms.test.mjs`; numbers in §10.1).
     - J ≤ 1.3 × the best possible on the oven, the motor and the arms. The tank is reported, with its where-spread flagged.
     - Every Try-on-the-plant step keeps g ≥ 0.3.
     - Arms within 2 min of plant time.
@@ -1161,7 +1189,7 @@ Each step is one agent, with `npm test` green at the end.
    - Check in the browser against the real `hil_plant.py` with two seeds.
    - Test 14.
 8. **Shake.** The multisine under the incumbent at two places; frequency-response points and distortion; grade rules. Test 8 (grade).
-9. **Auto-tune and Analysis on the model.**
+9. **Auto-tune and Analysis on the model.** **Built** (§10.1, §12.1).
    - The shared plant-source selector, `twinDiagram` with the test push, labelled runs and result names.
    - `app.loopModel(path, 'identified')`, ranges in Analysis, measured points on Bode.
    - Test 13 (the whole harness).

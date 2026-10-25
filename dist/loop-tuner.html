@@ -19472,21 +19472,22 @@ function keptModel(project, path = null) {
 }
 
 function measuredPoints(model) {
-  const F = model?.frf;
-  if (!F?.G?.length || !model.structure) return [];
-  const Ts = model.Ts;
-  const f = F.f ?? F.lines.map((k) => k / (F.N * Ts));
-  const out = [];
-  F.G.forEach((g, i) => {
-    const w = 2 * Math.PI * f[i];
-    if (!(w > 0) || !(w < Math.PI / Ts)) return;
-    const b = modelBode(model, [w]), mag = b.mag[0], ph = (b.phase[0] * Math.PI) / 180;
-    if (!(mag > 0)) return;
-    const gr = g.re ?? g[0], gi = g.im ?? g[1];
-    const mr = mag * Math.cos(ph), mi = mag * Math.sin(ph), den = mr * mr + mi * mi;
-    const G = Math.hypot(gr, gi);
-    out.push({ w, ratio: { re: (gr * mr + gi * mi) / den, im: (gi * mr - gr * mi) / den }, bar: G > 0 ? (2 * (F.sd?.[i] ?? 0)) / G : 0 });
-  });
+  if (!Array.isArray(model?.frf) || !model.structure) return [];
+  const Ts = model.Ts, out = [];
+  for (const F of model.frf) {
+    (F.G ?? []).forEach((g, i) => {
+      const w = 2 * Math.PI * F.f[i];
+      if (!(w > 0) || !(w < Math.PI / Ts)) return;
+      let mr, mi;
+      if (F.model?.[i]) [mr, mi] = F.model[i];
+      else { const b = modelBode(model, [w]), ph = (b.phase[0] * Math.PI) / 180; mr = b.mag[0] * Math.cos(ph); mi = b.mag[0] * Math.sin(ph); }
+      const den = mr * mr + mi * mi;
+      if (!(den > 0)) return;
+      const [gr, gi] = Array.isArray(g) ? g : [g.re, g.im];
+      const G = Math.hypot(gr, gi);
+      out.push({ w, place: F.place, ratio: { re: (gr * mr + gi * mi) / den, im: (gi * mr - gr * mi) / den }, bar: G > 0 ? (2 * (F.sd?.[i] ?? 0)) / G : 0 });
+    });
+  }
   return out;
 }
 

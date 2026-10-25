@@ -12,6 +12,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { armProject } from '../test/fixtures/arm-project.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
@@ -75,6 +76,19 @@ for (const [width, height] of [[1440, 950], [390, 860]]) {
       await page.click('#an-src [data-plantsrc="diagram"]');
       await page.waitForTimeout(200);
       check(!(await page.isHidden('#an-ops')), `${tag}: the diagram again`);
+    }
+    // The simulated arm with 5 min for the test: the Shake runs, and its
+    // measured points show on Analysis's Bode plot.
+    if (width === 1440) {
+      await page.evaluate((p) => window.loopTuner.setProject(p), armProject());
+      await page.evaluate(() => window.loopTuner.speed(-1));
+      const rep = await page.evaluate(() => window.loopTuner.identify({ budget: 300 }));
+      check(rep.ok, `${width} ${scheme} arm: identified (${rep.structure})`);
+      await page.evaluate(() => window.loopTuner.plantSource('ctrl', 'identified'));
+      await page.click('[data-tab="analysis"]');
+      await page.waitForTimeout(400);
+      check(/measured points/.test(await page.innerText('#an-notes')), `${width} ${scheme} arm: the Shake's points on Bode`);
+      await page.screenshot({ path: join(OUT, `arm-analysis-${width}-${scheme}.png`), fullPage: true });
     }
     // A plant outside the page, not identified: both tabs say to identify first.
     await page.evaluate(() => window.loopTuner.loadSystem('HIL: an external plant'));

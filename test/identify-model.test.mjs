@@ -105,11 +105,11 @@ test('the Shake\'s measured points: a measured response equal to the model\'s gi
   const model = structuredClone(motor.res.model);
   const f = [0.5, 1, 2, 5];
   const b = modelBode(model, f.map((x) => 2 * Math.PI * x));
-  model.frf = { f, G: b.mag.map((g, i) => ({ re: g * Math.cos((b.phase[i] * Math.PI) / 180), im: g * Math.sin((b.phase[i] * Math.PI) / 180) })), sd: b.mag.map((g) => 0.05 * g) };
+  model.frf = [{ place: 1, f, G: b.mag.map((g, i) => [g * Math.cos((b.phase[i] * Math.PI) / 180), g * Math.sin((b.phase[i] * Math.PI) / 180)]), sd: b.mag.map((g) => 0.05 * g) }];
   const pts = measuredPoints(model);
   assert.equal(pts.length, 4);
   for (const q of pts) { assert.ok(Math.abs(q.ratio.re - 1) < 1e-9 && Math.abs(q.ratio.im) < 1e-9); assert.ok(Math.abs(q.bar - 0.1) < 1e-12); }
-  assert.deepEqual(measuredPoints(motor.res.model), [], 'none without a Shake');
+  assert.deepEqual(measuredPoints({ ...motor.res.model, frf: [] }), [], 'none without a Shake');
 });
 
 test('the command line: autotune --plant identified tunes on the kept test\'s model and scores on the diagram; refused before one is kept', () => {
