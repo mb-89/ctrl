@@ -2,6 +2,12 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: one servo motor, its errors as detail ([input 18](../input/2026-10-25-18-servo-motor-detail.md))
+
+The person: "make them high detail toggles in our servo motor ... the servo motor can also run speed controlled ... we show them in the spectrogram thing, but we could also just increase the level of the servos of the robot, and then the same errors would show up in the robot too ... it would also be reuse. So think about that."
+- **Direction (being designed):** one reusable servo motor component, openable like every model, used by the DC motor examples (position), the encoder example (speed) and the PUMA's six joints (geared, current drive). Its non-idealities (the encoder's 1× and 2× angle errors, torque ripple, the shaft resonance, noise, and more the research finds) are high-detail switches of that one model; at their neutral values they vanish exactly (as SPICE's added parameters do), so the plain motor is the same model with them off.
+- **Interpretation:** the switches come first, built on the component's mask, and need none of the detail-levels machinery (which stays at the end of the backlog); when levels come, a level is a named set of these switches. Design: [servo.md](servo.md) (in progress).
+
 ## 2026-10-25 · v2.8: a warning in a limited environment ([input 16](../input/2026-10-25-16-limited-environment-banner.md))
 
 The person: the page will be put into SharePoint, whose HTML preview is a sandbox; "if you detect that you're running in a sandbox, there should be a warning label that's really impossible to miss right below the header ... running in a limited environment ... For optimal performance, please download and run directly in the browser". (Person: "a small thing ... not that important".)
