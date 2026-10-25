@@ -10,15 +10,16 @@ const CH = 6;       // px per character at the diagram's 10 px monospace
 const LINE = 11;    // px between the lines of a block
 
 // Draws the running variant of a Controller or Observer block into el.
-// lib: the block's library; names: what feeds each input.
-export function drawStructure(el, block, lib, names) {
+// lib: the block's library; names: what feeds each input; values: what a
+// designed variant's design computed (its status's values), if it has any.
+export function drawStructure(el, block, lib, names, values = null) {
   const v = block.variants[block.variant ?? 0];
   let d = null;
-  try { d = describeVariant(normalizeVariant(v, 'variant', lib), { inputs: names, Ts: block.params.Ts, def: lib[v.type] }); } catch { d = null; }
+  try { d = describeVariant(normalizeVariant(v, 'variant', lib), { inputs: names, Ts: block.params.Ts, def: lib[v.type], values }); } catch { d = null; }
   if (!d) { el.hidden = true; el.innerHTML = ''; return; }
   el.hidden = false;
   const svg = structureSvg(d);
-  el.innerHTML = `<figcaption><h4 class="glabel">What it does</h4><span>faint: 0 or off · click to enlarge</span></figcaption>${svg}`;
+  el.innerHTML = `<figcaption><h4 class="label">What it does</h4><span class="hint">faint: 0 or off · click to enlarge</span></figcaption>${svg}`;
   el.tabIndex = 0;
   el.setAttribute('role', 'button');
   el.setAttribute('aria-label', `What ${v.name} does: a diagram; click to enlarge`);
@@ -31,13 +32,13 @@ let big = null;
 function enlarge(svg, name) {
   if (!big) {
     big = document.createElement('div');
-    big.className = 'ctdiag-big';
+    big.className = 'overlay ctdiag-big';
     big.hidden = true;
     document.body.append(big);
     big.addEventListener('click', () => { big.hidden = true; });
     window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !big.hidden) { big.hidden = true; e.stopImmediatePropagation(); } }, true);
   }
-  big.innerHTML = `<figure><figcaption><b>${esc(name)}</b> · what it does</figcaption>${svg}<figcaption>Hover a block for what it is. Click or Esc to close.</figcaption></figure>`;
+  big.innerHTML = `<figure class="dialog dialog-wide"><figcaption class="note"><b>${esc(name)}</b> · what it does</figcaption>${svg}<figcaption class="hint">Hover a block for what it is. Click or Esc to close.</figcaption></figure>`;
   big.hidden = false;
 }
 

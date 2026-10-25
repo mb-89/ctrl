@@ -6,7 +6,7 @@
 // host's save adapter.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildHtml } from '../build.mjs';
+import { buildHtml, vendorBlock } from '../build.mjs';
 
 const FORBIDDEN = [
   /github|gitlab|bitbucket/i, /mb-89/i, /markus/i, /gmail/i, /[\w.+-]+@[\w-]+\.[a-z]{2,}/i,
@@ -16,8 +16,21 @@ const FORBIDDEN = [
 ];
 const snippet = (s, m) => s.slice(Math.max(0, m.index - 60), m.index + 60).replace(/\s+/g, ' ');
 
+// The vendored renderer (src/vendor/three) keeps its licence and its text as
+// they are; it is checked against its checksums (test/vendor.test.mjs). Only
+// that block, exactly as the build makes it, is set aside: all the rest of
+// the page, our own text, gets the full check.
+const VENDOR = vendorBlock();
+function ownText(name, html) {
+  const at = html.indexOf(VENDOR);
+  assert.ok(at > 0, `${name}: the vendor block is the build's`);
+  const rest = html.slice(0, at) + html.slice(at + VENDOR.length);
+  assert.equal(rest.indexOf(VENDOR), -1, `${name}: a second vendor block`);
+  return rest;
+}
+
 test('the built page carries no provenance (names, accounts, repositories, sessions, paths, conversation quotes)', () => {
-  const pages = { standalone: buildHtml(), hosted: buildHtml({ fragment: true }), exported: buildHtml({ project: { title: 'x' } }) };
+  const pages = Object.fromEntries(Object.entries({ standalone: buildHtml(), hosted: buildHtml({ fragment: true }), exported: buildHtml({ project: { title: 'x' } }) }).map(([k, v]) => [k, ownText(k, v)]));
   for (const [name, html] of Object.entries(pages)) {
     for (const re of FORBIDDEN) {
       const m = re.exec(html);
@@ -27,4 +40,14 @@ test('the built page carries no provenance (names, accounts, repositories, sessi
   // The standalone page does not even name the host it was first shown in.
   assert.equal(/claude/i.exec(pages.standalone), null, 'the standalone page mentions the host');
   assert.ok(!/\/\/ ---- ui\//.test('') && pages.standalone.includes('\n// ---- ui/'), 'module markers stay (the live worker finds the core by them)');
+});
+
+test('dist holds what the build makes and nothing else', async () => {
+  // An archive of the source once sat there, with its .git folder: logs with
+  // a name, an e-mail address and a session link, which no page check saw.
+  const { readdirSync } = await import('node:fs');
+  const dist = new URL('../dist/', import.meta.url);
+  assert.deepEqual(readdirSync(dist).sort(), ['artifact.html', 'hil-plant', 'loop-tuner.html']);
+  const plant = readdirSync(new URL('hil-plant/', dist));
+  assert.deepEqual(plant.filter((f) => !/^(README\.txt|hil_plant\.py|loop-tuner-core\.js|runme\.(sh|cmd|ps1))$/.test(f)), [], 'the plant\'s files only');
 });

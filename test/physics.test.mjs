@@ -16,7 +16,9 @@ function run(type, p, { T, h = 1e-3, u = () => 0, X0, watch }) {
   const n = typeof ode.n === 'function' ? ode.n(p) : ode.n;
   const X = Float64Array.from(X0 ?? ode.init(p)), Xt = new Float64Array(n);
   const k = [1, 2, 3, 4].map(() => new Float64Array(n));
-  const f = (t, x, d) => ode.f(x, 0, u(t, x), p, d);
+  // The rate function the compile uses: ode.make computes the constants once.
+  const rates = ode.make(p);
+  const f = (t, x, d) => rates(x, 0, u(t, x), d);
   for (let i = 0, t = 0; i < Math.round(T / h); i++, t += h) {
     watch?.(t, X);
     f(t, X, k[0]);
@@ -157,4 +159,71 @@ test("the mass–spring–damper's energies on the scope balance the work done a
     assert.ok(Math.abs(E - E0 - work) < 2e-4 * Math.max(1e-3, Math.abs(E)) + 1e-6, `t ${t[k]}: E ${E} vs work ${work}`);
   }
   assert.ok(Math.abs(s.Ekin[100] - 0.5 * s.v[100] ** 2) < 1e-12 && Math.abs(s.Epot[100] - 0.5 * 25 * s.x[100] ** 2) < 1e-12);
+});
+
+test('a Dead time delays its input by exactly L: a held u, and a smooth one', async () => {
+  const { simulateSystem } = await import('../src/core/sim.js');
+  // A Controller's u is held between its samples: it steps at 0.04 s, comes
+  // out of a 0.1 s dead time at 0.14 s, and integrates to 0.16 by 0.3 s. The
+  // history was interpolated across each integration step, which moved the
+  // step half a step early (0.170 at a 20 ms step, 0.1625 at 5 ms).
+  const held = {
+    blocks: [
+      { id: 'r', type: 'source', params: { signal: 'r', unit: '1' } },
+      { id: 'c', type: 'controller', params: { inputs: 2, Ts: 0.02 }, variants: [{ name: 'P', type: 'pid', params: { Kp: 1 } }] },
+      { id: 'del', type: 'delay', params: { L: 0.1, y0: 0 } },
+      { id: 'int', type: 'integrator', params: { K: 1 } },
+      { id: 'y', type: 'sink', params: { name: 'y', unit: '1' } },
+    ],
+    wires: [{ from: 'r', to: 'c' }, { from: 'c', to: 'del' }, { from: 'del', to: 'int' }, { from: 'int', to: 'y' }],
+  };
+  const step = { r: { period: 5, components: [{ type: 'step', params: { amplitude: 1, time: 0.04 } }] } };
+  for (const sampleTime of [0.02, 0.005]) {
+    const res = simulateSystem(held, step, { duration: 0.4, sampleTime });
+    const at = (t) => res.signals.y[res.t.findIndex((x) => x >= t - 1e-9)];
+    assert.ok(Math.abs(at(0.3) - 0.16) < 1e-9, `step ${sampleTime}: ${at(0.3)}, not 0.16`);
+    assert.ok(Math.abs(at(0.14)) < 1e-9, `step ${sampleTime}: nothing before 0.14 s (${at(0.14)})`);
+  }
+  // A smooth input (a ramp from a Source) comes out the same ramp L later.
+  const ramp = {
+    blocks: [
+      { id: 'r', type: 'source', params: { signal: 'r', unit: '1' } },
+      { id: 'del', type: 'delay', params: { L: 0.1, y0: 0 } },
+      { id: 'int', type: 'integrator', params: { K: 1 } },
+      { id: 'y', type: 'sink', params: { name: 'y', unit: '1' } },
+    ],
+    wires: [{ from: 'r', to: 'del' }, { from: 'del', to: 'int' }, { from: 'int', to: 'y' }],
+  };
+  const res = simulateSystem(ramp, { r: { period: 5, components: [{ type: 'ramp', params: { amplitude: 1, time: 0, rise: 1 } }] } }, { duration: 0.4, sampleTime: 0.01 });
+  const k = res.t.findIndex((x) => x >= 0.3 - 1e-9);
+  // ∫ from 0.1 to 0.3 of (t − 0.1) dt = 0.02
+  assert.ok(Math.abs(res.signals.y[k] - 0.02) < 1e-9, `ramp: ${res.signals.y[k]}, not 0.02`);
+  // The older loop (a project with candidates: controller, actuator, plant
+  // with its dead time, sensor) took its record before the new u, so its
+  // held step came half a step late (0.150 at Ts = 20 ms).
+  const { simulate } = await import('../src/core/sim.js');
+  const { normalizeReference } = await import('../src/core/signals.js');
+  const loop = {
+    reference: normalizeReference(step.r),
+    controller: { type: 'PID', params: { Kp: 1, Ki: 0, Kd: 0, Tf: 0.05, b: 1, c: 0 } },
+    actuator: { type: 'ideal', params: {} }, disturbance: { type: 'none', params: {} },
+    plant: { type: 'tf', params: { num: [1], den: [1, 0], delay: 0.1 } },
+    sensor: { type: 'ideal', params: {} }, noise: { type: 'none', params: {} },
+  };
+  for (const Ts of [0.02, 0.005]) {
+    const v1 = simulate(loop, { duration: 0.4, sampleTime: Ts }, { openLoop: true });
+    assert.ok(Math.abs(v1.y[Math.round(0.3 / Ts)] - 0.16) < 1e-9, `older loop, Ts ${Ts}: ${v1.y[Math.round(0.3 / Ts)]}, not 0.16`);
+  }
+});
+
+test('the conical tank drains when more is drawn off than pumped in, until it is empty', () => {
+  // The tank takes the net flow q (pump less draw-off): a draw-off above the
+  // pump's flow was dropped (max(0, q)).
+  const p = params('conicalTank', { a: 0, h0: 0.5 }), q = -0.01;
+  const vol = (h) => { const r = p.r0 + ((p.R - p.r0) * h) / p.H; return (Math.PI * h * (p.r0 * p.r0 + p.r0 * r + r * r)) / 3; };
+  let X = run('conicalTank', p, { T: 2, u: () => q });
+  assert.ok(Math.abs(vol(0.5) - vol(X[0]) - 0.02) < 1e-9, `drained ${vol(0.5) - vol(X[0])} m³, not 0.02`);
+  X = run('conicalTank', p, { T: 60, h: 1e-2, u: () => q });
+  const y = [0]; diagramBlockDef('conicalTank').ode.out(X, 0, p, y);
+  assert.ok(y[0] >= 0 && y[0] < 1e-3, `empty, not below: h = ${y[0]}`);
 });

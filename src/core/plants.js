@@ -3,9 +3,15 @@
 // position x, …) and on the scope, and its view shows the motion
 // (design/output/system-library.md). Each runs 5 s and opens running, on its
 // view in the Plant tab (ui). The controlled ones grow in difficulty: a PID
-// on a motor, a gain-scheduled PI on a tank, an energy (Lyapunov) swing-up of a
-// pendulum, state feedback on a triple pendulum. Each has a reference r and a
-// disturbance d, and a Controller block whose variants can be flipped.
+// on a motor, a gain-scheduled PI on a tank, an energy (Lyapunov) swing-up of
+// a pendulum, a swing-up of a triple pendulum planned in the page. Each has a
+// reference r and a disturbance d, and a Controller block whose variants can
+// be flipped.
+//
+// Only inputs are stored here: physics, hand gains (PID, the energy pump),
+// and the weights, levels and limits of designed variants. Every gain,
+// table and start value those compute comes from the plant, in the page
+// (design/output/designs.md).
 
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
@@ -123,15 +129,15 @@ function cartView(name, rods, caption, box) {
   };
 }
 
-// Cart–pole gains: discrete LQR (Ts = 10 ms) at the upright rest, for the
-// outputs in block order (x, θ…, v, ω…); see design/output/system-library.md.
-const K_SINGLE = [-9.177, -63.18, -10.33, -13.34];
-const K_TRIPLE = [-6.9896, -497.8, 1400.5, -1011.7, -12.018, -18.079, 79.602, -102.41];
-const K_TRIPLE_GENTLE = [-2.3, -417, 1050, -686, -4.496, -14.83, 62.84, -67.32];
+// LQR weights for the cart–poles, one per measurement (x, θ…, v, ω…): the
+// cart's position, the angles, the rates.
+const Q_SINGLE = [10, 50, 1, 1];
+const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 
 export const EXAMPLE_PLANTS = [
   {
     name: 'Mass–spring–damper',
+    summary: 'A mass on a spring and a damper, pulled down once; no controller. Change the spring or the damping and watch it swing and settle: how stiffness and damping shape a response.',
     notes: 'A 1 kg mass hangs on a spring (25 N/m) and a damper (0.5 N·s/m). At 0.1 s a force F = 1 N pulls it down: it drops about 40 mm and swings at 0.8 Hz while it settles, its energy moving between motion (Ekin) and spring (Epot). No controller.',
     signals: { F: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
     scope: { channels: channels('F', 'x', 'Ekin', 'Epot') },
@@ -181,6 +187,7 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'DC motor, position control',
+    summary: 'A motor turning its shaft to a commanded angle against a load. Its controller starts too aggressive: switch to PD or PID, or tune it, and see what P, I and D each do.',
     notes: 'A PID controls the shaft angle of a DC motor; the reference r jumps between 0 and 2 rad, and a load torque d brakes the shaft at 3.2 s. The controller it starts with is too aggressive: the shaft overshoots and rings. Flip the Controller tab to PD or PID with prefilter to see it settle, or tune it yourself.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 2, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
@@ -199,7 +206,8 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Following a sine (XY)',
-    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line. PID + feedforward adds a velocity feedforward Kv, set by hand, so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
+    summary: 'The motor following a slow sine, drawn as error against reference. Step through P, PD, PID and feedforward: why feedback alone lags a moving target, and what feedforward adds.',
+    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line.\n\nPID + feedforward adds a velocity feedforward Kv that the page computes from the motor (the voltage per rad/s its inverse needs, plus the PID\'s Kd, which the derivative on the angle takes away), so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time. Try its Feedforward choice "and acceleration": Ka from the motor\'s inertia flattens the figure about four times more.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'sine', params: { amplitude: 1, frequency: 0.2 } }] },
       d: { period: PERIOD, components: [] },
@@ -210,17 +218,21 @@ export const EXAMPLE_PLANTS = [
       { name: 'P', type: 'pid', params: { Kp: 3, umin: -12, umax: 12 } },
       { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
       { name: 'PID', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, umin: -12, umax: 12 } },
-      // Kv set by hand: raised until the figure lay flat.
-      { name: 'PID + feedforward', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, Kv: 1.7, umin: -12, umax: 12 } },
+      // The same PID, its feedforward computed from the motor: Kv = Ke + R·b/Kt
+      // (0.7) + Kd (1) = 1.7, the velocity term only (order 1).
+      { name: 'PID + feedforward', type: 'pidFF', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, order: '1', umin: -12, umax: 12 } },
     ]),
     views: motorViews(),
   },
   {
     // Sliding mode on the library motor (design/research/sliding-mode.md):
     // three variants, each showing one thing; the gains are design inputs
-    // (λ, φ, limits) and hand gains (K, k1, k2), nothing computed from the plant.
+    // (λ, φ, limits) and hand gains (K, k1). k2 = 44 is Levant's 1.1·L/β with
+    // this motor's β = Kt/(J·R) and a guessed L: derived from the plant, an
+    // open question for the person (roadmap).
     name: 'DC motor, sliding mode',
-    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs). To read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides. Relay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time. Try: open Motor and triple J (rotor den [0.06, 0.1]): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (den [0.001, 1]): the relay chatters at 250 Hz and makes about five times the heat.',
+    summary: 'The motor under sliding-mode control, on its phase portrait. Compare the ideal relay, a boundary layer and super-twisting: a response the load cannot change, and what chattering costs.',
+    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: open Motor and triple J (rotor den [0.06, 0.1]): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (den [0.001, 1]): the relay chatters at 250 Hz and makes about five times the heat.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
       d: { period: PERIOD, components: [pulse(1, 3.2, 0.5)] },
@@ -240,7 +252,8 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Encoder errors and torque ripple',
-    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing. Up there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB. Try FFT mode, and a notch filter on the channel.',
+    summary: 'A motor speeding up with encoder errors, torque ripple and a shaft resonance, in the spectrogram. Change the colour scale, try FFT or a notch: tell errors that follow the speed from a resonance, and spot aliasing.',
+    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing.\n\nUp there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB.\n\nTry FFT mode, and a notch filter on the channel.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'ramp', params: { amplitude: 300, time: 0.5, rise: 4 } }] },
     },
@@ -293,7 +306,8 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Conical tank, gain scheduling',
-    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The gain-scheduled PI looks its gains up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
+    summary: 'A tank that widens upwards: quick when nearly empty, slow when full. Compare a gain-scheduled PI with fixed ones: why one set of gains cannot fit a plant that changes.',
+    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other.\n\nThe page computes the PI gains from the tank itself at each level (pole cancellation), and the gain-scheduled PI looks them up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
     signals: {
       r: { period: PERIOD, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }] },
       d: { period: PERIOD, components: [pulse(0.15, 2.2, 0.5)] },
@@ -304,15 +318,18 @@ export const EXAMPLE_PLANTS = [
       blocks: [
         src('r', 30, 112, 'm'),
         src('d', 300, 220, 'm³/s'),
-        // PI by pole cancellation for a 0.25 s closed loop at level h:
-        // Kp = A(h) / 0.25, Ki = a √(2g) / (2 √h · 0.25); u0 balances the outlet at 0.15 m.
+        // PIs by pole cancellation for a 0.25 s closed loop, computed from
+        // the tank at these levels; each starts in balance at the start level.
+        // The top level is 0.95 m, not the brim: at H = 1 m the tank
+        // overflows, so its slope differs left and right there (decisions.md).
         ctrl(130, 90, 2, 0.02, [
-          { name: 'Gain-scheduled PI', type: 'gainScheduled', params: { at: [0.1, 0.25, 0.5, 0.75, 1], Kp: [0.113, 0.332, 0.95, 1.887, 3.142], Ki: [2.801, 1.772, 1.253, 1.023, 0.886], u0: 0.172, Tr: 0.1, umin: 0, umax: 3 } },
-          { name: 'PI tuned for full', type: 'pid', params: { Kp: 2.112, Ki: 0.99, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
-          { name: 'PI tuned for empty', type: 'pid', params: { Kp: 0.173, Ki: 2.287, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
+          { name: 'Gain-scheduled PI', type: 'scheduledPI', params: { at: [0.1, 0.25, 0.5, 0.75, 0.95], Tcl: 0.25, Tr: 0.1, umin: 0, umax: 3 } },
+          { name: 'PI tuned for full', type: 'scheduledPI', params: { at: [0.8], Tcl: 0.25, umin: 0, umax: 3 } },
+          { name: 'PI tuned for empty', type: 'scheduledPI', params: { at: [0.15], Tcl: 0.25, umin: 0, umax: 3 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
-        { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: 0.172 }, x: 320, y: 96 },
+        // The pipe was already flowing: before 0.1 s it delivers what the pump gives at t = 0.
+        { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: null }, x: 320, y: 96 },
         { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
         { id: 'tank', type: 'conicalTank', name: 'tank', params: { r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }, x: 510, y: 90 },
         sink('h', 720, 106, 'm'),
@@ -341,7 +358,8 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Pendulum swing-up',
-    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with state feedback and holds it; at 3.5 s it is pushed (d). Flip to "State feedback only" to see why the swing-up is needed.',
+    summary: 'A pendulum below a cart, swung up and balanced. Compare with LQR alone, and push it: energy-based control brings it near the top, a linear controller computed from the cart and pole holds it there.',
+    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with LQR, its gains computed from the cart and pole, and holds it; at 3.5 s it is pushed (d). Flip to "LQR only" to see why the swing-up is needed.',
     signals: {
       r: { period: PERIOD, components: [] },
       d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
@@ -353,8 +371,8 @@ export const EXAMPLE_PLANTS = [
         src('r', 30, 112, 'm'),
         src('d', 300, 200, 'N'),
         ctrl(130, 80, 5, 0.01, [
-          { name: 'Swing-up + state feedback', type: 'swingUp', params: { kE: 3, kx: 8, kv: 5, l: 0.5, g: 9.81, thetaS: 0.4, K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
-          { name: 'State feedback only', type: 'stateFeedback', params: { K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
+          { name: 'Swing-up + LQR catch', type: 'swingUpLqr', params: { kE: 3, kx: 8, kv: 5, thetaS: 0.4, Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
+          { name: 'LQR only', type: 'lqr', params: { Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 104 },
@@ -372,24 +390,26 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Triple pendulum',
-    notes: 'Three rods balanced on top of each other on a cart, held up by state feedback from all eight states (positions, angles and their rates; gains from LQR). It starts with the lowest rod tilted 3°, is pushed at 1 s (d), and the cart is moved 0.5 m at 2.5 s (r). Flip to the gentle LQR to see a softer, slower controller.',
+    summary: 'Three rods hanging below a cart, swung up by a plan the page computes, then held by LQR. Push it, or flip to LQR only: why a controller for the top alone cannot get there.',
+    notes: 'Three rods hang below a cart. When the system loads, the page plans a swing-up from the cart and rods themselves; until the plan is ready (a few seconds, its progress beside the title) the rods hang.\n\nThe plan is a force that brings all three up in 2.4 s, followed with time-varying LQR, then LQR holds them. At 3.5 s the cart is pushed (d). Flip to "LQR only" to see that a controller for the top alone cannot get there.',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 0.5, time: 2.5 } }] },
-      d: { period: PERIOD, components: [pulse(4, 1, 0.1)] },
+      r: { period: PERIOD, components: [] },
+      d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
     },
-    scope: { channels: channels('r', 'x', 'theta1', 'F') },
+    scope: { channels: channels('x', 'theta1', 'F', 'd') },
     ui: ui('Cart and triple pendulum'),
     diagram: {
       blocks: [
         src('r', 30, 132, 'm'),
         src('d', 300, 260, 'N'),
+        // The plan may use 75 % of the ±40 N, leaving the rest to the feedback.
         ctrl(130, 70, 9, 0.01, [
-          { name: 'LQR', type: 'stateFeedback', params: { K: K_TRIPLE, kr: K_TRIPLE[0], umin: -40, umax: 40 } },
-          { name: 'LQR, gentle', type: 'stateFeedback', params: { K: K_TRIPLE_GENTLE, kr: K_TRIPLE_GENTLE[0], umin: -40, umax: 40 } },
+          { name: 'Planned swing-up + TV-LQR', type: 'trajectory', params: { T: 2.4, segments: 12, planShare: 0.75, Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
+          { name: 'LQR only (cannot swing up)', type: 'lqr', params: { Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },
-        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: 0.05, theta20: 0, theta30: 0 }, x: 400, y: 60 },
+        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }, x: 400, y: 60 },
         sink('x', 640, 64, 'm'), sink('theta1', 640, 100, 'rad'), sink('theta2', 640, 136, 'rad'), sink('theta3', 640, 172, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
@@ -403,7 +423,7 @@ export const EXAMPLE_PLANTS = [
       { len: 0.25, angle: '-theta1' },
       { len: 0.25, angle: '-(theta2 - theta1)' },
       { len: 0.25, angle: '-(theta3 - theta2)' },
-    ], 'x {x:5.2} m   θ1 {theta1*180/pi:5.1}°   θ2 {theta2*180/pi:5.1}°   θ3 {theta3*180/pi:5.1}°   F {F:5.1} N', [-1.3, -0.4, 1.3, 1.1])],
+    ], 'x {x:5.2} m   θ1 {theta1*180/pi:6.1}°   θ2 {theta2*180/pi:6.1}°   θ3 {theta3*180/pi:6.1}°   F {F:5.1} N', [-1.3, -0.8, 1.3, 1.1])],
   },
   {
     // Made for the Auto-tune tab: a classic process (three lags and a dead
@@ -411,6 +431,7 @@ export const EXAMPLE_PLANTS = [
     // demo fits 5 s. The gains are hand-picked to be poor; the tab computes
     // better ones from the plant.
     name: 'Oven, badly tuned',
+    summary: 'An oven with a poorly tuned temperature controller and a dead time. It opens on Auto-tune: press Start and watch automatic tuning remove the ringing; without anti-windup, see integrator windup.',
     notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled to fit 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration. The variant without anti-windup has the same gains, but its integral winds up while the heater is full on: the first step overshoots to 67 °C instead of 52 °C.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }] },
@@ -460,43 +481,72 @@ export const EXAMPLE_PLANTS = [
       ],
     }],
   },
-  // Live mode (design/output/hil.md): the plant is hil_plant.py, outside the
-  // page; the External plant block's ports match what it describes. The
-  // controller gains are chosen by hand: a P that gravity defeats, then better.
+  // The DC motor swinging an unbalanced arm that hil_plant.py simulated by
+  // hand until the simulator ran the library (design/output/hil-simulator.md
+  // §6): now the example plant's default model, and a system of its own.
+  //   armature 1/(L·s + R)   R = 2 Ω, L = 4 mH; out: the current i
+  //   K (= Ke)               0.1 N·m/A = 0.1 V·s/rad, once (Ke follows K)
+  //   rotor 1/(J·s + b)      J = 2.5e-3 kg·m², b = 2e-3 N·m·s/rad
+  //   Coulomb friction       Tc·tanh(ω/0.01), Tc = 0.01 N·m
+  //   gravity                mgl·sin(angle), mgl = 0.1 N·m; angle 0 hangs down
   {
-    name: 'HIL: external motor',
-    notes: 'The plant runs outside this page: hil_plant.py, a DC motor swinging an unbalanced arm, simulated in real time at 100 Hz on your computer. Under Live, get the script, run it with "uv run hil_plant.py" and press Connect; then tune the controller against it while it runs. The P it starts with leaves the arm short of r (gravity pulls it back); flip to PD or PID. A load torque d pushes the arm at 3.6 s. Offline the plant reads 0.',
+    name: 'DC motor with an unbalanced arm',
+    summary: 'A motor swinging an arm that gravity pulls down, with friction: the plant the example HIL simulator runs. Compare P with PID and see why holding against gravity needs integral action.',
+    notes: 'A DC motor swings an arm with an unbalanced mass: gravity pulls it down with mgl·sin(angle), Coulomb and viscous friction brake it, and the motor has 12 V. To hold the arm out sideways the controller needs integral action (gravity leaves a P or PD short of r). It is the plant the example HIL simulator runs by default, there varied by up to 15 % and unknown to the page; here it is open. Flip to "P, a first guess" to see the offset gravity leaves; open Motor and arm to see the physics.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
-      d: { period: PERIOD, components: [pulse(0.1, 3.6, 0.6)] },
+      load: { period: PERIOD, components: [pulse(0.05, 3.5, 0.3)] },
     },
-    scope: { channels: channels('r', 'angle', 'V', 'd') },
-    ui: { ...ui('Arm'), setup: 0.36 },  // Live adds a row to Run Control
-    tags: [{ label: 'Nonlinear', kind: 'plant' }],  // the arm: gravity and Coulomb friction, outside the page
+    scope: { channels: channels('r', 'angle', 'V', 'current') },
+    ui: ui('Arm'),
     diagram: {
       blocks: [
-        src('r', 30, 156, 'rad'),
-        src('d', 230, 250, 'N·m'),
-        ctrl(130, 150, 2, 0.01, [
-          { name: 'P, untuned', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
-          { name: 'PD', type: 'pid', params: { Kp: 6, Kd: 0.6, Tf: 0.01, umin: -12, umax: 12 } },
-          { name: 'PID with prefilter', type: 'pid', params: { Kp: 10, Ki: 20, Kd: 0.6, Tf: 0.01, Tr: 0.1, umin: -12, umax: 12 } },
+        src('r', 30, 112, 'rad'),
+        src('load', 180, 230, 'N·m'),
+        ctrl(130, 90, 2, 0.01, [
+          { name: 'PID', type: 'pid', params: { Kp: 10, Ki: 20, Kd: 0.6, Tf: 0.01, umin: -12, umax: 12 } },
+          { name: 'P, a first guess', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         {
-          id: 'motor', type: 'external', name: 'motor', x: 340, y: 96,
-          params: { url: 'ws://127.0.0.1:8765', rate: 100, inputs: ['V', 'load'], inUnits: ['V', 'N·m'], min: [-12, -0.2], max: [12, 0.2], safe: [0, 0], outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'] },
+          id: 'motor', type: 'subsystem', name: 'Motor and arm', params: {}, x: 330, y: 96,
+          diagram: {
+            blocks: [
+              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 330, y: 300 },
+              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+              { id: 'arm', type: 'tf', name: 'armature 1/(Ls + R)', params: { num: [1], den: [0.004, 2], delay: 0 }, x: 190, y: 96 },
+              sink('current', 360, 20, 'A'),
+              { id: 'kt', type: 'gain', name: 'K (= Ke)', params: { K: 0.1 }, x: 370, y: 100 },
+              { id: 'tsum', type: 'sum', params: { signs: '+--+' }, x: 460, y: 104 },
+              { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.0025, 0.002], delay: 0 }, x: 530, y: 96 },
+              { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 680, y: 96 },
+              { id: 'th', type: 'outport', name: 'angle', params: { port: 1 }, x: 820, y: 112 },
+              { id: 'w', type: 'outport', name: 'speed', params: { port: 2 }, x: 820, y: 30 },
+              { id: 'ke', type: 'gain', name: 'Ke (= K)', params: { K: 0.1 }, x: 370, y: 380, flip: true },
+              { id: 'sgn', type: 'fcn', name: 'Coulomb tanh(ω/0.01)', params: { expr: 'tanh(u/0.01)' }, x: 530, y: 220, flip: true },
+              { id: 'tc', type: 'gain', name: 'Tc', params: { K: 0.01 }, x: 400, y: 220, flip: true },
+              { id: 'sin', type: 'fcn', name: 'gravity sin(angle)', params: { expr: 'sin(u)' }, x: 680, y: 300, flip: true },
+              { id: 'mgl', type: 'gain', name: 'mgl', params: { K: 0.1 }, x: 540, y: 300, flip: true },
+            ],
+            wires: [
+              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'current' }, { from: 'kt', to: 'tsum' },
+              { from: 'sgn', to: 'tc' }, { from: 'tc', to: 'tsum:1' }, { from: 'mgl', to: 'tsum:2' }, { from: 'load', to: 'tsum:3' },
+              { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'int' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'rotor', to: 'sgn' },
+              { from: 'ke', to: 'sum:1' }, { from: 'int', to: 'th' }, { from: 'int', to: 'sin' }, { from: 'sin', to: 'mgl' },
+            ],
+          },
         },
-        sink('angle', 600, 98, 'rad'), sink('speed', 600, 134, 'rad/s'), sink('current', 600, 170, 'A'),
+        sink('angle', 600, 98, 'rad'), sink('speed', 600, 30, 'rad/s'),
         sink('V', 330, 20, 'V'),
       ],
       wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'ctrl', to: 'V' },
-        { from: 'motor', to: 'angle' }, { from: 'motor:1', to: 'speed' }, { from: 'motor:2', to: 'current' }, { from: 'motor', to: 'ctrl:1' },
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'load', to: 'motor:1' }, { from: 'ctrl', to: 'V' },
+        { from: 'motor', to: 'angle' }, { from: 'motor:1', to: 'speed' }, { from: 'motor', to: 'ctrl:1' },
       ],
     },
+    // The arm hangs at angle 0 and turns counter-clockwise; the yellow mark is r.
     views: [{
-      // The arm hangs at angle 0 and turns counter-clockwise; the yellow mark is r.
       name: 'Arm', kind: '2d', view: [-1.1, -1.05, 1.1, 1.0],
       shapes: [
         { type: 'circle', cx: 0, cy: 0, r: 0.75, fill: 'panel', stroke: 'muted', lineWidth: 2 },
@@ -507,11 +557,142 @@ export const EXAMPLE_PLANTS = [
           { type: 'circle', cx: 0, cy: -0.6, r: 0.11, fill: 'ch2' },
         ] },
         { type: 'circle', cx: 0, cy: 0, r: 0.12, fill: 'ink' },
-        { type: 'text', x: 0, y: 0.9, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:4.2} N·m', size: 13 },
+        { type: 'text', x: 0, y: 0.9, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {load:4.2} N·m', size: 13 },
       ],
     }],
   },
+  // Live mode (design/output/hil.md): the plant is outside the page and a
+  // black box (input 20): the page knows its interface only, the inputs and
+  // outputs its describe lists (names, units, full scales, hard ranges,
+  // kinds), which the External block keeps (here: what the example plant,
+  // hil_plant.py, describes) and takes anew on Connect. No model, no
+  // disturbance it does not offer, no picture: the Plant tab shows the
+  // interface. The controller is a first guess, not tuned on a model:
+  // tuning needs the plant identified first (identification.md). It opens
+  // stopped: nothing runs until the plant is connected and Run is pressed.
+  {
+    name: 'HIL: an external plant',
+    summary: 'A plant outside the page, connected live (hardware in the loop); the page knows only its interface. Download and run the plant, connect, then identify and tune it: working with a plant you cannot see.',
+    notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Help (?), Live and For agents, has all of it.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
+    },
+    scope: { channels: channels('r', 'angle', 'V', 'current') },
+    ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
+    diagram: {
+      blocks: [
+        src('r', 30, 106, 'rad'),
+        ctrl(130, 100, 2, 0.01, [
+          { name: 'P, a first guess', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
+          { name: 'Off', type: 'off', params: {} },
+        ]),
+        {
+          id: 'plant', type: 'external', name: 'plant', x: 340, y: 96,
+          params: {
+            url: 'ws://127.0.0.1:8765', rate: 100,
+            inputs: ['V'], inUnits: ['V'], min: [-12], max: [12], safe: [0], kinds: ['effort'], measures: [''],
+            outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'], outMin: [-Math.PI, -120, -12], outMax: [Math.PI, 120, 12],
+            ymin: [-2.5, -60, -10], ymax: [2.5, 60, 10],
+            ramp: 10,
+          },
+        },
+        sink('angle', 600, 98, 'rad'), sink('speed', 600, 134, 'rad/s'), sink('current', 600, 170, 'A'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'plant' }, { from: 'ctrl', to: 'V' },
+        { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant', to: 'ctrl:1' },
+      ],
+    },
+    views: [],
+  },
+  // The same in reference mode (the person, settled: both modes): the plant
+  // runs its own controller, with its limits and monitoring; the page sends
+  // the reference and records what comes back, the plant's own u included.
+  // The page's controllers and Auto-tune are not in the loop.
+  {
+    name: 'HIL: an external plant, reference mode',
+    summary: 'An external plant that runs its own controller; the page only sends references and records. Start the plant in reference mode, connect and run: logging a plant that controls itself.',
+    notes: 'An external plant in reference mode: it runs its own controller, with its own limits and monitoring; this page only sends the reference r and records what comes back, the plant\'s own control effort included. The page knows only the interface the plant describes (Plant tab, Interface); what is inside is a black box, identified from what it reports. For logging, and for a plant that controls itself; the page\'s controllers and Auto-tune are not in the loop. Start the example plant with sh runme.sh --mode reference (or runme.cmd --mode reference); then Plant tab, Connect, and Run. Everything else as in HIL: an external plant; Help (?), Live.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
+    },
+    scope: { channels: channels('r', 'angle', 'V', 'current') },
+    ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
+    tags: [{ label: 'Reference mode', kind: 'feature' }],
+    diagram: {
+      blocks: [
+        src('r', 60, 110, 'rad'),
+        {
+          id: 'plant', type: 'external', name: 'plant', x: 240, y: 96,
+          params: {
+            url: 'ws://127.0.0.1:8765', rate: 100,
+            inputs: ['r'], inUnits: ['rad'], min: [-3], max: [3], safe: [0], kinds: ['reference'], measures: ['angle'],
+            outputs: ['angle', 'speed', 'current', 'V'], outUnits: ['rad', 'rad/s', 'A', 'V'], outMin: [-Math.PI, -120, -12, -12], outMax: [Math.PI, 120, 12, 12],
+            ymin: [-2.5, -60, -10, null], ymax: [2.5, 60, 10, null], outKinds: ['measurement', 'measurement', 'measurement', 'effort'],
+            ramp: 10,
+          },
+        },
+        sink('angle', 500, 98, 'rad'), sink('speed', 500, 134, 'rad/s'), sink('current', 500, 170, 'A'), sink('V', 500, 206, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'plant' },
+        { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant:3', to: 'V' },
+      ],
+    },
+    views: [],
+  },
 ];
+
+
+// What the HIL simulator reads of each model (design/output/hil-simulator.md
+// §4): its physical parameters (name, where, unit; same: tied to another, as
+// Ke to Kt), its effects (a block; off, a Gain of 1, pass, or 0, zero) and the
+// ranges it declares for its ports (full scale, hard range; an input's
+// full scale is its limits). The page's
+// simulation never reads these.
+const phys = (name, at, unit, same) => ({ name, at, unit, ...(same ? { same } : {}) });
+const MOTOR_PHYSICS = [
+  phys('R', 'motor/arm.den[1]', 'Ω'), phys('L', 'motor/arm.den[0]', 'H'), phys('Kt', 'motor/kt.K', 'N·m/A'), phys('Ke', 'motor/ke.K', 'V·s/rad', 'Kt'),
+  phys('J', 'motor/rotor.den[0]', 'kg·m²'), phys('b', 'motor/rotor.den[1]', 'N·m·s/rad'),
+];
+const SIMULATOR = {
+  'Mass–spring–damper': { physics: [phys('1/m', 'm.K', '1/kg'), phys('c', 'c.K', 'N·s/m'), phys('k', 'k.K', 'N/m')] },
+  'DC motor, position control': { physics: MOTOR_PHYSICS },
+  'Following a sine (XY)': { physics: MOTOR_PHYSICS },
+  'DC motor, sliding mode': { physics: MOTOR_PHYSICS },
+  'Encoder errors and torque ripple': {
+    physics: [phys('1/R', 'motor/arm.K', 'A/V'), phys('L/R', 'motor/arm.tau', 's'), phys('Kt', 'motor/kt.K', 'N·m/A'), phys('Ke', 'motor/ke.K', 'V·s/rad', 'Kt'),
+      phys('1/b', 'motor/mech.K', 'rad/(N·m·s)'), phys('J/b', 'motor/mech.tau', 's'), phys('ωn', 'shaft.wn', 'rad/s'), phys('ζ', 'shaft.zeta', '1')],
+    effects: [{ name: 'torque ripple', at: 'ripple', off: 'zero' }, { name: 'torque noise', at: 'rough', off: 'pass' }, { name: 'shaft resonance', at: 'shaft', off: 'pass' }, { name: 'encoder errors', at: 'enc', off: 'pass' }],
+  },
+  'Conical tank, gain scheduling': {
+    physics: [phys('r0', 'tank.r0', 'm'), phys('R', 'tank.R', 'm'), phys('H', 'tank.H', 'm'), phys('a', 'tank.a', 'm²'), phys('Td', 'pipe.L', 's')],
+    effects: [{ name: 'pipe dead time', at: 'pipe', off: 'pass' }],
+    ports: { h: { scale: [0, 1.2], hard: [0, 1] } },
+  },
+  'Pendulum swing-up': { physics: [phys('M', 'cart.M', 'kg'), phys('m', 'cart.m', 'kg'), phys('l', 'cart.l', 'm'), phys('b', 'cart.b', 'N·s/m')] },
+  'Triple pendulum': {
+    physics: [phys('M', 'cart.M', 'kg'), ...[1, 2, 3].flatMap((i) => [phys(`m${i}`, `cart.m${i}`, 'kg'), phys(`l${i}`, `cart.l${i}`, 'm')]), phys('b', 'cart.b', 'N·s/m')],
+  },
+  'Oven, badly tuned': {
+    physics: [phys('heater τ', 'heater.tau', 's'), phys('K', 'oven.K', '1'), phys('τ', 'oven.tau', 's'), phys('Td', 'lag.L', 's'), phys('sensor τ', 'tc.tau', 's')],
+    effects: [{ name: 'thermocouple lag', at: 'tc', off: 'pass' }],
+    // An over-temperature trip below what full power reaches (100 °C).
+    ports: { T: { scale: [0, 120], hard: [-10, 95] } },
+  },
+  'DC motor with an unbalanced arm': {
+    physics: [phys('R', 'motor/arm.den[1]', 'Ω'), phys('L', 'motor/arm.den[0]', 'H'), phys('K', 'motor/kt.K', 'N·m/A'), phys('Ke', 'motor/ke.K', 'V·s/rad', 'K'),
+      phys('J', 'motor/rotor.den[0]', 'kg·m²'), phys('b', 'motor/rotor.den[1]', 'N·m·s/rad'), phys('Tc', 'motor/tc.K', 'N·m'), phys('mgl', 'motor/mgl.K', 'N·m')],
+    effects: [{ name: 'Coulomb friction', at: 'motor/sgn', off: 'zero' }],
+    // As the plant has always declared them: what a PID reaches with room to spare.
+    ports: {
+      angle: { scale: [-Math.PI, Math.PI], hard: [-2.5, 2.5] }, speed: { scale: [-120, 120], hard: [-60, 60] }, current: { scale: [-12, 12], hard: [-10, 10] },
+      r: { scale: [-3, 3] }, load: { scale: [-0.2, 0.2] },
+    },
+  },
+};
+for (const e of EXAMPLE_PLANTS) Object.assign(e, SIMULATOR[e.name] ?? {});
 
 // A new project's plant: the reference alone.
 export const EMPTY_PLANT = { blocks: [src('r', 60, 104, '1')], wires: [] };

@@ -1,0 +1,5 @@
+# Detail levels: answers (2026-10-25)
+
+Answers to the four questions at the end of design/output/detail-levels.md.
+
+> So for now, I want previous runs to stay visible. And if I want to compare levels, what I would do is that I would run a number of single runs and compare the traces. So we don't need to change anything about the system. For the global and local levels, I guess the way I want it is I have a global level that sets everything that I didn't set by hand. Then I have a local override where I can locally override the level of an individual block. And then I have a lock on or clear button where I clear the local overrides and everything is put back onto the global level. And then obviously, if I say global level is 4, but one element only has 2 detail levels, then it can only go to level 2. And I think the detail setting, it belongs into the plant. It doesn't belong into the header. In the op-amp example, choose a... I'm not that familiar with what usually have, how op-amps usually misbehave. Choose a behavior that is something that a electrical engineer will be familiar with. I guess it should ring, but I'm not 100% sure. Keep going.

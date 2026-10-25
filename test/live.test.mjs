@@ -4,8 +4,7 @@
 // the live record, CSV/JSON round trips, and the real plant script.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +18,7 @@ import { normalizeProject, evaluateSystem } from '../src/core/project.js';
 import { createRecorder, traceToCsv, traceToJson, traceToCsvParts, traceToJsonParts, parseTrace, traceWindow, sweepStart, refShift, refSteps } from '../src/core/trace.js';
 import { zipFiles, crc32 } from '../src/core/zip.js';
 import { bundleScript } from '../build.mjs';
+import { runPlant, startPlant } from './plant.mjs';
 
 const DESC = {
   protocol: 'loop-tuner-hil/1', name: 'motor', rate_hz: 100, watchdog_cycles: 10,
@@ -30,7 +30,7 @@ const DESC = {
 test('protocol messages: requests, u answers, and what the plant sends', () => {
   assert.deepEqual(JSON.parse(rpcRequest(3, 'describe')), { jsonrpc: '2.0', id: 3, method: 'describe' });
   assert.deepEqual(JSON.parse(uMessage(42, [1.23456789012, NaN])), { jsonrpc: '2.0', method: 'u', params: { seq: 42, u: [1.23456789, null] } });
-  assert.deepEqual(parseMessage('{"jsonrpc":"2.0","method":"y","params":{"seq":7,"t":0.07,"y":[1,"x",2]}}'), { kind: 'y', seq: 7, t: 0.07, y: [1, NaN, 2] });
+  assert.deepEqual(parseMessage('{"jsonrpc":"2.0","method":"y","params":{"seq":7,"t":0.07,"y":[1,"x",2]}}'), { kind: 'y', seq: 7, t: 0.07, y: [1, NaN, 2], applied: null });
   assert.equal(parseMessage('{"jsonrpc":"2.0","method":"y","params":{"t":0.07,"y":[1]}}').kind, 'invalid', 'a y needs its seq');
   assert.deepEqual(parseMessage('{"jsonrpc":"2.0","method":"estop","params":{"reason":"no u for 10 cycles","t":3.1}}'), { kind: 'estop', reason: 'no u for 10 cycles', t: 3.1 });
   assert.deepEqual(parseMessage('{"jsonrpc":"2.0","id":2,"result":{"rate_hz":100}}'), { kind: 'result', id: 2, result: { rate_hz: 100 } });
@@ -88,7 +88,9 @@ const LOOP = (variant = { name: 'PID', type: 'pid', params: { Kp: 3, Ki: 2, Kd: 
 });
 const SIGNALS = {
   r: normalizeReference({ period: 10, components: [{ type: 'step', params: { amplitude: 1, time: 0.05 } }] }),
-  d: normalizeReference({ period: 10, components: [{ type: 'dc', params: { level: 0.05 } }] }),
+  // d is 0 (the load's safe value) at its first instant, so these runs start
+  // without a ramp-in; the ramp-in has tests of its own.
+  d: normalizeReference({ period: 10, components: [{ type: 'step', params: { amplitude: 0.05, time: 0.001 } }] }),
 };
 
 test('live stepping: the u sent is what the controller law gives for the y received', () => {
@@ -100,13 +102,37 @@ test('live stepping: the u sent is what the controller law gives for the y recei
     const { u, values } = runner.step(t, [angle, 0.1]);
     const want = law.step([t >= 0.05 ? 1 : 0, angle]);
     assert.ok(Math.abs(u[0] - want) < 1e-12, `cycle ${k}: ${u[0]} vs ${want}`);
-    assert.equal(u[1], 0.05, 'the load input plays d');
+    assert.equal(u[1], k ? 0.05 : 0, 'the load input plays d');
     assert.deepEqual(values.slice(2), [angle, u[0]]);
   }
   // Out of range or not a number: clamped, or the safe value.
   const wild = createLiveRunner(LOOP({ name: 'P', type: 'pid', params: { Kp: 1000 } }), SIGNALS);
+  wild.step(0, [0, 0]);
   assert.equal(wild.step(0.1, [-1, 0]).u[0], 12);
   assert.equal(wild.step(0.11, [NaN, 0]).u[0], 12, 'a y that is not a number reads 0');
+});
+
+test('live stepping: a Dead time on the page delays the held u exactly, between cycles too', () => {
+  // u steps 0 → 1 at 0.05 s (r's step, angle 0), leaves a 0.05 s dead time at
+  // 0.1 s and is integrated on the page into V: V(t) = t − 0.1. Read across
+  // an integration step, the history moved the step half a step early (V
+  // 0.005 high).
+  const d = normalizeDiagram({
+    blocks: [
+      { id: 'r', type: 'source', params: { signal: 'r' } },
+      { id: 'd', type: 'source', params: { signal: 'd' } },
+      { id: 'c', type: 'controller', params: { inputs: 2, Ts: 0.01 }, variants: [{ name: 'P', type: 'pid', params: { Kp: 1 } }], variant: 0 },
+      { id: 'del', type: 'delay', params: { L: 0.05, y0: 0 } },
+      { id: 'int', type: 'integrator', params: { K: 1 } },
+      { id: 'p', type: 'external', params: externalParams(checkDescription(DESC)) },
+    ],
+    wires: [{ from: 'r', to: 'c' }, { from: 'c', to: 'del' }, { from: 'del', to: 'int' }, { from: 'int', to: 'p' }, { from: 'd', to: 'p:1' }, { from: 'p', to: 'c:1' }],
+  });
+  const runner = createLiveRunner(d, SIGNALS);
+  for (let k = 0; k <= 30; k++) {
+    const t = k * 0.01, { u } = runner.step(t, [0, 0]);
+    assert.ok(Math.abs(u[0] - Math.max(0, t - 0.1)) < 1e-9, `t ${t.toFixed(2)}: V ${u[0]}, not ${Math.max(0, t - 0.1)}`);
+  }
 });
 
 test('live edits: parameters change at the next cycle and keep the state; a new variant restarts', () => {
@@ -116,7 +142,8 @@ test('live edits: parameters change at the next cycle and keep the state; a new 
   const lawParams = { ...normalizeVariant({ type: 'pid', params: p }).params };
   const ref = makeLaw({ type: 'pid', params: lawParams }, 0.01);
   let k = 0;
-  const cycle = () => { const t = k * 0.01; const y = 0.2; k++; return [runner.step(t, [y, 0]).u[0], ref.step([t >= 0.05 ? 1 : 0, y])]; };
+  // y is 0 at the first cycle, where r starts: no ramp-in.
+  const cycle = () => { const t = k * 0.01; const y = k ? 0.2 : 0; k++; return [runner.step(t, [y, 0]).u[0], ref.step([t >= 0.05 ? 1 : 0, y])]; };
   for (let i = 0; i < 20; i++) cycle();
   const edited = LOOP({ name: 'PI', type: 'pid', params: { ...p, Kp: 5 } });
   edited.blocks.find((b) => b.id === 'c').x = 999;   // moving a block changes nothing
@@ -189,7 +216,11 @@ test('the loop answers each y at once, stops answering on its own watchdog, and 
   f.loop.handle({ type: 'reset' });
   await f.tick();
   f.y(16);
-  assert.equal(f.us().at(-1).params.seq, 16, 'answers again after Reset');
+  assert.equal(f.us().length, 5, 'Reset clears the latch; nothing runs until Run');
+  f.loop.handle({ type: 'start' });
+  await f.tick();
+  f.y(17);
+  assert.equal(f.us().at(-1).params.seq, 17, 'answers again after Run');
 });
 
 test('the loop: y before start\'s answer, Run as a fresh run, Stop, and a plant speaking another protocol', async () => {
@@ -339,7 +370,7 @@ test('every controller and observer law reads its parameters at every step (so a
   }
 });
 
-test('live edits of any variant parameter are taken in place; names are cosmetic; a stop shows the safe inputs', () => {
+test('live edits of any variant parameter are taken in place; names are cosmetic; an output that is not a number holds', () => {
   // The review's case: a gain-scheduled PI's output limit, lowered while running.
   const gs = { name: 'GS', type: 'gainScheduled', params: { at: [0, 1], Kp: [5, 5], Ki: [1, 1], umin: -12, umax: 12 } };
   const runner = createLiveRunner(LOOP(gs), SIGNALS);
@@ -360,30 +391,57 @@ test('live edits of any variant parameter are taken in place; names are cosmetic
   const out = r2.step(0.1, [0, 0]);
   assert.equal(out.values[3], 30, 'V: Kp 30 on r = 1, no limit');
   assert.equal(out.u[0], 12, 'sent within the plant\'s 12 V');
-  // Every parameter of every controller type.
+  // Every parameter of every controller type. A designed type's parameters
+  // are inputs to its design: a change designs it again, so the loop is
+  // rebuilt (and a design on a plant outside the page is refused, saying so).
   for (const type of CONTROLLER_TYPES) {
     const v = { name: type, type, params: LAW_PARAMS[type] ?? {} };
-    const r = createLiveRunner(LOOP(v), SIGNALS);
+    let r = createLiveRunner(LOOP(v), SIGNALS);
     r.step(0, [0.1, 0]);
     for (const spec of CONTROLLERS[type].params) {
+      // (After a rebuild the runner holds the edited loop: start each edit from the same one.)
+      if (CONTROLLERS[type].designed) { r = createLiveRunner(LOOP(v), SIGNALS); r.step(0, [0.1, 0]); }
       const d = LOOP(v), c = d.blocks.find((b) => b.id === 'c');
-      c.variants[0].params[spec.key] = other(c.variants[0].params[spec.key], spec);
-      assert.equal(r.update(normalizeDiagram(d), SIGNALS), 'kept', `${type}.${spec.key}`);
+      const was = c.variants[0].params[spec.key], next = other(was, spec);
+      c.variants[0].params[spec.key] = spec.max !== undefined && next > spec.max ? spec.max * 0.9 : next;
+      const changed = JSON.stringify(c.variants[0].params[spec.key]) !== JSON.stringify(was);
+      assert.equal(r.update(normalizeDiagram(d), SIGNALS), CONTROLLERS[type].designed && changed ? 'rebuilt' : 'kept', `${type}.${spec.key}`);
     }
   }
-  // E-stop latched: the plant applies its safe inputs, and the Sink on the
-  // controller's output shows them, not what the controller computes.
+  // A designed variant that does not run is designed when it is switched to:
+  // editing it keeps the running loop and its state (an LQR's R edited
+  // beside a running PID rebuilt the loop, resetting the PID's integral).
+  const two = () => {
+    const d = LOOP();
+    d.blocks.find((b) => b.id === 'c').variants.push({ name: 'LQR', type: 'lqr', params: { Q: [1], R: 1 } });
+    return normalizeDiagram(d);
+  };
+  const beside = createLiveRunner(two(), SIGNALS);
+  beside.step(0, [0.1, 0]);
+  const edit = two();
+  edit.blocks.find((b) => b.id === 'c').variants[2].params.R = 5;
+  assert.equal(beside.update(edit, SIGNALS), 'kept', 'a designed variant that does not run');
+  edit.blocks.find((b) => b.id === 'c').variant = 2;
+  assert.equal(beside.update(edit, SIGNALS), 'rebuilt', 'switched to: designed afresh');
+  const rerun = structuredClone(edit);
+  rerun.blocks.find((b) => b.id === 'c').variants[2].params.R = 7;
+  assert.equal(beside.update(rerun, SIGNALS), 'rebuilt', 'the running designed variant');
+  // An output that is not a number (null on the wire) holds its last number
+  // and is reported, never taken for a measured 0.
   const held = createLiveRunner(LOOP(), SIGNALS);
-  const free = held.step(0.1, [0.1, 0]);
-  assert.ok(Math.abs(free.u[0]) > 0.5);
-  const stopped = held.step(0.11, [0.1, 0], true);
-  assert.deepEqual(stopped.u, [0, 0]);
-  assert.deepEqual(stopped.values.slice(2), [0.1, 0], 'angle as measured, V as applied (safe)');
-  assert.equal(stopped.values[0], 1, 'r plays on');
+  held.step(0, [0, 0]);
+  const free = held.step(0.1, [0.4, 0]);
+  assert.deepEqual(free.missing, []);
+  const gap = held.step(0.11, [NaN, 0]);
+  assert.deepEqual(gap.missing, ['angle']);
+  assert.equal(gap.values[2], 0.4, 'angle holds its last number');
+  assert.deepEqual(held.step(0.12, [0.41]).missing, ['speed'], 'a missing value is not a number either');
 });
 
 test('an observer in a live loop takes parameter edits in place and keeps its estimate', () => {
-  const kalman = { name: 'KF', type: 'kalman', params: { A: [0, 1, 0, 0], B: [0, 1], C: [1, 0], Q: [1, 1], R: [1] } };
+  // A hand observer (a Kalman filter's own numbers come from the plant, and
+  // this plant runs outside the page).
+  const kalman = { name: 'KF', type: 'luenberger', params: { A: [0, 1, 0, 0], B: [0, 1], C: [1, 0], L: [0.5, 10] } };
   const diagram = () => normalizeDiagram({
     blocks: [
       { id: 'r', type: 'source', params: { signal: 'r' } },
@@ -401,7 +459,7 @@ test('an observer in a live loop takes parameter edits in place and keeps its es
   const edited = createLiveRunner(diagram(), SIGNALS), same = createLiveRunner(diagram(), SIGNALS);
   for (let k = 0; k < 30; k++) { edited.step(k * 0.01, [0.5, 0]); same.step(k * 0.01, [0.5, 0]); }
   const d = diagram();
-  d.blocks.find((b) => b.id === 'o').variants[0].params.Q = [1.2, 1.2];
+  d.blocks.find((b) => b.id === 'o').variants[0].params.L = [0.6, 12];
   assert.equal(edited.update(d, SIGNALS), 'kept');
   const xa = edited.step(0.3, [0.5, 0]).values[2], xb = same.step(0.3, [0.5, 0]).values[2];
   const xc = createLiveRunner(diagram(), SIGNALS).step(0.3, [0.5, 0]).values[2];
@@ -412,24 +470,30 @@ test('an observer in a live loop takes parameter edits in place and keeps its es
 test('the plant ships in the bundle; the worker part of the bundle runs on its own', () => {
   const bundle = bundleScript();
   assert.ok(bundle.includes('const __HIL_FILES = {"hil_plant.py":"#!/usr/bin/env python3'));
-  for (const f of ['runme.sh', 'runme.ps1', 'README.txt']) assert.ok(bundle.includes(`"${f}":`), f);
+  for (const f of ['runme.sh', 'runme.cmd', 'runme.ps1', 'README.txt']) assert.ok(bundle.includes(`"${f}":`), f);
   // The worker gets the core modules only: no DOM is touched.
   const cut = bundle.indexOf('\n// ---- ui/');
   const core = new Function(`return ${bundle.slice(0, cut)}\nreturn __mods;\n})();`)();
   assert.equal(typeof core['core/live.js'].liveWorker, 'function');
   const text = readFileSync(new URL('../hil/hil_plant.py', import.meta.url), 'utf8');
-  assert.match(text, /# \/\/\/ script\n# requires-python = ">=3\.9"\n# dependencies = \["websockets>=13"\]\n# \/\/\//, 'PEP 723 metadata, for uv run');
+  assert.match(text, /# \/\/\/ script\n# requires-python = ">=3\.10"\n# dependencies = \["websockets>=13", "mini-racer>=0\.12"\]\n# \/\/\//, 'PEP 723 metadata, for uv run');
   assert.ok(statSync(new URL('../hil/runme.sh', import.meta.url)).mode & 0o100, 'runme.sh is executable');
+  // A click starts them: runme.cmd (CRLF, for cmd.exe) runs runme.ps1; both
+  // runme scripts ask uv for its own Python (a system one may lack tkinter).
+  const cmd = readFileSync(new URL('../hil/runme.cmd', import.meta.url), 'utf8');
+  assert.ok(cmd.split('\n').slice(0, -1).every((l) => l.endsWith('\r')), 'runme.cmd has CRLF line ends');
+  assert.match(cmd, /powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0runme\.ps1" %\*/);
+  for (const f of ['runme.sh', 'runme.ps1']) assert.match(readFileSync(new URL(`../hil/${f}`, import.meta.url), 'utf8'), /uv run --python-preference only-managed hil_plant\.py/, f);
 });
 
 test('hil-plant.zip: the plant with its runme scripts, read back as a zip (by Python when it is here)', (t) => {
   assert.equal(crc32(new TextEncoder().encode('123456789')), 0xcbf43926, 'the standard CRC-32 check value');
-  const names = ['hil_plant.py', 'runme.sh', 'runme.ps1', 'README.txt'];
+  const names = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README.txt'];
   const files = names.map((f) => ({ name: `hil-plant/${f}`, data: readFileSync(new URL(`../hil/${f}`, import.meta.url), 'utf8'), mode: f.endsWith('.sh') ? 0o755 : 0o644 }));
   const zip = zipFiles(files, new Date(2026, 9, 24, 12, 0, 0));
   const v = new DataView(zip.buffer);
   assert.equal(v.getUint32(0, true), 0x04034b50, 'starts with a local file header');
-  assert.equal(v.getUint16(zip.length - 12, true), 4, 'four files in the directory');
+  assert.equal(v.getUint16(zip.length - 12, true), 5, 'five files in the directory');
   const path = join(tmpdir(), `hil-plant-${process.pid}.zip`);
   writeFileSync(path, zip);
   let out;
@@ -442,54 +506,25 @@ test('hil-plant.zip: the plant with its runme scripts, read back as a zip (by Py
   assert.deepEqual(JSON.parse(out), [
     ['hil-plant/hil_plant.py', '0o100644', '#!/usr/bin/e'],
     ['hil-plant/runme.sh', '0o100755', '#!/bin/sh\n# '],
+    ['hil-plant/runme.cmd', '0o100644', '@echo off\r\nr'],
     ['hil-plant/runme.ps1', '0o100644', "# Loop Tuner"],
     ['hil-plant/README.txt', '0o100644', 'Loop Tuner: '],
   ]);
 });
 
-test('the plant script runs its physics and describes itself as the HIL system expects (when python3 is here)', async (t) => {
-  const py = (arg) => execFileSync('python3', [new URL('../hil/hil_plant.py', import.meta.url).pathname, arg]).toString();
-  let out;
-  try { out = py('--check'); } catch (err) {
-    if (err.code === 'ENOENT') { t.skip('no python3'); return; }
-    throw err;
-  }
-  assert.match(out, /^angle 1\.\d+ rad/);
-  const desc = checkDescription(JSON.parse(py('--describe')));
+test('the plant script runs the page\'s model and describes itself as the HIL system expects (when uv can run it here)', async (t) => {
+  const out = runPlant(['--check']);
+  if (out === null) { t.skip('uv with websockets and mini-racer in its cache is not here'); return; }
+  assert.match(out, /^DC motor with an unbalanced arm, nominal, after 5 s of its own controller: angle -?0\.\d+ rad/);
+  const desc = checkDescription(JSON.parse(runPlant(['--describe'])));
   const { SYSTEM_LIBRARY } = await import('../src/core/systems.js');
-  const hil = SYSTEM_LIBRARY.find((s) => s.name === 'HIL: external motor');
+  const hil = SYSTEM_LIBRARY.find((s) => s.name === 'HIL: an external plant');
   const block = normalizeDiagram(hil.plant.diagram).blocks.find((b) => b.type === 'external');
   assert.ok(sameDescription(block.params, desc), 'connecting changes nothing in the library system');
   assert.equal(desc.watchdog, 10);
-  // The plant the page is not told: within ±15 % of nominal, the same for a
-  // seed, a parameter fixed with --set.
-  const script = new URL('../hil/hil_plant.py', import.meta.url).pathname;
-  const probe = "import importlib.util, sys, types; spec = importlib.util.spec_from_file_location('hp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); a = types.SimpleNamespace(vary=0.15, seed=7, set=['J=0.003']); p = m.plant_params(a); print(p == m.plant_params(a), p['J'], all(abs(p[n] / getattr(m.Motor, n) - 1) <= 0.15 for n in m.Motor.PHYSICS if n != 'J'), len(set(p.values())) == len(p))";
-  assert.equal(execFileSync('python3', ['-I', '-B', '-c', probe, script]).toString().trim(), 'True 0.003 True True');
-  assert.throws(() => execFileSync('python3', ['-I', script, '--set', 'X=1', '--describe'], { stdio: 'pipe' }), /--set X=1: one of R, L, k, J, b, Tc, mgl/);
+  // A parameter it does not have is refused with the ones it has.
+  assert.throws(() => runPlant(['--set', 'X=1', '--describe']), /--set X: not a physical parameter of DC motor with an unbalanced arm; its parameters: R, L, K, Ke, J, b, Tc, mgl/);
 });
-
-// Starts hil_plant.py on a free port: with python3 if it has websockets, else
-// with uv from its cache (no network). Resolves { proc, port } or null.
-async function startPlant() {
-  const script = fileURLToPath(new URL('../hil/hil_plant.py', import.meta.url));
-  const port = 20000 + (process.pid % 20000);
-  const ways = [['python3', ['-I', script, '--port', String(port)]], ['uv', ['run', '--offline', '--quiet', script, '--port', String(port)]]];
-  for (const [cmd, args] of ways) {
-    const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    const up = await new Promise((resolve) => {
-      let text = '';
-      const done = (v) => { clearTimeout(timer); resolve(v); };
-      const timer = setTimeout(() => done(false), 20000);
-      proc.on('error', () => done(false));
-      proc.on('exit', () => done(false));
-      proc.stdout.on('data', (b) => { text += b; if (/listening on/.test(text)) done(true); });
-    });
-    if (up) return { proc, port };
-    proc.kill();
-  }
-  return null;
-}
 
 test('hil_plant.py speaks the protocol: describe, the y/u cycle, its watchdog, Reset, Stop and Ctrl+C (when it can run here)', async (t) => {
   if (typeof WebSocket !== 'function') { t.skip('no WebSocket in this Node'); return; }
@@ -499,7 +534,9 @@ test('hil_plant.py speaks the protocol: describe, the y/u cycle, its watchdog, R
   const notes = [], waiting = new Map();
   let id = 0, answer = true, closed = null;
   const call = (method, params) => new Promise((resolve) => { const i = ++id; waiting.set(i, resolve); ws.send(rpcRequest(i, method, params)); });
-  const until = (pred, ms = 2000) => new Promise((resolve, reject) => {
+  // It resolves as soon as pred holds: the long limit only matters on a busy
+  // machine (it hit 2 s at a load of 11 on four cores).
+  const until = (pred, ms = 10000) => new Promise((resolve, reject) => {
     const t0 = Date.now();
     const check = () => { const hit = pred(); if (hit) resolve(hit); else if (Date.now() - t0 > ms) reject(new Error('timed out')); else setTimeout(check, 5); };
     check();
@@ -508,7 +545,7 @@ test('hil_plant.py speaks the protocol: describe, the y/u cycle, its watchdog, R
     const m = JSON.parse(e.data);
     if (m.id !== undefined && waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); return; }
     notes.push(m);
-    if (m.method === 'y' && answer) ws.send(uMessage(m.params.seq, [0, 0]));
+    if (m.method === 'y' && answer) ws.send(uMessage(m.params.seq, [0]));
   };
   ws.onclose = (e) => { closed = e; };
   try {

@@ -35,7 +35,7 @@ The person ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md
   Hovering a coefficient shows its value for this plant (l1·(m1 + m2 + m3) = 0.075).
 - **From outside nothing is lost.** The closed subsystem keeps the same ports (F → x, θ1…θ3, v, ω1…ω3) and the Parameters panel shows the same fields as the old block (M, m1…m3, l1…l3, g, b, start angles): a **mask**. The rates agree with the old block to 1.5·10⁻¹³ (relative), the planned swing-up is the same plan, and it is planned in the same time (median 3.18 s against 3.16 s, §4).
 
-**Double-click "tank" in the Conical tank** and it opens as five ordinary blocks: q → *pump only fills* (qin = max(0, q)) → *net inflow* (Σ, + −) → *level rate* (r = r0 + (R − r0)·h/H; A = π·r²; dh = Q/A) → ∫ *h* [0, H] → Out h, and h → *outlet (Torricelli)* (qout = a·√(2·g·h)) back into the Σ. The tank needs no new part: Equations, Sum and an Integrator with limits.
+**Double-click "tank" in the Conical tank** and it opens as four ordinary blocks: q (the net flow in: pump less draw-off; v2.7.4, a draw-off larger than the pump's flow drains the tank) → *net inflow* (Σ, + −) → *level rate* (r = r0 + (R − r0)·h/H; A = π·r²; dh = Q/A) → ∫ *h* [0, H] → Out h, and h → *outlet (Torricelli)* (qout = a·√(2·g·h)) back into the Σ. The tank needs no new part: Equations, Sum and an Integrator with limits.
 
 **New building blocks** (each with one formula, §1): five Mechanics parts (World, Rail, Hinge, Mass, Rod) and joins; the **Equations** block (the Function block, with several named inputs and outputs); the **Integrator** with a start value, limits, unit and angle flag; **masks** on subsystems (parameters that may be formulas in the mask's names). Rigid-body constraints are what the existing blocks cannot express without an algebraic loop, hence the parts.
 
@@ -175,13 +175,12 @@ The triple has 18 blocks, 7 joins and 9 wires; its port order is today's (F → 
 ```json
 { "blocks": [
     { "id": "q", "type": "inport", "name": "q", "params": { "port": 1 } },
-    { "id": "pump", "type": "fcn", "name": "pump only fills", "params": { "inputs": "q", "eqs": "qin = max(0, q)", "outputs": "qin" } },
     { "id": "net", "type": "sum", "name": "net inflow", "params": { "signs": "+-" } },
     { "id": "rate", "type": "fcn", "name": "level rate", "params": { "inputs": "Q, h", "eqs": "r = r0 + (R - r0)*h/H\nA = pi*r^2\ndh = Q/A", "outputs": "dh" } },
     { "id": "level", "type": "integrator", "name": "h", "params": { "x0": "h0", "min": 0, "max": "H", "unit": "m" } },
     { "id": "outlet", "type": "fcn", "name": "outlet (Torricelli)", "params": { "inputs": "h", "eqs": "qout = a*sqrt(2*g*h)", "outputs": "qout" }, "flip": true },
     { "id": "o_1", "type": "outport", "name": "h", "params": { "port": 1 } } ],
-  "wires": [ { "from": "q", "to": "pump" }, { "from": "pump", "to": "net" }, { "from": "net", "to": "rate" },
+  "wires": [ { "from": "q", "to": "net" }, { "from": "net", "to": "rate" },
              { "from": "level", "to": "rate:1" }, { "from": "rate", "to": "level" }, { "from": "level", "to": "o_1" },
              { "from": "level", "to": "outlet" }, { "from": "outlet", "to": "net:1" } ] }
 ```
@@ -200,7 +199,7 @@ This is main's tank (it overflows at H and stops when dry). The design branch's 
 
 - **Unchanged**: model mode, `el.seen`, structural reduction (carts 4 or 8 states, tank 1), `linearize`, `trim`, `firstOrderFit`, every designed type (`lqr`, `swingUpLqr`, `scheduledPI`, `trajectory`, `kalman`), the planner, `verifyLoop`, snapshots, `linearizeBlock`, `loopModel`. The design statuses read "F → x, θ, v, ω · 4 states (x, θ, v, ω)".
 - **Changes**: the cart–pole's state order is the chain's (positions, then rates); nothing stored depends on it (Q, K and the swing-up's inputs are in measurement order), but six tests assert the old order (§8.6), and a Kalman observer on a cart–pole now estimates (x, θ, v, ω). Labels use `/` as for any block in a subsystem.
-- **A merge item to settle first** (found while measuring): main's tank overflows at H = 1 m and feat/designs schedules a PI at 1 m. At h = H the trim has no slope, and the design fails with "q does not reach h". The same happens with main's block, so it is a merge issue, not this plan's. With the top level at 0.95 m (a design input) all three variants design. The alternative is a trim that takes one-sided slopes at a limit.
+- **A merge item, settled** (found while measuring): main's tank overflows at H = 1 m and feat/designs scheduled a PI at 1 m. At h = H the level's rate has no slope above, and the design fails (on the merged branch: "pole cancellation needs slopes, and the plant has a kink at h = 1 m"). The merge moved the top level to 0.95 m (a design input; decisions v2.7.2), and all three variants design.
 
 ## 4. Speed, measured
 
@@ -245,7 +244,7 @@ The same plan (peak 15.48895 N in both; at sample 100 they differ by 5·10⁻⁸
 | Swing-up | 0.62 → 1.36 | 0.76 → 1.68 | 0.12 → 0.15 | 1.4 → 2.8 kB |
 | Tank | 0.30 → 1.08 | 0.47 → 1.56 | 0.17 → 0.16 | 1.3 → 2.7 kB |
 
-A wheel notch on the triple re-designs and re-simulates in about 35 ms today ([designs.md](designs.md), on feat/designs until it is merged); this adds about 1.4 ms. Most of it is formula resolution, building the mechanism and hashing a larger diagram. Caching parsed formulas by their text would recover part of it; not needed now.
+A wheel notch on the triple re-designs and re-simulates in about 35 ms today ([designs.md](designs.md), the design layer from `feat/designs`); this adds about 1.4 ms. Most of it is formula resolution, building the mechanism and hashing a larger diagram. Caching parsed formulas by their text would recover part of it; not needed now.
 
 ## 5. Agreement, measured
 
@@ -336,7 +335,7 @@ The behaviour test (`core.test.mjs`: the swing-up, the planned triple swing-up w
 ## 9. Implementation steps (each ends with `npm test` green)
 
 0. **Prerequisites and record.**
-   - feat/designs merged into main. Two items for that merge: the tank's top schedule level (§3), and main's `physics.test.mjs`, which calls `ode.f` where feat/designs has `ode.make`.
+   - feat/designs merged with main (done, decisions v2.7.2: the tank's top schedule level is 0.95 m, §3, and `physics.test.mjs` calls `ode.make`).
    - `decisions.md`: the entries in §11.
    - This page's row in the output README (done with this plan).
 1. **Compiler groundwork, no change in results.**

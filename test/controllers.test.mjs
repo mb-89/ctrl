@@ -185,12 +185,34 @@ test('following a sine: PID + feedforward flattens the error figure (σ at least
     return lineFit(res.signals.r, e, Math.round(n * 0.3), n - 1);
   };
   const pid = figure('PID'), ff = figure('PID + feedforward');
+  const figureOf = (variant) => {
+    const p = normalizeProject(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY.find((x) => x.name.startsWith('Following a sine')), SYSTEM_PARTS));
+    p.scope.timebase = autoTimebase(p);
+    const c = p.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+    c.variants.push(variant);
+    c.variant = c.variants.length - 1;
+    const res = evaluateSystem(p);
+    const unit = (x) => ({ r: 'rad', angle: 'rad', V: 'V' })[x];
+    const e = ySignal(res, p.scope, 1, unit), n = res.t.length;
+    return lineFit(res.signals.r, e, Math.round(n * 0.3), n - 1);
+  };
   assert.ok(ff.sigma * 5 < pid.sigma, `σ: PID ${pid.sigma}, PID + feedforward ${ff.sigma}`);
   assert.ok(Math.abs(ff.a) < 0.005 && Math.abs(ff.a) < Math.abs(pid.a) / 5, `the line lies flat: slope ${ff.a} (PID ${pid.a})`);
+  // The same PID, its feedforward computed from the motor (pidFF): nothing
+  // computable stored. Kv = Ke + R·b/Kt (the motor's inverse, 0.7) + Kd = 1.7,
+  // the value once set by hand; the run is the one the hand value gave.
   const v = SYSTEM_LIBRARY.find((s) => s.name.startsWith('Following a sine')).plant.diagram.blocks.find((b) => b.type === 'controller').variants;
-  const a = v.find((x) => x.name === 'PID').params, b = v.find((x) => x.name === 'PID + feedforward').params;
-  assert.deepEqual({ ...b, Kv: 0 }, { ...a, Kv: 0 }, 'the same PID, plus Kv');
-  assert.ok(b.Kv > 0);
+  const a = v.find((x) => x.name === 'PID'), b = v.find((x) => x.name === 'PID + feedforward');
+  assert.equal(b.type, 'pidFF');
+  const { order, ...feedback } = b.params;
+  assert.deepEqual(feedback, a.params, 'the same PID');
+  assert.equal(order, '1', 'the velocity term');
+  const { res } = runSystem('Following a sine', 'PID + feedforward');
+  const [st] = res.info.designs;
+  assert.equal(st.status, 'ok');
+  assert.ok(Math.abs(st.values.Kv - 1.7) < 1e-9 && st.values.Kff === 0 && st.values.Ka === 0, JSON.stringify(st.values));
+  const hand = figureOf({ name: 'hand', type: 'pid', params: { ...a.params, Kv: 1.7 } });
+  assert.ok(Math.abs(hand.sigma - ff.sigma) < 1e-12 * pid.sigma, `the hand Kv 1.7 gave σ ${hand.sigma}, the computed one ${ff.sigma}`);
 });
 
 test('every type in the library still runs its default and keeps u inside its limits', () => {
@@ -206,7 +228,7 @@ test('every type in the library still runs its default and keeps u inside its li
 
 // Where a diagram draws something over one of its notes: a block, another
 // note, a sign or port, or a wire passing through it (boxes at the font's
-// size: notes 9 px, about NOTE_CHAR a character).
+// size: notes and signs 10 px, about NOTE_CHAR a character).
 function collisions(d, NOTE_CHAR) {
   const box = (x0, y0, x1, y1, what) => ({ x0, y0, x1, y1, what });
   const textBox = (x, y, chars, cw, anchor, h, what) => {
@@ -215,15 +237,15 @@ function collisions(d, NOTE_CHAR) {
   };
   const notes = [], solid = [];
   for (const n of d.nodes) {
-    if (n.kind === 'note') notes.push(textBox(n.x, n.y, [...n.text].length, NOTE_CHAR, n.anchor ?? 'start', 9, `note "${n.text}"`));
+    if (n.kind === 'note') notes.push(textBox(n.x, n.y, [...n.text].length, NOTE_CHAR, n.anchor ?? 'start', 10, `note "${n.text}"`));
     else if (n.kind === 'port') solid.push(textBox(n.x, n.y, [...n.text].length, 6.6, n.anchor ?? 'start', 11, `port ${n.text}`));
     else if (n.kind === 'sum') {
       solid.push(box(n.x - n.r, n.y - n.r, n.x + n.r, n.y + n.r, 'a sum'));
       const at = { w: [n.x - n.r - 2, n.y - 5, 'end'], n: [n.x + 3, n.y - n.r - 3, 'start'], s: [n.x + 3, n.y + n.r + 5, 'start'] };
-      for (const [k, sg] of Object.entries(n.signs ?? {})) if (sg) solid.push(textBox(at[k][0], at[k][1], 1, 5.4, at[k][2], 9, `the sign ${sg}`));
+      for (const [k, sg] of Object.entries(n.signs ?? {})) if (sg) solid.push(textBox(at[k][0], at[k][1], 1, 6, at[k][2], 10, `the sign ${sg}`));
     } else if (n.kind === 'bar') {
       solid.push(box(n.x - n.w / 2, n.y - n.h / 2, n.x + n.w / 2, n.y + n.h / 2, 'the bar'));
-      for (const [y, sg] of n.signs ?? []) if (sg) solid.push(textBox(n.x - n.w / 2 - 1, y - 5, 1, 5.4, 'end', 9, `the sign ${sg}`));
+      for (const [y, sg] of n.signs ?? []) if (sg) solid.push(textBox(n.x - n.w / 2 - 1, y - 5, 1, 6, 'end', 10, `the sign ${sg}`));
     } else if (n.w) solid.push(box(n.x - n.w / 2, n.y - n.h / 2, n.x + n.w / 2, n.y + n.h / 2, `${n.kind} ${(n.lines ?? []).map((l) => l.map(([t]) => t).join('')).join(' / ')}`));
   }
   const hit = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
@@ -254,7 +276,8 @@ test('the structure diagram: every type has its picture, inside its canvas, with
     const inputs = ['r', ...Array.from({ length: b.params.inputs - 1 }, (_, i) => `y${i + 1}`)];
     cases.push({ v: normalizeVariant(v), inputs });
     // Each anti-windup mode, and a start output, on every variant that has them.
-    if (CONTROLLERS[v.type].params.some((p) => p.key === 'aw')) for (const aw of ['back', 'off']) cases.push({ v: normalizeVariant({ ...v, params: { ...v.params, aw, u0: 1.5 } }), inputs });
+    // (A start output only where it is an input: a PI from the plant computes its u0.)
+    if (CONTROLLERS[v.type].params.some((p) => p.key === 'aw')) for (const aw of ['back', 'off']) cases.push({ v: normalizeVariant({ ...v, params: { ...v.params, aw, ...(CONTROLLERS[v.type].computes?.includes('u0') ? {} : { u0: 1.5 }) } }), inputs });
   }
   for (const t of Object.keys(CONTROLLERS)) cases.push({ v: normalizeVariant({ type: t }), inputs: ['r', 'y'] });
   for (const t of Object.keys(OBSERVERS)) cases.push({ v: normalizeVariant({ type: t }, 'variant', OBSERVERS), inputs: ['u', 'y'] });
@@ -318,8 +341,38 @@ test('the structure diagram: every type has its picture, inside its canvas, with
   assert.deepEqual([fmt(0.005), fmt(0.0001), fmt(-2.5e-7), fmt(12345)], ['0.005', '100µ', '−0.25µ', '12.3k']);
   // An observer's long note is cut to the canvas, the whole of it in the tooltip.
   const { OBSERVERS: OBS } = await import('../src/core/observers.js');
-  const big = normalizeVariant({ type: 'kalman', params: { A: new Array(16).fill(0.5), B: [1, 0, 0, 1], C: [1, 0, 0, 0, 0, 1, 0, 0], Q: [1, 2, 3, 4], R: [0.0001, 0.0002] } }, 'variant', OBS);
-  d = describeVariant(big, { inputs: ['u', 'y1', 'y2'] });
+  // (The Kalman filter is designed: its model and L come from the plant, as values.)
+  const big = normalizeVariant({ type: 'kalman', params: { Q: [1, 2, 3, 4], R: [0.0001, 0.0002] } }, 'variant', OBS);
+  d = describeVariant(big, { inputs: ['u', 'y1', 'y2'], values: { A: new Array(16).fill(0.5), B: [1, 0, 0, 1], C: [1, 0, 0, 0, 0, 1, 0, 0], L: new Array(8).fill(0.1) } });
   assert.deepEqual(collisions(d, NOTE_CHAR), []);
   assert.ok(find(d, /^Q 1 2 3 4 {2}R 100µ 200µ$/), d.nodes.map(text).join(' | '));
+});
+
+test('the designed types draw as their Copy as numbers twin, with the numbers their design computed', async () => {
+  const { describeVariant, fmt } = await import('../src/core/structure.js');
+  const text = (n) => (n.lines ?? []).map((l) => l.map(([t]) => t).join('')).join(' / ') + (n.text ?? '');
+  const all = (d) => d.nodes.map(text).join(' | ');
+  let seen = 0;
+  for (const [name, inputs] of [['Pendulum swing-up', ['r', 'x', 'θ', 'v', 'ω']], ['Conical tank', ['r', 'h']], ['Triple', ['r', 'x', 'θ1', 'θ2', 'θ3', 'v', 'ω1', 'ω2', 'ω3']]]) {
+    const e = SYSTEM_LIBRARY.find((s) => s.name.startsWith(name));
+    const p = normalizeProject(applySystem(DEFAULT_PROJECT, e, ['input', 'plant']));
+    const ctrl = p.system.plant.diagram.blocks.find((b) => b.id === 'ctrl');
+    for (let i = 0; i < ctrl.variants.length; i++) {
+      const v = normalizeVariant(ctrl.variants[i]);
+      if (!CONTROLLERS[v.type].designed) continue;
+      ctrl.variant = i;
+      const st = evaluateSystem(p).info.designs[0];
+      // Before the design: '–' where its numbers go; after: the numbers.
+      const before = describeVariant(v, { inputs, Ts: 0.01 }), after = describeVariant(v, { inputs, Ts: 0.01, values: st.values });
+      assert.match(all(before), /–/, `${v.type}: ${all(before)}`);
+      assert.match(all(before), /from the plant/);
+      const has = (want) => assert.ok(all(after).includes(want), `${v.type}: "${want}" in ${all(after)}`);
+      if (v.type === 'lqr') has(`K2 ${fmt(st.values.K[1])}`);
+      if (v.type === 'scheduledPI') has(st.values.at.length > 1 ? `Kp(y) ${fmt(Math.min(...st.values.Kp))}…${fmt(Math.max(...st.values.Kp))}` : `Kp ${fmt(st.values.Kp[0])}`);
+      if (v.type === 'swingUpLqr') has(`K ${st.values.K.map(fmt).join(' ')}`);
+      if (v.type === 'trajectory') has('planned from the plant: F ');
+      seen++;
+    }
+  }
+  assert.ok(seen >= 6, `${seen} designed variants`);
 });

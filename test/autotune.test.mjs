@@ -12,7 +12,7 @@ import {
   iterate, runIterate, tuneContext, runVariant, costScales, runCost, variantCost, tuningSpace,
   relayExperiment, relayTune, pidFromUltimate, stepExperiment, stepTune, simcGains, baseName, RULES,
   autotune, tuneReport, resultName, placeVariant, loopOverlays, upstreamSource,
-  simcIntegrating, settledLevel, settledSlope, derivativeFilter, tauCSource,
+  simcIntegrating, settledLevel, settledSlope, derivativeFilter, tauCSource, unstableAtStart,
 } from '../src/core/autotune.js';
 import { analyzeLoop } from '../src/core/analysis.js';
 
@@ -277,6 +277,7 @@ test('the step test fits an integrator with lag and dead time: k\' and θ within
 });
 
 test('the step method on the library\'s examples: better where the loop is badly tuned, sensible elsewhere', () => {
+  const step2 = (p, opts) => autotune(p, null, { method: 'step', ...opts });
   const step = (name, opts) => {
     const res = autotune(system(name), null, { method: 'step', ...opts });
     assert.ok(res.ok, `${name}: ${res.why}`);
@@ -310,9 +311,16 @@ test('the step method on the library\'s examples: better where the loop is badly
   // u0 balances the outlet at the start level: a √(2 g h0).
   assert.ok(Math.abs(tank.variant.params.u0 / (0.1 * Math.sqrt(2 * 9.81 * 0.15)) - 1) < 0.02, `u0 ${tank.variant.params.u0}`);
   assert.ok(tank.after.J < 2 * tank.before.cost.J && tank.after.overshoot < 20, `${tank.before.cost.J} → ${tank.after.J}, overshoot ${tank.after.overshoot} %`);
+  // The library's schedule (from the plant) tops out at 0.95 m, below the
+  // brim, and its step test works there.
+  assert.ok(tank.points.find((q) => q.at === 0.95).ok);
   // The full tank (1 m) overflows: a small step does not move y, a large one
-  // drains it too far. Said as it is, not as a wiring fault.
-  const full = tank.points.find((q) => q.at === 1);
+  // drains it too far. Said as it is, not as a wiring fault. (A hand schedule
+  // with a point at the brim: the table the library once held.)
+  const brim = system('Conical');
+  const bctrl = brim.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+  bctrl.variants[0] = { name: 'Gain-scheduled PI', type: 'gainScheduled', params: { at: [0.1, 0.25, 0.5, 0.75, 1], Kp: [0.113, 0.332, 0.95, 1.887, 3.142], Ki: [2.801, 1.772, 1.253, 1.023, 0.886], u0: 0.172, Tr: 0.1, umin: 0, umax: 3 } };
+  const full = step2(brim).points.find((q) => q.at === 1);
   assert.ok(!full.ok && /limit of its own/.test(full.why) && !/wired/.test(full.why), full.why);
   // Each point steps toward the middle of the table: down at 0.75 m.
   assert.ok(tank.points.find((q) => q.at === 0.75).du < 0);
@@ -321,8 +329,13 @@ test('the step method on the library\'s examples: better where the loop is badly
   assert.ok(tank25.after.J < 2.5 * tank25.before.cost.J && tank25.after.overshoot < 20, `${tank25.after.J / tank25.before.cost.J} ${tank25.after.overshoot}`);
   const empty = system('Conical');
   empty.system.plant.diagram.blocks.find((b) => b.type === 'controller').variant = 2;
+  // Its run scores far better than the PI tuned for empty (cost ×0.18), but
+  // the PI it fits is unstable at h = 0.15 m, where the run starts: it rests
+  // there only in exact balance (u0 computed from the plant). With u0 0.1 %
+  // off it rings at 3 Hz and empties the tank within 5 s. So it is not run.
   const pe = autotune(empty, null, { method: 'step', amplitude: 0.5 });
-  assert.ok(pe.ok && pe.better, `${pe.before?.variant.name}: ${pe.why ?? pe.worse}`);
+  assert.ok(pe.ok && pe.after.J < 0.3 * pe.before.cost.J, `${pe.before?.variant.name}: ${pe.why ?? pe.worse}`);
+  assert.ok(!pe.better && pe.unstableAtStart?.Z === 2, pe.worse);
   // Smooth is slower than tight: smaller gains from the same tests.
   const calm = step('DC motor', { simc: 'smooth' });
   assert.ok(calm.variant.params.Kp < motor.variant.params.Kp && calm.variant.name.endsWith('· SIMC smooth'));
@@ -363,8 +376,10 @@ test('tuning reads a Controller inside a subsystem; unwired inputs are named', (
 });
 
 test('Iterate tunes gain-scheduled and state-feedback variants, signs kept', () => {
+  // The library's tank runs a PI from the plant: Iterate tunes the schedule
+  // its design computed (its Copy as numbers twin), from those numbers.
   const tank = system('Conical');
-  const startKp = tank.system.plant.diagram.blocks.find((b) => b.id === 'ctrl').variants[0].params.Kp;
+  const startKp = evaluateSystem(tank).info.designs[0].values.Kp;
   const gs = runIterate(tank, null, {}, { maxIter: 12 });
   assert.equal(gs.best.variant.type, 'gainScheduled');
   assert.ok(gs.cost < 0.95 * gs.start.cost, `${gs.start.cost} → ${gs.cost}`);
@@ -461,14 +476,20 @@ test('results: a variant of their own, numbered, never overwriting; a worse one 
   block.variant = 1;
   assert.equal(resultName(block, 'iterate'), 'PID, badly tuned · auto-tuned', 'tuning again from a result updates it');
   assert.equal(baseName('PID · auto-tuned 2'), 'PID');
-  // The conical tank's gain scheduling beats a fixed PI from a relay rule: not better.
+  // The conical tank's gain scheduling against a fixed PID from a relay rule:
+  // the PID is unstable where the run starts (h = 0.15 m), so it does not
+  // run, though its run, resting in exact balance until the first step,
+  // costs a little less (×0.95 since the pipe's dead time is exact; ×1.006
+  // before).
   const tank = autotune(system('Conical'), null, { method: 'relay' });
-  assert.ok(tank.ok && !tank.better && tank.after.J > tank.before.cost.J, `${tank.before.cost.J} → ${tank.after.J}`);
+  assert.ok(tank.ok && !tank.better && tank.unstableAtStart?.Z === 6, `${tank.before.cost.J} → ${tank.after.J}`);
+  assert.ok(tank.after.J < tank.before.cost.J, 'its run alone would not tell');
   const rep = tuneReport(tank);
   assert.equal(rep.better, false);
-  // Why, in plain words: one PID where the running variant schedules its gains, and what grew.
-  assert.match(rep.worse, /^one PID from a relay test at h = 0\.475 m; Gain-scheduled PI changes its gains with h \(Kp 0\.113 … 3\.14\), which a single PID cannot;/);
-  assert.match(rep.worse, /overshoots/);
+  // Why, in plain words: unstable at the start, and one PID where the
+  // running variant schedules its gains (computed from the tank, up to
+  // 0.95 m); nothing about a cost that did not grow.
+  assert.equal(rep.worse, 'it is unstable where the run starts (the initial state, q = 0.172: 6 closed-loop poles outside the unit circle); the run rests there only because it starts in exact balance, and the first disturbance there sets it off; one PID from a relay test at h = 0.475 m; Gain-scheduled PI changes its gains with h (Kp 0.113 … 2.87), which a single PID cannot');
   assert.equal(rep.before.variant.params.umax, 3);
   assert.equal(JSON.stringify(rep), JSON.stringify(JSON.parse(JSON.stringify(rep))), 'plain JSON');
 });
@@ -583,4 +604,49 @@ test('relay and step results move a feedforward that is on with the new gains (K
   blk.variant = blk.variants.findIndex((x) => x.name === 'PID + feedforward');
   const res = autotune(p, null, { method: 'relay', rule: 'tl' });
   assert.ok(res.ok && Math.abs(res.variant.params.Kv - res.variant.params.Kd - 0.7) < 1e-9, JSON.stringify(res.variant.params));
+});
+
+test('a variant from the plant: Auto-tune tunes the numbers its design computed, as a hand variant; a plan says why not', () => {
+  // The tank's PI from the plant runs as a gain-scheduled PI with the table
+  // its design computed: that twin is what Iterate starts from, and the
+  // result is a hand variant (the designed one stays, following the plant).
+  const tank = system('Conical');
+  const des = evaluateSystem(tank).info.designs[0];
+  const ctx = tuneContext(tank);
+  assert.equal(ctx.variant.type, 'gainScheduled');
+  assert.equal(ctx.variant.name, 'Gain-scheduled PI');
+  assert.deepEqual(ctx.variant.params.Kp, des.values.Kp);
+  assert.equal(ctx.variant.params.u0, des.values.u0);
+  assert.deepEqual(ctx.designed, { label: 'PI from the plant', type: 'scheduledPI', from: 'gainScheduled' });
+  // The triple pendulum's planned swing-up has no gains of its own.
+  assert.throws(() => iterate(system('Triple'), null).next(), /A planned swing-up follows a plan computed from the plant/);
+  // A design that refuses (the motor's LQR: its angle alone) leaves nothing to start from.
+  const motor = system('DC motor');
+  const c = motor.system.plant.diagram.blocks.find((b) => b.id === 'ctrl');
+  c.variants = [{ name: 'LQR', type: 'lqr', params: { Q: [1], R: 1 } }];
+  c.variant = 0;
+  assert.throws(() => iterate(motor, null).next(), /LQR computes its numbers from the plant, and has none now/);
+});
+
+test('a relay result unstable where the run starts is not run, though its run rests in exact balance', () => {
+  // The tank starts in exact balance (u0 computed from the plant), so a loop
+  // unstable at h = 0.15 m rests there until the step at 1.5 s and its run
+  // scores like the running variant's (×1.01). One PID from the relay test
+  // at mid-range is unstable there: the loop linearised at the start says so.
+  const tank = system('Conical');
+  const res = autotune(tank, null, { method: 'relay' });
+  assert.ok(res.ok);
+  assert.ok(res.unstableAtStart, 'flagged');
+  assert.ok(res.unstableAtStart.Z > 0);
+  assert.equal(res.better, false);
+  assert.match(res.worse, /^it is unstable where the run starts \(the initial state, q = 0\.172: \d+ closed-loop poles outside the unit circle\); the run rests there only because it starts in exact balance/);
+  assert.deepEqual(tuneReport(res).unstableAtStart, { Z: res.unstableAtStart.Z, at: res.unstableAtStart.label });
+  // The gain-scheduled PI it would replace is stable there, and so is the
+  // oven's relay result, which runs (the oven starts at the heater's limit:
+  // no verdict there, so nothing is flagged).
+  const ctx = tuneContext(tank);
+  assert.equal(unstableAtStart(tank, ctx, ctx.variant), null);
+  const oven = autotune(system('Oven'), null, { method: 'relay' });
+  assert.equal(oven.unstableAtStart, undefined);
+  assert.equal(oven.better, true);
 });

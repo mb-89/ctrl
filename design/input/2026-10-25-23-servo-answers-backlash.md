@@ -1,0 +1,5 @@
+# The servo motor, answered; the rotor in the motor, backlash (2026-10-25)
+
+The person's answers to the open questions of [servo.md](../output/servo.md) (robot default, error sizes, two-mass shaft and backlash).
+
+> Should the robot open with Coulomb friction? I guess yes, the error sizes. You can exaggerate the error sizes in the example for the spectrogram. You don't have to exaggerate it in the robot. The user can do this by themselves if they want. The two mass shaft and backlash wanted soon. I feel like it makes sense that you model this correctly. So you put the rotor's inertia into the motor. That's where they belong, right? And then set the, I guess, the stiffness and the stiffness of the connections and the backlash, set them to non-problematic values first. But especially backlash is an interesting thing for us. So if we can simulate that, that would be cool. That's also something you could show, that could show up in the description of the sim, if the model that you can actually use that to simulate backlash. Or in general, we should have one example that exemplifies a backlash simulation.

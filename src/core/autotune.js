@@ -25,9 +25,11 @@
 // autotune() is the one entry for the page, the command line and agents.
 
 import { simulateSystem } from './sim.js';
-import { defaultSampleTime } from './project.js';
-import { normalizeVariant, makeLaw } from './controllers.js';
-import { parseEnd, blockPorts } from './diagram.js';
+import { defaultSampleTime, loopModel } from './project.js';
+import { analyzeLoop } from './analysis.js';
+import { normalizeVariant, makeLaw, CONTROLLERS } from './controllers.js';
+import { parseEnd, blockPorts, compileDiagram } from './diagram.js';
+import { blockMode, EXTERNAL_BLOCK } from './hil.js';
 import { amplitudeSpectrum } from './spectrum.js';
 
 const DIVERGED = 100;        // the cost of a run that blew up (normal costs are O(1))
@@ -128,7 +130,8 @@ export function tuneContext(project, path) {
   // Every method simulates the loop; a plant outside the page (Live mode)
   // only outputs 0 here, so nothing could be learned from it.
   const ext = externalBlock(plant.diagram);
-  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}); Auto-tune simulates the loop and has no model of it (identification is not built yet). Tune it live in the Controller tab`);
+  if (ext && blockMode(EXTERNAL_BLOCK.normalize(ext.params)) !== 'control') throw new Error(`the plant runs its own controller (External plant ${ext.name ?? ext.id}, reference mode): the page's controllers and Auto-tune are not in the loop`);
+  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, and Auto-tune needs an identified model of it (Identify, not built yet). Until then, tune it live in the Controller tab`);
   const all = controllerBlocks(plant.diagram);
   const key = path ? [].concat(path).join('/') : null;
   const hit = (key && all.find((c) => c.key === key)) || all[0];
@@ -139,15 +142,34 @@ export function tuneContext(project, path) {
   const { level } = locate(plant.diagram, hit.path);
   if (!wireTo(level, block.id, 0)) throw new Error(`${hit.where}: wire the reference r to input 1`);
   if (!wireTo(level, block.id, 1)) throw new Error(`${hit.where}: wire the measurement y to input 2`);
-  const variant = normalizeVariant(block.variants[block.variant ?? 0]);
+  const running = normalizeVariant(block.variants[block.variant ?? 0]);
+  const { variant, designed } = asTuned(plant.diagram, hit, running);
   const period = Math.max(...Object.values(project.system.signals).map((s) => s.period));
   const sim = { duration: period, sampleTime: project.sim?.sampleTime ?? defaultSampleTime(period) };
   // Copies, so the page may change the project while a tuning run reads these.
-  const ctx = { diagram: structuredClone(plant.diagram), signals: structuredClone(project.system.signals), path: hit.path, key: hit.key, where: hit.where, block, variant, sim, Ts: block.params.Ts };
+  const ctx = { diagram: structuredClone(plant.diagram), signals: structuredClone(project.system.signals), path: hit.path, key: hit.key, where: hit.where, block, variant, designed, sim, Ts: block.params.Ts };
   // The Source that feeds r, and the other inputs (the disturbance d, …).
   ctx.source = upstreamSource(ctx.diagram, ctx.path, 0);
   ctx.others = ctx.source ? Object.keys(ctx.signals).filter((k) => k !== ctx.source) : [];
   return ctx;
+}
+
+// A variant from the plant (design/output/designs.md) runs as its Copy as
+// numbers twin with the numbers its design computes; Auto-tune tunes that
+// twin, from those numbers, and its result is a hand variant like any other
+// (the designed one stays, and goes on following the plant). The design is
+// the one a compile makes now (in the page, from the page's store, as a
+// guest: a plan not made yet has no numbers). A type without a twin (a
+// planned swing-up), or a design that has no numbers, stays as it is, and
+// tuningSpace says why it cannot be tuned. designed: { label, error } then.
+function asTuned(diagram, hit, running) {
+  const def = CONTROLLERS[running.type];
+  if (!def?.designed) return { variant: running, designed: null };
+  let st = null;
+  try { st = compileDiagram(diagram, 'plant', { standalone: true }).designs.find((x) => x.path === hit.key); } catch { st = null; }
+  if (!def.manual || !st?.values) return { variant: running, designed: { label: def.label, type: running.type, error: st?.error?.message ?? (st && st.status !== 'ok' && st.status !== 'warn' ? `its design is ${st.status}` : '') } };
+  const twin = normalizeVariant(def.manual(running.params, st.values));
+  return { variant: { ...twin, name: running.name }, designed: { label: def.label, type: running.type, from: twin.type } };
 }
 
 export function runVariant(ctx, variant, signals = ctx.signals, sim = ctx.sim) {
@@ -286,7 +308,10 @@ const UNTUNABLE = {
   off: 'Off has nothing to tune. Add a PID to this block in the Controller tab, then tune that.',
   swingUp: 'A swing-up switches between pumping energy and catching the pole; its gains do not act on r − y. Tune its catching gains as a State feedback variant.',
   relay: 'A relay has no gains to tune; the relay method uses one to find Ku and Pu.',
+  trajectory: 'A planned swing-up follows a plan computed from the plant: it has no gains of its own to tune. Change its inputs (T, Q, R) in the Controller tab.',
 };
+// A variant from the plant whose design has no numbers to start from.
+const undesigned = (v) => `${CONTROLLERS[v.type].label} computes its numbers from the plant, and has none now; see its Computed box in the Controller tab, or tune a hand variant`;
 
 // The knobs the optimiser turns, as log factors on the variant's own values:
 // x = 0 is the variant as it is, x = ln 2 doubles a gain. A gain at 0 stays
@@ -342,7 +367,7 @@ export function tuningSpace(variant, { start = null, part = 'all' } = {}) {
     const keys = fb ? (variant.type === 'slidingMode' ? ['lambda', 'phi'] : ['lambda', 'k1', 'k2']).filter((k) => on(p[k])) : [];
     names = keys.map((k) => (k === 'lambda' ? 'λ' : k === 'phi' ? 'φ' : k));
     apply = (x) => { const q = { ...p }; keys.forEach((k, i) => { q[k] = p[k] * f(x[i]); }); return q; };
-  } else throw new Error(UNTUNABLE[variant.type] ?? `a ${variant.type} variant cannot be tuned`);
+  } else throw new Error(UNTUNABLE[variant.type] ?? (CONTROLLERS[variant.type]?.designed ? undesigned(variant) : `a ${variant.type} variant cannot be tuned`));
   if (!names.length) throw new Error('every gain of this variant is 0; give the gains it should use a start value, then tune');
   return { names, started, base: started.length ? { ...variant, params: p } : variant, apply: (x) => ({ ...variant, params: apply(x) }) };
 }
@@ -1010,8 +1035,11 @@ function* stepAt(ctx, point, du, bound = Infinity) {
   const notes = [];
   // A variant that keeps swinging at r0 cannot hand over a plant at rest: the
   // test then starts at t = 0, from the plant's own start.
-  if (!st.settled) notes.push(`${ctx.variant.name} does not settle at r0 = ${fmtN(point.r0)}, so the test starts at t = 0 from the plant's start: exact for a linear plant, rough otherwise`);
-  const tHold = st.settled ? Math.ceil(st.time / ctx.Ts - 1e-6) * ctx.Ts : 0;
+  // It runs one sample first, so a dead time whose output before T_d is its
+  // input at t = 0 (a pipe already flowing, design.js) holds what the loop put
+  // out there in both runs, and the step reaches the plant after T_d.
+  if (!st.settled) notes.push(`${ctx.variant.name} does not settle at r0 = ${fmtN(point.r0)}, so the test starts one sample after t = 0, from the plant's start: exact for a linear plant, rough otherwise`);
+  const tHold = st.settled ? Math.ceil(st.time / ctx.Ts - 1e-6) * ctx.Ts : ctx.Ts;
   const out = { du, u0: point.u0, r0: point.r0, tHold, notes };
   let W = ctx.sim.duration, runB = null;
   for (let tries = 0; tries < 2; tries++, W *= 4) {
@@ -1219,8 +1247,10 @@ const simcFactor = (rule) => {
 // 'ripple' (the ripple's period on y); both floors are ours.
 export function tauCSource(g, rule = 'tight') {
   const f = SIMC[rule]?.f ?? 1, x = f === 1 ? '' : `${f} × `;
-  if (g.by === 'ripple') return `${x}the ripple's period on y (our floor), not the dead time θ = ${fmtN(g.theta)} s`;
-  if (g.by === 'lag') return `${x}a tenth of the lag τ (our floor), not the dead time θ = ${fmtN(g.theta)} s, which is shorter`;
+  // (g.theta is the fit's θ with half a controller sample, and the
+  // derivative's filter if any: what SIMC's rule uses.)
+  if (g.by === 'ripple') return `${x}the ripple's period on y (our floor), not the dead time θ = ${fmtN(g.theta)} s (half a controller sample included)`;
+  if (g.by === 'lag') return `${x}a tenth of the lag τ (our floor), not the dead time θ = ${fmtN(g.theta)} s (half a controller sample included), which is shorter`;
   if (g.by === 'given') return 'given';
   const dead = `the dead time${g.Tf ? ' with the derivative\'s filter' : ''}`;
   return f === 1 ? `θ, ${dead} (Skogestad's tight rule)` : `${f}θ (θ = ${fmtN(g.theta)} s, ${dead})`;
@@ -1326,8 +1356,8 @@ export function* stepTuneSteps(project, path, opts = {}) {
 // gain-scheduled PI, which has no derivative.
 function simcNotes(m, g, scheduled = false) {
   const notes = [];
-  if (g.by === 'ripple') notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s): a faster loop would chase the ripple`);
-  if (g.by === 'lag') notes.push(`τc = ${fmtN(g.tauC)} s is set from a tenth of the lag τ = ${fmtN(m.tau)} s (our floor), not from the dead time θ = ${fmtN(g.theta)} s, which is shorter`);
+  if (g.by === 'ripple') notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s, half a controller sample included): a faster loop would chase the ripple`);
+  if (g.by === 'lag') notes.push(`τc = ${fmtN(g.tauC)} s is set from a tenth of the lag τ = ${fmtN(m.tau)} s (our floor), not from the dead time θ = ${fmtN(g.theta)} s (half a controller sample included), which is shorter`);
   if (m.model === 'integrating' && m.tau2 > 0.02 * m.L) {
     if (g.Kd) notes.push(`the lag τ2 = ${fmtN(m.tau2)} s is longer than the dead time θ = ${fmtN(g.thetaPlant)} s (half a controller sample included), so the PI gets a derivative that cancels it (SIMC PID)`);
     else notes.push(`${scheduled ? 'a gain-scheduled PI has no derivative' : `the lag τ2 = ${fmtN(m.tau2)} s is no longer than the dead time`}, so half of τ2 counts as dead time (the half rule)`);
@@ -1347,7 +1377,9 @@ export const METHODS = ['iterate', 'relay', 'step'];
 // what the strategy yields; returns
 //   { ok, why, method, key, where, before: { variant, cost }, variant (the
 //     result, named), after (its cost), better, worse (why it scores worse,
-//     in plain words, when it does), notes, … the method's own:
+//     in plain words, when it does), unstableAtStart (relay, step: a result
+//     unstable where the run starts, which is not run whatever it scores:
+//     { Z, label, sentence }), notes, … the method's own:
 //     iterate: iterations, evals, names; relay: Ku, Pu, a, u0, d, r0, rule,
 //     gains, run; step: model ('fopdt': K, tau, theta; 'integrating': kp, L,
 //     tau2, theta; 'schedule': points, trim), simc, gains, u0, du, r0, run }
@@ -1391,7 +1423,40 @@ export function* autotuneSteps(project, path, opts = {}) {
   }
   const out = { ...res, ...head, before, after, better: after.J < before.cost.J };
   if (!out.better) out.worse = whyWorse(out, ctx);
+  // An experiment's rule knows the loop only where the experiment ran (the
+  // middle of r): a result unstable where the run starts, where the running
+  // variant is not, is not run, whatever its run scores.
+  // Its run may even score better (the tank's relay PID, ×0.95): then the
+  // reasons the result itself gives, not the cost's.
+  const start = unstableAtStart(project, ctx, res.variant);
+  if (start && !unstableAtStart(project, ctx, ctx.variant)) {
+    out.unstableAtStart = start;
+    out.worse = [start.sentence, out.better ? whyWorse(out, ctx, { cost: false }) : out.worse].filter(Boolean).join('; ');
+    out.better = false;
+  }
   return out;
+}
+
+// A run that starts in exact balance rests there even where the loop is
+// unstable: nothing moves it until r or d does, and its cost cannot tell.
+// Since the design layer computes the input that holds the start, the tank
+// rests to the last bit, and its relay-tuned PID (six closed-loop poles
+// outside the unit circle at h = 0.15 m) scored ×1.0 of the gain-scheduled
+// PI, where the 0.172 stored before had it ring at once (×3.6). The loop
+// linearised at the start state tells: null where it is stable there, or
+// where that cannot be said (no linear law, a kink: loopModel refuses it, u
+// at a limit); else
+// { Z, label, sentence }.
+export function unstableAtStart(project, ctx, variant) {
+  let m, r;
+  try {
+    const p = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: withVariant(ctx.diagram, ctx.path, variant) } } };
+    m = loopModel(p, ctx.path, 'initial');
+    if (m.atLimit) return null;
+    r = analyzeLoop(m.plant, m.ctrl, m.Ts);
+  } catch { return null; }
+  if (r.stable || r.marginal) return null;
+  return { Z: r.Z, label: m.opLabel, sentence: `it is unstable where the run starts (${m.opLabel}: ${r.Z} closed-loop pole${r.Z > 1 ? 's' : ''} outside the unit circle); the run rests there only because it starts in exact balance, and the first disturbance there sets it off` };
 }
 
 export const autotune = (project, path, opts) => drain(autotuneSteps(project, path, opts));
@@ -1412,8 +1477,8 @@ export function measurement(ctx) {
 
 // Why a result scores worse than the running variant, in plain words, as far
 // as it can be known: what the result cannot do that the running variant
-// does, then which part of the cost grew the most.
-export function whyWorse(res, ctx) {
+// does, then (unless cost: false) which part of the cost grew the most.
+export function whyWorse(res, ctx, { cost = true } = {}) {
   const was = res.before.variant, now = res.variant, a = res.before.cost, b = res.after, goal = res.goal;
   const y = measurement(ctx), yName = y.name || 'y', at = (v) => `${yName} = ${fmtN(v)}${y.unit ? ` ${y.unit}` : ''}`;
   const kind = (v) => (v.type === 'gainScheduled' ? 'gain-scheduled PI' : v.params.Kd ? 'PID' : v.params.Ki ? 'PI' : 'P controller');
@@ -1430,6 +1495,7 @@ export function whyWorse(res, ctx) {
   if (res.ripple && !Array.isArray(now.params.Kp) && Number.isFinite(hi - lo) && kp * res.ripple >= 0.05 * (hi - lo)) {
     out.push(`${yName} ripples by ±${fmtN(res.ripple)}${y.unit ? ` ${y.unit}` : ''}, and its Kp passes ±${fmtN(kp * res.ripple)} of that to u (${fmtN((100 * kp * res.ripple) / (hi - lo))} % of u's range)`);
   }
+  if (!cost) return out.join('; ');
   if (b.diverged) out.push('the loop diverges with it');
   else {
     const [part] = Object.keys(b.parts).map((k) => [k, b.parts[k] - (a.parts?.[k] ?? 0)]).sort((p, q) => q[1] - p[1])[0];
@@ -1452,6 +1518,7 @@ export function tuneReport(res) {
   else {
     Object.assign(out, { better: res.better, before: { variant: res.before.variant, cost: cost(res.before.cost) }, after: { variant: res.variant, cost: cost(res.after) }, notes: res.notes });
     if (!res.better) out.worse = res.worse;
+    if (res.unstableAtStart) out.unstableAtStart = { Z: res.unstableAtStart.Z, at: res.unstableAtStart.label };
     if (res.method === 'iterate') Object.assign(out, { iterations: res.iterations, evals: res.evals, tuned: res.names });
     if (res.method === 'relay') Object.assign(out, { Ku: res.Ku, Pu: res.Pu, amplitude: res.a, r0: res.r0, u0: res.u0, d: res.d, rule: res.rule, gains: res.gains });
     if (res.method === 'step') {

@@ -80,10 +80,10 @@ test('createStepRunner: one controller sample at a time, the same as simulateSys
   for (let k = 0; k < 5; k++) r2.step();
   assert.equal(seen.length, 5);
   assert.equal(typeof r2.law('ctrl').step, 'function');
-  assert.throws(() => createStepRunner(libraryProject('HIL: external').system.plant.diagram, {}, { Ts: 0.01 }), /outside the page/);
+  assert.throws(() => createStepRunner(libraryProject('HIL: an external plant').system.plant.diagram, {}, { Ts: 0.01 }), /outside the page/);
   // The live runner shares the core: an External plant still steps as before.
-  const live = createLiveRunner(libraryProject('HIL: external').system.plant.diagram, libraryProject('HIL: external').system.signals);
-  assert.deepEqual(live.step(0, [0.1, 0, 0]).u.length, 2);
+  const live = createLiveRunner(libraryProject('HIL: an external plant').system.plant.diagram, libraryProject('HIL: an external plant').system.signals);
+  assert.deepEqual(live.step(0, [0.1, 0, 0]).u.length, 1);
 });
 
 test('identify(): the experiment runs as the block\'s hidden law in a copy, r plays its reference, d is held, the plant time stays within the budget', () => {

@@ -10,7 +10,9 @@ export const SYSTEM_PARTS = ['input', 'plant', 'controller'];
 
 function fromPlant(e) {
   return {
-    name: e.name, notes: e.notes ?? '',
+    // Two levels (progressive disclosure): the summary is the bottom line the
+    // library shows; the notes are the full description, one click away.
+    name: e.name, summary: e.summary ?? '', notes: e.notes ?? '',
     input: { signals: structuredClone(e.signals) },
     plant: { type: 'diagram', diagram: structuredClone(e.diagram), ...(e.views ? { views: structuredClone(e.views) } : {}) },
     ...(e.scope ? { scope: structuredClone(e.scope) } : {}),
@@ -33,18 +35,29 @@ function fromPlant(e) {
 // Nonlinear take the warm and cool poles. Tones are the eight slots of a
 // palette validated for colour-vision deficiency; the label is always shown.
 // A tone is not shared with a tag a value appears beside, nor by two values
-// of one kind in the filter row: Disturbance is violet (red is Nonlinear,
-// beside it on three cards), so XY moved to yellow.
+// of one kind in the filter row: Disturbance is slate (red is Nonlinear,
+// beside it on three cards), so XY moved to yellow. No tone is violet: in the
+// page violet means selected (design/output/design-system.md).
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
-const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
-export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
+// A type's tags; a function reads the variant (a PI from the plant at one
+// level is a plain PI, at several it is scheduled).
+const VARIANT_TAGS = {
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
+  scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
+};
+const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
+export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'slate', 'red'];
 const TONE = {
-  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta',
-  PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
+  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta', 'Black box': 'yellow',
+  // LQR sits beside Disturbance (slate) on both pendulums, so it took State
+  // feedback's orange, and State feedback, on no card with a disturbance
+  // now that the library's gains are computed, took slate.
+  PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
   // Seven of the eight tones are taken by controller tags: this one is set.
   'Sliding mode': 'red',
-  'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
-  Disturbance: 'violet', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
+  'Kalman filter': 'slate', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
+  'Reference mode': 'aqua', 'Controller in the plant': 'green',
 };
 // A value without its own tone gets one from its label, so it stays put.
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
@@ -64,15 +77,19 @@ export function systemTags(e) {
   walk(e.diagram);
   const tags = [];
   const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind, tone: toneOf(label) }); };
-  // An External plant's physics is outside the page: its entry says what it is.
-  const own = blocks.some((b) => b.type === 'external') ? (e.tags ?? []).filter((t) => t.kind === 'plant') : [];
-  if (own.length) for (const t of own) add(t.label, 'plant'); else add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
+  // An External plant is outside the page, a black box until identified
+  // (input 20): its entry may say more, the diagram cannot.
+  const external = blocks.some((b) => b.type === 'external');
+  const own = external ? (e.tags ?? []).filter((t) => t.kind === 'plant') : [];
+  if (own.length) for (const t of own) add(t.label, 'plant'); else add(external ? 'Black box' : nonlinear ? 'Nonlinear' : 'Linear', 'plant');
   if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
-  if (!ctrls.length) add('No controller', 'none');
-  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
-  for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
+  // In reference mode the plant runs its own controller: none in the page.
+  const ownLoop = blocks.some((b) => b.type === 'external' && (b.params?.kinds ?? []).includes('reference'));
+  if (!ctrls.length) add(ownLoop ? 'Controller in the plant' : 'No controller', 'none');
+  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') for (const t of variantTags(v, CONTROLLERS[v.type]?.label ?? v.type)) add(t, 'controller');
+  for (const b of obs) for (const v of b.variants ?? []) for (const t of variantTags(v, 'Observer')) add(t, 'observer');
   // A disturbance only when d plays something: a Source d whose signal has
   // no components stays at 0 (Following a sine keeps one for the person to fill).
   const plays = (name) => !e.signals || (e.signals[name]?.components?.length ?? 0) > 0;
@@ -114,6 +131,8 @@ export function applySystem(project, entry, parts) {
   const whole = SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k));
   if (whole) {
     p.title = entry.name;
+    // Its full description comes along, so the Plant tab can show it.
+    if (entry.notes) p.notes = entry.notes; else delete p.notes;
     // A whole system brings its controller, or none: candidates an older
     // project carried do not stay behind.
     // Its record step comes along (a library entry may carry sim.sampleTime);

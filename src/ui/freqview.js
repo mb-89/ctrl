@@ -19,9 +19,9 @@
 import { amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, AUTO_LEVELS, spectrogramWindow, levelHistogram, autoLevels, levelRange, spectrogramNoise, aboveNoise } from '../core/spectrum.js';
 import { levelsOf } from '../core/project.js';
 import { siUnit, num } from './units.js';
+import { palette as C, HEAT_STOPS as STOPS } from './palette.js';
 
 const DIVX = 10, DIVY = 8, DB_PER_DIV = 10;
-const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
 // Filtered signals, cached per run and filter, so turning a knob only
 // filters again what changed.
@@ -61,8 +61,7 @@ function spectrumOf(d, ch, k) {
   return cached(d, key, () => { const v = channelSignal(d, ch); return kk >= 32 ? amplitudeSpectrum(v.subarray(0, kk + 1), dtOf(d)) : null; });
 }
 
-// A dark-to-bright heat map (after matplotlib's inferno).
-const STOPS = [[0, 0, 4], [40, 11, 84], [101, 21, 110], [159, 42, 99], [212, 72, 66], [245, 125, 21], [250, 193, 39], [252, 255, 164]];
+// A dark-to-bright heat map (palette.js: after matplotlib's inferno).
 function heat(x) {
   const s = Math.max(0, Math.min(1, x)) * (STOPS.length - 1), i = Math.min(STOPS.length - 2, Math.floor(s)), f = s - i;
   return STOPS[i].map((c, j) => Math.round(c + f * (STOPS[i + 1][j] - c)));
@@ -86,15 +85,15 @@ export function drawFrequency(v) {
 }
 
 function axisText(g, P, labels, side, color) {
-  g.font = `10.5px ${MONO}`;
+  g.font = `10.5px ${C().mono}`;
   g.fillStyle = color;
   g.textBaseline = 'middle';
   g.textAlign = side === 'left' ? 'right' : 'left';
   labels.forEach(([y, s]) => g.fillText(s, side === 'left' ? P.l - 6 : P.r + 6, Math.min(P.b - 5, Math.max(P.t + 5, y))));
 }
 function freqLabels(g, P, f0, f1) {
-  g.font = `10.5px ${MONO}`;
-  g.fillStyle = 'rgba(200, 210, 218, 0.75)';
+  g.font = `10.5px ${C().mono}`;
+  g.fillStyle = C().label;
   g.textBaseline = 'top';
   for (let i = 0; i <= DIVX; i++) {
     const x = P.l + i * P.dx;
@@ -121,7 +120,7 @@ function drawFft(v) {
   const yOf = (i, a) => (db ? P.t + ((refDb - 20 * Math.log10(Math.max(a, 1e-12))) / DB_PER_DIV) * P.dy : P.b - (a / scope.channels[i].scale) * P.dy);
   freqLabels(g, P, f0, f1);
   const ai = shown.includes(axis) ? axis : shown[0];
-  if (db) axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, `${refDb - j * DB_PER_DIV}${j ? '' : ' dB'}`]), 'left', 'rgba(200, 210, 218, 0.75)');
+  if (db) axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, `${refDb - j * DB_PER_DIV}${j ? '' : ' dB'}`]), 'left', C().label);
   else if (ai !== undefined) axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, num((DIVY - j) * scope.channels[ai].scale, 3)]), 'left', colors[ai]);
 
   g.save();
@@ -129,9 +128,9 @@ function drawFft(v) {
   const fn = nyquist(fd);
   if (fn >= f0 && fn <= f1) {
     const x = Math.round(fx(fn)) + 0.5;
-    g.strokeStyle = 'rgba(235, 240, 245, 0.35)'; g.setLineDash([3, 4]);
+    g.strokeStyle = C().scan; g.setLineDash([3, 4]);
     g.beginPath(); g.moveTo(x, P.t); g.lineTo(x, P.b); g.stroke(); g.setLineDash([]);
-    g.font = `10px ${MONO}`; g.fillStyle = 'rgba(235, 240, 245, 0.55)'; g.textAlign = 'right'; g.textBaseline = 'top';
+    g.font = `10px ${C().mono}`; g.fillStyle = C().label; g.textAlign = 'right'; g.textBaseline = 'top';
     g.fillText('Nyquist', x - 4, P.t + 4);
   }
   const order = shown.slice().sort((a, b) => (a === line) - (b === line));
@@ -140,7 +139,7 @@ function drawFft(v) {
     if (!s) continue;
     g.strokeStyle = colors[i];
     g.lineWidth = i === line ? 2.4 : 1.4;
-    g.globalAlpha = line !== null && i !== line ? 0.55 : 1;
+    g.globalAlpha = line !== null && i !== line ? C().alpha.unselected : 1;
     g.beginPath();
     let col = null, mn = 0, mx = 0, started = false;
     for (let j = 0; j < s.f.length; j++) {
@@ -160,7 +159,7 @@ function drawFft(v) {
     const fl = designFilter({ ...fc, dt: dtOf(data) });
     const fs = Array.from({ length: 200 }, (_, j) => f0 + ((f1 - f0) * j) / 199);
     const { mag } = filterResponse(fl, fs, dtOf(data));
-    g.strokeStyle = colors[ai]; g.setLineDash([5, 4]); g.lineWidth = 1.2; g.globalAlpha = 0.8;
+    g.strokeStyle = colors[ai]; g.setLineDash([5, 4]); g.lineWidth = 1.2; g.globalAlpha = C().alpha.over;
     g.beginPath();
     fs.forEach((f, j) => { const y = P.t + (-20 * Math.log10(Math.max(mag[j], 1e-9)) / DB_PER_DIV) * P.dy; if (j) g.lineTo(fx(f), y); else g.moveTo(fx(f), y); });
     g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
@@ -168,11 +167,11 @@ function drawFft(v) {
   // Peaks of the selected channel, labelled.
   const sp = ai !== undefined && spectrumOf(data, scope.channels[ai], k);
   if (sp) {
-    g.font = `10.5px ${MONO}`; g.textAlign = 'center'; g.textBaseline = 'bottom';
+    g.font = `10.5px ${C().mono}`; g.textAlign = 'center'; g.textBaseline = 'bottom';
     for (const pk of peaks(sp.f, sp.amp, { count: 6, minRel: 0.02 })) {
       if (pk.f < f0 || pk.f > f1 || pk.f < 3 * sp.df) continue;
       const x = fx(pk.f), y = Math.max(P.t + 26, yOf(ai, pk.amp) - 4);
-      g.fillStyle = 'rgba(10, 13, 16, 0.7)';
+      g.fillStyle = C().veil;
       const s = siUnit(Number(pk.f.toPrecision(3)), 'Hz', 3), w = g.measureText(s).width;
       g.fillRect(x - w / 2 - 3, y - 13, w + 6, 13);
       g.fillStyle = colors[ai]; g.fillText(s, x, y);
@@ -181,9 +180,9 @@ function drawFft(v) {
   if (hover && hover.x >= P.l && hover.x <= P.r && hover.y >= P.t && hover.y <= P.b) {
     const f = f0 + ((hover.x - P.l) / P.w) * (f1 - f0);
     const x = Math.round(hover.x) + 0.5;
-    g.strokeStyle = 'rgba(235, 240, 245, 0.5)'; g.setLineDash([2, 3]);
+    g.strokeStyle = C().cursor; g.setLineDash([2, 3]);
     g.beginPath(); g.moveTo(x, P.t); g.lineTo(x, P.b); g.stroke(); g.setLineDash([]);
-    const rows = [[`f  ${siUnit(f, 'Hz', 4)}`, 'rgba(235, 240, 245, 0.9)']];
+    const rows = [[`f  ${siUnit(f, 'Hz', 4)}`, C().ink]];
     for (const i of shown) {
       const s = spectrumOf(data, scope.channels[i], k);
       if (!s) continue;
@@ -308,7 +307,7 @@ function drawSpectrogram(v) {
   const fixed = levelsOf(scope.view, ch.source, !!noise);
   const levels = fixed ?? (shown?.auto ? [shown.auto.floor, shown.auto.ceiling] : null);
   freqLabelsTime(v);
-  axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, siUnit(Number((f1 - ((f1 - f0) * j) / DIVY).toPrecision(4)), 'Hz', 3)]), 'left', 'rgba(200, 210, 218, 0.75)');
+  axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, siUnit(Number((f1 - ((f1 - f0) * j) / DIVY).toPrecision(4)), 'Hz', 3)]), 'left', C().label);
   axisText(g, P, Array.from({ length: DIVY + 1 }, (_, j) => [P.t + j * P.dy, num((DIVY / 2 - j) * ch.scale - ch.offset, 3)]), 'right', colors[i]);
   g.save();
   g.beginPath(); g.rect(P.l, P.t, P.w, P.h); g.clip();
@@ -333,7 +332,7 @@ function drawSpectrogram(v) {
   }
   // The channel's time trace over it, on the right axis.
   const k = sig ? v.k : -1;
-  g.strokeStyle = colors[i]; g.lineWidth = 1.4; g.globalAlpha = 0.9;
+  g.strokeStyle = colors[i]; g.lineWidth = 1.4; g.globalAlpha = C().alpha.over;
   g.beginPath();
   let started = false;
   for (let j = 0; j <= k; j++) {
@@ -345,12 +344,12 @@ function drawSpectrogram(v) {
   g.stroke(); g.globalAlpha = 1;
   if (v.sweeping) {
     const x = Math.round(tx(v.tScan)) + 0.5;
-    g.strokeStyle = 'rgba(235, 240, 245, 0.35)'; g.beginPath(); g.moveTo(x, P.t); g.lineTo(x, P.b); g.stroke();
+    g.strokeStyle = C().scan; g.beginPath(); g.moveTo(x, P.t); g.lineTo(x, P.b); g.stroke();
   }
   const unit = v.unitLabel(ch.source);
   if (hover && hover.x >= P.l && hover.x <= P.r && hover.y >= P.t && hover.y <= P.b) {
     const t = v.xt(hover.x), f = f1 - ((hover.y - P.t) / P.h) * (f1 - f0);
-    const rows = [[`t  ${siUnit(t, 's', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`f  ${siUnit(f, 'Hz', 4)}`, 'rgba(235, 240, 245, 0.9)'], [`${i + 1} ${ch.source}`, colors[i]]];
+    const rows = [[`t  ${siUnit(t, 's', 4)}`, C().ink], [`f  ${siUnit(f, 'Hz', 4)}`, C().ink], [`${i + 1} ${ch.source}`, colors[i]]];
     // The amplitude under the cursor, to pick a level by.
     if (sg && (!v.sweeping || t <= v.tScan)) {
       const fr = Math.round((t - t0 - sg.t[0]) / hop), b = Math.round(f / (sg.f[1] - sg.f[0]));
@@ -404,7 +403,7 @@ function drawStrip(v, st, shown) {
   const { counts, width } = shown.hist;
   // The band between the levels.
   const yc = yOf(ceiling), yf = yOf(floor);
-  g.fillStyle = 'rgba(235, 240, 245, 0.07)';
+  g.fillStyle = C().hover;
   g.fillRect(hL, yc, hR - hL, yf - yc);
   // A faint line every 20 dB across the histogram, so where the noise's hump
   // sits can be read without hovering; the labels go on top (below).
@@ -414,7 +413,7 @@ function drawStrip(v, st, shown) {
   g.lineWidth = 1;
   for (const d of ticks) {
     const y = Math.round(yOf(d)) + 0.5;
-    g.strokeStyle = sign && d === 0 ? 'rgba(200, 210, 218, 0.4)' : 'rgba(200, 210, 218, 0.16)';
+    g.strokeStyle = sign && d === 0 ? C().ruleStrong : C().rule;
     g.beginPath(); g.moveTo(hL, y); g.lineTo(hR, y); g.stroke();
   }
   let mx = 0;
@@ -424,7 +423,7 @@ function drawStrip(v, st, shown) {
     if (!counts[k]) continue;
     const d0 = lo + k * width, len = (counts[k] / L) * (hR - hL), y0 = yOf(d0 + width), y1 = yOf(d0);
     const inside = d0 + width / 2 >= floor && d0 + width / 2 <= ceiling;
-    g.fillStyle = inside ? 'rgba(214, 222, 229, 0.78)' : 'rgba(160, 175, 190, 0.32)';
+    g.fillStyle = inside ? C().hist : C().grid;
     g.fillRect(hR - len, y0, len, Math.max(1, y1 - y0));
   }
   // The colour bar: each pixel row in the colour its dB gets.
@@ -434,34 +433,34 @@ function drawStrip(v, st, shown) {
     g.fillStyle = `rgb(${LUT[c]}, ${LUT[c + 1]}, ${LUT[c + 2]})`;
     g.fillRect(barL, y, BAR_W, 1);
   }
-  g.strokeStyle = 'rgba(160, 175, 190, 0.5)'; g.lineWidth = 1;
+  g.strokeStyle = C().axis; g.lineWidth = 1;
   g.strokeRect(barL - 0.5, S.t + 0.5, BAR_W + 1, H - 1);
   // Where the handles' labels go (top of each box, 12 px high).
   const yC = Math.round(yOf(ceiling)) + 0.5, yF = Math.round(yOf(floor)) + 0.5;
   const tops = [Math.max(S.t + 1, yC - 15), Math.min(S.b - 14, yF + 3)];
   // The scale's labels, outlined so they read over the bars; not where a
   // handle's label is, and only if they fit beside the colour bar.
-  g.font = `9px ${MONO}`; g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.font = `9px ${C().mono}`; g.textAlign = 'left'; g.textBaseline = 'middle';
   if (hR - hL >= 26) for (const d of ticks) {
     const y = Math.round(yOf(d)), t = fmtDb(d, 0, sign);
     if (y < S.t + 11 || y > S.b - 3 || tops.some((ty) => y > ty - 4 && y < ty + 24)) continue;
-    g.lineWidth = 3; g.strokeStyle = 'rgba(10, 13, 16, 0.9)'; g.strokeText(t, hL + 2, y - 5);
-    g.fillStyle = 'rgba(200, 210, 218, 0.6)'; g.fillText(t, hL + 2, y - 5);
+    g.lineWidth = 3; g.strokeStyle = C().veil; g.strokeText(t, hL + 2, y - 5);
+    g.fillStyle = C().label; g.fillText(t, hL + 2, y - 5);
   }
   // The handles: a line across, a grip at the left, the level in dB.
-  g.font = `10px ${MONO}`; g.textAlign = 'left';
+  g.font = `10px ${C().mono}`; g.textAlign = 'left';
   for (const [d, y, ty] of [[ceiling, yC, tops[0]], [floor, yF, tops[1]]]) {
-    g.strokeStyle = '#e8edf2'; g.lineWidth = 1.5;
+    g.strokeStyle = C().handle; g.lineWidth = 1.5;
     g.beginPath(); g.moveTo(hL, y); g.lineTo(S.r, y); g.stroke();
-    g.fillStyle = '#e8edf2';
+    g.fillStyle = C().handle;
     g.beginPath(); g.moveTo(hL - 1, y - 5); g.lineTo(hL + 5, y); g.lineTo(hL - 1, y + 5); g.closePath(); g.fill();
     const s = fmtDb(d, 0, sign), w = g.measureText(s).width;
-    g.fillStyle = 'rgba(10, 13, 16, 0.8)'; g.fillRect(hL + 6, ty, w + 4, 12);
-    g.fillStyle = '#e8edf2'; g.textBaseline = 'top'; g.fillText(s, hL + 8, ty + 1);
+    g.fillStyle = C().veil; g.fillRect(hL + 6, ty, w + 4, 12);
+    g.fillStyle = C().handle; g.textBaseline = 'top'; g.fillText(s, hL + 8, ty + 1);
   }
   // Under the strip, where the time axis has its labels: the unit, and auto.
-  g.font = `10.5px ${MONO}`; g.textBaseline = 'top'; g.textAlign = 'center';
-  g.fillStyle = 'rgba(200, 210, 218, 0.75)';
+  g.font = `10.5px ${C().mono}`; g.textBaseline = 'top'; g.textAlign = 'center';
+  g.fillStyle = C().label;
   g.fillText(st.auto ? 'dB auto' : 'dB', (S.l + S.r) / 2, S.b + 5);
   // The switch above the strip: what a colour means. Lit above the noise
   // (not the default); a click switches (ui/display.js).
@@ -469,14 +468,14 @@ function drawStrip(v, st, shown) {
   st.switchBox = sw;
   const swHover = hover && hover.x >= sw.l - 2 && hover.x <= sw.r + 2 && hover.y >= sw.t - 2 && hover.y <= sw.b + 2;
   const on = st.switchOn;
-  g.fillStyle = on ? '#2a3540' : swHover ? 'rgba(235, 240, 245, 0.08)' : 'rgba(10, 13, 16, 0.6)';
+  g.fillStyle = on ? C().accent : swHover ? C().hover : C().veil;
   g.fillRect(sw.l, sw.t, sw.r - sw.l, sw.b - sw.t);
-  g.strokeStyle = on ? 'rgba(242, 199, 24, 0.7)' : 'rgba(160, 175, 190, 0.55)'; g.lineWidth = 1;
+  g.strokeStyle = on ? C().accent : C().axis; g.lineWidth = 1;
   g.strokeRect(sw.l + 0.5, sw.t + 0.5, sw.r - sw.l - 1, sw.b - sw.t - 1);
-  g.font = `600 9.5px ${MONO}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillStyle = on ? '#f2c718' : 'rgba(200, 210, 218, 0.85)';
+  g.font = `600 9.5px ${C().mono}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = on ? C().inkOnLit : C().label;
   g.fillText(on ? 'noise' : 'abs', (sw.l + sw.r) / 2, (sw.t + sw.b) / 2 + 0.5);
-  const grey = 'rgba(235, 240, 245, 0.9)', dim = 'rgba(200, 210, 218, 0.7)';
+  const grey = C().ink, dim = C().label;
   // Its readout goes beside the strip, outside the screen, as the strip's does.
   if (swHover) {
     st.tip = { y: (sw.t + sw.b) / 2, rows: st.noNoise ? [
@@ -500,7 +499,7 @@ function drawStrip(v, st, shown) {
   if (hover && hover.x >= S.l - 6 && hover.y >= S.t && hover.y <= S.b) {
     const d = lo + ((S.b - hover.y) / H) * (hi - lo);
     const y = Math.round(hover.y) + 0.5;
-    g.strokeStyle = 'rgba(235, 240, 245, 0.5)'; g.setLineDash([2, 3]); g.lineWidth = 1;
+    g.strokeStyle = C().cursor; g.setLineDash([2, 3]); g.lineWidth = 1;
     g.beginPath(); g.moveTo(hL, y); g.lineTo(S.r, y); g.stroke(); g.setLineDash([]);
     // The readout goes to the right of the strip, outside the screen (the
     // display places it), so the plot stays in view while the levels move.
@@ -517,8 +516,8 @@ function drawStrip(v, st, shown) {
 
 function freqLabelsTime(v) {
   const { g, P } = v;
-  g.font = `10.5px ${MONO}`;
-  g.fillStyle = 'rgba(200, 210, 218, 0.75)';
+  g.font = `10.5px ${C().mono}`;
+  g.fillStyle = C().label;
   g.textBaseline = 'top';
   for (let i = 0; i <= DIVX; i++) {
     const x = P.l + i * P.dx;
@@ -530,11 +529,11 @@ function freqLabelsTime(v) {
 // The hover readout goes in the top corner of the half the pointer is not in
 // (the person: "it blocks the view on the diagram"), as a scope's readouts do.
 function readout(g, P, x, rows, top = P.t + 6) {
-  g.font = `11.5px ${MONO}`;
+  g.font = `11.5px ${C().mono}`;
   g.textAlign = 'left'; g.textBaseline = 'top';
   const w = Math.max(...rows.map(([s]) => g.measureText(s).width)) + 14;
   const bx = Math.max(2, x < (P.l + P.r) / 2 ? P.r - 6 - w : P.l + 6);
-  g.fillStyle = 'rgba(10, 13, 16, 0.85)'; g.fillRect(bx, top, w, rows.length * 16 + 8);
-  g.strokeStyle = 'rgba(160, 175, 190, 0.4)'; g.strokeRect(bx + 0.5, top + 0.5, w - 1, rows.length * 16 + 7);
+  g.fillStyle = C().veil; g.fillRect(bx, top, w, rows.length * 16 + 8);
+  g.strokeStyle = C().tick; g.strokeRect(bx + 0.5, top + 0.5, w - 1, rows.length * 16 + 7);
   rows.forEach(([s, c], j) => { g.fillStyle = c; g.fillText(s, bx + 7, top + 5 + j * 16); });
 }

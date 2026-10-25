@@ -15,7 +15,8 @@
 // starts, and the model from the record whenever it is needed.
 
 import { controllerBlocks, upstreamSource, drain } from './autotune.js';
-import { parseEnd, ELEMENTS, diagramBlockDef } from './diagram.js';
+import { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } from './diagram.js';
+import { CONTROLLERS } from './controllers.js';
 import { referenceFn, gaussAt } from './signals.js';
 import { IDENTIFY_VERSION, EXPERIMENT, halved, piLaw, bumpless, fmtNum } from './experiment.js';
 import {
@@ -105,10 +106,13 @@ const range = (lo, hi) => (finite(lo) && finite(hi) && lo < hi ? [lo, hi] : null
 // answer to `describe` (Live mode), for its output ranges and input kinds.
 // link: { connected, estop } on a live plant (the tab's state). Returns
 //   { block: { path, key, where }, live,
-//     u: { name, unit, min, max, u0, from },
+//     u: { name, unit, min, max, u0, from, start },
 //     y: { name, unit, hard, from },
 //     r: { lo, hi, span, source, period, samples, Ts } | null,
-//     Ts, others: [{ name, value }] }
+//     Ts, others: [{ name, value, input? }] }
+// u.start says where u₀ came from ('plant': the port's safe value;
+// 'controller': the running variant's start output; null: 0); an other
+// input that drives a live plant's input names it (input).
 // and throws an IdentifyError when Identify cannot run on this block.
 export function knownFor(project, path, { describe = null, link = null } = {}) {
   const plant = project?.system?.plant;
@@ -126,7 +130,7 @@ export function knownFor(project, path, { describe = null, link = null } = {}) {
   const live = !!(up.ext || yp.ext || hasExternal(plant.diagram));
   if (live) {
     const ext = up.ext ?? yp.ext;
-    const kinds = ext?.params.kinds ?? describe?.inputs?.map((p) => p.kind);
+    const kinds = describe?.inputs?.map((p) => p.kind) ?? ext?.params.kinds;
     if (up.index >= 0 && kinds?.[up.index] === 'reference') throw new IdentifyError('reference-mode', 'this plant takes references (reference mode): identifying through its own controller comes later', 'Identify needs a plant the page drives with u');
     if (link && link.connected === false) throw new IdentifyError('connect', 'connect the plant first', 'press Connect under Live');
     if (link?.estop) throw new IdentifyError('estop', 'the plant is E-stopped: Reset', 'press Reset under Live');
@@ -148,15 +152,20 @@ export function knownFor(project, path, { describe = null, link = null } = {}) {
   }
   // u₀: a live plant's safe value; on a simulated plant the running
   // variant's start output u0 (the integral at t = 0, which a person sets so
-  // the loop starts in balance: the tank's pump at 0.172 m³/s holds 0.15 m),
-  // else 0; held to the range.
-  const start = safe ?? (finite(variant?.params?.u0) ? variant.params.u0 : 0);
+  // the loop starts in balance), or the one its design computed from the
+  // plant (a PI from the plant: the tank's pump holding 0.15 m), else 0;
+  // held to the range.
+  const own = safe === null ? variantStart(plant.diagram, hit.key, variant) : null;
+  const start = safe ?? own ?? 0;
   const u0 = Math.min(umax, Math.max(umin, start));
-  // y's hard range: what the plant declares (describe, or the External block's outMin/outMax, ymin/ymax).
+  // y's hard range: what the plant declares, beyond which it E-stops
+  // (describe's hard_min … hard_max, kept in the External block as ymin,
+  // ymax). An output's min … max (the block's outMin, outMax) is its full
+  // scale, what the scope spans, and never the hard range (§15).
   let hard = null;
   if (yp.ext) {
     const j = yp.index, p = yp.ext.params, d = describe?.outputs?.[j];
-    hard = range(d?.min, d?.max) ?? range(p.outMin?.[j], p.outMax?.[j]) ?? range(p.ymin?.[j] ?? p.ymin, p.ymax?.[j] ?? p.ymax);
+    hard = range(d?.hard_min, d?.hard_max) ?? range(p.ymin?.[j], p.ymax?.[j]);
   }
   const Ts = block.params.Ts;
   // r: the Source feeding input 1, over one period at Ts.
@@ -180,10 +189,24 @@ export function knownFor(project, path, { describe = null, link = null } = {}) {
   });
   return {
     block: { path: hit.path, key: hit.key, where: hit.where }, live,
-    u: { name: up.name, unit: up.unit, min: umin, max: umax, u0, from: fromPlant && fromVariant ? 'both' : fromPlant ? 'plant' : 'controller', start: safe !== null ? 'plant' : finite(variant?.params?.u0) && variant.params.u0 !== 0 ? 'controller' : null },
+    u: { name: up.name, unit: up.unit, min: umin, max: umax, u0, from: fromPlant && fromVariant ? 'both' : fromPlant ? 'plant' : 'controller', start: safe !== null ? 'plant' : own !== null && own !== 0 ? 'controller' : null },
     y: { name: yp.name, unit: yp.unit, hard, from: hard ? 'plant' : null },
     r, Ts, others,
   };
+}
+
+// The start output of a Controller block's running variant: its u0, or, for
+// a designed variant, the u0 its design computes from the plant (read from a
+// compile of the diagram, as a run makes it). null when it has none, or
+// when the design cannot give one now.
+function variantStart(diagram, key, variant) {
+  if (finite(variant?.params?.u0)) return variant.params.u0;
+  if (!CONTROLLERS[variant?.type]?.designed || !(CONTROLLERS[variant.type].computes ?? []).includes('u0')) return null;
+  try {
+    const el = compileDiagram(normalizeDiagram(structuredClone(diagram)), 'plant', { standalone: true, sources: new Proxy({}, { get: () => () => 0 }) });
+    const st = el.designs.find((x) => [].concat(x.path).join('/') === key);
+    return finite(st?.values?.u0) ? st.values.u0 : null;
+  } catch { return null; }
 }
 
 // The External plant input a Source drives directly (at any level), or null.

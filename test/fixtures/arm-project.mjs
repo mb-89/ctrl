@@ -1,6 +1,6 @@
 // Test fixture (not shipped): the HIL arm as a simulated project, so the
 // command line can identify it with a hidden variation (identification.md
-// §13, §17): the library's "HIL: external motor" with its External plant
+// §13, §17): the library's "HIL: an external plant" with its External plant
 // replaced by hil_plant.py's physics in blocks (arm.mjs ports the same
 // physics line by line; test 17 checks the two agree):
 //
@@ -67,10 +67,10 @@ export function armSubsystem(p = NOMINAL, { noise = 0.001, counts = 4096, seed =
 
 // The HIL arm's project, simulated: the External plant replaced by the arm.
 export function armProject(p = NOMINAL, opts = {}) {
-  const project = libraryProject('HIL: external');
+  const project = libraryProject('HIL: an external plant');
   const d = project.system.plant.diagram;
   const i = d.blocks.findIndex((b) => b.type === 'external');
-  d.blocks[i] = armSubsystem(p, opts);
+  d.blocks[i] = { ...armSubsystem(p, opts), id: d.blocks[i].id };
   project.title = 'Arm (simulated)';
   return project;
 }

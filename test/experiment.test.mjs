@@ -52,22 +52,39 @@ test('knownFor reads u, y, r, Ts and the other inputs from the project, never as
   assert.deepEqual([oven.r.lo, oven.r.hi, oven.r.source, oven.r.samples.length, oven.Ts], [0, 60, 'r', 250, 0.02]);
   assert.deepEqual(oven.others, [{ name: 'd', value: 0 }]);
   assert.equal(oven.live, false);
-  // A simulated plant starts from the running variant's start output (the
-  // tank's PI is set to start in balance at 0.172 m³/s).
+  // A simulated plant starts from the running variant's start output: the
+  // tank's PI from the plant computes the pump that holds it where it starts
+  // (0.15 m: 0.172 m³/s), so the loop starts in balance.
   const tank = knownFor(libraryProject('Conical tank'));
-  assert.deepEqual([tank.u.name, tank.u.u0, tank.u.start], ['q', 0.172, 'controller']);
+  assert.deepEqual([tank.u.name, tank.u.start], ['q', 'controller']);
+  assert.ok(Math.abs(tank.u.u0 - 0.1716) < 1e-3, String(tank.u.u0));
   // A live plant: u's range within the port's, its safe value as u₀; d is held
   // at the safe value of the plant input it drives; the hard range from describe.
-  const hil = libraryProject('HIL: external');
-  const k = knownFor(hil, 'ctrl', { describe: { outputs: [{ name: 'angle', min: -2.5, max: 2.5 }, { name: 'speed' }, { name: 'current' }] } });
+  const hil = libraryProject('HIL: an external plant');
+  const k = knownFor(hil, 'ctrl', { describe: { outputs: [{ name: 'angle', min: -Math.PI, max: Math.PI, hard_min: -2.4, hard_max: 2.4 }, { name: 'speed' }, { name: 'current' }] } });
   assert.deepEqual([k.live, k.u.name, k.u.min, k.u.max, k.u.u0, k.u.from], [true, 'V', -12, 12, 0, 'both']);
-  assert.deepEqual([k.y.name, k.y.unit, k.y.hard, k.y.from], ['angle', 'rad', [-2.5, 2.5], 'plant']);
-  assert.deepEqual(k.others, [{ name: 'd', value: 0, input: 'load' }]);
-  // The External block's own output ranges serve when describe is not at hand.
-  const hil2 = structuredClone(hil);
-  const ext = hil2.system.plant.diagram.blocks.find((b) => b.type === 'external');
-  Object.assign(ext.params, { outMin: [-3, null, null], outMax: [3, null, null] });
-  assert.deepEqual(knownFor(hil2).y.hard, [-3, 3]);
+  assert.deepEqual([k.y.name, k.y.unit, k.y.hard, k.y.from], ['angle', 'rad', [-2.4, 2.4], 'plant']);
+  assert.deepEqual(k.others, []);
+  // Without describe at hand, the External block's hard range (ymin, ymax:
+  // the arm's ±2.5 rad), never its full scale (outMin, outMax: ±π), which
+  // the plant does not stop at (§15). A typed band beyond it is refused.
+  const ext = hil.system.plant.diagram.blocks.find((b) => b.type === 'external');
+  assert.deepEqual([ext.params.outMin[0], ext.params.outMax[0]], [-Math.PI, Math.PI]);
+  const kb = knownFor(hil);
+  assert.deepEqual(kb.y.hard, [-2.5, 2.5]);
+  assert.throws(() => planExperiment(kb, { band: [-0.5, 2.8] }), (err) => err instanceof IdentifyError && err.code === 'band-hard');
+  assert.deepEqual(defaultBand(kb).band, [-0.5, 2], 'the default band backs off inside ±2.5, not ±π');
+  const fullOnly = structuredClone(hil);
+  Object.assign(fullOnly.system.plant.diagram.blocks.find((b) => b.type === 'external').params, { ymin: [null, null, null], ymax: [null, null, null] });
+  assert.equal(knownFor(fullOnly).y.hard, null, 'a full scale alone is no hard range');
+  // Another input, held at the safe value of the plant input it drives.
+  const two = structuredClone(hil);
+  const d2 = two.system.plant.diagram, e2 = d2.blocks.find((b) => b.type === 'external');
+  Object.assign(e2.params, { inputs: ['V', 'load'], inUnits: ['V', 'N·m'], min: [-12, -1], max: [12, 1], safe: [0, 0.25], kinds: ['effort', 'effort'], measures: ['', ''] });
+  d2.blocks.push({ id: 'd', type: 'source', params: { signal: 'd', unit: 'N·m' } });
+  d2.wires.push({ from: 'd', to: `${e2.id}:1` });
+  two.system.signals.d = { period: 5, components: [] };
+  assert.deepEqual(knownFor(two).others, [{ name: 'd', value: 0.25, input: 'load' }]);
 });
 
 test('the band defaults to r\'s range widened by a third, clipped inside the plant\'s range; the plan holds the references (§2, §5.7)', () => {
@@ -112,10 +129,10 @@ test('every reason Identify cannot run is an IdentifyError with a sentence (§2,
   refuses(() => knownFor(edit(oven, (d) => { d.blocks.find((b) => b.id === 'ctrl').params.inputs = 5; })), 'measurements', /one measurement \(r, y\): this one has 4$/);
   refuses(() => knownFor(edit(oven, (d) => { d.blocks.find((b) => b.id === 'ctrl').variants.forEach((v) => { v.params.umin = -Infinity; v.params.umax = Infinity; }); })), 'u-range', /^set u min and u max in the Controller tab: Identify needs to know how far P may go$/);
   refuses(() => knownFor(edit(oven, (d) => { d.blocks = d.blocks.filter((b) => b.id !== 'ctrl'); d.wires = d.wires.filter((w) => !w.to.startsWith('ctrl') && !w.from.startsWith('ctrl')); })), 'no-controller', /no Controller block/);
-  const hil = libraryProject('HIL: external');
+  const hil = libraryProject('HIL: an external plant');
   refuses(() => knownFor(hil, 'ctrl', { link: { connected: false } }), 'connect', /^connect the plant first$/);
   refuses(() => knownFor(hil, 'ctrl', { link: { connected: true, estop: 'stop pressed at the plant' } }), 'estop', /^the plant is E-stopped: Reset$/);
-  refuses(() => knownFor(hil, 'ctrl', { describe: { inputs: [{ name: 'V', kind: 'reference' }, { name: 'load' }] } }), 'reference-mode', /takes references \(reference mode\): identifying through its own controller comes later/);
+  refuses(() => knownFor(hil, 'ctrl', { describe: { inputs: [{ name: 'V', kind: 'reference' }] } }), 'reference-mode', /takes references \(reference mode\): identifying through its own controller comes later/);
   // The band: r must stay inside; the page must know a range for y; inside the plant's.
   refuses(() => armPlan({ band: [-0.5, 1.2] }), 'r-band', /^r leaves 'may move within' \(r reaches 1\.5, the band ends at 1\.2\)$/);
   const still = { ...ARM_KNOWN, y: { ...ARM_KNOWN.y, hard: null }, r: { ...ARM_KNOWN.r, lo: 0, hi: 0, span: 0, samples: new Array(500).fill(0) } };
@@ -421,7 +438,9 @@ test('the fixtures stay out of the page: no plant numbers or test code in the bu
   const bundle = bundleScript();
   // The shipped plant script rides along on purpose (Live mode offers it); the code does not.
   const code = bundle.replace(/^const __HIL_FILES = .*$/m, '');
-  for (const word of ['mgl', 'w_eps', 'drawArm', 'createArm', 'transferPlant', 'diagramPlant', 'runExperiment', 'fixtures', 'NOMINAL']) {
+  // (The library's own physics may name mgl, as the pendulum chain does: the
+  // examples are data. What must stay out is the fixtures' code and names.)
+  for (const word of ['W_EPS', 'w_eps', 'drawArm', 'createArm', 'armProject', 'armSubsystem', 'transferPlant', 'diagramPlant', 'runExperiment', 'contSim', 'fixtures', 'NOMINAL']) {
     assert.equal(code.includes(word), false, word);
   }
   const build = readFileSync(new URL('../build.mjs', import.meta.url), 'utf8');

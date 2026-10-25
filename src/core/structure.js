@@ -3,10 +3,14 @@
 // describes the picture, with the variant's live values on it; it touches no
 // DOM, so it runs in Node for the tests. src/ui/ctldiagram.js draws it.
 //
-// describeVariant(variant, { inputs, Ts, block }) → { title, w, h, nodes, wires }
+// describeVariant(variant, { inputs, Ts, block, values }) → { title, w, h, nodes, wires }
 //   variant  normalised ({ type, params })
 //   inputs   names of what feeds the block's inputs (r or u first, then the measurements)
 //   Ts       the block's sample time; block: 'controller' or 'observer'
+//   values   for a designed type, what its design computed (the Computed
+//            box's numbers), when there are any: its picture is its Copy as
+//            numbers twin's with those numbers ('–' until they are computed),
+//            and a line under it says where they come from
 //
 // Each type lays out its own picture on a canvas w × h (px at 1:1, about
 // the width of the tab's Variants column). Signals flow left to right; r (or
@@ -28,7 +32,7 @@
 
 import { trackingTime, ANTI_WINDUP } from './controllers.js';
 
-export const DIAGRAM_WIDTH = 270;
+export const DIAGRAM_WIDTH = 276;
 
 // A number as the diagram shows it: 3 significant digits, k for the very
 // large and µ for the very small (below 0.001; 0.005 stays 0.005), a true
@@ -44,9 +48,10 @@ export function fmt(v) {
 }
 // A time: in ms below 0.1 s ("20 ms"), else in s ("0.387 s").
 const secs = (v) => (Number.isFinite(v) && v !== 0 && Math.abs(v) < 0.1 ? `${fmt(v * 1e3)} ms` : `${fmt(v)} s`);
-const range = (xs) => { const lo = Math.min(...xs), hi = Math.max(...xs); return lo === hi ? fmt(lo) : `${fmt(lo)}…${fmt(hi)}`; };
+const range = (xs) => { if (xs.some(Number.isNaN)) return '–'; const lo = Math.min(...xs), hi = Math.max(...xs); return lo === hi ? fmt(lo) : `${fmt(lo)}…${fmt(hi)}`; };
 // Times from lo to hi, in the unit the larger one takes.
 const secsRange = (xs) => {
+  if (!xs.length || xs.some(Number.isNaN)) return '–';
   const lo = Math.min(...xs), hi = Math.max(...xs);
   if (lo === hi) return secs(lo);
   return Math.abs(hi) < 0.1 ? `${fmt(lo * 1e3)}…${fmt(hi * 1e3)} ms` : `${fmt(lo)}…${fmt(hi)} s`;
@@ -62,8 +67,8 @@ export function limitsText(lo, hi) {
   return a ? `≥ ${fmt(lo)}` : `≤ ${fmt(hi)}`;
 }
 
-// A note's text is 9 px monospace: about 5.4 px a character.
-export const NOTE_CHAR = 5.4;
+// A note's text is 10 px monospace (--text-2xs): about 6 px a character.
+export const NOTE_CHAR = 6;
 
 function sheet(title, w, h) {
   const nodes = [], wires = [];
@@ -145,7 +150,8 @@ function antiWindup(s, p, ix, iy, y, yOut, noLimits, tts, rule) {
 
 function pid(p, { inputs, Ts }) {
   const s = sheet('PID', DIAGRAM_WIDTH, 144);
-  const P = !!p.Kp, I = !!p.Ki, Dd = !!p.Kd;
+  // A gain at 0 is off (faint); one not computed yet (NaN, a design pending) is not.
+  const P = p.Kp !== 0, I = p.Ki !== 0, Dd = p.Kd !== 0;
   reference(s, p, 40);
   const ffOff = feedforward(s, p, 40);
   // P: b·rf − y, then Kp.
@@ -176,7 +182,7 @@ function pid(p, { inputs, Ts }) {
   s.block({ x: 168, y: p.u0 ? 97 : 92, w: 52, h: p.u0 ? 26 : 16, lines: [[['∫ ', ''], ...kv('Ki', fmt(p.Ki))], ...(p.u0 ? [kv('u0', fmt(p.u0))] : [])], faint: !I, tip: `Integral gain Ki on the error rf − y; it starts at u0 ${fmt(p.u0)}` });
   s.wire([[194, 92], [213, 92]], { faint: !I });
   const noLimits = output(s, p, 6, 100, [[14, ffOff ? '' : '+'], [40, '+'], [66, '−'], [92, '+']], 53);
-  if (I) antiWindup(s, p, 168, iy, 120, 53, noLimits, [trackingTime(p, Ts)], '√(Ti·Td), or Ti/2 without D');
+  if (I) antiWindup(s, p, 168, iy, 120, 53, noLimits, [Number.isNaN(p.Ki) ? NaN : trackingTime(p, Ts)], '√(Ti·Td), or Ti/2 without D');
   return s.done();
 }
 
@@ -204,7 +210,7 @@ function gainScheduled(p, { inputs, Ts }) {
   s.note({ x: 142, y: (79 + bottom) / 2, text: 'Kp, Ki', anchor: 'end' });
   const noLimits = output(s, p, 6, 52, [[14, ffOff ? '' : '+'], [44, '+']], 29);
   // Tt 0: Ti/2 at each point of the schedule (Ti = Kp/Ki there).
-  const tts = p.at.map((_, i) => trackingTime({ Kp: p.Kp[i], Ki: p.Ki[i], Kd: 0, Tt: p.Tt }, Ts)).filter((t, i) => p.Ki[i]);
+  const tts = p.at.map((_, i) => (Number.isNaN(p.Ki[i]) ? NaN : trackingTime({ Kp: p.Kp[i], Ki: p.Ki[i], Kd: 0, Tt: p.Tt }, Ts))).filter((t, i) => p.Ki[i] !== 0);
   if (I) antiWindup(s, p, 186, bottom, 120, 29, noLimits, tts, 'Ti/2 at each point of the schedule, Ti = Kp/Ki');
   return s.done();
 }
@@ -216,13 +222,13 @@ function stateFeedback(p, { inputs }) {
   s.port({ x: 4, y: 14, text: 'r', anchor: 'start' });
   s.wire([[12, 14], [16, 14]]);
   s.block({ x: 39, y: 14, w: 46, h: 16, lines: [kv('Tr', p.Tr > 0 ? secs(p.Tr) : '0')], faint: !(p.Tr > 0), tip: 'Prefilter (Vorfilter) on r; 0 is off' });
-  s.wire([[62, 14], [74, 14]], { faint: !p.kr });
-  s.block({ x: 100, y: 14, w: 52, h: 16, lines: [kv('kr', fmt(p.kr))], faint: !p.kr, tip: 'Static prefilter kr: scales r so the output settles at r' });
-  s.wire([[126, 14], [191, 14]], { faint: !p.kr });
+  s.wire([[62, 14], [74, 14]], { faint: p.kr === 0 });
+  s.block({ x: 100, y: 14, w: 52, h: 16, lines: [kv('kr', fmt(p.kr))], faint: p.kr === 0, tip: 'Static prefilter kr: scales r so the output settles at r' });
+  s.wire([[126, 14], [191, 14]], { faint: p.kr === 0 });
   s.sum({ x: 196, y: 14, r: 5, signs: { w: '+', s: '−' } });
   const top = rowY(0) - 8, bottom = rowY(m - 1) + 8, mid = (top + bottom) / 2;
   for (let i = 0; i < m; i++) {
-    const y = rowY(i), off = !p.K[i];
+    const y = rowY(i), off = p.K[i] === 0;
     s.port({ x: 4, y, text: short(inputs[i + 1] ?? `y${i + 1}`), anchor: 'start', faint: off, tip: `Input ${i + 2}: ${inputs[i + 1] ?? 'not connected'}` });
     s.wire([[58, y], [74, y]], { faint: off });
     s.block({ x: 100, y, w: 52, h: 14, lines: [kv(`K${i + 1}`, fmt(p.K[i]))], faint: off });
@@ -302,9 +308,10 @@ function off() {
 }
 
 // An observer predicts with its model, then corrects with the measurements.
-function estimator(p, { inputs }, kind) {
-  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, kind === 'kalman' ? 117 : 106);
-  const n = p.B.length, m = p.C.length / n;
+// n, m: the states and measurements (NaN: not known yet); lines: the notes
+// under it for a Kalman filter.
+function estimator(p, { inputs }, kind, { n = p.B.length, m = p.C.length / p.B.length, lines = [] } = {}) {
+  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, 95 + 11 * (kind === 'kalman' ? lines.length : 1));
   s.port({ x: 4, y: 36, text: 'u', anchor: 'start', tip: `Plant input: ${inputs[0] ?? 'not connected'}` });
   s.wire([[12, 36], [24, 36]]);
   s.block({ x: 74, y: 36, w: 100, h: 28, lines: [[['predict', 'k']], [['Ad·x̂ + Bd·u', '']]], tip: 'Predict: the model, discretised at Ts, carries the estimate one sample ahead with the input u' });
@@ -312,17 +319,15 @@ function estimator(p, { inputs }, kind) {
   s.block({ x: 190, y: 36, w: 100, h: 28, lines: [[['correct', 'k']], [['+ L·(y − C·x̂)', '']]], tip: 'Correct: the estimate moves toward the measurements by the gain L times what the model did not predict' });
   s.wire([[240, 36], [252, 36]]);
   s.dot({ x: 246, y: 36 });
-  s.port({ x: 254, y: 36, text: 'x̂', anchor: 'start', tip: `${n} estimated states` });
+  s.port({ x: 254, y: 36, text: 'x̂', anchor: 'start', tip: Number.isNaN(n) ? 'the estimated states' : `${n} estimated states` });
   s.wire([[246, 36], [246, 9], [165, 9]]);
   s.block({ x: 150, y: 9, w: 30, h: 13, lines: [[['z⁻¹', '']]], tip: 'The estimate of the sample before' });
   s.wire([[135, 9], [74, 9], [74, 22]]);
   s.port({ x: 4, y: 70, text: 'y', anchor: 'start', tip: `Measurements: ${inputs.slice(1).join(', ') || 'none'}` });
   s.wire([[12, 70], [190, 70], [190, 50]]);
-  s.note({ x: 4, y: 87, text: `${n} state${n === 1 ? '' : 's'}, ${m} measurement${m === 1 ? '' : 's'}`, anchor: 'start' });
-  if (kind === 'kalman') {
-    s.note({ x: 4, y: 98, text: 'L: the steady Kalman gain from Q and R', anchor: 'start' });
-    s.note({ x: 4, y: 109, text: `Q ${p.Q.map(fmt).join(' ')}  R ${p.R.map(fmt).join(' ')}`, anchor: 'start' });
-  } else s.note({ x: 4, y: 98, text: `L ${p.L.map(fmt).join(' ')}`, anchor: 'start' });
+  s.note({ x: 4, y: 87, text: `${Number.isNaN(n) ? 'the states it sees' : `${n} state${n === 1 ? '' : 's'}`}, ${m} measurement${m === 1 ? '' : 's'}`, anchor: 'start' });
+  if (kind === 'kalman') lines.forEach((text, i) => s.note({ x: 4, y: 98 + 11 * i, text, anchor: 'start' }));
+  else s.note({ x: 4, y: 98, text: `L ${p.L.map(fmt).join(' ')}`, anchor: 'start' });
   return s.done();
 }
 
@@ -423,12 +428,90 @@ function superTwisting(p, { inputs, Ts }) {
   return s.done();
 }
 
-const LAYOUTS = { pid, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, kalman: (p, o) => estimator(p, o, 'kalman'), luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+// ---- Designed types (design/output/designs.md) ---------------------------
+// A designed variant runs as its Copy as numbers twin, so it draws as its
+// twin with the numbers its design computed (o.values; NaN, drawn '–', while
+// none are), and a line under the picture says where they come from.
+const UNKNOWN = NaN;
+const unknown = (n) => new Array(n).fill(UNKNOWN);
+// A line of small text in a row of its own under a picture.
+function below(d, text, title = d.title) {
+  const room = Math.floor((d.w - 6) / NOTE_CHAR), chars = [...text];
+  const cut = chars.length > room ? `${chars.slice(0, room - 1).join('')}…` : text;
+  return { ...d, title, h: d.h + 13, nodes: [...d.nodes, { kind: 'note', x: 4, y: d.h + 6, text: cut, anchor: 'start', ...(cut !== text ? { tip: text } : {}) }] };
+}
+const weights = (p) => `Q ${p.Q.map(fmt).join(' ')}, R ${fmt(p.R)}`;
+
+function lqr(p, o) {
+  const v = o.values, m = Math.max(1, o.inputs.length - 1);
+  const d = stateFeedback({ K: v?.K ?? unknown(m), kr: v?.kr ?? UNKNOWN, Tr: p.Tr, umin: p.umin, umax: p.umax }, o);
+  return below(d, `K, kr: LQR from the plant at its origin, ${weights(p)}`, 'LQR');
+}
+
+function scheduledPI(p, o) {
+  const v = o.values, n = p.at.length;
+  const common = { Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, u0: v?.u0 ?? 0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
+  const d = n === 1
+    ? pid({ Kp: v?.Kp[0] ?? UNKNOWN, Ki: v?.Ki[0] ?? UNKNOWN, Kd: 0, Tf: 0.01, b: 1, ...common }, o)
+    : gainScheduled({ at: p.at, Kp: v?.Kp ?? unknown(n), Ki: v?.Ki ?? unknown(n), ...common }, o);
+  return below(d, `Kp, Ki, u0 from the plant at y = ${p.at.map(fmt).join(', ')}; Tcl ${secs(p.Tcl)}`, 'PI from the plant');
+}
+
+function pidFF(p, o) {
+  const v = o.values;
+  const d = pid({ Kp: p.Kp, Ki: p.Ki, Kd: p.Kd, Tf: p.Tf, b: p.b, Tr: p.Tr, Kff: v?.Kff ?? UNKNOWN, Kv: v?.Kv ?? UNKNOWN, Ka: v?.Ka ?? UNKNOWN, u0: p.u0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt }, o);
+  return below(d, `Kff, Kv, Ka: the plant's inverse at its origin, with the PID's Kp (1 − b) and Kd; order ${p.order}`, 'PID + feedforward from the plant');
+}
+
+function swingUpLqr(p, o) {
+  const v = o.values;
+  const d = swingUp({ ...p, K: v?.K ?? unknown(4), kr: v?.kr ?? UNKNOWN }, o);
+  return below(d, `K, kr: LQR from the plant, ${weights(p)}; l, g too`, 'Swing-up + LQR catch');
+}
+
+// The planned swing-up: the plan's force F(t) ahead, TV-LQR on the error
+// from the planned measurements y*(t), the upright LQR after it.
+function trajectory(p, { inputs, values }) {
+  const v = values, steps = v?.F?.length ?? 0;
+  const s = sheet('Planned swing-up + TV-LQR', DIAGRAM_WIDTH, 116);
+  let lo = Infinity, hi = -Infinity;
+  for (let k = 0; k < steps; k++) { lo = Math.min(lo, v.F[k]); hi = Math.max(hi, v.F[k]); }
+  s.block({ x: 70, y: 20, w: 110, h: 26, lines: [[['plan ', 'k'], ['F(t), y*(t)', '']], [...kv('T', secs(p.T)), ...kv('  seg.', String(p.segments))]], tip: `The plan: the force F(t) that takes the plant from where it starts to rest at the origin in T ${secs(p.T)}, and the measurements y*(t) along it; computed in the page from the plant (${p.segments} segments, multiple shooting), using ${fmt(100 * p.planShare)} % of each force limit` });
+  s.wire([[125, 14], [213, 14]]);
+  s.note({ x: 132, y: 7, text: 'F(t)', anchor: 'start' });
+  s.wire([[100, 33], [100, 55]]);
+  s.port({ x: 4, y: 60, text: 'y', anchor: 'start', tip: `Measurements: ${inputs.slice(1).join(', ') || 'none'}` });
+  s.wire([[12, 60], [95, 60]]);
+  s.sum({ x: 100, y: 60, r: 5, signs: { w: '+', n: '−' } });
+  s.wire([[105, 60], [118, 60]]);
+  s.block({ x: 148, y: 60, w: 60, h: 16, lines: [[['K(t) ', 'k'], ['TV-LQR', '']]], tip: `Time-varying LQR along the plan (Q ${p.Q.map(fmt).join(' ')}, R ${fmt(p.R)}): it corrects what the plant does off the plan, with the gains of each sample` });
+  s.wire([[178, 60], [213, 60]]);
+  output(s, p, 6, 68, [[14, '+'], [60, '−']], 37);
+  s.note({ x: 4, y: 86, text: 'after T: u = kr·r − K·y, the LQR at the origin', anchor: 'start' });
+  s.note({ x: 4, y: 98, text: `u = 0 until ${secs(p.start)}; the plan may use ${fmt(100 * p.planShare)} % of u`, anchor: 'start' });
+  s.note({ x: 4, y: 110, text: steps ? `planned from the plant: F ${fmt(lo)}…${fmt(hi)}` : 'planned from the plant: F – (not yet)', anchor: 'start' });
+  return s.done();
+}
+
+function kalman(p, o) {
+  const v = o.values;
+  const n = v ? v.B.length : UNKNOWN, m = v ? v.C.length / v.B.length : Math.max(1, o.inputs.length - 1);
+  const lines = ['model and L from the plant, at its origin', `Q ${p.Q.map(fmt).join(' ')}  R ${p.R ? p.R.map(fmt).join(' ') : 'from the sensors'}`];
+  return estimator(p, o, 'kalman', { n, m, lines });
+}
+
+// A Kalman filter on your model: the page computes L from it, Q and R.
+function kalmanModel(p, o) {
+  const lines = ['L from your model A, B, C, Q and R (Riccati)', `Q ${p.Q.map(fmt).join(' ')}  R ${p.R.map(fmt).join(' ')}`];
+  return estimator(p, o, 'kalman', { lines });
+}
+
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 // def: the type's library entry, for the generic picture of a type without its own.
-export function describeVariant(variant, { inputs = [], Ts = 0.01, def = null } = {}) {
+export function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {
   const layout = LAYOUTS[variant.type];
-  return layout ? layout(variant.params, { inputs, Ts }) : generic(variant, def);
+  return layout ? layout(variant.params, { inputs, Ts, values }) : generic(variant, def);
 }
 
 // The types that have their own picture.
