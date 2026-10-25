@@ -13,7 +13,7 @@
 //   renderMarkdown(result)  → the decision as text, for a terminal or an agent
 //
 // The matrix (a plain object; the file shape is in pugh.md):
-//   { title?, criteria: [{ key, label?, weight, better: 'lower'|'higher',
+//   { title?, kind? (what is decided, for the heading: 'Controller benchmark'), criteria: [{ key, label?, weight, better: 'lower'|'higher',
 //       tolerance?, floor?, kind?: 'measured'|'judged' }],
 //     candidates: [{ key, label?, values?: {criterion: number},
 //       marks?: {criterion: −2…2 | [−2…2, …] (several raters)}, fits?, whyNot?,
@@ -148,7 +148,7 @@ function pughEngine() {
       return out;
     });
     return {
-      title: String(m.title ?? 'Decision'), criteria, candidates, gates, datum: { prefer }, strong, overrides,
+      title: String(m.title ?? 'Decision'), kind: String(m.kind ?? 'Decision'), criteria, candidates, gates, datum: { prefer }, strong, overrides,
       sensitivity: { step: s.step, draws: Math.round(s.draws), seed: s.seed, holdShare: s.holdShare, runnersUp: Math.round(s.runnersUp) },
     };
   }
@@ -343,7 +343,7 @@ function pughEngine() {
       losses: parts(r).filter((x) => x.contribution < 0).sort((a, b) => a.contribution - b.contribution),
     });
     const result = {
-      version: PUGH_VERSION, title: m.title, strong, criteria, weights, gates: m.gates, input: matrix, nudgeUnit,
+      version: PUGH_VERSION, title: m.title, kind: m.kind, strong, criteria, weights, gates: m.gates, input: matrix, nudgeUnit,
       datum: { key: datum.key, label: datum.label, fits: datum.fits, whyNot: datum.whyNot },
       candidates: rows.map(out),
       ranking: ranking.map((r) => r.key),
@@ -681,17 +681,28 @@ function pughEngine() {
     const sym = (v) => (v === null || v === undefined ? '?' : SYMBOL[Math.round(v)]);
     const pctTol = (t) => `±${fmt(100 * t)} %`;
     const words = (t) => t.split(' ').map((w) => `<span class="rpt-word">${esc(w)}</span>`).join(' ');
-    const h = [`<section class="rpt${live ? ' live' : ''}">`, `<h1>${esc(res.title)}</h1>`, `<p class="rpt-bottom" data-bottom>${bold(bottomLine(res))}</p>`];
-    // The person's changes, under the bottom line (and in print).
-    if (res.overrides?.length) {
-      h.push(`<div class="rpt-person"><h2>Changed by the person</h2>${res.overrides.map((o) => `<p>${esc(o.effect)} <span class="dim">— “${esc(o.comment)}”</span></p>`).join('')}${res.before && res.before.suggestion !== (res.suggestion?.label ?? null) ? `<p class="dim">Without these changes the suggestion was ${esc(res.before.suggestion ?? 'none')}.</p>` : ''}</div>`);
-    }
-    // The keys, live only: Undo, Save, Export, Print, and the theme (the
-    // page's own: system, light or dark; print is always light).
+    // One page with nothing open (input 68): what it is, the bottom line,
+    // the keys and the person's changes as one line, the sensitivity, the
+    // table. Everything else opens: the changes, the runners-up, each row.
+    const nIn = res.candidates.filter((c) => c.fits).length, nOut = res.candidates.length - nIn;
+    const h = [`<section class="rpt${live ? ' live' : ''}">`, `<h1>${esc(res.kind)}: ${esc(res.title)}</h1>`,
+      `<p class="dim rpt-sub">${res.candidates.length} options compared on ${res.criteria.length} criteria against the datum, ${esc(res.datum.label)}; ${nIn} in${nOut ? `, ${nOut} vetoed` : ''}.</p>`,
+      `<p class="rpt-bottom" data-bottom>${bold(bottomLine(res))}</p>`];
+    // The keys, live only: Undo, Save, Export, Print (what is open, or
+    // everything), and the theme (the page's own; print is always light).
     const themes = `<span class="seg" role="group" aria-label="Theme">${THEMES.map(([k, label]) => `<button type="button" class="btn btn-sm" data-theme-set="${k}" aria-pressed="${k === theme}">${label}</button>`).join('')}</span>`;
-    h.push(`<div class="rpt-tools rpt-live">${btn('Undo', { tool: 'undo' })}${btn('Save report', { tool: 'save' })}${btn('Export changes', { tool: 'export' })}${btn('Print', { tool: 'print' })}${themes}</div>`);
-    if (res.sensitivity) h.push(`<div class="rpt-sens">${sensitivitySvg(res)}</div>`);
-    h.push(`<p class="dim">Datum: <strong>${esc(res.datum.label)}</strong>, the first row. Marks: ++ much better, + better, S the same within the tolerance, − worse, −− much worse (beyond ×${esc(fmt(res.strong))}), ? not judged (counts as S); × after a total: vetoed. <span class="rpt-live">A boxed value can be changed: click it, or Tab to it and press Enter. A dashed frame: changed by the person. A row opens to its vetoes, actions and plots.</span></p>`);
+    h.push(`<div class="rpt-tools rpt-live">${btn('Undo', { tool: 'undo' })}${btn('Save report', { tool: 'save' })}${btn('Export changes', { tool: 'export' })}${btn('Print', { tool: 'print' })}${btn('Print with everything open', { tool: 'print-all' })}${themes}</div>`);
+    // The person's changes: one line, their list behind it.
+    if (res.overrides?.length) {
+      const n = res.overrides.length, was = res.before && res.before.suggestion !== (res.suggestion?.label ?? null) ? `; without them the suggestion was ${esc(res.before.suggestion ?? 'none')}` : '';
+      h.push(`<details class="rpt-more rpt-person" data-more="changes"${open.includes('changes') ? ' open' : ''}><summary class="disclosure"><span class="chev" aria-hidden="true"></span>${n} change${n > 1 ? 's' : ''} by you${was}</summary>${res.overrides.map((o) => `<p>${esc(o.effect)} <span class="dim">— “${esc(o.comment)}”</span></p>`).join('')}</details>`);
+    }
+    // The sensitivity, said for what it is; the runners-up's numbers behind it.
+    if (res.sensitivity) {
+      h.push(`<figure class="rpt-sens">${sensitivitySvg(res)}<figcaption>How far a weight must move before another option wins</figcaption></figure>`);
+      h.push(`<details class="rpt-more" data-more="runners"${open.includes('runners') ? ' open' : ''}><summary class="disclosure"><span class="chev" aria-hidden="true"></span>The runners-up in numbers</summary><div class="rpt-scroll"><table><thead><tr>${['Runner-up', 'Total', 'Ties when one weight changes', `Reasonable (±${esc(fmt(res.sensitivity.step))})`, 'All weights together', 'Share of draws'].map((t) => `<th>${t}</th>`).join('')}</tr></thead><tbody>${runnerRows(res).map((row) => `<tr>${row.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`);
+    }
+    h.push(`<p class="dim rpt-key">Datum: <strong>${esc(res.datum.label)}</strong>, the first row. ++ much better, + better, S the same within the tolerance, − worse, −− much worse (beyond ×${esc(fmt(res.strong))}), ? not judged; × after a total: vetoed. <span class="rpt-live">A boxed value can be changed; a dashed frame, changed by you; a row opens to its vetoes, actions and plots.</span></p>`);
     // The head: the criteria on end, then their weights and tolerances.
     const head = [`<div class="rpt-grid rpt-head"><span class="rpt-name">Option</span><span class="rpt-total">Total</span>${res.criteria.map((cr) => `<span class="rpt-c"><span class="rpt-vhead">${words(cr.label)}${cr.kind === 'judged' ? ' <span class="rpt-word">(judged)</span>' : ''}</span></span>`).join('')}</div>`];
     head.push(`<div class="rpt-grid"><span class="rpt-name">Weight</span><span class="rpt-total"></span>${res.criteria.map((cr, i) => `<span class="rpt-c">${field(esc(fmt(res.weights[i])), { weight: cr.key }, `${cr.label}: weight ${fmt(res.weights[i])}; change`, res.weights[i] !== cr.defaults.weight ? 'changed' : '')}</span>`).join('')}</div>`);
@@ -721,16 +732,11 @@ function pughEngine() {
         const figs = c.fits ? (c.figures ?? []).slice(0, MAX_FIGURES) : [];
         if (figs.length) panel.push(`<div class="rpt-figs">${figs.map((f) => `<figure>${plotSvg(f)}<figcaption>${esc(f.title)}</figcaption></figure>`).join('')}</div>`);
       }
-      return `<details class="rpt-opt${c.fits ? ' in' : ' out'}" data-section="${esc(c.key)}" data-fits="${c.fits}"${open.includes(c.key) ? ' open' : ''}>${summary}<div class="rpt-panel">${panel.join('')}</div></details>`;
+      return `<details class="rpt-opt${c.fits ? '' : ' out'}" data-section="${esc(c.key)}" data-fits="${c.fits}"${open.includes(c.key) ? ' open' : ''}>${summary}<div class="rpt-panel">${panel.join('')}</div></details>`;
     });
     // A table wider than its place scrolls in its own box, the names held.
     h.push(`<div class="rpt-scroll">${head.join('')}${optRows.join('')}</div>`);
-    if (res.sensitivity) {
-      h.push(`<h2 class="rpt-gap">Runners-up</h2><div class="rpt-scroll"><table><thead><tr>${['Runner-up', 'Total', 'Ties when one weight changes', `Reasonable (±${esc(fmt(res.sensitivity.step))})`, 'All weights together', 'Share of draws'].map((t) => `<th>${t}</th>`).join('')}</tr></thead><tbody>`);
-      for (const row of runnerRows(res)) h.push(`<tr>${row.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`);
-      h.push('</tbody></table></div>');
-    }
-    if (res.notes.length) h.push(...res.notes.map((n) => `<p class="dim">Note: ${esc(n)}.</p>`));
+    if (res.notes.length) h.push(`<details class="rpt-more" data-more="notes"${open.includes('notes') ? ' open' : ''}><summary class="disclosure"><span class="chev" aria-hidden="true"></span>${res.notes.length} note${res.notes.length > 1 ? 's' : ''} from the tool</summary>${res.notes.map((n) => `<p class="dim">${esc(n)}.</p>`).join('')}</details>`);
     h.push('</section>');
     const body = h.join('\n');
     if (!standalone) return body;
@@ -759,7 +765,7 @@ function pughEngine() {
     // the table stays where it was scrolled to.
     function render(focus) {
       res = decide({ ...base, overrides });
-      const open = [...doc.querySelectorAll('details.rpt-opt[open]')].map((d) => d.dataset.section);
+      const open = [...doc.querySelectorAll('details.rpt-opt[open], details.rpt-more[open]')].map((d) => d.dataset.section ?? d.dataset.more);
       const left = doc.querySelector('.rpt-scroll')?.scrollLeft ?? 0;
       section().outerHTML = renderHtml(res, { standalone: false, live: true, theme: themeNow(), open });
       const box = doc.querySelector('.rpt-scroll');
@@ -819,6 +825,13 @@ function pughEngine() {
         }
         if (d.tool === 'export') download(`${slug}-changes.json`, `${JSON.stringify(overrides, null, 1)}\n`, 'application/json');
         if (d.tool === 'print') win.print();
+        if (d.tool === 'print-all') {
+          // Everything open for the long version, then back as it was.
+          const shut = [...doc.querySelectorAll('section.rpt details:not([open])')];
+          shut.forEach((x) => { x.open = true; });
+          win.addEventListener('afterprint', () => shut.forEach((x) => { x.open = false; }), { once: true });
+          win.print();
+        }
         return;
       }
       // A criterion's weight or tolerance (the same for every option).
