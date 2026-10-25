@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { reportStyle } from '../build.mjs';
 import { decide, markOf, worseRatio, normalizeMatrix, renderMarkdown, renderHtml, bottomLine, mainReason, plotSvg, PughError } from '../src/core/pugh.js';
 
 const require = createRequire(import.meta.url);
@@ -142,16 +143,19 @@ test('sensitivity: tie points and the smallest change agree with brute force', (
   close(shares.reduce((a, b) => a + b, 0), 1, 1e-12);
 });
 
-test('verdict: robust, sensitive, tied now', () => {
+test('verdict: the choice holds, depends on the weights, tied now', () => {
   const r = decide(small());
-  assert.equal(r.sensitivity.verdict, 'robust');
-  // Two identical candidates: tied now, sensitive, the tie-break decides.
+  assert.equal(r.sensitivity.verdict, 'holds');
+  // robustShare, holdShare's old name, is still read.
+  assert.equal(decide({ ...small(), sensitivity: { robustShare: 1.01 } }).sensitivity.verdict, 'depends');
+  // Two identical candidates: tied now, the choice depends, the tie-break decides.
   const mx = small();
   mx.candidates.push({ key: 'B2', values: { ...mx.candidates[2].values }, tieBreak: 5 });
   const r2 = decide(mx), ru = r2.sensitivity.runnersUp.find((x) => x.key === 'B2');
   assert.equal(r2.suggestion.key, 'B');
   assert.equal(ru.tie.now, true);
-  assert.equal(r2.sensitivity.verdict, 'sensitive');
+  assert.equal(r2.sensitivity.verdict, 'depends');
+  assert.match(bottomLine(r2), /the choice depends on the weights: .*B2 ties it now/);
 });
 
 test('deterministic: the same matrix gives the same result, the seed moves only the draws', () => {
@@ -166,20 +170,34 @@ test('deterministic: the same matrix gives the same result, the seed moves only 
 test('the report: the bottom line first, then the matrix and the runners-up', () => {
   const r = decide(small()), md = renderMarkdown(r), lines = md.split('\n');
   assert.equal(lines[0], '# Small');
-  assert.match(lines[2], /^Suggestion: \*\*B\*\* \(\+8 against the datum D\); robust: it wins [\d.]+ % of the weight draws within ±1; mainly speed \(\+\+\), err \(\+\)\.$/);
+  assert.match(lines[2], /^Suggestion: \*\*B\*\* \(\+8 against the datum D\); the choice holds: it wins [\d.]+ % of the weight draws within ±1; mainly speed \(\+\+\), err \(\+\)\.$/);
   assert.equal(mainReason(r), 'mainly speed (++), err (+)');
   assert.ok(md.indexOf('| Criterion') > md.indexOf('Suggestion'));
   assert.ok(md.indexOf('Runners-up') > md.indexOf('| Criterion'));
   const keep = decide({ ...small(), candidates: [{ key: 'D', keep: true, values: { err: 0.1, speed: 99, cost: 0 } }, ...small().candidates.slice(1)] });
   assert.match(bottomLine(keep), /^Keep \*\*D\*\*: nothing beats it/);
-  // The HTML report: a whole page, nothing outside it, no script, the bottom
-  // line before the matrix, the page's tokens with fallbacks.
-  const html = renderHtml(r);
+  // The HTML report: a whole page, nothing outside it, the bottom line
+  // before the matrix; its look is the style sheet it is given, nothing of
+  // its own (input 65).
+  const html = renderHtml(r, { style: reportStyle() });
   assert.match(html, /^<!doctype html>/);
   assert.match(html, /<strong>B<\/strong>/);
-  assert.ok(html.indexOf('class="bottom"') < html.indexOf('<table'));
-  assert.match(html, /--tone-green: #008300/);
-  assert.match(html, /var\(--tone-green, #008300\)/);
+  assert.ok(html.indexOf('class="rpt-bottom"') < html.indexOf('<table'));
+  const noScripts = (x) => x.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.equal((noScripts(html).match(/<style/g) || []).length, 1);
+  assert.match(html, /<style id="rpt-style" data-license="IBM Plex/);
+  assert.doesNotMatch(noScripts(renderHtml(r)), /<style/);
+  assert.match(renderHtml(r, { theme: 'dark' }), /<html lang="en" data-theme="dark">/);
+  // The matrix as a Pugh matrix is laid out (input 63): the datum's column
+  // first, the weight in its own column, the counts and the weighted total
+  // at the bottom.
+  const head = html.slice(html.indexOf('<table class="rpt-overview"'));
+  assert.match(head, /<th>Criterion<\/th><th>Weight<\/th><th[^>]*>Tol\.<\/th><th class="datum">D<\/th>/);
+  const tr = (label) => head.match(new RegExp(`<tr><td>${label}</td>(.*?)</tr>`))[1].replace(/<[^>]+>/g, ' ').trim().split(/\s+/);
+  assert.deepEqual(tr('Σ \\+'), ['1', '3']);   // A: ++ S −; B: + ++ +
+  assert.deepEqual(tr('Σ S'), ['1', '0']);
+  assert.deepEqual(tr('Σ −'), ['1', '0']);
+  assert.ok(head.indexOf('Σ −') < head.indexOf('Weighted total'));
   // Interactive (input 61): two scripts, inline, the matrix (as data) and the
   // engine; nothing fetched; a static page without them on request.
   assert.equal((html.match(/<script/g) || []).length, 2);
@@ -243,8 +261,10 @@ test('figures: plotted from series, thinned, at most two per option, bad ones re
 test('the deadbeat report stays within one page per option', { skip: !chromium && 'Playwright is not installed' }, async () => {
   const mx = JSON.parse(readFileSync(new URL('./fixtures/pugh-deadbeat.json', import.meta.url), 'utf8'));
   const first = decide(mx);
-  for (const c of mx.candidates) if (first.ranking.includes(c.key)) c.figures = [figure(1), figure(2)];
+  // Figures for every option (input 62); only those that fit show them.
+  for (const c of mx.candidates) c.figures = [figure(1), figure(2)];
   const res = decide(mx);
+  assert.ok(first.ranking.length < 13);
   assert.equal(res.candidates.length, 13);
   assert.equal(res.suggestion.label, 'State feedback');
   const dir = mkdtempSync(join(tmpdir(), 'pugh-'));
@@ -259,7 +279,7 @@ test('the deadbeat report stays within one page per option', { skip: !chromium &
       await page.close();
       return (pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
     };
-    const full = await pages(renderHtml(res), 'full.html'), base = await pages(renderHtml(res, { sections: false, interactive: false }), 'base.html');   // static: with its script the page draws itself whole
+    const style = reportStyle(), full = await pages(renderHtml(res, { style }), 'full.html'), base = await pages(renderHtml(res, { style, sections: false, interactive: false }), 'base.html');   // static: with its script the page draws itself whole
     console.log(`# page budget: ${full} pages with the sections, ${base} without, ${res.candidates.length} options`);
     const options = res.candidates.length;   // every option compared has a section (input 64)
     assert.ok(full - base <= options, `${full} pages with the sections, ${base} without: more than one page for each of ${options} options`);
@@ -336,6 +356,32 @@ test('overrides: the tool’s vetoes, one per reason, each lifted on its own', (
   assert.ok(withOv(small(), { kind: 'lift', candidate: 'A', veto: 'gate9', comment: 'x' }).notes.some((n) => /no veto 'gate9'/.test(n)));
 });
 
+// Input 62: a lifted veto is as if the tool had never set it, and the
+// person's veto and the tool's are one and the same thing.
+const decision = (r) => ({ ranking: r.ranking, suggestion: r.suggestion?.key, totals: r.candidates.map((c) => [c.key, c.total, c.fits]), sensitivity: r.sensitivity && { verdict: r.sensitivity.verdict, share: r.sensitivity.share } });
+test('a lifted tool veto ranks the option as decide() does without that gate', () => {
+  const gates = [{ criterion: 'cost', max: 15, why: 'too dear' }, { criterion: 'err', maxRatio: 1.05, why: 'main job' }];
+  const mx = { ...small(), gates, candidates: small().candidates.map((c) => (c.key === 'A' ? { ...c, values: { err: 1.2, speed: 10.5, cost: 19 } } : c)) };   // only A fails, both gates
+  for (const [gi, id] of [[0, 'gate0'], [1, 'gate1']]) {
+    const other = gates.filter((_, k) => k !== gi);
+    const lifted = withOv(mx, { kind: 'lift', candidate: 'A', veto: id, comment: 'x' }, { kind: 'lift', candidate: 'A', veto: gi ? 'gate0' : 'gate1', comment: 'y' });
+    const without = decide({ ...mx, gates: [] });
+    assert.deepEqual(decision(lifted), decision(without), `${id} and the other lifted: as without both gates`);
+    const one = withOv(mx, { kind: 'lift', candidate: 'A', veto: id, comment: 'x' });
+    assert.deepEqual(decision(one), decision(decide({ ...mx, gates: other })), `${id} lifted: as without that gate`);
+  }
+});
+
+test('the person’s veto and the tool’s are one path: the same ranking either way', () => {
+  const byTool = decide({ ...small(), candidates: small().candidates.map((c) => (c.key === 'B' ? { ...c, fits: false, whyNot: 'diverges' } : c)) });
+  const byPerson = withOv(small(), { kind: 'option', candidate: 'B', action: 'veto', comment: 'diverges' });
+  assert.deepEqual(decision(byPerson), decision(byTool));
+  assert.deepEqual(cand(byPerson, 'B').vetoes.map(({ by, why }) => [by, why]), [['person', 'diverges']]);
+  assert.deepEqual(cand(byTool, 'B').vetoes.map(({ by, why }) => [by, why]), [['tool', 'diverges']]);
+  // Lifting the tool's and removing the person's both give the matrix back.
+  assert.deepEqual(decision(withOv(byTool.input, { kind: 'lift', candidate: 'B', veto: 'given', comment: 'x' })), decision(decide(small())));
+});
+
 test('overrides: another datum; bad overrides are refused', () => {
   const r = withOv(small(), { kind: 'datum', candidate: 'B', comment: 'B is what we know' });
   assert.equal(r.datum.key, 'B');
@@ -358,18 +404,18 @@ test('the report decides again in the browser, and equals decide() here', { skip
   const mx = { ...small(), gates: [{ criterion: 'cost', max: 15, why: 'too dear' }] };   // A is out: cost 19
   const dir = mkdtempSync(join(tmpdir(), 'pugh-live-'));
   const file = join(dir, 'report.html');
-  writeFileSync(file, renderHtml(decide(mx)));
+  writeFileSync(file, renderHtml(decide(mx), { style: reportStyle() }));
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
     await page.goto(pathToFileURL(file).href);
-    await page.waitForSelector('section.pugh.live');
+    await page.waitForSelector('section.rpt.live');
     const act = async (selector, choice, { comment = 'a reason', weight } = {}) => {
       await page.click(selector);
       if (weight !== undefined) await page.fill('#pugh-weight', String(weight));
       if (comment) await page.fill('#pugh-comment', comment);
       await page.click(`dialog [data-do="${choice}"]`);
-      await page.waitForFunction(() => !document.querySelector('dialog.pugh-dialog')?.open);
+      await page.waitForFunction(() => !document.querySelector('dialog.rpt-dialog')?.open);
     };
     await act('[data-weight="cost"] >> nth=0', 'set', { weight: 2, comment: 'cost matters more' });
     await act('[data-cell="B|speed"]', 'veto', { comment: 'the speed test was wrong' });
@@ -393,10 +439,10 @@ test('the report decides again in the browser, and equals decide() here', { skip
     await download.saveAs(saved);
     const again = await browser.newPage();
     await again.goto(pathToFileURL(saved).href);
-    await again.waitForSelector('section.pugh.live');
+    await again.waitForSelector('section.rpt.live');
     const reopened = await again.evaluate(() => window.pughState.overrides);
     assert.equal(reopened.length, 4);
-    assert.match(await again.textContent('.person'), /Changed by the person/);
+    assert.match(await again.textContent('.rpt-person'), /Changed by the person/);
     // Export: the changes as JSON, for the command line.
     const [exp] = await Promise.all([page.waitForEvent('download'), page.click('[data-tool="export"]')]);
     const json = join(dir, 'changes.json');
@@ -405,7 +451,27 @@ test('the report decides again in the browser, and equals decide() here', { skip
     // Keyboard: a weight opens with Enter.
     await page.focus('[data-weight="err"] >> nth=0');
     await page.keyboard.press('Enter');
-    assert.equal(await page.evaluate(() => document.querySelector('dialog.pugh-dialog').open), true);
+    assert.equal(await page.evaluate(() => document.querySelector('dialog.rpt-dialog').open), true);
+    await page.keyboard.press('Escape');
+    // The theme (input 65): the page follows the system until a key is
+    // pressed; dark sets data-theme, the key reads pressed; print is light.
+    const bg = (p) => p.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    await page.emulateMedia({ colorScheme: 'light' });
+    const light = await bg(page);
+    await page.click('[data-theme-set="dark"]');
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
+    assert.equal(await page.getAttribute('[data-theme-set="dark"]', 'aria-pressed'), 'true');
+    assert.notEqual(await bg(page), light);
+    await page.emulateMedia({ media: 'print' });
+    assert.equal(await bg(page), light, 'print is light whatever the theme');
+    await page.emulateMedia({ media: 'screen' });
+    // Save keeps the theme chosen.
+    const [dark] = await Promise.all([page.waitForEvent('download'), page.click('[data-tool="save"]')]);
+    const darkFile = join(dir, 'dark.html');
+    await dark.saveAs(darkFile);
+    assert.match(readFileSync(darkFile, 'utf8'), /<html lang="en" data-theme="dark">[\s\S]*<style id="rpt-style"/);
+    await page.click('[data-theme-set="system"]');
+    assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-theme')), false);
   } finally { await browser.close(); }
 });
 

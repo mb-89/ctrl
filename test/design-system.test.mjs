@@ -8,7 +8,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { buildHtml } from '../build.mjs';
+import { buildHtml, reportStyle } from '../build.mjs';
+import { decide, renderHtml } from '../src/core/pugh.js';
 
 const ui = new URL('../src/ui/', import.meta.url);
 const css = readFileSync(new URL('style.css', ui), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -77,4 +78,41 @@ test('the old one-off looks are gone: one button, one selected state', () => {
 
 test('both rows of channel keys show "on" the one way: lit, from aria-pressed', () => {
   assert.doesNotMatch(css, /\.chbtn\.off|\.chbtn \.num/, 'the channel bar has no on/off look of its own');
+});
+
+// The decision report (src/core/pugh.js) goes through the same sheet (input
+// 65: "make sure we have one master style sheet. Everything goes through
+// there"): its markup carries classes only, every class it uses is the
+// sheet's, every key is .btn, and a chosen key reads pressed.
+test('the decision report has no look of its own: classes from the one sheet only', () => {
+  const engine = code(readFileSync(new URL('../src/core/pugh.js', import.meta.url), 'utf8'));
+  assert.deepEqual([...engine.matchAll(CODE_COLOUR)].map((m) => around(engine, m.index)), [], 'pugh.js writes colours');
+  assert.doesNotMatch(engine, /font-size\s*[:=]|opacity\s*[:=]|\bstyle="|\bstyle=\$|<style>|\.style\./, 'pugh.js writes a style of its own');
+  // A report with every part: overrides, vetoes lifted and standing,
+  // figures, the sensitivity, the toolbar.
+  const mx = JSON.parse(readFileSync(new URL('fixtures/pugh-deadbeat.json', import.meta.url), 'utf8'));
+  const series = (k) => ({ x: [0, 1, 2], y: [0, k, 1], role: ['option', 'datum', 'reference', 'other'][k] });
+  for (const c of mx.candidates) c.figures = [{ title: 'run', xLabel: 't', panels: [{ yLabel: 'y', series: [0, 1, 2, 3].map(series) }] }];
+  const first = decide(mx), out = first.candidates.find((c) => !c.fits && c.vetoes.some((v) => v.by === 'tool'));
+  const res = decide({ ...mx, overrides: [
+    { kind: 'criterion', criterion: first.criteria[0].key, weight: 2, comment: 'a' },
+    { kind: 'cell', candidate: first.ranking[1], criterion: first.criteria[1].key, action: 'veto', comment: 'b' },
+    { kind: 'option', candidate: first.ranking[2], action: 'nudge', by: -1, comment: 'c' },
+    { kind: 'lift', candidate: out.key, veto: out.vetoes[0].id, comment: 'd' },
+  ] });
+  const html = renderHtml(res, { style: reportStyle(), live: true }).replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/g, '');
+  const tags = html.match(/<[^>]+>/g);
+  const inTags = tags.join('\n');
+  assert.deepEqual([...inTags.matchAll(COLOUR)].map((m) => around(inTags, m.index)), [], 'colours in the report\'s markup');
+  assert.doesNotMatch(inTags, /\sstyle=|\sfill="|\sstroke="|\sopacity=|font-size|stroke-dasharray|stroke-width/, 'presentation written into the markup');
+  // Every class is the sheet's (it is defined there, as a selector).
+  const classes = new Set(tags.flatMap((t) => t.match(/\sclass="([^"]*)"/)?.[1].split(/\s+/).filter(Boolean) ?? []));
+  const missing = [...classes].filter((c) => !new RegExp(`\\.${c.replace(/[-]/g, '\\-')}(?![\\w-])`).test(css));
+  assert.deepEqual(missing, [], 'classes the style sheet does not define');
+  // One button: every key is .btn; a chosen key is pressed, not a class.
+  const buttons = tags.filter((t) => /^<button\b/.test(t));
+  assert.ok(buttons.length > 10);
+  assert.deepEqual(buttons.filter((t) => !/\sclass="btn[ "]/.test(t)), [], 'keys that are not .btn');
+  assert.deepEqual([...classes].filter((c) => /^(active|selected|on|chosen|current|pressed)$/.test(c)), [], 'a selected look of its own');
+  assert.equal(tags.filter((t) => /aria-pressed="true"/.test(t)).length, 1, 'the theme in use reads pressed');
 });
