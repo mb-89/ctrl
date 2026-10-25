@@ -2,6 +2,10 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: every controller industry ready, bumpless by one wrapper ([input 49](../input/2026-10-25-49-bumpless-wrapper-industry-ready.md))
+
+- A rule for every controller the page proposes: "The control law should be industry ready, and that means it needs a bumpless mode switch." It is given by one wrapper round the law (differentiate its output, integrate once at the end), which does not need to know the law inside; laws without integral action fade the offset the wrapper absorbed. Built after the overhaul, with changes applied mid-run (roadmap.md).
+
 ## 2026-10-25 · v2.9: bumpless by the velocity form, no tracking; the benchmark's answers ([input 48](../input/2026-10-25-48-bumpless-velocity-form-and-benchmark-answers.md))
 
 - **Bumpless switching (backlog, after the overhaul)**: every law in velocity form, one integrator at the end of the Controller block holding u, so there is always a state that absorbs a switch or an edit; a law without integral action fades the switch's offset. No tracking of laws that are not running. Recorded in roadmap.md.
