@@ -71,7 +71,7 @@ The paper's plant, the PUMA 560, cannot be reproduced honestly: its numbers are 
 
 ## Measured (simulation, `simulateSystem`, record 0.5 ms; Controller Ts 2 ms)
 
-Weights Q = [1000, 0, 0] (the angle), R = 1 for the variable gain and for clipped LQR (the same gain near r: K = [30.1, 1.38, 0.94]); PID Kp 16, Ki 4, Kd 1.2, Tf 5 ms, the best of a grid on a 0.2 rad step (2.1 % overshoot, 0.48 s); back-calculation's Tt by the library's rule √(Ti·Td) = 0.55 s. Reference: 5 rad at 0.25 s, back 0.5 rad at 2.75 s. Settling to 2 % of the step; "at limit" is the time u sits at ±6 N·m.
+Weights Q = [1000, 0, 0] (the angle), R = 1 for the variable gain and for clipped LQR (the same gain near r: K = [30.1, 1.38, 0.94]); PID Kp 16, Ki 4, Kd 1.2, Tf 5 ms, the best of a grid on a 0.2 rad step (2.1 % overshoot, 0.48 s); back-calculation's Tt by the library's rule √(Ti·Td) = 0.55 s. Reference: 5 rad at 0.25 s, back 0.5 rad at 2.75 s (measured before the library's r also went back to 0 at 4.25 s, inputs 50–52; nothing before 4.25 s moved). Settling to 2 % of the step; "at limit" is the time u sits at ±6 N·m.
 
 | Variant | 5 rad: overshoot, settling, IAE | at limit, peak \|u\| | 0.5 rad back: overshoot, settling | ∫u² dt (large, small) |
 |---|---|---|---|---|

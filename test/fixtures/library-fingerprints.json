@@ -7,7 +7,7 @@
   "Mass–spring–damper": {
     "samples": 2001,
     "signals": "Ekin,Epot,F,v,x",
-    "hash": "36c541c5"
+    "hash": "2f4e1c7f"
   },
   "DC motor, position control": {
     "samples": 2001,
@@ -17,7 +17,7 @@
   "Following a sine (XY)": {
     "samples": 2001,
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
-    "hash": "98d538f5"
+    "hash": "cde93c41"
   },
   "DC motor, sliding mode": {
     "samples": 20001,
@@ -27,17 +27,17 @@
   "Variable gain against anti-windup": {
     "samples": 2001,
     "signals": "angle,ctrl.r,ctrl.u,ctrl.y,d,r,speed,torque,u",
-    "hash": "f3a827e7"
+    "hash": "d40d082a"
   },
   "Encoder errors and torque ripple": {
     "samples": 2001,
     "signals": "V,ctrl.r,ctrl.u,ctrl.y,i,r,speed,speed_m,tau_e,tau_f,tau_m,tau_r,v",
-    "hash": "a356789d"
+    "hash": "6fc5646e"
   },
   "DC motor, speed from an encoder": {
     "samples": 5001,
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,encoder,est_error,estimate,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
-    "hash": "5bfad072"
+    "hash": "30accc48"
   },
   "DC motor, deadbeat": {
     "samples": 5001,
@@ -50,9 +50,9 @@
     "hash": "41f167c"
   },
   "Conical tank, gain scheduling": {
-    "samples": 2001,
+    "samples": 4001,
     "signals": "ctrl.r,ctrl.u,ctrl.y,d,h,q,r",
-    "hash": "12c366e5"
+    "hash": "4a1fcb39"
   },
   "Pendulum swing-up": {
     "samples": 2001,
@@ -65,9 +65,9 @@
     "hash": "d33b15bf"
   },
   "Oven, badly tuned": {
-    "samples": 2001,
+    "samples": 4001,
     "signals": "P,T,ctrl.r,ctrl.u,ctrl.y,d,r",
-    "hash": "dec8753d"
+    "hash": "2f6f15f5"
   },
   "Unknown oven: identify, then tune": {
     "samples": 2001,

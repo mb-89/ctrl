@@ -2556,13 +2556,13 @@ const SIGNALS = {
     fn: (q) => {
       if (!(q.ease > 0)) return (t) => (t >= q.time ? q.amplitude * Math.sin(2 * Math.PI * q.frequency * (t - q.time) + (q.phase * Math.PI) / 180) : 0);
       const w = 2 * Math.PI * q.frequency, ph = (q.phase * Math.PI) / 180;
-      return (t) => (t >= q.time ? q.amplitude * Math.sin(easedPhase(t - q.time, w, q.ease)[0] + ph) : 0);
+      return (t, n = 0) => (n > 0 || t >= q.time ? q.amplitude * Math.sin(easedPhase(t - q.time, w, q.ease, n > 0)[0] + ph) : 0);
     },
     d: (q, ctx, comp, k) => {
       const w = 2 * Math.PI * q.frequency, ph = (q.phase * Math.PI) / 180, A = q.amplitude;
-      return { fn: (t) => {
-        if (t < q.time) return 0;
-        const [f, df, ddf] = q.ease > 0 ? easedPhase(t - q.time, w, q.ease) : [w * (t - q.time), w, 0];
+      return { fn: (t, n = 0) => {
+        if (t < q.time && !(q.ease > 0 && n > 0)) return 0;
+        const [f, df, ddf] = q.ease > 0 ? easedPhase(t - q.time, w, q.ease, n > 0) : [w * (t - q.time), w, 0];
         return k === 1 ? A * Math.cos(f + ph) * df : A * (Math.cos(f + ph) * ddf - Math.sin(f + ph) * df * df);
       } };
     },
@@ -2633,8 +2633,8 @@ function slope(pts, t) {
   return t1 === t0 ? 0 : (v1 - v0) / (t1 - t0);
 }
 
-function easedPhase(u, w, Te) {
-  if (u >= Te) return [w * (u - Te / 2), w, 0];
+function easedPhase(u, w, Te, steady = false) {
+  if (steady || u >= Te) return [w * (u - Te / 2), w, 0];
   const s = u / Te;
   return [w * Te * (2.5 * s ** 4 - 3 * s ** 5 + s ** 6), w * (10 * s ** 3 - 15 * s ** 4 + 6 * s ** 5), (w / Te) * (30 * s ** 2 - 60 * s ** 3 + 30 * s ** 4)];
 }
@@ -2701,16 +2701,27 @@ function componentFn(comp, ctx) {
 }
 
 function referenceFn(ref, ctx) {
-  const on = ref.components.filter((c) => c.enabled !== false);
+  const on = ref.components.map(normalizeComponent).filter((c) => c.enabled !== false);
   const T = ref.period ?? Infinity;
   const sum = (fns) => (t) => {
-    let tp = t;
-    if (Number.isFinite(T) && t > T * (1 + 1e-12)) tp = t - Math.ceil(t / T - 1 - 1e-9) * T;
+    let tp = t, n = 0;
+    if (Number.isFinite(T) && t > T * (1 + 1e-12)) {
+      n = Math.ceil(t / T - 1 - 1e-9);
+      tp = n > 0 ? Math.round((t - n * T) * 1e12) / 1e12 : t;
+    }
     let s = 0;
-    for (const f of fns) s += f(tp);
+    for (const f of fns) s += f(tp, n);
     return s;
   };
-  const r = sum(on.map((c) => componentFn(c, ctx)));
+  const fns = on.map((c) => componentFn(c, ctx));
+  const r = sum(fns);
+  r.after = (t) => {
+    const k = Number.isFinite(T) ? Math.round(t / T) : 0;
+    if (k < 1 || Math.abs(t - k * T) > 1e-9 * T) return r(t);
+    let s = 0;
+    for (const f of fns) s += f(0, k);
+    return s;
+  };
   r.derivative = (k) => {
     if (k !== 1 && k !== 2) throw new Error(`derivative: k must be 1 or 2, not ${k}`);
     const ds = on.map((c) => SIGNALS[c.type].d(c.params, ctx, c, k));
@@ -2719,6 +2730,43 @@ function referenceFn(ref, ctx) {
     return dr;
   };
   return r;
+}
+
+function wrapJump(ref, ctx = { sampleTime: 1e-3 }) {
+  const T = Number(ref.period);
+  const on = (ref.components ?? []).map(normalizeComponent).filter((c) => c.enabled !== false && c.type !== 'noise');
+  if (!(T > 0) || !Number.isFinite(T) || !on.length) return { value: 0, slope: 0, span: 0, rate: 0, smooth: true, joins: true };
+  const fns = on.map((c) => componentFn(c, ctx));
+  const at = (fs, t, n) => fs.reduce((s, f) => s + f(t, n), 0);
+  const value = at(fns, 0, 2) - at(fns, T, 1);
+  let d1 = null, smooth = false;
+  try {
+    d1 = on.map((c) => SIGNALS[c.type].d(c.params, ctx, c, 1));
+    smooth = d1.every((d) => !d.warn) && on.every((c) => !SIGNALS[c.type].d(c.params, ctx, c, 2).warn);
+    d1 = d1.map((d) => d.fn);
+  } catch { d1 = null; }
+  const slope = d1 ? at(d1, 0, 2) - at(d1, smooth ? T : T * (1 - 1e-10), 1) : null;
+  let lo = Infinity, hi = -Infinity, rate = 0;
+  const N = 1000;
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * T, v = at(fns, t, 1);
+    lo = Math.min(lo, v); hi = Math.max(hi, v);
+    if (smooth && d1) rate = Math.max(rate, Math.abs(at(d1, t, 1)));
+  }
+  const span = hi - lo;
+  const joins = Math.abs(value) <= 1e-6 * span && (!smooth || slope === null || Math.abs(slope) <= 1e-6 * rate);
+  return { value, slope, span, rate, smooth, joins };
+}
+
+function wrapWarning(ref, name = 'r', ctx) {
+  const j = wrapJump(ref, ctx);
+  if (j.joins) return '';
+  const T = Number(ref.period);
+  const saw = ref.components.map(normalizeComponent).some((c) => c.enabled !== false && c.type === 'ramp' && c.params.time < T && c.params.time + c.params.rise >= T * (1 - 1e-9));
+  if (saw) return '';
+  return Math.abs(j.value) > 1e-6 * j.span
+    ? `${name}(t) jumps where it repeats: it ends the period away from where it starts, so every later period begins with a step; bring it back before the period ends.`
+    : `${name}(t) kinks where it repeats: its slope at the end of the period is not the one it starts with; a sine joins up with a whole number of cycles per period.`;
 }
 
 function describeComponent(comp) {
@@ -2768,7 +2816,7 @@ function migrateComponents(block, duration) {
   }
 }
 
-return { SIGNALS, easedPhase, gaussAt, normalizeComponent, DEFAULT_PERIOD, normalizeReference, componentFn, referenceFn, describeComponent, sampleSignal, parseWaveform, migrateReferenceBlock };
+return { SIGNALS, easedPhase, gaussAt, normalizeComponent, DEFAULT_PERIOD, normalizeReference, componentFn, referenceFn, wrapJump, wrapWarning, describeComponent, sampleSignal, parseWaveform, migrateReferenceBlock };
 })();
 // ---- core/metrics.js
 __mods['core/metrics.js'] = (() => {
@@ -13145,9 +13193,9 @@ const EXAMPLE_PLANTS = [
   PUMA_SYSTEM,
   {
     name: 'Mass–spring–damper',
-    summary: 'A mass on a spring and a damper, pulled down once; no controller. Change the spring or the damping and watch it swing and settle: how stiffness and damping shape a response.',
-    notes: 'A 1 kg mass hangs on a spring (25 N/m) and a damper (0.5 N·s/m). At 0.1 s a force F = 1 N pulls it down: it drops about 40 mm and swings at 0.8 Hz while it settles, its energy moving between motion (Ekin) and spring (Epot). No controller.',
-    signals: { F: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
+    summary: 'A mass on a spring and a damper, pulled down and let go; no controller. Change the spring or the damping and watch it swing and settle: how stiffness and damping shape a response.',
+    notes: 'A 1 kg mass hangs on a spring (25 N/m) and a damper (0.5 N·s/m). At 0.1 s a force F = 1 N pulls it down: it drops about 40 mm and swings at 0.8 Hz while it settles, its energy moving between motion (Ekin) and spring (Epot). At 2.6 s the force lets go and it swings back up round where it hangs at rest. No controller.\n\nThe damper is light: a swing shrinks to a third in 4.4 s. Let it run longer and the next pull finds the mass still swinging a little, so the first periods differ a little (by 10 mm, then 3 mm, then 0.8 mm) until every period is the same.',
+    signals: { F: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }, { type: 'step', params: { amplitude: -1, time: 2.6 } }] } },
     scope: { channels: channels('F', 'x', 'Ekin', 'Epot') },
     ui: ui('Hanging mass'),
     diagram: {
@@ -13232,7 +13280,7 @@ const EXAMPLE_PLANTS = [
   {
     name: 'DC motor, sliding mode',
     summary: 'The motor under sliding-mode control, on its phase portrait. Compare the ideal relay, a boundary layer and super-twisting: a response the load cannot change, and what chattering costs.',
-    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure, switched on, counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: select Motor and triple its rotor inertia Jm on its mask (0.06): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (L 1 mH): the relay chatters at 250 Hz and makes about five times the heat.',
+    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure, switched on, counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Its chatter keeps a rhythm of its own, not the input\'s: on a long run every period chatters in the same band, but not on the same samples (it repeats every third period). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: select Motor and triple its rotor inertia Jm on its mask (0.06): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (L 1 mH): the relay chatters at 250 Hz and makes about five times the heat.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
       d: { period: PERIOD, components: [pulse(1, 3.2, 0.5)] },
@@ -13250,9 +13298,9 @@ const EXAMPLE_PLANTS = [
   {
     name: 'Variable gain against anti-windup',
     summary: 'A servo axis stepped far and near through a torque drive with a hard limit. Compare the Hu–Lin variable gain, which never saturates, with clipped LQR and anti-windup: what saturation costs, and each remedy.',
-    notes: 'A torque drive (its torque follows the command u with a 20 ms lag, limited to ±6 N·m) turns a rotor (J 0.02 kg·m², b 0.1 N·m·s/rad). The reference steps 5 rad at 0.25 s, far enough that every controller needs the limit, and back 0.5 rad at 2.75 s, a step none of them needs it for. The Controller reads the angle, the speed and the torque, every 2 ms. The scope shows r, the angle and u; switch on channel 4 for the speed.\n\nVariable gain (Hu–Lin): the page computes LQR gains for the weights ε·Q and R at 30 levels of ε from 0.0001 to 1, each with the largest ellipsoid around r on which its u cannot reach the limit; the ellipsoids are nested. At every sample the law takes the highest gain whose ellipsoid holds the error, interpolated between two levels. Far from r the gain is low, and it grows as the angle closes in: on the 5 rad step u rises to 4.9 N·m and never touches 6, the loop never opens, and the angle arrives with 0.5 % overshoot in 0.37 s (2 %). Its Computed box says how far the levels reach: a step of 17 rad from rest stays inside. Variable gain, high gain k 2 is Hu and Lin\'s own improvement, u = sat(2·K(ε)·e): it uses the limit for 0.08 s, arrives with no overshoot in 0.33 s, and takes the small step in 0.14 s.\n\nLQR, clipped: the gain the variable gain ends with, from the start, its u clipped at the limit. It sits there for 0.31 s and overshoots 11 %; on a plant with one more integration a clipped high gain opens the loop for good. PID, clamping (Kp 16, Ki 4, Kd 1.2, the best of a search on small steps): 0.7 % overshoot in 0.36 s, but the integral it gathered makes the small step after it settle in 1.3 s. PID, back-calculation with the rule-of-thumb tracking time Tt = √(Ti·Td) = 0.55 s pulls the integral far below while the P part alone is past the limit: it creeps toward r and has not settled after 2.5 s, and after the small step it passes r by 0.26 rad; set Tt to 4 s (= Ti) and it behaves (1.9 %, 0.34 s). PID, no anti-windup: 3.9 % overshoot and a tail that lasts the whole step.\n\nTry: change J by 20 % (open Axis, rotor den [0.016, 0.1] or [0.024, 0.1]): the variable gain keeps its shape (0.5 %, 0.34 to 0.40 s), designed again for the new rotor. Give d a load torque of 1 N·m: the variable gain is state feedback without an integral and holds the shaft 0.064 rad off r, where the PID\'s integral removes the error. Analysis shows the variable gain near r, where it is the LQR.',
+    notes: 'A torque drive (its torque follows the command u with a 20 ms lag, limited to ±6 N·m) turns a rotor (J 0.02 kg·m², b 0.1 N·m·s/rad). The reference steps 5 rad at 0.25 s, far enough that every controller needs the limit, back 0.5 rad at 2.75 s, a step none of them needs it for, and back to 0 at 4.25 s, far again, so each period ends where the next begins. The Controller reads the angle, the speed and the torque, every 2 ms. The scope shows r, the angle and u; switch on channel 4 for the speed.\n\nVariable gain (Hu–Lin): the page computes LQR gains for the weights ε·Q and R at 30 levels of ε from 0.0001 to 1, each with the largest ellipsoid around r on which its u cannot reach the limit; the ellipsoids are nested. At every sample the law takes the highest gain whose ellipsoid holds the error, interpolated between two levels. Far from r the gain is low, and it grows as the angle closes in: on the 5 rad step u rises to 4.9 N·m and never touches 6, the loop never opens, and the angle arrives with 0.5 % overshoot in 0.37 s (2 %). Its Computed box says how far the levels reach: a step of 17 rad from rest stays inside. Variable gain, high gain k 2 is Hu and Lin\'s own improvement, u = sat(2·K(ε)·e): it uses the limit for 0.08 s, arrives with no overshoot in 0.33 s, and takes the small step in 0.14 s.\n\nLQR, clipped: the gain the variable gain ends with, from the start, its u clipped at the limit. It sits there for 0.31 s and overshoots 11 %; on a plant with one more integration a clipped high gain opens the loop for good. PID, clamping (Kp 16, Ki 4, Kd 1.2, the best of a search on small steps): 0.7 % overshoot in 0.36 s, but the integral it gathered makes the small step after it settle in 1.3 s. PID, back-calculation with the rule-of-thumb tracking time Tt = √(Ti·Td) = 0.55 s pulls the integral far below while the P part alone is past the limit: it creeps toward r and has not settled after 2.5 s, and after the small step it passes r by 0.26 rad; set Tt to 4 s (= Ti) and it behaves (1.9 %, 0.34 s). PID, no anti-windup: 3.9 % overshoot and a tail that lasts the whole step. A PID\'s integral fades with a time constant of about Kp/Ki = 4 s, longer than the period: what it still holds at 5 s carries into the next period, so on a long run the PIDs repeat only after a few periods; the variable gain and LQR are back at rest before 5 s.\n\nTry: change J by 20 % (open Axis, rotor den [0.016, 0.1] or [0.024, 0.1]): the variable gain keeps its shape (0.5 %, 0.34 to 0.40 s), designed again for the new rotor. Give d a load torque of 1 N·m: the variable gain is state feedback without an integral and holds the shaft 0.064 rad off r, where the PID\'s integral removes the error. Analysis shows the variable gain near r, where it is the LQR.',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 5, time: 0.25 } }, { type: 'step', params: { amplitude: -0.5, time: 2.75 } }] },
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 5, time: 0.25 } }, { type: 'step', params: { amplitude: -0.5, time: 2.75 } }, { type: 'step', params: { amplitude: -4.5, time: 4.25 } }] },
       d: { period: PERIOD, components: [] },
     },
     scope: { channels: channels('r', 'angle', 'u', { source: 'speed', on: false }) },
@@ -13269,10 +13317,10 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Encoder errors and torque ripple',
-    summary: 'A motor speeding up with encoder errors, torque ripple and a shaft resonance, in the spectrogram. Change the colour scale, try FFT or a notch: tell errors that follow the speed from a resonance, and spot aliasing.',
-    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible coupling that resonates at 70 Hz. The motor is the Servo motor: each of these is a switch on its mask. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing.\n\nUp there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB.\n\nTry FFT mode, and a notch filter on the channel. Or select Motor and switch its torque ripple off on its mask: the 6× line goes.',
+    summary: 'A motor running up and down with encoder errors, torque ripple and a shaft resonance, in the spectrogram. Change the colour scale, try FFT or a notch: tell errors that follow the speed from a resonance; spot aliasing.',
+    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s over 4 s and runs back down: r ramps to 0 in about 0.3 s, and the motor is nearly at rest (about 1.5 rad/s) when the period ends, so every period starts as the first one did; on the way down every line returns to the origin. The run-down\'s length makes r cover a whole 103 turns a period, so the shaft also starts each period at nearly the same angle, and on a long run the errors that follow its angle repeat from period to period, but for the noise. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible coupling that resonates at 70 Hz. The motor is the Servo motor: each of these is a switch on its mask. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing.\n\nUp there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB. In Absolute the run-down at the right edge is the brightest spot: zoom the time axis to the run-up, or drag the ceiling down.\n\nTry FFT mode, and a notch filter on the channel. Or select Motor and switch its torque ripple off on its mask: the 6× line goes.',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'ramp', params: { amplitude: 300, time: 0.5, rise: 4 } }] },
+      r: { period: PERIOD, components: [{ type: 'ramp', params: { amplitude: 300, time: 0.5, rise: 4 } }, { type: 'ramp', params: { amplitude: -300, time: 4.5, rise: 2 * ((2 * Math.PI * 103) / 300 - 2) } }] },
     },
     scope: { channels: channels('speed_m', 'r', 'speed', 'V'), view: { mode: 'spectrogram' } },
     ui: { run: 'run', tab: 'plant', setup: 0.42 },
@@ -13298,9 +13346,9 @@ const EXAMPLE_PLANTS = [
   {
     name: 'DC motor, speed from an encoder',
     summary: 'A motor whose speed is not measured: only a coarse encoder angle is. Flip the observer from a raw difference to a Luenberger observer and a Kalman filter, and see the noise leave the voltage and the loop hold its speed.',
-    notes: 'A PI holds the speed of the DC motor (the same motor as the position examples) while the reference r steps to 10 rad/s and down to 3 rad/s, and a load of 0.2 N·m brakes it from 3.5 to 4.3 s. The speed is not measured: an encoder counts 1024 steps per turn (6.1 mrad), with a little noise on its signal (σ 1 mrad), and an Observer block makes the speed the PI sees from those counts. Channel 3 is the voltage V, channel 4 the estimate\'s error (estimate − true speed); Measure, switched on, reads their rms and ripple.\n\nIt opens on the raw finite difference: at Ts = 1 ms one count is 6.1 rad/s, so the estimate jumps between whole counts (3.1 rad/s rms of error) and the PI (Kp 2, Ki 40) passes that on: V chatters between its ±12 V limits (σ 6.1 V at 10 rad/s), and since the limits clip it the motor runs at 8.99 rad/s, not 10.\n\nThe Luenberger observer predicts the motor from its model (the page takes the model from the motor\'s blocks) and corrects it with the counts, its error dying out at the poles you place (s = −400 1/s here): 0.47 rad/s of error, V σ 0.96 V, the speed on 10. The Kalman filter takes the same model and computes its gain from the noise: R from the encoder\'s blocks (σ² + q²/12), Q a random push on V of variance 1 V² per sample. Its error is 0.056 rad/s rms and V σ 0.080 V, 55 and 76 times below the difference\'s; its slowest pole is at 101 rad/s. Neither model knows the load: under it the Kalman estimate reads 0.1 rad/s high and the motor runs at 2.90 rad/s, where the faster Luenberger is off by 0.02.\n\nTry: the Luenberger at w = 100 (as calm as the Kalman filter, slower to see the load); the Kalman filter with Q = 100 (it follows the load, with more noise); the difference with Tf = 0.02 s (a filter calms it, with a lag); an encoder of 4096 counts (q = 0.001534). FFT mode on V shows the difference\'s noise spread up to the Nyquist frequency.',
+    notes: 'A PI holds the speed of the DC motor (the same motor as the position examples) while the reference r steps to 10 rad/s, down to 3 rad/s and back to 0 at 4.6 s, so the motor has stopped when r repeats, and a load of 0.2 N·m brakes it from 3.5 to 4.3 s. The speed is not measured: an encoder counts 1024 steps per turn (6.1 mrad), with a little noise on its signal (σ 1 mrad), and an Observer block makes the speed the PI sees from those counts. Channel 3 is the voltage V, channel 4 the estimate\'s error (estimate − true speed); Measure, switched on, reads their rms and ripple.\n\nIt opens on the raw finite difference: at Ts = 1 ms one count is 6.1 rad/s, so the estimate jumps between whole counts (3.1 rad/s rms of error) and the PI (Kp 2, Ki 40) passes that on: V chatters between its ±12 V limits (σ 6.1 V at 10 rad/s), and since the limits clip it the motor runs at 8.99 rad/s, not 10.\n\nThe Luenberger observer predicts the motor from its model (the page takes the model from the motor\'s blocks) and corrects it with the counts, its error dying out at the poles you place (s = −400 1/s here): 0.46 rad/s of error, V σ 0.96 V, the speed on 10. The Kalman filter takes the same model and computes its gain from the noise: R from the encoder\'s blocks (σ² + q²/12), Q a random push on V of variance 1 V² per sample. Its error is 0.058 rad/s rms and V σ 0.080 V, 54 and 76 times below the difference\'s; its slowest pole is at 101 rad/s. Neither model knows the load: under it the Kalman estimate reads 0.1 rad/s high and the motor runs at 2.90 rad/s, where the faster Luenberger is off by 0.02.\n\nTry: the Luenberger at w = 100 (as calm as the Kalman filter, slower to see the load); the Kalman filter with Q = 100 (it follows the load, with more noise); the difference with Tf = 0.02 s (a filter calms it, with a lag); an encoder of 4096 counts (q = 0.001534). FFT mode on V shows the difference\'s noise spread up to the Nyquist frequency.',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 10, time: 0.2 } }, { type: 'step', params: { amplitude: -7, time: 2.5 } }] },
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 10, time: 0.2 } }, { type: 'step', params: { amplitude: -7, time: 2.5 } }, { type: 'step', params: { amplitude: -3, time: 4.6 } }] },
       d: { period: PERIOD, components: [pulse(0.2, 3.5, 0.8)] },
     },
     scope: { channels: channels('r', 'speed', { source: 'V' }, { source: 'est_error' }) },
@@ -13404,7 +13452,7 @@ const EXAMPLE_PLANTS = [
   {
     name: 'Gear backlash',
     summary: 'A motor turning a load arm through a gearhead with play (backlash). Watch the load-encoder loop hunt, the motor encoder hold the load off by the play, and the industrial fix, a dual loop, hold it still.',
-    notes: 'A motor turns a load arm through a 20:1 gearhead with 1° of play (backlash). The Servo motor simulates it: its rotor and the load are two bodies joined by the gear\'s stiffness, and between the teeth there is a gap where no torque passes (select Motor: Backlash and β on its mask; open it to see the dead zone). The controller holds the load\'s angle with the load\'s own encoder; r steps between 0 and 1 rad. Every step ends in hunting: the motor crosses the gap, knocks the load, overshoots, crosses back, and the load rattles by about ±10 mrad, about 31 times a second (the torque τ changes sign about 60 times a second). Pick PD: it still hunts, so it is backlash inside a loop, not the integral winding up.\n\nNow double-click the Switch "feedback from" (or set its position to 2): the controller reads the motor\'s encoder. The hunting stops, but the motor\'s encoder cannot see the play, so the load stays wherever it came to rest in it, up to half the play (8.7 mrad) away from r.\n\nThe industrial fix, Dual loop: position from the load\'s encoder, damping from the motor\'s speed, which the play cannot cut off (dual-loop feedback, as industrial drives run it). Back on the load encoder it holds the load to about 0.1 mrad and nothing rattles.\n\nTry: Motor\'s β at a quarter (0.0044 rad): the hunting shrinks with it. Backlash off: every variant settles. Press XY (δ across, τ up): the flat part is the play, the slopes the gear\'s spring. Make the gear softer, 20 Hz (Motor\'s k to 70, c to 0.11): the load-encoder PID goes unstable even without play, and the dual loop still holds.',
+    notes: 'A motor turns a load arm through a 20:1 gearhead with 1° of play (backlash). The Servo motor simulates it: its rotor and the load are two bodies joined by the gear\'s stiffness, and between the teeth there is a gap where no torque passes (select Motor: Backlash and β on its mask; open it to see the dead zone). The controller holds the load\'s angle with the load\'s own encoder; r steps between 0 and 1 rad. Every step ends in hunting: the motor crosses the gap, knocks the load, overshoots, crosses back, and the load rattles by about ±10 mrad, about 31 times a second (the torque τ changes sign about 60 times a second). The hunting keeps a rhythm of its own, not the input\'s: on a long run every hold hunts alike, but not on the same samples. Pick PD: it still hunts, so it is backlash inside a loop, not the integral winding up.\n\nNow double-click the Switch "feedback from" (or set its position to 2): the controller reads the motor\'s encoder. The hunting stops, but the motor\'s encoder cannot see the play, so the load stays wherever it came to rest in it, up to half the play (8.7 mrad) away from r.\n\nThe industrial fix, Dual loop: position from the load\'s encoder, damping from the motor\'s speed, which the play cannot cut off (dual-loop feedback, as industrial drives run it). Back on the load encoder it holds the load to about 0.1 mrad and nothing rattles.\n\nTry: Motor\'s β at a quarter (0.0044 rad): the hunting shrinks with it. Backlash off: every variant settles. Press XY (δ across, τ up): the flat part is the play, the slopes the gear\'s spring. Make the gear softer, 20 Hz (Motor\'s k to 70, c to 0.11): the load-encoder PID goes unstable even without play, and the dual loop still holds.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
     },
@@ -13482,11 +13530,12 @@ const EXAMPLE_PLANTS = [
   {
     name: 'Conical tank, gain scheduling',
     summary: 'A tank that widens upwards: quick when nearly empty, slow when full. Compare a gain-scheduled PI with fixed ones: why one set of gains cannot fit a plant that changes.',
-    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other.\n\nThe page computes the PI gains from the tank itself at each level (pole cancellation), and the gain-scheduled PI looks them up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
+    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other.\n\nThe page computes the PI gains from the tank itself at each level (pole cancellation), and the gain-scheduled PI looks them up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d). At 5 s it drops back to 0.15 m and the cycle is 10 s, so the tank is back where it started before r repeats and a longer run repeats from its start. On the drop the pump can only stop: the outlet drains the tank, which takes about 2 s, and the PI tuned for empty lets it run dry for a moment. The PI tuned for full rests at 0.15 m only at the very start, where it begins in exact balance; after the drop it rings at the low level, running the tank dry again and again, until the next cycle\'s first step, and its run takes a few cycles to repeat.',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }] },
-      d: { period: PERIOD, components: [pulse(0.15, 2.2, 0.5)] },
+      r: { period: 10, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }, { type: 'step', params: { amplitude: -0.65, time: 5 } }] },
+      d: { period: 10, components: [pulse(0.15, 2.2, 0.5)] },
     },
+    sim: { sampleTime: 0.0025 },
     scope: { channels: channels('r', 'h', 'q', 'd') },
     ui: ui('Tank'),
     diagram: {
@@ -13597,11 +13646,12 @@ const EXAMPLE_PLANTS = [
   {
     name: 'Oven, badly tuned',
     summary: 'An oven with a poorly tuned temperature controller and a dead time. It opens on Auto-tune: press Start and watch automatic tuning remove the ringing; without anti-windup, see integrator windup.',
-    notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled to fit 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration. The variant without anti-windup has the same gains, but its integral winds up while the heater is full on: the first step overshoots to 67 °C instead of 52 °C.',
+    notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled so the test fits 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). From 5 s r ramps back down and the oven cools to where it started, so every cycle runs the same. It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration. The variant without anti-windup has the same gains, but its integral winds up while the heater is full on: the first step overshoots to 67 °C instead of 52 °C (63 °C in later cycles: at the bottom of the ramp, with the heater off, its integral winds down a little too).',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }] },
-      d: { period: PERIOD, components: [pulse(25, 3.6, 0.8)] },
+      r: { period: 10, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }, { type: 'ramp', params: { amplitude: -60, time: 5, rise: 4 } }] },
+      d: { period: 10, components: [pulse(25, 3.6, 0.8)] },
     },
+    sim: { sampleTime: 0.0025 },
     scope: { channels: channels('r', 'T', 'P', 'd') },
     ui: { ...ui('Oven'), tab: 'tune' },
     diagram: {
@@ -17399,7 +17449,7 @@ function createRampIn({ refs, period, rate = 0.1 }) {
     return { name: r.name, fn: r.fn, fs, R: Math.max(1e-12, rate * fs), from: 0, to: 0, v: 0 };
   });
   const byName = Object.fromEntries(list.map((r) => [r.name, r]));
-  let phase = 'ramp', first = true, tR = 0, loopStart = 0, loop0 = null, loop = 0, tLast = null;
+  let phase = 'ramp', first = true, tR = 0, loopStart = 0, loop0 = null, loop = 0, seq = 0, tLast = null;
 
   const along = (r, s) => {
     const d = r.to - r.from, go = r.R * Math.max(0, s - tR);
@@ -17407,12 +17457,13 @@ function createRampIn({ refs, period, rate = 0.1 }) {
   };
   const arrived = (s) => list.every((r) => along(r, s) === r.to);
   const same = (a, b, r) => Math.abs(a - b) <= 1e-9 * r.fs;
+  const joins = (r, tau) => same(r.fn(tau), r.fn.after ? r.fn.after(tau) : r.fn(tau), r);
   function beginRamp(s, fromValues) {
     phase = 'ramp'; tR = s;
     for (const r of list) { r.from = fromValues(r); r.to = r.fn(0); }
   }
   function beginLoop(s) {
-    phase = 'loop'; loopStart = s;
+    phase = 'loop'; loopStart = s; seq = 0;
     if (loop0 === null) loop0 = s; else loop++;
     first = false;
   }
@@ -17427,8 +17478,8 @@ function createRampIn({ refs, period, rate = 0.1 }) {
       if (phase === 'ramp') {
         if (arrived(t)) beginLoop(t);
       } else if (t - loopStart > L * (1 + 1e-12) + 1e-9) {
-        if (list.every((r) => same(r.fn(L), r.fn(0), r))) {
-          while (t - loopStart > L * (1 + 1e-12) + 1e-9) { loopStart += L; loop++; }
+        if (list.every((r) => joins(r, (seq + 1) * L))) {
+          while (t - loopStart > L * (1 + 1e-12) + 1e-9) { loopStart += L; loop++; seq++; }
         } else {
           beginRamp(tLast ?? t, (r) => r.v);
           if (arrived(t)) beginLoop(t);
@@ -17441,7 +17492,7 @@ function createRampIn({ refs, period, rate = 0.1 }) {
       const r = byName[name];
       if (!r) return NaN;
       if (phase === 'ramp') return along(r, s);
-      return r.fn(Math.max(0, s - loopStart));
+      return r.fn((seq ? seq * L : 0) + Math.max(0, s - loopStart));
     },
     values: () => Object.fromEntries(list.map((r) => [r.name, r.v])),
     state() {
@@ -17530,7 +17581,11 @@ function createLiveRunner(diagram, signals, { identify = null } = {}) {
     for (const name of Object.keys(fns)) delete fns[name];
     for (const [name, ref] of Object.entries(sigs)) fns[name] = referenceFn(ref, { sampleTime: h ?? 0.01 });
   }
-  const wave = (name) => (tau) => (fns[name] ? fns[name](tau) : 0);
+  const wave = (name) => {
+    const f = (tau) => (fns[name] ? fns[name](tau) : 0);
+    f.after = (tau) => (fns[name] ? fns[name].after(tau) : 0);
+    return f;
+  };
   function build(d) {
     own = normalizeDiagram(structuredClone(d));
     key = structureKey(own);
@@ -22697,7 +22752,7 @@ return { createControls };
 // ---- ui/generator.js
 __mods['ui/generator.js'] = (() => {
 
-const { SIGNALS, normalizeComponent, describeComponent, parseWaveform } = __mods['core/signals.js'];
+const { SIGNALS, normalizeComponent, describeComponent, parseWaveform, wrapWarning } = __mods['core/signals.js'];
 const { compileExpr, EXPR_HELP } = __mods['core/expr.js'];
 const { createDial } = __mods['ui/dial.js'];
 const ICONS = {
@@ -22739,6 +22794,7 @@ function createGenerator(root, app) {
       <section class="gcol gstack" aria-label="Signal">
         <h3 class="label">Signal <span class="mono" id="g-eq">r(t) = Σ</span></h3>
         <ol class="lcd list slist" id="g-stack"></ol>
+        <div class="note text-warn" id="g-wrap" role="status" hidden></div>
       </section>
       <section class="gcol gentry" aria-label="Entry">
         <h3 class="label">Entry</h3>
@@ -22883,6 +22939,13 @@ function createGenerator(root, app) {
 
   root.addEventListener('click', (e) => { const k = e.target.closest('button'); if (k && e.detail > 0) k.blur(); });
 
+  function wrapNote() {
+    const ref = app.signalRef();
+    const comps = ref.components.slice();
+    if (draft?.mode === 'edit') comps[draft.index] = draft.comp; else if (draft) comps.push(draft.comp);
+    try { return wrapWarning({ period: ref.period, components: comps }, app.signal); } catch { return ''; }
+  }
+
   function valueHtml(key) {
     const f = fieldDef(key);
     if (key === active && buffer) return `<span class="buf">${buffer}</span><span class="caret"></span>`;
@@ -22933,6 +22996,9 @@ function createGenerator(root, app) {
           <button class="btn btn-sm onoff" data-tog="${i}" role="switch" aria-checked="${c.enabled !== false}" aria-label="Component ${i + 1} on">${c.enabled === false ? 'off' : 'on'}</button>
           <button class="btn btn-sm btn-icon btn-danger" data-del="${i}" aria-label="Remove component ${i + 1}" title="Remove">✕</button></li>`).join('')
       : `<li class="note">No components yet: ${app.signal}(t) = 0.</li>`;
+    const wrap = wrapNote();
+    if ($('#g-wrap').textContent !== wrap) $('#g-wrap').textContent = wrap;
+    $('#g-wrap').hidden = !wrap;
     $('#g-period').innerHTML = fieldRow(PERIOD);
     $('#g-eq').textContent = `${app.signal}(t) = Σ`;
     const exprIn = $('#g-expr');

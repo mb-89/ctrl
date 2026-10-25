@@ -3,7 +3,7 @@
 // r(t). A waveform is drafted first (previewed dashed on the display) and only
 // joins the signal on Add. See design/output/signal-generator.md.
 
-import { SIGNALS, normalizeComponent, describeComponent, parseWaveform } from '../core/signals.js';
+import { SIGNALS, normalizeComponent, describeComponent, parseWaveform, wrapWarning } from '../core/signals.js';
 import { compileExpr, EXPR_HELP } from '../core/expr.js';
 import { createDial } from './dial.js';
 
@@ -46,6 +46,7 @@ export function createGenerator(root, app) {
       <section class="gcol gstack" aria-label="Signal">
         <h3 class="label">Signal <span class="mono" id="g-eq">r(t) = Σ</span></h3>
         <ol class="lcd list slist" id="g-stack"></ol>
+        <div class="note text-warn" id="g-wrap" role="status" hidden></div>
       </section>
       <section class="gcol gentry" aria-label="Entry">
         <h3 class="label">Entry</h3>
@@ -195,6 +196,16 @@ export function createGenerator(root, app) {
   // Enter, Esc); keyboard users who tabbed to a key keep its focus.
   root.addEventListener('click', (e) => { const k = e.target.closest('button'); if (k && e.detail > 0) k.blur(); });
 
+  // Where the signal repeats it should join up with itself (the person: a
+  // spike at t = 0 is accepted, at no other time): a line when it does not,
+  // for the signal as the preview draws it, with the draft.
+  function wrapNote() {
+    const ref = app.signalRef();
+    const comps = ref.components.slice();
+    if (draft?.mode === 'edit') comps[draft.index] = draft.comp; else if (draft) comps.push(draft.comp);
+    try { return wrapWarning({ period: ref.period, components: comps }, app.signal); } catch { return ''; }
+  }
+
   // Rendering
   function valueHtml(key) {
     const f = fieldDef(key);
@@ -248,6 +259,9 @@ export function createGenerator(root, app) {
           <button class="btn btn-sm onoff" data-tog="${i}" role="switch" aria-checked="${c.enabled !== false}" aria-label="Component ${i + 1} on">${c.enabled === false ? 'off' : 'on'}</button>
           <button class="btn btn-sm btn-icon btn-danger" data-del="${i}" aria-label="Remove component ${i + 1}" title="Remove">✕</button></li>`).join('')
       : `<li class="note">No components yet: ${app.signal}(t) = 0.</li>`;
+    const wrap = wrapNote();
+    if ($('#g-wrap').textContent !== wrap) $('#g-wrap').textContent = wrap;
+    $('#g-wrap').hidden = !wrap;
     $('#g-period').innerHTML = fieldRow(PERIOD);
     $('#g-eq').textContent = `${app.signal}(t) = Σ`;
     const exprIn = $('#g-expr');
