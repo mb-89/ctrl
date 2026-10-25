@@ -9233,9 +9233,9 @@ const EXAMPLE_PLANTS = [
   PUMA_SYSTEM,
   {
     name: 'Mass–spring–damper',
-    summary: 'A mass on a spring and a damper, pulled down once; no controller. Change the spring or the damping and watch it swing and settle: how stiffness and damping shape a response.',
-    notes: 'A 1 kg mass hangs on a spring (25 N/m) and a damper (0.5 N·s/m). At 0.1 s a force F = 1 N pulls it down: it drops about 40 mm and swings at 0.8 Hz while it settles, its energy moving between motion (Ekin) and spring (Epot). No controller.',
-    signals: { F: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
+    summary: 'A mass on a spring and a damper, pulled down and let go; no controller. Change the spring or the damping and watch it swing and settle: how stiffness and damping shape a response.',
+    notes: 'A 1 kg mass hangs on a spring (25 N/m) and a damper (0.5 N·s/m). At 0.1 s a force F = 1 N pulls it down: it drops about 40 mm and swings at 0.8 Hz while it settles, its energy moving between motion (Ekin) and spring (Epot). At 2.6 s the force lets go and it swings back up round where it hangs at rest. No controller.\n\nThe damper is light: a swing shrinks to a third in 4.4 s. Let it run longer and the next pull finds the mass still swinging a little, so the first periods differ a little (by 10 mm, then 3 mm, then 0.8 mm) until every period is the same.',
+    signals: { F: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }, { type: 'step', params: { amplitude: -1, time: 2.6 } }] } },
     scope: { channels: channels('F', 'x', 'Ekin', 'Epot') },
     ui: ui('Hanging mass'),
     diagram: {

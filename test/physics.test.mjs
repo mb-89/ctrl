@@ -166,13 +166,18 @@ test("the mass–spring–damper's energies on the scope balance the work done a
   p.scope.timebase = autoTimebase(p);
   const { t, signals: s } = evaluateSystem(p);
   const c = 0.5, dt = t[1] - t[0];
-  let work = 0;
+  // Where F steps (pulled down, let go), its samples do not say where in
+  // the record step it switched: that step's work is known to within
+  // ½·dt·|ΔF|·|v|, which the balance allows from there on.
+  let work = 0, slack = 0;
   for (let k = 1; k < t.length; k++) {
     const pw = (j) => s.F[j] * s.v[j] - c * s.v[j] ** 2;
     work += 0.5 * dt * (pw(k - 1) + pw(k));
+    slack += 0.5 * dt * Math.abs(s.F[k] - s.F[k - 1]) * Math.max(Math.abs(s.v[k - 1]), Math.abs(s.v[k]));
     const E = s.Ekin[k] + s.Epot[k], E0 = s.Ekin[0] + s.Epot[0];
-    assert.ok(Math.abs(E - E0 - work) < 2e-4 * Math.max(1e-3, Math.abs(E)) + 1e-6, `t ${t[k]}: E ${E} vs work ${work}`);
+    assert.ok(Math.abs(E - E0 - work) < 2e-4 * Math.max(1e-3, Math.abs(E)) + 1e-6 + slack, `t ${t[k]}: E ${E} vs work ${work}`);
   }
+  assert.ok(s.F.some((f, k) => k > 0 && f < s.F[k - 1]), 'F lets go inside the run');
   assert.ok(Math.abs(s.Ekin[100] - 0.5 * s.v[100] ** 2) < 1e-12 && Math.abs(s.Epot[100] - 0.5 * 25 * s.x[100] ** 2) < 1e-12);
 });
 

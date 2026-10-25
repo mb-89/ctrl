@@ -144,7 +144,7 @@ test("the Input tab's line: a jump or a kink where it repeats, quiet where that 
 });
 
 test("the library's other inputs join up where they repeat", () => {
-  const known = { 'Mass–spring–damper': ['F'], 'Variable gain against anti-windup': ['r'], 'Encoder errors and torque ripple': ['r'], 'DC motor, speed from an encoder': ['r'], 'Conical tank, gain scheduling': ['r'], 'Oven, badly tuned': ['r'] };
+  const known = { 'Variable gain against anti-windup': ['r'], 'Encoder errors and torque ripple': ['r'], 'DC motor, speed from an encoder': ['r'], 'Conical tank, gain scheduling': ['r'], 'Oven, badly tuned': ['r'] };
   for (const sys of SYSTEM_LIBRARY) for (const [name, sig] of Object.entries(sys.input.signals)) {
     if (known[sys.name]?.includes(name)) continue;
     const j = wrapJump(normalizeReference(sig), ctx);
@@ -179,4 +179,26 @@ test('the PUMA does not jump where its circle repeats', () => {
     // Before, eb kicked to about 88 mm here (0.05 mm while the circle runs).
     assert.ok(wrap <= steady, `${n}: ${wrap} mm after the wrap against ${steady} mm while running`);
   }
+});
+
+test('the mass–spring–damper is let go inside its period: no kick where F repeats, and its light damping makes every period alike', () => {
+  const sys = SYSTEM_LIBRARY.find((s) => s.name === 'Mass–spring–damper');
+  const F = sys.input.signals.F, T = F.period, dt = 0.0025, N = Math.round(T / dt);
+  assert.ok(wrapJump(normalizeReference(F), ctx).joins, 'F ends the period where it starts');
+  const out = simulateSystem(normalizeDiagram(sys.plant.diagram), sys.input.signals, { duration: 5 * T, sampleTime: dt });
+  const { x, v, F: f } = out.signals;
+  // Nothing happens at a wrap: F holds, the acceleration does not step (the
+  // second difference of v stays at the rounding of a smooth swing).
+  for (let p = 1; p < 5; p++) {
+    const k = p * N;
+    assert.equal(f[k + 1], f[k], `F at ${p * T} s`);
+    assert.ok(Math.abs(v[k + 1] - 2 * v[k] + v[k - 1]) < 1e-4, `v kinks at ${p * T} s`);
+  }
+  // Each period starts from where the last one left the mass, so the periods
+  // differ by the swing the damper has not yet taken away: that difference
+  // shrinks by e^(−c·T/2m) = e^(−1.25) a period (σ = 0.25 1/s), the physics.
+  const diff = (a, b) => { let m = 0; for (let k = 1; k <= N; k++) m = Math.max(m, Math.abs(x[a * N + k] - x[b * N + k])); return m; };
+  const d = [diff(0, 1), diff(1, 2), diff(2, 3), diff(3, 4)];
+  for (let i = 1; i < d.length; i++) close(d[i] / d[i - 1], Math.exp(-1.25), 0.01, `period ${i + 1} against ${i + 2}`);
+  assert.ok(d[1] < 3e-3 && d[3] < 2.5e-4, `periods 2 and 3 within 3 mm, 4 and 5 within 0.25 mm: ${d}`);
 });

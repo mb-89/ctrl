@@ -7,7 +7,7 @@
   "Mass–spring–damper": {
     "samples": 2001,
     "signals": "Ekin,Epot,F,v,x",
-    "hash": "36c541c5"
+    "hash": "2f4e1c7f"
   },
   "DC motor, position control": {
     "samples": 2001,

@@ -8,7 +8,7 @@ Reader: whoever adds an example system or changes how systems load.
 
 | System | Input | Controller variants (first one runs) | What you see |
 |---|---|---|---|
-| Mass–spring–damper | F: 1 N step | none | The hanging mass drops 40 mm and swings at 0.8 Hz; energy bars |
+| Mass–spring–damper | F: 1 N from 0.1 s, let go at 2.6 s | none | The hanging mass drops 40 mm and swings at 0.8 Hz; let go, it swings back up round its rest; energy bars. Its light damping (a swing shrinks to 29 % a period) carries a little swing into the next period, so a long run settles into repeating: periods 2 and 3 differ by 2.9 mm, 3 and 4 by 0.8 mm |
 | DC motor, position control | r: 0 ↔ 2 rad every 1.25 s; d: load torque at 3.2 s | P too aggressive · PD · PID with prefilter · Off | The shaft overshoots and rings (the person asked for a "not that good" controller); flip to see it settle |
 | DC motor, sliding mode | r: 0 ↔ 1 rad every 1.25 s; d: 1 N·m load torque 3.2–3.7 s | Relay (theory) · Boundary layer · Super-twisting | Opens in XY: the phase portrait, e across and the speed up; reaching arcs, then the sliding line speed = 10·e. Channels 3 and 4 (V, i; off), with Measure switched on, read the relay's 12 V chatter and 7.6 W of heat, the layer's calm, super-twisting's small ripple |
 | Gear backlash | r: 0 ↔ 1 rad every 1.25 s | PID · PD · Dual loop; a Switch *feedback from*: the load's encoder (1) or the motor's (2) | A motor turns a load arm through a 20:1 gearhead with 1° of play. On the load's encoder every step ends in hunting (±10 mrad, about 31 Hz), with PD too; on the motor's encoder the load stays where it came to rest in the play; the Dual loop (the industrial fix) holds it to about 0.1 mrad. Opens on the view: the gear and the load arm on one hub |
