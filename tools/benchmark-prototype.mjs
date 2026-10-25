@@ -7,6 +7,7 @@
 // the ±15 % plant variation by vary() (identification.md's varyDiagram).
 //
 //   node tools/benchmark-prototype.mjs [system name start …] [--iter 60] [--sweep 8] [--ms-max 3] [--no-backoff] [--json out.json]
+//        [--report dir] (the HTML report per system, pugh.js) [--matrix dir] (the Pugh matrix per system, with its figures)
 //
 // Prints, per system: the tests (a standard load step when the system's d
 // plays nothing; the same moves as a smooth move), the candidates and
@@ -23,12 +24,12 @@ import { CONTROLLERS, CONTROLLER_TYPES, normalizeVariant } from '../src/core/con
 import { diagramBlockDef, parseEnd, compileDiagram, blockPorts } from '../src/core/diagram.js';
 import { analyzeLoop } from '../src/core/analysis.js';
 import { simulateSystem } from '../src/core/sim.js';
-import { decide, SYMBOL } from '../src/core/pugh.js';
+import { decide, SYMBOL, renderHtml } from '../src/core/pugh.js';
 import { tuneContext, withVariant, runVariant, loopSignals, costScales, runCost, iterate, autotune, tuningSpace, drain, GOAL } from '../src/core/autotune.js';
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
-const MS_MAX = Number(opt('--ms-max', 3)), BACKOFF = !args.includes('--no-backoff'), MAX_ITER = Number(opt('--iter', 60)), SWEEP = Number(opt('--sweep', 8)), JSON_OUT = opt('--json', null);
+const MS_MAX = Number(opt('--ms-max', 3)), BACKOFF = !args.includes('--no-backoff'), MAX_ITER = Number(opt('--iter', 60)), SWEEP = Number(opt('--sweep', 8)), JSON_OUT = opt('--json', null), REPORT_DIR = opt('--report', null), MATRIX_DIR = opt('--matrix', null);
 const names = args.filter((a, i) => !a.startsWith('--') && !(i && args[i - 1].startsWith('--')));
 const SYSTEMS = names.length ? names : ['DC motor, sliding mode', 'Oven, badly tuned', 'Conical tank'];
 const GOAL_USED = { ...GOAL };
@@ -641,6 +642,8 @@ function benchmark(name) {
       moveRun = P.goalScore(row.variant, P.move);
       row.move = moveRun.cost.diverged ? Infinity : moveScore(moveRun.run, P.ctx.key, P.ctx.others, R, steps);
     }
+    // The runs the report plots: r, y and u, thinned.
+    if (!cost.diverged) { row.trace = traceOf(run, P.ctx.key); row.moveTrace = moveRun && !moveRun.cost.diverged ? traceOf(moveRun.run, P.ctx.key) : null; }
     // The feedforward's share of u, on the steps and on the smooth move.
     const twin = CONTROLLERS[row.variant.type].designed && CONTROLLERS[row.variant.type].manual ? CONTROLLERS[row.variant.type].manual(row.variant.params, designValues(row.variant)) : row.variant;
     if (twin?.type === 'pid' && (twin.params.Kff || twin.params.Kv || twin.params.Ka) && !cost.diverged) {
@@ -677,7 +680,28 @@ function benchmark(name) {
     row.fits = !row.diverged && !row.varyBad && row.margins.stable !== false && !row.margins.startUnstable;
     row.whyNot = row.diverged ? 'diverges on the nominal plant' : row.varyBad ? `diverges on ${row.varyBad} of ${SWEEP} plants within ±15 %` : row.margins.stable === false ? `unstable at r's middle (${row.margins.note})` : row.margins.startUnstable ? `unstable where the run starts (${row.margins.startUnstable}); it rests there only because it starts in balance` : '';
   }
-  return { name: project.title, rows, refusals, changed, T, standard: std?.change ?? null, tau, step: st?.ok ? `${st.method === 'relay' ? 'relay' : st.model}` : st?.why, R, U };
+  const moveWindow = steps.length && tau ? [ls.t[steps[0]] - 0.1 * Math.min(...gaps) * dtS, ls.t[steps[0]] + Math.min(...gaps) * dtS] : null;
+  return { name: project.title, rows, refusals, changed, T, standard: std?.change ?? null, tau, moveWindow, step: st?.ok ? `${st.method === 'relay' ? 'relay' : st.model}` : st?.why, R, U };
+}
+
+// A run thinned for the report's figures: every k-th sample (at most 400),
+// four significant digits.
+function traceOf(run, key) {
+  const s = loopSignals(run, key), k = Math.max(1, Math.ceil(s.t.length / 400)), pick = (a) => Array.from({ length: Math.ceil(a.length / k) }, (_, i) => Number(Number(a[i * k]).toPrecision(4)));
+  return { t: pick(s.t), r: pick(s.r), y: pick(s.y), u: pick(s.u) };
+}
+
+// The report's figures for one option, against the datum (input 59: at most
+// two): the system's run (y over r, u below), and the first smooth move.
+function figuresOf(row, datum, b) {
+  const figs = [], self = row === datum;
+  const panels = (tr, dt) => [
+    { yLabel: 'y', series: [{ label: 'r', x: tr.t, y: tr.r, role: 'reference' }, ...(!self && dt ? [{ label: 'datum', x: dt.t, y: dt.y, role: 'datum' }] : []), { label: 'y', x: tr.t, y: tr.y, role: 'option' }] },
+    { yLabel: 'u', series: [...(!self && dt ? [{ label: 'datum', x: dt.t, y: dt.u, role: 'datum' }] : []), { label: 'u', x: tr.t, y: tr.u, role: 'option' }] },
+  ];
+  if (row.trace) figs.push({ title: `The system's run${b.standard ? ' with the standard load step' : ''}: y over r, and u${self ? '' : ' (dashed: the datum)'}`, xLabel: 't (s)', panels: panels(row.trace, datum.trace) });
+  if (row.moveTrace && b.moveWindow) figs.push({ title: `The first smooth move${self ? '' : ' (dashed: the datum)'}`, xLabel: 't (s)', xRange: b.moveWindow, panels: panels(row.moveTrace, datum.moveTrace) });
+  return figs;
 }
 
 // ---- The decision: the generic Pugh module ----------------------------------
@@ -686,7 +710,7 @@ function benchmark(name) {
 // benchmark hands it a matrix of measured numbers and reads the result.
 
 const JOB_MAX = 2, STEP = 1;
-function matrixOf(b) {
+function matrixOf(b, datumIndex = -1, fitting = null) {
   const keyOf = (i) => `c${i}`;
   const pid = b.rows.findIndex((r) => r.type === 'pid' && !r.loaded && !r.plantChange), loadedRow = b.rows.findIndex((r) => r.loaded);
   return {
@@ -696,6 +720,9 @@ function matrixOf(b) {
       key: keyOf(i), label: r.name,
       values: Object.fromEntries(CRITERIA.filter((cr) => typeof r[cr.key] === 'number').map((cr) => [cr.key, r[cr.key]])),
       fits: r.fits, whyNot: r.whyNot, suggestable: !r.plantChange, keep: !!r.loaded, tieBreak: r.J,
+      ...(r.plantChange ? { note: `A plant change: ${r.plantChange}.` } : {}),
+      // Figures only for the options that fit: the others get a line, not a section.
+      ...(datumIndex >= 0 && fitting?.has(`c${i}`) ? { figures: figuresOf(r, b.rows[datumIndex], b) } : {}),
     })),
     // The main job against the datum (input 55) and the Ms bound.
     gates: [...CRITERIA.filter((cr) => cr.job).map((cr) => ({ criterion: cr.key, maxRatio: JOB_MAX, why: 'fails the main job' })), { criterion: 'ms', max: MS_MAX, why: "fragile, at r's middle" }],
@@ -714,7 +741,12 @@ for (const name of SYSTEMS) {
   const b = benchmark(name);
   const total = now() - t0;
   results.push(b);
-  const res = decide(matrixOf(b));
+  // Decide once for the datum, then again with the figures drawn against it.
+  const res0 = decide(matrixOf(b)), matrix = matrixOf(b, Number(res0.datum.key.slice(1)), new Set(res0.ranking));
+  const res = decide(matrix);
+  const slug = b.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (REPORT_DIR) writeFileSync(`${REPORT_DIR}/${slug}.html`, renderHtml(res));
+  if (MATRIX_DIR) writeFileSync(`${MATRIX_DIR}/${slug}.json`, JSON.stringify(matrix));
   const byKey = Object.fromEntries(res.candidates.map((c) => [c.key, c]));
   b.rows.forEach((row, i) => { const c = byKey[`c${i}`]; row.fits = c.fits; row.whyNot = c.whyNot; });
   const datum = b.rows[Number(res.datum.key.slice(1))];

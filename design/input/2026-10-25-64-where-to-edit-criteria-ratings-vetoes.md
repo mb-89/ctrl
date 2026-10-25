@@ -1,0 +1,3 @@
+# Where to edit: criteria in the overview, ratings and vetoes in each option's section (2026-10-25)
+
+> And the overview table is not where I edit everything. I'm indifferent about whether I can edit ratings there. I don't care. But the criterions, I can only edit them there. They are not anywhere else. The weights, I would rather have the criterion and the weights again as a small table in every options small section, and then I can edit them there, I guess. And there I would also be able to edit the vetoes. So it could be multiple vetoes, right? You could reject something for multiple vetoes, and then I would have to think about if I override any of them.

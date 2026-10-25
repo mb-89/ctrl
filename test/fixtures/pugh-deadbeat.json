@@ -1,0 +1,455 @@
+{
+ "title": "DC motor, deadbeat",
+ "criteria": [
+  {
+   "key": "track",
+   "label": "Following steps (IAE)",
+   "weight": 1.5,
+   "better": "lower",
+   "tolerance": 0.1,
+   "floor": 0.001
+  },
+  {
+   "key": "move",
+   "label": "Following a smooth move (IAE)",
+   "weight": 1.5,
+   "better": "lower",
+   "tolerance": 0.1,
+   "floor": 0.001
+  },
+  {
+   "key": "dist",
+   "label": "Rejecting d (IAE)",
+   "weight": 3,
+   "better": "lower",
+   "tolerance": 0.1,
+   "floor": 0.001
+  },
+  {
+   "key": "over",
+   "label": "Overshoot",
+   "weight": 2,
+   "better": "lower",
+   "tolerance": 0.2,
+   "floor": 2
+  },
+  {
+   "key": "settle",
+   "label": "Settling (2 %, s)",
+   "weight": 1,
+   "better": "lower",
+   "tolerance": 0.15,
+   "floor": 0.02
+  },
+  {
+   "key": "effort",
+   "label": "Effort (u swing)",
+   "weight": 1,
+   "better": "lower",
+   "tolerance": 0.15,
+   "floor": 0.001
+  },
+  {
+   "key": "wear",
+   "label": "Wear (u travel/s)",
+   "weight": 2,
+   "better": "lower",
+   "tolerance": 0.25,
+   "floor": 0.05
+  },
+  {
+   "key": "sat",
+   "label": "Time at a limit",
+   "weight": 1,
+   "better": "lower",
+   "tolerance": 0.25,
+   "floor": 0.02
+  },
+  {
+   "key": "ms",
+   "label": "Robustness Ms",
+   "weight": 2,
+   "better": "lower",
+   "tolerance": 0.1,
+   "floor": 0.05
+  },
+  {
+   "key": "vary",
+   "label": "Plant ±15 % (worst J)",
+   "weight": 3,
+   "better": "lower",
+   "tolerance": 0.15,
+   "floor": 0.005
+  },
+  {
+   "key": "noise",
+   "label": "Noise → u",
+   "weight": 2,
+   "better": "lower",
+   "tolerance": 0.25,
+   "floor": 0.002
+  },
+  {
+   "key": "complex",
+   "label": "Complexity",
+   "weight": 1,
+   "better": "lower",
+   "tolerance": 0,
+   "floor": 0.5
+  },
+  {
+   "key": "effortTune",
+   "label": "Tuning runs",
+   "weight": 1,
+   "better": "lower",
+   "tolerance": 0.5,
+   "floor": 5
+  }
+ ],
+ "candidates": [
+  {
+   "key": "c0",
+   "label": "As loaded: Deadbeat, 100 ms",
+   "values": {
+    "track": 0.153556,
+    "move": 0.175521,
+    "dist": 0.249214,
+    "over": 29.9866,
+    "settle": 0.38725,
+    "effort": 0.0999095,
+    "wear": 0.623229,
+    "sat": 0,
+    "ms": 2.25089,
+    "vary": 1.16131,
+    "noise": 0.00458691,
+    "complex": 8,
+    "effortTune": 0
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": true,
+   "tieBreak": 0.560079
+  },
+  {
+   "key": "c1",
+   "label": "PID",
+   "values": {
+    "track": 0.0959338,
+    "move": 0.0803757,
+    "dist": 0.0252194,
+    "over": 11.6855,
+    "settle": 0.50475,
+    "effort": 0.138291,
+    "wear": 1.52719,
+    "sat": 0.0459908,
+    "ms": 2.64594,
+    "vary": 0.765341,
+    "noise": 0.0242546,
+    "complex": 4,
+    "effortTune": 111
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 0.126771
+  },
+  {
+   "key": "c2",
+   "label": "LQR",
+   "values": {
+    "track": 0.546601,
+    "move": 0.539678,
+    "dist": 0.711234,
+    "over": 104.379,
+    "settle": 1.03775,
+    "effort": 0.033411,
+    "wear": 0.0994329,
+    "sat": 0,
+    "ms": 1.42688,
+    "vary": 2.38954,
+    "noise": 0.00343357,
+    "complex": 9,
+    "effortTune": 31
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 2.43378
+  },
+  {
+   "key": "c3",
+   "label": "State feedback",
+   "values": {
+    "track": 0.0796779,
+    "move": 0.0453501,
+    "dist": 0.0196224,
+    "over": 2.23676,
+    "settle": 0.37425,
+    "effort": 0.143716,
+    "wear": 1.60614,
+    "sat": 0.0559888,
+    "ms": 1.65758,
+    "vary": 0.0919697,
+    "noise": 0.0419788,
+    "complex": 8,
+    "effortTune": 107
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 0.0809162
+  },
+  {
+   "key": "c4",
+   "label": "Deadbeat",
+   "values": {
+    "track": 0.0831885,
+    "move": 0.0222033,
+    "dist": 0.00357638,
+    "over": 29.1739,
+    "settle": 0.22175,
+    "effort": 0.216007,
+    "wear": 3.71554,
+    "sat": 0.173965,
+    "ms": 5.18613,
+    "vary": 1.30968,
+    "noise": 0.321027,
+    "complex": 8,
+    "effortTune": 1
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 0.904041
+  },
+  {
+   "key": "c5",
+   "label": "Gain-scheduled PI",
+   "values": {
+    "track": 0.198069,
+    "move": 0.189118,
+    "dist": 0.29685,
+    "over": 37.5829,
+    "settle": 1.03775,
+    "effort": 0.0745783,
+    "wear": 0.413721,
+    "sat": 0,
+    "ms": 1.3995,
+    "vary": 1.44803,
+    "noise": 0.00159078,
+    "complex": 6,
+    "effortTune": 63
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 0.785793
+  },
+  {
+   "key": "c6",
+   "label": "PID + feedforward from the plant",
+   "values": {
+    "track": 0.0910717,
+    "move": 0.0357701,
+    "dist": 0.0252579,
+    "over": 8.18623,
+    "settle": 0.49425,
+    "effort": 0.134074,
+    "wear": 1.48851,
+    "sat": 0.0459908,
+    "ms": 2.64594,
+    "vary": 0.646026,
+    "noise": 0.0239134,
+    "complex": 9,
+    "effortTune": 31
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 0.0889724
+  },
+  {
+   "key": "c7",
+   "label": "Planned swing-up + TV-LQR",
+   "values": {
+    "track": 0.743465,
+    "move": 0.745492,
+    "dist": 1.0545,
+    "over": 186.792,
+    "settle": 0.738,
+    "effort": 0.0272098,
+    "wear": 0.0377434,
+    "sat": 0,
+    "ms": 1.13146,
+    "vary": 4.53291,
+    "noise": 0.00132961,
+    "complex": 5,
+    "effortTune": 1
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 4.29004
+  },
+  {
+   "key": "c8",
+   "label": "Variable gain (Hu–Lin)",
+   "values": {
+    "track": 0.711125,
+    "move": 0.703634,
+    "dist": 0.93649,
+    "over": 182.796,
+    "settle": 1.03775,
+    "effort": 0.02703,
+    "wear": 0.0583596,
+    "sat": 0,
+    "ms": 1.13146,
+    "vary": 4.43269,
+    "noise": 0.00132944,
+    "complex": 3,
+    "effortTune": 1
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 4.16793
+  },
+  {
+   "key": "c9",
+   "label": "Relay (on/off)",
+   "values": {
+    "track": 0.294101,
+    "move": 0.251885,
+    "dist": 0.239108,
+    "over": 50.3064,
+    "settle": 1.03775,
+    "effort": 0.498836,
+    "wear": 10,
+    "sat": 1,
+    "vary": 4.46514,
+    "noise": 0.684037,
+    "complex": 2,
+    "effortTune": 1
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 3.33124
+  },
+  {
+   "key": "c10",
+   "label": "Sliding mode (ideal)",
+   "values": {
+    "track": 0.0948413,
+    "move": 0.0569023,
+    "dist": 0.0098271,
+    "over": 5.95414,
+    "settle": 0.785,
+    "effort": 0.488726,
+    "wear": 39.5,
+    "sat": 0.960008,
+    "vary": 0.374136,
+    "noise": 0.319342,
+    "complex": 4,
+    "effortTune": 39
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 0.283943
+  },
+  {
+   "key": "c11",
+   "label": "Sliding mode (boundary layer)",
+   "values": {
+    "track": 0.0805303,
+    "move": 0.0470158,
+    "dist": 0.0297625,
+    "over": 3.39385,
+    "settle": 0.388,
+    "effort": 0.15212,
+    "wear": 2.16514,
+    "sat": 0.059988,
+    "ms": 2.55,
+    "vary": 0.152705,
+    "noise": 0.029779,
+    "complex": 5,
+    "effortTune": 64
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 0.0838659
+  },
+  {
+   "key": "c12",
+   "label": "Super-twisting",
+   "values": {
+    "track": 0.0783612,
+    "move": 0.0527404,
+    "dist": 0.00633585,
+    "over": 2.88601,
+    "settle": 0.16125,
+    "effort": 0.144302,
+    "wear": 5.06522,
+    "sat": 0.0359928,
+    "vary": 0.431017,
+    "noise": 0.0831642,
+    "complex": 5,
+    "effortTune": 141
+   },
+   "fits": true,
+   "whyNot": "",
+   "suggestable": true,
+   "keep": false,
+   "tieBreak": 0.0741056
+  }
+ ],
+ "gates": [
+  {
+   "criterion": "track",
+   "maxRatio": 2,
+   "why": "fails the main job"
+  },
+  {
+   "criterion": "move",
+   "maxRatio": 2,
+   "why": "fails the main job"
+  },
+  {
+   "criterion": "dist",
+   "maxRatio": 2,
+   "why": "fails the main job"
+  },
+  {
+   "criterion": "ms",
+   "max": 3,
+   "why": "fragile, at r's middle"
+  }
+ ],
+ "datum": {
+  "prefer": [
+   "c1",
+   "c0"
+  ]
+ },
+ "sensitivity": {
+  "step": 1,
+  "draws": 4000,
+  "seed": 55,
+  "robustShare": 0.75,
+  "runnersUp": 3
+ }
+}
