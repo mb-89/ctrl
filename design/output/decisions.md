@@ -37,6 +37,16 @@ The person, after the prototype ranked Hu–Lin first on "DC motor, deadbeat" wi
 - **"Measure it instead" by matching**: the sensor for an observer is the block output whose run matches the measured signal's rate within 5 %, so it works on the Servo motor main now has (the structure trace of the first prototype found no integrator there).
 - **Results**: sliding-mode motor, the boundary-layer sliding mode (+10, robust); oven, the PID, sensitive (the PI from the plant ties it, the feedforward ties if complexity's weight drops to 0.75); tank, keep the loaded schedule (robust); deadbeat motor, state feedback (+16, robust), Hu–Lin, LQR, the planned swing-up and the relay fail the main job.
 
+## 2026-10-25 · v2.9, Identify: Try on the plant (§18 step 10)
+
+Built on branch `feat/identify-tab` from [identification.md](identification.md) §11 (no new words from the person; [§11.1](identification.md#111-built-step-10) has the numbers):
+
+- **The path's gains**: log-interpolated where both ends are positive, linear where one is 0 (a derivative that starts at 0, the integral of a P result). Interpretation: log interpolation cannot leave or reach 0.
+- **The screening's places** are models with a place's gain and time scale (the Where refit), beside 12 parameter samples; Ms and stability from the linear loop round each, the room and the prediction from the nominal model's replay.
+- **The monitor compares y with the prediction moved to where y was at the switch** (the model is incremental), over 0.2 s.
+- **After the steps the plant is stopped and the result is the running variant** (interpretation of "the result runs on the plant, d back on": every test ends with the plant stopped; Run starts it, d included).
+- **The key sits in the Auto-tune tab**, the test in the Identify tab's runner: one runner, one Stop, one scope.
+
 ## 2026-10-25 · v2.9, Identify: Auto-tune and Analysis on the model (§18 step 9)
 
 Built on branch `feat/identify-tab` from [identification.md](identification.md) §10 and §12 (no new words from the person; [§10.1](identification.md#101-built-step-9) has the numbers):

@@ -5035,6 +5035,7 @@ const EXPERIMENT = {
   shake: { minN: 256, maxN: 8192, fmax: 0.4, band: 10, lines: 60, push: 0.5, ramp: [0.25, 0.5, 1], measured: 4, room: 0.5, repeat: 1 },
   check: { stair: 0.125 },
   discriminate: { rest: 0.5 },
+  tryPlant: { stray: 0.2, room: 0.7, cost: 0.3 },
   goal: { effort: 0.05, overshoot: 10, overshootWeight: 2, saturation: 0.2 },
 };
 
@@ -5089,6 +5090,21 @@ function piLaw({ Kp, Ki }, I0, lo, hi, Ts) {
 }
 
 const bumpless = (g, u, r, y) => u - g.Kp * (r - y);
+
+function pidLaw({ Kp, Ki, Kd = 0, Tf = 0 }, I0, lo, hi, Ts) {
+  let I = I0, D = 0, yPrev = null;
+  return {
+    get I() { return I; },
+    step(r, y) {
+      if (Kd) { if (yPrev === null) yPrev = y; D = (Tf * D - Kd * (y - yPrev)) / (Tf + Ts); yPrev = y; }
+      const e = r - y;
+      const v = Kp * e + I + D;
+      const u = clamp(v, lo, hi);
+      if (Ki && (u === v || Math.sign(Ki * e) !== Math.sign(v - u))) I += Ki * Ts * e;
+      return u;
+    },
+  };
+}
 
 
 function tryCost(r, y, u, { R, U, lo, hi, per = r.length }) {
@@ -5916,9 +5932,72 @@ function createExperiment(plan) {
     return null;
   }
 
+  function* tryPath() {
+    yield* listen();
+    if (st.done || stopping) return null;
+    if (!inBand(listenInfo.y0)) return finish('outside', `${names.y} is at ${yU(listenInfo.y0)}, outside 'may move within': widen it, or bring the plant inside first`);
+    chips.nudge = '–'; chips.shake = '–';
+    test = testR; check = testR;
+    { let a = Infinity, b = -Infinity; for (const v of test) { a = Math.min(a, v); b = Math.max(b, v); } test.span = b - a > 1e-12 ? b - a : Math.max(Math.abs(r0), 1) * 1e-3; }
+    enter('hold');
+    const g0 = P.eased, lim0 = g0.lim ?? [P.umin, P.umax];
+    switchTo(g0, 'hold', lim0);
+    const s0 = yield* settle(r0, 4 * ((g0.tauC ?? 1) + (g0.theta ?? 0)) + E.hold.slack, `Holding ${names.y} at ${yU(r0)} with the controller that held before`, true);
+    if (s0 === 'left' || s0 === 'away') return finish('band', `${names.y} did not stay in 'may move within' under the controller that held before: the page stopped the plant; identify again`);
+    inc = { gains: g0, tauC: g0.tauC, J: Infinity, n: 0, lim: lim0 };
+    enter('ease');
+    const marks = [];
+    const keepFor = Math.max(1, Math.ceil(E.tryPlant.stray / Ts - 1e-9));
+    for (const step of P.steps) {
+      const status = `Try on the plant, step ${step.n} of ${P.steps.length}`;
+      const s1 = yield* settle(r0, E.ease.settleMax, `${status}: settling`);
+      if (s1 === 'left') return endBand(`${names.y} left 'may move within' before step ${step.n}: the page stopped the plant`);
+      const I = uLast - step.gains.Kp * (r - y);
+      law = pidLaw(step.gains, I, step.lim[0], step.lim[1], Ts);
+      log({ kind: 'law', i, Kp: step.gains.Kp, Ki: step.gains.Ki, umin: step.lim[0], umax: step.lim[1], I, role: 'step' });
+      const iS = i, kS = k, N = test.length, yS = y, pred = step.predicted;
+      rFn = (kk) => test[Math.min(N - 1, kk - kS)];
+      let stray = 0, tripped = null;
+      while (k - kS < N) {
+        if (!inBand(y)) { tripped = 'left'; break; }
+        const j = k - kS, yh = yS + (pred[Math.min(j, pred.length - 1)] - pred[0]);
+        stray = Math.abs(y - yh) > P.monitor ? stray + 1 : 0;
+        if (stray >= keepFor) { tripped = 'stray'; break; }
+        const u = law.step(r, y);
+        meters(u);
+        st.room = roomUsed(y); st.roomMax = Math.max(st.roomMax, st.room);
+        st.status = status;
+        yield u;
+      }
+      const iE = i;
+      if (tripped) { ramp = { k0: k, k1: k + Math.max(1, Math.ceil(Math.min(E.ease.recover, 2 * ((g0.tauC ?? 1) + (g0.theta ?? 0))) / Ts - 1e-9)), from: r }; recovering = { k, beyond: beyond(y), inside: 0 }; }
+      aim(r0);
+      switchTo(g0, 'incumbent', lim0);
+      let mark, accepted = false, J = null, gm = null;
+      if (tripped) mark = tripped === 'left' ? '✕ left the range, back to the one that held' : '✕ did not behave as predicted';
+      else {
+        const rr = rec.r.slice(iS, iE), yy = rec.y.slice(iS, iE), uu = rec.u.slice(iS, iE);
+        J = tryCost(rr, yy, uu, { R: test.span, U, lo: P.umin, hi: P.umax }).J;
+        gm = tryMargin(rr, yy, P.band, Math.max(3 * listenInfo.sigma, 2 * listenInfo.q));
+        const used = 1 - gm.gRoom;
+        if (gm.g < E.ease.gMin) mark = gm.gRing !== null && gm.gRing <= gm.gRoom ? '! rang more than predicted' : '! came nearer the edge than predicted';
+        else if (used > E.tryPlant.room) mark = '! used more room than predicted';
+        else if (Math.abs(J - step.J) > E.tryPlant.cost * step.J) mark = J > step.J ? '! cost more than predicted' : '! cost less than predicted';
+        else { mark = '✓ as predicted'; accepted = true; }
+      }
+      marks.push(`step ${step.n} ${mark}`);
+      st.tries.push(mark);
+      log({ kind: 'step', n: step.n, accepted, mark, J, Jpred: step.J, g: gm?.g ?? null, room: gm ? 1 - gm.gRoom : null, i0: iS, iEnd: iE, tripped });
+      if (!accepted) break;
+    }
+    const good = marks.filter((x) => x.includes('✓')).length;
+    return finish('done', `Tried on the plant: ${good} of ${P.steps.length} steps as predicted; the plant is stopped`);
+  }
+
 
   function* program() {
     if (P.kind === 'recheck') return yield* recheck();
+    if (P.kind === 'try') return yield* tryPath();
     yield* listen();
     if (st.done || stopping) return null;
     const L = listenInfo;
@@ -6108,7 +6187,7 @@ function checkPlan(p) {
   if (!p.test || !(Array.isArray(p.test.r) ? p.test.r.length >= 2 : Number.isFinite(p.test.r0))) throw new Error('experiment: plan.test needs r (samples) or r0 (a staircase)');
 }
 
-return { IDENTIFY_VERSION, EXPERIMENT, STAGES, STAGE_LABELS, fmtNum, LENGTHS, budgetText, gentleGains, gentleTauC, piLaw, bumpless, tryCost, tryMargin, listenStats, staircase, halved, createExperiment, excitationOf, discriminationSignal };
+return { IDENTIFY_VERSION, EXPERIMENT, STAGES, STAGE_LABELS, fmtNum, LENGTHS, budgetText, gentleGains, gentleTauC, piLaw, bumpless, pidLaw, tryCost, tryMargin, listenStats, staircase, halved, createExperiment, excitationOf, discriminationSignal };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
@@ -17010,7 +17089,7 @@ const { controllerBlocks, upstreamSource, drain } = __mods['core/autotune.js'];
 const { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } = __mods['core/diagram.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
 const { referenceFn, gaussAt } = __mods['core/signals.js'];
-const { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText, discriminationSignal, excitationOf } = __mods['core/experiment.js'];
+const { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, pidLaw, bumpless, fmtNum, budgetText, discriminationSignal, excitationOf, tryCost, tryMargin } = __mods['core/experiment.js'];
 const {
   STRUCTURES, CHOICE, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
   fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded, frf,
@@ -18109,6 +18188,86 @@ function keptModel(project, path = null) {
 }
 
 
+const TRY = { steps: [1 / 3, 2 / 3, 1], ms: 2, room: 0.7, samples: 12, monitor: { residuals: 5, room: 0.2 } };
+function planTry(project, path, model, src, variant) {
+  if (variant?.type !== 'pid') throw new IdentifyError('try-type', `Try on the plant takes PI and PID results; ${variant?.name ?? 'this one'} is a ${variant?.type}`, 'tune a PID or PI on the model');
+  if (!model?.ok || !model.eased) throw new IdentifyError('try-eased', 'Try on the plant starts from the controller that held in the test: identify again, to a test that eased in', '');
+  const { plan, record } = src;
+  const g = readLog(record), Ts = plan.Ts;
+  const refs = g.tries?.find((T) => T.settled) ?? g.tries?.[0];
+  const len = record.log.find((e) => e.kind === 'references')?.test;
+  if (!refs || !len) throw new IdentifyError('try-ref', 'the test that found this model played no try: identify again', '');
+  const r = record.r.slice(refs.iSwitch, refs.iSwitch + len).map((v) => nan(v));
+  const e0 = model.eased, p1 = variant.params;
+  const lim = [Math.max(plan.umin, finite(p1.umin) ? p1.umin : -Infinity), Math.min(plan.umax, finite(p1.umax) ? p1.umax : Infinity)];
+  const mix = (a, b, s) => (a > 0 && b > 0 ? a * (b / a) ** s : a + (b - a) * s);
+  const theta = model.params.theta ?? 0;
+  const S = STRUCTURES[model.structure], gk = GAIN(S);
+  const models = [model, ...modelSamples(model, TRY.samples).map((p) => ({ ...model, params: p }))];
+  for (const pl of model.where ?? []) if (pl.seen >= GRADE.seen && finite(pl.gain) && finite(pl.scale)) models.push({ ...model, params: { ...model.params, [gk]: pl.gain, [pl.scaleKey]: pl.scale } });
+  const rest = model.holds?.[0] ?? { y: r[0], u: plan.u0 };
+  const uHold = S.integrating ? rest.u : rest.u + (r[0] - rest.y) / model.params.K;
+  const predict = (gains, m = model) => {
+    let d;
+    try { d = discretise(m.structure, m.params, Ts); } catch { return null; }
+    const law = () => { const L = pidLaw(gains, uHold, lim[0], lim[1], Ts); return (k, yh) => L.step(r[k], yh); };
+    return simulateSegment(d, { n: r.length, yStart: r[0], uStart: uHold, law });
+  };
+  const resid = model.check ? Math.sqrt(model.check.y.reduce((a, v, k) => (v === null ? a : a + (v - model.check.yhat[k]) ** 2), 0) / Math.max(1, model.check.y.length)) : model.noise?.sigma ?? 0;
+  const room = Math.min(plan.band[1] - r[0], r[0] - plan.band[0]);
+  const monitor = Math.max(TRY.monitor.residuals * resid, TRY.monitor.room * room);
+  const span = Math.max(...r) - Math.min(...r) || 1;
+  const steps = [];
+  let why = null;
+  for (const [j, s] of TRY.steps.entries()) {
+    const gains = { Kp: mix(e0.Kp, p1.Kp, s), Ki: mix(e0.Ki, p1.Ki, s), Kd: (p1.Kd ?? 0) * s, Tf: p1.Tf ?? 0 };
+    const stepVariant = normalizeVariantLike(variant, gains);
+    let bad = null;
+    for (const m of models) {
+      let a;
+      try { const placed = withBlockVariant(project, path, stepVariant); const L = identifiedLoop(placed, path, m); a = analyzeLoop(L.plant, L.ctrl, L.Ts, { points: 200 }); } catch (err) { bad = `the model cannot say (${err.message})`; break; }
+      if (!a.stable) { bad = m === model ? 'unstable on the model' : 'unstable for a model within its bars or one of its places'; break; }
+      if (a.margins.ms > TRY.ms) { bad = `Ms ${fmtNum(a.margins.ms, 3)} above ${TRY.ms}${m === model ? '' : ' for a model within its bars or places'}`; break; }
+    }
+    const pr = predict(gains);
+    let J = null, used = null;
+    if (pr) {
+      J = tryCost(r, Array.from(pr.y), Array.from(pr.u), { R: span, U: plan.umax - plan.umin, lo: plan.umin, hi: plan.umax }).J;
+      used = 1 - tryMargin(r, Array.from(pr.y), plan.band).gRoom;
+      if (!bad && used > TRY.room) bad = `predicted to use ${Math.round(100 * used)} % of the room`;
+    } else bad ??= 'the model cannot be simulated';
+    steps.push({ n: j + 1, s, gains, ok: !bad, why: bad, J, room: used, predicted: pr ? Array.from(pr.y) : null });
+    if (bad) { why = `the result is bolder than what the model knows: ${j ? `tried up to step ${j}` : 'not even its first step'} (step ${j + 1}: ${bad})`; break; }
+  }
+  const ok = steps.filter((x) => x.ok);
+  const tryPlan = {
+    ...structuredClone(plan), kind: 'try', test: { r }, check: { r },
+    eased: { Kp: e0.Kp, Ki: e0.Ki, tauC: e0.tauC ?? 1, theta, lim: [e0.umin ?? plan.umin, e0.umax ?? plan.umax] },
+    steps: ok.map((x) => ({ n: x.n, gains: x.gains, lim, predicted: x.predicted, J: x.J, room: x.room })), monitor,
+  };
+  return { plan: tryPlan, steps: steps.map(({ predicted, ...x }) => x), upto: ok.length, why };
+}
+function normalizeVariantLike(v, g) { return { ...v, params: { ...v.params, Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, Tf: g.Tf || v.params.Tf } }; }
+function withBlockVariant(project, path, variant) {
+  const p = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: structuredClone(project.system.plant.diagram) } } };
+  const { block } = locate(p.system.plant.diagram, [].concat(path));
+  block.variants = [...block.variants, structuredClone(variant)];
+  block.variant = block.variants.length - 1;
+  return p;
+}
+
+function tryOutcome(record, tried, variant) {
+  const steps = record.log.filter((e) => e.kind === 'step');
+  const good = steps.filter((e) => e.accepted);
+  const total = tried.plan.steps.length;
+  if (good.length === total && total === TRY.steps.length) return { steps, run: variant, all: true };
+  if (!good.length) return { steps, run: null, all: false };
+  const last = tried.plan.steps[good.length - 1];
+  const name = `${variant.name.slice(0, 31)} · tried ${good.length}/${TRY.steps.length}`;
+  return { steps, run: { ...structuredClone(variant), name, params: { ...variant.params, Kp: last.gains.Kp, Ki: last.gains.Ki, Kd: last.gains.Kd } }, all: false };
+}
+
+
 function maskPhysics(mask, params) {
   const on = (under) => {
     if (under === undefined) return true;
@@ -18210,6 +18369,10 @@ function identifyRun(project, path = null, settings = {}, { plan: ready = null, 
     }
     if (!exp.state.done) exp.stop();
     const record = compactRecord(exp.record());
+    if (plan.kind === 'try') {
+      const end = exp.state.end;
+      return { ok: end.code === 'done', block: known.block, plan, record, end: { code: end.code, message: end.message }, time: record.y.length * Ts, steps: record.log.filter((e) => e.kind === 'step') };
+    }
     if (recheck) {
       const end = exp.state.end;
       return { ok: end.code === 'done', block: known.block, plan, record, end: { code: end.code, message: end.message }, time: record.y.length * Ts, recheck: recheckFit(recheck.model, record, recheck.record) };
@@ -18463,7 +18626,7 @@ function discreteAt(d, Om) {
   return [sr * mr - si * mi, sr * mi + si * mr];
 }
 
-return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, twinDiagram, PUSH, testPush, modelProject, identifiedLoop, loopRanges, keptModel, varyDiagram, identifyRun, shakeWanted, fitSupply, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, twinDiagram, PUSH, testPush, modelProject, identifiedLoop, loopRanges, keptModel, TRY, planTry, tryOutcome, varyDiagram, identifyRun, shakeWanted, fitSupply, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {

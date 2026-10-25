@@ -10,7 +10,7 @@
 // try a sweep of its own. Nothing but the record is kept, on Keep; the model
 // is computed from it whenever it is needed.
 
-import { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord, discriminateSteps, fitSupply, shakeWanted } from '../core/identify.js';
+import { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord, discriminateSteps, fitSupply, shakeWanted, planTry, tryOutcome } from '../core/identify.js';
 import { controllerBlocks, placeVariant, baseName } from '../core/autotune.js';
 import { normalizeVariant } from '../core/controllers.js';
 import { AS_FAST, formatSpeed } from '../core/speed.js';
@@ -46,6 +46,7 @@ export function createIdentifyTab(host, app, display, record) {
   const models = new Map();   // record hash + structure → a model computed from it
   let computing = null;       // a model being computed from a kept record
   const checks = new Map();   // block key → the last Check again's verdict
+  let tryLast = null;         // the last Try on the plant: { key, text, end, ok }
   const connections = new Map(); // record hash → the live connection it was measured on (this page session)
 
   host.innerHTML = `
@@ -455,10 +456,13 @@ export function createIdentifyTab(host, app, display, record) {
   // plant in the live loop (ui/live.js, core/live.js) at its own clock.
 
   // kind: 'identify' (the whole test) or 'recheck' (Check again, §14).
-  function start(kind = 'identify') {
+  // kind: 'identify', 'recheck', or 'try' (Try on the plant, §11: opts {
+  // tried: planTry's result, variant: the result it takes to the plant }).
+  function start(kind = 'identify', opts = {}) {
     const ctx = context();
     if (job || !ctx.plan) { if (ctx.why) app.toast(ctx.why); return null; }
     let plan = ctx.plan, recheck = null;
+    if (kind === 'try') plan = opts.tried.plan;
     if (kind === 'recheck') {
       const { src, model } = modelOf(ctx.c.key);
       try { plan = planRecheck(src.plan, model, src.record); } catch (err) { app.toast(err.message); return null; }
@@ -466,7 +470,7 @@ export function createIdentifyTab(host, app, display, record) {
     }
     let run = null;
     if (!ctx.known.live) {
-      try { run = identifyRun(app.project, ctx.c.path, {}, kind === 'recheck' ? { plan, recheck } : {}); } catch (err) { app.toast(err instanceof IdentifyError ? err.message : `Could not start: ${err.message}`); return null; }
+      try { run = identifyRun(app.project, ctx.c.path, {}, kind === 'recheck' ? { plan, recheck } : kind === 'try' ? { plan } : {}); } catch (err) { app.toast(err instanceof IdentifyError ? err.message : `Could not start: ${err.message}`); return null; }
       plan = run.plan;
     }
     app.beginEdit();
@@ -479,7 +483,7 @@ export function createIdentifyTab(host, app, display, record) {
     }
     record.removeReferences((nm) => nm.startsWith(REF));
     job = {
-      kind, live: known.live, run, plan, recheck, key: ctx.c.key, path: ctx.c.path, where: ctx.c.where, plant: app.project.system.plant, mode: display.mode, names: run?.names ?? [], known,
+      kind, live: known.live, run, plan, recheck, tried: opts.tried ?? null, variant: opts.variant ?? null, key: ctx.c.key, path: ctx.c.path, where: ctx.c.where, plant: app.project.system.plant, mode: display.mode, names: run?.names ?? [], known,
       wall: performance.now(), target: 0, tPlant: 0, timer: 0, fitting: false, stopping: false, rendered: 0, stageKey: '', checkDrawn: false,
       sweep: null, done: null, past: null, lastT: null, resolve: [], state: null, pre: null, work: null,
     };
@@ -526,10 +530,11 @@ export function createIdentifyTab(host, app, display, record) {
       const end0 = record.log.find((e) => e.kind === 'end') ?? { code: record.end, message: m.state.status };
       const base = { ok: false, block: { path: j.path, key: j.key, where: j.where }, plan: j.plan, record, end: { code: end0.code, message: end0.message }, time: record.y.length * j.plan.Ts, tries: m.state.tries };
       if (j.kind === 'recheck') { finish({ ...base, ok: end0.code === 'done', recheck: recheckFit(j.recheck.model, record, j.recheck.record) }); return; }
+      if (j.kind === 'try') { finish({ ...base, ok: end0.code === 'done', steps: record.log.filter((e) => e.kind === 'step') }); return; }
       j.fitting = true;
       work(j, identifySteps(record, { plan: j.plan, structure: stored(j.key).structure ?? null, reuse: j.pre }), (model) => finish({ ...base, ok: !!model.ok, model, settings: { structure: stored(j.key).structure ?? null } }));
     }
-    if (performance.now() - j.rendered > RENDER) { j.rendered = performance.now(); renderExperiment(context()); }
+    if (performance.now() - j.rendered > RENDER) { j.rendered = performance.now(); renderExperiment(context()); app.identifyProgress?.(); }
   }
   // A generator's work in slices; then(value) at its end.
   function work(j, gen, then) {
@@ -561,7 +566,7 @@ export function createIdentifyTab(host, app, display, record) {
     }
     app.timeRan(t0 / 1000, 0);
     app.timeRan(performance.now() / 1000, job.tPlant - tBefore);
-    if (performance.now() - job.rendered > RENDER) { job.rendered = performance.now(); renderExperiment(context()); }
+    if (performance.now() - job.rendered > RENDER) { job.rendered = performance.now(); renderExperiment(context()); app.identifyProgress?.(); }
     schedule();
   }
   // One controller sample: onto the scope's sweep; a new try (or stage of
@@ -620,6 +625,17 @@ export function createIdentifyTab(host, app, display, record) {
 
   function finish(result) {
     const j = job;
+    if (j.kind === 'try') {
+      // The result runs when every step was as predicted; else the last
+      // step that was, as "<name> · tried 2/3"; else what ran stays (§11).
+      const out = tryOutcome(result.record, j.tried, j.variant);
+      const chips = out.steps.map((e) => `step ${e.n} ${e.mark}`).join(' · ');
+      const kept = out.all ? '' : out.run ? ` (kept step ${out.steps.filter((e) => e.accepted).length})` : ' (the controller that ran stays)';
+      tryLast = { key: j.key, text: `${chips || 'no step ran'}${kept}`, end: result.end.message, ok: out.all };
+      if (out.run) app.editProject((p) => placeVariant(p, j.path, out.run, { run: true }));
+      end({ status: `${result.end.message}. ${out.all ? `${j.variant.name} runs.` : out.run ? `${out.run.name} runs.` : 'The controller that ran stays.'}` });
+      return;
+    }
     if (j.kind === 'recheck') {
       const rc = result.recheck;
       checks.set(j.key, { ...rc, connection: j.connection ?? null, ended: result.end.code === 'done' ? null : result.end.message });
@@ -652,6 +668,7 @@ export function createIdentifyTab(host, app, display, record) {
     if (status) app.toast(status);
     for (const f of j.resolve) f(result);
     renderAll();
+    app.identifyProgress?.();
   }
   function showRecord(res, j) {
     const rec = res.record, Ts = rec.Ts, n = rec.y.length, [w0] = windowOf();
@@ -772,8 +789,29 @@ export function createIdentifyTab(host, app, display, record) {
     return `identified ${src.name.split(' · ').pop()}, ${m.grade} explains ${fitText(m.check?.fit ?? m.fit)} %${earlier ? '; measured on an earlier connection: the plant may have changed' : ''}`;
   }
 
+  // Try on the plant (§11), from the Auto-tune tab: screened on the model,
+  // then the steps on the plant (or, on a simulated plant, on the diagram
+  // at the header's Speed, as a demonstration). Returns the screening's why
+  // when not one step passes, else null.
+  function tryOnPlant(path, variant) {
+    const key = [].concat(path).join('/');
+    const { src, model } = modelOf(key);
+    if (!src || !model?.ok) return 'identify the plant first (Identify tab)';
+    let tried;
+    try { tried = planTry(app.project, [].concat(path), model, { plan: src.plan, record: src.record }, variant); } catch (err) { return err.message; }
+    tryLast = { key, text: tried.why ? `screened: ${tried.why}` : 'screened: every step holds on the model', end: '', ok: null };
+    if (!tried.upto) return tried.why;
+    st.target = key;
+    return start('try', { tried, variant }) ? null : 'it could not start';
+  }
+  const tryState = (key) => {
+    const s = job?.kind === 'try' && job.key === key ? stateOf(job) : null;
+    if (s) return { running: true, text: `${s.status}${s.tries.length ? ` · ${s.tries.map((t, i) => `step ${i + 1} ${t}`).join(' · ')}` : ''}` };
+    return tryLast?.key === key ? { running: false, text: tryLast.text, end: tryLast.end, ok: tryLast.ok } : null;
+  };
+
   return {
-    modelFor, labelFor,
+    modelFor, labelFor, tryOnPlant, tryState,
     setSource: (key, src) => setSetting(key, 'source', src === 'identified' ? 'identified' : null),
     render() { if (!host.hidden) renderAll(); },
     shown: renderAll,
