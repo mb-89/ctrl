@@ -1,6 +1,8 @@
 # One Servo motor, its errors as switches
 
-Reader: the agent who builds the Servo motor component, rebuilds the motor examples or the PUMA's motors on it, builds the backlash example, or adds an effect to it. The person's words are in [input 18](../input/2026-10-25-18-servo-motor-detail.md) and their answers in [input 20](../input/2026-10-25-20-servo-answers-backlash.md); the research, with sources, is in [../research/servo.md](../research/servo.md). This is the plan, not yet built. Where the code and this page differ later, the code and [decisions.md](decisions.md) win.
+Reader: the agent who builds the Servo motor component, rebuilds the motor examples or the PUMA's motors on it, builds the backlash example, or adds an effect to it. The person's words are in [input 18](../input/2026-10-25-18-servo-motor-detail.md) and their answers in [input 23](../input/2026-10-25-23-servo-answers-backlash.md); the research, with sources, is in [../research/servo.md](../research/servo.md). This is the plan, not yet built. Where the code and this page differ later, the code and [decisions.md](decisions.md) win.
+
+The person, later ([input 24](../input/2026-10-25-24-backlash-fix-gear-stiffness.md)): "The backlash example should also offer the industrial fix ... make it a bit slower, because 50 Hertz running at our [HIL] with 100 Hertz is ... critical. And ... make it configurable."
 
 The person: "make them high detail toggles in our servo motor ... the servo motor can also run speed controlled ... we could also just increase the level of the servos of the robot, and then the same errors would show up in the robot too ... it would also be reuse." And, answering this page: "put the rotor's inertia into the motor. That's where they belong ... set the stiffness ... and the backlash ... to non-problematic values first. But especially backlash is an interesting thing for us ... we should have one example that exemplifies a backlash simulation."
 
@@ -27,13 +29,13 @@ The person: "make them high detail toggles in our servo motor ... the servo moto
 - **Defaults, as the person set them**:
   - the robot opens with Coulomb friction on and every other error off, at realistic sizes (the user raises them);
   - the encoder example keeps its exaggerated errors, so they show in the spectrogram;
-  - the gear's stiffness starts non-problematic (its resonance about ten times above the loop's bandwidth);
+  - the gear's stiffness starts non-problematic and is configurable (k, c). On the robot its resonance is 20 Hz, below the 50 Hz Nyquist frequency of a 100 Hz HIL cycle (input 24), and four times the axis loops' 5 Hz;
   - backlash starts off, at 0.
-- **A new example, Gear backlash**: a small motor on a current drive turns a load arm through a 20:1 gearhead with 1° of play, and the position loop reads the load's encoder. The loop hunts: the load rattles in the play at about 31 Hz, ±10.7 mrad, whatever the gains. Read the motor's encoder instead and the hunting stops, but the load sits half the play away from where it should, 8.72 mrad (β/2 = 8.73). Its notes say that the Servo motor simulates backlash, and how (§7.4).
+- **A new example, Gear backlash**: a small motor on a current drive turns a load arm through a 20:1 gearhead with 1° of play, and the position loop reads the load's encoder. The loop hunts: the load rattles in the play at about 31 Hz, ±10.5 mrad, with PID or PD. Reading the motor's encoder stops the hunting, but leaves the load wherever it came to rest in the play. **The industrial fix, the dual loop** (position from the load's encoder, damping from the motor's speed), holds the load to 0.13 mrad with no hunting. Its notes say that the Servo motor simulates backlash, and how (§7.4).
 - **Measured on a prototype from today's primitives** (§10):
   - the DC motor examples (free shaft, rotor inside) reproduce main to 1.4·10⁻¹⁴ relative;
   - the encoder example reproduces main to 6.1·10⁻¹², because the motor now owns its friction (shown exact when it is put back);
-  - on a PUMA joint 2 with an elastic gear at 50 Hz, the path error barely changes (1.78 → 1.83 mrad rms). The joint torque now leaves out the rotor's own acceleration torque (4.9 N·m rms, which was inside before). Backlash under gravity only shifts the path (+1.3 mrad at 15′); without gravity it knocks: torque spikes of up to 25 N·m.
+  - on a PUMA joint 2 with an elastic gear at 20 Hz, the path error grows from 1.78 to 2.82 mrad rms; the loops, tuned as if rigid, now see the gear (at 50 Hz: 1.83; at 10 Hz: 8.53). The joint torque now leaves out the rotor's own acceleration torque (4.9 N·m rms, which was inside before). Backlash under gravity only shifts the path (+1.3 mrad at 15′); without gravity it knocks: torque spikes of up to 25 N·m.
 - **What it needs first:**
   - a minimal mask (numbers, toggles, choices; formulas in the mask's names);
   - **switches resolved at compile time** (a compiled off branch changed the step: 2 substeps against 1);
@@ -139,7 +141,11 @@ Physical inputs only. Nothing computable is stored: no τ = J/b, no reflected in
 - ωr² = k·(1/(G²·Jm) + 1/J_L);
 - 2ζ·ωr = c·(1/(G²·Jm) + 1/J_L).
 
-That gives 50 Hz on the PUMA joints (k = 1.07·10⁵ N·m/rad, c = 68 N·m·s/rad on joint 2) and 50 Hz in the backlash example (k = 439 N·m/rad, c = 0.28). These are inputs typed once: the formula is how the values were chosen, written in the example's comment, not something the page computes. The person lowers k to see the resonance.
+Defaults:
+- **PUMA joints: 20 Hz** (k = 1.72·10⁴ N·m/rad, c = 27 N·m·s/rad on joint 2). The person: 50 Hz is critical next to a 100 Hz HIL cycle, whose Nyquist frequency it is (input 24). 20 Hz is four times the axis loops' 5 Hz.
+- **The backlash example: 50 Hz** (k = 439 N·m/rad, c = 0.28), so that its hunting is the play's alone. At 20 Hz its load-encoder loop is unstable even without play (§7.4), which is a lesson of its own, kept as a try-this.
+
+These are inputs typed once. The formula is how the values were chosen, written in the example's comment, not something the page computes. **Configurable**: k and c are mask fields. A later convenience, not stored, is a "set from fr, ζ" helper in the mask panel that types k and c from a resonance frequency and a damping.
 
 ## 4. The switches
 
@@ -256,9 +262,9 @@ DC motor position control, Following a sine and DC motor, sliding mode use the S
 | imax (A) | 8.83 | 8.77 | 8.74 | 4.42 | 4.42 | 4.49 |
 | R (Ω) | 2.1 | 2.1 | 2.1 | 6.7 | 6.7 | 6.7 |
 | N (counts per motor turn) | 1 000 | 800 | 1 000 | 1 000 | 1 000 | 500 |
-| k, c | for 50 Hz, ζ 0.1 at the start pose's link inertia (§3) | | | | | |
+| k, c | for 20 Hz, ζ 0.1 at the start pose's link inertia (§3) | | | | | |
 
-**Defaults** (the person, input 20):
+**Defaults** (the person, input 23):
 - Coulomb friction on (robot.md's results assume it);
 - every other switch off, its fields at realistic sizes: ripple 1 % of K·imax at 6×; encoder errors 20″ (1×) and 10″ (2×) at the motor; the counts above; the current loop at 400 Hz; torque noise 0.002 N·m;
 - backlash off. Its field is at 3′ (a premium gearhead, research §4), so switching it on gives a realistic play. The user exaggerates any of these if they want.
@@ -270,18 +276,20 @@ The robot's Encoder speed observer reads Out 2, the motor encoders, as on the re
 | Case | rms τ (N·m) | rms Δτ (N·m) | peak Δτ (N·m) | rms error (mrad) | peak error (mrad) | substeps |
 |---|---|---|---|---|---|---|
 | rigid, Coulomb (the first design: G²·Jm on the arm) | 36.12 | – | – | 1.78 | 4.12 | 1 |
-| **elastic 50 Hz, Coulomb (the default)** [rigid] | 35.17 | 4.96 | 8.53 | 1.83 | 4.35 | 1 |
-| + backlash 3′, gravity [elastic] | 35.17 | 0.003 | 0.005 | 1.96 | 4.79 | 1 |
-| + backlash 15′, gravity [elastic] | 35.17 | 0.016 | 0.024 | 3.09 | 6.53 | 1 |
-| elastic, no gravity (as joint 1) | 4.36 | – | – | 1.80 | 4.11 | 1 |
-| + backlash 3′, no gravity [no gravity] | 4.42 | 0.71 | 8.40 | 2.08 | 4.54 | 1 |
-| + backlash 15′, no gravity [no gravity] | 4.84 | 2.03 | 25.3 | 3.52 | 6.28 | 1 |
-| elastic + realistic ripple, encoder, counts, current loop, noise [elastic] | 35.19 | 1.24 | 4.31 | 1.84 | 4.37 | 3 |
+| elastic 50 Hz, Coulomb [rigid] | 35.17 | 4.96 | 8.53 | 1.83 | 4.35 | 1 |
+| elastic 10 Hz, Coulomb [rigid] | 35.16 | 5.13 | 12.1 | 8.53 | 14.05 | 1 |
+| **elastic 20 Hz, Coulomb (the default)** [rigid] | 35.17 | 4.99 | 8.82 | 2.82 | 6.35 | 1 |
+| + backlash 3′, gravity [elastic] | 35.17 | 0.003 | 0.005 | 3.15 | 6.79 | 1 |
+| + backlash 15′, gravity [elastic] | 35.17 | 0.016 | 0.024 | 4.65 | 8.53 | 1 |
+| elastic, no gravity (as joint 1) | 4.40 | – | – | 1.95 | 4.43 | 1 |
+| + backlash 3′, no gravity [no gravity] | 4.43 | 0.45 | 3.09 | 2.24 | 4.87 | 1 |
+| + backlash 15′, no gravity [no gravity] | 4.64 | 1.37 | 9.95 | 3.71 | 6.60 | 1 |
+| elastic + realistic ripple, encoder, counts, current loop, noise [elastic] | 35.17 | 0.45 | 1.82 | 2.82 | 6.38 | 3 |
 
-- **Elastic against rigid.** The path is nearly unchanged (+0.06 mrad rms). The torque differs by the rotor's own acceleration torque, G²·Jm·q̈ (4.86 N·m rms expected, 4.96 measured): before, τ was the motor's torque at the output, rotor included; now it is the gear's torque on the link. The rotor's share is the motor's τm, a Sink.
-- **Backlash under gravity**: the teeth stay on one flank. The torque hardly changes; the path shifts by the play the motor's encoder cannot see (the error grows by about β/2: 0.4 mrad at 3′, 2.2 at 15′).
-- **Backlash without gravity** (joint 1, or the wrist): the gear crosses its play at every reversal, and the torque knocks (25 N·m peaks at 15′). This is what "the same errors in the robot's torques" means for backlash.
-- **Realistic errors** move the torque by 1.2 N·m rms and the path by 0.01 mrad. The user raises them to see more.
+- **Elastic against rigid.** At 50 Hz the path is nearly unchanged (+0.06 mrad rms). At the 20 Hz default it grows by 1 mrad, because the PID was tuned for a rigid joint and the gear now sits four times above its bandwidth; at 10 Hz it is 8.5 mrad. The design layer, designing the axis loops on the plant that runs, sees the gear (robot.md §5). The torque differs by the rotor's own acceleration torque, G²·Jm·q̈ (4.86 N·m rms expected, 4.96 measured): before, τ was the motor's torque at the output, rotor included; now it is the gear's torque on the link. The rotor's share is the motor's τm, a Sink.
+- **Backlash under gravity**: the teeth stay on one flank. The torque hardly changes; the path shifts by the play the motor's encoder cannot see (the error grows by about β/2: 0.3 mrad at 3′, 1.8 at 15′).
+- **Backlash without gravity** (joint 1, or the wrist): the gear crosses its play at every reversal, and the torque knocks (10 N·m peaks at 15′ on the 20 Hz gear; 25 N·m on a 50 Hz one, whose stiffer teeth hit harder). This is what "the same errors in the robot's torques" means for backlash.
+- **Realistic errors** move the torque by 0.45 N·m rms and the path by 0.002 mrad. The user raises them to see more.
 
 ### 7.4 A new example: Gear backlash
 
@@ -290,9 +298,12 @@ The example the person asked for: "one example that exemplifies a backlash simul
 - **System:**
   - a small motor on a current drive: R 1 Ω, L 1 mH, K 0.05, b 1e-5, Jm 2e-5 kg·m², imax 5 A;
   - a 20:1 gearhead with 1° of play (17.45 mrad), k 439 N·m/rad and c 0.28 (50 Hz, ζ 0.1);
-  - a load arm of 0.01 kg·m², no gravity;
+  - a load arm of 0.01 kg·m², no gravity, on a bearing with a little friction (viscous 0.005 N·m·s/rad, Coulomb 0.02 N·m: 0.4 % of the drive's 5 N·m). Without it the load coasts freely in the play and nothing can stop it there;
   - an encoder on the load (its angle θ_L) and the motor's own (Out 2).
-- **Control:** a Switch "feedback from" (load encoder · motor encoder) feeds a Controller: PID (Kp 16, Ki 100, Kd 0.76, Tf 3 ms, ±5 A; for 30 rad/s), and PD (the same without Ki).
+- **Control:** a Switch "feedback from" (load encoder · motor encoder) feeds the Controller's y; its third input is the motor's speed (Out 3, ω measured). Three variants:
+  - PID (Kp 16, Ki 100, Kd 0.76, Tf 3 ms, ±5 A; for 30 rad/s);
+  - PD (the same without Ki);
+  - **Dual loop**, the industrial fix (state feedback, i* = Kp·(r − θ_L) − Kd·ωm/G with the PD's gains): position from the load's encoder, damping from the motor's speed. The play cannot cut the damping off, because the motor's speed is on the motor's side of the gap. Industrial drives do the same with a speed loop on the motor encoder inside a position loop on the load encoder (dual-loop feedback). A cascade variant with an inner PI speed loop is the later, fuller form (§13).
 - **Reference:** r steps 0 ↔ 1 rad every 1.25 s.
 - **Scope:** opens on the load error e = r − θ_L, the gear torque τ, the deflection δ (Out of the motor's Sink) and i. A view shows the motor's mark and the load arm's, the gap between them drawn.
 - **XY view:** δ across, τ up, shows the play as the flat part between two springs.
@@ -301,16 +312,22 @@ The example the person asked for: "one example that exemplifies a backlash simul
 
 | Case | e p-p within a hold (mrad) | largest \|e\| in holds (mrad) | τ sign changes per s | peak \|θm/G − θ_L\| (mrad) |
 |---|---|---|---|---|
-| PID, load encoder, no backlash | 0.41 | 0.41 | 0 | 10.9 (the spring's wind-up) |
-| **PID, load encoder, backlash 1°** | **21.0** | 10.7 | 63 | 32.7 |
-| PD, load encoder, backlash 1° | 20.7 | 10.3 | 62 | 32.5 |
-| PID, motor encoder, no backlash | 0.40 | 0.40 | 0 | 10.9 |
-| **PID, motor encoder, backlash 1°** | 0.41 | **8.72** | 0 | 27.7 |
-| PID, load encoder, backlash 0.25° | 5.49 | 2.91 | 62 | 15.3 |
+| PID, load encoder, no backlash | 0.65 | 0.50 | 2 | 11.0 (the spring's wind-up) |
+| **PID, load encoder, backlash 1°** | **20.6** | 10.5 | 62 | 32.4 |
+| PD, load encoder, backlash 1° | 20.3 | 10.2 | 62 | 30.5 |
+| PID, load encoder, backlash 0.25° | 5.12 | 2.69 | 61 | 14.6 |
+| PID, motor encoder, no backlash | 0.67 | 0.50 | 2 | 11.0 |
+| PID, motor encoder, backlash 1° | 0.00 | 0.63 | 0 | 24.5 |
+| Dual loop, no backlash | 0.00 | 0.01 | 0 | 11.0 |
+| **Dual loop, backlash 1°** | **0.12** | **0.13** | 0 | 27.7 |
+| Dual loop, backlash 0.25° | 0.10 | 0.11 | 0 | 15.9 |
 
-**The notes the example carries** (draft): "A motor turns a load arm through a gearhead with 1° of play (backlash). The Servo motor simulates it: its rotor and the load are two bodies joined by the gear's stiffness, and between the teeth there is a gap where no torque passes (open Motor: the Backlash switch, β). The controller holds the load's angle with its own encoder. Every step ends in hunting: the motor crosses the gap, knocks the load, overshoots, crosses back, and the load rattles about ±11 mrad, about 31 times a second (τ changes sign 63 times a second). Lower the gains or drop the integral (PD): it still hunts. That is backlash inside a loop, not bad tuning. Flip 'feedback from' to the motor encoder: the hunting stops, but the load now sits half the play away from where it should, 8.7 mrad (β/2), on the side it came from. Set β to 0.25°: the hunting shrinks with it. Set β to 0: both encoders agree. Press XY (δ across, τ up): the flat part is the play."
+- **Motor encoder**: no hunting, but the load is where it came to rest in the play: 0.63 mrad off here, anywhere up to β/2 = 8.7 mrad. Without the bearing's friction it was exactly β/2 (8.72 mrad), on the side it came from.
+- **At 20 Hz** (k = 70 N·m/rad, the robot's default): the load-encoder PID is unstable even without play (e p-p 228 mrad), because the resonance is too close to the loop, on the far side of the spring from the motor. The motor-encoder PID and the dual loop still hold (0.46 and 0.37 mrad). A try-this, not the default: it is a resonance lesson, not a backlash one.
 
-The hunting with PD as well as PID shows it is not integral windup. In the prototype the limit cycle's frequency stayed at about 31 Hz for PD and PID alike, and its amplitude scaled with β. Its frequency comes from the gear's spring and the loop's gains (not researched further).
+**The notes the example carries** (draft): "A motor turns a load arm through a gearhead with 1° of play (backlash). The Servo motor simulates it: its rotor and the load are two bodies joined by the gear's stiffness, and between the teeth there is a gap where no torque passes (open Motor: the Backlash switch, β). The controller holds the load's angle with its own encoder. Every step ends in hunting: the motor crosses the gap, knocks the load, overshoots, crosses back, and the load rattles about ±10 mrad, about 31 times a second (τ changes sign 62 times a second). Drop the integral (PD): it still hunts. That is backlash inside a loop, not bad tuning. Flip 'feedback from' to the motor encoder: the hunting stops, but the motor's encoder cannot see the play, so the load stays wherever it came to rest in it, up to half the play (8.7 mrad) away. Now pick Dual loop, the industrial fix: position from the load's encoder, damping from the motor's speed, which the play cannot cut off. The load holds to 0.13 mrad and nothing rattles. Set β to 0.25°: the hunting shrinks with it. Set β to 0: every variant settles. Press XY (δ across, τ up): the flat part is the play. Try the gear at 20 Hz (Motor's k to 70): the load-encoder PID goes unstable even without play, and the dual loop still holds."
+
+The hunting with PD as well as PID shows it is not integral windup. In the prototype the limit cycle's frequency stayed at about 31 Hz for PD and PID alike, and its amplitude scaled with β. Its frequency comes from the gear's spring and the loop's gains (not researched further). The dual loop removes it because its damping term never passes through the gap.
 
 ## 8. What it needs (and a minimal mask first)
 
@@ -381,11 +398,11 @@ Run each with `node design/prototypes/servo/<name>.mjs` (`backlash.mjs` takes ab
    - Every library system's step plan is unchanged (their modes are all seen by today's bound); a two-Integrator spring loop gets its bound.
    - Tests: §12.3's step case.
 6. **The coupled shaft and backlash, and the Gear backlash example** (§7.4).
-   - The gear group with the dead zone; the example with its Switch, variants, views, notes and XY.
+   - The gear group with the dead zone; the example with its Switch, its three variants (PID, PD, Dual loop), the load's bearing friction, views, notes and XY.
    - Tests §12.3 and §12.5.
 7. **The robot's Motor drives on the component** (with or after robot.md's step for motors).
    - Six coupled Servo motors with their data. The arm's armature leaves the plant's mass matrix, and the controller's model keeps it. Coulomb on, the rest off at realistic sizes; θ measured to the Encoder speed observer; the torque shares as Sinks.
-   - Robot.md's numbers re-measured; expect the path within about 0.1 mrad of the rigid model at 50 Hz (§7.3).
+   - Robot.md's numbers re-measured. With the axis loops designed on the plant that runs, expect the path closer to the rigid model than §7.3's 2.82 mrad, which used gains tuned for a rigid joint.
    - A try-this: "open Motor drives, Motor 1: switch Backlash on (3′) and watch τ1 knock at each reversal; set it to 15′".
 8. **Docs sweep.** plant-editor.md, project-format.md, system-library.md (the new example), robot.md §4 (pointing here; the armature moves), detail-levels.md §7 (the motor's levels become §6's switch sets), AGENTS.md, roadmap.md.
 
@@ -422,7 +439,8 @@ Run each with `node design/prototypes/servo/<name>.mjs` (`backlash.mjs` takes ab
 5. **Gear backlash:**
    - load feedback hunts: in every hold e p-p exceeds 0.8·β, and τ changes sign at least 20 times a second;
    - motor feedback holds still (p-p below 1 mrad) with the load off by β/2 within 5 %;
-   - β = 0 settles both;
+   - the dual loop holds (p-p below 0.5 mrad, no sign changes in the holds) with 1° of play, and at 20 Hz;
+   - β = 0 settles every variant;
    - the hunting amplitude scales with β (0.25° gives about a quarter).
 6. **The robot:**
    - switches off and a stiff gear against the rigid reference;
@@ -431,6 +449,7 @@ Run each with `node design/prototypes/servo/<name>.mjs` (`backlash.mjs` takes ab
 
 ## 13. Not built (and why)
 
+- **A cascade Dual loop** (an inner PI speed loop on the motor encoder, an outer P position loop on the load encoder, as industrial drives run it): it needs a Controller variant with an inner loop or two Controllers in series. The state-feedback Dual loop shows the same fix with today's types.
 - **Stiction and Stribeck** need a stick state (Modelica's BearingFriction has one; Simscape smooths, research §4). The tanh smoothing's validity sentence from robot.md applies.
 - **A PI current loop over the R–L armature** (`drive: current, PI`): about 0.25 ms steps on the PUMA. Later, for voltage limits in fast moves.
 - **The wrist's coupled gears** (motor 6 turns with joint 5): one Servo motor per joint, as Corke's toolbox. Stated in Motor drives' validity sentence.
@@ -445,15 +464,18 @@ Run each with `node design/prototypes/servo/<name>.mjs` (`backlash.mjs` takes ab
 - **One component, Servo motor**: the motor, its drive, its rotor, its gear and its encoder. The rotor's inertia is inside, as the person said. The load is outside.
 - **Two shafts, one physics**: free (a load torque, a lone motor) and coupled (an inertia through the elastic gear). Interpretation: a lone motor needs no spring, and coupling it costs accuracy and speed for nothing (measured, §2.2). The choice is how it is connected, not a level.
 - **The robot's armature moves into the motors**: the arm's plant mass matrix loses G²·Jm, and the controller's model keeps it. Interpretation: the controller should still model the rotor it drives.
-- **Non-problematic stiffness**: the two-mass resonance about ten times above the loop's bandwidth with ζ 0.1 (50 Hz on the PUMA and in the backlash example). Backlash starts off, at 0 in examples where it is not the subject, and at 3′ (off) in the robot's fields.
+- **Non-problematic stiffness**: on the robot 20 Hz with ζ 0.1, below a 100 Hz HIL cycle's Nyquist frequency (the person's "make it a bit slower", input 24) and four times the axis loops' bandwidth. The backlash example's gear stays at 50 Hz so that its hunting is the play's alone (it is not a HIL plant). Both are configurable through k and c. Interpretation: "slower" is the resonance, "configurable" is k and c on the mask. Backlash starts off, at 0 in examples where it is not the subject, and at 3′ (off) in the robot's fields.
 - **Error sizes**: exaggerated only in the encoder example; realistic, and off except Coulomb, in the robot (the person: "The user can do this by themselves").
+- **The backlash example's fix is a variant**, Dual loop (load position, motor speed), as the person asked. Its load gets a little bearing friction, without which no loop can stop a load inside the play.
 - **Backlash** is a switch of the coupled shaft, modelled as a spring and damper in contact and nothing in the gap, without pulling, from one Function block. The Gear backlash example shows it; its notes say the Servo motor simulates it.
 - **"High detail toggles"** are switches on the mask, each with fields kept while off. Off is exact because it is not compiled; on with the neutral value is exact where one exists.
 - **"Speed controlled"** is which output the loop reads.
 - **Encoder example tolerance**: 10⁻⁹ relative, because the motor owns its friction (the cause shown by `why.mjs`).
 - **A use is a reference plus mask values**, opened read-only, with Edit a copy into My blocks; built-in components are versioned.
 
-## Open questions for the person
+## Open questions
 
-1. **The backlash example's controller**: it hunts with PID and PD alike on the load encoder. Should it also offer a fix as a variant (a dual-loop: speed from the motor encoder, position from the load encoder, which is the industrial answer), or leave the fix as a try-this (switch to the motor encoder)?
-2. **The PUMA's gear stiffness**: 50 Hz is a "non-problematic" choice, not a measured one. Robot joints with harmonic drives resonate at about 10–30 Hz (research §3); the PUMA's spur gears were not measured in the sources we have. Keep 50 Hz, or start the robot lower and let the loops show it?
+None open with the person now. The person asked (input 24) that questions go through the cloud coordinator, not to them directly: later questions from this design go to the coordinator, which asks the person.
+
+For the coordinator to weigh (interpretations, not blocking):
+- At the robot's 20 Hz default, axis loops tuned as if rigid lose 1 mrad of path accuracy (§7.3). That is acceptable if the design layer designs the axis loops on the elastic plant; otherwise raise the default.
