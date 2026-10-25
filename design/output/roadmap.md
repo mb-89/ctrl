@@ -70,6 +70,7 @@ Reader: whoever picks the next piece of work.
 
 ## Open questions
 
+- The Hu–Lin variable gain (v2.9, [research](../research/hu-lin.md)) is a designed variant beside LQR. For the person: offer it also as an option on LQR, or as a variant in other examples (the pendulums' catch: the ellipsoids hold for the linearised plant only, untested)? Add an integral state under the schedule (LQI), so a load leaves no offset?
 - The triple pendulum's plan in a Web Worker? v2.7.1 set 10 s in the page as the point to revisit it; on a machine at a load of 10 to 15 (four cores) the plan took 7.6 to 12.1 s in the page (v2.7.4). Idle, 5 to 7 s.
 - Super-twisting's k2 = 44 in *DC motor, sliding mode* is Levant's 1.1·L/β with the motor's β = Kt/(J·R) = 25 and a guessed L = 1000 rad/s³: a number derived from the plant, stored (the library review, v2.7.4). A designed super-twisting (L and the multipliers as inputs, β from the plant) needs the person's view on how to take β where the armature's inductance makes the relative degree 3 (β is the gain of ë in u only with L neglected), and on k1 = 4, raised by hand from the rule's 1.9.
 

@@ -107,21 +107,36 @@ const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
 const servoDiagram = (variants, { Ts = 0.002 } = {}) => ({
   blocks: [
     src('r', 30, 112, 'rad'),
-    src('d', 330, 230, 'N·m'),
+    src('d', 180, 230, 'N·m'),
     ctrl(130, 90, 4, Ts, variants),
-    { id: 'drive', type: 'tf', name: 'torque drive 1/(τs + 1)', params: { num: [1], den: [0.02, 1], delay: 0 }, x: 300, y: 96 },
-    { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 420, y: 104 },
-    { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 520, y: 96 },
-    { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 680, y: 96 },
-    sink('angle', 820, 106, 'rad'),
-    sink('speed', 680, 20, 'rad/s'),
-    sink('torque', 420, 20, 'N·m'),
-    sink('u', 260, 20, 'N·m'),
+    {
+      id: 'axis', type: 'subsystem', name: 'Axis', params: {}, x: 330, y: 96,
+      diagram: {
+        blocks: [
+          { id: 'u', type: 'inport', name: 'u', params: { port: 1 }, x: 30, y: 112 },
+          { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 230, y: 220 },
+          { id: 'drive', type: 'tf', name: 'torque drive 1/(τs + 1)', params: { num: [1], den: [0.02, 1], delay: 0 }, x: 130, y: 96 },
+          { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 260, y: 104 },
+          { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 370, y: 96 },
+          { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 540, y: 112 },
+          { id: 'T', type: 'outport', name: 'torque', params: { port: 2 }, x: 540, y: 30 },
+        ],
+        wires: [
+          { from: 'u', to: 'drive' }, { from: 'drive', to: 'tsum' }, { from: 'load', to: 'tsum:1' }, { from: 'tsum', to: 'rotor' },
+          { from: 'rotor', to: 'w' }, { from: 'drive', to: 'T' },
+        ],
+      },
+    },
+    { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+    sink('angle', 690, 106, 'rad'),
+    sink('speed', 690, 30, 'rad/s'),
+    sink('torque', 500, 200, 'N·m'),
+    sink('u', 330, 20, 'N·m'),
   ],
   wires: [
-    { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'drive' }, { from: 'ctrl', to: 'u' }, { from: 'drive', to: 'tsum' }, { from: 'd', to: 'tsum:1' },
-    { from: 'drive', to: 'torque' }, { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'int' }, { from: 'rotor', to: 'speed' }, { from: 'int', to: 'angle' },
-    { from: 'int', to: 'ctrl:1' }, { from: 'rotor', to: 'ctrl:2' }, { from: 'drive', to: 'ctrl:3' },
+    { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'axis' }, { from: 'ctrl', to: 'u' }, { from: 'd', to: 'axis:1' },
+    { from: 'axis', to: 'int' }, { from: 'axis', to: 'speed' }, { from: 'axis:1', to: 'torque' }, { from: 'int', to: 'angle' },
+    { from: 'int', to: 'ctrl:1' }, { from: 'axis', to: 'ctrl:2' }, { from: 'axis:1', to: 'ctrl:3' },
   ],
 });
 
@@ -284,7 +299,7 @@ export const EXAMPLE_PLANTS = [
     // with Hu and Lin's high gain, and clipped; a PID with each anti-windup.
     name: 'Variable gain against anti-windup',
     summary: 'A servo axis stepped far and near through a torque drive with a hard limit. Compare the Hu–Lin variable gain, which never saturates, with clipped LQR and anti-windup: what saturation costs, and each remedy.',
-    notes: 'A torque drive (its torque follows the command u with a 20 ms lag, limited to ±6 N·m) turns a rotor (J 0.02 kg·m², b 0.1 N·m·s/rad). The reference steps 5 rad at 0.25 s, far enough that every controller needs the limit, and back 0.5 rad at 2.75 s, a step none of them needs it for. The Controller reads the angle, the speed and the torque, every 2 ms. The scope shows r, the angle and u; switch on channel 4 for the speed.\n\nVariable gain (Hu–Lin): the page computes LQR gains for the weights ε·Q and R at 30 levels of ε from 0.0001 to 1, each with the largest ellipsoid around r on which its u cannot reach the limit; the ellipsoids are nested. At every sample the law takes the highest gain whose ellipsoid holds the error, interpolated between two levels. Far from r the gain is low, and it grows as the angle closes in: on the 5 rad step u rises to 4.9 N·m and never touches 6, the loop never opens, and the angle arrives with 0.5 % overshoot in 0.37 s (2 %). Its Computed box says how far the levels reach: a step of 17 rad from rest stays inside. Variable gain, high gain k 2 is Hu and Lin\'s own improvement, u = sat(2·K(ε)·e): it uses the limit for 0.08 s, arrives with no overshoot in 0.33 s, and takes the small step in 0.14 s.\n\nLQR, clipped: the gain the variable gain ends with, from the start, its u clipped at the limit. It sits there for 0.31 s and overshoots 11 %; on a plant with one more integration a clipped high gain opens the loop for good. PID, clamping (Kp 16, Ki 4, Kd 1.2, the best of a search on small steps): 0.7 % overshoot in 0.36 s, but the integral it gathered makes the small step after it settle in 1.3 s. PID, back-calculation with the rule-of-thumb tracking time Tt = √(Ti·Td) = 0.55 s pulls the integral far below while the P part alone is past the limit: it has not settled after 2.5 s and overshoots the small step by 51 %; set Tt to 4 s (= Ti) and it behaves (1.9 %, 0.34 s). PID, no anti-windup: 3.9 % overshoot and a tail that lasts the whole step.\n\nTry: change J by 20 % (open the diagram, rotor den [0.016, 0.1] or [0.024, 0.1]): the variable gain keeps its shape (0.5 %, 0.34 to 0.40 s), designed again for the new rotor. Give d a load torque of 1 N·m: the variable gain is state feedback without an integral and holds the shaft 0.064 rad off r, where the PID\'s integral removes the error. Analysis shows the variable gain near r, where it is the LQR.',
+    notes: 'A torque drive (its torque follows the command u with a 20 ms lag, limited to ±6 N·m) turns a rotor (J 0.02 kg·m², b 0.1 N·m·s/rad). The reference steps 5 rad at 0.25 s, far enough that every controller needs the limit, and back 0.5 rad at 2.75 s, a step none of them needs it for. The Controller reads the angle, the speed and the torque, every 2 ms. The scope shows r, the angle and u; switch on channel 4 for the speed.\n\nVariable gain (Hu–Lin): the page computes LQR gains for the weights ε·Q and R at 30 levels of ε from 0.0001 to 1, each with the largest ellipsoid around r on which its u cannot reach the limit; the ellipsoids are nested. At every sample the law takes the highest gain whose ellipsoid holds the error, interpolated between two levels. Far from r the gain is low, and it grows as the angle closes in: on the 5 rad step u rises to 4.9 N·m and never touches 6, the loop never opens, and the angle arrives with 0.5 % overshoot in 0.37 s (2 %). Its Computed box says how far the levels reach: a step of 17 rad from rest stays inside. Variable gain, high gain k 2 is Hu and Lin\'s own improvement, u = sat(2·K(ε)·e): it uses the limit for 0.08 s, arrives with no overshoot in 0.33 s, and takes the small step in 0.14 s.\n\nLQR, clipped: the gain the variable gain ends with, from the start, its u clipped at the limit. It sits there for 0.31 s and overshoots 11 %; on a plant with one more integration a clipped high gain opens the loop for good. PID, clamping (Kp 16, Ki 4, Kd 1.2, the best of a search on small steps): 0.7 % overshoot in 0.36 s, but the integral it gathered makes the small step after it settle in 1.3 s. PID, back-calculation with the rule-of-thumb tracking time Tt = √(Ti·Td) = 0.55 s pulls the integral far below while the P part alone is past the limit: it creeps toward r and has not settled after 2.5 s, and after the small step it passes r by 0.26 rad; set Tt to 4 s (= Ti) and it behaves (1.9 %, 0.34 s). PID, no anti-windup: 3.9 % overshoot and a tail that lasts the whole step.\n\nTry: change J by 20 % (open Axis, rotor den [0.016, 0.1] or [0.024, 0.1]): the variable gain keeps its shape (0.5 %, 0.34 to 0.40 s), designed again for the new rotor. Give d a load torque of 1 N·m: the variable gain is state feedback without an integral and holds the shaft 0.064 rad off r, where the PID\'s integral removes the error. Analysis shows the variable gain near r, where it is the LQR.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 5, time: 0.25 } }, { type: 'step', params: { amplitude: -0.5, time: 2.75 } }] },
       d: { period: PERIOD, components: [] },

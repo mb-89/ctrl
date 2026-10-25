@@ -1,6 +1,8 @@
 # Research: the Hu–Lin variable-gain controller
 
-Reader: whoever builds or judges the Hu–Lin controller in Loop Tuner and its example. The person's words are in [input 33](../input/2026-10-25-33-hu-lin-controller.md). **Status: research in progress (2026-10-25); the controller and the example are not built yet.**
+Reader: whoever builds or judges the Hu–Lin controller in Loop Tuner and its example. The person's words are in [input 33](../input/2026-10-25-33-hu-lin-controller.md). **Status: done (2026-10-25); built as the designed type `huLin` and the System library's *Variable gain against anti-windup*.**
+
+**Bottom line.** The controller is T. Hu and Z. Lin, "On improving the performance with bounded continuous feedback laws" (IEEE TAC 2002), the continuous form of Wredenhagen and Bélanger's piecewise-linear LQ control: LQR gains on nested invariant ellipsoids, the gain chosen by the ellipsoid the state lies on, so it grows as the error shrinks and the input never saturates; Megretski's level-set rule is the scheduling variable. Built in the page from the plant (discrete LQR at Ts, 30 levels, interpolated). On a servo axis with a torque limit it beats clipped LQR (0.5 % against 11 % overshoot on a large step, never at the limit) and matches a PID with clamping on the large step while settling the small step after it four to six times faster; with Hu and Lin's high gain k = 2 it is the best of all on both steps. On a chain of three integrators, where clipping a high gain opens the loop for good, it is the only one of the two that settles. It has no integral, so a load leaves an offset. **Verdict: a good thing for plants with integrators and a hard input limit whose large steps saturate a stiff loop; offer it as a designed variant beside LQR** (decisions.md, v2.9).
 
 Marks: **(verified)** read in the primary source or its publisher's record; **(secondary)** read in a paper that describes it; **(inference)** our reasoning, not a source.
 
@@ -32,10 +34,49 @@ Then x lies on the boundary of the guaranteed region of attraction, |u| ≤ 1 ev
 
 Grognard et al. compare it, on the double integrator ẋ1 = x2, ẋ2 = u, |u| ≤ 1, Q(ε) = diag(ε⁴, 2ε²) (u = −ε²x1 − √3 ε x2), from (−10, 0): 10.25 s to reach the local ellipsoid T(1) with Megretski's schedule, 6.79 s with theirs, 5.64 s time-optimal (verified in their paper, sect. 5). Raising the gain by k > 1 with saturation, u = −sat(k BᵀP x), keeps the region (the infinite gain margin of Riccati laws; Saberi, Lin and Teel 1996); k → ∞ is a sliding mode along BᵀPx = 0 (verified, Grognard et al. sect. 2). This is the "saturated high-gain feedback" of Hu and Lin's abstract (inference).
 
-## Where we stopped (2026-10-25) and what comes next
+## What we could not read, and what we decided
 
-- Not yet found: the exact smoothing Hu and Lin use and the PUMA 560 numbers of the paper (closed text). Next: one more search for a copy or a thesis that restates it; else build the scheme from the sources above and mark the smoothing as ours.
-- Next: the designed type (the family from the plant in the page, discrete Riccati at Ts, the nested ellipsoids, ε(x) per sample), the example against PID with clamping and back-calculation and LQR with saturation, the measurements, the verdict.
+The full text of Hu and Lin 2002 is closed: no copy was found (OpenAlex: closed access, no repository copy; the authors' pages list it without a file; the CDC version likewise). So the paper's exact smoothing formula and its PUMA 560 numbers are not known here. What is known for sure is its abstract, its references and the two works it builds on, which say what the law does. Our build therefore follows those and marks what is ours:
+
+- **The family** (as Lin's low gain, Megretski and Wredenhagen–Bélanger): LQR for weights ε·Q and R, ε from a lowest level up to 1. **Ours:** discrete (the discrete Riccati equation at the Controller's Ts, on the plant the page linearises at its origin, as the `lqr` type does), since every controller here runs at Ts; Wredenhagen and Bélanger name the discrete version too (secondary).
+- **The ellipsoid of each level** (exact, inference from Cauchy–Schwarz): on xᵀPx ≤ c the largest |K·x| is √(c·K P⁻¹ Kᵀ), so the error lies inside where eᵀ S e ≤ ū², S = P·(K P⁻¹ Kᵀ), ū the room the limits leave. Under its own linear law V = xᵀPx falls (the discrete Riccati equation's Lyapunov property), so the ellipsoid is invariant: a trajectory that starts inside stays inside and never saturates. The ellipsoids are nested (S grows with ε); the design checks it and warns if not.
+- **The scheduling variable** is the level of the ellipsoid the error lies on: Megretski's ε(x), the largest ε whose ellipsoid holds x. The person's "when the error is big, a smaller gain; as it gets smaller, a bigger and bigger gain": exactly this.
+- **Continuity** (Hu and Lin's point): **ours** is a linear interpolation between the two levels around the error, in the quadratic form (0 on level j's boundary, 1 on level j + 1's), so the gain is a continuous function of the state; with 30 levels over four decades neighbours differ by 37 % in ε. A test checks that with 200 levels it matches Megretski's exact ε(x) (by bisection on a Riccati iteration of the test's own) to 3 %, and that along trajectories from inside the lowest ellipsoid u never reaches the limit (double and triple integrator, 40 starts each). Not proven by us for the interpolated law in general; on every trajectory measured it held.
+- **The saturated high gain** of the abstract: u = sat(k·K(ε)·e), k ≥ 1 (the parameter `k`). Riccati laws have an infinite gain margin, so k > 1 keeps the region (Saberi, Lin and Teel 1996, quoted by Grognard et al.); it trades a little time at the limit for speed.
+- **Tracking**: the theory regulates to the origin. **Ours:** the error is taken from where the plant rests with the tracked measurement at r (ys·r, held by us·r, from the linear model), and ū is the room the limits leave around us·r.
+- **Refused** (with sentences): no limits ("without a limit its gain would simply be the highest"); every refusal of LQR (a state not measured, not at rest, a kink, not stabilisable); no rest for the tracked measurement.
+
+## The plant
+
+The paper's plant, the PUMA 560, cannot be reproduced honestly: its numbers are in the closed text (the library's own PUMA is a nonlinear six-axis arm, not the linearised joint model the paper would have used). So the example is a library plant where saturation matters: a **servo axis**, a torque drive (lag 20 ms, ±6 N·m) turning a rotor (J 0.02 kg·m², b 0.1 N·m·s/rad), every state measured (angle, speed, torque). Close to the library's DC motor (same rotor), but driven by torque: the motor's back-EMF damps it so strongly that clipping does it little harm (below), while a torque drive leaves a chain of integrators with a lag, the kind of plant where clipping a stiff loop hurts.
+
+## Measured (simulation, `simulateSystem`, record 0.5 ms; Controller Ts 2 ms)
+
+Weights Q = [1000, 0, 0] (the angle), R = 1 for the variable gain and for clipped LQR (the same gain near r: K = [30.1, 1.38, 0.94]); PID Kp 16, Ki 4, Kd 1.2, Tf 5 ms, the best of a grid on a 0.2 rad step (2.1 % overshoot, 0.48 s); back-calculation's Tt by the library's rule √(Ti·Td) = 0.55 s. Reference: 5 rad at 0.25 s, back 0.5 rad at 2.75 s. Settling to 2 % of the step; "at limit" is the time u sits at ±6 N·m.
+
+| Variant | 5 rad: overshoot, settling, IAE | at limit, peak \|u\| | 0.5 rad back: overshoot, settling | ∫u² dt (large, small) |
+|---|---|---|---|---|
+| Variable gain (Hu–Lin), k 1 | 0.5 %, 0.37 s, 1.03 | 0 s, 4.9 N·m | 3.2 %, 0.21 s | 2.9, 0.5 |
+| Variable gain, k 2 | 0.0 %, 0.33 s, 0.88 | 0.08 s, 6 | 0.2 %, 0.14 s | 4.4, 0.9 |
+| LQR, clipped | 11.1 %, 0.38 s, 0.84 | 0.31 s, 6 | 5.4 %, 0.19 s | 11.8, 1.5 |
+| PID, clamping | 0.7 %, 0.36 s, 0.88 | 0.24 s, 6 | 0.0 %, 1.31 s | 9.8, 2.1 |
+| PID, back-calculation | not settled in 2.5 s, 1.68 | 0.22 s, 6 | passes r by 0.26 rad, not settled | 9.0, 2.1 |
+| PID, no anti-windup | 3.9 %, not settled in 2.5 s, 1.14 | 0.25 s, 6 | 0.0 %, not settled | 10.1, 2.1 |
+
+- **J ± 20 %** (the rotor's inertia, the plant changed, the designs recomputed for it): the variable gain keeps 0.5 % and 0.34–0.40 s; clipped LQR 9.7–12.2 %; clamping 0.7–0.8 % but its small step settles in 0.5–2.2 s.
+- **Small step alone** (0.2 rad): variable gain 5.3 %, 0.18 s (k 2: 0.4 %, 0.11 s); clipped LQR 5.7 %, 0.18 s (the same law, nothing saturates); PID 2.1 %, 0.49 s.
+- **Large step** (20 rad, beyond the lowest ellipsoid's reach of 17 rad): variable gain 0.1 %, 0.73 s, 0.02 s at the limit; k 2 0.0 %, 0.64 s; clipped LQR 8 %, 0.74 s; clamping 0.9 %, 0.56 s; back-calculation and no anti-windup not settled in 4.75 s.
+- **Back-calculation** is the worst here because the P part alone is far past the limit during the large step: tracking pulls the integral to cancel it, and Ki = 4 takes seconds to bring it back. With Tt = Ti = 4 s it behaves (1.9 %, 0.34 s); with Tt ≤ 0.2 s it is worse. A finding about the rule of thumb on this plant, not about back-calculation in general.
+- **Load torque** 1 N·m: the variable gain and LQR hold the shaft 0.064 rad off r (state feedback, no integral; the torque measurement fights the load: (1 + K₃)/K₁); the PID's integral removes it.
+- **The DC motor** (the library's, back-EMF damped), Q = [100, 0, 0], ±12 V: the variable gain never touches the limit and settles about 7 % later than clipped LQR (0.42 against 0.40 s on a 4 rad step); neither overshoots (0–0.4 %). Clipping does little harm on a damped plant, so the variable gain buys little there.
+- **A chain of three integrators**, |u| ≤ 1, Ts 10 ms: with Q = [100, 0, 0] clipped LQR diverges on steps of 1, 5 and 20 (it oscillates to 60–150 and grows: the loop opens and never closes again), the variable gain settles with 0.5–2.5 % overshoot and never reaches the limit inside its reach. With Q = [1, 0, 0] clipped LQR still diverges on the 20 step. This is the case the theory is for (Sussmann and Yang: no saturated linear law holds a triple integrator globally) and a test.
+
+## Verdict
+
+- **Good where clipping hurts**: plants with integrators (positioning axes, torque or force driven) and a hard input limit, with steps large enough to saturate a stiff loop. There it gives the stiff loop's small-signal behaviour and a large step without overshoot, from one design, never opening the loop; with k ≈ 2 it uses the limit about as much as a well-tuned anti-windup and settles faster. On a plant that is already well damped (the back-EMF motor) it buys little.
+- **Not a replacement for an integral**: it is state feedback, so a constant load leaves an offset; every state must be measured (or estimated: a Kalman Observer); it needs a model (the page has one) and finite limits.
+- **Against "a proper anti-windup"**: a PID with clamping is as good on the large step itself, but carries integral it gathered into the next step (1.3 s against 0.21 s here); back-calculation depends on Tt and its rule of thumb failed here.
+- **How it could be offered elsewhere**: as it is, a designed variant beside LQR (any system whose LQR runs can run it with the same Q, R); an option on the `lqr` type ("schedule the gain under the limits") would be the same law; a variant in other examples (the pendulum's LQR catch has no integrator but a nonlinear plant: the ellipsoids hold only for the linearised model, untested). An integral state (LQI) under the same schedule would remove the load offset: not built.
 
 ## Sources
 
@@ -45,3 +86,5 @@ Grognard et al. compare it, on the double integrator ẋ1 = x2, ẋ2 = u, |u| �
 - Megretski, IFAC World Congress 1996, 435–440.
 - Lin, Saberi, *Systems & Control Letters* 21(3), 1993, 225–239; Lin, *Automatica* 34(7), 1998, 897–905; Saberi, Lin, Teel, *IEEE TAC* 41(3), 1996, 368–378.
 - Hu's publication list: faculty.uml.edu/thu/constrained_control.htm.
+- Köse, Jabbari, "Scheduled controllers for linear systems with bounded actuators", *Automatica* 39 (2003), 1377–1387 (the same idea with LMIs; not used).
+- Scripts (scratch, not kept): the measurements above re-run with `simulateSystem` on the library entry; `test/hulin.test.mjs` holds the independent Riccati iteration and Megretski's bisection.
