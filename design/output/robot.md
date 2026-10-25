@@ -2,6 +2,14 @@
 
 Reader: the agent who builds the PUMA example (vector signals, the URDF, the rigid-body blocks, the 3D view, the robot controller), or who adds another robot or a MIMO loop to Loop Tuner. This is the plan, not yet built. The person's words are in [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md), section "a PUMA robot in 3D from URDF". The research, its parameter tables and sources are in [../research/robot.md](../research/robot.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
 
+**The person's notes on this plan (2026-10-25, [input 14](../input/2026-10-25-14-puma-notes-size.md)); they override the plan where they differ:**
+- The renderer may be a vendored library (for example three.js, inlined); our own WebGL renderer is not required. It must be real 3D with CAD-like navigation and a fallback where WebGL is missing. Size is no reason to choose (the page may grow to 20 MB).
+- The scope opens on four channels: the references a_r, b_r and the actual values a, b. The error e and the shoulder current i2 stay available as sources and Measure lines.
+- Hidden probes are accepted to get the view running; later, views bind to visible Sinks and deleting a Sink in use warns.
+- No Off variant until joint end stops are modelled (later).
+- Built as planned for now; diagram variants may come back if the modelling needs them.
+
+
 **How this plan was made.** Two designs were prototyped on 2026-10-25 and scored by two judges. Design A ("vector signals first": vector wires, explicit transformation blocks, control in end-effector coordinates on the measured pose, the arm opening to M(q)·q̈ = τ − h) won, 8/10 and narrowly 6.9 against 7.0. Design B ("joint space first": a closed-loop inverse kinematics reference, scalar wires drawn as ribbons, a sealed Robot block) scored 6.5/10 and 7.0. This plan takes A and grafts from B:
 - the circle in its own frame, given by two references a_r and b_r, and a Frame transform block;
 - a pure circle with an eased phase, from B's start pose;
