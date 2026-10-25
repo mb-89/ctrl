@@ -334,7 +334,7 @@ export function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
       el.record();
     }
   }
-  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs } };
+  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, validity: el.validity } };
   if (until !== undefined) res.snapshot = unstable ? null : el.snapshot(K * Ts, X);
   return res;
 }

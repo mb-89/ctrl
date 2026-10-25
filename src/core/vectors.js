@@ -322,7 +322,7 @@ const flatCache = new WeakMap();
 // opts.ports(block) → [inputs, outputs] of a scalar block (diagram.js's
 // blockPorts). The result is memoised by the diagram object.
 export function flattenVectors(diagram, opts) {
-  if (!needsPass(diagram)) return diagram;
+  if (diagram.scalar || !needsPass(diagram)) return diagram;
   const hit = flatCache.get(diagram);
   if (hit) return hit;
   const parsed = robotsOf(diagram.robots);
@@ -356,15 +356,20 @@ export function flattenVectors(diagram, opts) {
   const decide = (force) => {
     let progress = false;
     for (const u of units) {
-      if (W.has(u.key)) continue;
+      if (done.has(u.key)) continue;
       const { lv, b } = u;
       let res = null;
       if (b.type === 'subsystem') {
+        // Port by port: a loop may run out of one port and back into another.
         const inner = childOf.get(u.key);
         const ports = (t) => b.diagram.blocks.filter((x) => x.type === t).sort((a, c) => a.params.port - c.params.port);
         const ins = ports('inport').map((x) => W.get(keyOf(inner, x.id))?.outs[0]);
         const outs = ports('outport').map((x) => W.get(keyOf(inner, x.id))?.ins[0]);
-        if (ins.every((w) => w !== undefined) && outs.every((w) => w !== undefined)) res = { ins, outs };
+        const known = (r) => (r ? [...r.ins, ...r.outs].filter((x) => x !== undefined).length : -1);
+        const before = known(W.get(u.key));
+        if (known({ ins, outs }) > before) { W.set(u.key, { ins, outs }); progress = true; }
+        if (ins.every((x) => x !== undefined) && outs.every((x) => x !== undefined)) done.add(u.key);
+        continue;
       } else if (b.type === 'inport' && lv.parent) {
         const parent = lv.parent.lv, sub = parent.byId[lv.parent.key.split('/').pop()];
         const order = sub.diagram.blocks.filter((x) => x.type === 'inport').sort((a, c) => a.params.port - c.params.port);
@@ -381,15 +386,16 @@ export function flattenVectors(diagram, opts) {
         const env = { name: where(lv, b), robot, ports: opts.ports, wired: (k) => lv.into.has(`${b.id}:${k}`) };
         try { res = blockWidths(b, inW, env, force); } catch (e) { throw new Error(`${e.message.startsWith("'") ? '' : `${where(lv, b)}: `}${e.message}`); }
       }
-      if (res) { W.set(u.key, res); progress = true; }
+      if (res) { W.set(u.key, res); done.add(u.key); progress = true; }
     }
     return progress;
   };
-  while (W.size < units.length) {
+  const done = new Set();
+  while (done.size < units.length) {
     if (decide(false)) continue;
     if (!decide(true)) break;
   }
-  const open = units.filter((u) => !W.has(u.key));
+  const open = units.filter((u) => !done.has(u.key));
   if (open.length) throw new Error(`the width of ${open.slice(0, 4).map((u) => where(u.lv, u.b)).join(', ')} cannot be told: a loop needs a block with state whose width is declared (an Integrator's x0 or width)`);
   // Every wire: the source's width is the input's, or 1 (it broadcasts).
   for (const lv of levels) {
@@ -401,6 +407,7 @@ export function flattenVectors(diagram, opts) {
   }
   const out = expandLevel(levels[0], { W, keyOf, childOf, opts, levels }).diagram;
   if (diagram.robots) out.robots = diagram.robots;
+  out.scalar = true;   // flattened already (a copy of it is too)
   flatCache.set(diagram, out);
   return out;
 }
@@ -473,13 +480,13 @@ function expandLevel(lv, cx) {
     if (b.type === 'controller' && (b.params.lanes ?? 1) > 1) {
       const lanes = b.params.lanes, nIn = b.params.inputs + (b.params.ff ? 1 : 0);
       const ids = Array.from({ length: lanes }, (_, k) => `${b.id}[${k + 1}]`);
-      ids.forEach((id, k) => blocks.push({ ...b, id, name: `${label}[${k + 1}]`, params: { inputs: nIn, Ts: b.params.Ts, lane: k + 1, lanes, ...(b.params.ff ? { ff: 1 } : {}) } }));
+      ids.forEach((id, k) => blocks.push({ ...b, id, name: `${label}[${k + 1}]`, params: { inputs: b.params.inputs, Ts: b.params.Ts, lane: k + 1, lanes, ...(b.params.ff ? { ff: 1 } : {}) } }));
       ins[b.id] = Array.from({ length: nIn }, (_, g) => ids.map((id) => end(id, g)));
       outs[b.id] = [ids];
       continue;
     }
     if (b.type === 'controller' && b.params.ff) {
-      blocks.push({ ...b, params: { ...b.params, inputs: b.params.inputs + 1 } });
+      blocks.push(b);
       ins[b.id] = Array.from({ length: b.params.inputs + 1 }, (_, g) => [end(b.id, g)]);
       outs[b.id] = [[b.id]];
       continue;
@@ -487,6 +494,8 @@ function expandLevel(lv, cx) {
     if (grouped(b)) {
       const m = w.outs[0], wu = w.ins[0];
       blocks.push({ ...b, params: { ...b.params, inputs: wu + m, outputs: 2 * m, groups: [wu, m] } });
+      // A finite difference reads no u: left open, it reads a 0 of its own (no warning).
+      if (!lv.into.has(`${b.id}:0`)) { blocks.push({ id: `${b.id}[u]`, type: 'mimo', params: { op: 'constant', p: { value: 0 }, inW: [], outW: [1], nIn: 0, nOut: 1, label: `${lv.path}${label}/u` }, x: b.x, y: b.y }); wires.push({ from: `${b.id}[u]`, to: b.id }); }
       ins[b.id] = [Array.from({ length: wu }, (_, i) => end(b.id, i)), Array.from({ length: m }, (_, i) => end(b.id, wu + i))];
       outs[b.id] = [Array.from({ length: m }, (_, i) => end(b.id, i)), Array.from({ length: m }, (_, i) => end(b.id, m + i))];
       continue;

@@ -26,7 +26,7 @@ const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...ext
 // Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
 // are diagram blocks too: their transfer function becomes the block.
 export const ELEMENTS = {
-  source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: () => [0, 1], formula: 'r(t)' },
+  source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: (p) => [0, 1 + (p.derivatives ?? 0)], formula: 'r(t)' },
   sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: () => [1, 0], formula: 'y' },
   terminator: { label: 'Terminator', group: 'Signals', params: [], ports: () => [1, 0], formula: 'ends a signal' },
   switch: {
