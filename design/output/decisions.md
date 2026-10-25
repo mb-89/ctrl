@@ -2,6 +2,10 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: Auto-tune's Unlimited speed ([input 45](../input/2026-10-25-45-autotune-unlimited-speed.md))
+
+- "Just give it a toggle that says unlimited speed, and then during the autotune it will run with unlimited speed. And then when it's done, it will flip back to the old speed." A key **Unlimited speed** beside Start: pressed, a run sets the header's Speed to ∞ and gives back the speed set before when it ends, done or stopped. The header's Speed stays the one speed control: the key only drives it (the Fast switch of input 10 is not back). **Interpretations:** off by default and kept while the page is open; not offered with a live plant (it holds 1×); if someone changes the Speed during the run, theirs stays.
+
 ## 2026-10-25 · v2.9: Measure off by default ([input 42](../input/2026-10-25-42-measure-off-by-default.md))
 
 - "I want it off by default. It creates an irritating noise when looking at the traces ... by default it should always be off." The key stays; a channel starts without it, and the three systems that switched it on (sliding mode on V and i, the encoder example on V and the estimate's error, the PUMA on ea) no longer do; their notes say to switch it on where it reads something. A test holds every library system to opening with Measure off.

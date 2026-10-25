@@ -499,6 +499,8 @@ function startApp() {
   app.speedChanged = () => autosave();
   const speed = createSpeed(app);
   app.speed = () => speed.effective();
+  app.speedSet = () => speed.set;
+  app.setSpeed = (v) => speed.setSpeed(v);
   app.timeRan = (t, seconds) => speed.ran(t, seconds);
   app.speedRender = () => speed.render();
   const display = createDisplay($('display'), {
