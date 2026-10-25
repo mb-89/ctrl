@@ -97,6 +97,11 @@ export function sweepClock(scan, w0, w1, pace, dt, single = false) {
   return { scan: w0 + ((from + want - w0) % W), advanced: want, ended: true };
 }
 
+// The Single key. Pressed while the scope runs, the sweep under way finishes
+// and then the scope stops (no jump back to the left edge, design/output/
+// instrument.md); pressed while stopped, one sweep from the left edge.
+export const singleFrom = (mode) => ({ mode: 'single', restart: mode !== 'run' && mode !== 'single' });
+
 // The achieved speed: samples (wall time t in seconds, simulated seconds run
 // since the sample before), over a moving window of `span` seconds. The rate
 // is what ran between the window's first and last samples over the wall time

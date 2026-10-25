@@ -148,6 +148,8 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
 [hidden] { display: none !important; }
+/* Read by screen readers and agents, not shown. */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 body { margin: 0; background: var(--surface); color: var(--ink); font-family: var(--font-ui); font-size: var(--text-base); }
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -635,15 +637,25 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .an-fig figcaption .muted { overflow: hidden; text-overflow: ellipsis; }
 .an-fig canvas { flex: 1 1 0; min-height: 0; width: 100%; display: block; }
 
-/* Live (ui/live.js), under Run Control: its keys, then two lines that keep
-   their height: where the plant is and the state, or what the link does. */
-.lv { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-1); }
-.lv-line { display: flex; align-items: center; gap: var(--space-4); }
-.lv-url { flex: 1; margin-left: calc(-1 * var(--space-3)); font-family: var(--font-mono); }
-.lv-stats { font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.45; color: var(--ink-2); min-height: 1.45em; }
-.lv-stats > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lv-line[hidden] + .lv-stats { min-height: calc(var(--h-sm) + 1.45em); }
-.lv-btns { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+/* Live (ui/live.js): the panel at the top of the Plant tab's right-hand
+   column: Download, the keys, where the plant listens, two lines of state,
+   the settings. The header's E-STOP is a danger key, lit red while latched.
+   In reference mode the Controller and Auto-tune tabs open on a banner. */
+.live { display: flex; flex-direction: column; gap: var(--space-3); padding-bottom: var(--space-5); margin-bottom: var(--space-4); border-bottom: 1px solid var(--line); }
+.live .note { margin: 0; }
+.lv-download { width: 100%; }
+.lv-line { display: flex; align-items: center; gap: var(--space-3); }
+.lv-url { flex: 1; font-family: var(--font-mono); }
+.lv-stats { font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.45; color: var(--ink-2); min-height: 2.9em; }
+.lv-stats > div { overflow-wrap: anywhere; }
+.lv-set summary { cursor: pointer; }
+.lv-set[open] summary { margin-bottom: var(--space-3); }
+.lv-fs { margin: var(--space-3) 0 var(--space-1); }
+.lv-fsin { display: flex; align-items: center; gap: var(--space-2); color: var(--ink-3); }
+.lv-fsin .field { width: 0; flex: 1 1 60px; font-family: var(--font-mono); text-align: right; }
+.notloop { margin: 0 0 var(--space-4); }
+/* Help's guide for agents. */
+.dialog pre.guide { white-space: pre-wrap; max-height: 50vh; overflow: auto; line-height: 1.45; }
 
 /* Narrow screens */
 @media (max-width: 1180px) {

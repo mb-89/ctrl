@@ -30,6 +30,7 @@ export function createControllerTab(host, app) {
   let target = null;   // path of subsystem ids and the Controller block id
 
   host.innerHTML = `
+    <div class="banner notloop" id="ct-notloop" role="note" hidden></div>
     <div class="ctl">
       <section class="gcol" aria-label="Controller block">
         <div class="ghead"><h3 class="label">Controller</h3></div>
@@ -116,8 +117,17 @@ export function createControllerTab(host, app) {
   function render() {
     const all = controllers();
     const c = current();
+    // Reference mode (Live): the plant runs its own controller; the page's
+    // are not in the loop, and the tab says so plainly.
+    const notLoop = ['reference', 'log'].includes(app.hilMode?.());
+    $('#ct-notloop').hidden = !notLoop || !c;
+    if (notLoop) $('#ct-notloop').innerHTML = '<span class="banner-text"><b class="text-bad">Not in the loop.</b> This system\'s plant runs its own controller (reference mode): the page sends it the references and records what comes back. The Controller blocks here compute, but what they put out does not drive the plant.</span>';
     $('.ctl').hidden = !c;
     $('#ct-empty').hidden = !!c;
+    if (!c && notLoop) {
+      $('#ct-empty').innerHTML = '<div class="notice"><h3 class="label">The plant runs its own controller</h3><p class="note"><b>Not in the loop:</b> in reference mode the External plant takes references, not a control effort, so its own controller closes the loop, with its own limits and monitoring. The page sends the references (Input tab) and records what comes back, the plant\'s own control effort included. Controllers and Auto-tune in this page are not in the loop.</p></div>';
+      return;
+    }
     if (!c) {
       $('#ct-empty').innerHTML = `<div class="notice"><h3 class="label">No controller in this plant</h3><p class="note">Add a <b>Controller</b> block from the library's Control group in the Plant tab. Wire the reference r to its first input and the measurements to the next ones, and its output u to the plant. Then it shows here, with its variants. Or load a controlled system from the <b>System library</b>.</p></div>`;
       return;

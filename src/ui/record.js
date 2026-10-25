@@ -9,13 +9,13 @@
 //   Open         a saved trace, drawn dashed on the channels with the same
 //                names until cleared; ◀ ▶ step it through a trace longer
 //                than the screen.
-// Files leave through app.download (in the claude.ai viewer, its downloads
-// capability); where there is none, the keys copy CSV.
+// Files leave through app.download, the page's one download path (a host's
+// download capability where it has one, else a link); Copy and Copy image
+// put the same on the clipboard.
 // See design/output/instrument.md and design/output/hil.md.
 
 import { findExternal } from '../core/hil.js';
 import { createRecorder, traceToCsv, traceToCsvParts, traceToJsonParts, parseTrace, traceWindow, refShift, refSteps } from '../core/trace.js';
-import { palette as C } from './palette.js';
 import { num } from './units.js';
 import { fitPopover } from './layout.js';
 
@@ -95,46 +95,85 @@ export function createRecord(app, display) {
 
   // ---- Saving
   const stem = (what) => `${app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'trace'}-${what === 'screen' ? 'screen' : 'record'}-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}`;
+  // Saves the screen or the live record as CSV, JSON, or (the screen) a
+  // screenshot; copy and image put them on the clipboard. Resolves true once
+  // done.
   async function save(what, kind) {
     closePop();
-    if (kind === 'png') { if (await app.download(`${stem('screen')}.png`, await screenshot(), 'image/png')) app.toast('Saved a picture of the screen (PNG)'); return; }
+    if (kind === 'png') { const ok = await app.download(`${stem('screen')}.png`, await screenshot(), 'image/png', 'use Save ▾ › Copy image'); if (ok) app.toast('Saved a screenshot of the scope (PNG)'); return ok; }
+    if (kind === 'image') return copyImage();
     const x = what === 'screen' ? screenTrace() : recordTrace();
-    if (!x) { app.toast(what === 'screen' ? 'Nothing on the screen yet.' : 'The live record is empty: connect a plant and Run.'); return; }
+    if (!x) { app.toast(what === 'screen' ? 'Nothing on the screen yet.' : 'The live record is empty: connect a plant and Run.'); return false; }
     const meta = { title: app.project.title, source: x.source };
     const names = Object.keys(x.trace.signals), n = x.trace.t.length;
-    if (kind === 'copy') { app.copy(traceToCsv(x.trace, meta), `The ${x.what} (${n} samples of ${names.length} signals, CSV)`); return; }
+    if (kind === 'copy') { await app.copy(traceToCsv(x.trace, meta), `The ${x.what} (${n} samples of ${names.length} signals, CSV)`); return true; }
     // Built in parts, as a Blob; CSV with a UTF-8 mark first, so spreadsheets
     // read units such as N·m right.
     const file = kind === 'json' ? new Blob(traceToJsonParts(x.trace, meta), { type: 'application/json' }) : new Blob(['\uFEFF', ...traceToCsvParts(x.trace, meta)], { type: 'text/csv' });
-    if (await app.download(`${stem(what)}.${kind}`, file, file.type)) app.toast(`Saved ${duration(span(x.trace))} of ${listed(names)} (${x.what}, ${kind.toUpperCase()})`);
+    const ok = await app.download(`${stem(what)}.${kind}`, file, file.type, 'use Save ▾ › Copy (CSV to the clipboard)');
+    if (ok) app.toast(`Saved ${duration(span(x.trace))} of ${listed(names)} (${x.what}, ${kind.toUpperCase()})`);
+    return ok;
   }
-  // A picture of the screen as it is, with the title, the status line and
-  // the channels' scales.
+  async function copyImage() {
+    try {
+      if (!window.ClipboardItem || !navigator.clipboard?.write) throw new Error('no image clipboard');
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': screenshot() })]);
+      app.toast('Screenshot copied to the clipboard');
+      return true;
+    } catch { app.toast('This browser does not let the page copy an image here; use Screenshot (PNG).'); return false; }
+  }
+  // A screenshot of the scope as it is: the title and the status line, the
+  // screen, the channel badges, on the display's own background (the
+  // theme's), at the device pixel ratio. Every piece keeps its colours.
   function screenshot() {
-    const src = document.querySelector('#display .screen canvas');
-    const k = src.width / Math.max(1, src.getBoundingClientRect().width);
-    const pad = Math.round(10 * k), line = Math.round(20 * k);
+    const box = document.getElementById('display');
+    const src = box.querySelector('.screen canvas');
+    const k = src.width / Math.max(1, src.getBoundingClientRect().width) || window.devicePixelRatio || 1;
+    const css = (el) => getComputedStyle(el);
+    const pad = Math.round(10 * k), line = Math.round(26 * k);
     const c = document.createElement('canvas');
     c.width = src.width + 2 * pad; c.height = src.height + 2 * line + 2 * pad;
     const g = c.getContext('2d');
-    g.fillStyle = C().bg; g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = css(box).backgroundColor;
+    g.fillRect(0, 0, c.width, c.height);
     g.drawImage(src, pad, pad + line);
-    g.font = `${Math.round(12 * k)}px ${C().mono}`;
     g.textBaseline = 'middle';
-    g.fillStyle = C().ink;
-    const status = [...document.querySelector('#display .status').children].map((e) => e.textContent.trim()).filter(Boolean).join('  ');
-    g.fillText(`${app.project.title} · ${status}`, pad, pad + line / 2);
-    g.textAlign = 'right'; g.fillStyle = C().label;
-    g.fillText(new Date().toLocaleString(), c.width - pad, pad + line / 2);
-    g.textAlign = 'left';
-    let x = pad;
-    app.project.scope.channels.forEach((ch, i) => {
-      if (!ch.on || !ch.source) return;
-      const text = `${i + 1} ${ch.source}  ${num(ch.scale)} ${app.unitOf(ch.source)}/div`;
-      g.fillStyle = C().ch[i];
-      g.fillText(text, x, c.height - pad - line / 2);
-      x += g.measureText(text).width + 22 * k;
-    });
+    const clear = (col) => !col || col === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(col);
+    const font = (st, weight = st.fontWeight) => `${weight} ${Math.round(parseFloat(st.fontSize) * k)}px ${st.fontFamily}`;
+    // The title, then the status line's pieces as drawn (badges on their
+    // lamp or outlined, the rest in its colour).
+    const status = box.querySelector('.status');
+    let x = pad, y = pad + line / 2;
+    const sst = css(status);
+    g.font = font(sst, 600); g.fillStyle = sst.color;
+    g.fillText(app.project.title, x, y);
+    x += g.measureText(app.project.title).width + 14 * k;
+    for (const el of status.children) {
+      const st = css(el), text = el.textContent.replace(/\s+/g, ' ').trim();
+      if (!text || st.display === 'none') continue;
+      g.font = font(st);
+      const boxed = !clear(st.backgroundColor) || st.borderTopStyle !== 'none' && !clear(st.borderTopColor) && parseFloat(st.borderTopWidth) > 0;
+      const w = g.measureText(text).width + (boxed ? 12 * k : 0);
+      if (x + w > c.width - pad) break;
+      if (!clear(st.backgroundColor)) { g.fillStyle = st.backgroundColor; g.fillRect(x, y - 9 * k, w, 18 * k); }
+      else if (boxed) { g.strokeStyle = st.borderTopColor; g.lineWidth = k; g.strokeRect(x + k / 2, y - 9 * k, w - k, 18 * k); }
+      g.fillStyle = st.color;
+      g.fillText(text, x + (boxed ? 6 * k : 0), y);
+      x += w + 12 * k;
+    }
+    // The channel keys that are on, lit as on the page: their colour, with
+    // the number, the source and the scale in the lit ink.
+    x = pad; y = c.height - pad - line / 2;
+    for (const b of box.querySelectorAll('.chbar .btn-ch[aria-pressed="true"]')) {
+      const st = css(b);
+      g.font = font(st, 600);
+      const text = [...b.children].map((e) => e.textContent.trim()).filter(Boolean).join('  ');
+      const w = g.measureText(text).width + 16 * k;
+      if (x + w > c.width - pad) break;
+      g.fillStyle = st.backgroundColor; g.fillRect(x, y - 11 * k, w, 22 * k);
+      g.fillStyle = st.color; g.fillText(text, x + 8 * k, y);
+      x += w + 8 * k;
+    }
     return new Promise((resolve) => c.toBlob(resolve, 'image/png'));
   }
 
@@ -142,12 +181,16 @@ export function createRecord(app, display) {
   const pop = $('rc-pop');
   function renderPop() {
     const scr = screenTrace(), lr = rec.length > 1;
+    // Where the host offers no downloads, only the copy keys (as the
+    // header's Save JSON and Export HTML hide there).
+    const files = app.canSave();
     const key = (what, kind, text, title) => `<button class="btn btn-sm" role="menuitem" data-save="${what}:${kind}" title="${esc(title)}">${text}</button>`;
-    const keys = (what, png) => (!app.canDownload() ? key(what, 'copy', 'Copy CSV', 'CSV to the clipboard (files cannot be saved here)')
-      : key(what, 'csv', 'CSV', 't and every signal, units in the header: for spreadsheets') + key(what, 'json', 'JSON', 'the same as JSON: for scripts')
-        + (png ? key(what, 'png', 'PNG', 'a picture of the screen as it is') : '') + key(what, 'copy', 'Copy', 'CSV to the clipboard'));
+    const file = (what, kind, text, title) => (files ? key(what, kind, text, title) : '');
+    const pics = (what) => file(what, 'png', 'Screenshot (PNG)', 'a picture of the scope as it is: the status line, the screen and the channel keys') + key(what, 'image', 'Copy image', 'the same picture to the clipboard');
+    const keys = (what, png) => file(what, 'csv', 'CSV', 't and every signal, units in the header: for spreadsheets') + file(what, 'json', 'JSON', 'the same as JSON: for scripts')
+      + key(what, 'copy', 'Copy', 'CSV to the clipboard') + (png ? pics(what) : '');
     const row = (label, note, body) => `<div class="rc-row"><span class="rc-what">${label}<span class="hint">${esc(note)}</span></span><span class="rc-keys">${body}</span></div>`;
-    pop.innerHTML = row('Screen', scr ? `${duration(span(scr.trace))} · ${Object.keys(scr.trace.signals).length} signals` : 'nothing yet', scr ? keys('screen', true) : '')
+    pop.innerHTML = row('Screen', scr ? `${duration(span(scr.trace))} · ${Object.keys(scr.trace.signals).length} signals` : 'nothing yet', scr ? keys('screen', true) : pics('screen'))
       + (lr ? row('Live record', `${duration(rec.span())} · ${rec.names.length} signals`, keys('record', false)) : '');
     pop.querySelectorAll('[data-save]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); const [what, kind] = b.dataset.save.split(':'); save(what, kind); }));
   }
@@ -248,6 +291,14 @@ export function createRecord(app, display) {
     api: {
       screen: (format = 'csv') => { const x = screenTrace(); return x ? (format === 'json' ? traceToJsonParts : traceToCsvParts)(x.trace, { title: app.project.title, source: x.source }).join('') : ''; },
       live: (format = 'csv') => { const x = recordTrace(); return x ? (format === 'json' ? traceToJsonParts : traceToCsvParts)(x.trace, { title: app.project.title, source: x.source }).join('') : ''; },
+      save: async (what = 'screen', format = 'csv') => {
+        const w = what === 'live' ? 'record' : what;
+        if (!['screen', 'record'].includes(w)) throw new Error(`record.save: what is "screen" or "record", not ${JSON.stringify(what)}`);
+        if (!['csv', 'json', 'png'].includes(format)) throw new Error(`record.save: format is "csv", "json" or "png", not ${JSON.stringify(format)}`);
+        if (format === 'png' && w !== 'screen') throw new Error('record.save: "png" is a picture of the screen; the live record saves as "csv" or "json"');
+        return save(w, format);
+      },
+      screenshot: async () => { const blob = await screenshot(); return new Promise((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsDataURL(blob); }); },
       reference: (text, name = 'reference') => addReference(text, name),
       clearReferences: () => { refs.length = 0; display.setRefs([]); renderRefs(); },
       state: () => ({ recorded: rec.span(), seconds, signals: [...rec.names], references: refs.map((r) => ({ name: r.name, shown: r.part })) }),
