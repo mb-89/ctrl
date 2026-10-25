@@ -32,6 +32,7 @@
   --skirt: #2c3237;
   --knurl: #59616a;
   --bad: #c62f2f;
+  --warn: #ffb21e; --warn-ink: #1b1400;
   --ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
@@ -43,6 +44,7 @@
     --key-top: #3a4148; --key-bot: #2a3036; --key-ink: #e7ebee; --key-edge: rgba(0, 0, 0, 0.6);
     --bezel: #0d0f11; --cap-hi: #8a939b; --cap-lo: #4b535a; --skirt: #121518; --knurl: #3d444b;
     --bad: #ef6464;
+    --warn: #f5a623; --warn-ink: #140f00;
     color-scheme: dark;
   }
 }
@@ -53,6 +55,7 @@
   --key-top: #3a4148; --key-bot: #2a3036; --key-ink: #e7ebee; --key-edge: rgba(0, 0, 0, 0.6);
   --bezel: #0d0f11; --cap-hi: #8a939b; --cap-lo: #4b535a; --skirt: #121518; --knurl: #3d444b;
   --bad: #ef6464;
+  --warn: #f5a623; --warn-ink: #140f00;
   color-scheme: dark;
 }
 *, *::before, *::after { box-sizing: border-box; }
@@ -78,6 +81,11 @@ button, input, select { font: inherit; color: inherit; }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .btn.icon { width: 30px; padding: 0; justify-content: center; }
 .btn svg { width: 15px; height: 15px; }
+.limited { flex: 1 0 100%; order: 99; display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 6px; border: 2px solid var(--warn-ink); background: var(--warn); color: var(--warn-ink); font-size: 14px; line-height: 1.4; }
+.lt-full .limited { display: none; }
+.limited-icon { font-size: 22px; line-height: 1; font-weight: 600; }
+.limited-text { flex: 1 1 auto; min-width: 0; }
+.limited-hide { flex: none; background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
 .sep { width: 1px; height: 20px; background: var(--line-strong); }
 .speed { display: inline-flex; align-items: center; gap: 6px; }
 .speed-label { font-size: 13px; color: var(--ink-2); }
@@ -556,6 +564,91 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
 }
 .striptip { position: fixed; z-index: 30; pointer-events: none; background: rgba(10, 13, 16, 0.92); border: 1px solid rgba(160, 175, 190, 0.4); border-radius: 4px; padding: 5px 8px; font: 11.5px/16px var(--mono); white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
 </style>
+<script id="lt-limited-check">(() => {
+
+const REASONS = {
+  sandbox: 'sandboxed by the site showing it',
+  storage: 'no storage: nothing is saved, no autosave',
+  downloads: 'downloads blocked: Save and Export do not work',
+  workers: 'no background workers: slower, no live plant',
+};
+
+function limitedProbe(w = window) {
+  const tryOr = (f, fallback) => { try { return f(); } catch { return fallback; } };
+  const storageOk = (name) => tryOr(() => {
+    const s = w[name], k = '__lt-probe';
+    s.setItem(k, '1');
+    const ok = s.getItem(k) === '1';
+    s.removeItem(k);
+    return ok;
+  }, false);
+  const sandbox = tryOr(() => w.frameElement?.getAttribute('sandbox') ?? null, null);
+  return {
+    host: tryOr(() => !!w.__ltHost, false),
+    localStorage: storageOk('localStorage'),
+    sessionStorage: storageOk('sessionStorage'),
+    opaqueOrigin: tryOr(() => w.location.origin === 'null' || w.origin === 'null', false),
+    file: tryOr(() => w.location.protocol === 'file:', false),
+    framed: tryOr(() => w.top !== w.self, true),
+    downloads: sandbox === null ? null : /(^|\s)allow-downloads(\s|$)/.test(sandbox),
+    workers: tryOr(() => {
+      const url = w.URL.createObjectURL(new w.Blob([''], { type: 'text/javascript' }));
+      try { new w.Worker(url).terminate(); } finally { w.URL.revokeObjectURL(url); }
+      return true;
+    }, false),
+  };
+}
+
+function limitedVerdict(p) {
+  if (p.host) return { limited: false, reasons: [] };
+  const found = {
+    sandbox: p.opaqueOrigin && (p.framed || !p.file),
+    storage: !p.localStorage && p.framed,
+    downloads: p.downloads === false,
+    workers: !p.workers,
+  };
+  const reasons = Object.keys(found).filter((k) => found[k]);
+  return { limited: reasons.length > 0, reasons };
+}
+
+function markLimited(w = window) {
+  const v = limitedVerdict(limitedProbe(w));
+  w.document.documentElement.classList.add(v.limited ? 'lt-limited' : 'lt-full');
+  return v;
+}
+
+function explainLimited(doc, v) {
+  const box = doc.getElementById('lt-limited');
+  doc.documentElement.classList.toggle('lt-limited', v.limited);
+  doc.documentElement.classList.toggle('lt-full', !v.limited);
+  if (!box || !v.limited) return;
+  const list = doc.getElementById('lt-limited-why');
+  if (list) list.textContent = `Found here: ${v.reasons.map((r) => REASONS[r]).join('; ')}.`;
+  const hide = doc.getElementById('lt-limited-hide');
+  if (hide && hide.hidden) { hide.hidden = false; hide.addEventListener('click', () => { box.hidden = true; }); }
+}
+
+function startLimited(w = window) {
+  const probe = limitedProbe(w);
+  let v = limitedVerdict(probe);
+  explainLimited(w.document, v);
+  if (probe.workers) {
+    try {
+      const url = w.URL.createObjectURL(new w.Blob(['postMessage(1)'], { type: 'text/javascript' }));
+      const worker = new w.Worker(url);
+      const done = (ok) => {
+        worker.terminate(); w.URL.revokeObjectURL(url);
+        if (!ok) { v = limitedVerdict({ ...probe, workers: false }); explainLimited(w.document, v); }
+      };
+      worker.onmessage = () => done(true);
+      worker.onerror = () => done(false);
+    } catch {   }
+  }
+  return () => structuredClone(v);
+}
+
+try { markLimited(window); } catch { }
+})();</script>
 </head>
 <body>
 <div id="lt-shell" class="app">
@@ -582,6 +675,11 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
     <button id="copy-html" class="btn" data-framed title="Copy a standalone HTML page with the project inside">Copy HTML</button>
     <button id="help" class="btn icon" title="Help and keyboard shortcuts (?)" aria-label="Help">?</button>
     <input type="file" id="file" accept=".json,.html,application/json,text/html" hidden>
+  </div>
+  <div id="lt-limited" class="limited" role="alert">
+    <span class="limited-icon" aria-hidden="true">⚠</span>
+    <div class="limited-text"><b>Warning: limited environment.</b> This page is running in a limited environment, such as a file preview: saving, the autosave and downloads may not work here, and it may run slower. For full function, <b>download this file and open it in your browser.</b> <span id="lt-limited-why"></span></div>
+    <button type="button" id="lt-limited-hide" class="limited-hide" hidden>Hide for now</button>
   </div>
 </header>
 <main class="instrument">
@@ -650,6 +748,7 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
+<p>Shown in a limited environment, such as a file preview that runs the page in a sandbox, a warning below the header says what does not work there: download the file and open it in your browser.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
 <p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it), <code>speed(x?)</code> (sets the speed: a factor, or -1 for as fast as possible; returns the setting, the factor in effect, the achieved speed, the simulation's speed and why it is held at 1×, if it is) and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
@@ -12916,6 +13015,92 @@ function createSpeed(app) {
 
 return { createSpeed };
 })();
+// ---- ui/limited.js
+__mods['ui/limited.js'] = (() => {
+
+const REASONS = {
+  sandbox: 'sandboxed by the site showing it',
+  storage: 'no storage: nothing is saved, no autosave',
+  downloads: 'downloads blocked: Save and Export do not work',
+  workers: 'no background workers: slower, no live plant',
+};
+
+function limitedProbe(w = window) {
+  const tryOr = (f, fallback) => { try { return f(); } catch { return fallback; } };
+  const storageOk = (name) => tryOr(() => {
+    const s = w[name], k = '__lt-probe';
+    s.setItem(k, '1');
+    const ok = s.getItem(k) === '1';
+    s.removeItem(k);
+    return ok;
+  }, false);
+  const sandbox = tryOr(() => w.frameElement?.getAttribute('sandbox') ?? null, null);
+  return {
+    host: tryOr(() => !!w.__ltHost, false),
+    localStorage: storageOk('localStorage'),
+    sessionStorage: storageOk('sessionStorage'),
+    opaqueOrigin: tryOr(() => w.location.origin === 'null' || w.origin === 'null', false),
+    file: tryOr(() => w.location.protocol === 'file:', false),
+    framed: tryOr(() => w.top !== w.self, true),
+    downloads: sandbox === null ? null : /(^|\s)allow-downloads(\s|$)/.test(sandbox),
+    workers: tryOr(() => {
+      const url = w.URL.createObjectURL(new w.Blob([''], { type: 'text/javascript' }));
+      try { new w.Worker(url).terminate(); } finally { w.URL.revokeObjectURL(url); }
+      return true;
+    }, false),
+  };
+}
+
+function limitedVerdict(p) {
+  if (p.host) return { limited: false, reasons: [] };
+  const found = {
+    sandbox: p.opaqueOrigin && (p.framed || !p.file),
+    storage: !p.localStorage && p.framed,
+    downloads: p.downloads === false,
+    workers: !p.workers,
+  };
+  const reasons = Object.keys(found).filter((k) => found[k]);
+  return { limited: reasons.length > 0, reasons };
+}
+
+function markLimited(w = window) {
+  const v = limitedVerdict(limitedProbe(w));
+  w.document.documentElement.classList.add(v.limited ? 'lt-limited' : 'lt-full');
+  return v;
+}
+
+function explainLimited(doc, v) {
+  const box = doc.getElementById('lt-limited');
+  doc.documentElement.classList.toggle('lt-limited', v.limited);
+  doc.documentElement.classList.toggle('lt-full', !v.limited);
+  if (!box || !v.limited) return;
+  const list = doc.getElementById('lt-limited-why');
+  if (list) list.textContent = `Found here: ${v.reasons.map((r) => REASONS[r]).join('; ')}.`;
+  const hide = doc.getElementById('lt-limited-hide');
+  if (hide && hide.hidden) { hide.hidden = false; hide.addEventListener('click', () => { box.hidden = true; }); }
+}
+
+function startLimited(w = window) {
+  const probe = limitedProbe(w);
+  let v = limitedVerdict(probe);
+  explainLimited(w.document, v);
+  if (probe.workers) {
+    try {
+      const url = w.URL.createObjectURL(new w.Blob(['postMessage(1)'], { type: 'text/javascript' }));
+      const worker = new w.Worker(url);
+      const done = (ok) => {
+        worker.terminate(); w.URL.revokeObjectURL(url);
+        if (!ok) { v = limitedVerdict({ ...probe, workers: false }); explainLimited(w.document, v); }
+      };
+      worker.onmessage = () => done(true);
+      worker.onerror = () => done(false);
+    } catch {   }
+  }
+  return () => structuredClone(v);
+}
+
+return { limitedProbe, limitedVerdict, markLimited, explainLimited, startLimited };
+})();
 // ---- ui/app.js
 __mods['ui/app.js'] = (() => {
 
@@ -12938,6 +13123,7 @@ const { createLive } = __mods['ui/live.js'];
 const { createRecord } = __mods['ui/record.js'];
 const { createSpeed } = __mods['ui/speed.js'];
 const { speedToJson } = __mods['core/speed.js'];
+const { startLimited } = __mods['ui/limited.js'];
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
   { key: 'input', label: 'Input' },
@@ -12953,6 +13139,7 @@ function startApp() {
   const embeddedText = $('loop-tuner-project')?.textContent.trim() || '';
   const shellTemplate = $('lt-shell').outerHTML;
   const framed = window.self !== window.top;
+  const limited = startLimited(window);
   document.querySelectorAll(framed ? '[data-standalone]' : '[data-framed]').forEach((el) => { el.hidden = true; });
 
   const app = { project: null, channel: 0, tab: 'input', signal: 'r' };
@@ -13335,7 +13522,7 @@ function startApp() {
   const exportJson = () => JSON.stringify(withUi(), null, 2);
   function exportHtml() {
     const json = exportJson().replace(/</g, '\\u003c');
-    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n<\/script>\n<script id="lt-script">${$('lt-script').textContent}<\/script>\n</body>\n</html>\n`;
+    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n${$('lt-limited-check')?.outerHTML ?? ''}\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n<\/script>\n<script id="lt-script">${$('lt-script').textContent}<\/script>\n</body>\n</html>\n`;
   }
   let saver = null;
   (window.__ltHost?.saver?.() ?? Promise.resolve(null)).then((d) => {
@@ -13486,6 +13673,7 @@ function startApp() {
     },
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
     live: live.api,  
+    limited,  
     record: record.api,  
     autotune: (opts = {}) => {
       tuneTab.stop();

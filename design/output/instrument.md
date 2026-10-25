@@ -178,6 +178,14 @@ Under the screen, beside the channel badges, like a scope's save keys. Storing t
 
 Endless rotary encoders, like a scope's: every detent is one step. Drag up or right to turn clockwise, scroll, or use the arrow keys when focused.
 
+## A limited environment
+
+Where the page runs in a limited environment, such as a file preview's sandbox (SharePoint's HTML viewer), a warning shows right below the header, full width, in the warning colour (`--warn`), with ⚠ and the words "Warning: limited environment". It names what does not work there (saving, the autosave, downloads, the speed), what was found, and what to do: **download this file and open it in your browser**. "Hide for now" hides it until the next load; it cannot be turned off for good. It sits in the header's flow, so it covers no control, and it wraps at phone width.
+
+- **It is in the page's HTML from the start**, so it shows where no script runs. An inline check before the first paint hides it where the environment is full, so it never flashes. The page's start then fills in the reasons (`src/ui/limited.js`; `loopTuner.limited()` returns them).
+- **The rule.** In a known host (the hosted build's `window.__ltHost`), never limited. Otherwise limited by any of these: an opaque origin in a frame, or served from a site (a sandbox without `allow-same-origin`; a file opened directly also has one, and does not count); no localStorage in a frame; a readable frame `sandbox` without `allow-downloads`; a Blob worker that cannot be made, or that fails at once (a `worker-src 'none'` policy). No storage in a window of its own (a private window, a browser setting) does not count: the page is already open directly.
+- Checked in a browser by `node tools/limited-check.mjs` (normal, sandboxed, a SharePoint-like policy, no JavaScript, a fully allowed same-origin frame, the hosted build). Research: [../research/limited-environment.md](../research/limited-environment.md).
+
 ## Layout
 
 Two separators can be dragged: between the display and the setup tabs, and between the display and its controls. The sizes belong to the viewer (kept in their browser), never change when a tab changes, and double-clicking a separator resets it. The setup area starts at the height the Input tab needs, so nothing scrolls; the tab strip never scrolls.
