@@ -193,6 +193,10 @@ class CorePlant:
     def numbers(text):
         return [float("nan") if v is None else float(v) for v in json.loads(text)]
 
+    def restore(self):
+        """Puts the model back to its start (its initial state)."""
+        self.js.eval("__plant.restore()")
+
     def running(self, on):
         """The plant starts or stops: a model running its own controller
         (reference and log modes) starts it afresh, or gates it off (its
@@ -404,6 +408,11 @@ class Plant:
             self.log_names = []
         self.log_values = [None] * len(self.log_names)
         if not self.running:
+            # A model beyond a hard range (an unstable one that fell while it
+            # waited) is set up again, as someone at a rig would before a run.
+            if self.beyond(self.model.measure()):
+                self.model.restore()
+                say("the model was beyond a hard range: put back to its start for this run")
             self.k_start = self.k              # the next cycle is seq 0, t 0
             self.since_u = 0
             self.sent.clear()
@@ -532,6 +541,16 @@ class Plant:
         self.notify("estop", {"reason": reason, "t": self.t()})
         self.stop(by="plant", reason=f"E-STOP: {reason}")
 
+    def beyond(self, y):
+        """The first output beyond its hard range, as "angle 2.6 rad beyond
+        2.5", or None."""
+        for o, v in zip(self.outputs, y):
+            lo, hi = o.get("hard_min"), o.get("hard_max")
+            bound = lo if lo is not None and v < lo else hi if hi is not None and v > hi else None
+            if bound is not None:
+                return f"{o['name']} {beyond(v, bound)} {o['unit']} beyond {bound:g}"
+        return None
+
     def monitor(self, y):
         """An output that is not a number, or beyond its hard range, latches
         an E-stop: "angle 2.6 rad beyond 2.5"."""
@@ -539,12 +558,9 @@ class Plant:
             if not math.isfinite(v):
                 self.trip(f"{o['name']} is not a number")
                 return
-        for o, v in zip(self.outputs, y):
-            lo, hi = o.get("hard_min"), o.get("hard_max")
-            bound = lo if lo is not None and v < lo else hi if hi is not None and v > hi else None
-            if bound is not None:
-                self.trip(f"{o['name']} {beyond(v, bound)} {o['unit']} beyond {bound:g}")
-                return
+        out = self.beyond(y)
+        if out:
+            self.trip(out)
 
     def cycle_ended(self, task):
         """The cycle never ends by itself: if it failed, the inputs go safe

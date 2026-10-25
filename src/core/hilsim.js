@@ -242,16 +242,18 @@ const outward = (v, up) => {
   return (up ? Math.ceil(v / e - 1e-9) : Math.floor(v / e + 1e-9)) * e;
 };
 const tidy = (v) => Number(v.toPrecision(12));
-// { scale: [lo, hi], hard: [lo, hi] } from an extent [a, b] (4.3).
+// { scale: [lo, hi], hard: [lo, hi] } from an extent [a, b] (4.3): around 0,
+// the hard range three times the largest value, the full scale four times;
+// else the extent widened by its span (hard) or twice its span (full scale).
 export function rangesFrom(a, b) {
   if (!Number.isFinite(a) || !Number.isFinite(b)) return { scale: [-1, 1], hard: [-1, 1] };
   if (a === b && a === 0) return { scale: [-1, 1], hard: [-1, 1] };
   if (a < 0 && b > 0) {
     const m = Math.max(-a, b);
-    return { scale: [tidy(-outward(2 * m, true)), tidy(outward(2 * m, true))], hard: [tidy(-outward(1.5 * m, true)), tidy(outward(1.5 * m, true))] };
+    return { scale: [tidy(-outward(4 * m, true)), tidy(outward(4 * m, true))], hard: [tidy(-outward(3 * m, true)), tidy(outward(3 * m, true))] };
   }
   const s = b - a || Math.max(Math.abs(a), Math.abs(b));
-  return { scale: [tidy(outward(a - s, false)), tidy(outward(b + s, true))], hard: [tidy(outward(a - s / 2, false)), tidy(outward(b + s / 2, true))] };
+  return { scale: [tidy(outward(a - 2 * s, false)), tidy(outward(b + 2 * s, true))], hard: [tidy(outward(a - s, false)), tidy(outward(b + s, true))] };
 }
 
 const finiteLimit = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v));
@@ -562,6 +564,14 @@ export function createSimPlant(spec) {
       }
     },
     outputs() { const all = el.probes(); return index.map((i) => all[i][1]); },
+    // Back to the model's start (its initial state), as someone at a rig sets
+    // it up again: the plant does it at a start when an output lies beyond
+    // its hard range (an unstable model that fell while it waited).
+    restore() {
+      el.init(X, 0);
+      const t = k * dt + s * h + a;
+      el.eval(t, X, 0, 0, null);
+    },
     // The plant starts or stops: its own controller (if it runs one) afresh, or gated off.
     running(on) {
       if (!spec.gate || running === !!on) return;

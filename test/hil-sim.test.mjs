@@ -159,8 +159,9 @@ test('the description is the model\'s: inputs, outputs, units, kinds, full scale
 });
 
 test('ranges from a simulation: symmetric when they cross zero, with the hard range inside the full scale', () => {
-  assert.deepEqual(rangesFrom(-0.5, 1.2), { scale: [-2.4, 2.4], hard: [-1.8, 1.8] });
-  assert.deepEqual(rangesFrom(0, 300), { scale: [-300, 600], hard: [-150, 450] });
+  assert.deepEqual(rangesFrom(-0.5, 1.2), { scale: [-4.8, 4.8], hard: [-3.6, 3.6] });
+  assert.deepEqual(rangesFrom(0, 300), { scale: [-600, 900], hard: [-300, 600] });
+  assert.deepEqual(rangesFrom(20, 60), { scale: [-60, 140], hard: [-20, 100] });
   assert.deepEqual(rangesFrom(0, 0), { scale: [-1, 1], hard: [-1, 1] });
   assert.deepEqual(rangesFrom(NaN, 1), { scale: [-1, 1], hard: [-1, 1] });
 });

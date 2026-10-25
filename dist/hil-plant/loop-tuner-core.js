@@ -5812,10 +5812,10 @@ function rangesFrom(a, b) {
   if (a === b && a === 0) return { scale: [-1, 1], hard: [-1, 1] };
   if (a < 0 && b > 0) {
     const m = Math.max(-a, b);
-    return { scale: [tidy(-outward(2 * m, true)), tidy(outward(2 * m, true))], hard: [tidy(-outward(1.5 * m, true)), tidy(outward(1.5 * m, true))] };
+    return { scale: [tidy(-outward(4 * m, true)), tidy(outward(4 * m, true))], hard: [tidy(-outward(3 * m, true)), tidy(outward(3 * m, true))] };
   }
   const s = b - a || Math.max(Math.abs(a), Math.abs(b));
-  return { scale: [tidy(outward(a - s, false)), tidy(outward(b + s, true))], hard: [tidy(outward(a - s / 2, false)), tidy(outward(b + s / 2, true))] };
+  return { scale: [tidy(outward(a - 2 * s, false)), tidy(outward(b + 2 * s, true))], hard: [tidy(outward(a - s, false)), tidy(outward(b + s, true))] };
 }
 
 const finiteLimit = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v));
@@ -6093,6 +6093,11 @@ function createSimPlant(spec) {
       }
     },
     outputs() { const all = el.probes(); return index.map((i) => all[i][1]); },
+    restore() {
+      el.init(X, 0);
+      const t = k * dt + s * h + a;
+      el.eval(t, X, 0, 0, null);
+    },
     running(on) {
       if (!spec.gate || running === !!on) return;
       running = !!on;
