@@ -61,7 +61,8 @@ node tools/view3d-shots.mjs         # the 3D view's own checks in headless Chrom
 | `src/core/guide.js` | The page's guide for agents: `window.loopTuner.help()`, `.api`, and the Help dialog's For agents. |
 | `src/core/trace.js`, `src/ui/record.js` | Saving traces: the screen or the live record (a ring buffer of every live signal) as CSV, JSON or PNG, and back as references; where live and saved time lands on the screen. |
 | `src/core/zip.js` | A stored zip, for the plant's download. |
-| `hil/` | The external plant of the HIL systems: `hil_plant.py` (`uv run hil_plant.py`; a window with STOP, Run/Stop, Reset and where it listens, or a console; `--mode reference`, `--plant heater`, `--log`, `--bench`), `runme.sh`, `runme.cmd` (Windows: a double-click runs `runme.ps1`), `runme.ps1`, `README.txt`; the page offers them as `hil-plant.zip`. |
+| `hil/` | The external plant of the HIL systems: `hil_plant.py` (`uv run hil_plant.py`; a window with STOP, Run/Stop, Reset and where it listens, or a console; it simulates any library model with the page's own core, `loop-tuner-core.js`, in V8: `--model`, `--random`, `--list`, `--vary`, `--detail`, `--seed`, `--show-params`, `--dyno`, `--mode reference`, `--log`, `--bench`), `runme.sh`, `runme.cmd` (Windows: a double-click runs `runme.ps1`), `runme.ps1`, `README.txt`; the page offers them with its own core as `hil-plant.zip`, and `node build.mjs` writes the same into `dist/hil-plant/`. |
+| `src/core/hilsim.js` | The HIL simulator's core: a library system's plant as an external plant (its interface from the model, the seeded variation and effects, stepped on the page's grid), and the cut of the page's core for the zip ([design/output/hil-simulator.md](design/output/hil-simulator.md)). |
 | `src/ui/` | The page: display, controls, dial, signal generator, app wiring. |
 | `build.mjs` | Bundles core and UI into one HTML file. |
 | `cli.mjs` | The command line, for agents and scripts. |

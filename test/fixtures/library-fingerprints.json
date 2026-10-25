@@ -1,0 +1,52 @@
+{
+  "Mass–spring–damper": {
+    "samples": 2001,
+    "signals": "Ekin,Epot,F,v,x",
+    "hash": "36c541c5"
+  },
+  "DC motor, position control": {
+    "samples": 2001,
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed",
+    "hash": "d884117d"
+  },
+  "Following a sine (XY)": {
+    "samples": 2001,
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed",
+    "hash": "dc05c98d"
+  },
+  "DC motor, sliding mode": {
+    "samples": 20001,
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,e,i,r,speed",
+    "hash": "dc5b9021"
+  },
+  "Encoder errors and torque ripple": {
+    "samples": 2001,
+    "signals": "V,ctrl.r,ctrl.u,ctrl.y,r,speed,speed_m",
+    "hash": "bf121d90"
+  },
+  "Conical tank, gain scheduling": {
+    "samples": 2001,
+    "signals": "ctrl.r,ctrl.u,ctrl.y,d,h,q,r",
+    "hash": "a756d0b9"
+  },
+  "Pendulum swing-up": {
+    "samples": 2001,
+    "signals": "F,ctrl.r,ctrl.u,ctrl.y,d,r,theta,x",
+    "hash": "bea2f547"
+  },
+  "Triple pendulum": {
+    "samples": 2001,
+    "signals": "F,ctrl.r,ctrl.u,ctrl.y,d,r,theta1,theta2,theta3,x",
+    "hash": "f88b0105"
+  },
+  "Oven, badly tuned": {
+    "samples": 2001,
+    "signals": "P,T,ctrl.r,ctrl.u,ctrl.y,d,r",
+    "hash": "dec8753d"
+  },
+  "DC motor with an unbalanced arm": {
+    "samples": 2001,
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,current,load,r,speed",
+    "hash": "23d8e117"
+  }
+}

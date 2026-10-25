@@ -1,0 +1,5 @@
+# The runme script bootstraps from winget (2026-10-25)
+
+Following input 26, on how it was summed up ("winget only installs uv, everything else through uv").
+
+> Okay, listen, I want to be, you say Winget only installs UV and everything else is pulled in via UV. That's not what I said. What I said was, if you run a Python script, I want it to be runnable via UV. If that, but you, the runme can still install stuff via Winget. So if you need something that's available in Winget but not in UV, then install it via Winget. I'm just saying, don't create a system where you have some, where you need to use pip to install dependencies and then, yeah, use UV. It is state of the art as far as I'm concerned. And then you can use UV to install dependencies that you wouldn't get via Winget. But yeah, I feel like you have it under control. This shouldn't stop you. As long as in the end, it's a one-click install for the user via the runme script, then I don't care. So you have Winget, you can rely on that. You can't rely on anything else being installed. So that is where you have to bootstrap yourself from.

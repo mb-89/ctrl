@@ -4,11 +4,9 @@
 // the live record, CSV/JSON round trips, and the real plant script.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { rpcRequest, uMessage, parseMessage, checkDescription, externalParams, sameDescription, pageWatchdog, createLinkStats, EXTERNAL_BLOCK, HIL_URL } from '../src/core/hil.js';
 import { createLiveRunner, createLiveLoop } from '../src/core/live.js';
@@ -20,6 +18,7 @@ import { normalizeProject, evaluateSystem } from '../src/core/project.js';
 import { createRecorder, traceToCsv, traceToJson, traceToCsvParts, traceToJsonParts, parseTrace, traceWindow, sweepStart, refShift, refSteps } from '../src/core/trace.js';
 import { zipFiles, crc32 } from '../src/core/zip.js';
 import { bundleScript } from '../build.mjs';
+import { runPlant, startPlant } from './plant.mjs';
 
 const DESC = {
   protocol: 'loop-tuner-hil/1', name: 'motor', rate_hz: 100, watchdog_cycles: 10,
@@ -477,7 +476,7 @@ test('the plant ships in the bundle; the worker part of the bundle runs on its o
   const core = new Function(`return ${bundle.slice(0, cut)}\nreturn __mods;\n})();`)();
   assert.equal(typeof core['core/live.js'].liveWorker, 'function');
   const text = readFileSync(new URL('../hil/hil_plant.py', import.meta.url), 'utf8');
-  assert.match(text, /# \/\/\/ script\n# requires-python = ">=3\.9"\n# dependencies = \["websockets>=13"\]\n# \/\/\//, 'PEP 723 metadata, for uv run');
+  assert.match(text, /# \/\/\/ script\n# requires-python = ">=3\.10"\n# dependencies = \["websockets>=13", "mini-racer>=0\.12"\]\n# \/\/\//, 'PEP 723 metadata, for uv run');
   assert.ok(statSync(new URL('../hil/runme.sh', import.meta.url)).mode & 0o100, 'runme.sh is executable');
   // A click starts them: runme.cmd (CRLF, for cmd.exe) runs runme.ps1; both
   // runme scripts ask uv for its own Python (a system one may lack tkinter).
@@ -513,53 +512,19 @@ test('hil-plant.zip: the plant with its runme scripts, read back as a zip (by Py
   ]);
 });
 
-test('the plant script runs its physics and describes itself as the HIL system expects (when python3 is here)', async (t) => {
-  const py = (arg) => execFileSync('python3', [new URL('../hil/hil_plant.py', import.meta.url).pathname, arg]).toString();
-  let out;
-  try { out = py('--check'); } catch (err) {
-    if (err.code === 'ENOENT') { t.skip('no python3'); return; }
-    throw err;
-  }
-  assert.match(out, /^angle 1\.\d+ rad/);
-  const desc = checkDescription(JSON.parse(py('--describe')));
+test('the plant script runs the page\'s model and describes itself as the HIL system expects (when uv can run it here)', async (t) => {
+  const out = runPlant(['--check']);
+  if (out === null) { t.skip('uv with websockets and mini-racer in its cache is not here'); return; }
+  assert.match(out, /^DC motor with an unbalanced arm, nominal, after 5 s of its own controller: angle -?0\.\d+ rad/);
+  const desc = checkDescription(JSON.parse(runPlant(['--describe'])));
   const { SYSTEM_LIBRARY } = await import('../src/core/systems.js');
   const hil = SYSTEM_LIBRARY.find((s) => s.name === 'HIL: an external plant');
   const block = normalizeDiagram(hil.plant.diagram).blocks.find((b) => b.type === 'external');
   assert.ok(sameDescription(block.params, desc), 'connecting changes nothing in the library system');
   assert.equal(desc.watchdog, 10);
-  // The plant the page is not told: within ±15 % of nominal, the same for a
-  // seed, a parameter fixed with --set.
-  const script = new URL('../hil/hil_plant.py', import.meta.url).pathname;
-  const probe = "import importlib.util, sys, types; spec = importlib.util.spec_from_file_location('hp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); a = types.SimpleNamespace(plant='motor', vary=0.15, seed=7, set=['J=0.003']); p = m.plant_params(a); print(p == m.plant_params(a), p['J'], all(abs(p[n] / getattr(m.Motor, n) - 1) <= 0.15 for n in m.Motor.PHYSICS if n != 'J'), len(set(p.values())) == len(p))";
-  assert.equal(execFileSync('python3', ['-I', '-B', '-c', probe, script]).toString().trim(), 'True 0.003 True True');
-  assert.throws(() => execFileSync('python3', ['-I', script, '--set', 'X=1', '--describe'], { stdio: 'pipe' }), /--set X=1: one of R, L, k, J, b, Tc, mgl/);
+  // A parameter it does not have is refused with the ones it has.
+  assert.throws(() => runPlant(['--set', 'X=1', '--describe']), /--set X: not a physical parameter of DC motor with an unbalanced arm; its parameters: R, L, K, Ke, J, b, Tc, mgl/);
 });
-
-// A port nobody listens on now (the system picks it).
-const freePort = () => new Promise((resolve) => { const srv = createServer(); srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)); }); });
-
-
-// Starts hil_plant.py on a free port: with python3 if it has websockets, else
-// with uv from its cache (no network). Resolves { proc, port } or null.
-async function startPlant() {
-  const script = fileURLToPath(new URL('../hil/hil_plant.py', import.meta.url));
-  const port = await freePort();
-  const ways = [['python3', ['-I', script, '--no-gui', '--port', String(port)]], ['uv', ['run', '--offline', '--quiet', script, '--no-gui', '--port', String(port)]]];
-  for (const [cmd, args] of ways) {
-    const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    const up = await new Promise((resolve) => {
-      let text = '';
-      const done = (v) => { clearTimeout(timer); resolve(v); };
-      const timer = setTimeout(() => done(false), 20000);
-      proc.on('error', () => done(false));
-      proc.on('exit', () => done(false));
-      proc.stdout.on('data', (b) => { text += b; if (/listening on/.test(text)) done(true); });
-    });
-    if (up) return { proc, port };
-    proc.kill();
-  }
-  return null;
-}
 
 test('hil_plant.py speaks the protocol: describe, the y/u cycle, its watchdog, Reset, Stop and Ctrl+C (when it can run here)', async (t) => {
   if (typeof WebSocket !== 'function') { t.skip('no WebSocket in this Node'); return; }

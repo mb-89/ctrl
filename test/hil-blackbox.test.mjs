@@ -5,12 +5,11 @@
 // --dyno). See design/output/hil.md.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { checkDescription, externalParams, sameDescription, interfaceOf } from '../src/core/hil.js';
 import { followPorts, createLiveRunner, liveProblem } from '../src/core/live.js';
 import { normalizeDiagram, diagramNames } from '../src/core/diagram.js';
 import { normalizeReference } from '../src/core/signals.js';
-import { SCRIPT } from './plant.mjs';
+import { runPlant, pyProbe } from './plant.mjs';
 
 const library = async () => (await import('../src/core/systems.js')).SYSTEM_LIBRARY;
 const hilSystems = async () => (await library()).filter((s) => s.plant.diagram.blocks.some((b) => b.type === 'external'));
@@ -86,31 +85,35 @@ test('connecting to a plant with other ports: the block takes them, and the Sink
   assert.deepEqual([same.blocks, same.wires, same.renamed], [d.blocks, d.wires, {}]);
 });
 
-test('hil_plant.py: no disturbance input unless --dyno offers one; the library matches the default (when python3 is here)', async (t) => {
-  const py = (args) => JSON.parse(execFileSync('python3', ['-I', '-B', SCRIPT, '--describe', ...args]).toString());
-  let plain;
-  try { plain = py([]); } catch (err) { if (err.code === 'ENOENT') { t.skip('no python3'); return; } throw err; }
-  const dyno = py(['--dyno']), ref = py(['--mode', 'reference', '--dyno']), heater = py(['--plant', 'heater', '--dyno']);
+test('hil_plant.py: no disturbance input unless --dyno offers one; the library matches the default (when uv can run it here)', async (t) => {
+  const py = (args) => { const out = runPlant(['--describe', ...args]); return out === null ? null : JSON.parse(out); };
+  const plain = py([]);
+  if (!plain) { t.skip('uv with websockets and mini-racer in its cache is not here'); return; }
+  const dyno = py(['--dyno']), ref = py(['--mode', 'reference', '--dyno']), oven = py(['--model', 'Oven, badly tuned', '--dyno']), enc = py(['--model', 'Encoder errors and torque ripple', '--dyno']);
   assert.deepEqual(plain.inputs.map((p) => p.name), ['V']);
   assert.deepEqual(dyno.inputs.map((p) => [p.name, p.kind]), [['V', 'effort'], ['load', 'disturbance']]);
   assert.deepEqual(ref.inputs.map((p) => [p.name, p.kind]), [['r', 'reference'], ['load', 'disturbance']]);
-  assert.deepEqual(heater.inputs.map((p) => p.name), ['P'], 'the heater has none to offer');
+  assert.deepEqual(oven.inputs.map((p) => [p.name, p.kind]), [['P', 'effort'], ['d', 'disturbance']], 'the oven offers its door loss');
+  assert.deepEqual(enc.inputs.map((p) => p.name), ['V'], 'the encoder example has no disturbance Source to offer');
   const [control, reference] = await hilSystems();
   const block = (s) => normalizeDiagram(s.plant.diagram).blocks.find((b) => b.type === 'external');
   assert.ok(sameDescription(block(control).params, checkDescription(plain)), 'connecting the library system to the default plant changes nothing');
   assert.ok(sameDescription(block(reference).params, checkDescription(py(['--mode', 'reference']))));
   assert.ok(!sameDescription(block(control).params, checkDescription(dyno)), 'with --dyno the block takes the load input, an ordinary described input');
-  // Without --dyno the model's load holds its safe value: the plant runs on
-  // one input (the physics is unchanged).
-  const probe = `
-import importlib.util, sys, types
-spec = importlib.util.spec_from_file_location('hp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-m.say = lambda text: None
+  // Without --dyno the model's load holds 0: the plant on one input runs as
+  // the plant with --dyno whose load is 0.
+  const out = pyProbe(`
 for dyno in (False, True):
-    a = types.SimpleNamespace(rate=100.0, plant='motor', mode='control', setpoint=None, log=None, bench=0, watchdog=10, slew=0.0, vary=0.0, seed=1, set=[], allow_origin=[], strict_origin=False, dyno=dyno)
-    p = m.Plant(a)
-    p.u = [3.0] + ([0.1] if dyno else [])
-    print(p.applied())
-`;
-  assert.deepEqual(execFileSync('python3', ['-I', '-B', '-c', probe, SCRIPT]).toString().trim().split('\n'), ['[3.0, 0.0]', '[3.0, 0.1]']);
+    p = m.Plant(args(dyno=dyno, vary=0.15, seed=4))
+    p.running = True
+    p.u = [1.0] + ([0.0] if dyno else [])
+    for k in range(50):
+        p.cycle(0.0, 0.0, p.dt)
+    print(p.applied(), p.last_y)
+    p.model.close()
+`);
+  const [one, two] = out.trim().split('\n');
+  assert.ok(one.startsWith('[1.0] ') && two.startsWith('[1.0, 0.0] '), out);
+  assert.equal(one.slice(6), two.slice(11), 'the same outputs');
+  assert.ok(!/nan/.test(one) && JSON.parse(one.slice(6))[0] > 0.05, 'the arm moved, untripped');
 });

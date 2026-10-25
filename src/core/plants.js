@@ -481,6 +481,86 @@ export const EXAMPLE_PLANTS = [
       ],
     }],
   },
+  // The DC motor swinging an unbalanced arm that hil_plant.py simulated by
+  // hand until the simulator ran the library (design/output/hil-simulator.md
+  // §6): now the example plant's default model, and a system of its own.
+  //   armature 1/(L·s + R)   R = 2 Ω, L = 4 mH; out: the current i
+  //   K (= Ke)               0.1 N·m/A = 0.1 V·s/rad, once (Ke follows K)
+  //   rotor 1/(J·s + b)      J = 2.5e-3 kg·m², b = 2e-3 N·m·s/rad
+  //   Coulomb friction       Tc·tanh(ω/0.01), Tc = 0.01 N·m
+  //   gravity                mgl·sin(angle), mgl = 0.1 N·m; angle 0 hangs down
+  {
+    name: 'DC motor with an unbalanced arm',
+    summary: 'A motor swinging an arm that gravity pulls down, with friction: the plant the example HIL simulator runs. Compare P with PID and see why holding against gravity needs integral action.',
+    notes: 'A DC motor swings an arm with an unbalanced mass: gravity pulls it down with mgl·sin(angle), Coulomb and viscous friction brake it, and the motor has 12 V. To hold the arm out sideways the controller needs integral action (gravity leaves a P or PD short of r). It is the plant the example HIL simulator runs by default, there varied by up to 15 % and unknown to the page; here it is open. Flip to "P, a first guess" to see the offset gravity leaves; open Motor and arm to see the physics.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
+      load: { period: PERIOD, components: [pulse(0.05, 3.5, 0.3)] },
+    },
+    scope: { channels: channels('r', 'angle', 'V', 'current') },
+    ui: ui('Arm'),
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad'),
+        src('load', 180, 230, 'N·m'),
+        ctrl(130, 90, 2, 0.01, [
+          { name: 'PID', type: 'pid', params: { Kp: 10, Ki: 20, Kd: 0.6, Tf: 0.01, umin: -12, umax: 12 } },
+          { name: 'P, a first guess', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
+          { name: 'Off', type: 'off', params: {} },
+        ]),
+        {
+          id: 'motor', type: 'subsystem', name: 'Motor and arm', params: {}, x: 330, y: 96,
+          diagram: {
+            blocks: [
+              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 330, y: 300 },
+              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+              { id: 'arm', type: 'tf', name: 'armature 1/(Ls + R)', params: { num: [1], den: [0.004, 2], delay: 0 }, x: 190, y: 96 },
+              sink('current', 360, 20, 'A'),
+              { id: 'kt', type: 'gain', name: 'K (= Ke)', params: { K: 0.1 }, x: 370, y: 100 },
+              { id: 'tsum', type: 'sum', params: { signs: '+--+' }, x: 460, y: 104 },
+              { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.0025, 0.002], delay: 0 }, x: 530, y: 96 },
+              { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 680, y: 96 },
+              { id: 'th', type: 'outport', name: 'angle', params: { port: 1 }, x: 820, y: 112 },
+              { id: 'w', type: 'outport', name: 'speed', params: { port: 2 }, x: 820, y: 30 },
+              { id: 'ke', type: 'gain', name: 'Ke (= K)', params: { K: 0.1 }, x: 370, y: 380, flip: true },
+              { id: 'sgn', type: 'fcn', name: 'Coulomb tanh(ω/0.01)', params: { expr: 'tanh(u/0.01)' }, x: 530, y: 220, flip: true },
+              { id: 'tc', type: 'gain', name: 'Tc', params: { K: 0.01 }, x: 400, y: 220, flip: true },
+              { id: 'sin', type: 'fcn', name: 'gravity sin(angle)', params: { expr: 'sin(u)' }, x: 680, y: 300, flip: true },
+              { id: 'mgl', type: 'gain', name: 'mgl', params: { K: 0.1 }, x: 540, y: 300, flip: true },
+            ],
+            wires: [
+              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'current' }, { from: 'kt', to: 'tsum' },
+              { from: 'sgn', to: 'tc' }, { from: 'tc', to: 'tsum:1' }, { from: 'mgl', to: 'tsum:2' }, { from: 'load', to: 'tsum:3' },
+              { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'int' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'rotor', to: 'sgn' },
+              { from: 'ke', to: 'sum:1' }, { from: 'int', to: 'th' }, { from: 'int', to: 'sin' }, { from: 'sin', to: 'mgl' },
+            ],
+          },
+        },
+        sink('angle', 600, 98, 'rad'), sink('speed', 600, 30, 'rad/s'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'load', to: 'motor:1' }, { from: 'ctrl', to: 'V' },
+        { from: 'motor', to: 'angle' }, { from: 'motor:1', to: 'speed' }, { from: 'motor', to: 'ctrl:1' },
+      ],
+    },
+    // The arm hangs at angle 0 and turns counter-clockwise; the yellow mark is r.
+    views: [{
+      name: 'Arm', kind: '2d', view: [-1.1, -1.05, 1.1, 1.0],
+      shapes: [
+        { type: 'circle', cx: 0, cy: 0, r: 0.75, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        ...ticks(0.75),
+        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: -0.8, x2: 0, y2: -0.95, stroke: 'ch1', lineWidth: 5 }] },
+        { type: 'group', angle: 'angle', shapes: [
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: -0.6, stroke: 'ch2', lineWidth: 7 },
+          { type: 'circle', cx: 0, cy: -0.6, r: 0.11, fill: 'ch2' },
+        ] },
+        { type: 'circle', cx: 0, cy: 0, r: 0.12, fill: 'ink' },
+        { type: 'text', x: 0, y: 0.9, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {load:4.2} N·m', size: 13 },
+      ],
+    }],
+  },
   // Live mode (design/output/hil.md): the plant is outside the page and a
   // black box (input 20): the page knows its interface only, the inputs and
   // outputs its describe lists (names, units, full scales, hard ranges,
@@ -563,6 +643,56 @@ export const EXAMPLE_PLANTS = [
     views: [],
   },
 ];
+
+
+// What the HIL simulator reads of each model (design/output/hil-simulator.md
+// §4): its physical parameters (name, where, unit; same: tied to another, as
+// Ke to Kt), its effects (a block; off, a Gain of 1, pass, or 0, zero) and the
+// ranges it declares for its ports (full scale, hard range; an input's
+// full scale is its limits). The page's
+// simulation never reads these.
+const phys = (name, at, unit, same) => ({ name, at, unit, ...(same ? { same } : {}) });
+const MOTOR_PHYSICS = [
+  phys('R', 'motor/arm.den[1]', 'Ω'), phys('L', 'motor/arm.den[0]', 'H'), phys('Kt', 'motor/kt.K', 'N·m/A'), phys('Ke', 'motor/ke.K', 'V·s/rad', 'Kt'),
+  phys('J', 'motor/rotor.den[0]', 'kg·m²'), phys('b', 'motor/rotor.den[1]', 'N·m·s/rad'),
+];
+const SIMULATOR = {
+  'Mass–spring–damper': { physics: [phys('1/m', 'm.K', '1/kg'), phys('c', 'c.K', 'N·s/m'), phys('k', 'k.K', 'N/m')] },
+  'DC motor, position control': { physics: MOTOR_PHYSICS },
+  'Following a sine (XY)': { physics: MOTOR_PHYSICS },
+  'DC motor, sliding mode': { physics: MOTOR_PHYSICS },
+  'Encoder errors and torque ripple': {
+    physics: [phys('1/R', 'motor/arm.K', 'A/V'), phys('L/R', 'motor/arm.tau', 's'), phys('Kt', 'motor/kt.K', 'N·m/A'), phys('Ke', 'motor/ke.K', 'V·s/rad', 'Kt'),
+      phys('1/b', 'motor/mech.K', 'rad/(N·m·s)'), phys('J/b', 'motor/mech.tau', 's'), phys('ωn', 'shaft.wn', 'rad/s'), phys('ζ', 'shaft.zeta', '1')],
+    effects: [{ name: 'torque ripple', at: 'ripple', off: 'zero' }, { name: 'torque noise', at: 'rough', off: 'pass' }, { name: 'shaft resonance', at: 'shaft', off: 'pass' }, { name: 'encoder errors', at: 'enc', off: 'pass' }],
+  },
+  'Conical tank, gain scheduling': {
+    physics: [phys('r0', 'tank.r0', 'm'), phys('R', 'tank.R', 'm'), phys('H', 'tank.H', 'm'), phys('a', 'tank.a', 'm²'), phys('Td', 'pipe.L', 's')],
+    effects: [{ name: 'pipe dead time', at: 'pipe', off: 'pass' }],
+    ports: { h: { scale: [0, 1.2], hard: [0, 1] } },
+  },
+  'Pendulum swing-up': { physics: [phys('M', 'cart.M', 'kg'), phys('m', 'cart.m', 'kg'), phys('l', 'cart.l', 'm'), phys('b', 'cart.b', 'N·s/m')] },
+  'Triple pendulum': {
+    physics: [phys('M', 'cart.M', 'kg'), ...[1, 2, 3].flatMap((i) => [phys(`m${i}`, `cart.m${i}`, 'kg'), phys(`l${i}`, `cart.l${i}`, 'm')]), phys('b', 'cart.b', 'N·s/m')],
+  },
+  'Oven, badly tuned': {
+    physics: [phys('heater τ', 'heater.tau', 's'), phys('K', 'oven.K', '1'), phys('τ', 'oven.tau', 's'), phys('Td', 'lag.L', 's'), phys('sensor τ', 'tc.tau', 's')],
+    effects: [{ name: 'thermocouple lag', at: 'tc', off: 'pass' }],
+    // An over-temperature trip below what full power reaches (100 °C).
+    ports: { T: { scale: [0, 120], hard: [-10, 95] } },
+  },
+  'DC motor with an unbalanced arm': {
+    physics: [phys('R', 'motor/arm.den[1]', 'Ω'), phys('L', 'motor/arm.den[0]', 'H'), phys('K', 'motor/kt.K', 'N·m/A'), phys('Ke', 'motor/ke.K', 'V·s/rad', 'K'),
+      phys('J', 'motor/rotor.den[0]', 'kg·m²'), phys('b', 'motor/rotor.den[1]', 'N·m·s/rad'), phys('Tc', 'motor/tc.K', 'N·m'), phys('mgl', 'motor/mgl.K', 'N·m')],
+    effects: [{ name: 'Coulomb friction', at: 'motor/sgn', off: 'zero' }],
+    // As the plant has always declared them: what a PID reaches with room to spare.
+    ports: {
+      angle: { scale: [-Math.PI, Math.PI], hard: [-2.5, 2.5] }, speed: { scale: [-120, 120], hard: [-60, 60] }, current: { scale: [-12, 12], hard: [-10, 10] },
+      r: { scale: [-3, 3] }, load: { scale: [-0.2, 0.2] },
+    },
+  },
+};
+for (const e of EXAMPLE_PLANTS) Object.assign(e, SIMULATOR[e.name] ?? {});
 
 // A new project's plant: the reference alone.
 export const EMPTY_PLANT = { blocks: [src('r', 60, 104, '1')], wires: [] };

@@ -6,12 +6,11 @@
 // plant with an old page. See design/output/hil.md.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { checkDescription, externalParams, sameDescription, parseMessage, EXTERNAL_BLOCK } from '../src/core/hil.js';
 import { createLiveLoop } from '../src/core/live.js';
 import { normalizeDiagram } from '../src/core/diagram.js';
 import { normalizeReference } from '../src/core/signals.js';
-import { SCRIPT, startPlant, connectPlant } from './plant.mjs';
+import { startPlant, connectPlant, runPlant, pyProbe } from './plant.mjs';
 
 const OLD = {
   protocol: 'loop-tuner-hil/1', name: 'fake', rate_hz: 100, running: false, estop: null,
@@ -121,41 +120,35 @@ test('an old plant (no hard ranges, no applied) with this page: it connects, run
 
 // The plant itself, without a server: its declared hard ranges are its
 // monitoring, and the sentence names the output and the value.
-test('hil_plant.py: an output beyond its hard range latches an E-stop that names it; --check shows it (when python3 is here)', (t) => {
-  const probe = `
-import importlib.util, json, sys, types
-spec = importlib.util.spec_from_file_location('hp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-m.say = lambda text: None
+test('hil_plant.py: an output beyond its hard range latches an E-stop that names it; --check shows it (when uv can run it here)', (t) => {
+  const res = pyProbe(`
 out = {}
-for plant, mode in (('motor', 'control'), ('motor', 'reference'), ('heater', 'control')):
-    a = types.SimpleNamespace(rate=100.0, plant=plant, mode=mode, setpoint=None, log=None, bench=0, watchdog=10, slew=0.0, vary=0.0, seed=1, set=[], allow_origin=[], strict_origin=False)
-    p = m.Plant(a)
-    out[plant + ' ' + mode] = [[o['name'], o.get('hard_min'), o.get('hard_max')] for o in p.describe()['outputs']]
+for model, mode in ((m.DEFAULT_MODEL, 'control'), (m.DEFAULT_MODEL, 'reference'), ('Oven, badly tuned', 'control')):
+    p = m.Plant(args(model=model, mode=mode))
+    key = ('motor ' if model == m.DEFAULT_MODEL else 'oven ') + mode
+    out[key] = [[o['name'], o.get('hard_min'), o.get('hard_max')] for o in p.describe()['outputs']]
     trips = []
-    for y in ([2.4, 59, 9.9] + [0] * (len(p.outputs) - 3), [2.6, 0, 0] + [0] * (len(p.outputs) - 3), [-2.6, 0, 0] + [0] * (len(p.outputs) - 3), [0, 61, 0] + [0] * (len(p.outputs) - 3), [0, 0, -10.5] + [0] * (len(p.outputs) - 3), [0, 0, 0, 13]) if plant == 'motor' else ([109.9], [110.04], [-1]):
+    for y in ([2.4, 59, 9.9] + [0] * (len(p.outputs) - 3), [2.6, 0, 0] + [0] * (len(p.outputs) - 3), [-2.6, 0, 0] + [0] * (len(p.outputs) - 3), [0, 61, 0] + [0] * (len(p.outputs) - 3), [0, 0, -10.5] + [0] * (len(p.outputs) - 3), [0, 0, 0, 13]) if model == m.DEFAULT_MODEL else ([p.outputs[0]['hard_max'] - 0.01], [p.outputs[0]['hard_max'] + 0.04], [p.outputs[0]['hard_min'] - 1]):
         p.running, p.estop_reason, p.estop_by = True, None, None
         p.monitor(y[:len(p.outputs)])
         trips.append(p.estop_reason)
-    out[plant + ' ' + mode + ' trips'] = trips
+    out[key + ' trips'] = trips
+    p.model.close()
 print(json.dumps(out))
-`;
-  let res, check;
-  try {
-    res = execFileSync('python3', ['-I', '-B', '-c', probe, SCRIPT], { stdio: 'pipe' }).toString();
-    check = ['motor', 'heater'].map((plant) => execFileSync('python3', ['-I', '-B', SCRIPT, '--check', '--plant', plant], { stdio: 'pipe' }).toString());
-  } catch (err) {
-    if (err.code === 'ENOENT') { t.skip('no python3'); return; }
-    throw err;
-  }
+`);
+  if (res === null) { t.skip('uv with websockets and mini-racer in its cache is not here'); return; }
+  const check = ['DC motor with an unbalanced arm', 'Oven, badly tuned'].map((model) => runPlant(['--check', '--model', model]));
   const out = JSON.parse(res.trim().split('\n').at(-1));
   assert.deepEqual(out['motor control'], [['angle', -2.5, 2.5], ['speed', -60, 60], ['current', -10, 10]]);
   assert.deepEqual(out['motor reference'].at(-1), ['V', null, null], 'its own effort, an output it clamps, has no hard range');
-  assert.deepEqual(out['heater control'], [['T', 0, 110]]);
+  const [[name, lo, hi]] = out['oven control'];
+  assert.equal(name, 'T');
+  assert.ok(lo < 0 && hi > 60, `the oven's T from its own loop's extent: ${lo} … ${hi}`);
   assert.deepEqual(out['motor control trips'], [null, 'angle 2.6 rad beyond 2.5', 'angle -2.6 rad beyond -2.5', 'speed 61 rad/s beyond 60', 'current -10.5 A beyond -10', null]);
   assert.deepEqual(out['motor reference trips'].at(-1), null, 'V beyond 12 is not monitored');
-  assert.deepEqual(out['heater control trips'], [null, 'T 110.04 °C beyond 110', 'T -1 °C beyond 0']);
+  assert.deepEqual(out['oven control trips'].map((x) => x && x.replace(/[-\d.]+/g, '#')), [null, 'T # °C beyond #', 'T # °C beyond #']);
   assert.match(check[0], /E-stop after [\d.]+ s at full V: angle 2\.\d+ rad beyond 2\.5\n/);
-  assert.match(check[1], /E-stop after [\d.]+ s at full P: T 110\.\d+ °C beyond 110\n/);
+  assert.match(check[1], /E-stop after [\d.]+ s at full P: T [\d.]+ °C beyond [\d.]+\n/);
 });
 
 // The real plant over its socket, with test/plant.mjs's page, which knows
