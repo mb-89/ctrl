@@ -29,6 +29,10 @@ function pathSamples(data, p) {
 export function createRobotScene(host, app) {
   let spec = null, view = null, model = null, rbd = null, raf = 0, drawn = 0;
   let jointNames = [], last = { data: null, k: -1 }, samples = [], rec = { data: null, k: null };
+  // The camera as the person left it, per view and robot: it comes back when
+  // the tab is shown again or the view rebuilt.
+  const cameras = new Map();
+  let camKey = '';
 
   // The signal that poses joint i: a Sink's base name numbered (q1 …), or
   // the map by the joint's name (or j1 …).
@@ -85,6 +89,7 @@ export function createRobotScene(host, app) {
   function stop() {
     if (raf) cancelAnimationFrame(raf);
     raf = 0;
+    if (view && camKey) cameras.set(camKey, view.camera);
     view?.destroy();
     view = null; spec = null; last = { data: null, k: -1 }; samples = [];
     host.replaceChildren();
@@ -102,7 +107,8 @@ export function createRobotScene(host, app) {
         rbd = createRbd(model);
         spec = v;
         jointNames = model.joints.map((_, i) => jointSignal(i));
-        view = createView3d(host, { links: model.links, joints: model.joints, camera: v.camera, linkInfo });
+        camKey = `${v.name}|${urdf.length}`;
+        view = createView3d(host, { links: model.links, joints: model.joints, camera: cameras.get(camKey) ?? v.camera, linkInfo });
       } catch (err) {
         stop();
         host.innerHTML = `<p class="note text-bad">View error: ${esc(err.message)}</p>`;

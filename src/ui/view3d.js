@@ -558,7 +558,8 @@ export function createView3d(container, opts = {}) {
   // axes, the triads and the dashes.
   let bounds = robotBounds(robot.meshes), posed = false;
   const cam0 = opts.camera ?? {};
-  let state = { target: cam0.target ?? bounds.center, distance: cam0.distance ?? fitDistance(bounds.radius), ...viewAngles(cam0.view ?? 'iso') };
+  // A camera kept from before (its yaw and pitch) comes back as it was; else a preset view.
+  let state = { target: cam0.target ?? bounds.center, distance: cam0.distance ?? fitDistance(bounds.radius), ...(Number.isFinite(cam0.yaw) && Number.isFinite(cam0.pitch) ? { yaw: cam0.yaw, pitch: cam0.pitch } : viewAngles(cam0.view ?? 'iso')) };
 
   // ---- Theme
   function readTheme() {

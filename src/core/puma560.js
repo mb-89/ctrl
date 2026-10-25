@@ -101,7 +101,7 @@ const DRIVE = {
 };
 
 // A touch probe on the flange (inputs 40, 41): a stylus 0.1 m long along
-// the flange's z axis with a ruby ball of 8 mm radius at its end, whose
+// the flange's z axis with a ruby ball of 12 mm radius at its end, whose
 // centre is the tool point (the link "tip"). Its mass is the arm's to
 // carry: a carbon stylus and its holder, 0.1 kg with the centre of mass at
 // 40 mm, a slender rod's inertia (m·L²/12 across, little along it), the
@@ -115,7 +115,7 @@ const PROBE = `<material name="ruby"><color rgba="0.8 0.05 0.12 1"/></material>
 </link>
 <joint name="tip" type="fixed"><parent link="probe"/><child link="tip"/><origin xyz="0 0 0.1"/></joint>
 <link name="tip">
-<visual><geometry><sphere radius="0.008"/></geometry><material name="ruby"/></visual>
+<visual><geometry><sphere radius="0.012"/></geometry><material name="ruby"/></visual>
 </link>
 `;
 

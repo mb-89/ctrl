@@ -2,6 +2,17 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the PUMA's tool a probe touching the circle from outside; its orientation turns ([input 40](../input/2026-10-25-40-puma-probe-at-45-degrees.md), [input 41](../input/2026-10-25-41-tool-orientation-changes.md); [robot.md](robot.md), "The probe")
+
+The person: "make the tool a pointer ... the sapphire dot is supposed to touch the circle with an angle, so not from the top, but from like 45 degrees from outside of the circle ... a visible movement onto all the axes", and "the tool coordinate system, it would change over time ... The orientation would then change, right?"
+- **The tool is a touch probe, part of the arm**: a stylus on the flange with a ruby ball at its end, its mass and inertia in the robot description; the tool point is the ball's centre. The ball is drawn red, cel shaded, from a token of its own (`--part-ruby`).
+- **The stylus leans outward and turns once round the circle with the ball**, so the tool's orientation changes all the time and all six joints move (34° to 98° each, peak to peak; joint 4's current, 0.00 A before, peaks at 0.91 A).
+- **Interpretations:**
+  - **30° from the vertical, not 45°.** At 45° (and down to 35°) no start pose lets the PUMA's wrist follow a full turn: the stylus's cone needs twice its tilt of joint 5's bend (±100°) plus what the forearm moves, or joint 4 has to wind a full turn per turn of the circle. 30° fits, on a circle of 0.08 m (from 0.15) turned once per 5 s screen (from twice: the wrist's speed limits). The person said "like 45"; the notes say why it is 30.
+  - **The turn about the stylus is free**: a ball looks the same however the stylus turns about itself, and holding that turn too would wind joint 6 through 650°. The orientation reference is the stylus's direction (z_d, with ω_d and α_d as its feedforward), its error the new Pointing error block (z × z_d).
+  - The circle's radius sits on the Circle reference's mask, and the sines' amplitude must match it (a Source cannot read a mask yet).
+  - The camera stays when the Plant tab is shown again; the tool's triad turns with the ball's frame.
+
 ## 2026-10-25 · v2.9: the PUMA is the flagship; the page opens on it ([input 39](../input/2026-10-25-39-puma-flagship-opens.md))
 
 - "This should be the flagship example. So if we open the HTML, that's the thing that should be running." A page with no project inside opens the System library's first system; the PUMA is now first, so the page opens on it, running, and the library shows it on top. This replaces "the page opens the Mass–spring–damper" (v1). **Interpretation:** the flagship also heads the library list; the other systems keep their order, simple to complex.
