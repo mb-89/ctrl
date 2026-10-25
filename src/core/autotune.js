@@ -25,7 +25,8 @@
 // autotune() is the one entry for the page, the command line and agents.
 
 import { simulateSystem } from './sim.js';
-import { defaultSampleTime } from './project.js';
+import { defaultSampleTime, loopModel } from './project.js';
+import { analyzeLoop } from './analysis.js';
 import { normalizeVariant, makeLaw, CONTROLLERS } from './controllers.js';
 import { parseEnd, blockPorts, compileDiagram } from './diagram.js';
 import { amplitudeSpectrum } from './spectrum.js';
@@ -1372,7 +1373,9 @@ export const METHODS = ['iterate', 'relay', 'step'];
 // what the strategy yields; returns
 //   { ok, why, method, key, where, before: { variant, cost }, variant (the
 //     result, named), after (its cost), better, worse (why it scores worse,
-//     in plain words, when it does), notes, … the method's own:
+//     in plain words, when it does), unstableAtStart (relay, step: a result
+//     unstable where the run starts, which is not run whatever it scores:
+//     { Z, label, sentence }), notes, … the method's own:
 //     iterate: iterations, evals, names; relay: Ku, Pu, a, u0, d, r0, rule,
 //     gains, run; step: model ('fopdt': K, tau, theta; 'integrating': kp, L,
 //     tau2, theta; 'schedule': points, trim), simc, gains, u0, du, r0, run }
@@ -1416,7 +1419,37 @@ export function* autotuneSteps(project, path, opts = {}) {
   }
   const out = { ...res, ...head, before, after, better: after.J < before.cost.J };
   if (!out.better) out.worse = whyWorse(out, ctx);
+  // An experiment's rule knows the loop only where the experiment ran (the
+  // middle of r): a result unstable where the run starts, where the running
+  // variant is not, is not run, whatever its run scores.
+  const start = unstableAtStart(project, ctx, res.variant);
+  if (start && !unstableAtStart(project, ctx, ctx.variant)) {
+    out.unstableAtStart = start;
+    out.worse = [start.sentence, out.better ? '' : out.worse].filter(Boolean).join('; ');
+    out.better = false;
+  }
   return out;
+}
+
+// A run that starts in exact balance rests there even where the loop is
+// unstable: nothing moves it until r or d does, and its cost cannot tell.
+// Since the design layer computes the input that holds the start, the tank
+// rests to the last bit, and its relay-tuned PID (six closed-loop poles
+// outside the unit circle at h = 0.15 m) scored ×1.0 of the gain-scheduled
+// PI, where the 0.172 stored before had it ring at once (×3.6). The loop
+// linearised at the start state tells: null where it is stable there, or
+// where that cannot be said (no linear law, a kink, u at a limit); else
+// { Z, label, sentence }.
+export function unstableAtStart(project, ctx, variant) {
+  let m, r;
+  try {
+    const p = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: withVariant(ctx.diagram, ctx.path, variant) } } };
+    m = loopModel(p, ctx.path, 'initial');
+    if (m.atLimit || m.plant.kinks?.length) return null;
+    r = analyzeLoop(m.plant, m.ctrl, m.Ts);
+  } catch { return null; }
+  if (r.stable || r.marginal) return null;
+  return { Z: r.Z, label: m.opLabel, sentence: `it is unstable where the run starts (${m.opLabel}: ${r.Z} closed-loop pole${r.Z > 1 ? 's' : ''} outside the unit circle); the run rests there only because it starts in exact balance, and the first disturbance there sets it off` };
 }
 
 export const autotune = (project, path, opts) => drain(autotuneSteps(project, path, opts));
@@ -1477,6 +1510,7 @@ export function tuneReport(res) {
   else {
     Object.assign(out, { better: res.better, before: { variant: res.before.variant, cost: cost(res.before.cost) }, after: { variant: res.variant, cost: cost(res.after) }, notes: res.notes });
     if (!res.better) out.worse = res.worse;
+    if (res.unstableAtStart) out.unstableAtStart = { Z: res.unstableAtStart.Z, at: res.unstableAtStart.label };
     if (res.method === 'iterate') Object.assign(out, { iterations: res.iterations, evals: res.evals, tuned: res.names });
     if (res.method === 'relay') Object.assign(out, { Ku: res.Ku, Pu: res.Pu, amplitude: res.a, r0: res.r0, u0: res.u0, d: res.d, rule: res.rule, gains: res.gains });
     if (res.method === 'step') {

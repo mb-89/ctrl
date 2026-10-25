@@ -399,8 +399,9 @@ export function linearizeBlock(project, idPath, at = 'origin', opts = {}) {
 //          from the values its design computed
 // so that L(z) = −C_y(z) P(z), with C_y the measurement columns of ctrl.
 // Also Ts, opLabel, variantName, type, t (the snapshot's, or 0 for the
-// initial state) and warnings: the model's, and where the linear loop does
-// not hold (u at a limit; estimates read as the states they stand for).
+// initial state), atLimit (u at a limit there) and warnings: the model's,
+// and where the linear loop does not hold (u at a limit; estimates read as
+// the states they stand for).
 export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
   const { model, pt, statuses, block, id, snap } = blockModel(project, idPath, at, { designs });
   if (block.type !== 'controller') throw new DesignError('not-a-controller', `'${block.name ?? block.id}' is an Observer: a loop is cut at a Controller's output`, 'pick the Controller that drives the plant');
@@ -424,9 +425,14 @@ export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
   const warnings = [...plant.warnings];
   if (ctrl.note) warnings.push(ctrl.note);
   const { umin = -Infinity, umax = Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
-  if (u >= umax - tol || u <= umin + tol) warnings.push(`${plant.input.label} = ${fmt(u)} is at its limit (${fmt(umin)} to ${fmt(umax)}) there: the controller saturates, and the linear loop does not hold`);
+  const atLimit = u >= umax - tol || u <= umin + tol;
+  if (atLimit) warnings.push(`${plant.input.label} = ${fmt(u)} is at its limit (${fmt(umin)} to ${fmt(umax)}) there: the controller saturates, and the linear loop does not hold`);
   for (const obs of model.through) warnings.push(`the estimates of '${obs}' are read as the states they stand for: the filter's own dynamics are not in this loop`);
-  return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, warnings: [...new Set(warnings)] };
+  // Where the linear loop does not hold, for a reader that grades it (the
+  // Analysis tab's verdict, Auto-tune's check at the start): a kink at the
+  // operating point (plant.kinks: the slopes differ left and right, so the
+  // central one is neither side's), or u at a limit.
+  return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
 }
 
 // The least-used palette slot, earliest first, so a colour follows its

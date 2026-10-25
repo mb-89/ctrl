@@ -519,7 +519,7 @@ function startApp() {
     if (!s) return null;
     const pct = `${Math.round(100 * (s.progress?.fraction ?? 0))} %${s.progress?.start > 1 ? ` (start ${s.progress.start} of ${s.progress.starts})` : ''}`;
     const what = { error: 'no design', warn: 'check its design', pending: `planning ${pct}`, stale: `re-planning ${pct}`, cancelled: 'planning cancelled' }[s.status];
-    return { text: `${s.block} · ${s.variant}: ${what}`, path: s.path };
+    return { who: `${s.block} · ${s.variant}`, what, path: s.path };
   }
   function renderChrome() {
     $('undo').disabled = !undoStack.length;
@@ -527,13 +527,21 @@ function startApp() {
     if (document.activeElement !== $('title')) $('title').value = app.project.title;
     renderNote();
   }
+  // A design's note is "block · variant: what"; where the header is short of
+  // room the name gives way (an ellipsis) and "planning 43 %" stays. The note
+  // takes no room of its own in the header's rows (style.css), so a plan that
+  // starts or settles never wraps the header and moves the page.
   function renderNote() {
     const note = app.systemError ? null : designNote();
     const el = $('loopnote');
-    el.textContent = app.systemError ? 'plant: see the Plant tab' : note?.text ?? loopNote;
+    if (note) {
+      el.innerHTML = `<span class="ln-who"></span><span class="ln-what"></span>`;
+      el.firstChild.textContent = note.who;
+      el.lastChild.textContent = `: ${note.what}`;
+    } else el.textContent = app.systemError ? 'plant: see the Plant tab' : loopNote;
     noteAction = app.systemError ? () => { app.tab = 'plant'; renderTabs(); } : note ? () => app.openController(note.path.split('/')) : null;
     el.classList.toggle('act', !!noteAction);
-    if (noteAction) { el.setAttribute('role', 'button'); el.tabIndex = 0; el.title = 'Open the tab that says why'; } else { el.removeAttribute('role'); el.removeAttribute('tabindex'); el.title = ''; }
+    if (noteAction) { el.setAttribute('role', 'button'); el.tabIndex = 0; el.title = `${el.textContent}. Open the tab that says why`; } else { el.removeAttribute('role'); el.removeAttribute('tabindex'); el.title = ''; }
   }
   $('loopnote').addEventListener('click', () => noteAction?.());
   $('loopnote').addEventListener('keydown', (e) => { if (noteAction && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); noteAction(); } });

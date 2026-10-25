@@ -232,8 +232,16 @@ test('loopModel: refusals and notes: a law not linear there, no design yet, an O
   // The triple pendulum's plan is not made yet in a page's store.
   const tp = project('Triple');
   refusal(() => loopModel(tp, 'ctrl', 'origin', { designs: createDesignStore({ mode: 'async' }) }), 'no-design', /Planned swing-up \+ TV-LQR has no design to analyse: its plan is not made yet/);
-  // The tank at the origin: u = 0 is the pump's lower limit.
-  assert.ok(loopModel(project('Conical tank'), 'ctrl', 'origin').warnings.some((w) => /q = 0 is at its limit \(0 to 3\) there: the controller saturates/.test(w)));
+  // The tank at the origin: u = 0 is the pump's lower limit, and the empty
+  // tank a kink. Flagged (atLimit, plant.kinks), so the Analysis tab's
+  // verdict does not grade these numbers (it read "✓ stable, ×4840 good").
+  const empty = loopModel(project('Conical tank'), 'ctrl', 'origin');
+  assert.ok(empty.warnings.some((w) => /q = 0 is at its limit \(0 to 3\) there: the controller saturates/.test(w)));
+  assert.equal(empty.atLimit, true);
+  assert.ok(empty.plant.kinks.length > 0, 'the empty tank is a kink');
+  const start = loopModel(project('Conical tank'), 'ctrl', 'initial');
+  assert.equal(start.atLimit, false);
+  assert.deepEqual(start.plant.kinks, []);
   // A Controller on a Kalman filter's estimates: the loop reads them as the
   // states, and says the filter's dynamics are left out.
   const k = project('Pendulum', 1);

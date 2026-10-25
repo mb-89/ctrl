@@ -168,13 +168,22 @@ export function createAnalysisTab(host, app) {
       $('#an-notes').textContent = v.error ?? '';
       return;
     }
-    const { res, m, st } = v, g = res.margins, Ts = m.Ts, ok = res.stable;
+    const { res, m, st } = v, g = res.margins, Ts = m.Ts;
+    // Where the linear loop does not hold (a kink at the operating point: the
+    // central slope is neither side's; u at a limit: the loop is open), its
+    // numbers are shown but not graded, and the verdict says so first: the
+    // empty tank at rest read "✓ stable, gain margin ×4840 good, settles in
+    // 1240 s" with the reason only in the notes below.
+    const caveat = m.plant.kinks?.length ? 'a kink at the operating point: the slopes differ left and right, and these numbers are those of the central slope, which neither side has'
+      : m.atLimit ? `${esc(m.plant.input?.label ?? 'u')} is at its limit there: the controller saturates, and the linear loop does not hold` : '';
+    const ok = res.stable && !caveat;
     const plural = (k, w) => `${k} ${w}${k > 1 ? 's' : ''}`;
-    $('#an-verdict').innerHTML = ok
-      ? `<span class="grade grade-good">✓ stable</span> <span class="dim">every closed-loop pole inside the unit circle</span>`
-      : res.marginal
-        ? `<span class="grade grade-fair">! marginal</span> <span class="dim">${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows</span>`
-        : `<span class="grade grade-poor">✕ unstable</span> <span class="dim">${plural(res.Z, 'closed-loop pole')} outside the unit circle</span>`;
+    $('#an-verdict').innerHTML = (caveat ? `<div><span class="grade grade-fair">! not linear here</span> <span class="dim">${caveat}</span></div>` : '')
+      + (res.stable
+        ? `<span class="grade ${caveat ? 'grade-fair' : 'grade-good'}">${caveat ? 'as linearised: stable' : '✓ stable'}</span> <span class="dim">every closed-loop pole inside the unit circle</span>`
+        : res.marginal
+          ? `<span class="grade grade-fair">${caveat ? 'as linearised: marginal' : '! marginal'}</span> <span class="dim">${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows</span>`
+          : `<span class="grade grade-poor">${caveat ? 'as linearised: unstable' : '✕ unstable'}</span> <span class="dim">${plural(res.Z, 'closed-loop pole')} outside the unit circle</span>`);
     const rows = [];
     const row = (k, val, extra = '', title = '') => rows.push(`<tr title="${esc(title)}"><th>${k}</th><td>${val}</td><td>${extra}</td></tr>`);
     const factor = (k) => `×${num(k, 3)}`;

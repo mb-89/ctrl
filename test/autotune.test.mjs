@@ -12,7 +12,7 @@ import {
   iterate, runIterate, tuneContext, runVariant, costScales, runCost, variantCost, tuningSpace,
   relayExperiment, relayTune, pidFromUltimate, stepExperiment, stepTune, simcGains, baseName, RULES,
   autotune, tuneReport, resultName, placeVariant, loopOverlays, upstreamSource,
-  simcIntegrating, settledLevel, settledSlope, derivativeFilter, tauCSource,
+  simcIntegrating, settledLevel, settledSlope, derivativeFilter, tauCSource, unstableAtStart,
 } from '../src/core/autotune.js';
 import { analyzeLoop } from '../src/core/analysis.js';
 
@@ -329,8 +329,13 @@ test('the step method on the library\'s examples: better where the loop is badly
   assert.ok(tank25.after.J < 2.5 * tank25.before.cost.J && tank25.after.overshoot < 20, `${tank25.after.J / tank25.before.cost.J} ${tank25.after.overshoot}`);
   const empty = system('Conical');
   empty.system.plant.diagram.blocks.find((b) => b.type === 'controller').variant = 2;
+  // Its run scores far better than the PI tuned for empty (cost ×0.18), but
+  // the PI it fits is unstable at h = 0.15 m, where the run starts: it rests
+  // there only in exact balance (u0 computed from the plant). With u0 0.1 %
+  // off it rings at 3 Hz and empties the tank within 5 s. So it is not run.
   const pe = autotune(empty, null, { method: 'step', amplitude: 0.5 });
-  assert.ok(pe.ok && pe.better, `${pe.before?.variant.name}: ${pe.why ?? pe.worse}`);
+  assert.ok(pe.ok && pe.after.J < 0.3 * pe.before.cost.J, `${pe.before?.variant.name}: ${pe.why ?? pe.worse}`);
+  assert.ok(!pe.better && pe.unstableAtStart?.Z === 2, pe.worse);
   // Smooth is slower than tight: smaller gains from the same tests.
   const calm = step('DC motor', { simc: 'smooth' });
   assert.ok(calm.variant.params.Kp < motor.variant.params.Kp && calm.variant.name.endsWith('· SIMC smooth'));
@@ -478,7 +483,9 @@ test('results: a variant of their own, numbered, never overwriting; a worse one 
   assert.equal(rep.better, false);
   // Why, in plain words: one PID where the running variant schedules its gains, and what grew.
   // (The schedule is computed from the tank, up to 0.95 m.)
-  assert.match(rep.worse, /^one PID from a relay test at h = 0\.475 m; Gain-scheduled PI changes its gains with h \(Kp 0\.113 … 2\.87\), which a single PID cannot;/);
+  // (Before that: it is unstable where the run starts, which the run in exact
+  // balance cannot show; see the test of unstableAtStart.)
+  assert.match(rep.worse, /^it is unstable where the run starts .*; one PID from a relay test at h = 0\.475 m; Gain-scheduled PI changes its gains with h \(Kp 0\.113 … 2\.87\), which a single PID cannot;/);
   assert.match(rep.worse, /overshoots|r − y is larger/);
   assert.equal(rep.before.variant.params.umax, 3);
   assert.equal(JSON.stringify(rep), JSON.stringify(JSON.parse(JSON.stringify(rep))), 'plain JSON');
@@ -616,4 +623,27 @@ test('a variant from the plant: Auto-tune tunes the numbers its design computed,
   c.variants = [{ name: 'LQR', type: 'lqr', params: { Q: [1], R: 1 } }];
   c.variant = 0;
   assert.throws(() => iterate(motor, null).next(), /LQR computes its numbers from the plant, and has none now/);
+});
+
+test('a relay result unstable where the run starts is not run, though its run rests in exact balance', () => {
+  // The tank starts in exact balance (u0 computed from the plant), so a loop
+  // unstable at h = 0.15 m rests there until the step at 1.5 s and its run
+  // scores like the running variant's (×1.01). One PID from the relay test
+  // at mid-range is unstable there: the loop linearised at the start says so.
+  const tank = system('Conical');
+  const res = autotune(tank, null, { method: 'relay' });
+  assert.ok(res.ok);
+  assert.ok(res.unstableAtStart, 'flagged');
+  assert.ok(res.unstableAtStart.Z > 0);
+  assert.equal(res.better, false);
+  assert.match(res.worse, /^it is unstable where the run starts \(the initial state, q = 0\.172: \d+ closed-loop poles outside the unit circle\); the run rests there only because it starts in exact balance/);
+  assert.deepEqual(tuneReport(res).unstableAtStart, { Z: res.unstableAtStart.Z, at: res.unstableAtStart.label });
+  // The gain-scheduled PI it would replace is stable there, and so is the
+  // oven's relay result, which runs (the oven starts at the heater's limit:
+  // no verdict there, so nothing is flagged).
+  const ctx = tuneContext(tank);
+  assert.equal(unstableAtStart(tank, ctx, ctx.variant), null);
+  const oven = autotune(system('Oven'), null, { method: 'relay' });
+  assert.equal(oven.unstableAtStart, undefined);
+  assert.equal(oven.better, true);
 });

@@ -346,7 +346,7 @@ switch (cmd) {
       } else console.log(`  step at r0 = ${fmt(res.r0)}: ${model(res)}; ${simc}, τc ${fmt(res.gains.tauC)} s = ${tauCSource(res.gains, res.simc)}`);
     }
     for (const n of res.notes ?? []) console.log(`  note: ${n}`);
-    if (!res.better) console.log(`  the result scores no better than the running variant${res.worse ? `: ${res.worse}` : ''}`);
+    if (!res.better) console.log(`  ${res.unstableAtStart ? 'the result is not run' : 'the result scores no better than the running variant'}${res.worse ? `: ${res.worse}` : ''}`);
     if (opt.save) console.log(res.better ? `saved: “${res.variant.name}” now runs in ${pos[1]}` : `saved: “${res.variant.name}” added to ${pos[1]}; “${res.before.variant.name}” keeps running`);
     break;
   }

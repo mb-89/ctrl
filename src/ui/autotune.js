@@ -116,10 +116,12 @@ export function createAutotuneTab(host, app, display) {
     // A variant from the plant is tuned as its Copy as numbers twin, from the
     // numbers its design computes now (core/autotune.js, asTuned).
     const twin = ctx?.designed?.from ? ctx.variant : null;
-    $('#tu-now').innerHTML = `<li class="tuhead"><b>${esc(v.name)}</b><span>${esc(CONTROLLERS[v.type]?.label ?? v.type)} · running</span></li>`
-      + (twin ? `<li class="turow tunote"><span>from the plant: tuned as a ${esc(CONTROLLERS[twin.type].label)} with the numbers computed now</span></li>` : '')
-      + tunedValues(twin ?? v).map(([k, x]) => `<li class="turow"><span>${esc(k)}</span><span>${show(x)}</span></li>`).join('');
     const why = noCtx ?? whyNot(ctx, st.method);
+    // The note says how a variant from the plant is tuned; where the method
+    // cannot tune it (a swing-up), the reason below says so instead.
+    $('#tu-now').innerHTML = `<li class="tuhead"><b>${esc(v.name)}</b><span>${esc(CONTROLLERS[v.type]?.label ?? v.type)} · running</span></li>`
+      + (twin && !why ? `<li class="tunote">from the plant: tuned as a ${esc(CONTROLLERS[twin.type].label)}, from the numbers it computes now</li>` : '')
+      + tunedValues(twin ?? v).map(([k, x]) => `<li class="turow"><span>${esc(k)}</span><span>${show(x)}</span></li>`).join('');
     const into = job ? job.name : resultName(c.block, st.method, st.rule, st.simc);
     const target = $('#tu-target');
     if (job) { target.innerHTML = `Into <b>${esc(into)}</b>`; target.title = `${shown.before?.variant.name ?? v.name} stays as it was.`; }
@@ -406,9 +408,11 @@ export function createAutotuneTab(host, app, display) {
     if (!res.ok) { end(`The experiment gave no result: ${res.why}.`); return; }
     const notes = res.notes?.length ? ` Note: ${res.notes.join('; ')}.` : '';
     if (res.better) { place(res.variant, true); end(`Done.${notes}`); return; }
-    // Worse than the running variant: kept to compare, not run.
+    // Worse than the running variant (or unstable where the run starts,
+    // whatever its run scores): kept to compare, not run.
     place(res.variant, false);
-    end(`The result scores worse than ${res.before.variant.name} (cost ×${num(res.after.J / res.before.cost.J, 2)})${res.worse ? `: ${res.worse}` : ''}. It was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
+    const x = `cost ×${num(res.after.J / res.before.cost.J, 2)}`;
+    end(`${res.unstableAtStart ? `The result is not run (${x} against ${res.before.variant.name})` : `The result scores worse than ${res.before.variant.name} (${x})`}${res.worse ? `: ${res.worse}` : ''}. It was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
   }
 
   // What the display shows of a step test, in words. Times on the display

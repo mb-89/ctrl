@@ -73,7 +73,15 @@ button, input, select { font: inherit; color: inherit; }
 .title { flex: 1 1 180px; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; font-size: 17px; font-weight: 600; }
 .title:hover { border-color: var(--line); }
 .title:focus { border-color: var(--line-strong); background: var(--panel-2); outline: none; }
-.loopnote { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+/* The note beside the title takes no room of its own (basis 0), only what the
+   title leaves, so it never wraps the header: a plan's "planning 43 %" would
+   push the actions onto a second row at 1400 px and move the page 42 px down
+   and back. Where it is short of room the name gives way, not the status. */
+.loopnote { flex: 2 1 0; min-width: 0; display: flex; overflow: hidden; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.loopnote:empty { display: none; }
+.bar:has(> .loopnote:not(:empty)) .title { flex-basis: 120px; }
+.loopnote .ln-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.loopnote .ln-what { flex: none; }
 .loopnote.act { cursor: pointer; color: var(--ink-2); text-decoration: underline dotted; text-underline-offset: 3px; }
 .loopnote.act:hover { color: var(--ink); }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -541,6 +549,9 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
 .turow em:empty { display: none; }
 .turow.tucost > span:nth-child(2) { color: #33d17a; }
 .turow.tuworse > span:nth-child(2) { color: var(--bad); }
+/* How a variant from the plant is tuned: a sentence that wraps (in a grid row
+   it ran on unwrapped and was cut at the card's edge). */
+.tunote { padding: 0 6px 3px; font-size: 11px; line-height: 1.35; color: var(--lcd-dim); }
 .tuhead { display: flex; flex-direction: column; padding: 1px 6px 3px; font-size: 12.5px; }
 .tuhead b { font-family: var(--mono); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tuhead span { font-size: 11px; color: var(--lcd-dim); }
