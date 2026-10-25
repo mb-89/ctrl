@@ -2,6 +2,10 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: the PUMA 560 plan ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md))
+
+Researched and designed, not built: [robot.md](robot.md) (plan) and [../research/robot.md](../research/robot.md). Its §14 lists the decisions to record when building starts (step 0). In short: a task-space cascade (the task law on the measured pose, the damped inverse Jacobian to per-axis speed and acceleration targets, six PI speed loops, model torque feedforward; 0.049 mm rms on the circle in the prototype, 1.8 mm without the model, 14 mm with P only, visible in 3D); coordinate systems named on wires and the transformation as two openable groups (Axes → task, Task → axes); MIMO by vector signals flattened by the compiler; one URDF per robot as the single source for physics, controller model and 3D picture; our own WebGL renderer with a Canvas2D fallback. Interpretation: the outer task loop is not analysed; Analysis and Auto-tune cover the six speed loops lane by lane. Built after the design layer, the transparent-models steps 1–3 and the Valid range block.
+
 ## 2026-10-25 · v2.8: detail levels, answered ([input 13](../input/2026-10-25-13-detail-levels-answers.md))
 
 The person answered the four questions of [detail-levels.md](detail-levels.md) §14:
