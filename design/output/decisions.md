@@ -2,6 +2,12 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: feature freeze, then an overhaul ([input 28](../input/2026-10-25-28-feature-freeze-then-overhaul.md))
+
+The person: "we're not going to add any more new features because I want to get done with this today, and it also burns through a lot of tokens. But the last thing I want you to do is a full review and possible refactor ... shared foundations, a shared config system, making sure the utility itself, so the HTML, doesn't contain ... any specific knowledge ... about the systems, about the example systems ... go over the testing ... Test expensive stuff only once, then mock it for repeated tests ... Make the code itself pure wherever you can ... Reduce global state ... common software patterns ... we need to finish all the features first, and then we can have an overhaul".
+- **Feature freeze.** No new features; what is under way is finished: the Identify core and its tab, the diagram auto-layout, the viewport fix, the model foundations, the observer example, the openable physics models, the servo motor, the PUMA integration. Interpretation: detail levels and the controller benchmark, which the person put at the end of the backlog "if we get everything else done", stay in the backlog and are not built today.
+- **Then one overhaul, behaviour unchanged**: the library's fingerprints, the tests and the page's look are the gate for every step. Its aims, in the person's words: shared foundations; one shared configuration (constants, limits and defaults in one place); the tool knows nothing of particular systems (every example is data; no code names or special-cases one); efficient tests (expensive simulations and designs once, shared or faked for the tests that only need their results); pure functions wherever possible and less global state; common patterns.
+
 ## 2026-10-25 · v2.7.4: main merged again; the three reviews' findings
 
 No new words from the person. Main moved 22 commits after v2.7.2 (the HIL follow-ups with both modes, E-STOP in the header and the guide for agents; the limited-environment warning; inputs 14 to 19 with the PUMA, diagram-layout and servo-motor plans). Merged; where the two met:
