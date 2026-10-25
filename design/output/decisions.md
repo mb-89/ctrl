@@ -2,6 +2,17 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: bumpless by the velocity form, no tracking; the benchmark's answers ([input 48](../input/2026-10-25-48-bumpless-velocity-form-and-benchmark-answers.md))
+
+- **Bumpless switching (backlog, after the overhaul)**: every law in velocity form, one integrator at the end of the Controller block holding u, so there is always a state that absorbs a switch or an edit; a law without integral action fades the switch's offset. No tracking of laws that are not running. Recorded in roadmap.md.
+- **Benchmark** ([benchmark.md](benchmark.md)), the person's answers to its five questions:
+  - The weights stand (following r, rejecting d and the ±15 % plant 3, wear 2, complexity 1).
+  - The datum is the tuned PID: "we have to set a good datum and then the others are either plus or minus one ... Don't make it too complicated."
+  - The winner is added as a variant, not switched on; the report only suggests.
+  - Rewiring stays in the report as a candidate with a high complexity: an observer for a missing measurement, and the other way round, a sensor in place of an observer that does not work well.
+  - Swing-ups are judged on following r only, until a system can declare its task.
+  - **Interpretation:** one round against the datum, each criterion +, S or − (+1, 0, −1), weighted and summed; the second round against the winner is dropped.
+
 ## 2026-10-25 · v2.9: Auto-tune's Unlimited speed ([input 45](../input/2026-10-25-45-autotune-unlimited-speed.md))
 
 - "Just give it a toggle that says unlimited speed, and then during the autotune it will run with unlimited speed. And then when it's done, it will flip back to the old speed." A key **Unlimited speed** beside Start: pressed, a run sets the header's Speed to ∞ and gives back the speed set before when it ends, done or stopped. The header's Speed stays the one speed control: the key only drives it (the Fast switch of input 10 is not back). **Interpretations:** off by default and kept while the page is open; not offered with a live plant (it holds 1×); if someone changes the Speed during the run, theirs stays.
