@@ -18,7 +18,7 @@ import { controllerBlocks, upstreamSource, drain } from './autotune.js';
 import { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } from './diagram.js';
 import { CONTROLLERS } from './controllers.js';
 import { referenceFn, gaussAt } from './signals.js';
-import { IDENTIFY_VERSION, EXPERIMENT, halved, piLaw, bumpless, fmtNum } from './experiment.js';
+import { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText } from './experiment.js';
 import {
   STRUCTURES, discretise, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
   fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded,
@@ -36,7 +36,7 @@ export class IdentifyError extends Error {
 }
 
 // The test's length (plant time, s): the choices the tab offers, and the default.
-export const BUDGETS = [30, 60, 120, 300, 600];
+export const BUDGETS = LENGTHS;
 export const BUDGET = 120;
 // The band's defaults (§2): r's range widened by a third of its span on each
 // side; without a span, r₀ ± 10 % of the hard range; clipped to the hard
@@ -681,7 +681,9 @@ function* placeFit(fsegs, structure, p, cov, levels, Ts, hNoise) {
 }
 
 // How the grade is given (§7); thresholds in %, the where-spread as a share.
-export const GRADE = { good: 85, ceiling: 3, fair: 60, distortion: [10, 30], where: 0.25, kernel: 5 };
+// seen: a place counts toward "behaves differently" when the model spent
+// this share of its time there (its bars must still part the places).
+export const GRADE = { good: 85, ceiling: 3, fair: 60, distortion: [10, 30], where: 0.25, seen: 0.05, kernel: 5 };
 
 // The grade and its reasons (§7): ✓, ! or ✕; grades inform and never block.
 // coloured: the noise at rest is itself not white (Listen), so a pattern in
@@ -784,7 +786,7 @@ export function modelSentences(model, names = {}) {
     out.push(`${one} more gives ${withU(withBar(p.K, sd.K), n.yUnit)}${n.yUnit ? '' : ` of ${n.y}`} more.`);
   }
   const W = model.whereSpread;
-  const seenPlaces = (model.where ?? []).filter((pl) => pl.seen >= 0.1);
+  const seenPlaces = (model.where ?? []).filter((pl) => pl.seen >= GRADE.seen);
   if (W?.flagged && seenPlaces.length >= 2) {
     const a = seenPlaces[0], b = seenPlaces.at(-1);
     const at = (v) => withU(fmtNum(v, 2), n.yUnit);
@@ -1044,7 +1046,7 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
     });
   }
   let spread = 0, flagged = false;
-  const seen = where.filter((pl) => pl.seen >= 0.1);
+  const seen = where.filter((pl) => pl.seen >= GRADE.seen);
   for (let a = 0; a < seen.length; a++) {
     for (let b = a + 1; b < seen.length; b++) {
       for (const [key, sdKey] of [['gain', 'gainSd'], ['scale', 'scaleSd']]) {

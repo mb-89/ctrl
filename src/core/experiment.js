@@ -40,6 +40,7 @@ export const EXPERIMENT = {
     seconds: 3, samples: 100,  // at least this long, and at least this many samples
     floor: 1e-5,               // the smallest floor, as a share of the band's span: a noise-free simulation
     drift: 4,                  // a slope is drift when it is this many standard errors from 0 …
+    outside: 3,                // y outside the band this many samples in a row ends Listen
   },
   nudge: {
     a0: 0.01,                  // the first push: this share of u's range
@@ -79,6 +80,7 @@ export const EXPERIMENT = {
     settle: 0.5,               // settled: inside the tolerance for this long
     slack: 2,                  // it may take 4(τc + θ) + slack before the Hold looks again (§5.3)
     sigmas: 3, bandShare: 0.01, steps: 2,   // the tolerance: max(3σ, 1 % of the band, 2q)
+    away: 0.25,                // y moving away from r(0) by this share of the room on its side: the wrong way
   },
   ease: {
     quicker: 0.7,              // each try asks for τc × 0.7
@@ -94,6 +96,9 @@ export const EXPERIMENT = {
     stair: 0.25,               // the staircase's step, as a share of the band's span
     hold: 5,                   // each stair is held hold × (τc₀ + θ)
     stepShare: 0.05,           // a reference step: a jump of more than this share of r's span
+    cap: 2,                    // a try pushes |u − u₀| at most this × the largest push proven before it
+    beyond: 0.05,              // after a soft guard, y this share of the band's span further out than at the exit ends the test
+    recover: 2,                // after a soft guard r ramps back to r(0) over 2(τc + θ) of the incumbent, at most this (s)
   },
   pause: { seconds: 2, wait: 30 },
   check: { stair: 0.125 },
@@ -117,6 +122,9 @@ export function fmtNum(v, digits = 3) {
 }
 const withUnit = (v, unit) => `${fmtNum(v)}${unit ? ` ${unit}` : ''}`;
 const pct = (x) => `${Math.round(100 * x)} %`;
+// The test's lengths the tester can choose (s; identify.js offers them), in words.
+export const LENGTHS = [30, 60, 120, 300, 600];
+export const budgetText = (t) => (t < 60 ? `${fmtNum(t, 2)} s` : `${fmtNum(t / 60, 2)} min`);
 
 // ---- The gentle PI and its law
 
@@ -177,25 +185,28 @@ export const bumpless = (g, u, r, y) => u - g.Kp * (r - y);
 // about its mean over u's range (U), the overshoot beyond 10 % at each
 // reference step (a jump of more than 5 % of R in one sample), and the time u
 // sits at a limit. Other inputs are held during the test, so no step window
-// is cut by them.
-export function tryCost(r, y, u, { R, U, lo, hi }) {
+// is cut by them. per: the samples each sum is shared by (default all of
+// them): a try is scored with its tail, which must add what it costs, not
+// dilute the mean (a slow loop's long tail would read as a better try).
+export function tryCost(r, y, u, { R, U, lo, hi, per = r.length }) {
   const G = EXPERIMENT.goal, n = r.length;
-  let err = 0;
-  for (let k = 0; k < n; k++) err += Math.abs((r[k] - y[k]) / R);
-  err /= n;
+  // A lost measurement (y not a number) is left out of the error.
+  let err = 0, m = 0;
+  for (let k = 0; k < n; k++) if (Number.isFinite(y[k])) { err += Math.abs((r[k] - y[k]) / R); m++; }
+  err /= Math.max(1, (m * per) / n);
   let um = 0;
   for (let k = 0; k < n; k++) um += u[k];
   um /= n;
   let swing = 0;
   for (let k = 0; k < n; k++) swing += (u[k] - um) ** 2;
-  const effort = (G.effort * swing) / (n * U * U);
+  const effort = (G.effort * swing) / (per * U * U);
   const steps = [];
   for (let k = 1; k < n; k++) if (Math.abs(r[k] - r[k - 1]) > EXPERIMENT.ease.stepShare * R) steps.push(k);
   let over = 0, worst = 0;
   steps.forEach((k0, i) => {
     const k1 = steps[i + 1] ?? n, dr = r[k0] - r[k0 - 1], dir = Math.sign(dr);
     let peak = 0;
-    for (let k = k0; k < k1; k++) peak = Math.max(peak, dir * (y[k] - r[k]));
+    for (let k = k0; k < k1; k++) if (Number.isFinite(y[k])) peak = Math.max(peak, dir * (y[k] - r[k]));
     const p = (100 * peak) / Math.abs(dr);
     worst = Math.max(worst, p);
     over += Math.max(0, p - G.overshoot) / 100;
@@ -203,7 +214,7 @@ export function tryCost(r, y, u, { R, U, lo, hi }) {
   let sat = 0;
   const tol = 1e-9 * (U + 1);
   for (let k = 0; k < n; k++) if (u[k] <= lo + tol || u[k] >= hi - tol) sat++;
-  const parts = { error: err, effort, overshoot: G.overshootWeight * over, saturation: (G.saturation * sat) / n };
+  const parts = { error: err, effort, overshoot: G.overshootWeight * over, saturation: (G.saturation * sat) / per };
   return { J: parts.error + parts.effort + parts.overshoot + parts.saturation, parts, overshoot: worst };
 }
 
@@ -218,7 +229,7 @@ export function tryMargin(r, y, band, h = 0) {
   const [lo, hi] = band, n = r.length;
   let dy = Infinity, dr = Infinity;
   for (let k = 0; k < n; k++) {
-    dy = Math.min(dy, y[k] - lo, hi - y[k]);
+    if (Number.isFinite(y[k])) dy = Math.min(dy, y[k] - lo, hi - y[k]);
     dr = Math.min(dr, r[k] - lo, hi - r[k]);
   }
   const gRoom = dy / Math.max(dr, 1e-12 * (hi - lo));
@@ -231,6 +242,7 @@ export function tryMargin(r, y, band, h = 0) {
     const k1 = steps[i + 1] ?? n, step = r[k0] - r[k0 - 1];
     let s = Math.sign(step), wave = 0, peak3 = 0;
     for (let k = k0; k < k1; k++) {
+      if (!Number.isFinite(y[k])) continue;
       const e = r[k] - y[k];
       if (s > 0 && e < -h) { s = -1; wave++; } else if (s < 0 && e > h) { s = 1; wave++; }
       if (wave === 2) peak3 = Math.max(peak3, Math.abs(e));
@@ -371,7 +383,10 @@ function lookGuess(rung, Ts) {
 //   needs                      null, or { kind: 'fit', upto }: the page fits
 //                              the record up to sample upto and supplies
 //   supply(kind, data)         the fit and the Check's prediction, as data
-//   stop()                     Stop (soft): the excitation ends, then `stop`
+//   stop()                     Stop (soft): the excitation ends; a closed loop
+//                              brings y back to r(0) (r ramps there, at most
+//                              settleMax), and only then state.stop asks for
+//                              the plant's `stop`; before any loop ran, u₀ at once
 //   abort(reason)              an E-stop or a lost plant: ends at once
 //   state                      { stage, chips, status, push, room, … , done,
 //                              end, stop }
@@ -429,12 +444,29 @@ export function createExperiment(plan) {
     return yy >= y0 ? (yy - y0) / Math.max(up, 1e-300) : (y0 - yy) / Math.max(down, 1e-300);
   };
   const inBand = (yy) => yy >= lo && yy <= hi;
-  // After a soft guard the incumbent brings y back: until y is inside again
-  // (for at most settleMax), a closed-loop stage does not end the test.
+  const beyond = (yy) => Math.max(lo - yy, yy - hi, 0);
+  // After a soft guard the incumbent brings y back (§5.4): for at most
+  // settleMax a closed-loop stage does not end the test while y is outside,
+  // unless y goes further beyond the band than where it left it (plus a
+  // twentieth of the band's span: what the plant's momentum carries on);
+  // the recovery is over once y has been back inside for hold.settle.
   let recovering = null;
   const holds = () => {
-    if (inBand(y)) { recovering = null; return true; }
-    return recovering !== null && (k - recovering) * Ts < E.ease.settleMax;
+    if (recovering === null) return inBand(y);
+    if (inBand(y)) {
+      if (++recovering.inside >= Math.ceil(E.hold.settle / Ts - 1e-9)) recovering = null;
+      return true;
+    }
+    recovering.inside = 0;
+    if (beyond(y) > recovering.beyond + E.ease.beyond * span) return false;
+    return (k - recovering.k) * Ts < E.ease.settleMax;
+  };
+  // The reference while the incumbent brings y back: from the try's own
+  // value at the exit, a ramp to r(0), so its first sample does not kick u
+  // by Kp times the step (measured: 37 % of the range on an arm).
+  let ramp = null;
+  const aim = (sp) => {
+    if (ramp && k < ramp.k1) { const { k0: a, k1: b, from } = ramp; rFn = (kk) => (kk >= b ? sp : from + ((sp - from) * (kk - a)) / (b - a)); } else { ramp = null; rFn = () => sp; }
   };
 
   // ---- Listen
@@ -442,8 +474,18 @@ export function createExperiment(plan) {
   function* listen() {
     enter('listen');
     const n = Math.max(E.listen.samples, Math.ceil(E.listen.seconds / Ts - 1e-9));
-    const i0 = i, kEnd = k + n;
+    const i0 = i, kEnd = k + n, yFirst = y;
+    // The band is guarded from the first sample: a plant that runs off at
+    // u₀ ends the test at once (an unstable plant with a small bias reached
+    // 220 in Listen's 3 s, for a band of ±1.3), a few samples in a row so
+    // that noise at the band's edge does not.
+    let out = 0;
     while (k < kEnd) {
+      out = inBand(y) ? 0 : out + 1;
+      if (out >= E.listen.outside) {
+        if (!inBand(yFirst)) return finish('outside', `${names.y} is at ${yU(y)}, outside 'may move within': widen it, or bring the plant inside first`);
+        return finish('drift', `${names.y} drifts out of 'may move within' with ${names.u} held at ${uU(P.u0)} (from ${yU(yFirst)} to ${yU(y)} in ${fmtNum(now(), 2)} s): it needs a controller first`);
+      }
       st.status = `Listening: ${names.u} held at ${uU(P.u0)} while the page measures the noise on ${names.y} (${fmtNum(now(), 2)} of ${fmtNum(n * Ts, 2)} s)`;
       yield P.u0;
     }
@@ -461,20 +503,30 @@ export function createExperiment(plan) {
     const L = listenInfo;
     // The level the rung starts from (its response is read against it),
     // carried along the drift: the last few samples before it.
-    let base, ic;
-    if (!rungs.length) { base = L.y0; ic = L.i1 - 1; } else {
-      const from = Math.max(rungs[rungs.length - 1].i0, i - E.nudge.start);
-      base = 0; for (let j = from; j < i; j++) base += rec.y[j];
-      base /= i - from; ic = (from + i - 1) / 2;
+    let base, ic, nBase;
+    if (!rungs.length) { base = L.y0; ic = L.i1 - 1; nBase = L.i1 - L.i0; } else {
+      // The rest the last rung ended in (the window it was still over).
+      const last = rungs[rungs.length - 1];
+      const from = Math.max(last.i0, i - Math.max(E.nudge.start, last.w ?? 0));
+      base = meanOf(from, i); ic = (from + i - 1) / 2; nBase = i - from;
+      if (!Number.isFinite(base)) base = y;
     }
-    const R = { kind: 'rung', n, shape, a, T, dir, i0: i, i1: null, base, ic, slope: L.slope, bound, backoff: false, runaway: false };
+    const R = { kind: 'rung', n, shape, a, T, dir, i0: i, i1: null, base, ic, nBase, slope: L.slope, bound, backoff: false, runaway: false };
     const level = (j) => R.base + R.slope * (j - R.ic);
     const kStart = k, len = 4 * T;
     // After its planned rest the rung waits, at u₀, until y has stopped
     // moving (at most `most` samples): the next rung then starts from rest,
-    // and its response can be read against the level it starts from.
-    const most = Math.max(E.nudge.restMax * len, Math.ceil(E.nudge.restMin / Ts));
+    // and its response can be read against the level it starts from. Rest
+    // is declared only once the wait covers a delay the response may have
+    // (twice the longest one a visible rung showed; 1 s while none has been
+    // seen), and only when the last window's spread is small, not just its
+    // two halves' means: in the middle of a swing they can be equal (a tank
+    // read mid-swing had its sign read the wrong way round).
+    const seen = rungs.filter((Q) => Q.visible && Number.isFinite(Q.delay)).map((Q) => Q.delay);
+    const minWait = seen.length ? 2 * Math.max(...seen) : Math.ceil(E.nudge.restMin / Ts - 1e-9);
+    const most = Math.max(E.nudge.restMax * len, Math.ceil(E.nudge.restMin / Ts), minWait);
     const w = Math.max(8, T);
+    R.w = w;
     const uOf = (j) => (j < T ? P.u0 + dir * a : shape === 'doublet' && j < 2 * T ? P.u0 - dir * a : P.u0);
     let peak = 0, peakPlanned = 0, grows = false;
     st.rung = n;
@@ -486,8 +538,16 @@ export function createExperiment(plan) {
       st.room = roomUsed(y); st.roomMax = Math.max(st.roomMax, st.room);
       if (!inBand(y)) {
         R.i1 = i; R.left = true; R.at = y;
-        // Out of the band with u held at u₀: it ran away by itself.
-        R.runaway = j >= (shape === 'doublet' ? 2 * T : T);
+        // Out of the band with u held at u₀ after the push, and accelerating
+        // away (three equal windows since the push ended): it ran away by
+        // itself. A response still arriving slows down (a high-gain lag, or
+        // one with a dead time longer than the push): not a runaway.
+        const after = shape === 'doublet' ? 2 * T : T, m = Math.floor((j - after) / 3);
+        if (m >= 2) {
+          const lv = level(i), sg = Math.sign(y - lv);
+          const a0 = sg * (meanOf(i - 3 * m, i - 2 * m) - lv), a1 = sg * (meanOf(i - 2 * m, i - m) - lv), a2 = sg * (meanOf(i - m, i) - lv);
+          R.runaway = a2 - a1 > a1 - a0 && a1 - a0 > 0;
+        }
         measure(R, level);
         rungs.push(R); log(R);
         return R;
@@ -496,7 +556,18 @@ export function createExperiment(plan) {
         const m1 = meanOf(i - w, i - w / 2), m2 = meanOf(i - w / 2, i);
         const tol = Math.max((6 * L.floor) / Math.sqrt(w), E.nudge.still * peak);
         grows = Math.abs(m2 - level(i)) > Math.abs(m1 - level(i)) + tol;
-        if (Math.abs(m2 - m1) <= tol || j >= len + most || k >= kLast) break;
+        let a = Infinity, b = -Infinity;
+        for (let q = i - w; q < i; q++) if (Number.isFinite(rec.y[q])) { a = Math.min(a, rec.y[q]); b = Math.max(b, rec.y[q]); }
+        const still = Math.abs(m2 - m1) <= tol && b - a <= 2 * tol + 6 * L.floor;
+        // Accelerating away from where it started over three windows, after
+        // the wait, beyond 1.5 × the push's peak: it runs away, now, not at
+        // the band's edge (a slow response still arriving slows down).
+        if (i - R.i0 >= 3 * w && j >= len + minWait) {
+          const lv = level(i), sg = Math.sign(y - lv), n3 = (6 * L.floor) / Math.sqrt(w);
+          const a0 = sg * (meanOf(i - 3 * w, i - 2 * w) - lv), a1 = sg * (meanOf(i - 2 * w, i - w) - lv), a2 = sg * (m1 + m2 - 2 * lv) / 2;
+          if (a2 - a1 > a1 - a0 + n3 && a1 - a0 > n3 && Math.abs(y - lv) > E.nudge.runaway * peakPlanned && peak > E.nudge.visible * L.floor) { grows = true; break; }
+        }
+        if ((still && j >= len + minWait) || j >= len + most || k >= kLast) break;
       }
       // Back-off: 80 % of the room on its side.
       if (!R.backoff && st.room >= E.nudge.backoff) R.backoff = true;
@@ -514,7 +585,8 @@ export function createExperiment(plan) {
     log(R);
     return R;
   }
-  const meanOf = (a, b) => { let s = 0; for (let j = a; j < b; j++) s += rec.y[j]; return s / (b - a); };
+  // The mean of y over samples a … b − 1, leaving out lost measurements (NaN when all are).
+  const meanOf = (a, b) => { let s = 0, m = 0; for (let j = a; j < b; j++) if (Number.isFinite(rec.y[j])) { s += rec.y[j]; m++; } return m ? s / m : NaN; };
 
   // What a rung showed (§5.2). Its reach: how far y went from y₀ (the Listen
   // level, carried along the drift) up and down, the room it used; the move
@@ -524,14 +596,32 @@ export function createExperiment(plan) {
   // it started from: its size, the growth exponent p during the push, a
   // plateau or a constant slope, ringing.
   function measure(R, level) {
-    const { i0, T } = R, n = R.i1 - i0, L = listenInfo, floor = L.floor;
-    const d = new Float64Array(n);
-    let up = 0, down = 0, size = 0;
+    const { i0, T } = R, n = R.i1 - i0, L = listenInfo;
+    const raw = new Float64Array(n);
+    let up = 0, down = 0;
+    // A lost measurement holds the last one (none yet: the level it started from).
+    let yj = level(i0);
     for (let j = 0; j < n; j++) {
-      d[j] = rec.y[i0 + j] - level(i0 + j);
-      size = Math.max(size, Math.abs(d[j]));
-      const e = rec.y[i0 + j] - (L.y0 + L.slope * (i0 + j - (L.i1 - 1)));
+      if (Number.isFinite(rec.y[i0 + j])) yj = rec.y[i0 + j];
+      raw[j] = yj - level(i0 + j);
+      const e = yj - (L.y0 + L.slope * (i0 + j - (L.i1 - 1)));
       up = Math.max(up, e); down = Math.max(down, -e);
+    }
+    // The response is read through a moving mean over half the push
+    // (m samples), against the noise of such a mean and of the level it is
+    // read from, floor·√(1/m + 1/nBase): single samples hid a clear response
+    // in noise (a lag at 1 % noise of its room read "is u wired?"). The reach
+    // (up, down) stays sample by sample: it is what the room must hold.
+    const m = Math.max(1, Math.floor(T / 2)), h0 = Math.floor((m - 1) / 2);
+    const floor = L.floor * Math.sqrt(1 / m + 1 / Math.max(1, R.nBase));
+    const d = new Float64Array(n);
+    let size = 0;
+    for (let j = 0; j < n; j++) {
+      const a = Math.max(0, j - h0), b = Math.min(n, a + m);
+      let s = 0;
+      for (let q = a; q < b; q++) s += raw[q];
+      d[j] = s / (b - a);
+      size = Math.max(size, Math.abs(d[j]));
     }
     const at = (j) => d[Math.min(n - 1, Math.max(0, Math.round(j)))];
     const yT = at(T), yH = at(T / 2), y3 = at((3 * T) / 4), yQ = at(T / 4);
@@ -557,7 +647,7 @@ export function createExperiment(plan) {
     Object.assign(R, {
       d, up, down, max: Math.max(up, down), size, p, plateau, ramp, complete: plateau || ramp,
       rings: cross >= (R.shape === 'doublet' ? 2 : 1), visible: size > E.nudge.visible * floor,
-      seen: size > E.nudge.response * floor, floor,
+      seen: size > E.nudge.response * floor, floor, mean: m,
     });
     // The response's sign: the direction of its first clear move, which
     // answers the push's first half whatever the dead time.
@@ -565,6 +655,7 @@ export function createExperiment(plan) {
     let jf = 0;
     while (jf < n - 1 && Math.abs(d[jf]) <= thr) jf++;
     R.sign = (Math.sign(d[jf]) || 1) * R.dir;
+    R.delay = jf;   // samples from the push to that move: the next rungs wait twice as long
     if (R.bound !== null) R.within = up <= R.bound[0] * (1 + 1e-12) && down <= R.bound[1] * (1 + 1e-12);
   }
 
@@ -592,6 +683,9 @@ export function createExperiment(plan) {
       if (R.runaway) {
         return finish('runaway', `${names.y} runs away when pushed and does not come back: it needs a stabilising controller before it can be identified`);
       }
+      // The smallest push already took y out: the plant is too sensitive for
+      // this room (a gain of 1000), not unstable.
+      if (R.left && n === 1) return finish('band', `${names.y} moves too far at the smallest push (${uU(a)}, ${pct(a / U)} of ${names.u}'s range, took it to ${yU(R.at)}): narrow ${names.u}'s range in the Controller tab, or widen 'may move within'`);
       if (R.left) return finish('band', `${names.y} left 'may move within' during the Nudge (${yU(R.at)}): the page stopped the plant`);
       if (R.backoff) { why = 'backoff'; break; }
       if (R.visible && !sign) {
@@ -599,7 +693,7 @@ export function createExperiment(plan) {
         sign = R.sign;
         if (!atLimit) dir = sign * (roomUp >= roomDown ? 1 : -1);
       }
-      if (R.complete && R.size >= Math.max(E.nudge.visible * floor, E.nudge.enough * rMin)) { why = 'enough'; break; }
+      if (R.complete && R.size >= Math.max(E.nudge.visible * R.floor, E.nudge.enough * rMin)) { why = 'enough'; break; }
       // The next move: double T while the response is not complete; while it
       // is not even visible, alternate T and a; once complete, double a. A
       // move predicts growth × safety × the reach (2 for a, 2^p for T). Two
@@ -609,9 +703,12 @@ export function createExperiment(plan) {
       // floor); and a pulse moves y one way, so its two sides are predicted
       // and held to their own rooms, where a doublet's swing both ways is
       // held to the smaller room.
+      // A longer push after one that did not visibly move y lies the same
+      // way (measured from rest: an arm's T 4 → 8 at 0.48 V moved 4.8× where
+      // 2^p gave 4), so it predicts dead/2 × 2^p.
       const predict = (growth, amp) => {
-        const lift = (e) => (amp && !R.visible ? Math.max(e, E.nudge.response * floor) : e);
-        const g = amp && !R.visible ? E.nudge.dead : growth;
+        const lift = (e) => (amp && !R.visible ? Math.max(e, E.nudge.response * R.floor) : e);
+        const g = !R.visible ? (amp ? E.nudge.dead : (E.nudge.dead / 2) * growth) : growth;
         if (R.shape === 'doublet') { const m = g * E.nudge.safety * lift(R.max); return [m, m]; }
         return [g * E.nudge.safety * lift(R.up), g * E.nudge.safety * lift(R.down)];
       };
@@ -629,12 +726,22 @@ export function createExperiment(plan) {
       if (move === 'a') { a = Math.min(2 * a, aMax); bound = nextA; } else { T *= 2; bound = nextT; }
     }
     log({ kind: 'nudge', why, rungs: rungs.length, i });
-    if (!rungs.some((R) => R.seen)) {
+    // Nothing at all, with the push grown to the largest the Nudge allows
+    // (half of u's way to its nearer limit) and as long as its time or T's
+    // limit let it: not wired. Stopped short of that by the room, the noise
+    // was too large for it, and the sentence says so.
+    const R = rungs[rungs.length - 1];
+    const largest = R && R.a >= aMax * (1 - 1e-9) && (why === 'budget' || why === 'longest');
+    if (!rungs.some((Q) => Q.seen) && largest) {
       return finish('none', `${names.u} does not move ${names.y}: is ${names.u} wired to the plant?`);
     }
     // Something moved, but never clearly: a first look would read noise.
-    if (!rungs.some((R) => R.visible)) {
-      if (why === 'budget') return finish('budget', `${fmtNum(P.budget / 60, 2)} min is too short to see ${names.y} move clearly: allow longer`);
+    if (!rungs.some((Q) => Q.visible)) {
+      if (why === 'budget') return finish('budget', `${budgetText(P.budget)} is too short to see ${names.y} move clearly: allow longer`);
+      if (rMin < E.nudge.visible * floor) {
+        const side = roomUp < roomDown ? `above ${yU(hi)}` : `below ${yU(lo)}`;
+        return finish('room', `${names.y} starts ${yU(rMin)} from the edge of 'may move within' (its noise is ${yU(floor)}): widen it ${side}, so the pushes have room both ways`);
+      }
       return finish('room', `${names.y} moves too little to read within half of 'may move within' (its noise is ${yU(floor)}): widen it`);
     }
     return null;
@@ -696,7 +803,13 @@ export function createExperiment(plan) {
     const sane = (f) => f && Number.isFinite(f.bic) && STRUCTURES[f.structure].params.every((key) => key === 'theta' || Math.abs(Math.log(Math.abs(f.p[key]))) < E.look.edge);
     const ok = Object.values(fits).filter(sane);
     if (!ok.length) return null;
-    const pick = ok.reduce((a, b) => (b.bic < a.bic ? b : a));
+    let pick = ok.reduce((a, b) => (b.bic < a.bic ? b : a));
+    // A settling fit whose slower time constant is longer than all the data
+    // it was fitted to cannot be told from an integrator there (a resonance
+    // at ζ 20 for an integrator drifting on a bias); within 2 of BIC, the
+    // integrator is taken, and its gentle loop holds.
+    const slowOf = (f) => (f.structure === 'lag' ? f.p.tau : f.structure === 'resonance' ? (f.p.zeta >= 1 ? (f.p.zeta + Math.sqrt(f.p.zeta ** 2 - 1)) / (2 * Math.PI * f.p.f) : 0) : 0);
+    if (pick.structure !== 'intLag' && sane(fits.intLag) && fits.intLag.bic < pick.bic + 2 && slowOf(pick) > n * Ts) pick = fits.intLag;
     const integrating = pick.structure === 'intLag';
     const rings = !integrating && (swing.count >= 2 || (pick.structure === 'resonance' && pick.p.zeta < E.look.rings));
     let model;
@@ -723,28 +836,44 @@ export function createExperiment(plan) {
 
   let law = null, lawInfo = null;
   // A switch to new gains at this sample: the integral makes u continue.
-  function switchTo(g, role) {
+  // lim: the limits it runs within (u's range, or a try's cap on the push).
+  function switchTo(g, role, lim = [P.umin, P.umax]) {
     const I = bumpless(g, uLast, r, y);
-    law = piLaw(g, I, P.umin, P.umax, Ts);
-    lawInfo = { Kp: g.Kp, Ki: g.Ki, tauC: g.tauC, umin: P.umin, umax: P.umax, I, role };
+    law = piLaw(g, I, lim[0], lim[1], Ts);
+    lawInfo = { Kp: g.Kp, Ki: g.Ki, tauC: g.tauC, umin: lim[0], umax: lim[1], I, role };
     log({ kind: 'law', i, ...lawInfo });
   }
+  // The largest push proven so far, |u − u₀|: the Nudge's, the Hold's, then
+  // each accepted try's. A try may push at most ease.cap × that (§5.4: the
+  // effort eases in; measured, a motor's first try pushed 15× the Nudge's).
+  let proven = 0;
+  const provenIn = (a, b) => { let m = 0; for (let j = a; j < b; j++) if (Number.isFinite(rec.u[j])) m = Math.max(m, Math.abs(rec.u[j] - P.u0)); return m; };
+  const capOf = () => {
+    const c = E.ease.cap * Math.max(proven, E.nudge.a0 * U);
+    return [Math.max(P.umin, P.u0 - c), Math.min(P.umax, P.u0 + c)];
+  };
   const tolerance = () => Math.max(E.hold.sigmas * listenInfo.sigma, E.hold.bandShare * span, E.hold.steps * listenInfo.q);
 
   // Holds y at sp under the current law until it has been settled for
   // `settle` s or `most` s have passed. Returns whether it settled; a band
-  // exit returns 'left'.
+  // exit returns 'left'. guard: y moving away from sp, the way it has been
+  // going and without ever crossing it, by more than a quarter of the room
+  // on that side beyond where it started, returns 'away' (a loop pushing the
+  // wrong way: the sign read wrong; measured, it caught every such tank
+  // before it emptied, and never tripped on a loop that holds).
   // How the last settle went: whether y swung across sp (beyond the
   // tolerance, after first reaching it), and how far y was from sp at its
   // start and at its end.
   let swing = { swung: false, from: 0, to: 0 };
-  function* settle(sp, most, status) {
-    rFn = () => sp;
+  function* settle(sp, most, status, guard = false) {
+    aim(sp);
     const tol = tolerance(), need = Math.ceil(E.hold.settle / Ts - 1e-9), kEnd = k + Math.ceil(most / Ts - 1e-9);
     let inside = 0, side = 0;
     swing = { swung: false, from: Math.abs(y - sp), to: Math.abs(y - sp) };
+    const yStart = y, awayStart = Math.abs(y - sp);
     for (;;) {
       if (!holds()) return 'left';
+      if (guard && !swing.swung && Math.abs(y - sp) - awayStart > E.hold.away * (y >= sp ? hi - sp : sp - lo) && Math.sign(y - yStart) === Math.sign(y - sp)) return 'away';
       const e = y - sp;
       inside = Math.abs(e) < tol ? inside + 1 : 0;
       if (Math.abs(e) >= tol) {
@@ -776,7 +905,7 @@ export function createExperiment(plan) {
     switchTo(gentle, 'hold');
     log({ kind: 'hold', ...gentle, i });
     const status = `Holding ${names.y} at ${yU(r0)} with a gentle controller`;
-    let ok = yield* settle(r0, 4 * (tauC + gentle.theta) + E.hold.slack, status);
+    let ok = yield* settle(r0, 4 * (tauC + gentle.theta) + E.hold.slack, status, true);
     if (ok === false) {
       const first = { ...swing };
       if (first.swung) {
@@ -785,48 +914,93 @@ export function createExperiment(plan) {
         switchTo(gentle, 'hold');
         log({ kind: 'hold', ...gentle, doubled: true, i });
       } else log({ kind: 'hold', ...gentle, again: true, i });
-      ok = yield* settle(r0, 4 * (tauC + gentle.theta) + E.hold.slack, status);
+      ok = yield* settle(r0, 4 * (tauC + gentle.theta) + E.hold.slack, status, true);
       if (ok === false && !first.swung && !swing.swung && swing.to < swing.from - 2 * listenInfo.floor) {
         log({ kind: 'note', i, text: `${names.y} creeps toward ${yU(r0)} under the gentle controller (${yU(swing.to)} away): the tries start from there` });
         ok = true;
       }
     }
+    proven = Math.max(proven, provenIn(rungs[0]?.i0 ?? i, i));
+    if (ok === 'away') return finish('away', `the gentle controller pushed ${names.y} away from ${yU(r0)} (${yU(y)} at ${fmtNum(now(), 3)} s): the page stopped the plant; the pushes may have been read the wrong way round`);
     if (ok === 'left') return finish('band', `${names.y} left 'may move within' under the gentle controller (${yU(y)} at ${fmtNum(now(), 3)} s): the page stopped the plant`);
     if (!ok) return finish('hold', `the gentle controller does not hold ${names.y} at ${yU(r0)}`);
-    inc = { gains: gentle, tauC, J: Infinity, n: 0 };
+    inc = { gains: gentle, tauC, J: Infinity, n: 0, lim: [P.umin, P.umax] };
     return null;
   }
 
   // ---- Ease in
 
   function* tryOnce(n, g) {
-    const status = `Ease in, try ${n}: asking the controller to be ${pct(1 - E.ease.quicker)} quicker than the last try`;
+    const status = `Ease in, try ${n}: asking the controller to be ${pct(1 - E.ease.quicker)} quicker than ${n === 1 ? 'the gentle one' : 'the last try'}`;
     // 1. The incumbent brings y to r(0) and holds it.
     const i0 = i;
     const settled = yield* settle(r0, E.ease.settleMax, status);
     if (settled === 'left') return { left: true, i0 };
     // 2. A bumpless switch to the candidate; 3. one period of the test reference.
-    switchTo(g, 'try');
+    const lim = capOf();
+    switchTo(g, 'try', lim);
     const iS = i, kS = k, N = test.length;
     rFn = (kk) => test[Math.min(N - 1, kk - kS)];
-    let left = false;
+    let left = false, away = false, toward = false;
+    // From a settled start: y going the other way from where r asks, never
+    // having gone toward it, by more than a quarter of the room on that side
+    // (the Hold's guard, for a loop that held r(0) by luck).
+    const yS = y;
     while (k - kS < N) {
       if (!inBand(y)) { left = true; break; }
+      if (settled === true && r !== r0) {
+        const want = Math.sign(r - r0), moved = y - yS;
+        if (Math.sign(moved) === want && Math.abs(moved) > 0.1 * Math.abs(r - r0)) toward = true;
+        if (!toward && Math.sign(moved) === -want && Math.abs(moved) > E.hold.away * (moved > 0 ? hi - yS : yS - lo)) { left = true; away = true; break; }
+      }
       const u = law.step(r, y);
       meters(u);
       st.room = roomUsed(y); st.roomMax = Math.max(st.roomMax, st.room);
       st.status = status;
       yield u;
     }
+    // The try's tail: the candidate holds the reference's last value until
+    // y has come to rest (settled at it, or stopped moving: a gentle loop
+    // held off by friction creeps), at most settleMax, and the tail is
+    // scored with the try, so the incumbent takes over at rest and the next
+    // stage does not start from a moving y (an integrator with a lag ended a
+    // try on its way back and left the band under the incumbent).
+    let tail = null;
+    if (!left) {
+      const sp = test[N - 1], tol = tolerance(), need = Math.ceil(E.hold.settle / Ts - 1e-9), kEnd = k + Math.ceil(E.ease.settleMax / Ts - 1e-9);
+      rFn = () => sp;
+      let inside = 0;
+      const iT = i;
+      for (;;) {
+        if (!inBand(y)) { left = true; break; }
+        inside = Math.abs(y - sp) < tol ? inside + 1 : 0;
+        if (inside >= need) { tail = true; break; }
+        if (i - iT >= need) {
+          let a = Infinity, b = -Infinity;
+          for (let q = i - need; q <= i; q++) if (Number.isFinite(rec.y[q])) { a = Math.min(a, rec.y[q]); b = Math.max(b, rec.y[q]); }
+          if (b - a <= tol) { tail = 'still'; break; }
+        }
+        if (k >= kEnd) { tail = false; break; }
+        const u = law.step(r, y);
+        meters(u);
+        st.room = roomUsed(y); st.roomMax = Math.max(st.roomMax, st.room);
+        st.status = `${status} (settling)`;
+        yield u;
+      }
+    }
     const iE = i;
-    // 4. A bumpless switch back to the incumbent (at once, when y left the band).
-    rFn = () => r0;
-    switchTo(inc.gains, 'incumbent');
-    if (left) recovering = k;
-    const T = { kind: 'try', n, tauC: g.tauC, Kp: g.Kp, Ki: g.Ki, i0, iSwitch: iS, iEnd: iE, settled: settled === true };
-    if (left) return { ...T, left: true, g: E.ease.guardG, gRoom: E.ease.guardG, gRing: null, J: null };
+    // 4. A bumpless switch back to the incumbent; at once when y left the
+    // band, with r ramping from where the try had it back to r(0).
+    if (left) {
+      ramp = { k0: k, k1: k + Math.max(1, Math.ceil(Math.min(E.ease.recover, 2 * (inc.tauC + gentle.theta)) / Ts - 1e-9)), from: r };
+      recovering = { k, beyond: beyond(y), inside: 0 };
+    }
+    aim(r0);
+    switchTo(inc.gains, 'incumbent', inc.lim);
+    const T = { kind: 'try', n, tauC: g.tauC, Kp: g.Kp, Ki: g.Ki, umin: lim[0], umax: lim[1], push: provenIn(iS, iE), i0, iSwitch: iS, iEnd: iE, settled: settled === true, tail };
+    if (left) return { ...T, left: true, away, g: E.ease.guardG, gRoom: E.ease.guardG, gRing: null, J: null };
     const rr = rec.r.slice(iS, iE), yy = rec.y.slice(iS, iE), uu = rec.u.slice(iS, iE);
-    const cost = tryCost(rr, yy, uu, { R: test.span, U, lo: P.umin, hi: P.umax });
+    const cost = tryCost(rr, yy, uu, { R: test.span, U, lo: P.umin, hi: P.umax, per: N });
     const m = tryMargin(rr, yy, P.band, Math.max(3 * listenInfo.sigma, 2 * listenInfo.q));
     return { ...T, J: cost.J, parts: cost.parts, overshoot: cost.overshoot, ...m };
   }
@@ -839,13 +1013,14 @@ export function createExperiment(plan) {
     for (let n = 1; n <= E.ease.tries; n++) {
       tauC *= E.ease.quicker;
       if (tauC < E.ease.thetaShare * theta) { why = 'quick'; break; }
-      if (left() < E.ease.settleMax + test.length * Ts + reserve) { why = 'budget'; break; }
+      // A try: the incumbent's settle, the reference, the candidate's tail.
+      if (left() < 2 * E.ease.settleMax + test.length * Ts + reserve) { why = 'budget'; break; }
       const g = gentleGains(look, tauC, Ts);
       st.try = n;
       const T = yield* tryOnce(n, g);
       if (T.left && T.n === undefined) {
         // y left the band while the incumbent settled it: nothing proven holds.
-        return finish('band', `${names.y} left 'may move within' under the controller that held it: the page stopped the plant`);
+        return endBand(`${names.y} left 'may move within' under the controller that held it: the page stopped the plant`);
       }
       const before = inc.J;
       let mark;
@@ -853,12 +1028,16 @@ export function createExperiment(plan) {
       else if (T.g < E.ease.gMin) mark = T.gRing < T.gRoom ? '! rang' : '! near the edge';
       else if (T.J < (1 - E.ease.better) * before) mark = '✓ quicker';
       else mark = '· no better';
-      T.accepted = !T.left && T.g >= E.ease.gMin && T.J < before;
-      if (T.accepted) inc = { gains: g, tauC, J: T.J, n };
+      // Accepted only when it is quicker by the margin that counts, so the
+      // mark and the incumbent agree (a try 1 % better read "· no better" and
+      // could still become the controller the end message names).
+      T.accepted = mark === '✓ quicker';
+      if (T.accepted) { inc = { gains: g, tauC, J: T.J, n, lim: [T.umin, T.umax] }; proven = Math.max(proven, T.push); }
       T.mark = mark;
       st.tries.push(mark);
       st.room = T.left ? 1 : Math.max(0, 1 - T.gRoom);
       log(T);
+      if (T.away) return finish('away', `the controller pushed ${names.y} the other way from where r asked (${yU(y)} at ${fmtNum(now(), 3)} s): the page stopped the plant; the pushes may have been read the wrong way round`);
       if (T.left) { why = 'guard'; break; }
       if (T.g < E.ease.gMin) { why = 'margin'; break; }
       stale = T.J < (1 - E.ease.better) * before ? 0 : stale + 1;
@@ -872,12 +1051,12 @@ export function createExperiment(plan) {
   // ---- Fit pause: the incumbent holds y while the page fits.
 
   function* pause() {
-    rFn = () => r0;
+    aim(r0);
     const i0 = i, kMin = k + Math.ceil(E.pause.seconds / Ts - 1e-9), kMax = k + Math.ceil(E.pause.wait / Ts - 1e-9);
     needs = { kind: 'fit', upto: i };
     supplied = null;
     for (;;) {
-      if (!holds()) return finish('band', `${names.y} left 'may move within' while the controller held it: the page stopped the plant`);
+      if (!holds()) return endBand(`${names.y} left 'may move within' while the controller held it: the page stopped the plant`);
       if (supplied && k >= kMin) break;
       if (k >= kMax) { needs = null; return finish('fit', 'the page could not fit in time'); }
       const u = law.step(r, y);
@@ -896,11 +1075,11 @@ export function createExperiment(plan) {
     const status = 'Check: a test the model has not seen';
     const i0 = i;
     const s = yield* settle(check[0], E.ease.settleMax, status);
-    if (s === 'left') return finish('band', `${names.y} left 'may move within' before the Check: the page stopped the plant`);
+    if (s === 'left') return endBand(`${names.y} left 'may move within' before the Check: the page stopped the plant`);
     const iS = i, kS = k, N = check.length;
     rFn = (kk) => check[Math.min(N - 1, kk - kS)];
     while (k - kS < N) {
-      if (!holds()) return finish('band', `${names.y} left 'may move within' during the Check: the page stopped the plant`, { check: { i0, iStart: iS } });
+      if (!holds()) return endBand(`${names.y} left 'may move within' during the Check: the page stopped the plant`, { check: { i0, iStart: iS } });
       const u = law.step(r, y);
       meters(u);
       st.status = status;
@@ -914,13 +1093,14 @@ export function createExperiment(plan) {
 
   function* program() {
     yield* listen();
+    if (st.done || stopping) return null;
     const L = listenInfo;
     if (!inBand(L.y0)) {
       return finish('outside', `${names.y} is at ${yU(L.y0)}, outside 'may move within': widen it, or bring the plant inside first`);
     }
     if (L.drifts) log({ kind: 'note', i, text: `${names.y} does not stay put with ${names.u} at ${uU(P.u0)} (it moves ${yU(Math.abs(L.drift))}/s)` });
     yield* nudge();
-    if (st.done) return null;
+    if (st.done || stopping) return null;
     // The first look, during the rest that follows the Nudge.
     const seen = yield* firstLook();
     if (seen === 'runaway') return finish('runaway', `${names.y} runs away when pushed and does not come back: it needs a stabilising controller before it can be identified`);
@@ -941,26 +1121,75 @@ export function createExperiment(plan) {
       test.span = b - a > 1e-12 ? b - a : Math.max(Math.abs(r0), 1) * 1e-3;
     }
     log({ kind: 'references', i, test: test.length, check: check.length, staircase: !testR });
-    // Not one try fits the budget: the test ends after the first look.
+    // A time scale beyond ten times the whole test: what was pushed does
+    // not come back within any test (an unstable plant read slowly, an
+    // integrator twice over); it needs a controller that holds it first.
+    const slowest = look.theta + look.tau;
+    if (slowest > 10 * P.budget) {
+      return finish('slow', `${names.y} does not come back after a push (its time scale reads ${fmtNum(slowest, 2)} s): it needs a controller that holds it before it can be identified`);
+    }
+    // Not one try fits the budget: the test ends after the first look. The
+    // Hold may take two windows (τc doubled, or a creep given more time),
+    // and a try is its settle, the reference and its tail.
     const holdMost = 4 * (tc0 + th) + E.hold.slack;
-    const need = holdMost + E.ease.settleMax + test.length * Ts + E.pause.seconds + E.ease.settleMax + check.length * Ts;
+    const need = 2 * holdMost + 2 * E.ease.settleMax + test.length * Ts + E.pause.seconds + E.ease.settleMax + check.length * Ts;
     if (need > left()) {
-      const minutes = Math.ceil((now() + need) / 60);
-      return finish('budget', `${fmtNum(P.budget / 60, 2)} min is too short for this plant: the Nudge alone took ${Math.round(now())} s. Allow ${minutes <= 5 ? 5 : 10} min.`);
+      const fits = LENGTHS.find((b) => b >= now() + need);
+      const advice = fits ? `Allow ${budgetText(fits)}.` : `Even ${budgetText(LENGTHS.at(-1))} is too short for it.`;
+      return finish('budget', `${budgetText(P.budget)} is too short for this plant: the test so far took ${Math.round(now())} s, and one try needs about ${Math.round(need)} s more. ${advice}`);
     }
     yield* hold();
-    if (st.done) return null;
+    if (st.done || stopping) return null;
     yield* ease();
-    if (st.done) return null;
+    if (st.done || stopping) return null;
     yield* pause();
-    if (st.done) return null;
+    if (st.done || stopping) return null;
     chips.shake = '–';
     yield* runCheck();
-    if (st.done) return null;
-    return finish('done', `Done: the plant is stopped${inc?.n ? `; the gentlest controller that held, eased in, is try ${inc.n}` : ''}`);
+    if (st.done || stopping) return null;
+    return finish('done', `Done: the plant is stopped; ${inc?.n ? `the gentlest controller that held, eased in, is try ${inc.n}` : 'the gentle controller held, and no try was quicker'}`);
   }
 
   const gen = program();
+
+  // Stop (§5.8): the excitation ends; the incumbent (or the loop that runs)
+  // brings y back to r(0) from wherever r is, by a ramp (no kick), and holds
+  // it until settled, at most settleMax; then the plant's stop. Measured: an
+  // arm held at 1.3 rad and dropped to 0 V at once swung to −0.45 rad. A test
+  // that ends because y left the band under the incumbent ends the same way
+  // (endBand): released at u₀ on its way out, an arm above the horizontal
+  // flew over the top. Only y going further out still (a twentieth of the
+  // band's span beyond where the stop began) ends it at once.
+  let stopping = null;
+  function* softStop(code = 'stopped', message = 'Stopped: the record so far is kept', extra = {}) {
+    const status = `Stopping: the controller brings ${names.y} back to ${yU(r0)}, then the plant stops`;
+    if (law) {
+      if (inc && lawInfo?.role === 'try') switchTo(inc.gains, 'incumbent', inc.lim);
+      ramp = { k0: k, k1: k + Math.max(1, Math.ceil(Math.min(E.ease.recover, 2 * ((inc?.tauC ?? gentle?.tauC ?? 0) + (gentle?.theta ?? 0))) / Ts - 1e-9)), from: r };
+      recovering = null;
+      log({ kind: 'stop', i, code });
+      aim(r0);
+      const tol = tolerance(), need = Math.ceil(E.hold.settle / Ts - 1e-9), kEnd = k + Math.ceil(E.ease.settleMax / Ts - 1e-9), b0 = beyond(y);
+      let inside = 0;
+      for (;;) {
+        if (beyond(y) > b0 + E.ease.beyond * span) break;
+        inside = Math.abs(y - r0) < tol ? inside + 1 : 0;
+        if (inside >= need || k >= kEnd) break;
+        const u = law.step(r, y);
+        meters(u);
+        st.status = status;
+        yield u;
+      }
+    }
+    finish(code, message, extra);
+  }
+  // The test ends with y out of the band under a loop that has a fallback.
+  function endBand(message, extra = {}) {
+    if (!law || !inc) return finish('band', message, extra);
+    needs = null;
+    stopping = softStop('band', message, extra);
+    return null;
+  }
 
   function stepOnce(kk, yy, applied) {
     if (st.done) return P.u0;
@@ -978,7 +1207,9 @@ export function createExperiment(plan) {
     }
     y = yy;
     st.t = now();
-    const res = gen.next();
+    let res = (stopping ?? gen).next();
+    // The test just turned to its soft end: this sample is the stop's first.
+    if (res.done && stopping && !st.done) res = stopping.next();
     const u = res.done || st.done ? P.u0 : res.value;
     rec.u.push(u); rec.y.push(y); rec.r.push(r); rec.applied.push(NaN);
     uLast = u;
@@ -997,8 +1228,10 @@ export function createExperiment(plan) {
       needs = null;
     },
     stop() {
-      if (st.done) return;
-      finish('stopped', 'Stopped: the record so far is kept');
+      if (st.done || stopping) return;
+      if (!law) { finish('stopped', 'Stopped: the record so far is kept'); return; }
+      needs = null;
+      stopping = softStop();
     },
     abort(reason = 'the plant stopped itself') {
       if (st.done) return;

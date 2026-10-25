@@ -33,12 +33,23 @@ function checkLadder(name, plan, res) {
   assert.ok(RULES.includes(ladder.why), `${name}: ${ladder.why}`);
   assert.ok(tries.every((T) => !T.left), `${name}: a try left the band`);
   // Each try asks for 30 % quicker than the one before; accepted ones keep
-  // their margin and improve J; the incumbent is the best accepted.
+  // their margin and improve J by at least 3 % (so the mark ✓ and the
+  // incumbent agree); the incumbent is the best accepted. A try pushes at
+  // most twice what was proven before it (the Nudge, the Hold, the accepted
+  // tries), and its tail (until y settles or stops moving, at most 4 s) is
+  // scored with it.
   let J = Infinity, tc = record.log.find((e) => e.kind === 'law' && e.role === 'hold').tauC, best = 0;
+  const U = plan.umax - plan.umin;
+  const pushIn = (a, b) => { let m = 0; for (let j = a; j < b; j++) if (record.u[j] !== null) m = Math.max(m, Math.abs(record.u[j] - plan.u0)); return m; };
+  let proven = pushIn(record.log.find((e) => e.kind === 'rung').i0, tries[0].i0);
   for (const T of tries) {
     assert.ok(Math.abs(T.tauC - E.quicker * tc) < 1e-12 * tc, `${name}: try ${T.n} τc`);
     tc = T.tauC;
-    assert.equal(T.accepted, T.g >= E.gMin && T.J < J, `${name}: try ${T.n} accepted`);
+    assert.ok(Math.abs(T.push - pushIn(T.iSwitch, T.iEnd)) < 1e-9 && T.push <= E.cap * Math.max(proven, EXPERIMENT.nudge.a0 * U) * (1 + 1e-9), `${name}: try ${T.n} pushed ${T.push}, proven ${proven}`);
+    assert.ok(T.left || T.tail !== null, `${name}: try ${T.n} has its tail`);
+    if (T.mark === '✓ quicker') proven = Math.max(proven, T.push);
+    assert.equal(T.accepted, T.g >= E.gMin && T.J < (1 - E.better) * J, `${name}: try ${T.n} accepted`);
+    assert.equal(T.accepted, T.mark === '✓ quicker');
     if (T.accepted) { J = T.J; best = T.n; }
   }
   assert.equal(ladder.incumbent, best);
@@ -56,8 +67,9 @@ function checkLadder(name, plan, res) {
     assert.ok(E.quicker * last.tauC < E.thetaShare * gentleGains(look, 1, plan.Ts).theta);
   }
   if (ladder.why === 'budget') {
+    // Another try (its settle, the reference, its tail) and the pause and the Check did not fit.
     const at = last.iEnd * plan.Ts;
-    assert.ok(plan.budget - at < E.settleMax * 2 + (exp.found.test.length + exp.found.check.length) * plan.Ts + EXPERIMENT.pause.seconds + 0.5);
+    assert.ok(plan.budget - at < E.settleMax * 3 + (exp.found.test.length + exp.found.check.length) * plan.Ts + EXPERIMENT.pause.seconds + 0.5);
   }
   return `${name}: ${tries.length} tries (${tries.map((T) => T.mark[0]).join('')}), ${ladder.why}, best J ${J.toFixed(3)}, ${t.toFixed(0)} s`;
 }

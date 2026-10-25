@@ -103,7 +103,7 @@ test('identify(): the experiment runs as the block\'s hidden law in a copy, r pl
   assert.equal(m.structure, 'intLag');
   assert.ok(Math.abs(m.params.kp - 1.4286) < 0.01 * 1.4286, `k′ ${m.params.kp}`);
   assert.ok(m.sentences.length >= 3 && m.sentences.length <= 6, m.sentences.join(' | '));
-  assert.ok(m.sentences.some((s) => /^Keeps moving as long as it is pushed: 1 V for 1 s moves it 1\.4\d+ ± 0\.000\d rad \(it integrates\)\.$/.test(s)), m.sentences.join(' | '));
+  assert.ok(m.sentences.some((s) => /^Keeps moving as long as it is pushed: 1 V for 1 s moves it 1\.4\d+ ± 0\.00\d+ rad \(it integrates\)\.$/.test(s)), m.sentences.join(' | '));
   assert.ok(m.sentences.includes('This plant has no noise; real plants do.'));
 });
 
