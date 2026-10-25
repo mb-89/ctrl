@@ -69,6 +69,11 @@
     "signals": "P,T,ctrl.r,ctrl.u,ctrl.y,d,r",
     "hash": "dec8753d"
   },
+  "Unknown oven: identify, then tune": {
+    "samples": 2001,
+    "signals": "P,T,ctrl.r,ctrl.u,ctrl.y,d,r",
+    "hash": "7a24b30d"
+  },
   "DC motor with an unbalanced arm": {
     "samples": 2001,
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,current,load,r,speed",

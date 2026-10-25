@@ -16,7 +16,7 @@ Reader: whoever changes Live mode, its protocol, the plant and its download, or 
 
 | Mode | The page sends each cycle | Who controls | In the page |
 |---|---|---|---|
-| **Control** (tune a controller) | the control effort u, plus r and e for the plant's log | the page's Controller blocks | tuning live; Auto-tune and Analysis wait for identification (designed, [identification.md](identification.md)) |
+| **Control** (tune a controller) | the control effort u, plus r and e for the plant's log | the page's Controller blocks | tuning live; Identify measures the plant, then Auto-tune and Analysis work on its model and Try on the plant takes a result back to it ([identification.md](identification.md)) |
 | **Reference** (log data, or drive a plant with its own controller) | reference values | the plant's own controller | the Controller and Auto-tune tabs say **not in the loop** (Auto-tune does not start); recording, the scope and (partly) identification work |
 
 **One system, a switch** (input 31): *HIL: an external plant* is the one HIL system, and the mode is a switch in its Live settings, **Mode**: *Page* (the page controls) or *Plant* (the plant controls). Pressed while the plant is connected and stopped, it sends `mode`; the plant (the example plant: the same model, the same seed) runs in that mode from then on and answers with its new description, and the page takes the new ports as on Connect, rewiring as the mode needs (`followPorts`, `src/core/live.js`): in reference mode r goes straight into the plant's reference input and the Sink V shows the plant's own effort; back in control mode the Controller drives the plant again and V shows its u. A plant without `mode` answers `-32601`: the page says to start it with `--mode reference` instead, and follows what it describes, as before. Agents: `loopTuner.live.setMode(mode)`, the MCP server's `page_live` with `action: "mode"`. *HIL with an agent* is the same plant, drawn at random (`--random`), with an agent on the page through the MCP server ([mcp.md](mcp.md)).
@@ -212,7 +212,7 @@ The person ([input 20](../input/2026-10-25-20-hil-plant-is-a-black-box.md)): "we
 - **The library's HIL systems** are **HIL: an external plant** and **HIL: an external plant, reference mode** (before: "HIL: external motor"; since input 31, **HIL: an external plant** with the Mode switch and **HIL with an agent**): a Source r, a Controller (control mode), one External plant block and Sinks on its outputs; no motor model, no Source d, no Arm view; tagged **Black box**. Their notes say the downloadable example happens to simulate a motor with an arm, which the page does not know and must identify. The controller is a first guess (a P, Kp 2, within the described ±12 V) and Off; the PD and PID tuned by hand on the script's physics went. Interpretation: a guess the person can run is kept so that Run shows something; tuning waits for Identify.
 - **The ports come from `describe` only**: the block stores the last description (the example plant's, so the diagram is valid offline) and takes the plant's anew on Connect. **The Sinks and channels follow the outputs** (`followPorts` in `src/core/live.js`, one undo step with the ports): a Sink named for its port takes the port's new name and unit (and a channel on it follows); an output without a Sink gets one, wired; a Sink named for a port that went goes (and a channel on it clears). A Sink the person named stays. Connected to the example's heater, "HIL: an external plant" became P → T (the controller's wire into P went, as P is not V; the channel on angle shows T).
 - **A disturbance only where the plant offers one**: `hil_plant.py` has no `load` input unless started with `--dyno` (then an ordinary described input of kind `disturbance`, which the person wires). Without it the model's load holds 0; the physics is unchanged.
-- **Auto-tune and Analysis** on a HIL plant say plainly that the page knows only the interface and needs an identified model (Identify, not built yet), instead of reading a diagram that does not exist.
+- **Auto-tune and Analysis** on a HIL plant say plainly that the page knows only the interface and needs an identified model (the Identify tab), instead of reading a diagram that does not exist; once identified they work on the model.
 - Tests: `test/hil-blackbox.test.mjs`.
 
 ## Hard ranges and applied inputs (2026-10-25)
@@ -272,7 +272,6 @@ The page's own time per cycle was 0.1–0.25 ms on average (at most 4–17 ms, a
 
 ## Not yet
 
-- Auto-tune and Analysis on the identified model, so they work for HIL ([identification.md](identification.md) step 9). Identify itself runs on a live plant (§5.11 there, built on branch `feat/identify-tab`).
 - A trigger for live sweeps, so that loops separated by a ramp-in line up on the screen.
 - Signals the plant only logs (outputs that are not ports).
 - An agent tuning through MCP; remote plants (wss://, a token); several External blocks; binary frames for rates above 200 Hz.

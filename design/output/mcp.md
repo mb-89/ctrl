@@ -38,7 +38,7 @@ Every one of these tools takes an optional `project`: the name of a project in m
 | `autotune_history` | Every Auto-tune run since the server started, core and page alike: where, project, method, block, cost before and after, better, applied. `index` returns one run's whole report. | |
 | `analyze` | The Analysis tab's numbers at `at` (`"origin"`, `"initial"`, `{ "y": [levels] }`, `{ "t": s }`): stable or not, unstable pole counts, gain margins up and down (dB), phase margin and crossover, delay margin, Ms, Mt, least damping, closed-loop poles (s and z, ωn, ζ), the linear step. | `node cli.mjs analyze --json` |
 | `designs` | What each running designed variant computed from the plant: status, warnings, refusal. | `node cli.mjs design --json` |
-| `identify` | **Not built yet**: answers that it is not until the Identify core lands, and points to `page_signals` for the data. | |
+| `identify` | Identify's whole test on a simulated plant (`block`, `band`, `budget`, `vary`, `structure`; `keep` stores the record in the project in memory, for `autotune` with `plant: "identified"`): the same report as `node cli.mjs identify --json`, without the record. A live plant is identified on the page. | |
 | `save_project`, `export_html` | Write `.json`, or the standalone page with the project inside. | `node cli.mjs html` |
 
 ### On the page (the agentic mode)
@@ -135,7 +135,7 @@ Registered with Claude Code (`claude mcp add`, here as a project's `.mcp.json`) 
 - **One request at a time**, in the order they came. A long `autotune` delays the requests behind it, but a cancellation takes effect within about 50 ms. A design that plans (the planned swing-up) computes for seconds without yielding and cannot be cancelled half-way. `page_autotune` runs on the page and blocks it while it tunes, as the tab does.
 - **The page tools need the page open** in a browser on the same computer (`127.0.0.1` only); one page at a time. The page is served only while the agent's client keeps the server running.
 - **Live plants** are reached only through the page (`page_live`), never by the core-alone tools. The plant is real time: the tool descriptions tell the agent to stop it or E-stop it when in doubt.
-- **Identify is a stub** until the Identify core lands on main. The tool is listed so clients see it, and it answers that it is not built yet.
+- **Identify runs on simulated plants**; a live plant is identified on the page (its Identify tab), where the person sees the test and can stop it.
 - **Paths** are read and written as given, relative to the server's working directory. The server has the file access of the user who started it.
 - **Traces are downsampled** by keeping every n-th sample (and the last), so a peak between kept samples does not show in them. The metrics and summaries are measured on every sample.
 - **The MCP server names MCP clients** (input 36): its start text, `--help` and README.md say how to connect Claude Code, Claude Desktop, VS Code, Cursor or any client, with its own path filled in. The page carries these files, and its provenance rule never lets it name the host it was first shown in, so `test/provenance.test.mjs` sets aside exactly those client names, and only inside the MCP server's own files. `claude.ai`, the host's adapter, the person's identifiers, paths and the rest stay forbidden there too. The protocol revisions in `mcp.mjs` are dates by MCP's naming; the test sets aside those two statements, and only those.

@@ -21,6 +21,8 @@ function fromPlant(e) {
     ...(e.ui ? { ui: structuredClone(e.ui) } : {}),
     // Its record step, when the system needs its own (sim.sampleTime).
     ...(e.sim ? { sim: structuredClone(e.sim) } : {}),
+    // Its Identify settings (a hidden variation), with the plant.
+    ...(e.identify ? { identify: structuredClone(e.identify) } : {}),
     tags: systemTags(e),
   };
 }
@@ -145,7 +147,11 @@ export function applySystem(project, entry, parts) {
     // Keep signals the current plant still plays; take the system's for the rest.
     p.system.signals = { ...(p.system.signals ?? {}), ...structuredClone(entry.input.signals) };
   }
-  if (parts.includes('plant') && entry.plant) p.system.plant = structuredClone(entry.plant);
+  if (parts.includes('plant') && entry.plant) {
+    p.system.plant = structuredClone(entry.plant);
+    // Identify's settings and kept tests belong to the plant they measured.
+    if (entry.identify) p.system.identify = structuredClone(entry.identify); else delete p.system.identify;
+  }
   if (parts.includes('controller') && entry.controller) {
     const c = structuredClone(entry.controller);
     Object.assign(p, { candidates: c.candidates, goal: c.goal, sim: c.sim });

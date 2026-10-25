@@ -14,7 +14,9 @@ import { knownFor, identifySettings, planExperiment, identifySteps, compactRecor
 import { normalizeDiagram } from '../src/core/diagram.js';
 import { drain } from '../src/core/autotune.js';
 import { libraryProject } from './fixtures/plants.mjs';
-import { createArm, drawArm } from './fixtures/arm.mjs';
+import { createArm, drawArm, armAt } from './fixtures/arm.mjs';
+
+const SEED18 = 3;
 
 const DESC = { protocol: 'loop-tuner-hil/1', name: 'arm', rate_hz: 100, inputs: [{ name: 'V', unit: 'V', min: -12, max: 12, safe: 0 }], outputs: [{ name: 'angle', unit: 'rad', min: -3.1416, max: 3.1416, hard_min: -2.5, hard_max: 2.5 }, { name: 'speed', unit: 'rad/s', min: -120, max: 120 }, { name: 'current', unit: 'A', min: -12, max: 12 }], running: false, estop: null };
 
@@ -55,11 +57,11 @@ const tick = () => new Promise((r) => setTimeout(r, 2));
 // describes; a loop connected to the arm; the page fits at the pause
 // (supply: false leaves it waiting). Returns { project, plan, plant, loop,
 // out, run(cycles, until) }.
-async function setup({ seed = 1, supply = true } = {}) {
+async function setup({ seed = 1, supply = true, vary = 0.15 } = {}) {
   const project = libraryProject('HIL: an external plant');
   const known = knownFor(project, null, { describe: DESC, link: { connected: true, estop: false } });
   const plan = planExperiment(known, identifySettings(project, null, { known }));
-  const arm = createArm(drawArm(seed), { Ts: 0.01 });
+  const arm = createArm(drawArm(seed, vary), { Ts: 0.01 });
   const plant = armPlant(arm);
   const out = [];
   let pre = null;
@@ -82,7 +84,7 @@ async function setup({ seed = 1, supply = true } = {}) {
   return { project, plan, arm, plant, loop, out, run, done, pre: () => pre };
 }
 
-test('7. the live loop runs the experiment as the block\'s law: the page fits at the pause and supplies the fit; the plant is stopped at the end', async () => {
+test('7. the live loop runs the experiment as the block\'s law: the page fits at the pause and supplies the fit; the plant is stopped at the end', async (t) => {
   const s = await setup();
   s.loop.handle({ type: 'identify', key: 'ctrl', plan: s.plan, source: 'r', hold: {}, applied: 0 });
   for (let i = 0; i < 5; i++) await tick();
@@ -109,6 +111,15 @@ test('7. the live loop runs the experiment as the block\'s law: the page fits at
   await s2.run(5000);
   const rc = recheckFit(model, compactRecord(s2.done().record), compactRecord(end.record));
   assert.ok(rc.still, rc.message);
+  // 18. Check again against another arm draw (±30 %, seed 3: gain −31 %, f +32 %): the plant has changed.
+  const s3 = await setup({ seed: SEED18, vary: 0.3 });
+  s3.loop.handle({ type: 'identify', key: 'ctrl', plan, source: 'r', hold: {}, applied: 0 });
+  for (let i = 0; i < 5; i++) await tick();
+  await s3.run(5000);
+  const other = recheckFit(model, compactRecord(s3.done().record), compactRecord(end.record));
+  const a = armAt(drawArm(1), 0.25).gain, b = armAt(drawArm(SEED18, 0.3), 0.25).gain;
+  t.diagnostic(`same arm: ${rc.message}; another draw: ${other.message}`);
+  assert.ok(!other.still && /the plant has changed/.test(other.message), `${other.message} (gain ${a} against ${b})`);
 });
 
 test('14. an E-stop mid-test ends it at once, keeps the record marked, and Reset does not resume', async () => {

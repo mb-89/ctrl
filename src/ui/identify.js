@@ -10,8 +10,9 @@
 // try a sweep of its own. Nothing but the record is kept, on Keep; the model
 // is computed from it whenever it is needed.
 
-import { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord, discriminateSteps, fitSupply, shakeWanted, planTry, tryOutcome } from '../core/identify.js';
+import { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord, discriminateSteps, fitSupply, shakeWanted, planTry, tryOutcome, compareWithDiagram, compareCurves, compareHorizon, varyDiagram } from '../core/identify.js';
 import { controllerBlocks, placeVariant, baseName } from '../core/autotune.js';
+import { findExternal } from '../core/hil.js';
 import { normalizeVariant } from '../core/controllers.js';
 import { AS_FAST, formatSpeed } from '../core/speed.js';
 import { num, parseSI } from './units.js';
@@ -22,6 +23,7 @@ const SLICE = 30;       // ms of computing per task, so the page keeps drawing
 const FRAME = 0.25;     // s of wall time a slow frame may make up, at most
 const RENDER = 100;     // ms between two renders of the progress while it runs
 const MAX_SWEEP = 4000; // samples a sweep keeps, at most
+const SHARES = [0.05, 0.1, 0.15, 0.2, 0.3]; // Hide a variation: within ± this share
 const PLOTS = {
   check: { label: 'Check', about: 'The Check: what was measured (a test the model was not fitted to) against the model\'s prediction and its 2σ band, with the reference.' },
   bode: { label: 'Bode', about: 'How much of a swing at each frequency the model passes, as the sampled loop sees it, with its 2σ band; when the Shake ran, the measured points with their ±2σ bars, one colour per place.' },
@@ -40,7 +42,7 @@ const TIPS = {
 };
 
 export function createIdentifyTab(host, app, display, record) {
-  const st = { target: null, plot: 'check' };
+  const st = { target: null, plot: 'check', compare: false };
   let job = null;             // the test in progress
   const fresh = new Map();    // block key → the last test run here, not kept (memory only)
   const models = new Map();   // record hash + structure → a model computed from it
@@ -48,6 +50,7 @@ export function createIdentifyTab(host, app, display, record) {
   const checks = new Map();   // block key → the last Check again's verdict
   let tryLast = null;         // the last Try on the plant: { key, text, end, ok }
   const connections = new Map(); // record hash → the live connection it was measured on (this page session)
+  const compared = new Map();     // model + variation + diagram → its comparison with the diagram (§13)
 
   host.innerHTML = `
     <div class="ident">
@@ -75,6 +78,7 @@ export function createIdentifyTab(host, app, display, record) {
         <div class="seg" id="id-plots" role="radiogroup" aria-label="Plot"></div>
         <canvas class="idplot" id="id-plot" aria-label="The plot"></canvas>
         <p class="hint" id="id-plotnote"></p>
+        <div id="id-cmp"></div>
       </section>
     </div>
     <div id="id-empty" hidden></div>`;
@@ -104,14 +108,14 @@ export function createIdentifyTab(host, app, display, record) {
   }
   // The diagram as the experiment sees it: the variants and the blocks'
   // places aside, so Add as variant keeps a test that is not kept.
-  const plantKey = () => JSON.stringify(root(), function (k, v) { if (k === 'x' || k === 'y' ? typeof v === 'number' && this.id !== undefined : k === 'variants' || k === 'variant') return undefined; return v; });
+  const plantKey = (key) => JSON.stringify(stored(key).vary ?? null) + JSON.stringify(root(), function (k, v) { if (k === 'x' || k === 'y' ? typeof v === 'number' && this.id !== undefined : k === 'variants' || k === 'variant') return undefined; return v; });
 
   // ---- The model shown: the test just run (not kept), else the kept one in use.
 
   function source(key) {
     const f = fresh.get(key);
-    if (f && f.plant === plantKey() && f.keptAs === null) return { kind: 'fresh', plan: f.result.plan, record: f.result.record, name: f.name, result: f.result };
-    if (f && f.plant !== plantKey()) fresh.delete(key);
+    if (f && f.plant === plantKey(key) && f.keptAs === null) return { kind: 'fresh', plan: f.result.plan, record: f.result.record, name: f.name, result: f.result };
+    if (f && f.plant !== plantKey(key)) fresh.delete(key);
     const s = stored(key), kept = s.kept ?? [];
     if (!kept.length) return null;
     const i = Math.min(kept.length - 1, Math.max(0, s.use ?? kept.length - 1));
@@ -190,6 +194,12 @@ export function createIdentifyTab(host, app, display, record) {
       `<label class="idpf" title="How far the test may move ${esc(y.name)}: the page eases in and backs off before it reaches an edge. Default: r's range widened by a third of its span on each side, inside the plant's range."><span class="flabel">${esc(y.name)} may move within</span><span class="idpair"><input class="field field-sm mono" data-k="band0" value="${settings.band.value ? esc(num(settings.band.value[0], 4)) : ''}" ${lock}><span>…</span><input class="field field-sm mono" data-k="band1" value="${settings.band.value ? esc(num(settings.band.value[1], 4)) : ''}" ${lock}></span><span class="hint">${esc(y.unit)}${bandFrom ? ` · ${esc(bandFrom)}` : ''}</span></label>`,
       `<label class="idpf" title="Plant time: the test eases in for as long as this allows, and always keeps time for the Check."><span class="flabel">The test may take</span><select class="field field-sm" id="id-budget" ${lock}>${BUDGETS.map((b) => `<option value="${b}" ${b === settings.budget.value ? 'selected' : ''}>${b < 60 ? `${b} s` : `${b / 60} min`}</option>`).join('')}</select></label>`,
     ];
+    // Hide a variation (§13): off by default; the plant the test measures is
+    // the diagram with every physical parameter drawn within ±share.
+    if (!known.live) {
+      const vary = stored(c.key).vary ?? null;
+      rows.push(`<div class="idpf"><button class="btn btn-sm" id="id-vary" aria-pressed="${!!vary}" ${lock} title="The test measures the diagram with every physical parameter (masses, lengths, gains, time constants, friction) scaled by a hidden factor within the share, from the seed: identify the plant you modelled as if it were a real one. The model column reveals what was drawn.">Hide a variation</button>${vary ? `<span class="idpair"><select class="field field-sm" id="id-share" aria-label="Within" ${lock}>${SHARES.map((x) => `<option value="${x}" ${Math.abs(x - vary.share) < 1e-9 ? 'selected' : ''}>±${Math.round(100 * x)} %</option>`).join('')}</select><span>seed</span><input class="field field-sm mono" id="id-seed" aria-label="Seed" value="${esc(String(vary.seed))}" ${lock}></span>` : ''}</div>`);
+    }
     if (!editing($('#id-known'))) $('#id-known').innerHTML = rows.join('');
     $('#id-why').innerHTML = ctx.why ? `<span class="text-bad">✕ ${esc(ctx.why)}</span>${ctx.hint ? `<br><span class="hint">${esc(ctx.hint)}</span>` : ''}` : '';
     return ctx;
@@ -231,7 +241,7 @@ export function createIdentifyTab(host, app, display, record) {
   // The state of the last test, for the chips and the status after it.
   function shownState() {
     const f = fresh.get(current()?.key);
-    return f && f.plant === plantKey() ? f.state : null;
+    return f && f.plant === plantKey(current()?.key) ? f.state : null;
   }
   function meter(id, label, v, max, marks, title) {
     const pct = (x) => `${Math.round(100 * Math.min(1, Math.max(0, x)))}`;
@@ -319,6 +329,12 @@ export function createIdentifyTab(host, app, display, record) {
     if (kept.length > 1 || (kept.length && src.kind === 'fresh')) {
       out.push(`<div class="choices" role="radiogroup" aria-label="Kept tests">${kept.map((k, i) => `<button class="item" role="radio" data-use="${i}" aria-checked="${src.kind === 'kept' && src.index === i}"><span>${esc(k.name)}</span><span class="hint">${esc(clock(k.record.y.length * k.record.Ts))}</span></button>`).join('')}</div>`);
     }
+    const vary = !app.live?.owns() && root() ? s.vary : null;
+    if (vary) {
+      const { factors } = varyDiagram(root(), vary.share, vary.seed);
+      const pct = (f) => `${f >= 1 ? '+' : '−'}${num(Math.abs(100 * (f - 1)), 2)} %`;
+      out.push(`<details class="more"><summary class="disclosure label"><span class="chev"></span>The hidden plant</summary><p class="note">The test measured the diagram varied within ±${esc(String(Math.round(100 * vary.share)))} % (seed ${esc(String(vary.seed))}): ${factors.length ? esc(factors.map((f) => `${f.label} ${pct(f.factor)}`).join(', ')) : 'nothing in it is physical'}.</p></details>`);
+    }
     if (model.warnings?.length) out.push(`<details class="more"><summary class="disclosure label"><span class="chev"></span>Notes</summary>${model.warnings.map((w) => `<p class="note">${esc(w)}</p>`).join('')}</details>`);
     box.innerHTML = out.join('');
     box.querySelectorAll('[data-structure]').forEach((el) => { el.onclick = () => { if (el.dataset.structure !== model.structure) setSetting(c.key, 'structure', el.dataset.structure); }; });
@@ -372,6 +388,49 @@ export function createIdentifyTab(host, app, display, record) {
     $('#id-plots').innerHTML = Object.entries(PLOTS).map(([k, x]) => `<button class="btn btn-sm" role="radio" data-plot="${k}" aria-checked="${k === st.plot}" title="${esc(x.about)}">${x.label}</button>`).join('');
     host.querySelectorAll('[data-plot]').forEach((el) => { el.onclick = () => { st.plot = el.dataset.plot; renderPlots(model); }; });
     drawPlot(model);
+    renderCompare(model);
+  }
+
+  // ---- Compare with the diagram (§13): simulated plants only.
+  const canCompare = () => !app.live?.owns() && !!root() && !findExternal(root());
+  function comparison(model) {
+    const c = current();
+    if (!c || !st.compare || job || !model?.ok || !canCompare()) return null;
+    const vary = stored(c.key).vary ?? null;
+    const k = `${recordHash(source(c.key)?.record ?? null)}|${model.structure}|${plantKey(c.key)}`;
+    if (!compared.has(k)) {
+      let v;
+      try { v = compareWithDiagram(app.project, c.path, model, { vary }); } catch (err) { v = { error: err.message }; }
+      compared.set(k, v);
+      if (compared.size > 12) compared.delete(compared.keys().next().value);
+    }
+    return compared.get(k);
+  }
+  function renderCompare(model) {
+    const box = $('#id-cmp');
+    if (!canCompare() || !model?.ok || job) { box.innerHTML = ''; return; }
+    const cmp = comparison(model);
+    const out = [`<button class="btn btn-sm" id="id-compare" aria-pressed="${st.compare}" title="Draws the diagram's own linearisation at each place the test sat, dashed on Bode and Step, and lists what the test found beside it: how far the identification is from what you modelled">Compare with the diagram</button>`];
+    if (cmp?.error) out.push(`<p class="note text-bad">✕ ${esc(cmp.error)}</p>`);
+    else if (cmp) {
+      const res = cmp.rows.some((r) => 'f' in r.found);
+      const cell = (a, b) => `<td>${esc(Number.isFinite(a) ? num(a, 3) : '–')}</td><td class="muted">${esc(Number.isFinite(b) ? num(b, 3) : '–')}</td>`;
+      const head = ['near', 'gain', '', res ? 'f Hz' : 'τ s', '', ...(res ? ['ζ', ''] : []), 'θ s', ''];
+      const rows = cmp.rows.map((r) => `<tr${r.seen < GRADE.seen ? ' class="muted"' : ''}><td>${esc(num(r.level, 3))}</td>${r.diagram
+        ? `${cell(r.found.gain, r.diagram.gain)}${res ? `${cell(r.found.f, r.diagram.f)}${cell(r.found.zeta, r.diagram.zeta)}` : cell(r.found.tau, r.diagram.tau)}${cell(r.found.theta, r.diagram.theta)}`
+        : `<td colspan="${res ? 8 : 6}" class="text-bad">${esc(r.error)}</td>`}</tr>`).join('');
+      out.push(`<p class="note">${esc(cmp.sentence)}</p>`);
+      out.push(`<div class="ctabwrap"><table class="ctab" aria-label="Found against the diagram"><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr><tr><th></th>${head.slice(1).map((_, i) => `<th class="hint">${i % 2 ? 'diagram' : 'found'}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`);
+      for (const n of cmp.notes) out.push(`<p class="hint">${esc(n)}</p>`);
+    }
+    box.innerHTML = out.join('');
+    $('#id-compare').onclick = () => { st.compare = !st.compare; renderPlots(model); };
+  }
+  // The diagram's curves of the comparison rows, dashed, one colour per place.
+  function compareLines(model, opts) {
+    const cmp = comparison(model);
+    if (!cmp?.rows) return [];
+    return cmp.rows.filter((r) => r.diagram).map((r, i) => ({ ...compareCurves(r.diagram.sys, model.Ts, opts), color: C().ch[1 + (i % 3)], faint: r.seen < GRADE.seen }));
   }
   function drawPlot(model) {
     const note = $('#id-plotnote');
@@ -396,17 +455,18 @@ export function createIdentifyTab(host, app, display, record) {
       });
       note.textContent = `measured (${n.y}) against the model's prediction and its 2σ band: ${fitText(ck.fit)} % (the noise allows ${fitText(ck.ceiling)} %)`;
     } else if (st.plot === 'step') {
-      const slow = Math.max(...model.chain.filter((x) => ['lag', 'delay'].includes(x.kind)).map((x) => x.value), 1 / (model.params.f ?? Infinity) * 3, 10 * model.Ts);
-      const sp = modelStep(model, Math.min(6 * slow + (model.params.theta ?? 0), 600));
+      const sp = modelStep(model, compareHorizon(model));
       const kern = model.kernel ? kernelCurve(model.kernel, sp.t.at(-1)) : null;
-      const [y0, y1] = extent([...sp.lo, ...sp.hi, 0, ...(kern ? kern.s : [])]);
+      const diag = compareLines(model, { N: sp.t.length });
+      const [y0, y1] = extent([...sp.lo, ...sp.hi, 0, ...(kern ? kern.s : []), ...diag.flatMap((d) => [...d.step])]);
       plot.frame({ x0: 0, x1: sp.t.at(-1), y0, y1, xunit: 's', ylabel: `${n.y} per ${n.uUnit || n.u}` });
       plot.clip(() => {
         band(sp.t, sp.lo, sp.hi, cols[0]);
         if (kern) plot.line(kern.t, kern.s, { color: cols[2], dash: [2, 3], width: 1.2 });
+        for (const d of diag) plot.line(sp.t, d.step, { color: d.faint ? fade(d.color, C().alpha.unselected) : d.color, dash: [6, 4], width: 1.2 });
         plot.line(sp.t, sp.y, { color: cols[0], width: 1.6 });
       });
-      note.textContent = `the model's step: one ${n.uUnit || 'unit'} more of ${n.u}, from rest${kern ? '; dotted: the kernel (no shape chosen)' : ''}`;
+      note.textContent = `the model's step: one ${n.uUnit || 'unit'} more of ${n.u}, from rest${kern ? '; dotted: the kernel (no shape chosen)' : ''}${diag.length ? '; dashed: the diagram linearised at each place the test sat' : ''}`;
     } else if (st.plot === 'bode') {
       const nyq = Math.PI / model.Ts, slowest = Math.max(...model.chain.filter((x) => x.kind === 'lag').map((x) => x.value), model.params.f ? 1 / (2 * Math.PI * model.params.f) : 0, model.Ts);
       const wa = Math.min(0.05 / slowest, nyq / 1e3), w = Array.from({ length: 160 }, (_, i) => wa * (nyq / wa) ** (i / 159));
@@ -416,10 +476,12 @@ export function createIdentifyTab(host, app, display, record) {
       // The Shake's measured points (§6.7), each place in its own colour, with ±2σ bars.
       const pts = (model.frf ?? []).flatMap((x, p) => x.f.map((f, j) => ({ w: 2 * Math.PI * f, m: Math.hypot(...x.G[j]), sd: x.sd[j], p })));
       const inRange = pts.filter((q) => q.w >= w[0] && q.w <= w.at(-1));
-      const [y0, y1] = extent([...mag, ...hi, ...inRange.map((q) => dB(q.m))].filter((v) => v > -200));
+      const diag = compareLines(model, { w }).map((d) => ({ ...d, db: d.mag.map(dB) }));
+      const [y0, y1] = extent([...mag, ...hi, ...inRange.map((q) => dB(q.m)), ...diag.flatMap((d) => d.db)].filter((v) => v > -200));
       plot.frame({ x0: w[0], x1: w.at(-1), y0: Math.max(y0, y1 - 80), y1, xlog: true, xlabel: 'rad/s', ylabel: '|G| dB' });
       plot.clip(() => {
         band(w, lo, hi, cols[0]);
+        for (const d of diag) plot.line(w, d.db, { color: d.faint ? fade(d.color, C().alpha.unselected) : d.color, dash: [6, 4], width: 1.2 });
         plot.line(w, mag, { color: cols[0], width: 1.6 });
         for (const q of inRange) {
           const color = cols[1 + (q.p % 3)];
@@ -428,7 +490,7 @@ export function createIdentifyTab(host, app, display, record) {
         }
       });
       const shook = (model.frf ?? []).map((x) => `at ${num(x.place, 3)}: ${Math.round(100 * (x.within ?? 0))} % of the lines within 2σ, ${num(x.distortion.share, 2)} % not linear`).join('; ');
-      note.textContent = `|G|, as the loop sampled at ${fmtTime(model.Ts)} sees it, with its 2σ band${shook ? `; dots: the Shake ${shook}` : ''}; phase ${num(b.phase[Math.floor(w.length / 2)], 3)}° at ${num(w[Math.floor(w.length / 2)], 3)} rad/s`;
+      note.textContent = `|G|, as the loop sampled at ${fmtTime(model.Ts)} sees it, with its 2σ band${shook ? `; dots: the Shake ${shook}` : ''}${diag.length ? '; dashed: the diagram linearised at each place the test sat' : ''}; phase ${num(b.phase[Math.floor(w.length / 2)], 3)}° at ${num(w[Math.floor(w.length / 2)], 3)} rad/s`;
     } else if (st.plot === 'where') {
       const pl = model.where ?? [];
       if (!pl.length) { plot.frame({ x0: 0, x1: 1, y0: 0, y1: 1 }); plot.note('one place only'); return; }
@@ -663,7 +725,7 @@ export function createIdentifyTab(host, app, display, record) {
     }
     const name = `${j.known.y.name} · ${new Date().toTimeString().slice(0, 5)}`;
     checks.delete(j.key);
-    fresh.set(j.key, { result, name, state: stateOf(j), plant: plantKey(), keptAs: null, connection: j.live ? j.connection : null });
+    fresh.set(j.key, { result, name, state: stateOf(j), plant: plantKey(j.key), keptAs: null, connection: j.live ? j.connection : null });
     if (j.live) connections.set(recordHash(result.record), j.connection);
     const mk = modelKey({ record: result.record }, result.settings.structure);
     remember(mk, result.model);
@@ -732,6 +794,20 @@ export function createIdentifyTab(host, app, display, record) {
     const c = current();
     const budget = $('#id-budget');
     if (budget) budget.onchange = () => { const v = Number(budget.value); budget.blur(); setSetting(c.key, 'budget', v === 120 ? null : v); };
+    const vary = stored(c.key).vary ?? null;
+    const vb = $('#id-vary');
+    if (vb) vb.onclick = () => setSetting(c.key, 'vary', vary ? null : { share: 0.15, seed: 7 });
+    const share = $('#id-share');
+    if (share) share.onchange = () => { share.blur(); setSetting(c.key, 'vary', { ...vary, share: Number(share.value) }); };
+    const seed = $('#id-seed');
+    if (seed) {
+      seed.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') seed.blur(); if (e.key === 'Escape') { seed.value = String(vary.seed); seed.blur(); } };
+      seed.onblur = () => {
+        const v = Number(seed.value.trim());
+        if (!Number.isInteger(v)) { app.toast('The seed is a whole number.'); seed.value = String(vary.seed); return; }
+        if (v !== vary.seed) setSetting(c.key, 'vary', { ...vary, seed: v });
+      };
+    }
     host.querySelectorAll('#id-known input[data-k]').forEach((inp) => {
       inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } };
       inp.onblur = () => {

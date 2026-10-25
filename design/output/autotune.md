@@ -1,4 +1,4 @@
-# Tab 4: Auto-tune
+# Tab 5: Auto-tune
 
 Reader: whoever changes the auto-tuner, its methods or the tab. **Status: built 2026-10-24; revised the same day after a review** (the goal is locked during a run, experiments always hand the scope back, work runs in slices, reverse-acting plants, result naming, the command line), **and again for the step method** (integrating plants such as the DC motor, ripple, a schedule per point, why a result scores worse; see *Step response*), **and once more after a check of SIMC against the paper and a run over the whole library** (the PID's derivative filter in the dead time, the ramp test run until the lag has faded, steps toward the middle, τc shown as used). The person's words are in [../input/2026-10-24-09-analysis-autotune-triple-swingup.md](../input/2026-10-24-09-analysis-autotune-triple-swingup.md): "one system library element that's maybe badly tuned by default, and then we can use the autotuner to tune it better. And then you would see that over a number of iterations, the tuning parameters improve the behavior … research what common auto-tuning strategies are and put them in there." Background research: [../research/autotune.md](../research/autotune.md).
 
@@ -162,6 +162,10 @@ Four columns: **Controller** (the block, if several; the running variant and its
 - **One undo step for a whole run**: Ctrl+Z restores the project as it was before Start, and the progress column forgets a result that undo removed.
 - **Stop** keeps the best gains found so far (Iterate) or applies nothing (experiments). **The scope's Stop does the same while a run of the tuner sweeps on the display**, and the scope stays stopped (it used to skip to the next run). Loading another system or undoing during a run stops it.
 
+## On the identified model
+
+With Identify ([identification.md](identification.md)) the tab tunes on the diagram or on the identified model, one choice per block ("Plant: the diagram | the model", stored as `system.identify[key].source`); a plant outside the page only on the model. The method runs unchanged on a copy with the model in the plant's place and a test push at its input; results are named "… (model)", and on a simulated plant the status gives the cost on the model and on the diagram (the hidden variation's copy when one is set). **Try on the plant** then takes a PI or PID result to the plant in three screened steps, with a monitor that falls back to the controller that held. Details and measurements: identification.md §10.1 and §11.1.
+
 ## How the core reads a loop
 
 `compileDiagram` adds, for every Controller block (not Observer blocks), probes under its id path: `ctrl.r` (input 1), `ctrl.y` (input 2), `ctrl.u` (output); inside a subsystem `motor/ctrl.u`. A signal name never has a dot, so no scope channel lists them. `tuneContext` checks that inputs 1 and 2 are wired (else: "wire the measurement y to input 2"), copies the plant and runs variants on the copy (`withVariant`), never touching the project. A plant with an External plant block (Live mode) is refused: offline it reads 0, and every method simulates.
@@ -179,6 +183,5 @@ Four columns: **Controller** (the block, if several; the running variant and its
 - A robustness check: score the result against plant variations (±20–50 % of uncertain parameters).
 - AMIGO and Cohen–Coon rules; phase-margin placement from the relay's measured point; a noise-aware relay (hysteresis from the measured noise).
 - The step method: a PID for plants that settle (a second-order fit and SIMC's τD = τ2); a least-squares fit over the whole response for strongly nonlinear plants; telling a ripple that is a real disturbance (to reject) from measurement error (to ignore): today either sets τc's floor. The hold's band is 2 % of r's span (of how far y moved): at the tank's points y is still 12–29 % of each point's own step away when the step comes; a band per point changed K, τ and θ by under 10 % and the cost from ×1.63 to ×1.82, so it was left.
-- Auto-tune on an External plant (HIL): it needs an identified model first, or real runs (below).
 - One simulation is still one task: a long experiment on a heavy plant (a run of the encoder example's step test, its hold and one period, up to 0.2 s) holds the page that long. A Worker would remove it.
 - With an external plant (HIL), iterating needs real runs; iterative feedback tuning or extremum seeking fit that case.

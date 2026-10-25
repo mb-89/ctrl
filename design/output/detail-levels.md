@@ -305,7 +305,7 @@ All three use the running levels, through `runDiagram` (§2.1). Nothing in them 
 
 **Analysis** linearises the loop as it runs. When the plant has levels, its header names them. Snapshot operating points (`{ t }`) belong to the running levels. An analog loop with no Controller block, such as the op-amp follower, has nothing for Analysis to cut. Analysis at a wire (a loop probe, as SPICE's Middlebrook or Tian probes) is not built (§13); the example's margins are checked by tests.
 
-**Identify** (designed, not built) experiments on the plant as it runs.
+**Identify** (built) experiments on the plant as it runs.
 
 **The person's experiment, with a Controller:**
 1. Set Detail to 1 in the Plant tab (Clear first if a block is overridden), and press Single.
