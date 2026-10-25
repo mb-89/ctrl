@@ -2,6 +2,14 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: the HIL plant is a black box ([input 20](../input/2026-10-25-20-hil-plant-is-a-black-box.md))
+
+The person: "we shouldn't make assumptions about the plant ... Even if the plant that you programmed is actually a DC motor, we just can't make assumptions about the structure of it ... We have to identify it before we tune it ... the diagram of the [HIL] is a black box. You have a controller that's running against the black box. The signals and their names, they are given to you in the interface ... you can't put a disturbance on it ... you could if you had a dyno control, but we don't have that ... the arm, it doesn't have a 2D or 3D representation because it's a black box ... if the plant exposes a [d] signal, then we can also use it."
+- **A HIL system's diagram is the controller against one External plant block**, nothing else on the plant side: no motor model, no disturbance Source, no view. The External block's ports, names, units and ranges come only from the plant's description (`describe`); the page draws and wires what it is given.
+- **A disturbance only where the plant offers one**: if `describe` lists an input for it (a dyno or a load the plant can apply), it is an ordinary input like any other. Interpretation: the example plant script exposes no such input by default (a real rig without a dyno has none); a flag can expose one for experiments.
+- **No picture of the plant**: a HIL system has no 2D or 3D view; the Plant tab shows the interface description instead. Interpretation: the library entries are named for what the page knows ("HIL: an external plant"), and their notes may say that the downloadable example plant happens to simulate a motor with an arm, which the page does not know and must identify.
+- **Identify before tuning**: on a HIL plant, Auto-tune and Analysis use an identified model (identification.md); until one exists they say so.
+
 ## 2026-10-25 · v2.8: progressive disclosure ([input 19](../input/2026-10-25-19-progressive-disclosure.md))
 
 The person: the System library's descriptions "are too long. Look at how long the DC motor thing is ... There should be a bottom line that you show in the library, and then the model can have a detailed description ... so we can click and see a detailed description of it ... In general, think about progressive disclosure ... On a user interface, in general, what you need to show is what's actionable and needed for a decision. The details you can hide behind the details button"; "the fact that the oven ... has an overshoot of 67 and 52 degrees, that doesn't matter ... to decide which model to show, I don't need to know the numeric values of stuff like this. This is similar in the other examples."
