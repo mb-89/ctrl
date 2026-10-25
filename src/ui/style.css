@@ -27,6 +27,7 @@
   --skirt: #2c3237;
   --knurl: #59616a;
   --bad: #c62f2f;
+  --warn: #ffb21e; --warn-ink: #1b1400;
   --ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
@@ -38,6 +39,7 @@
     --key-top: #3a4148; --key-bot: #2a3036; --key-ink: #e7ebee; --key-edge: rgba(0, 0, 0, 0.6);
     --bezel: #0d0f11; --cap-hi: #8a939b; --cap-lo: #4b535a; --skirt: #121518; --knurl: #3d444b;
     --bad: #ef6464;
+    --warn: #f5a623; --warn-ink: #140f00;
     color-scheme: dark;
   }
 }
@@ -48,6 +50,7 @@
   --key-top: #3a4148; --key-bot: #2a3036; --key-ink: #e7ebee; --key-edge: rgba(0, 0, 0, 0.6);
   --bezel: #0d0f11; --cap-hi: #8a939b; --cap-lo: #4b535a; --skirt: #121518; --knurl: #3d444b;
   --bad: #ef6464;
+  --warn: #f5a623; --warn-ink: #140f00;
   color-scheme: dark;
 }
 
@@ -77,6 +80,12 @@ button, input, select { font: inherit; color: inherit; }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .btn.icon { width: 30px; padding: 0; justify-content: center; }
 .btn svg { width: 15px; height: 15px; }
+/* A limited environment (ui/limited.js): full width below the header, shown
+   from the first paint; the inline check hides it where the page is whole. */
+.limited { flex: 1 0 100%; order: 99; display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 6px; border: 2px solid var(--warn-ink); background: var(--warn); color: var(--warn-ink); font-size: 14px; line-height: 1.4; }
+.lt-full .limited { display: none; }
+.limited-icon { font-size: 22px; line-height: 1; font-weight: 600; }
+.limited-text { flex: 1 1 auto; min-width: 0; }
 .sep { width: 1px; height: 20px; background: var(--line-strong); }
 /* Speed (ui/speed.js): a factor in a header button's frame, its presets in a
    header popover, and the speed achieved beside it in the readout type. */
