@@ -141,7 +141,7 @@ if (qs.has('play')) { const t0 = performance.now(); const tick = () => { show(((
 window.__demo = { view, show };
 `;
   const css = (await import('node:fs')).readFileSync(join(ROOT, 'src/ui/style.css'), 'utf8');
-  const js = build.bundleScript(['core/xml.js', 'core/urdf.js', 'core/rbd.js', 'core/puma560.js', 'ui/display.js', 'ui/view3d.js'], tail).replace(/<\/script/gi, '<\\/script');
+  const js = build.bundleScript(build.MODULES.slice(0, build.MODULES.indexOf('ui/view3d.js') + 1), tail).replace(/<\/script/gi, '<\\/script');
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>PUMA 560 demo</title>
 <style>${css}
 body { display: flex; flex-direction: column; height: 100vh; margin: 0; }
