@@ -5033,6 +5033,7 @@ const EXPERIMENT = {
   },
   pause: { seconds: 2, wait: 30 },
   check: { stair: 0.125 },
+  discriminate: { rest: 0.5 },
   goal: { effort: 0.05, overshoot: 10, overshootWeight: 2, saturation: 0.2 },
 };
 
@@ -5820,6 +5821,42 @@ function createExperiment(plan) {
     return finish('done', 'Checked again: the plant is stopped');
   }
 
+  function* discriminate() {
+    const at = r0, i0 = i;
+    const s0 = yield* settle(at, E.ease.settleMax, `Holding ${names.y} at ${yU(at)} while the page compares the shapes`);
+    if (s0 === 'left') return endBand(`${names.y} left 'may move within' after the Check: the page stopped the plant`);
+    needs = { kind: 'discriminate', upto: i, at };
+    supplied = null;
+    const kMax = k + Math.ceil(E.pause.wait / Ts - 1e-9);
+    for (;;) {
+      if (!holds()) return endBand(`${names.y} left 'may move within' while the controller held it: the page stopped the plant`);
+      if (supplied) break;
+      if (k >= kMax) { needs = null; log({ kind: 'note', i, text: 'the page did not answer in time whether a test should tell two shapes apart' }); return null; }
+      const u = law.step(r, y);
+      meters(u);
+      st.status = `Holding ${names.y} at ${yU(at)} while the page compares the shapes`;
+      yield u;
+    }
+    const d = supplied;
+    if (!d?.shape) { if (d?.why) log({ kind: 'note', i, text: d.why }); return null; }
+    const sig = discriminationSignal(d, Ts), n = sig.length, tail = Math.ceil(E.discriminate.rest * n);
+    if ((n + tail) * Ts > left()) { log({ kind: 'note', i, text: `a test that tells ${d.candidates?.join(' and ') ?? 'two shapes'} apart needs about ${Math.ceil((n + tail) * Ts)} s more: allow a longer test` }); return null; }
+    const status = `Telling two shapes apart: ${d.shape === 'burst' ? `a burst at ${fmtNum(d.f, 2)} Hz` : `a ${d.shape}`} on ${names.u}`;
+    const iS = i;
+    let out = false;
+    for (let j = 0; j < n + tail; j++) {
+      if (!holds()) { out = true; break; }
+      const u = Math.min(P.umax, Math.max(P.umin, law.step(r, y) + (j < n ? sig[j] : 0)));
+      meters(u);
+      st.room = roomUsed(y);
+      st.status = status;
+      yield u;
+    }
+    log({ kind: 'discriminate', i0, iStart: iS, iEnd: i, shape: d.shape, a: d.a, n: d.n, f: d.f ?? null, at, left: out, candidates: d.candidates ?? [] });
+    if (out) return endBand(`${names.y} left 'may move within' during the test that tells two shapes apart: the page stopped the plant`);
+    return null;
+  }
+
 
   function* program() {
     if (P.kind === 'recheck') return yield* recheck();
@@ -5869,6 +5906,8 @@ function createExperiment(plan) {
     if (st.done || stopping) return null;
     chips.shake = '–';
     yield* runCheck();
+    if (st.done || stopping) return null;
+    yield* discriminate();
     if (st.done || stopping) return null;
     return finish('done', `Done: the plant is stopped; ${inc?.n ? `the gentlest controller that held, eased in, is try ${inc.n}` : 'the gentle controller held, and no try was quicker'}`);
   }
@@ -5964,6 +6003,17 @@ function createExperiment(plan) {
   };
 }
 
+function discriminationSignal({ shape, a, n, f }, Ts) {
+  const out = new Float64Array(n);
+  for (let j = 0; j < n; j++) {
+    if (shape === 'burst') {
+      const t = j * Ts, T = 1 / f, ramp = Math.min(1, t / T, (n * Ts - t) / T);
+      out[j] = a * ramp * Math.sin(2 * Math.PI * f * t);
+    } else out[j] = a;
+  }
+  return out;
+}
+
 const orNull = (v) => (Number.isFinite(v) ? v + 0 : null);
 
 function cleanEntry(e) {
@@ -5980,7 +6030,7 @@ function checkPlan(p) {
   if (!p.test || !(Array.isArray(p.test.r) ? p.test.r.length >= 2 : Number.isFinite(p.test.r0))) throw new Error('experiment: plan.test needs r (samples) or r0 (a staircase)');
 }
 
-return { IDENTIFY_VERSION, EXPERIMENT, STAGES, STAGE_LABELS, fmtNum, LENGTHS, budgetText, gentleGains, gentleTauC, piLaw, bumpless, tryCost, tryMargin, listenStats, staircase, halved, createExperiment };
+return { IDENTIFY_VERSION, EXPERIMENT, STAGES, STAGE_LABELS, fmtNum, LENGTHS, budgetText, gentleGains, gentleTauC, piLaw, bumpless, tryCost, tryMargin, listenStats, staircase, halved, createExperiment, discriminationSignal };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
@@ -12850,6 +12900,7 @@ const LOG_KEYS = {
   supply: ['what', 'i', 'upto'],
   pause: ['i0', 'i1', 'waited'],
   check: ['i0', 'iStart', 'iEnd'],
+  discriminate: ['i0', 'iStart', 'iEnd', 'shape', 'a', 'n', 'f', 'at', 'left', 'candidates'],
   end: ['code', 'message', 'i', 't', 'check'],
   stop: ['i', 'code'],
   note: ['i', 'text'],
@@ -16791,10 +16842,10 @@ function createLiveLoop(post, env = globalThis) {
       identNext = { key, plan, source, hold, applied, posted: 0, asked: false };
       try { await start(); return {}; } catch (err) { identNext = null; ident = null; return { error: err.message }; }
     },
-    supply({ data }) {
+    supply({ kind = 'fit', data }) {
       const exp = runner?.experiment;
-      if (!ident || !exp?.needs) return { error: 'nothing waits for a fit' };
-      exp.supply('fit', data ?? {});
+      if (!ident || exp?.needs?.kind !== kind) return { error: `nothing waits for ${kind}` };
+      exp.supply(kind, data ?? {});
       return {};
     },
     identifyStop() {
@@ -16873,9 +16924,9 @@ const { controllerBlocks, upstreamSource, drain } = __mods['core/autotune.js'];
 const { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } = __mods['core/diagram.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
 const { referenceFn, gaussAt } = __mods['core/signals.js'];
-const { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText } = __mods['core/experiment.js'];
+const { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText, discriminationSignal } = __mods['core/experiment.js'];
 const {
-  STRUCTURES, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
+  STRUCTURES, CHOICE, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
   fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded,
 } = __mods['core/fit.js'];
 const { cholesky } = __mods['core/linalg.js'];
@@ -17145,7 +17196,7 @@ function readLog(record) {
   const all = (kind) => log.filter((e) => e.kind === kind);
   return {
     listen: one('listen'), rungs: all('rung'), look: one('look'), laws: all('law'), tries: all('try'), ladder: one('ladder'),
-    supply: one('supply'), pause: one('pause'), check: one('check'), end: one('end'), notes: all('note'),
+    supply: one('supply'), pause: one('pause'), check: one('check'), discriminate: one('discriminate'), end: one('end'), notes: all('note'),
   };
 }
 
@@ -17257,6 +17308,7 @@ function fitSegment(record, seg, L, Ts) {
   const hold = ys.map((y) => !finite(y));
   const r = Float64Array.from(rs);
   const before = seg.before;
+  const ex = seg.excite ? { sig: discriminationSignal(seg.excite, Ts), from: seg.excite.from, lo: seg.excite.umin, hi: seg.excite.umax } : null;
   out.law = () => {
     let law = before ? piLaw(before, bumpless(before, seg.uStart, seg.rPrev, seg.yStart), before.umin, before.umax, Ts) : null;
     let uLast = seg.uStart;
@@ -17264,7 +17316,8 @@ function fitSegment(record, seg, L, Ts) {
       if (hold[k]) return uLast;
       const e = at.get(k);
       if (e) law = piLaw(e, bumpless(e, uLast, r[k], yh), e.umin, e.umax, Ts);
-      const u = law ? law.step(r[k], yh) : uLast;
+      let u = law ? law.step(r[k], yh) : uLast;
+      if (ex && law && idx[k] >= ex.from) u = Math.min(ex.hi, Math.max(ex.lo, u + (ex.sig[idx[k] - ex.from] ?? 0)));
       uLast = u;
       return u;
     };
@@ -17523,6 +17576,29 @@ function easedFrom(g, plan) {
   return { Kp: src.Kp, Ki: src.Ki, tauC: src.tauC, umin: plan.umin, umax: plan.umax, try: inc || null };
 }
 
+const ONSET = { share: 0.1, floors: 4, hold: 2, peakFloors: 20 };
+function onsetOf(record, rungs, floor, Ts) {
+  let best = null;
+  for (const R of rungs) {
+    if (!R.visible || !Number.isInteger(R.i0) || !Number.isInteger(R.T)) continue;
+    const dir = (R.dir ?? 1) * (R.sign ?? 1);
+    const end = Math.min(record.y.length, R.i0 + 1 + R.T + 1);
+    const d = [];
+    for (let i = R.i0; i < end; i++) { const y = nan(record.y[i]); d.push(finite(y) ? dir * (y - (R.base + (R.slope ?? 0) * (i - (R.ic ?? R.i0)))) : NaN); }
+    const peak = Math.max(...d.filter(finite));
+    if (!(peak > ONSET.peakFloors * floor)) continue;
+    const bar = Math.max(ONSET.floors * floor, ONSET.share * peak);
+    for (let k = 0; k + ONSET.hold <= d.length; k++) {
+      if (d.slice(k, k + ONSET.hold).every((v) => v > bar)) { const t = k * Ts; if (!best || t < best.t) best = { t, rung: R.n }; break; }
+    }
+  }
+  return best;
+}
+function refutedByOnset(theta, onset, Ts, names) {
+  if (!onset || !(theta > onset.t + Ts)) return null;
+  return `moves before its dead time: after a push ${names.y} had gone a tenth of its way in ${timeText(Math.max(onset.t, Ts))}, before this shape's ${timeText(theta)}`;
+}
+
 function fingerprint(record, seg) {
   let a = 0, b = 0;
   for (let j = 0; j < seg.F; j++) { const y = nan(record.y[j]), u = nan(record.u[j]); if (finite(y)) a += y * (1 + (j % 7)); if (finite(u)) b += u * (1 + (j % 5)); }
@@ -17640,11 +17716,12 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
   };
   let kernelFit = null;
   if (kernel && ckSeg) { try { kernelFit = scoreCheck(kernelReplay(kernel, ckSeg)).fit; } catch { kernelFit = null; } }
+  const onset = onsetOf(record, g.rungs, floorY, Ts);
   const candidates = [];
   for (const name of tried) {
     const f = fits[name];
     if (!f) continue;
-    const why = unsupported(name, f.p, { length });
+    const why = unsupported(name, f.p, { length }) ?? refutedByOnset(f.p.theta ?? 0, onset, Ts, names);
     let check = null;
     if (ckSeg) { const dd = discretise(name, f.p, Ts); check = scoreCheck(simulateSegment(dd, ckSeg).y, noiseTransfer(dd, ckSeg)); }
     const fitAll = (() => {
@@ -17676,6 +17753,23 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
     pick = { index: tied[0], why: ckSeg ? 'the lowest BIC (the Check gave no fit)' : 'the lowest BIC (no Check ran)' };
   }
   let index = pick.index, chosenWhy = pick.why;
+  let discrimination = null;
+  const D = g.discriminate;
+  if (D && !D.left && D.iEnd > D.iStart + 2) {
+    const fitsD = tellApart(record, plan, D.candidates.map((name) => candidates.find((c) => c.structure === name && !c.unsupported)).filter(Boolean).map((c) => ({ structure: c.structure, params: c.p })));
+    const names2 = Object.keys(fitsD);
+    if (names2.length >= 2) {
+      const win = names2.reduce((a, b) => (fitsD[b] > fitsD[a] ? b : a));
+      const other = names2.filter((x) => x !== win).reduce((a, b) => (fitsD[b] > fitsD[a] ? b : a));
+      const test = D.shape === 'burst' ? `a burst at ${fmtNum(D.f, 2)} Hz` : `a ${D.shape}`;
+      const clear = fitsD[win] >= GRADE.fair && 100 - fitsD[win] <= DISCRIMINATE.clear * (100 - fitsD[other]);
+      discrimination = { shape: D.shape, f: D.f, fits: fitsD, chosen: clear ? win : null };
+      if (clear) {
+        index = candidates.findIndex((c) => c.structure === win);
+        chosenWhy = `the one that predicted the test that tells it from ${STRUCTURES[other].label} (${test}): ${pctText(fitsD[win])} % against ${pctText(fitsD[other])} %`;
+      } else chosenWhy += `; the test that tells ${STRUCTURES[win].label} from ${STRUCTURES[other].label} (${test}) did not either (${pctText(fitsD[win])} % against ${pctText(fitsD[other])} %)`;
+    }
+  }
   if (structure && candidates.some((c) => c.structure === structure)) { index = candidates.findIndex((c) => c.structure === structure); chosenWhy = 'your choice'; }
   const chosen = candidates[index];
   const S = STRUCTURES[chosen.structure];
@@ -17751,7 +17845,7 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
     fit: chosen.fitted, check: checkOut,
     where, holds: seg.holds.map((h) => ({ y: h.y, u: h.u })), whereSpread: { spread, flagged }, size, sizeNote,
     kernel: kernel ? { g: Array.from(kernel.g), sd: Array.from(kernel.sd), Ts: kernel.Ts, decimate: kernel.decimate, integrating: kernel.integrating, rate: kernel.rate ? { value: kernel.rate.value, sd: kernel.rate.sd } : null, fit: kernelFit } : null,
-    eased: easedFrom(g, plan),
+    eased: easedFrom(g, plan), discrimination,
     grade: grade.mark, why: grade.why, warnings,
     segments: { open: seg.open ? [seg.open.i0, seg.open.i1] : null, closed: seg.closed.map((c) => [c.i0, c.i1]), check: seg.check ? [seg.check.from, seg.check.i1] : null, fitted: seg.F },
   };
@@ -17901,10 +17995,12 @@ function identifyRun(project, path = null, settings = {}, { plan: ready = null, 
     for (let k = 0; k <= most && !exp.state.done; k++) {
       const v = runner.step();
       yield { kind: 'sample', k: v.k, t: v.t, values: v.values };
-      if (exp.needs) {
+      if (exp.needs?.kind === 'fit') {
         const upto = exp.needs.upto;
         pre = yield* tagged(identifySteps(compactRecord(exp.record()), { plan, upto }), 'pause');
         exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+      } else if (exp.needs?.kind === 'discriminate') {
+        exp.supply('discriminate', yield* tagged(discriminateSteps(exp.record(), plan, pre), 'discriminate'));
       }
     }
     if (!exp.state.done) exp.stop();
@@ -17924,12 +18020,92 @@ function identifyRun(project, path = null, settings = {}, { plan: ready = null, 
   return { known, plan, settings: s, vary, factors, runner, exp, names: runner.names(), steps: steps(), stop: () => exp.stop(), get pre() { return pre; } };
 }
 
+function* discriminateSteps(record, plan, pre) {
+  const rec = compactRecord(record);
+  const so = yield* identifySteps(rec, { plan, reuse: pre });
+  return designDiscrimination(so, rec, plan) ?? {};
+}
+
 function* tagged(gen, stage) {
   for (;;) { const s = gen.next(); if (s.done) return s.value; yield { kind: 'fit', stage }; }
 }
 
 function identify(project, path = null, settings = {}) {
   return drain(identifyRun(project, path, settings).steps);
+}
+
+
+const DISCRIMINATE = { separation: 20, floor: 1e-3, room: 0.5, push: 1, longest: 10, clear: 0.9 };
+
+function designDiscrimination(model, record, plan) {
+  if (!model?.ok || !model.check) return null;
+  const pool = model.candidates.filter((c) => !c.unsupported && finite(c.fit));
+  if (pool.length < 2) return null;
+  const best = Math.max(...pool.map((c) => c.fit));
+  const tied = pool.filter((c) => c.fit >= best - CHOICE.within);
+  if (tied.length < 2) return null;
+  const A = tied.find((c) => c.structure === model.structure) ?? tied[0];
+  const B = tied.filter((c) => c !== A).reduce((a, b) => (b.fit > a.fit ? b : a));
+  const g = readLog(record), Ts = record.Ts, n0 = record.y.length;
+  const law = g.laws.at(-1);
+  if (!law || !g.listen) return null;
+  const w = Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9));
+  const rest = restBefore(record, n0, w), level = nan(record.r[n0 - 1]);
+  const floor = Math.max(model.noise?.floor ?? g.listen.floor, DISCRIMINATE.floor * (plan.band[1] - plan.band[0]));
+  let push = 0;
+  for (let j = law.i ?? 0; j < n0; j++) { const u = nan(record.u[j]); if (finite(u)) push = Math.max(push, Math.abs(u - rest.u)); }
+  const U = plan.umax - plan.umin;
+  const a0 = Math.max(0.01 * U, DISCRIMINATE.push * push);
+  const scale = (c) => { const p = c.params; return p.f ? 1 / (2 * Math.PI * p.f) : Math.max(...STRUCTURES[c.structure].times(p)); };
+  const freq = (c) => (c.params.f ? c.params.f * Math.sqrt(Math.max(0.05, 1 - (c.params.zeta ?? 0) ** 2)) : 1 / (2 * Math.PI * scale(c)));
+  const slow = Math.max(scale(A), scale(B), A.params.theta ?? 0, B.params.theta ?? 0, Ts);
+  const longest = Math.min(DISCRIMINATE.longest, plan.budget / 10);
+  const steps = (x) => Math.max(2, Math.min(Math.round(longest / Ts), Math.round(x / Ts)));
+  const shapes = [
+    { shape: 'pulse', n: steps(Math.max(2 * Ts, slow / 2)) },
+    { shape: 'step', n: steps(4 * slow) },
+    ...[A, B].map((c) => { const f = Math.min(freq(c), 0.4 / Ts); return { shape: 'burst', f, n: steps(4 / f) }; }),
+  ];
+  const [lo, hi] = plan.band, room = Math.min(hi - level, level - lo);
+  const predict = (c, d) => {
+    const sig = discriminationSignal(d, Ts), N = d.n + Math.ceil(EXPERIMENT.discriminate.rest * d.n);
+    return simulateSegment(discretise(c.structure, c.params, Ts), {
+      n: N, yStart: rest.y, uStart: rest.u,
+      law: () => { const pi = piLaw(law, bumpless(law, rest.u, level, rest.y), law.umin, law.umax, Ts); return (k, yh) => Math.min(plan.umax, Math.max(plan.umin, pi.step(level, yh) + (sig[k] ?? 0))); },
+    }).y;
+  };
+  let pickD = null;
+  for (const sh of shapes) {
+    let d = { ...sh, a: a0 };
+    let yA = predict(A, d), yB = predict(B, d);
+    const used = Math.max(...[...yA, ...yB].map((v) => Math.abs(v - level)));
+    if (!(room > 0)) continue;
+    if (used > DISCRIMINATE.room * room) { d = { ...d, a: (a0 * DISCRIMINATE.room * room) / used }; yA = predict(A, d); yB = predict(B, d); }
+    let e = 0;
+    for (let k = 0; k < yA.length; k++) e += (yA[k] - yB[k]) ** 2;
+    const sep = Math.sqrt(e) / floor;
+    if (!pickD || sep > pickD.separation) pickD = { ...d, separation: sep };
+  }
+  if (!pickD || !(pickD.separation >= DISCRIMINATE.separation)) {
+    return { why: `${A.label} and ${B.label} predict the same within the noise on any test the room allows: the simpler is kept` };
+  }
+  const { shape, a, n, f = null, separation } = pickD;
+  return { shape, a, n, f, candidates: [A.structure, B.structure], separation };
+}
+
+function tellApart(record, plan, models) {
+  const g = readLog(record), D = g.discriminate, Ts = record.Ts;
+  if (!D || !g.listen) return {};
+  const seg = { ...closedSegment(record, g.laws, D.iStart, D.iEnd, Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9)), 'discriminate'), excite: { shape: D.shape, a: D.a, n: D.n, f: D.f, from: D.iStart, umin: plan.umin, umax: plan.umax } };
+  const fs = fitSegment(record, seg, g.listen, Ts);
+  const out = {};
+  for (const m of models) {
+    const yh = simulateSegment(discretise(m.structure, m.params, Ts), fs).y;
+    const y = [], h = [];
+    for (let k = 0; k < yh.length; k++) if (finite(fs.y[k])) { y.push(fs.y[k]); h.push(yh[k]); }
+    out[m.structure] = fitPercent(y, h);
+  }
+  return out;
 }
 
 
@@ -18048,7 +18224,7 @@ function discreteAt(d, Om) {
   return [sr * mr - si * mi, sr * mi + si * mr];
 }
 
-return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, identify, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {

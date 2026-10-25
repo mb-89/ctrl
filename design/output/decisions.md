@@ -22,6 +22,14 @@ The person, after the prototype ranked Hu–Lin first on "DC motor, deadbeat" wi
 - **"Measure it instead" by matching**: the sensor for an observer is the block output whose run matches the measured signal's rate within 5 %, so it works on the Servo motor main now has (the structure trace of the first prototype found no integrator there).
 - **Results**: sliding-mode motor, the boundary-layer sliding mode (+10, robust); oven, the PID, sensitive (the PI from the plant ties it, the feedforward ties if complexity's weight drops to 0.75); tank, keep the loaded schedule (robust); deadbeat motor, state feedback (+16, robust), Hu–Lin, LQR, the planned swing-up and the relay fail the main job.
 
+## 2026-10-25 · v2.9, Identify: the onset test and the discriminating test (input 56)
+
+Built on branch `feat/identify-tab` from the entry below ([identification.md](identification.md#610-built-input-56-a-dead-time-and-a-resonance-told-apart) §6.10 has the numbers):
+
+- **The onset is where y has gone a tenth of its way and stays beyond four floors.** Interpretation of "the time y first leaves its noise band": the first sample out of the noise would refute every oven shape on a noise-free simulation (their dead time stands for the oven's slow start, which moves y far less than a tenth by then); a tenth refutes the arm's 0.15 s at once. A shape is refuted when its dead time exceeds the onset by more than a sample.
+- **The discriminating test runs at r(0)**, after the Check, where the tries and most of the fitting data are (first built where the Check ended, 1.125 rad on the arm, its least known place), and **keeps a shape only on a clear win**: its miss at most 0.9 of the other's and its fit at least 60 % (interpretation, measured: on the arm in its friction regime a resonance's burst is predicted by neither, and a plain "better" picked the lag back). It is skipped, with a note, when the shapes predict the same within 20 floors (the floor at least a thousandth of the band) or the time left is too short.
+- **No new chip**: the test plays under the Check's chip with its own status line ("Telling two shapes apart: a burst at 0.52 Hz on u").
+
 ## 2026-10-25 · v2.9, Identify: on a live plant (§18 step 7)
 
 Built on branch `feat/identify-tab` from [identification.md](identification.md) §3, §5.5, §5.8, §14 (no new words from the person; [§5.11](identification.md#511-built-step-7-on-a-live-plant) and [§14.1](identification.md#141-built-step-7-the-connection-and-check-again) have the details):

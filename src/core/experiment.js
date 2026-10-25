@@ -102,6 +102,10 @@ export const EXPERIMENT = {
   },
   pause: { seconds: 2, wait: 30 },
   check: { stair: 0.125 },
+  // The test that tells two shapes apart (input 56), after the Check: the
+  // page designs it (identify.js designDiscrimination) and the experiment
+  // plays it on the incumbent's output, then a rest of rest × its length.
+  discriminate: { rest: 0.5 },
   // Auto-tune's default goal (autotune.js GOAL, runCost): IAE, effort 0.05,
   // overshoot beyond 10 % at 2 per 100 %, saturation 0.2.
   goal: { effort: 0.05, overshoot: 10, overshootWeight: 2, saturation: 0.2 },
@@ -1124,6 +1128,47 @@ export function createExperiment(plan) {
     return finish('done', 'Checked again: the plant is stopped');
   }
 
+  // ---- Telling two shapes apart (input 56): after the Check, the page
+  // looks at the candidates; when two still tie it designs a test input
+  // (discriminationSignal), which is added to the incumbent's output while it
+  // holds y where the Check ended, then a rest. needs { kind: 'discriminate' }.
+  function* discriminate() {
+    // At r(0), where the tries started and most of the fitting data sit.
+    const at = r0, i0 = i;
+    const s0 = yield* settle(at, E.ease.settleMax, `Holding ${names.y} at ${yU(at)} while the page compares the shapes`);
+    if (s0 === 'left') return endBand(`${names.y} left 'may move within' after the Check: the page stopped the plant`);
+    needs = { kind: 'discriminate', upto: i, at };
+    supplied = null;
+    const kMax = k + Math.ceil(E.pause.wait / Ts - 1e-9);
+    for (;;) {
+      if (!holds()) return endBand(`${names.y} left 'may move within' while the controller held it: the page stopped the plant`);
+      if (supplied) break;
+      if (k >= kMax) { needs = null; log({ kind: 'note', i, text: 'the page did not answer in time whether a test should tell two shapes apart' }); return null; }
+      const u = law.step(r, y);
+      meters(u);
+      st.status = `Holding ${names.y} at ${yU(at)} while the page compares the shapes`;
+      yield u;
+    }
+    const d = supplied;
+    if (!d?.shape) { if (d?.why) log({ kind: 'note', i, text: d.why }); return null; }
+    const sig = discriminationSignal(d, Ts), n = sig.length, tail = Math.ceil(E.discriminate.rest * n);
+    if ((n + tail) * Ts > left()) { log({ kind: 'note', i, text: `a test that tells ${d.candidates?.join(' and ') ?? 'two shapes'} apart needs about ${Math.ceil((n + tail) * Ts)} s more: allow a longer test` }); return null; }
+    const status = `Telling two shapes apart: ${d.shape === 'burst' ? `a burst at ${fmtNum(d.f, 2)} Hz` : `a ${d.shape}`} on ${names.u}`;
+    const iS = i;
+    let out = false;
+    for (let j = 0; j < n + tail; j++) {
+      if (!holds()) { out = true; break; }
+      const u = Math.min(P.umax, Math.max(P.umin, law.step(r, y) + (j < n ? sig[j] : 0)));
+      meters(u);
+      st.room = roomUsed(y);
+      st.status = status;
+      yield u;
+    }
+    log({ kind: 'discriminate', i0, iStart: iS, iEnd: i, shape: d.shape, a: d.a, n: d.n, f: d.f ?? null, at, left: out, candidates: d.candidates ?? [] });
+    if (out) return endBand(`${names.y} left 'may move within' during the test that tells two shapes apart: the page stopped the plant`);
+    return null;
+  }
+
   // ---- The whole test
 
   function* program() {
@@ -1182,6 +1227,8 @@ export function createExperiment(plan) {
     if (st.done || stopping) return null;
     chips.shake = '–';
     yield* runCheck();
+    if (st.done || stopping) return null;
+    yield* discriminate();
     if (st.done || stopping) return null;
     return finish('done', `Done: the plant is stopped; ${inc?.n ? `the gentlest controller that held, eased in, is try ${inc.n}` : 'the gentle controller held, and no try was quicker'}`);
   }
@@ -1290,6 +1337,22 @@ export function createExperiment(plan) {
       };
     },
   };
+}
+
+// The test input that tells two shapes apart (input 56), from its design:
+// a pulse of a for n samples; a step of a for n samples; a burst, a sine of
+// amplitude a at f Hz over n samples, faded in and out over a period each
+// end so it starts and ends without a kick. The experiment adds it to the
+// incumbent's output; the replay rebuilds it from the log.
+export function discriminationSignal({ shape, a, n, f }, Ts) {
+  const out = new Float64Array(n);
+  for (let j = 0; j < n; j++) {
+    if (shape === 'burst') {
+      const t = j * Ts, T = 1 / f, ramp = Math.min(1, t / T, (n * Ts - t) / T);
+      out[j] = a * ramp * Math.sin(2 * Math.PI * f * t);
+    } else out[j] = a;
+  }
+  return out;
 }
 
 const orNull = (v) => (Number.isFinite(v) ? v + 0 : null);

@@ -291,7 +291,7 @@ test('12. every log entry the experiment writes is one the file keeps: soft guar
   runs.push([tight, runExperiment(tight, createArm(drawArm(6), { Ts, seed: 6 })).record]);
   const plan = planExperiment(known, {});
   const exp = createExperiment(plan), arm = createArm(drawArm(1), { Ts, seed: 1 });
-  for (let k = 0; k < 9000 && !exp.state.done; k++) { const u = exp.step(k, k === 400 ? NaN : arm.output()); if (exp.needs) exp.supply('fit', {}); arm.advance(u); if (k === 4000) exp.stop(); }
+  for (let k = 0; k < 9000 && !exp.state.done; k++) { const u = exp.step(k, k === 400 ? NaN : arm.output()); if (exp.needs) exp.supply(exp.needs.kind, {}); arm.advance(u); if (k === 4000) exp.stop(); }
   runs.push([plan, exp.record()]);
   const pp = planExperiment(plain, {});
   for (const plant of [transferPlant(unstable(1, 0.3), Ts, { noise: 0.001 }), transferPlant(unstable(1, 0.3), Ts, { noise: 0.001, bias: 0.01 }), transferPlant(lag(2, 0.5, 0.05), Ts, { noise: 0.001, drift: 0.02 })]) runs.push([pp, runExperiment(pp, plant).record]);

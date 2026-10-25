@@ -10,7 +10,7 @@
 // try a sweep of its own. Nothing but the record is kept, on Keep; the model
 // is computed from it whenever it is needed.
 
-import { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord } from '../core/identify.js';
+import { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord, discriminateSteps } from '../core/identify.js';
 import { controllerBlocks, placeVariant, baseName } from '../core/autotune.js';
 import { normalizeVariant } from '../core/controllers.js';
 import { AS_FAST, formatSpeed } from '../core/speed.js';
@@ -495,11 +495,15 @@ export function createIdentifyTab(host, app, display, record) {
   }
   function onLive(j, m) {
     j.state = m.state;
-    if (m.needs) {
+    if (m.needs?.kind === 'fit') {
       // The fit pause: fitted in slices on the record so far, then supplied.
       j.fitting = true;
       const gen = identifySteps(compactRecord(m.record), { plan: j.plan, upto: m.needs.upto });
-      work(j, gen, (pre) => { j.pre = pre; j.fitting = false; app.live.identify.supply(pre.ok ? { structure: pre.structure, params: pre.params } : {}); });
+      work(j, gen, (pre) => { j.pre = pre; j.fitting = false; app.live.identify.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {}); });
+    } else if (m.needs?.kind === 'discriminate') {
+      // After the Check: do two shapes still tie? Then the test that tells them apart (input 56).
+      j.fitting = true;
+      work(j, discriminateSteps(m.record, j.plan, j.pre), (d) => { j.fitting = false; app.live.identify.supply('discriminate', d); });
     }
     if (m.check && j.pre && !j.checkDrawn) { j.checkDrawn = true; drawPrediction(j, m.record, m.state.checkAt, m.check); }
     if (m.done) {

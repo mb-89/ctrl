@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createLiveLoop } from '../src/core/live.js';
-import { knownFor, identifySettings, planExperiment, identifySteps, compactRecord, planRecheck, recheckFit } from '../src/core/identify.js';
+import { knownFor, identifySettings, planExperiment, identifySteps, compactRecord, planRecheck, recheckFit, discriminateSteps } from '../src/core/identify.js';
 import { normalizeDiagram } from '../src/core/diagram.js';
 import { drain } from '../src/core/autotune.js';
 import { libraryProject } from './fixtures/plants.mjs';
@@ -65,10 +65,11 @@ async function setup({ seed = 1, supply = true } = {}) {
   let pre = null;
   const loop = createLiveLoop((m) => {
     out.push(m);
-    if (m.type === 'identify' && m.needs && supply) {
+    if (m.type === 'identify' && m.needs?.kind === 'fit' && supply) {
       pre = drain(identifySteps(compactRecord(m.record), { plan, upto: m.needs.upto }));
-      loop.handle({ type: 'supply', data: pre.ok ? { structure: pre.structure, params: pre.params } : {} });
+      loop.handle({ type: 'supply', kind: 'fit', data: pre.ok ? { structure: pre.structure, params: pre.params } : {} });
     }
+    if (m.type === 'identify' && m.needs?.kind === 'discriminate') loop.handle({ type: 'supply', kind: 'discriminate', data: drain(discriminateSteps(m.record, plan, pre)) });
   }, plant.env);
   loop.handle({ type: 'program', diagram: normalizeDiagram(structuredClone(project.system.plant.diagram)), signals: project.system.signals });
   loop.handle({ type: 'connect', url: 'ws://x' });
