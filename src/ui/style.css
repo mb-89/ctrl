@@ -27,6 +27,7 @@
   --skirt: #2c3237;
   --knurl: #59616a;
   --bad: #c62f2f;
+  --danger: #d4141c;  /* E-STOP: one red, both themes */
   --ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
@@ -256,6 +257,8 @@ button, input, select { font: inherit; color: inherit; }
 .lenrow { display: flex; background: var(--lcd); border-radius: 8px; padding: 3px; margin-top: 2px; }
 .lenrow .pfield { flex: 1; }
 .later-box { max-width: 70ch; padding: 6px 4px; }
+.notloop { margin: 0 0 8px; padding: 6px 10px; border: 1px solid var(--bad); border-radius: 6px; font-size: 13px; line-height: 1.45; color: var(--ink); background: var(--recess); }
+.notloop b { color: var(--bad); }
 .later-box p { color: var(--ink-2); line-height: 1.5; margin: 8px 0 0; }
 .later-box .dim { color: var(--muted); }
 
@@ -551,19 +554,32 @@ button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset:
 .st-estop { background: var(--lit-red); color: #3a0606; }
 .st-wait { background: transparent; color: var(--lit-amber); box-shadow: inset 0 0 0 1px var(--lit-amber); }
 .st-offline { background: transparent; color: #8a97a1; box-shadow: inset 0 0 0 1px #4a555e; }
-.lv { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
-.lv-line { display: flex; align-items: center; gap: 8px; }
-.lv-url { flex: 1; min-width: 0; height: 20px; padding: 0 4px; margin-left: -4px; border: 1px solid transparent; border-radius: 4px; background: transparent; font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
-.lv-url:hover:not(:disabled) { border-color: var(--line-strong); }
+/* Live: the panel at the top of the Plant tab's right-hand column, and the
+   header's E-STOP. */
+.live { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+.live .row .key { min-height: 30px; }
+.key.big { width: 100%; min-height: 40px; font-size: 14px; }
+.lv-line { display: flex; align-items: center; gap: 6px; }
+.lv-at { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.lv-url { flex: 1; min-width: 0; height: 22px; padding: 0 4px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--panel); font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
 .lv-url:focus { outline: none; background: var(--lcd); color: var(--lcd-ink); border-color: var(--lcd-ink); }
-.lv-url:disabled { color: var(--ink-2); }
-.lv-link { border: 0; background: none; padding: 0; font-size: 11.5px; color: var(--ink-2); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; white-space: nowrap; }
-.lv-link:hover { color: var(--ink); }
-.lv-stats { font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--ink-2); min-height: 1.45em; }
-.lv-stats > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lv-line[hidden] + .lv-stats { min-height: calc(24px + 1.45em); }  /* the address line's height: the block keeps its size */
+.lv-url:disabled { color: var(--ink-2); background: transparent; }
+.lv-stats { font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--ink-2); min-height: 2.9em; }
+.lv-stats > div { overflow-wrap: anywhere; }
 .lv-stats .bad { color: var(--bad); font-weight: 600; }
 .lv-stats .ok { color: var(--lit-green); }
+.live .phelp { margin: 0; }
+.lv-set summary { font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+.lv-set[open] summary { margin-bottom: 6px; }
+.lv-fs { margin: 6px 0 2px; }
+.lv-fsin { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+.lv-fsin .field { width: 0; flex: 1 1 60px; font-family: var(--mono); font-size: 12px; text-align: right; }
+.lv-agents code { font-size: 11.5px; }
+.btn.estop { background: var(--danger); border-color: var(--danger); color: var(--lcd-ink); font-weight: 700; letter-spacing: 0.06em; padding: 0 14px; }
+.btn.estop:hover:not(:disabled) { background: var(--danger); filter: brightness(1.12); }
+.btn.estop:disabled { opacity: 0.45; }
+.btn.estop.latched { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--danger); }
+.dialog pre.guide { white-space: pre-wrap; max-height: 50vh; overflow: auto; line-height: 1.45; }
 .key.estop:not(.lit-red):not(:disabled) { color: var(--bad); }
 .lv-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .display { grid-template-columns: minmax(0, 1fr) auto; }

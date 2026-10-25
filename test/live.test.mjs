@@ -8,6 +8,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, writeFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { rpcRequest, uMessage, parseMessage, checkDescription, externalParams, sameDescription, pageWatchdog, createLinkStats, EXTERNAL_BLOCK, HIL_URL } from '../src/core/hil.js';
 import { createLiveRunner, createLiveLoop } from '../src/core/live.js';
@@ -473,17 +474,21 @@ test('the plant script runs its physics and describes itself as the HIL system e
   // The plant the page is not told: within ±15 % of nominal, the same for a
   // seed, a parameter fixed with --set.
   const script = new URL('../hil/hil_plant.py', import.meta.url).pathname;
-  const probe = "import importlib.util, sys, types; spec = importlib.util.spec_from_file_location('hp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); a = types.SimpleNamespace(vary=0.15, seed=7, set=['J=0.003']); p = m.plant_params(a); print(p == m.plant_params(a), p['J'], all(abs(p[n] / getattr(m.Motor, n) - 1) <= 0.15 for n in m.Motor.PHYSICS if n != 'J'), len(set(p.values())) == len(p))";
+  const probe = "import importlib.util, sys, types; spec = importlib.util.spec_from_file_location('hp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); a = types.SimpleNamespace(plant='motor', vary=0.15, seed=7, set=['J=0.003']); p = m.plant_params(a); print(p == m.plant_params(a), p['J'], all(abs(p[n] / getattr(m.Motor, n) - 1) <= 0.15 for n in m.Motor.PHYSICS if n != 'J'), len(set(p.values())) == len(p))";
   assert.equal(execFileSync('python3', ['-I', '-B', '-c', probe, script]).toString().trim(), 'True 0.003 True True');
   assert.throws(() => execFileSync('python3', ['-I', script, '--set', 'X=1', '--describe'], { stdio: 'pipe' }), /--set X=1: one of R, L, k, J, b, Tc, mgl/);
 });
+
+// A port nobody listens on now (the system picks it).
+const freePort = () => new Promise((resolve) => { const srv = createServer(); srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)); }); });
+
 
 // Starts hil_plant.py on a free port: with python3 if it has websockets, else
 // with uv from its cache (no network). Resolves { proc, port } or null.
 async function startPlant() {
   const script = fileURLToPath(new URL('../hil/hil_plant.py', import.meta.url));
-  const port = 20000 + (process.pid % 20000);
-  const ways = [['python3', ['-I', script, '--port', String(port)]], ['uv', ['run', '--offline', '--quiet', script, '--port', String(port)]]];
+  const port = await freePort();
+  const ways = [['python3', ['-I', script, '--no-gui', '--port', String(port)]], ['uv', ['run', '--offline', '--quiet', script, '--no-gui', '--port', String(port)]]];
   for (const [cmd, args] of ways) {
     const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const up = await new Promise((resolve) => {

@@ -205,11 +205,45 @@ export function createLiveRunner(diagram, signals) {
   };
 }
 
+// The full scale of every signal around a diagram's External plant, for the
+// scope's channels and the Live settings: { name: [lo, hi] } (hil.js
+// fullScales), and the references the ramp-in moves (the Sources that feed
+// the plant or a Controller's r). Empty without an External plant.
+export function liveScales(diagram) {
+  if (!diagram) return { scales: {}, refs: [] };
+  let el;
+  try { el = compileDiagram(normalizeDiagram(structuredClone(diagram)), 'plant', { standalone: true, sources: new Proxy({}, { get: () => () => 0 }) }); } catch { return { scales: {}, refs: [] }; }
+  if (el.externals.length !== 1) return { scales: {}, refs: [] };
+  const links = el.links();
+  return { scales: fullScales(el.externals[0].params, links), refs: Object.keys(links.sources) };
+}
+
+// The scope's keys with an External plant: Run, Stop and Single go through
+// the plant, and nothing runs by itself (design/output/hil.md, "Run, Stop and
+// the keys"). key: 'run', 'stop', 'single', or 'swept' (a Single's sweep has
+// ended). st: { link: 'offline' | 'connecting' | 'open' | 'running', latched
+// (an E-stop, either side), display (the scope's mode) }. Returns { display:
+// the scope's next mode, restart (a fresh sweep from the left edge), plant:
+// 'start' | 'stop' | null, why: what to tell the person when a key is refused }.
+export function liveKey(key, { link, latched = false, display = 'stop' } = {}) {
+  const running = link === 'running';
+  const out = (d, restart, plant, why = null) => ({ display: d, restart, plant, why });
+  if (key === 'stop' || key === 'swept') return out('stop', false, running ? 'stop' : null);
+  if (latched) return out('stop', false, running ? 'stop' : null, 'E-STOP is latched: Reset first, then Run.');
+  if (!running && link !== 'open') return out('stop', false, null, link === 'connecting' ? 'Still connecting to the plant.' : 'Offline: connect the plant first (Plant tab, Connect); Run then starts it.');
+  // Single while running: the sweep under way finishes, then the plant stops.
+  if (key === 'single') return running ? out('single', false, null) : out('single', true, 'start');
+  // Run while running (a Single pending, or the screen stopped by a key the
+  // plant did not see) goes on running; from stopped it starts the plant.
+  return running ? out('run', display === 'stop', null) : out('run', true, 'start');
+}
+
 // The connection: one WebSocket to the plant, the runner, both watchdogs'
 // page side, and statistics. It talks to the page through post(msg):
 //   in:  connect { url }, program { diagram, signals }, start (a fresh run,
 //        restarting the plant if it runs), stop, estop, reset, disconnect
 //   out: state { state, detail }, described { desc }, estop { by, reason },
+//        cleared { by } (the plant was reset at its own key),
 //        run { by } (a new run begins), stopped { by, reason } (the plant
 //        stopped by itself), samples { names, t, rt, values, ramp },
 //        stats { link, plant }, error { message }, programmed { how }
@@ -250,6 +284,8 @@ export function createLiveLoop(post, env = globalThis) {
     latched = { by, reason };
     halt();
     post({ type: 'estop', by, reason });
+    // Still connected: the plant is stopped (latched) until Reset, then Run.
+    if (ws?.readyState === 1) say('open', 'e-stop');
   }
   function stopWatchdog() { if (watchdog) env.clearInterval(watchdog); watchdog = 0; }
   // The page's watchdog: no y for the plant's watchdog cycles means the plant
@@ -313,7 +349,12 @@ export function createLiveLoop(post, env = globalThis) {
       // The plant's own Run/Stop key: the page follows.
       if (!m.running && running) { halt(); post({ type: 'stopped', by: m.by, reason: m.reason }); say('open', 'stopped at the plant'); }
       else if (m.running && !running && !latched && desc && program) { try { begin('plant'); say('running', desc.name); } catch (err) { fail(err.message); } }
-    } else if (m.kind === 'status') plantStatus = m.status;
+    } else if (m.kind === 'status') {
+      plantStatus = m.status;
+      // Reset at the plant's own key clears an E-stop the plant latched; one
+      // the page latched waits for the page's Reset.
+      if (latched?.by === 'plant' && m.status?.estop === null && !running) { latched = null; post({ type: 'cleared', by: 'plant' }); say('open', 'reset'); }
+    }
     else fail(`the plant sent something unexpected: ${m.error}`);
   }
 

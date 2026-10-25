@@ -389,11 +389,14 @@ class Plant:
         return {}
 
     def reset(self, _params=None, by="page"):
-        if self.estop_reason:
-            say(f"E-stop reset (was: {self.estop_reason})")
-            self.event(f"reset by the {by}")
+        was = self.estop_reason
         self.estop_reason = None
         self.since_u = 0
+        if was:
+            say(f"E-stop reset by the {by} (was: {was})")
+            self.event(f"reset by the {by}")
+            # The page hears at once (its E-stop from the plant clears too).
+            self.notify("status", self.status_params())
         return {}
 
     def manual_estop(self, params):
@@ -541,6 +544,7 @@ class Plant:
             r = self.setpoint if self.mode == "log" else self.u[0]
             self.effort = self.own.step(r, y[self.measured]) if self.running and not self.estop_reason else self.Model.EFFORT["safe"]
             y = y + [self.effort] + ([self.setpoint] if self.mode == "log" else [])
+        self.last_y = y
         if self.running:
             self.monitor(y)
         if not self.running:
@@ -557,7 +561,6 @@ class Plant:
             return
         self.sent[seq] = time.perf_counter()
         self.sent.pop(seq - 50, None)
-        self.last_y = y
         if self.writer:
             self.writer.row("", seq * self.dt, y)
         self.notify("y", {"seq": seq, "t": round(seq * self.dt, 6), "y": [round(v, 6) for v in y]})
@@ -603,12 +606,14 @@ class Plant:
                 self.stop(by="plant", reason="the bench run is over")
                 self.done.set()
 
+    def status_params(self):
+        return {"t": self.t(), "rate_hz": round(self.last_rate, 2), "jitter_ms": self.last_jitter, "rtt_ms": self.last_rtt, "mode": self.mode,
+                "late": self.late, "overruns": self.overruns, "dropped": self.dropped, "running": self.running, "estop": self.estop_reason}
+
     def status(self, rate):
         jitter, rtt = self.jitter.take(), self.rtt.take()
         self.last_rate, self.last_jitter, self.last_rtt = rate, jitter, rtt
-        s = {"t": self.t(), "rate_hz": round(rate, 2), "jitter_ms": jitter, "rtt_ms": rtt, "mode": self.mode,
-             "late": self.late, "overruns": self.overruns, "dropped": self.dropped, "running": self.running, "estop": self.estop_reason}
-        self.notify("status", s)
+        self.notify("status", self.status_params())
         if self.writer:
             self.writer.flush()
         if CONSOLE["quiet"]:
@@ -703,13 +708,14 @@ class Bench:
         return self.t0 is not None and now - self.t0 >= self.seconds
 
     def report(self, plant):
-        q = lambda v, p: sorted(v)[min(len(v) - 1, int(p * len(v)))] if v else float("nan")
-        mean = lambda v: sum(v) / len(v) if v else float("nan")
+        q = lambda v, p: sorted(v)[min(len(v) - 1, int(p * len(v)))] if v else None
+        mean = lambda v: sum(v) / len(v) if v else None
+        rnd = lambda x: None if x is None else round(x, 3)
         span = time.perf_counter() - self.t0
         res = {
             "rate_set_hz": plant.rate, "rate_hz": round(self.cycles / span, 2), "seconds": round(span, 2),
-            "jitter_ms": {"mean": round(mean(self.late_ms), 3), "p99": round(q(self.late_ms, 0.99), 3), "max": round(max(self.late_ms or [0]), 3)},
-            "rtt_ms": {"mean": round(mean(self.rtt), 3), "p99": round(q(self.rtt, 0.99), 3), "max": round(max(self.rtt or [0]), 3)},
+            "jitter_ms": {"mean": rnd(mean(self.late_ms)), "p99": rnd(q(self.late_ms, 0.99)), "max": rnd(max(self.late_ms, default=None))},
+            "rtt_ms": {"mean": rnd(mean(self.rtt)), "p99": rnd(q(self.rtt, 0.99)), "max": rnd(max(self.rtt, default=None))},
             "answered": len(self.rtt), "cycles": self.cycles, "late": plant.late, "dropped": plant.dropped, "skipped": self.skipped,
             "estop": plant.estop_reason,
         }
@@ -832,7 +838,7 @@ def window(plant, title):
             state.config(text=f"E-STOP: {plant.estop_reason}", fg="#c8102e")
         else:
             state.config(text="Running" if plant.running else "Stopped", fg="#1b7f3a" if plant.running else "#333333")
-        page = f"page: {plant.origin}" if plant.client else "no page connected"
+        page = ("page: opened from a file" if plant.origin == "null" else f"page: {plant.origin}") if plant.client else "no page connected"
         info.config(text=f"{page}\n{plant.last_rate:.1f} Hz · jitter {fmt_ms(plant.last_jitter)} · round trip {fmt_ms(plant.last_rtt)}\n"
                          f"late {plant.late} · dropped {plant.dropped} · {plant.mode} mode\n{plant.reading()}")
         root.after(200, refresh)

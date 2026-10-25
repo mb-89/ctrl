@@ -20,7 +20,7 @@ import { step125 } from '../core/scale.js';
 import { channelSignal, drawFrequency, freqRange, nyquist } from './freqview.js';
 import { withLevels, levelsOf, withAboveNoise } from '../core/project.js';
 import { drawXY, vOfX, valueLabel, valueTargets, xyStatus, xyFrame, xyNearest } from './xyview.js';
-import { sweepClock, paceOf, MAX_FRAME, AS_FAST } from '../core/speed.js';
+import { sweepClock, paceOf, MAX_FRAME, AS_FAST, singleFrom } from '../core/speed.js';
 import { measure, measureLine } from './measure.js';
 
 export const CHANNEL_COLORS = ['#f2c718', '#33d17a', '#4ea6ff', '#ff5ca8'];
@@ -425,6 +425,10 @@ export function createDisplay(root, handlers) {
     const tb = scope.timebase;
     // Live mode's state (Live, E-STOP, Offline) and what goes with it.
     const live = handlers.liveTag?.();
+    // The state, readable without JavaScript (an agent's browser tool).
+    status.dataset.run = mode;
+    status.dataset.live = live?.state ?? 'none';
+    status.dataset.ramp = live?.ramp ? 'yes' : 'no';
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const vm = viewMode(), fr = vm === 'fft' || vm === 'spectrogram' ? freqRange(scope, freqData()) : null;
     status.innerHTML = `<span class="st st-${state[0]}">${state[1]}</span>
@@ -824,8 +828,11 @@ export function createDisplay(root, handlers) {
       renderBadges(); draw();
     },
     setPreview(p) { preview = p; draw(); },
-    setMode(m, { restart = false } = {}) {
-      if ((m === 'single' || restart) && scope) { if (m === 'single' && mode !== 'single') keepRun(); tScan = win()[0]; }
+    // restart: a fresh sweep from the left edge. Single pressed while the
+    // scope runs lets the sweep under way finish, then stops (singleFrom).
+    setMode(m, { restart } = {}) {
+      const fresh = restart ?? (m === 'single' ? singleFrom(mode).restart : false);
+      if (fresh && scope) { if (m === 'single' && mode !== 'single' && (data?.t?.length ?? 0) > 1) keepRun(); tScan = win()[0]; }
       if (m !== 'stop') cursorT = null;
       mode = m;
       run = null;
