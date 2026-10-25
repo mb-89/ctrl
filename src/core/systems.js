@@ -33,8 +33,9 @@ function fromPlant(e) {
 // Nonlinear take the warm and cool poles. Tones are the eight slots of a
 // palette validated for colour-vision deficiency; the label is always shown.
 // A tone is not shared with a tag a value appears beside, nor by two values
-// of one kind in the filter row: Disturbance is violet (red is Nonlinear,
-// beside it on three cards), so XY moved to yellow.
+// of one kind in the filter row: Disturbance is slate (red is Nonlinear,
+// beside it on three cards), so XY moved to yellow. No tone is violet: in the
+// page violet means selected (design/output/design-system.md).
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
 // A type's tags; a function reads the variant (a PI from the plant at one
 // level is a plain PI, at several it is scheduled).
@@ -43,17 +44,17 @@ const VARIANT_TAGS = {
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
-export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
+export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'slate', 'red'];
 const TONE = {
-  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta',
-  // LQR sits beside Disturbance (violet) on both pendulums, so it took State
+  Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta', 'Black box': 'yellow',
+  // LQR sits beside Disturbance (slate) on both pendulums, so it took State
   // feedback's orange, and State feedback, on no card with a disturbance
-  // now that the library's gains are computed, took violet.
-  PID: 'aqua', 'State feedback': 'violet', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
+  // now that the library's gains are computed, took slate.
+  PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
   // Seven of the eight tones are taken by controller tags: this one is set.
   'Sliding mode': 'red',
-  'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
-  Disturbance: 'violet', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
+  'Kalman filter': 'slate', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
   'Reference mode': 'aqua', 'Controller in the plant': 'green',
 };
 // A value without its own tone gets one from its label, so it stays put.
@@ -74,9 +75,11 @@ export function systemTags(e) {
   walk(e.diagram);
   const tags = [];
   const add = (label, kind) => { if (!tags.some((t) => t.label === label)) tags.push({ label, kind, tone: toneOf(label) }); };
-  // An External plant's physics is outside the page: its entry says what it is.
-  const own = blocks.some((b) => b.type === 'external') ? (e.tags ?? []).filter((t) => t.kind === 'plant') : [];
-  if (own.length) for (const t of own) add(t.label, 'plant'); else add(nonlinear ? 'Nonlinear' : 'Linear', 'plant');
+  // An External plant is outside the page, a black box until identified
+  // (input 20): its entry may say more, the diagram cannot.
+  const external = blocks.some((b) => b.type === 'external');
+  const own = external ? (e.tags ?? []).filter((t) => t.kind === 'plant') : [];
+  if (own.length) for (const t of own) add(t.label, 'plant'); else add(external ? 'Black box' : nonlinear ? 'Nonlinear' : 'Linear', 'plant');
   if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');

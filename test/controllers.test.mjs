@@ -206,7 +206,7 @@ test('every type in the library still runs its default and keeps u inside its li
 
 // Where a diagram draws something over one of its notes: a block, another
 // note, a sign or port, or a wire passing through it (boxes at the font's
-// size: notes 9 px, about NOTE_CHAR a character).
+// size: notes and signs 10 px, about NOTE_CHAR a character).
 function collisions(d, NOTE_CHAR) {
   const box = (x0, y0, x1, y1, what) => ({ x0, y0, x1, y1, what });
   const textBox = (x, y, chars, cw, anchor, h, what) => {
@@ -215,15 +215,15 @@ function collisions(d, NOTE_CHAR) {
   };
   const notes = [], solid = [];
   for (const n of d.nodes) {
-    if (n.kind === 'note') notes.push(textBox(n.x, n.y, [...n.text].length, NOTE_CHAR, n.anchor ?? 'start', 9, `note "${n.text}"`));
+    if (n.kind === 'note') notes.push(textBox(n.x, n.y, [...n.text].length, NOTE_CHAR, n.anchor ?? 'start', 10, `note "${n.text}"`));
     else if (n.kind === 'port') solid.push(textBox(n.x, n.y, [...n.text].length, 6.6, n.anchor ?? 'start', 11, `port ${n.text}`));
     else if (n.kind === 'sum') {
       solid.push(box(n.x - n.r, n.y - n.r, n.x + n.r, n.y + n.r, 'a sum'));
       const at = { w: [n.x - n.r - 2, n.y - 5, 'end'], n: [n.x + 3, n.y - n.r - 3, 'start'], s: [n.x + 3, n.y + n.r + 5, 'start'] };
-      for (const [k, sg] of Object.entries(n.signs ?? {})) if (sg) solid.push(textBox(at[k][0], at[k][1], 1, 5.4, at[k][2], 9, `the sign ${sg}`));
+      for (const [k, sg] of Object.entries(n.signs ?? {})) if (sg) solid.push(textBox(at[k][0], at[k][1], 1, 6, at[k][2], 10, `the sign ${sg}`));
     } else if (n.kind === 'bar') {
       solid.push(box(n.x - n.w / 2, n.y - n.h / 2, n.x + n.w / 2, n.y + n.h / 2, 'the bar'));
-      for (const [y, sg] of n.signs ?? []) if (sg) solid.push(textBox(n.x - n.w / 2 - 1, y - 5, 1, 5.4, 'end', 9, `the sign ${sg}`));
+      for (const [y, sg] of n.signs ?? []) if (sg) solid.push(textBox(n.x - n.w / 2 - 1, y - 5, 1, 6, 'end', 10, `the sign ${sg}`));
     } else if (n.w) solid.push(box(n.x - n.w / 2, n.y - n.h / 2, n.x + n.w / 2, n.y + n.h / 2, `${n.kind} ${(n.lines ?? []).map((l) => l.map(([t]) => t).join('')).join(' / ')}`));
   }
   const hit = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;

@@ -289,7 +289,7 @@ test('loopModel on main\'s systems: sliding mode linear only in its boundary lay
   // A plant outside the page (Live mode): what u drives runs elsewhere, so
   // neither a design nor the Analysis tab has a model of it.
   const hil = project('HIL');
-  refusal(() => loopModel(hil, 'ctrl', 'origin'), 'external-plant', /^the plant runs outside the page \(External plant 'motor'\): the page has no model of it/);
+  refusal(() => loopModel(hil, 'ctrl', 'origin'), 'external-plant', /^the plant runs outside the page \(External plant 'plant'\): the page has no model of it/);
   blk(hil, 'ctrl').variants = [normalizeVariant({ name: 'LQR', type: 'lqr', params: { Q: [1], R: 1 } })];
   blk(hil, 'ctrl').variant = 0;
   const st = evaluateSystem(hil).info.designs[0];

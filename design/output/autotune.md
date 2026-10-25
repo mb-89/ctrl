@@ -124,7 +124,7 @@ The PID is in Skogestad's series form; this code's PID is parallel, so (his eq. 
 | Conical tank, "PI tuned for empty" running (0.96, 45 %) | the same kind: 3.83 (×4.0), 142 % | 0.36 (×0.38); it keeps swinging at r0, so the test starts at t = 0 |
 | Oven, badly tuned (1.28, 42 %) | K 1.0, τ 0.52 s, θ 0.24 s: 0.152 (×0.12) | the same |
 | Pendulum swing-up, Triple pendulum | refused: several measurements | the same |
-| HIL: external motor (offline, its plant reads 0) | step: "y does not respond to u: is the controller output wired to the plant?"; Iterate: "×0.84" with Kd 600 | refused by every method: "the plant runs outside the page (External plant motor); Auto-tune simulates the loop and has no model of it (identification is not built yet). Tune it live in the Controller tab" |
+| HIL: external motor (offline, its plant reads 0) | step: "y does not respond to u: is the controller output wired to the plant?"; Iterate: "×0.84" with Kd 600 | refused by every method: "the plant runs outside the page (External plant plant) and is a black box: the page knows only its interface, and Auto-tune needs an identified model of it (Identify, not built yet). Until then, tune it live in the Controller tab" (the system is now HIL: an external plant, input 20) |
 
 Smooth on the same systems: motor 0.471 (×0.37), sine 0.033 (×0.38), encoder 0.029 (×1.8: slower than the running PI), tank 0.111 (×1.3), oven 0.246 (×0.19).
 

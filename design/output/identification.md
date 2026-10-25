@@ -1,6 +1,6 @@
 # Identify: finding the plant by experiment
 
-Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24, not built.** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
+Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; step 1 (the protocol and the plant, §15) built 2026-10-25, the rest not built.** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
 
 The person's words ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)):
 
@@ -110,7 +110,7 @@ A model taken at rest is not the plant the loop runs at. The ladder follows the 
 | u's range | The variant's `umin`/`umax`, intersected with the External port's `min`/`max`. With neither, Identify refuses: "set u min and u max in the Controller tab: Identify needs to know how far V may go" |
 | u's start value u₀ | HIL: the port's `safe` value. Simulated: 0, clamped into the range |
 | y's name and unit | The block's input 2 (`blockInputNames`), the Sink's or External port's unit |
-| y's hard range | **New, optional**: `outputs[].min/max` in `describe`; the plant E-stops beyond it (§15). Simulated plants have none unless the tester types one |
+| y's hard range | **New, optional** (built): `outputs[].hard_min/hard_max` in `describe`, kept in the External block as `ymin`/`ymax`; the plant E-stops beyond it (§15). Simulated plants have none unless the tester types one |
 | The reference range | Min and max over one period of the Source that feeds r (`upstreamSource`) |
 | The sample time | The Controller block's Ts; on HIL, the block samples at its Ts on the plant's clock |
 | The other inputs (d, load) | Held at 0 (simulated) or at their safe values (HIL) for the whole test |
@@ -723,11 +723,18 @@ The step is then "✕ did not behave as predicted".
 
 ## 15. Protocol and plant changes (built first)
 
+**Built 2026-10-25** ([hil.md](hil.md#hard-ranges-and-applied-inputs-2026-10-25), `test/hil-protocol.test.mjs`), with these deviations from the plan below:
+- **The hard range is `hard_min`/`hard_max`**, not `min`/`max`: an output's `min … max` was already its full scale (what the scope spans, hil.md v2.7). The hard range normally lies inside it (the arm: full scale ±π, hard range ±2.5 rad).
+- **Current ±10 A**, not ±7 A: the library's PID peaks at 6.9 A on a plant varied by 15 %. The heater's T is 0 … 110 °C. These ranges replace the plant's earlier monitoring.
+- **`applied` is the inputs in effect at the end of the cycle** (the last u that arrived in it, after the clamps and `--slew`), not a time average over it, so `applied` at sample k is the answer to y k−1 as the plant applied it.
+- **The live record names them `applied.NAME`** (`applied.V`, `applied.load`), in the inputs' units; the screen's save leaves them out.
+- **"Used"** (test 15's third point) waits for the experiment (step 4), which reads them; this step records them. `--check` now also E-stops each plant beyond a hard range (the "`--check` E-stops" of test 15).
+
 **Additions to `loop-tuner-hil/1`.** Both are optional; the protocol name stays, and the page works without them.
 
 | Where | Addition | Why |
 |---|---|---|
-| `describe` → `outputs[i]` | `min`, `max` (the hard range) | "The plant keeps itself safe" is not yet true for outputs: today it E-stops only on its watchdog, its stop key, a lost page or a request, and it clamps only u |
+| `describe` → `outputs[i]` | `hard_min`, `hard_max` (the hard range; planned as `min`, `max`) | "The plant keeps itself safe" is not yet true for outputs: today it E-stops only on its watchdog, its stop key, a lost page or a request, and it clamps only u |
 | `y` notification | `applied: [...]`, the inputs the plant applied over the cycle just ended, after its clamps | On real hardware, clamps, rate limits or a dead band make what was applied differ from what was sent; the model must be fitted to what was applied |
 
 **`hil_plant.py`:**
@@ -794,7 +801,7 @@ export function crossCorrelation(res, u, lags = 25)
 // src/core/controllers.js gains the hidden type 'experiment' ({ plan }); it is never in the library,
 //   and normalizeVariant refuses it in files ("experiment is the page's own").
 // src/core/autotune.js: tuneContext(project, path, { plant: 'diagram' | 'identified', model }).
-// src/core/hil.js: outputs[].min/max, y.applied, the External block's ymin/ymax.
+// src/core/hil.js: outputs[].hard_min/hard_max, y.applied, the External block's ymin/ymax (built).
 ```
 
 **CLI and browser:**
@@ -868,8 +875,8 @@ Each step is one agent, with `npm test` green at the end.
    - The decisions.md entry is made with this design; check it.
    - Add the roadmap item.
    - Point hil.md's "Not yet" at this file.
-1. **Protocol and plant first** (§15).
-   - `outputs[].min/max` and `y.applied` in `hil.js` and `checkDescription`; the External block's `ymin`/`ymax`.
+1. **Protocol and plant first** (§15). **Built 2026-10-25**, with the deviations in §15.
+   - `outputs[].hard_min/hard_max` and `y.applied` in `hil.js` and `checkDescription`; the External block's `ymin`/`ymax`.
    - `hil_plant.py`'s output ranges, output E-stop and `applied`.
    - Tests 15. Run the real plant once with `--seed`.
 2. **Numerics.**

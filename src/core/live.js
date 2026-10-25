@@ -9,7 +9,8 @@
 // their waveform in loop time after the ramp-in, core/ramp.js; Controller
 // blocks sample on their own Ts), and reads the block's inputs: that is the u
 // sent back, at once, with the same seq (and, in control mode, r and e for
-// the plant's log).
+// the plant's log). A plant that echoes the inputs it applied (y's applied)
+// has them recorded as signals of their own, applied.NAME.
 
 import { compileDiagram, normalizeDiagram, diagramNames, parseEnd } from './diagram.js';
 import { CONTROLLERS } from './controllers.js';
@@ -29,7 +30,7 @@ function controllerOnReference(params, links) {
   for (const c of links.ctrls) {
     for (const i of c.drives ?? []) {
       if ((params.kinds?.[i] ?? 'effort') !== 'reference') continue;
-      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Wire the Controller's output elsewhere, load a system made for reference mode (such as "HIL: external motor, reference mode"), or start the plant in control mode (hil_plant.py without --mode reference).`;
+      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Wire the Controller's output elsewhere, load a system made for reference mode (such as "HIL: an external plant, reference mode"), or start the plant in control mode (hil_plant.py without --mode reference).`;
     }
   }
   return null;
@@ -257,6 +258,43 @@ export function keptWires(wires, id, was, now) {
   return wires.filter((w) => { const f = parseEnd(w.from), t = parseEnd(w.to); return !(t.id === id && changed(t.port)) && !(f.id === id && f.port >= now.outputs.length); });
 }
 
+// A level whose External block (id) takes a plant's ports, was and now its
+// parameters before and after (input 20: the page draws and wires what the
+// plant describes). The wires go as keptWires says, and the Sinks follow
+// the outputs: a Sink named for its port (the port's old name) takes the
+// new name and unit; an output without a Sink gets one, wired; a Sink named
+// for a port that is gone goes with it. Returns { blocks, wires, renamed:
+// { old: new name, or null for one that went } } for the scope's channels.
+const SIGNAL_NAME = /^[A-Za-z][A-Za-z0-9_]{0,11}$/;
+export function followPorts(level, id, was, now) {
+  const ext = level.blocks.find((b) => b.id === id);
+  const fromPort = (w) => { const f = parseEnd(w.from); return f.id === id ? f.port : -1; };
+  const fed = (b) => level.wires.filter((w) => parseEnd(w.to).id === b.id);
+  const renamed = {};
+  // Sinks named for an output that is gone, fed by nothing else, go.
+  const gone = new Set(level.blocks.filter((b) => b.type === 'sink' && fed(b).length && fed(b).every((w) => fromPort(w) >= now.outputs.length && b.params.name === was.outputs[fromPort(w)])).map((b) => b.id));
+  for (const b of level.blocks) if (gone.has(b.id)) renamed[b.params.name] = null;
+  const blocks = level.blocks.filter((b) => !gone.has(b.id)).map((b) => structuredClone(b));
+  const wires = keptWires(level.wires, id, was, now).filter((w) => !gone.has(parseEnd(w.to).id));
+  const taken = new Set(diagramNames({ blocks, wires }).sinks.concat(diagramNames({ blocks, wires }).sources));
+  now.outputs.forEach((name, j) => {
+    const unit = now.outUnits?.[j] ?? '1';
+    const sinks = blocks.filter((b) => b.type === 'sink' && wires.some((w) => parseEnd(w.to).id === b.id && fromPort(w) === j));
+    for (const b of sinks) {
+      if (b.params.name !== was.outputs[j]) continue;  // the person's own name stays
+      if (name !== b.params.name && SIGNAL_NAME.test(name) && !taken.has(name)) { taken.delete(b.params.name); renamed[b.params.name] = name; b.params.name = name; taken.add(name); }
+      b.params.unit = unit;
+    }
+    if (sinks.length || !SIGNAL_NAME.test(name) || taken.has(name)) return;
+    let sid = name;
+    for (let k = 2; blocks.some((b) => b.id === sid); k++) sid = `${name}_${k}`;
+    blocks.push({ id: sid, type: 'sink', params: { name, unit }, x: (ext?.x ?? 0) + 260, y: (ext?.y ?? 0) + 36 * j });
+    wires.push({ from: j ? `${id}:${j}` : id, to: sid });
+    taken.add(name);
+  });
+  return { blocks, wires, renamed };
+}
+
 // Why Run cannot start this diagram against its plant, or null (the loop
 // refuses the same): a Controller block driving a reference input.
 export function liveProblem(diagram) {
@@ -295,7 +333,8 @@ export function liveKey(key, { link, latched = false, display = 'stop' } = {}) {
 //   out: state { state, detail }, described { desc }, estop { by, reason },
 //        cleared { by } (the plant was reset at its own key),
 //        run { by } (a new run begins), stopped { by, reason } (the plant
-//        stopped by itself), samples { names, t, rt, values, ramp },
+//        stopped by itself), samples { names, units, t, rt, values, ramp }
+//        (units: of the applied.NAME columns, which only the record keeps),
 //        stats { link, plant }, error { message }, programmed { how },
 //        refused { message }, done { id, error? }
 // States: connecting (until the plant has described itself), open
@@ -313,6 +352,9 @@ export function createLiveLoop(post, env = globalThis) {
   let stats = null, plantStatus = null, lastStats = 0;
   const empty = () => ({ t: [], rt: [], values: [] });
   let batch = empty(), lastFlush = 0, names = [], lastRamp = null;
+  // The inputs the plant applied, when it says (y's applied): recorded as
+  // applied.NAME after the diagram's signals, NaN in a cycle without them.
+  let appliedOn = false, appliedUnits = {};
   let id = 0, gen = 0, bad = 0;
   const calls = new Map();
   const programWaiters = [], closeWaiters = [];
@@ -331,7 +373,7 @@ export function createLiveLoop(post, env = globalThis) {
 
   function flush() {
     if (!batch.t.length) return;
-    post({ type: 'samples', names, ...batch, ramp: lastRamp });
+    post({ type: 'samples', names, units: appliedUnits, ...batch, ramp: lastRamp });
     batch = empty();
   }
   function halt() { running = false; stopWatchdog(); flush(); }
@@ -369,10 +411,16 @@ export function createLiveLoop(post, env = globalThis) {
     }, Math.max(5, 1000 / desc.rate_hz));
   }
 
+  function sampleNames() {
+    const p = runner.port;
+    appliedUnits = appliedOn ? Object.fromEntries(p.inputs.map((n, i) => [`applied.${n}`, p.inUnits[i]])) : {};
+    names = [...runner.names(), ...Object.keys(appliedUnits)];
+  }
   function makeRunner() {
     if (!program) throw new Error('nothing to run yet');
     runner = createLiveRunner(program.diagram, program.signals);
-    names = runner.names();
+    appliedOn = false;
+    sampleNames();
   }
   // The page's side of a fresh run: the controllers and the ramp-in afresh.
   function begin(by) {
@@ -401,9 +449,11 @@ export function createLiveLoop(post, env = globalThis) {
     // inputs gets an empty u: its watchdog sees a live page.
     if (!latched && open()) ws.send(uMessage(m.seq, res.u, res.log));
     stats?.add(at, m.seq, now() - at);
+    const n = runner.port.inputs.length;
+    if (!appliedOn && m.applied?.length === n && n) { flush(); appliedOn = true; sampleNames(); }
     batch.t.push(m.t);
     batch.rt.push(res.ramp?.runT ?? NaN);
-    batch.values.push(res.values);
+    batch.values.push(appliedOn ? [...res.values, ...Array.from({ length: n }, (_, i) => (m.applied?.length === n ? m.applied[i] : NaN))] : res.values);
     lastRamp = res.ramp && res.ramp.phase === 'ramp' ? { left: res.ramp.left, to: res.ramp.to, first: res.ramp.first } : null;
     if (at - lastFlush >= 33) { lastFlush = at; flush(); }
     if (stats && at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
@@ -502,7 +552,7 @@ export function createLiveLoop(post, env = globalThis) {
       if (!runner) return;
       try {
         const how = runner.update(p.diagram, p.signals);
-        if (how === 'rebuilt') names = runner.names();
+        if (how === 'rebuilt') { flush(); sampleNames(); }
         post({ type: 'programmed', how });
       } catch (err) { if (running) trip(err.message, 'the page\'s diagram failed'); }
     },

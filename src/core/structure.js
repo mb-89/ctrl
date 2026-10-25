@@ -32,7 +32,7 @@
 
 import { trackingTime, ANTI_WINDUP } from './controllers.js';
 
-export const DIAGRAM_WIDTH = 270;
+export const DIAGRAM_WIDTH = 276;
 
 // A number as the diagram shows it: 3 significant digits, k for the very
 // large and µ for the very small (below 0.001; 0.005 stays 0.005), a true
@@ -67,8 +67,8 @@ export function limitsText(lo, hi) {
   return a ? `≥ ${fmt(lo)}` : `≤ ${fmt(hi)}`;
 }
 
-// A note's text is 9 px monospace: about 5.4 px a character.
-export const NOTE_CHAR = 5.4;
+// A note's text is 10 px monospace (--text-2xs): about 6 px a character.
+export const NOTE_CHAR = 6;
 
 function sheet(title, w, h) {
   const nodes = [], wires = [];

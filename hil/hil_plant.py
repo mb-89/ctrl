@@ -9,6 +9,7 @@ computer and stands in for real hardware in Loop Tuner's Live (HIL) mode.
     uv run hil_plant.py                     a DC motor swinging an arm, 100 Hz
     uv run hil_plant.py --mode reference    the same, with its own controller
     uv run hil_plant.py --plant heater      a heater and a temperature
+    uv run hil_plant.py --dyno              the motor with a load-torque input too
     python3 hil_plant.py --check            the physics for 3 s, no server
     python3 hil_plant.py --describe         what it tells the page about itself
     python3 hil_plant.py --help             every option
@@ -31,8 +32,10 @@ setpoint and the page only records.
 The plant the page does not know: each physical parameter differs from
 nominal by a random factor within +-15 % (--vary), a new plant each start
 unless --seed is given; --show-params prints the true values. The page is
-told the ports, their units and full scales, never the physics: it has to
-identify the plant, as it would a real one.
+told the ports, their units, full scales and hard ranges, never the
+physics: it has to identify the plant, as it would a real one. It has no
+disturbance input unless --dyno offers one (a load torque), as a rig with a
+dynamometer would.
 
 The protocol (JSON-RPC 2.0, one message per WebSocket text frame, at
 ws://127.0.0.1:8765; the README has it in a paragraph):
@@ -44,7 +47,8 @@ ws://127.0.0.1:8765; the README has it in a paragraph):
                  every cycle, the answer to y (a notification, no answer):
                  {"jsonrpc": "2.0", "method": "u", "params": {"seq": 42, "u": [3.1, 0], "log": [1.5, 0.2]}}
   plant -> page  every cycle while running:
-                 {"jsonrpc": "2.0", "method": "y", "params": {"seq": 42, "t": 0.42, "y": [1.2, 0.3, 0.8]}}
+                 {"jsonrpc": "2.0", "method": "y", "params": {"seq": 42, "t": 0.42, "y": [1.2, 0.3, 0.8], "applied": [3.1, 0]}}
+                 (applied: the inputs applied at the end of that cycle, after the clamps)
                  and when something happens (notifications):
                  {"jsonrpc": "2.0", "method": "estop", "params": {"reason": "...", "t": 1.23}}
                  {"jsonrpc": "2.0", "method": "running", "params": {"running": false, "by": "plant", "reason": "..."}}
@@ -55,8 +59,8 @@ ws://127.0.0.1:8765; the README has it in a paragraph):
 This script owns the clock: every cycle it integrates the physics, sends the
 outputs y and applies each input u from the moment it arrives. It is also the
 safety authority: it clamps every input to its limits, and if no u comes for
-10 cycles, the page goes away while running, an output leaves its safe range
-or is not a number, the cycle itself fails, or STOP is pressed (here or on
+10 cycles, the page goes away while running, an output leaves its hard range
+(which describe declares) or is not a number, the cycle itself fails, or STOP is pressed (here or on
 the page), it applies the safe inputs, stops the run and latches an
 emergency stop (E-stop) until Reset. Who latched it resets it: a STOP
 pressed here is reset here, one from the page on the page.
@@ -86,7 +90,11 @@ import traceback
 PROTOCOL = "loop-tuner-hil/1"
 
 
-def port(name, unit, lo, hi, **extra):
+def port(name, unit, lo, hi, hard=None, **extra):
+    """A port and its full scale (min ... max); an output may have a hard
+    range too (hard_min ... hard_max), beyond which the plant E-stops."""
+    if hard:
+        extra = {"hard_min": hard[0], "hard_max": hard[1], **extra}
     return {"name": name, "unit": unit, "min": lo, "max": hi, **extra}
 
 
@@ -100,6 +108,15 @@ def number(v):
     except (OverflowError, ValueError):
         return None
     return x if math.isfinite(x) else None
+
+
+def beyond(v, bound):
+    """v with as few digits as show it beyond the bound: 2.6 beyond 2.5, 110.04 beyond 110."""
+    for digits in range(3, 10):
+        text = f"{v:.{digits}g}"
+        if float(text) != bound:
+            return text
+    return repr(v)
 
 
 class Motor:
@@ -120,17 +137,20 @@ class Motor:
     # The physical parameters, which the page is not told (see plant_params).
     PHYSICS = {"R": "ohm", "L": "H", "k": "N·m/A", "J": "kg·m²", "b": "N·m·s/rad", "Tc": "N·m", "mgl": "N·m"}
 
-    # The ports: what drives it (the effort, then test inputs), what it
-    # measures, each with its full scale (min ... max).
+    # The ports: what drives it (the effort, then test inputs, offered only
+    # with --dyno), what it measures, each with its full scale (min ... max).
+    # The outputs' hard ranges are its monitoring: beyond one the plant stops
+    # itself (E-stop). The arm stays below the horizontal-and-a-half; a PID
+    # (Kp 10, Ki 20, Kd 0.6) peaks at about 1.8 rad, 16 rad/s and 7 A on a
+    # plant varied by 15 %.
     EFFORT = port("V", "V", -12.0, 12.0, safe=0.0)
     TESTS = [port("load", "N·m", -0.2, 0.2, safe=0.0, kind="disturbance")]
-    OUTPUTS = [port("angle", "rad", -math.pi, math.pi), port("speed", "rad/s", -120.0, 120.0), port("current", "A", -12.0, 12.0)]
+    OUTPUTS = [port("angle", "rad", -math.pi, math.pi, hard=(-2.5, 2.5)), port("speed", "rad/s", -120.0, 120.0, hard=(-60.0, 60.0)),
+               port("current", "A", -12.0, 12.0, hard=(-10.0, 10.0))]
     # Its own controller (reference and log modes): a PID on the angle.
     REFERENCE = port("r", "rad", -3.0, 3.0, safe=0.0, measures="angle")
     OWN = {"Kp": 10.0, "Ki": 20.0, "Kd": 0.6, "Tf": 0.01}
     SETPOINT = 1.0                   # rad: what it holds in log mode
-    # Monitoring: outside these the plant stops itself (E-stop).
-    TRIPS = {"angle": (-2 * math.pi, 2 * math.pi, "the arm turned more than a full turn")}
 
     def __init__(self, params=None):
         for name, value in (params or {}).items():
@@ -180,11 +200,10 @@ class Heater:
     PHYSICS = {"C": "J/K", "G": "W/K", "Pmax": "W", "tau": "s", "Ta": "°C"}
     EFFORT = port("P", "%", 0.0, 100.0, safe=0.0)
     TESTS = []
-    OUTPUTS = [port("T", "°C", 0.0, 120.0)]
+    OUTPUTS = [port("T", "°C", 0.0, 120.0, hard=(0.0, 110.0))]
     REFERENCE = port("r", "°C", 20.0, 100.0, safe=20.0, measures="T")
     OWN = {"Kp": 6.0, "Ki": 1.5, "Kd": 0.0, "Tf": 0.1}
     SETPOINT = 50.0
-    TRIPS = {"T": (-50.0, 110.0, "over-temperature")}
 
     def __init__(self, params=None):
         for name, value in (params or {}).items():
@@ -270,11 +289,16 @@ class Plant:
         self.model = self.Model(plant_params(args))
         self.mode = args.mode
         M = self.Model
+        # Test inputs (a load torque) only with --dyno: a rig without a
+        # dynamometer has none. Without it they hold their safe values.
+        dyno = getattr(args, "dyno", False)
+        tests = list(M.TESTS) if dyno else []
+        self.hidden = [] if dyno else [p["safe"] for p in M.TESTS]
         if self.mode == "control":
-            self.inputs = [dict(M.EFFORT, kind="effort")] + M.TESTS
+            self.inputs = [dict(M.EFFORT, kind="effort")] + tests
             self.outputs = list(M.OUTPUTS)
         elif self.mode == "reference":
-            self.inputs = [dict(M.REFERENCE, kind="reference")] + M.TESTS
+            self.inputs = [dict(M.REFERENCE, kind="reference")] + tests
             self.outputs = list(M.OUTPUTS) + [dict(M.EFFORT, kind="effort")]
         else:  # log: no inputs; it holds its own setpoint and reports it
             self.inputs = []
@@ -584,14 +608,17 @@ class Plant:
         self.stop(by="plant", reason=f"E-STOP: {reason}")
 
     def monitor(self, y):
+        """An output that is not a number, or beyond its hard range, latches
+        an E-stop: "angle 2.6 rad beyond 2.5"."""
         for o, v in zip(self.outputs, y):
             if not math.isfinite(v):
                 self.trip(f"{o['name']} is not a number")
                 return
-        for j, o in enumerate(self.Model.OUTPUTS):
-            lo, hi, why = self.Model.TRIPS.get(o["name"], (None, None, None))
-            if lo is not None and not lo <= y[j] <= hi:
-                self.trip(f"{why} ({o['name']} {y[j]:.3g} {o['unit']})")
+        for o, v in zip(self.outputs, y):
+            lo, hi = o.get("hard_min"), o.get("hard_max")
+            bound = lo if lo is not None and v < lo else hi if hi is not None and v > hi else None
+            if bound is not None:
+                self.trip(f"{o['name']} {beyond(v, bound)} {o['unit']} beyond {bound:g}")
                 return
 
     def cycle_ended(self, task):
@@ -642,10 +669,11 @@ class Plant:
     # ---- the cycle
 
     def applied(self):
-        """The plant's inputs in its model's order: [effort, tests...]."""
+        """The plant's inputs in its model's order: [effort, tests...]; the
+        tests --dyno does not offer at their safe values."""
         if self.mode == "control":
-            return self.u
-        return [self.effort] + list(self.u[1:]) if self.inputs else [self.effort] + [p["safe"] for p in self.Model.TESTS]
+            return list(self.u) + self.hidden
+        return [self.effort] + list(self.u[1:]) + self.hidden if self.inputs else [self.effort] + [p["safe"] for p in self.Model.TESTS]
 
     def cycle(self, now, last, span):
         """One cycle: the physics over the last `span` seconds, each u applied
@@ -683,7 +711,12 @@ class Plant:
         self.sent.pop(seq - 50, None)
         if self.writer:
             self.writer.row("", seq * self.dt, y)
-        self.notify("y", {"seq": seq, "t": round(seq * self.dt, 6), "y": [round(v, 6) if math.isfinite(v) else None for v in y]})
+        msg = {"seq": seq, "t": round(seq * self.dt, 6), "y": [round(v, 6) if math.isfinite(v) else None for v in y]}
+        # The inputs applied at the end of the cycle (the last u that came in
+        # it, after the clamps and --slew), for the page's record.
+        if self.inputs:
+            msg["applied"] = [round(v, 6) for v in self.u]
+        self.notify("y", msg)
 
     async def run(self):
         """The real-time loop: deadlines are absolute (start + k·dt), so sleep
@@ -864,17 +897,35 @@ def plant_params(args):
     return params
 
 
+def check_trip(args):
+    """--check, its monitoring: the nominal plant's cycle at full effort,
+    without a page, until an output leaves its hard range and the plant
+    E-stops (the motor's arm swings up; a heater whose losses are halved
+    overheats). True if it did, with the safe inputs applied."""
+    a = argparse.Namespace(**{**vars(args), "mode": "control", "vary": 0.0, "set": ["G=1"] if args.plant == "heater" else [], "log": None, "bench": 0})
+    p = Plant(a)
+    p.running = True
+    p.u = [p.inputs[0]["max"]] + p.safe[1:]
+    for k in range(int(60 * p.rate)):
+        p.cycle(0.0, 0.0, p.dt)
+        if p.estop_reason:
+            break
+    print(f"E-stop after {k * p.dt:.2f} s at full {p.inputs[0]['name']}: {p.estop_reason}")
+    return p.estop_reason is not None and " beyond " in p.estop_reason and not p.running and p.u == p.safe
+
+
 def check(args):
     """--check: 3 s of the nominal physics without a server. The motor under a
     PD at 100 Hz rises to about 1.2 rad (gravity leaves an offset without
     integral action); its own PID (reference mode) holds 1.5 rad; the heater's
-    own PI reaches 50 °C."""
+    own PI reaches 50 °C. Then each E-stops at full effort when an output
+    leaves its hard range."""
     if args.plant == "heater":
         m, own = Heater(), OwnController(Heater.OWN, Heater.EFFORT, 0.01)
         for _ in range(3000):
             m.advance(0.01, [own.step(50.0, m.outputs()[0])])
         print(f"T {m.Ts:.2f} °C after 30 s of its own PI towards 50 °C")
-        return 0 if 48 < m.Ts < 52 else 1
+        return 0 if 48 < m.Ts < 52 and check_trip(args) else 1
     m = Motor()
     for _ in range(300):
         V = max(-12.0, min(12.0, 6 * (1.5 - m.angle) - 0.6 * m.w))
@@ -885,7 +936,7 @@ def check(args):
     for _ in range(300):
         m.advance(0.01, [own.step(1.5, m.angle), 0.0])
     print(f"angle {m.angle:.3f} rad after 3 s of its own PID (reference mode) towards 1.5 rad")
-    return 0 if ok and abs(m.angle - 1.5) < 0.02 else 1
+    return 0 if ok and abs(m.angle - 1.5) < 0.02 and check_trip(args) else 1
 
 
 # ---- the keys at the plant
@@ -1015,6 +1066,8 @@ def main():
     p.add_argument("--port", type=int, default=8765, help="port (default 8765)")
     p.add_argument("--rate", type=float, default=100.0, help="cycle rate in Hz (default 100; up to 200 measured sound with the default watchdog; at 500 or 1000 raise --watchdog and expect late cycles)")
     p.add_argument("--watchdog", type=int, default=10, help="E-stop after this many cycles without u (default 10)")
+    p.add_argument("--dyno", action="store_true",
+                   help="offer the test inputs too (the motor: a load torque, a disturbance input); by default the plant has none, as a rig without a dynamometer")
     p.add_argument("--slew", type=float, default=0.0, metavar="PCT",
                    help="limit how fast each input may change, in %% of its range per second (default 0: no limit; the page ramps in at 10 %%/s itself)")
     p.add_argument("--vary", type=float, default=0.15, metavar="F",

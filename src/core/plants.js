@@ -134,23 +134,6 @@ function cartView(name, rods, caption, box) {
 const Q_SINGLE = [10, 50, 1, 1];
 const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 
-// The arm of the HIL motor (both modes): it hangs at angle 0 and turns
-// counter-clockwise; the yellow mark is r.
-const ARM_VIEW = {
-  name: 'Arm', kind: '2d', view: [-1.1, -1.05, 1.1, 1.0],
-  shapes: [
-    { type: 'circle', cx: 0, cy: 0, r: 0.75, fill: 'panel', stroke: 'muted', lineWidth: 2 },
-    ...ticks(0.75),
-    { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: -0.8, x2: 0, y2: -0.95, stroke: 'ch1', lineWidth: 5 }] },
-    { type: 'group', angle: 'angle', shapes: [
-      { type: 'line', x1: 0, y1: 0, x2: 0, y2: -0.6, stroke: 'ch2', lineWidth: 7 },
-      { type: 'circle', cx: 0, cy: -0.6, r: 0.11, fill: 'ch2' },
-    ] },
-    { type: 'circle', cx: 0, cy: 0, r: 0.12, fill: 'ink' },
-    { type: 'text', x: 0, y: 0.9, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   load {d:4.2} N·m', size: 13 },
-  ],
-};
-
 export const EXAMPLE_PLANTS = [
   {
     name: 'Mass–spring–damper',
@@ -488,37 +471,37 @@ export const EXAMPLE_PLANTS = [
       ],
     }],
   },
-  // Live mode (design/output/hil.md): the plant is hil_plant.py, outside the
-  // page; the External plant block's ports match what it describes. The
-  // controller gains are chosen by hand: a P that gravity defeats, then better.
-  // It opens stopped: nothing runs until the plant is connected and Run is
-  // pressed (the person).
+  // Live mode (design/output/hil.md): the plant is outside the page and a
+  // black box (input 20): the page knows its interface only, the inputs and
+  // outputs its describe lists (names, units, full scales, hard ranges,
+  // kinds), which the External block keeps (here: what the example plant,
+  // hil_plant.py, describes) and takes anew on Connect. No model, no
+  // disturbance it does not offer, no picture: the Plant tab shows the
+  // interface. The controller is a first guess, not tuned on a model:
+  // tuning needs the plant identified first (identification.md). It opens
+  // stopped: nothing runs until the plant is connected and Run is pressed.
   {
-    name: 'HIL: external motor',
-    notes: 'The plant runs outside this page, in real time: a simulated DC motor swinging an unbalanced arm at 100 Hz on your computer, standing in for real hardware (its physics varies by up to 15 % and the page is not told). Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the link is up, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs and the arm follows r; each channel spans its full scale. 4. Tune in the Controller tab while it runs: the P it starts with leaves the arm short of r (gravity); flip to PD or PID (the variant list, or loopTuner.setVariant("ctrl", "PD")). A load torque d pushes the arm at 3.6 s. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there). Save, Live record keeps the last minutes. Help (?), Live and For agents, has all of it.',
+    name: 'HIL: an external plant',
+    notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Help (?), Live and For agents, has all of it.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
-      d: { period: PERIOD, components: [pulse(0.1, 3.6, 0.6)] },
     },
-    scope: { channels: channels('r', 'angle', 'V', 'd') },
-    ui: { ...ui('Arm'), run: 'stop', setup: 0.42 },
-    tags: [{ label: 'Nonlinear', kind: 'plant' }],  // the arm: gravity and Coulomb friction, outside the page
+    scope: { channels: channels('r', 'angle', 'V', 'current') },
+    ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
     diagram: {
       blocks: [
-        src('r', 30, 156, 'rad'),
-        src('d', 230, 250, 'N·m'),
-        ctrl(130, 150, 2, 0.01, [
-          { name: 'P, untuned', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
-          { name: 'PD', type: 'pid', params: { Kp: 6, Kd: 0.6, Tf: 0.01, umin: -12, umax: 12 } },
-          { name: 'PID with prefilter', type: 'pid', params: { Kp: 10, Ki: 20, Kd: 0.6, Tf: 0.01, Tr: 0.1, umin: -12, umax: 12 } },
+        src('r', 30, 106, 'rad'),
+        ctrl(130, 100, 2, 0.01, [
+          { name: 'P, a first guess', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         {
-          id: 'motor', type: 'external', name: 'motor', x: 340, y: 96,
+          id: 'plant', type: 'external', name: 'plant', x: 340, y: 96,
           params: {
             url: 'ws://127.0.0.1:8765', rate: 100,
-            inputs: ['V', 'load'], inUnits: ['V', 'N·m'], min: [-12, -0.2], max: [12, 0.2], safe: [0, 0], kinds: ['effort', 'disturbance'], measures: ['', ''],
+            inputs: ['V'], inUnits: ['V'], min: [-12], max: [12], safe: [0], kinds: ['effort'], measures: [''],
             outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'], outMin: [-Math.PI, -120, -12], outMax: [Math.PI, 120, 12],
+            ymin: [-2.5, -60, -10], ymax: [2.5, 60, 10],
             ramp: 10,
           },
         },
@@ -526,47 +509,46 @@ export const EXAMPLE_PLANTS = [
         sink('V', 330, 20, 'V'),
       ],
       wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'ctrl', to: 'V' },
-        { from: 'motor', to: 'angle' }, { from: 'motor:1', to: 'speed' }, { from: 'motor:2', to: 'current' }, { from: 'motor', to: 'ctrl:1' },
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'plant' }, { from: 'ctrl', to: 'V' },
+        { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant', to: 'ctrl:1' },
       ],
     },
-    views: [ARM_VIEW],
+    views: [],
   },
-  // The same motor in reference mode (the person, settled: both modes): the
-  // plant runs its own controller, with its limits and monitoring; the page
-  // sends the reference and records what comes back, the plant's own u (V)
-  // included. The page's controllers and Auto-tune are not in the loop.
+  // The same in reference mode (the person, settled: both modes): the plant
+  // runs its own controller, with its limits and monitoring; the page sends
+  // the reference and records what comes back, the plant's own u included.
+  // The page's controllers and Auto-tune are not in the loop.
   {
-    name: 'HIL: external motor, reference mode',
-    notes: 'The same simulated motor in reference mode: it runs its own controller (a PID with its own limits and monitoring); this page only sends the reference r and the load d, and records what comes back, the plant\'s own voltage V included. For logging, and for a plant that controls itself; the page\'s controllers and Auto-tune are not in the loop. Start the plant with sh runme.sh --mode reference (or runme.cmd --mode reference); then Plant tab, Connect, and Run. Everything else as in HIL: external motor; Help (?), Live.',
+    name: 'HIL: an external plant, reference mode',
+    notes: 'An external plant in reference mode: it runs its own controller, with its own limits and monitoring; this page only sends the reference r and records what comes back, the plant\'s own control effort included. The page knows only the interface the plant describes (Plant tab, Interface); what is inside is a black box, identified from what it reports. For logging, and for a plant that controls itself; the page\'s controllers and Auto-tune are not in the loop. Start the example plant with sh runme.sh --mode reference (or runme.cmd --mode reference); then Plant tab, Connect, and Run. Everything else as in HIL: an external plant; Help (?), Live.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
-      d: { period: PERIOD, components: [pulse(0.1, 3.6, 0.6)] },
     },
-    scope: { channels: channels('r', 'angle', 'V', 'd') },
-    ui: { ...ui('Arm'), run: 'stop', setup: 0.42 },
-    tags: [{ label: 'Nonlinear', kind: 'plant' }, { label: 'Reference mode', kind: 'feature' }],
+    scope: { channels: channels('r', 'angle', 'V', 'current') },
+    ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
+    tags: [{ label: 'Reference mode', kind: 'feature' }],
     diagram: {
       blocks: [
         src('r', 60, 110, 'rad'),
-        src('d', 60, 170, 'N·m'),
         {
-          id: 'motor', type: 'external', name: 'motor', x: 240, y: 96,
+          id: 'plant', type: 'external', name: 'plant', x: 240, y: 96,
           params: {
             url: 'ws://127.0.0.1:8765', rate: 100,
-            inputs: ['r', 'load'], inUnits: ['rad', 'N·m'], min: [-3, -0.2], max: [3, 0.2], safe: [0, 0], kinds: ['reference', 'disturbance'], measures: ['angle', ''],
+            inputs: ['r'], inUnits: ['rad'], min: [-3], max: [3], safe: [0], kinds: ['reference'], measures: ['angle'],
             outputs: ['angle', 'speed', 'current', 'V'], outUnits: ['rad', 'rad/s', 'A', 'V'], outMin: [-Math.PI, -120, -12, -12], outMax: [Math.PI, 120, 12, 12],
+            ymin: [-2.5, -60, -10, null], ymax: [2.5, 60, 10, null], outKinds: ['measurement', 'measurement', 'measurement', 'effort'],
             ramp: 10,
           },
         },
         sink('angle', 500, 98, 'rad'), sink('speed', 500, 134, 'rad/s'), sink('current', 500, 170, 'A'), sink('V', 500, 206, 'V'),
       ],
       wires: [
-        { from: 'r', to: 'motor' }, { from: 'd', to: 'motor:1' },
-        { from: 'motor', to: 'angle' }, { from: 'motor:1', to: 'speed' }, { from: 'motor:2', to: 'current' }, { from: 'motor:3', to: 'V' },
+        { from: 'r', to: 'plant' },
+        { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant:3', to: 'V' },
       ],
     },
-    views: [ARM_VIEW],
+    views: [],
   },
 ];
 

@@ -3,10 +3,8 @@
 // to draw curves, points and markers in data coordinates.
 
 import { siUnit, num } from './units.js';
+import { palette as C } from './palette.js';
 
-const BG = '#0a0d10';
-const MONO = '"IBM Plex Mono", ui-monospace, monospace';
-export const PLOT_COLORS = { ink: 'rgba(235, 240, 245, 0.9)', dim: 'rgba(200, 210, 218, 0.7)', grid: 'rgba(160, 175, 190, 0.18)', axis: 'rgba(160, 175, 190, 0.45)' };
 
 // Ticks for a linear axis: about n steps of 1, 2 or 5 × 10^k.
 export function niceTicks(lo, hi, n = 6) {
@@ -58,37 +56,37 @@ export function createPlot(canvas) {
         const sx = (ax.x1 - ax.x0) / (P.r - P.l), sy = (ax.y1 - ax.y0) / (P.b - P.t);
         if (sx > sy) { const c = (ax.y0 + ax.y1) / 2, h = (sx * (P.b - P.t)) / 2; ax.y0 = c - h; ax.y1 = c + h; } else { const c = (ax.x0 + ax.x1) / 2, h = (sy * (P.r - P.l)) / 2; ax.x0 = c - h; ax.x1 = c + h; }
       }
-      g.fillStyle = BG; g.fillRect(0, 0, W, H);
-      g.font = `10.5px ${MONO}`;
-      if (axes.title) { g.fillStyle = PLOT_COLORS.ink; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(axes.title, P.l, 4); }
+      g.fillStyle = C().bg; g.fillRect(0, 0, W, H);
+      g.font = `10.5px ${C().mono}`;
+      if (axes.title) { g.fillStyle = C().ink; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(axes.title, P.l, 4); }
       // Grid and tick labels.
       g.lineWidth = 1;
       const xt = ax.xlog ? decades(ax.x0, ax.x1) : niceTicks(ax.x0, ax.x1, Math.max(3, Math.floor((P.r - P.l) / 70)));
       const yt = niceTicks(ax.y0, ax.y1, Math.max(3, Math.floor((P.b - P.t) / 34)));
-      g.strokeStyle = PLOT_COLORS.grid;
+      g.strokeStyle = C().gridFaint;
       g.beginPath();
       for (const v of xt) { const x = Math.round(X(v)) + 0.5; g.moveTo(x, P.t); g.lineTo(x, P.b); }
       for (const v of yt) { const y = Math.round(Y(v)) + 0.5; g.moveTo(P.l, y); g.lineTo(P.r, y); }
       g.stroke();
-      g.fillStyle = PLOT_COLORS.dim;
+      g.fillStyle = C().label;
       g.textAlign = 'center'; g.textBaseline = 'top';
       for (const v of xt) g.fillText(ax.xunit ? siUnit(v, ax.xunit, 3) : num(v, 3), X(v), P.b + 5);
       g.textAlign = 'right'; g.textBaseline = 'middle';
       for (const v of yt) g.fillText(ax.yunit ? siUnit(v, ax.yunit, 3) : num(v, 3), P.l - 5, Y(v));
       // Zero lines, if inside.
-      g.strokeStyle = PLOT_COLORS.axis;
+      g.strokeStyle = C().axis;
       g.beginPath();
       if (!ax.xlog && ax.x0 < 0 && ax.x1 > 0) { const x = Math.round(X(0)) + 0.5; g.moveTo(x, P.t); g.lineTo(x, P.b); }
       if (ax.y0 < 0 && ax.y1 > 0) { const y = Math.round(Y(0)) + 0.5; g.moveTo(P.l, y); g.lineTo(P.r, y); }
       g.stroke();
       g.strokeRect(P.l + 0.5, P.t + 0.5, P.r - P.l - 1, P.b - P.t - 1);
-      if (axes.xlabel) { g.textAlign = 'right'; g.textBaseline = 'bottom'; g.fillStyle = PLOT_COLORS.dim; g.fillText(axes.xlabel, P.r - 3, P.b - 3); }
-      if (axes.ylabel) { g.textAlign = 'left'; g.textBaseline = 'top'; g.fillStyle = PLOT_COLORS.dim; g.fillText(axes.ylabel, P.l + 4, P.t + 3); }
+      if (axes.xlabel) { g.textAlign = 'right'; g.textBaseline = 'bottom'; g.fillStyle = C().label; g.fillText(axes.xlabel, P.r - 3, P.b - 3); }
+      if (axes.ylabel) { g.textAlign = 'left'; g.textBaseline = 'top'; g.fillStyle = C().label; g.fillText(axes.ylabel, P.l + 4, P.t + 3); }
       return ax;
     },
     // Clip to the plot area for the drawing in fn.
     clip(fn) { g.save(); g.beginPath(); g.rect(P.l, P.t, P.r - P.l, P.b - P.t); g.clip(); fn(); g.restore(); },
-    line(xs, ys, { color = PLOT_COLORS.ink, width = 1.5, dash = null, alpha = 1 } = {}) {
+    line(xs, ys, { color = C().ink, width = 1.5, dash = null, alpha = 1 } = {}) {
       g.strokeStyle = color; g.lineWidth = width; g.globalAlpha = alpha; if (dash) g.setLineDash(dash);
       g.beginPath();
       let pen = false;
@@ -100,7 +98,7 @@ export function createPlot(canvas) {
       g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
     },
     // Markers: 'x' (pole), 'o' (zero), 'dot', '+'.
-    mark(x, y, { shape = 'dot', color = PLOT_COLORS.ink, size = 4, width = 1.6 } = {}) {
+    mark(x, y, { shape = 'dot', color = C().ink, size = 4, width = 1.6 } = {}) {
       const px = X(x), py = Y(y);
       if (!Number.isFinite(px) || !Number.isFinite(py)) return;
       g.strokeStyle = color; g.fillStyle = color; g.lineWidth = width;
@@ -110,12 +108,12 @@ export function createPlot(canvas) {
       else if (shape === '+') { g.moveTo(px - size, py); g.lineTo(px + size, py); g.moveTo(px, py - size); g.lineTo(px, py + size); g.stroke(); }
       else { g.arc(px, py, size / 2, 0, 2 * Math.PI); g.fill(); }
     },
-    text(x, y, s, { color = PLOT_COLORS.dim, align = 'left', base = 'middle', dx = 0, dy = 0 } = {}) {
-      g.font = `10.5px ${MONO}`; g.fillStyle = color; g.textAlign = align; g.textBaseline = base;
+    text(x, y, s, { color = C().label, align = 'left', base = 'middle', dx = 0, dy = 0 } = {}) {
+      g.font = `10.5px ${C().mono}`; g.fillStyle = color; g.textAlign = align; g.textBaseline = base;
       g.fillText(s, X(x) + dx, Y(y) + dy);
     },
-    note(s, color = PLOT_COLORS.dim) {
-      g.font = `11px ${MONO}`; g.fillStyle = color; g.textAlign = 'center'; g.textBaseline = 'middle';
+    note(s, color = C().label) {
+      g.font = `11px ${C().mono}`; g.fillStyle = color; g.textAlign = 'center'; g.textBaseline = 'middle';
       g.fillText(s, (P.l + P.r) / 2, (P.t + P.b) / 2);
     },
   };

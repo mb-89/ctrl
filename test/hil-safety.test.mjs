@@ -22,7 +22,7 @@ const DESC = {
 // The same motor started with --mode reference: its first input is now r.
 const REF_DESC = { ...DESC, inputs: [{ name: 'r', unit: 'rad', min: -3, max: 3, safe: 0, kind: 'reference', measures: 'angle' }, DESC.inputs[1]], outputs: [...DESC.outputs, { name: 'V', unit: 'V', min: -12, max: 12, kind: 'effort' }] };
 
-const system = async (name = 'HIL: external motor') => (await import('../src/core/systems.js')).SYSTEM_LIBRARY.find((s) => s.name === name);
+const system = async (name = 'HIL: an external plant') => (await import('../src/core/systems.js')).SYSTEM_LIBRARY.find((s) => s.name === name);
 const signalsOf = (sys) => Object.fromEntries(Object.entries(sys.input.signals).map(([k, v]) => [k, normalizeReference(v)]));
 const program = (sys, diagram = sys.plant.diagram) => ({ type: 'program', diagram: normalizeDiagram(diagram), signals: signalsOf(sys) });
 // Lets every chain of the fakes' zero-delay timers run out (a fixed wait
@@ -189,9 +189,8 @@ test('a control-mode system against a reference-mode plant: the wire into the ch
   const now = externalParams(checkDescription(REF_DESC), ext.params);
   const kept = keptWires(d.wires, ext.id, ext.params, now);
   const has = (from, to) => kept.some((w) => w.from === from && w.to === to);
-  assert.ok(!has('ctrl', 'motor'), 'what fed V (volts) must not feed r (rad)');
-  assert.ok(has('d', 'motor:1'), 'load is still load');
-  assert.ok(has('motor', 'ctrl:1') && has('ctrl', 'V'), 'the rest stays');
+  assert.ok(!has('ctrl', 'plant'), 'what fed V (volts) must not feed r (rad)');
+  assert.ok(has('plant', 'ctrl:1') && has('ctrl', 'V'), 'the rest stays');
   assert.deepEqual(keptWires(d.wires, ext.id, ext.params, ext.params), d.wires, 'the same ports keep every wire');
   // Wired anyway (by hand, or an older page): Run is refused, and why.
   const wired = normalizeDiagram({ ...d, blocks: d.blocks.map((b) => (b === ext ? { ...b, params: now } : b)) });
@@ -236,7 +235,7 @@ out = {'number': [m.number(10 ** 400), m.number(True), m.number(1.5), m.number(f
 own = m.OwnController(m.Motor.OWN, m.Motor.EFFORT, 0.01)
 out['own'] = [own.step(1.0, float('nan')), own.step(1.0, 0.0)]
 p.running = True
-p.take_u({'seq': [1], 'u': [10 ** 400, 0]})
+p.take_u({'seq': [1], 'u': [10 ** 400]})
 out['u'] = p.pending[-1][1]
 p.monitor([float('nan'), 0.0, 0.0, 0.0])
 out['nan'] = [p.estop_reason, p.estop_by, p.running, len(safe) > 0]
@@ -271,7 +270,7 @@ print(json.dumps(out))
   const out = JSON.parse(res.trim().split('\n').at(-1));
   assert.deepEqual(out.number, [null, null, 1.5, null, null], 'too large for a float, a bool, NaN, a string: not numbers');
   assert.deepEqual(out.own, [0, 10], 'its PID gives the safe effort for a NaN measurement, and starts afresh');
-  assert.deepEqual(out.u, [0, 0], 'a u of 10^400 is the safe value, and a seq that is a list does no harm');
+  assert.deepEqual(out.u, [0], 'a u of 10^400 is the safe value, and a seq that is a list does no harm');
   assert.deepEqual(out.nan, ['angle is not a number', 'monitor', false, true], 'monitoring: latched, stopped, safe inputs on the device');
   assert.match(out.page_resets_key, /STOP was pressed at the plant: reset it there/);
   assert.equal(out.plant_resets_key, null);
@@ -295,9 +294,9 @@ test('hil_plant.py: frames in the order made, malformed messages answered and su
     assert.deepEqual(order(k), ['running true page', 'result 2', 'running false page', 'result 3', 'running true page', 'result 4'], 'a notification a request causes comes before its result');
     // Malformed: answered, or ignored; never the end of the link.
     assert.equal((await page.call('estop', [1, 2])).error.code, -32602);
-    page.raw(`{"jsonrpc":"2.0","method":"u","params":{"seq":4,"u":[1${'0'.repeat(400)},0]}}`);
+    page.raw(`{"jsonrpc":"2.0","method":"u","params":{"seq":4,"u":[1${'0'.repeat(400)}]}}`);
     page.raw(JSON.stringify({ jsonrpc: '2.0', method: 'u', params: [1, 2] }));
-    page.raw(JSON.stringify({ jsonrpc: '2.0', method: 'u', params: { seq: [1], u: [0, 0] } }));
+    page.raw(JSON.stringify({ jsonrpc: '2.0', method: 'u', params: { seq: [1], u: [0] } }));
     await tick(150);
     assert.ok(!page.notes.some((m) => m.method === 'estop'), 'no E-stop');
     assert.equal(page.closed(), null, 'the link stays');

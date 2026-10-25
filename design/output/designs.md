@@ -37,7 +37,7 @@ The map from a **cut** signal u to the block's **measurements**, evaluated by th
 | Saturation, Function, Switch | As in the simulation, so finite differences see their slope; `limits(x, u)` lists the saturations outside their limits (no slope) or at a limit, within a difference step of it (the slope differs left and right: `edge`); `atLimits(x, u)` gives their sentences |
 | Controller, Observer | No laws are built; outputs come from the cut, `held`, or the look-through |
 | Source | `at.sources[name] ?? 0` |
-| External plant (Live mode) | No model: when u drives it or a measurement reads it, the Model is refused (`external-plant`: "the plant runs outside the page (External plant 'motor'): the page has no model of it to design with or analyse"), so a design and the Analysis tab say so |
+| External plant (Live mode) | No model: when u drives it or a measurement reads it, the Model is refused (`external-plant`: "the plant runs outside the page (External plant 'plant'): the page has no model of it to design with or analyse"), so a design and the Analysis tab say so |
 
 When u reaches none of the measurements the Model says so, naming a held Controller in between. Errors (`no-block`, `no-cut` for an Observer with nothing on its u input, `bad-state`) carry `code` and `hint`, for `DesignError` to take over.
 
@@ -184,7 +184,7 @@ The Analysis tab is its own workstream (on main: `core/analysis.js`, `ui/analysi
   | Pendulum swing-up · Swing-up + LQR catch | the catch: gain ×0.349 … ×12.2, PM 60.4° at 15.7 rad/s, Ms 1.09, P 1 | at the start and mid-swing refused: "the swing-up pumps energy at θ = −3.14 rad" |
   | Triple pendulum · Planned swing-up + TV-LQR | "its plan is not made yet" until it settles, then the upright LQR: gain ×0.553 … ×3.34, PM 42°, Ms 1.43, P 3 | along the plan: its gains of that sample, frozen, with a note |
   | Oven · PID, badly tuned | "! not linear here" (P = 0 at its limit), as linearised unstable (Z 2; stable for gain ×0 … ×0.742; Ms 4.31): the run's limit cycle, held by the heater's limits | — |
-  | HIL: external motor | refused: "the plant runs outside the page (External plant 'motor'): the page has no model of it" | — |
+  | HIL: an external plant | refused: "The plant runs outside the page and is a black box: the page knows only its interface (Plant tab, Interface). Analysis needs an identified model of it, which Identify will give (not built yet)." (the tab, main's input 20; `loopModel` itself refuses with `external-plant`) | — |
   | Mass–spring–damper | no Controller block, said so | — |
 - **Not yet**: an Observer's own dynamics in the loop. A Controller on a Kalman filter's estimates sees the states they stand for, and the observer types have no `linear`; L through the filter needs it as part of the controller, with u fed to it from the cut.
 - **Not yet (found by the numerics review, v2.7.4)**:

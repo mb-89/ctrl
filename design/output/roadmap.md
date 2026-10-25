@@ -41,6 +41,16 @@ Reader: whoever picks the next piece of work.
 
    Coordinate with feat/design-system and feat/designs, which touch `src/ui/plant.js`.
 
+5. **One Servo motor** ([servo.md](servo.md), designed, not built; the person's [input 18](../input/2026-10-25-18-servo-motor-detail.md)). In its §11 steps:
+   - the minimal mask (numbers, toggles, a choice) and switches resolved at compile time;
+   - built-in components stored by reference (`component`, `params`), opened read-only, Edit a copy into My blocks;
+   - the DC motor examples, then the encoder example, on the component (free shaft);
+   - the eigenvalue step bound (shared with detail-levels.md §5);
+   - the coupled shaft with backlash, and the new **Gear backlash** example with its Dual loop fix ([input 23](../input/2026-10-25-23-servo-answers-backlash.md));
+   - the PUMA's Motor drives on it (rotor inertia in the motors, Coulomb on), with or after robot.md's motors.
+
+   Shares the mask with [transparent-models.md](transparent-models.md) and [detail-levels.md](detail-levels.md): whichever reaches it first builds it.
+
 ## Later
 
 - Live, more ([hil.md](hil.md#not-yet)), from the person's words of 2026-10-24: signals the plant only logs (outputs that are not ports); an agent tuning a live loop through MCP ("could we also connect an agent to that web page"); identifying the live plant, which varies by up to ±15 % and is not described to the page, so Auto-tune and Analysis work for HIL ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)); then several External blocks, remote plants (wss://, a token), a trigger for live sweeps, binary frames above 200 Hz. Check `runme.cmd`, `runme.ps1` and the plant's timing on Windows (untested here; `--bench 30` before relying on 100 Hz).
@@ -67,6 +77,7 @@ Reader: whoever picks the next piece of work.
 - Diagram layout ([diagram-layout.md](diagram-layout.md) §4, interpretations): should Del join a block's neighbours by default, with Shift+Del deleting without joining? Most tools make joining the variant. And is the main line the longest path to a Sink? In the mass–spring–damper that makes the spring energy the line's end and x a tap.
 - Speed at ∞ on a plain sweep: answered by review (not by the person yet; decisions.md, time control after review). The screen's simulation is timed, ∞ runs at that speed and no setting runs faster, so ∞ reads the simulation's own speed, as Auto-tune's ∞ does. It still depends on the time per division, since the simulation takes 2000 steps for any screen: the oven reads 170–300× on a 5 s screen and 0.7× on a 10 ms one, the DC motor 5–9× on a 100 ms one, the encoder 32× and the triple pendulum 63× on 5 s screens (build container). Ask the person: is that the limit they meant, and should a finite speed above it replay the screen faster than it can be simulated (1× real time on a 10 ms screen) instead of being held to it?
 - ~~Earlier runs at high speed~~: answered: no change (2026-10-25, [input 13](../input/2026-10-25-13-detail-levels-answers.md)). At a finite speed every sweep still fades the earlier runs; at ∞ only a changed run does. To compare (detail levels, or any edit), the person runs Single runs and compares the traces, which stay and fade over five runs. ("So we don't need to change anything about the system.")
+- Selected in the light theme (design system, after review): a lit violet key differs from an unlit one by under 3:1 in brightness, less than WCAG asks for a state shown by colour; a darker violet would put the dark text on it below 4.5:1. A cue that is not colour would fix it: a small lamp mark on every lit key and row. Ask the person: add one, or is the violet fill enough?
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
 - ~~Should the input repeat with its period?~~ Settled (2026-10-24): it repeats; no play-once mode.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?

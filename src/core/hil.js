@@ -7,7 +7,7 @@
 // server (a page cannot listen on a port) and owns the clock:
 //   page -> plant   describe, start { log }, stop, reset, estop   requests
 //                   u { seq, u: [...], log: [...] }       the answer to each y
-//   plant -> page   y { seq, t, y: [...] }                every cycle
+//   plant -> page   y { seq, t, y: [...], applied?: [...] }  every cycle
 //                   estop { reason, t }, running { running, by, reason },
 //                   status { ... }                        notifications
 // Two modes (settled): in control mode the plant's inputs are efforts and
@@ -47,7 +47,10 @@ export function parseMessage(text) {
   const p = m.params ?? {};
   if (m.method === 'y') {
     if (!Number.isInteger(p.seq) || !finite(p.t) || !Array.isArray(p.y)) return { kind: 'invalid', error: 'y needs seq (integer), t (s) and y (a list)' };
-    return { kind: 'y', seq: p.seq, t: p.t, y: p.y.map((v) => (finite(v) ? v : NaN)) };
+    // applied (optional): the inputs the plant applied over the cycle just
+    // ended, after its clamps; null when the plant does not say.
+    const applied = Array.isArray(p.applied) ? p.applied.map((v) => (finite(v) ? v : NaN)) : null;
+    return { kind: 'y', seq: p.seq, t: p.t, y: p.y.map((v) => (finite(v) ? v : NaN)), applied };
   }
   if (m.method === 'estop') return { kind: 'estop', reason: String(p.reason ?? 'E-stop'), t: finite(p.t) ? p.t : null };
   // The plant started or stopped on its own (its Run/Stop key): the page follows.
@@ -74,18 +77,20 @@ export const INPUT_KINDS = ['effort', 'reference', 'disturbance'];
 // The mode a set of inputs makes: reference if any input is a reference, log
 // (the plant only reports) if there are none, else control.
 export const modeOf = (kinds) => (!kinds.length ? 'log' : kinds.includes('reference') ? 'reference' : 'control');
-const range = (p, where) => {
-  if (p?.min === undefined && p?.max === undefined) return [null, null];
-  const lo = Number(p.min), hi = Number(p.max);
-  if (!finite(lo) || !finite(hi) || !(lo < hi)) throw new Error(`${where} needs min < max (its full scale)`);
+const range = (p, where, [a, b] = ['min', 'max'], what = 'its full scale') => {
+  if (p?.[a] === undefined && p?.[b] === undefined) return [null, null];
+  const lo = Number(p[a]), hi = Number(p[b]);
+  if (!finite(lo) || !finite(hi) || !(lo < hi)) throw new Error(`${where} needs ${a} < ${b} (${what})`);
   return [lo, hi];
 };
 
 // The plant's answer to describe, checked: { protocol, name, rate_hz, mode,
 // inputs: [{ name, unit, min, max, safe, kind, measures }], outputs: [{ name,
-// unit, min, max, kind }], watchdog, estop, running, slew }. Inputs have a
-// full scale (min … max, also their limits); outputs may (min … max: what
-// the scope shows, null if not given). An input's kind defaults to the
+// unit, min, max, hard_min, hard_max, kind }], watchdog, estop, running,
+// slew }. Inputs have a full scale (min … max, also their limits); outputs
+// may (min … max: what the scope shows, null if not given), and may have a
+// hard range (hard_min … hard_max: beyond it the plant E-stops; usually
+// inside the full scale, null if not given). An input's kind defaults to the
 // plant's mode ("mode": "reference" makes them references); a reference may
 // name the output it is compared with (measures).
 export function checkDescription(d) {
@@ -101,8 +106,9 @@ export function checkDescription(d) {
   if (!Array.isArray(d.outputs) || !d.outputs.length || d.outputs.length > 16) throw new Error('describe: outputs, a list of 1 to 16');
   const outputs = d.outputs.map((p, i) => {
     const [min, max] = range(p, `describe: outputs[${i}]`);
+    const [hard_min, hard_max] = range(p, `describe: outputs[${i}]`, ['hard_min', 'hard_max'], 'its hard range: beyond it the plant E-stops');
     const kind = p.kind === 'effort' ? 'effort' : 'measurement';
-    return { ...port(p, i, 'outputs'), min, max, kind };
+    return { ...port(p, i, 'outputs'), min, max, hard_min, hard_max, kind };
   });
   const byDefault = d.mode === 'reference' ? 'reference' : 'effort';
   const inputs = d.inputs.map((p, i) => {
@@ -137,7 +143,7 @@ export function checkDescription(d) {
 // ---- The External plant block (ELEMENTS.external in diagram.js)
 // Its ports are the plant's: what the page sends (inputs, with their limits,
 // safe values and kinds) and what it receives (outputs, with their full
-// scales). They are design inputs, set from the plant's description when it
+// scales and hard ranges). They are design inputs, set from the plant's description when it
 // connects and kept in the project, so the diagram is valid offline, where
 // the outputs hold 0. Two settings are the page's own and stay when the
 // plant's ports are taken: the ramp-in (% of full scale per second) and the
@@ -175,8 +181,12 @@ export const EXTERNAL_BLOCK = {
     { key: 'measures', label: 'u measured as', default: [], kind: 'list' },
     { key: 'outputs', label: 'Outputs y', default: ['y'], kind: 'list' },
     { key: 'outUnits', label: 'Units of y', default: ['1'], kind: 'list' },
-    { key: 'outMin', label: 'y min', default: [], kind: 'list' },
-    { key: 'outMax', label: 'y max', default: [], kind: 'list' },
+    { key: 'outMin', label: 'y full scale min', default: [], kind: 'list' },
+    { key: 'outMax', label: 'y full scale max', default: [], kind: 'list' },
+    // The hard range: beyond it the plant E-stops (from describe).
+    { key: 'ymin', label: 'y hard min', default: [], kind: 'list' },
+    { key: 'ymax', label: 'y hard max', default: [], kind: 'list' },
+    { key: 'outKinds', label: 'Kinds of y', default: [], kind: 'list' },
     { key: 'ramp', label: 'Ramp-in', default: RAMP_DEFAULT, unit: '%/s', min: 0.01, max: 1000 },
     { key: 'scales', label: 'Full scales', default: {}, kind: 'hidden' },
   ],
@@ -207,8 +217,15 @@ export const EXTERNAL_BLOCK = {
     for (const k of kinds) if (!INPUT_KINDS.includes(k)) throw new Error(`${where}.kinds: one of ${INPUT_KINDS.join(', ')} per input`);
     const measures = fit(splitKeep(d.measures), n, '');
     for (const o of measures) if (o && !outputs.includes(o)) throw new Error(`${where}.measures: "${o}" is not an output`);
-    const outMin = fit(maybeNumbers(d.outMin, `${where}.outMin`), m, null), outMax = fit(maybeNumbers(d.outMax, `${where}.outMax`), m, null);
-    for (let j = 0; j < m; j++) if (outMin[j] === null || outMax[j] === null || !(outMin[j] < outMax[j])) outMin[j] = outMax[j] = null;
+    // Pairs per output: a pair that is incomplete or empty is not given.
+    const pairs = (a, b) => {
+      const lo = fit(maybeNumbers(d[a], `${where}.${a}`), m, null), hi = fit(maybeNumbers(d[b], `${where}.${b}`), m, null);
+      for (let j = 0; j < m; j++) if (lo[j] === null || hi[j] === null || !(lo[j] < hi[j])) lo[j] = hi[j] = null;
+      return [lo, hi];
+    };
+    const [outMin, outMax] = pairs('outMin', 'outMax'), [ymin, ymax] = pairs('ymin', 'ymax');
+    // An output is a measurement, or the plant's own control effort.
+    const outKinds = fit(splitKeep(d.outKinds).map((k) => (k === 'effort' ? 'effort' : 'measurement')), m, 'measurement');
     const ramp = Number(d.ramp);
     if (!(ramp >= 0.01 && ramp <= 1000)) throw new Error(`${where}.ramp: from 0.01 to 1000 % of full scale per second`);
     const scales = {};
@@ -222,7 +239,7 @@ export const EXTERNAL_BLOCK = {
       inUnits: fit(split(d.inUnits), n, '1').map((u, i) => checkUnit(u, `${where}.inUnits[${i}]`)),
       min, max, safe, kinds, measures, outputs,
       outUnits: fit(split(d.outUnits), m, '1').map((u, i) => checkUnit(u, `${where}.outUnits[${i}]`)),
-      outMin, outMax, ramp, scales,
+      outMin, outMax, ymin, ymax, outKinds, ramp, scales,
     };
   },
 };
@@ -239,8 +256,22 @@ export function externalParams(desc, prev = {}) {
     kinds: desc.inputs.map((p) => p.kind ?? 'effort'), measures: desc.inputs.map((p) => p.measures ?? ''),
     outputs: desc.outputs.map((p) => p.name), outUnits: desc.outputs.map((p) => p.unit),
     outMin: desc.outputs.map((p) => p.min ?? null), outMax: desc.outputs.map((p) => p.max ?? null),
+    ymin: desc.outputs.map((p) => p.hard_min ?? null), ymax: desc.outputs.map((p) => p.hard_max ?? null),
+    outKinds: desc.outputs.map((p) => p.kind ?? 'measurement'),
     ramp: keep.ramp ?? RAMP_DEFAULT, scales: keep.scales ?? {},
   });
+}
+
+// The plant's interface, all the page knows of it (input 20: the rest is a
+// black box): its inputs and outputs as the block keeps them from describe,
+// for the Plant tab's Interface and for agents. Ranges are [lo, hi] or null.
+export function interfaceOf(params) {
+  const pair = (lo, hi, j) => (lo?.[j] === null || lo?.[j] === undefined || hi?.[j] === null || hi?.[j] === undefined ? null : [lo[j], hi[j]]);
+  return {
+    mode: modeOf(params.kinds ?? []), rate: params.rate,
+    inputs: params.inputs.map((name, i) => ({ name, unit: params.inUnits[i], fullScale: [params.min[i], params.max[i]], safe: params.safe[i], kind: params.kinds?.[i] ?? 'effort', measures: params.measures?.[i] || null })),
+    outputs: params.outputs.map((name, j) => ({ name, unit: params.outUnits[j], fullScale: pair(params.outMin, params.outMax, j), hard: pair(params.ymin, params.ymax, j), kind: params.outKinds?.[j] ?? 'measurement' })),
+  };
 }
 
 // The mode of a block (from its inputs' kinds): control, reference or log.
