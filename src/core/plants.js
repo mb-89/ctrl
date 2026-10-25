@@ -39,7 +39,8 @@ const PERIOD = 5;
 //   Kt (= Ke), Ke (= Kt)   0.5 N·m/A and 0.5 V·s/rad: equal in SI units, or
 //                          the motor would make or lose energy
 //   rotor 1/(J·s + b)      J = 0.02 kg·m², b = 0.1 N·m·s/rad; out: the speed
-const motorBlock = (x, y) => ({
+// opts.current adds the current as a second output, for a controller that measures it.
+const motorBlock = (x, y, { current = false } = {}) => ({
   id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x, y,
   diagram: {
     blocks: [
@@ -53,10 +54,12 @@ const motorBlock = (x, y) => ({
       { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 530, y: 96 },
       { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 720, y: 112 },
       { id: 'ke', type: 'gain', name: 'Ke (= Kt)', params: { K: 0.5 }, x: 370, y: 290, flip: true },
+      ...(current ? [{ id: 'iout', type: 'outport', name: 'current', params: { port: 2 }, x: 720, y: 20 }] : []),
     ],
     wires: [
       { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'i' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
       { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+      ...(current ? [{ from: 'arm', to: 'iout' }] : []),
     ],
   },
 });
@@ -504,6 +507,45 @@ export const EXAMPLE_PLANTS = [
         { type: 'text', x: 0, y: -0.78, text: 'speed {speed:5.2} rad/s   estimate {estimate:5.2} rad/s   r {r:4.1} rad/s   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
       ],
     }],
+  },
+  {
+    // Deadbeat on the library motor (design/research/deadbeat.md): state
+    // feedback with every pole at z = 0, computed from the motor, at two
+    // sample times and against an LQR. The controller measures all three
+    // states (angle, speed, current); only design inputs are stored.
+    name: 'DC motor, deadbeat',
+    summary: 'A motor under deadbeat control: it reaches each new angle exactly, in as many samples as it has states. Flip sample times, limits and LQR: what finite settling asks of the voltage, and what a limit does.',
+    notes: 'A deadbeat controller places every pole of the loop at z = 0: after a step of r the motor is at rest at r after n samples, n its three states (current, speed, angle), and stays there, between the samples too. The controller measures all three; its gains K and kr are computed in the page from the motor, at its own sample time. r steps between 0 and 1 rad (up at 0.2 s, down at 1.5 s, every 2.5 s); channel 3 is the voltage V, held between samples, so each of its steps is a sample; channel 4 the current i.\n\nDeadbeat, 100 ms (the block runs at 10 ms; this variant updates every 10 samples): the shaft is at 1 rad 0.3 s after each step and stays, with 8 V, then −1 V, then nothing. Deadbeat, 10 ms, no limit: the same design at 10 ms arrives in 30 ms and asks +655 V, −815 V and +229 V to do it (Auto Scale shows them). Deadbeat, 10 ms, ±12 V: the same gains clipped to the motor\'s 12 V; the law no longer gets what it assumed, the shaft overshoots by 17 % and is within 2 % only after about 0.22 s. LQR (Q 100 on the angle, 1 on the speed, R 1) at 10 ms: a smooth approach within 2 % after 0.5 s, never exactly there, with 9 V.\n\nThe sample time is deadbeat\'s one knob: the settling is always n samples, so a shorter one asks more of u. The Computed box names the largest step that stays inside the limits (1.5 rad at 100 ms, 15 mrad at 10 ms). Zoom in (Horizontal 50 ms/div at 0.1 s) to count the samples.\n\nThe Analysis tab shows what finite settling costs in robustness (at rest): at 100 ms a gain margin of ×1.8 and Ms 2.25, at 10 ms ×1.24, 18° of phase and Ms 5.19, where LQR has 97° and Ms 1.10. Try it: make the rotor 20 % heavier (Motor › rotor den [0.024, 0.1]). The design follows and is exact again; but Copy as numbers first, and the old gains on the heavier motor overshoot by 6 % at 100 ms and need 0.6 s to come within 1 mrad, while LQR\'s old gains do not overshoot. Or set the 100 ms variant\'s Update every to 5 (50 ms): it asks 22 V, and is clipped.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.2, width: 1.3, period: 2.5, count: 0 } }] },
+      d: { period: PERIOD, components: [] },
+    },
+    scope: { channels: channels('r', 'angle', 'V', 'i') },
+    sim: { sampleTime: 0.001 },
+    ui: ui('Motor shaft'),
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad'),
+        src('d', 180, 230, 'N·m'),
+        ctrl(130, 90, 4, 0.01, [
+          { name: 'Deadbeat, 100 ms', type: 'deadbeat', params: { every: 10, umin: -12, umax: 12 } },
+          { name: 'Deadbeat, 10 ms, no limit', type: 'deadbeat', params: { every: 1 } },
+          { name: 'Deadbeat, 10 ms, ±12 V', type: 'deadbeat', params: { every: 1, umin: -12, umax: 12 } },
+          { name: 'LQR', type: 'lqr', params: { Q: [100, 1, 0], R: 1, umin: -12, umax: 12 } },
+        ]),
+        motorBlock(330, 96, { current: true }),
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        sink('angle', 690, 106, 'rad'),
+        sink('speed', 690, 30, 'rad/s'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
+        { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
+        { from: 'int', to: 'ctrl:1' }, { from: 'motor', to: 'ctrl:2' }, { from: 'motor:1', to: 'ctrl:3' },
+      ],
+    },
+    views: motorViews(),
   },
   {
     name: 'Conical tank, gain scheduling',
