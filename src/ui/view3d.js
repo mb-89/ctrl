@@ -337,10 +337,11 @@ export const OUTLINE = { silhouette: 1.6, edge: 1.2 };
 export const EDGE_ANGLE = 30;
 // A part's colour is a token chosen by its role, which its URDF colour
 // gives: a saturated colour is the accent (a tool), else light or dark.
-export const PART_ROLES = ['light', 'dark', 'accent'];
+export const PART_ROLES = ['light', 'dark', 'accent', 'ruby'];
 export function partRole(rgba) {
   if (!rgba) return 'light';
   const [r, g, b] = rgba, hi = Math.max(r, g, b), lo = Math.min(r, g, b);
+  if (hi - lo > 0.3 && r > 0.6 && g < 0.2 && b < 0.3) return 'ruby';   // a probe's ruby ball
   return hi - lo > 0.3 ? 'accent' : 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? 'light' : 'dark';
 }
 
@@ -575,7 +576,7 @@ export function createView3d(container, opts = {}) {
       axis: [tok('--axis-x'), tok('--axis-y'), tok('--axis-z')],
       grid: mix(bg, ink, dark ? 0.12 : 0.08), gridMajor: mix(bg, ink, dark ? 0.24 : 0.18),
       ch: palette().ch.map(parseColor),
-      parts: { light: tok('--part'), dark: tok('--part-dark'), accent: tok('--part-accent') }, outline: tok('--part-line'),
+      parts: { light: tok('--part'), dark: tok('--part-dark'), accent: tok('--part-accent'), ruby: tok('--part-ruby') }, outline: tok('--part-line'),
     };
     probe.remove();
     // A yellow reference on a light ground reads better a little darker.

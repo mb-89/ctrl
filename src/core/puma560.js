@@ -100,6 +100,25 @@ const DRIVE = {
   Vmax: 40,
 };
 
+// A touch probe on the flange (inputs 40, 41): a stylus 0.1 m long along
+// the flange's z axis with a ruby ball of 8 mm radius at its end, whose
+// centre is the tool point (the link "tip"). Its mass is the arm's to
+// carry: a carbon stylus and its holder, 0.1 kg with the centre of mass at
+// 40 mm, a slender rod's inertia (m·L²/12 across, little along it), the
+// ball's few grams inside it.
+const PROBE = `<material name="ruby"><color rgba="0.8 0.05 0.12 1"/></material>
+<joint name="probe" type="fixed"><parent link="flange"/><child link="probe"/></joint>
+<link name="probe">
+<inertial><origin xyz="0 0 0.04"/><mass value="0.1"/><inertia ixx="0.0000833" iyy="0.0000833" izz="0.000002" ixy="0" ixz="0" iyz="0"/></inertial>
+<visual><origin xyz="0 0 0.012"/><geometry><cylinder radius="0.014" length="0.024"/></geometry><material name="dark"/></visual>
+<visual><origin xyz="0 0 0.058"/><geometry><cylinder radius="0.004" length="0.07"/></geometry><material name="body"/></visual>
+</link>
+<joint name="tip" type="fixed"><parent link="probe"/><child link="tip"/><origin xyz="0 0 0.1"/></joint>
+<link name="tip">
+<visual><geometry><sphere radius="0.008"/></geometry><material name="ruby"/></visual>
+</link>
+`;
+
 export const PUMA560 = {
   urdf: U,
   drive: DRIVE,
@@ -108,5 +127,7 @@ export const PUMA560 = {
   // The tool frame, and a start pose with the tool pointing down, well inside
   // every joint's range and away from the singularities (degrees).
   tool: 'flange',
+  // The arm with the probe on its flange: what the library system runs and draws.
+  urdfProbe: U.replace('</robot>', `${PROBE}</robot>`),
   start: [0, 40, -150, 0, -70, 0],
 };

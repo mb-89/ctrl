@@ -81,6 +81,7 @@
   --part: light-dark(#e2ddd0, #cdc7b8);             /* a body: castings, covers */
   --part-dark: light-dark(#59616b, #6c7580);        /* a dark part: bases, motors, flanges */
   --part-accent: light-dark(#e8692c, #f47a3c);      /* a tool, a part that stands out */
+  --part-ruby: light-dark(#c4122f, #ec3a55);        /* a probe's ruby ball */
   --part-line: light-dark(#15191c, #07090a);        /* outlines: silhouettes and hard edges */
 
   /* The screen's palette (canvases read these: src/ui/palette.js) */

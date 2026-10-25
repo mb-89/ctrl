@@ -12,26 +12,26 @@
 // encoders first), the Sources read there.
 
 import { parseUrdf } from '../src/core/urdf.js';
-import { createRbd, dampedInverse, orientationError, jointFriction } from '../src/core/rbd.js';
+import { createRbd, dampedInverse, jointFriction } from '../src/core/rbd.js';
 import { PUMA560 } from '../src/core/puma560.js';
 import { normalizeReference, referenceFn } from '../src/core/signals.js';
 import { solve } from '../src/core/linalg.js';
+import { PUMA_SYSTEM, PUMA_START } from '../src/core/pumasystem.js';
 
 const DEG = Math.PI / 180, N = 6;
 
 export function pumaReference({ variant = 0, T = 5, signals } = {}) {
   const D = PUMA560.drive, Ts = 0.001, h = Ts, K = Math.round(T / Ts);
-  const model = parseUrdf(PUMA560.urdf);
+  const model = parseUrdf(PUMA560.urdfProbe), tool = 'tip';
   const arm = createRbd(model, { armature: PUMA560.armature }), kin = createRbd(model);
-  const q0 = PUMA560.start.map((v) => v * DEG);
-  // The circle: two references in its own frame, at the tool's start pose.
-  const sig = signals ?? {
-    a_r: { period: 5, components: [{ type: 'sine', params: { amplitude: 0.15, frequency: 0.4, phase: 90, ease: 0.5 } }, { type: 'dc', params: { level: -0.15 } }] },
-    b_r: { period: 5, components: [{ type: 'sine', params: { amplitude: 0.15, frequency: 0.4, phase: 0, ease: 0.5 } }] },
-  };
+  const q0 = PUMA_START.map((v) => v * DEG);
+  // The circle: two references in its own frame (its a axis along −x of the
+  // base: the frame turned half a turn about z), at the probe's start point.
+  const sig = signals ?? PUMA_SYSTEM.signals;
+  const Rad = PUMA_SYSTEM.diagram.blocks.find((b) => b.id === 'ref').params.R;
   const fa = referenceFn(normalizeReference(sig.a_r), { sampleTime: Ts }), fb = referenceFn(normalizeReference(sig.b_r), { sampleTime: Ts });
   const ra = [fa, fa.derivative(1), fa.derivative(2)], rb = [fb, fb.derivative(1), fb.derivative(2)];
-  const start = kin.linkPose(q0, 'flange'), o = start.p, Rd = start.R;
+  const start = kin.linkPose(q0, tool), o = start.p, z0 = [start.R[2], start.R[5], start.R[8]];
   const kx = 10, ko = 10, Kf = variant === 0 ? 1 : 0, integral = variant !== 2;
 
   // The speed PIs' gains, as speedPI computes them: b is the joint's
@@ -72,16 +72,24 @@ export function pumaReference({ variant = 0, T = 5, signals } = {}) {
     prev = qm;
     const qdm = rate;
     // Axes → task.
-    const { p, R } = kin.linkPose(qm, 'flange');
-    kin.jacobian(qm, 'flange', J);
-    const jd = kin.jdotqd(qm, qdm, 'flange');
+    const { p, R } = kin.linkPose(qm, tool);
+    kin.jacobian(qm, tool, J);
+    const jd = kin.jdotqd(qm, qdm, tool);
     for (let i = 0; i < 6; i++) { let s = 0; for (let c = 0; c < N; c++) s += J[i * N + c] * qdm[c]; v[i] = s; }
     // The reference, placed at the tool's start.
-    const pd = [o[0] + ra[0](t), o[1] + rb[0](t), o[2] + 0], vd = [ra[1](t), rb[1](t), 0], ad = [ra[2](t), rb[2](t), 0];
-    // The task law.
-    orientationError(Rd, R, eo);
-    const vs = [0, 1, 2].map((i) => vd[i] + kx * (pd[i] - p[i])).concat([0, 1, 2].map((i) => ko * eo[i]));
-    const as = [0, 1, 2].map((i) => ad[i] + kx * (vd[i] - v[i])).concat([0, 1, 2].map((i) => -ko * v[3 + i]));
+    const A = [ra[0](t), ra[1](t), ra[2](t)], B = [rb[0](t), rb[1](t), rb[2](t)];
+    const pd = [o[0] - A[0], o[1] - B[0], o[2]], vd = [-A[1], -B[1], 0], ad = [-A[2], -B[2], 0];
+    // The stylus's direction: z0 turned about the vertical by the circle's
+    // phase φ, with the least angular velocity and acceleration that turn it.
+    const c = (A[0] + Rad) / Rad, sn = B[0] / Rad, dph = (c * B[1] - sn * A[1]) / Rad, ddph = (c * B[2] - sn * A[2]) / Rad;
+    const zd = [c * z0[0] - sn * z0[1], sn * z0[0] + c * z0[1], z0[2]];
+    const wd = [-dph * zd[2] * zd[0], -dph * zd[2] * zd[1], dph * (1 - zd[2] * zd[2])];
+    const al = [-zd[2] * (ddph * zd[0] - dph * dph * zd[1]), -zd[2] * (ddph * zd[1] + dph * dph * zd[0]), ddph * (1 - zd[2] * zd[2])];
+    // The task law: the pointing error e = z × z_d.
+    const z = [R[2], R[5], R[8]];
+    eo[0] = z[1] * zd[2] - z[2] * zd[1]; eo[1] = z[2] * zd[0] - z[0] * zd[2]; eo[2] = z[0] * zd[1] - z[1] * zd[0];
+    const vs = [0, 1, 2].map((i) => vd[i] + kx * (pd[i] - p[i])).concat([0, 1, 2].map((i) => wd[i] + ko * eo[i]));
+    const as = [0, 1, 2].map((i) => ad[i] + kx * (vd[i] - v[i])).concat([0, 1, 2].map((i) => al[i] + ko * (wd[i] - v[3 + i])));
     // Task → axes.
     const { Jinv } = dampedInverse(J, 6, N, { eps: 0.04, lambdaMax: 0.05 });
     const qds = new Float64Array(N), qdds = new Float64Array(N);
