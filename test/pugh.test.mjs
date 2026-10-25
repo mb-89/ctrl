@@ -186,6 +186,13 @@ test('the report: the bottom line first, then the matrix and the runners-up', ()
   // What it is, first (input 68): a heading and a line on what was compared.
   assert.match(html, /<h1>Decision: Small<\/h1>\s*<p class="dim rpt-sub">3 options compared on 3 criteria against the datum, D; 3 in\.<\/p>/);
   assert.match(renderHtml(decide({ ...small(), kind: 'Controller benchmark' })), /<h1>Controller benchmark: Small<\/h1>/);
+  // The caller's words (input 70): the options are controllers, the datum
+  // is the one set up now; a datum that fails stays the datum and says so.
+  const setUp = decide({ ...small(), kind: 'Controller benchmark', nouns: { options: 'controllers', datum: 'the one set up now' }, notes: ['a note of the caller'], gates: [{ criterion: 'cost', max: 8, why: 'too dear' }] });
+  assert.equal(setUp.datum.key, 'D');
+  assert.equal(setUp.datum.fits, false);
+  assert.match(renderHtml(setUp), /3 controllers compared on 3 criteria against the one set up now, D; 1 in, 2 vetoed\. <span class="minus">D itself fails: too dear: cost 9 above 8\.<\/span>/);
+  assert.equal(setUp.notes[0], 'a note of the caller');
   // Nothing outside the table but the bottom line, the keys, the
   // sensitivity and what opens.
   assert.doesNotMatch(html.replace(/<script[\s\S]*?<\/script>/g, ''), /<h2/);
