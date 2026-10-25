@@ -26,42 +26,45 @@ const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: '
 const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
 const PERIOD = 5;
 
-// The DC motor with its angle, shared by the systems built on it: a
-// Controller (variants given) sets the voltage V, the load torque d brakes it.
-// Motor is built from blocks whose parameters are the physics, each once
-// (no black box; design/research/sliding-mode.md, Recommendation 1):
+// The DC motor, shared by the systems built on it: V and the load torque in,
+// the speed out. Motor is built from blocks whose parameters are the
+// physics, each once (no black box; design/research/sliding-mode.md,
+// Recommendation 1):
 //   armature 1/(L·s + R)   R = 1 Ω, L = 10 mH; its output is the current i
 //   Kt (= Ke), Ke (= Kt)   0.5 N·m/A and 0.5 V·s/rad: equal in SI units, or
 //                          the motor would make or lose energy
 //   rotor 1/(J·s + b)      J = 0.02 kg·m², b = 0.1 N·m·s/rad; out: the speed
-// opts.inputs 3 also feeds the speed to the Controller (input 3), and adds
-// the error e = r − angle as a Sink; opts.Ts is the Controller's sample time.
+const motorBlock = (x, y) => ({
+  id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x, y,
+  diagram: {
+    blocks: [
+      { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+      { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 330, y: 220 },
+      { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+      { id: 'arm', type: 'tf', name: 'armature 1/(Ls + R)', params: { num: [1], den: [0.01, 1], delay: 0 }, x: 190, y: 96 },
+      sink('i', 360, 20, 'A'),
+      { id: 'kt', type: 'gain', name: 'Kt (= Ke)', params: { K: 0.5 }, x: 370, y: 100 },
+      { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 460, y: 104 },
+      { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 530, y: 96 },
+      { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 720, y: 112 },
+      { id: 'ke', type: 'gain', name: 'Ke (= Kt)', params: { K: 0.5 }, x: 370, y: 290, flip: true },
+    ],
+    wires: [
+      { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'i' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
+      { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+    ],
+  },
+});
+// The motor with its angle: a Controller (variants given) sets the voltage
+// V, the load torque d brakes it. opts.inputs 3 also feeds the speed to the
+// Controller (input 3), and adds the error e = r − angle as a Sink; opts.Ts
+// is the Controller's sample time.
 const motorDiagram = (variants, { inputs = 2, Ts = 0.01 } = {}) => ({
       blocks: [
         src('r', 30, 112, 'rad'),
         src('d', 180, 230, 'N·m'),
         ctrl(130, 90, inputs, Ts, variants),
-        {
-          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
-          diagram: {
-            blocks: [
-              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
-              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 330, y: 220 },
-              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'tf', name: 'armature 1/(Ls + R)', params: { num: [1], den: [0.01, 1], delay: 0 }, x: 190, y: 96 },
-              sink('i', 360, 20, 'A'),
-              { id: 'kt', type: 'gain', name: 'Kt (= Ke)', params: { K: 0.5 }, x: 370, y: 100 },
-              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 460, y: 104 },
-              { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 530, y: 96 },
-              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 720, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke (= Kt)', params: { K: 0.5 }, x: 370, y: 290, flip: true },
-            ],
-            wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'i' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
-              { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'ke', to: 'sum:1' },
-            ],
-          },
-        },
+        motorBlock(330, 96),
         { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
         sink('angle', 690, 106, 'rad'),
         sink('speed', 690, 30, 'rad/s'),
@@ -303,6 +306,83 @@ export const EXAMPLE_PLANTS = [
         { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
       ],
     },
+  },
+  {
+    name: 'DC motor, speed from an encoder',
+    summary: 'A motor whose speed is not measured: only a coarse encoder angle is. Flip the observer from a raw difference to a Luenberger observer and a Kalman filter, and see the noise leave the voltage and the loop hold its speed.',
+    notes: 'A PI holds the speed of the DC motor (the same motor as the position examples) while the reference r steps to 10 rad/s and down to 3 rad/s, and a load of 0.2 N·m brakes it from 3.5 to 4.3 s. The speed is not measured: an encoder counts 1024 steps per turn (6.1 mrad), with a little noise on its signal (σ 1 mrad), and an Observer block makes the speed the PI sees from those counts. Channel 3 is the voltage V, channel 4 the estimate\'s error (estimate − true speed); both carry Measure lines.\n\nIt opens on the raw finite difference: at Ts = 1 ms one count is 6.1 rad/s, so the estimate jumps between whole counts (3.1 rad/s rms of error) and the PI (Kp 2, Ki 40) passes that on: V chatters between its ±12 V limits (σ 6.1 V at 10 rad/s), and since the limits clip it the motor runs at 8.99 rad/s, not 10.\n\nThe Luenberger observer predicts the motor from its model (the page takes the model from the motor\'s blocks) and corrects it with the counts, its error dying out at the poles you place (s = −400 1/s here): 0.47 rad/s of error, V σ 0.96 V, the speed on 10. The Kalman filter takes the same model and computes its gain from the noise: R from the encoder\'s blocks (σ² + q²/12), Q a random push on V of variance 1 V² per sample. Its error is 0.056 rad/s rms and V σ 0.080 V, 55 and 76 times below the difference\'s; its slowest pole is at 101 rad/s. Neither model knows the load: under it the Kalman estimate reads 0.1 rad/s high and the motor runs at 2.90 rad/s, where the faster Luenberger is off by 0.02.\n\nTry: the Luenberger at w = 100 (as calm as the Kalman filter, slower to see the load); the Kalman filter with Q = 100 (it follows the load, with more noise); the difference with Tf = 0.02 s (a filter calms it, with a lag); an encoder of 4096 counts (q = 0.001534). FFT mode on V shows the difference\'s noise spread up to the Nyquist frequency.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 10, time: 0.2 } }, { type: 'step', params: { amplitude: -7, time: 2.5 } }] },
+      d: { period: PERIOD, components: [pulse(0.2, 3.5, 0.8)] },
+    },
+    scope: { channels: channels('r', 'speed', { source: 'V', measure: true }, { source: 'est_error', measure: true }) },
+    ui: ui('Motor speed'),
+    sim: { sampleTime: 0.001 },
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad/s'),
+        src('d', 180, 230, 'N·m'),
+        ctrl(130, 90, 2, 0.001, [
+          { name: 'PI speed', type: 'pid', params: { Kp: 2, Ki: 40, umin: -12, umax: 12 } },
+        ]),
+        motorBlock(330, 96),
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        // The encoder: 1024 counts per turn (q = 2π/1024 rad), with a little
+        // noise on its signal (edge jitter) before it is counted.
+        { id: 'jitter', type: 'noise', name: 'encoder noise', params: { std: 0.001, seed: 5 }, x: 640, y: 96 },
+        { id: 'enc', type: 'quantizer', name: 'encoder 1024 counts/turn', params: { q: (2 * Math.PI) / 1024 }, x: 780, y: 96 },
+        sink('encoder', 920, 106, 'rad'),
+        {
+          id: 'obs', type: 'observer', name: 'speed estimator', params: { inputs: 2, outputs: 3, Ts: 0.001 }, x: 780, y: 260, flip: true,
+          variants: [
+            { name: 'Finite difference', type: 'difference', params: { Tf: 0 } },
+            { name: 'Luenberger, placed poles', type: 'luenbergerPlaced', params: { w: [400] } },
+            { name: 'Kalman filter', type: 'kalman', params: { Q: [1], R: null } },
+          ],
+          variant: 0,
+        },
+        sink('estimate', 600, 340, 'rad/s'),
+        { id: 'esum', type: 'sum', params: { signs: '+-' }, x: 600, y: 420 },
+        sink('est_error', 720, 428, 'rad/s'),
+        sink('speed', 690, 30, 'rad/s'),
+        sink('angle', 640, 20, 'rad'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
+        { from: 'int', to: 'jitter' }, { from: 'jitter', to: 'enc' }, { from: 'enc', to: 'encoder' },
+        { from: 'ctrl', to: 'obs' }, { from: 'enc', to: 'obs:1' }, { from: 'obs:1', to: 'ctrl:1' }, { from: 'obs:1', to: 'estimate' },
+        { from: 'obs:1', to: 'esum' }, { from: 'motor', to: 'esum:1' }, { from: 'esum', to: 'est_error' },
+        { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
+      ],
+    },
+    views: [{
+      // The rotor turns with angle in a fixed dial; at the right, the true
+      // speed and the estimate the controller sees as bars (0.04 per rad/s),
+      // the reference r a yellow mark on the scale.
+      name: 'Motor speed', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+      shapes: [
+        { type: 'group', x: -0.5, y: 0.05, shapes: [
+          { type: 'circle', cx: 0, cy: 0, r: 0.45, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+          ...ticks(0.45),
+          { type: 'group', angle: 'angle', shapes: [
+            { type: 'circle', cx: 0, cy: 0, r: 0.36, fill: 'ink' },
+            { type: 'circle', cx: 0, cy: 0.2, r: 0.1, fill: 'ch2' },
+            { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.43, stroke: 'ch2', lineWidth: 5 },
+          ] },
+          { type: 'circle', cx: 0, cy: 0, r: 0.05, fill: 'muted' },
+        ] },
+        { type: 'line', x1: 0.15, y1: -0.3, x2: 0.15, y2: 0.5, stroke: 'muted', lineWidth: 1 },
+        { type: 'line', x1: '0.15 + 0.04*r', y1: -0.3, x2: '0.15 + 0.04*r', y2: 0.5, stroke: 'ch1', lineWidth: 3 },
+        { type: 'rect', x: 0.15, y: 0.18, w: '0.04*speed', h: 0.16, fill: 'ch2' },
+        { type: 'rect', x: 0.15, y: -0.22, w: '0.04*estimate', h: 0.16, fill: 'ch4' },
+        { type: 'text', x: 0.55, y: 0.42, text: 'speed', size: 12, fill: 'muted' },
+        { type: 'text', x: 0.55, y: 0.02, text: 'estimate', size: 12, fill: 'muted' },
+        { type: 'text', x: 0.15, y: -0.38, text: '0', size: 11, fill: 'muted' },
+        { type: 'text', x: 0.95, y: -0.38, text: '20 rad/s', size: 11, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.78, text: 'speed {speed:5.2} rad/s   estimate {estimate:5.2} rad/s   r {r:4.1} rad/s   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
+      ],
+    }],
   },
   {
     name: 'Conical tank, gain scheduling',
