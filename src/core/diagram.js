@@ -32,7 +32,7 @@ export const ELEMENTS = {
   terminator: { label: 'Terminator', group: 'Signals', params: [], ports: () => [1, 0], formula: 'ends a signal' },
   switch: {
     label: 'Switch', group: 'Math', formula: 'passes one input',
-    params: [num('inputs', 'Inputs', 2, { min: 2, int: true }), num('position', 'Position', 1, { min: 1, int: true })],
+    params: [num('inputs', 'Inputs', 2, { min: 2, int: true }), num('position', 'Position', 1, { min: 1, int: true, maskable: true })],
     ports: (p) => [p.inputs, 1],
   },
   inport: { label: 'In', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [0, 1], formula: 'u' },
@@ -68,7 +68,7 @@ export const ELEMENTS = {
   },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1, { inf: true }), num('max', 'Max', 1, { inf: true })], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
-  noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
+  noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0, maskable: true })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
   cartPole: {
     // Point mass m on a massless pole of length l, hinged on a cart of mass M.
     // θ = 0 is upright, positive leaning towards +x. b is the cart's friction.
@@ -294,9 +294,10 @@ export function diagramTypes() {
 }
 
 // [inputs, outputs] of a block.
-export function blockPorts(block) {
+export function blockPorts(block, scope = null) {
   if (block.type === 'subsystem') {
-    const count = (t) => Math.max(0, ...block.diagram.blocks.filter((b) => b.type === t).map((b) => b.params.port));
+    const inner = maskScope(block, scope);
+    const count = (t) => Math.max(0, ...block.diagram.blocks.filter((b) => b.type === t && portPresent(b, inner)).map((b) => b.params.port));
     return [count('inport'), count('outport')];
   }
   return diagramBlockDef(block.type).ports(block.params);
@@ -333,11 +334,43 @@ function formulaValue(src, scope, where) {
 // where the field allows it (inf: a limit, where ±inf means none).
 function fieldNumber(raw, p, scope, where) {
   if (!isFormula(raw)) return Number(raw);
-  if (p.int) throw new Error(`${where}: a whole number, not a formula`);
+  if (p.int && !p.maskable) throw new Error(`${where}: a whole number, not a formula`);
   const v = formulaValue(raw, scope, where);
+  if (p.int && Number.isFinite(v) && !Number.isInteger(v)) throw new Error(`${where}: ${String(raw).trim()} = ${v}; it must be a whole number`);
   if (Number.isNaN(v) || (!Number.isFinite(v) && !p.inf)) throw new Error(`${where}: ${String(raw).trim()} = ${Number.isNaN(v) ? 'not a number' : v > 0 ? 'inf' : '-inf'}; it must be finite`);
   return v;
 }
+// Mask fields are numbers, or of a kind: a toggle (an effect switched on
+// or off; 0 or 1 in formulas) or a choice of words (its 1-based index in
+// formulas, so a Switch's position can be the choice itself).
+export const MASK_KINDS = ['toggle', 'choice'];
+const toggleValue = (raw) => (raw === true || raw === 'on' ? 1 : raw === false || raw === 'off' ? 0 : Number(raw) === 0 || Number(raw) === 1 ? Number(raw) : NaN);
+function toggleField(raw, outer, at) {
+  const v = isFormula(raw) && raw !== 'on' && raw !== 'off' ? formulaValue(raw, outer, at) : toggleValue(raw);
+  if (v !== 0 && v !== 1) throw new Error(`${at}: a toggle is 0 or 1 (off or on), not ${raw}`);
+  return { v, kept: isFormula(raw) && raw !== 'on' && raw !== 'off' ? String(raw).trim() : v };
+}
+function choiceField(raw, options, outer, at) {
+  if (options.includes(raw)) return { v: options.indexOf(raw) + 1, kept: raw };
+  let v;
+  try { v = isFormula(raw) ? formulaValue(raw, outer, at) : Number(raw); } catch { v = NaN; }
+  if (!Number.isInteger(v) || v < 1 || v > options.length) throw new Error(`${at}: one of ${options.join(', ')}, not ${raw}`);
+  return { v, kept: isFormula(raw) ? String(raw).trim() : options[v - 1] };
+}
+// The scope a subsystem's mask opens (null when it has none or it cannot be
+// had without the masks outside), and whether an In or Out block is there:
+// a port may carry `when`, a formula in the mask (servo.md: In 3 only on a
+// coupled shaft); 0 removes the port.
+function maskScope(b, outer = null) {
+  if (!b.mask?.length) return outer;
+  try { return normalizeMask(b, b.id, outer, true).scope; } catch { return null; }
+}
+function portPresent(b, scope) {
+  if (!b.when) return true;
+  if (!scope) return true;
+  try { return formulaValue(b.when, scope, `${b.id}.when`) !== 0; } catch { return true; }
+}
+
 // The mask of subsystem b and the scope it opens: { mask, params, scope }.
 // resolve: params hold the values (numbers), not the formulas.
 function normalizeMask(b, where, outer, resolve) {
@@ -357,20 +390,45 @@ function normalizeMask(b, where, outer, resolve) {
     const unit = String(f.unit ?? '1').trim() || '1';
     if (unit.length > 12 || /[<>"{}]/.test(unit)) throw new Error(`${at}.unit: a short unit such as m, N, rad/s, or 1`);
     const out = { key, label: String(f.label ?? key), unit };
+    if (f.kind !== undefined && !MASK_KINDS.includes(f.kind)) throw new Error(`${at}.kind: one of ${MASK_KINDS.join(', ')} (or none: a number)`);
+    if (f.kind) out.kind = f.kind;
+    if (f.kind === 'choice') {
+      if (!Array.isArray(f.options) || f.options.length < 2 || !f.options.every((o) => typeof o === 'string' && /^[A-Za-z][A-Za-z0-9 _-]{0,23}$/.test(o)) || new Set(f.options).size < f.options.length) throw new Error(`${at}.options: two or more different words, such as ["voltage", "current"]`);
+      out.options = [...f.options];
+    }
     for (const k of ['min', 'max', 'default']) {
       if (f[k] === undefined || f[k] === null || f[k] === '') continue;
-      const v = Number(f[k]);
-      if (Number.isNaN(v)) throw new Error(`${at}.${k}: a number`);
+      if (k === 'default' && f.kind === 'choice') {
+        if (!out.options.includes(f.default)) throw new Error(`${at}.default: one of ${out.options.join(', ')}`);
+        out.default = f.default;
+        continue;
+      }
+      const v = k === 'default' && f.kind === 'toggle' ? toggleValue(f[k]) : Number(f[k]);
+      if (Number.isNaN(v)) throw new Error(`${at}.${k}: ${f.kind === 'toggle' && k === 'default' ? '0 or 1 (off or on)' : 'a number'}`);
       out[k] = v;
     }
     if (out.min !== undefined && out.max !== undefined && out.min > out.max) throw new Error(`${at}: min ${out.min} is above max ${out.max}`);
+    // Folded under a toggle ("coulomb") or one option of a choice ("shaft:coupled"): the panel greys it while that is off.
+    if (f.under !== undefined) out.under = String(f.under);
+    if (f.physical) out.physical = true;
     return out;
   });
+  for (const f of mask) {
+    if (f.under === undefined) continue;
+    const [k, opt] = f.under.split(':'), of = mask.find((g) => g.key === k);
+    if (!of || (of.kind !== 'toggle' && of.kind !== 'choice') || (opt === undefined) !== (of.kind === 'toggle') || (opt !== undefined && !of.options.includes(opt))) throw new Error(`${where}.mask(${f.key}).under: a toggle's key, or a choice's key:option, of this mask`);
+  }
   for (const k of given) if (!keys.has(k)) throw new Error(`${where}.params: "${k}" is not on the mask (${[...keys].join(', ')})`);
   const label = b.name ?? b.id, values = new Map(), params = {};
   for (const f of mask) {
-    const raw = b.params?.[f.key] ?? f.default;
     const at = `${where}.params.${f.key}`;
+    if (f.kind) {
+      const { v, kept } = f.kind === 'toggle' ? toggleField(b.params?.[f.key] ?? f.default ?? 0, outer, at) : choiceField(b.params?.[f.key] ?? f.default ?? f.options[0], f.options, outer, at);
+      values.set(f.key, v);
+      params[f.key] = resolve ? v : kept;
+      continue;
+    }
+    const raw = b.params?.[f.key] ?? f.default;
     if (raw === undefined || raw === null || raw === '') throw new Error(`${at}: needs a value`);
     const v = isFormula(raw) ? formulaValue(raw, outer, at) : Number(raw);
     if (Number.isNaN(v)) throw new Error(`${at}: expected a number or a formula`);
@@ -449,7 +507,8 @@ function normalizeParams(type, params = {}, where, scope = null, resolve = false
     out[p.key] = v;
   }
   if (type === 'integrator' && values.min !== undefined && values.max !== undefined && values.min > values.max) throw new Error(`${where}: min ${values.min} is above max ${values.max}`);
-  if (type === 'switch') out.position = Math.min(out.position, out.inputs);
+  if (type === 'switch' && typeof out.position === 'number') out.position = Math.min(out.position, out.inputs);
+  if (type === 'switch' && values.position > out.inputs) throw new Error(`${where}.position: ${params.position} = ${values.position}; the Switch has ${out.inputs} inputs`);
   return out;
 }
 
@@ -470,6 +529,14 @@ export function normalizeDiagram(d, path = 'plant', opts = {}) {
     const out = { id: b.id, type: b.type, params: m ? m.params ?? {} : normalizeParams(b.type, b.params, at, scope, resolve), x: Number(b.x) || 0, y: Number(b.y) || 0 };
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
+    if ((b.type === 'inport' || b.type === 'outport') && b.when !== undefined && b.when !== null && b.when !== '') {
+      if (!isFormula(b.when) && !Number.isFinite(Number(b.when))) throw new Error(`${at}.when: a formula in the mask's names (0: the port is not there)`);
+      formulaValue(String(b.when), scope, `${at}.when`);
+      out.when = String(b.when).trim();
+    }
+    // A Switch set by the mask is a wire once resolved: what reaches only
+    // its other inputs is not compiled (compileDiagram).
+    if (resolve && b.type === 'switch' && isFormula(b.params?.position)) Object.defineProperty(out, 'fixed', { value: true });
     if (m?.mask) out.mask = m.mask;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`, { scope: m.scope, resolve });
     if (resolve && b.type === 'fcn' && scope) Object.defineProperty(out, 'consts', { value: scopeMap(scope) });
@@ -487,7 +554,7 @@ export function normalizeDiagram(d, path = 'plant', opts = {}) {
     for (const [e, side] of [[f, 1], [t, 0]]) {
       const b = byId[e.id];
       if (!b) throw new Error(`${path}.wires[${i}]: no block "${e.id}"`);
-      const n = blockPorts(b)[side];
+      const n = blockPorts(b, scope)[side];
       if (!(e.port >= 0 && e.port < n)) throw new Error(`${path}.wires[${i}]: ${b.id} has no ${side ? 'output' : 'input'} ${e.port}`);
     }
     return { from: f.port ? `${f.id}:${f.port}` : f.id, to: t.port ? `${t.id}:${t.port}` : t.id };
@@ -566,6 +633,44 @@ function modelError(code, message, hint = '') {
 const fmt = (v) => String(Number(Number(v).toPrecision(3)));
 const NONE = [];
 
+// Compile-time switches (servo.md §8 item 6): a Switch set by a mask
+// becomes a wire to its chosen input, and what reaches only its other
+// inputs, or only those and Sinks, is not compiled: no state, no step bound,
+// no evaluation (a toggle that is off is the motor without the effect, bit
+// for bit). Sinks fed from there are off too. Marks the nodes dead and
+// returns their indices.
+function prune(nodes) {
+  const deadEdge = [];
+  for (const nd of nodes) {
+    if (nd.kind !== 'switch' || !nd.fixed) continue;
+    nd.inputs.forEach((s, slot) => { if (slot !== nd.pick && s >= 0) deadEdge.push(s); });
+    Object.assign(nd, { kind: 'pass', inputs: [nd.inputs[nd.pick] ?? -1] });
+  }
+  const off = new Set();
+  if (!deadEdge.length) return off;
+  const uses = nodes.map(() => []);
+  const feeds = (nd) => (nd.kind === 'tap' ? [nd.parent] : nd.inputs);
+  nodes.forEach((nd, i) => { for (const s of feeds(nd)) if (s >= 0) uses[s].push(i); });
+  const deadUses = new Map();
+  for (const s of deadEdge) deadUses.set(s, (deadUses.get(s) ?? 0) + 1);
+  // Candidates: whatever reaches an unchosen input; then, until nothing
+  // changes, drop each one that still feeds something compiled.
+  const cand = new Set(), stack = [...deadUses.keys()];
+  while (stack.length) { const i = stack.pop(); if (cand.has(i)) continue; cand.add(i); for (const s of feeds(nodes[i])) if (s >= 0) stack.push(s); }
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const i of cand) {
+      const live = uses[i].some((d) => !cand.has(d) && !nodes[d].end);
+      const toOff = deadUses.has(i) || uses[i].some((d) => cand.has(d));
+      if (live || !toOff) { cand.delete(i); changed = true; }
+    }
+  }
+  for (const i of cand) off.add(i);
+  nodes.forEach((nd, i) => { if (nd.end && nd.inputs[0] >= 0 && off.has(nd.inputs[0])) off.add(i); });
+  for (const i of off) nodes[i].dead = true;
+  return off;
+}
+
 // Flattens and compiles a diagram into a simulation element:
 //   { n, bound, eval(t, X, o, u, dX) -> y, record(), probes(), warnings, states }
 // opts.sources maps Source signal names to t => value. opts.standalone: the
@@ -581,7 +686,9 @@ const NONE = [];
 // noise adds 0, and Sources read the operating point's values.
 // el.seen(idPath, at) then gives the Model a Controller or Observer sees.
 export function compileDiagram(diagram, path = 'plant', opts = {}) {
-  // Masks and formulas are resolved to numbers first, outermost first.
+  // Masks and formulas are resolved to numbers first, outermost first. The
+  // model compile reads the diagram as given (it resolves it the same way).
+  const given = diagram;
   if (hasFormulas(diagram)) diagram = normalizeDiagram(diagram, path, { resolve: true });
   const model = opts.mode === 'model';
   const standalone = opts.standalone || model;
@@ -604,7 +711,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       const name = `${prefix}${b.name ?? b.id}`, idPath = `${ids}${b.id}`;
       if (b.type === 'subsystem') {
         const inner = level(b.diagram, `${name}/`, `${idPath}/`, false);
-        const ports = (t) => b.diagram.blocks.filter((x) => x.type === t).sort((a, c) => a.params.port - c.params.port);
+        const scope = maskScope(b);
+        const ports = (t) => b.diagram.blocks.filter((x) => x.type === t && portPresent(x, scope)).sort((a, c) => a.params.port - c.params.port);
         outs[b.id] = ports('outport').map((x) => inner.outs[x.id][0]);
         ins[b.id] = ports('inport').map((x) => inner.ins[x.id][0]);
         continue;
@@ -619,13 +727,13 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       if (b.type === 'sink') {
         if (probeList.some(([n2]) => n2 === b.params.name)) throw new Error(`${path}: two signals named "${b.params.name}"`);
-        const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+        const k = add({ kind: 'pass', name, ft: true, inputs: [-1], end: true, sink: b.params.name });
         probeList.push([b.params.name, k]);
         outs[b.id] = []; ins[b.id] = [[k, 0]];
         continue;
       }
       if (b.type === 'terminator') {
-        const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+        const k = add({ kind: 'pass', name, ft: true, inputs: [-1], end: true });
         outs[b.id] = []; ins[b.id] = [[k, 0]];
         continue;
       }
@@ -700,7 +808,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       else if (b.type === 'sum') Object.assign(node, { kind: 'sum', signs: [...b.params.signs].map((c) => (c === '-' ? -1 : 1)), ft: true });
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
       else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, y0: b.params.y0, ft: model || b.params.L <= 0 });
-      else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
+      else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true, fixed: !!b.fixed });
       else if (b.type === 'fcn') {
         const eq = compileEquations(b.params, b.consts);
         Object.assign(node, { kind: 'fcn', eq, v: new Float64Array(eq.n), outv: new Float64Array(eq.out.length), ft: true });
@@ -721,6 +829,12 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     return { outs, ins };
   }
   level(diagram, '', '', true);
+  const off = prune(nodes);
+  if (off.size) {
+    for (let q = probeList.length - 1; q >= 0; q--) if (off.has(probeList[q][1])) probeList.splice(q, 1);
+    for (let q = ctrlNodes.length - 1; q >= 0; q--) if (off.has(ctrlNodes[q][1])) ctrlNodes.splice(q, 1);
+  }
+  const offSinks = [...off].filter((i) => nodes[i].sink).map((i) => nodes[i].sink);
   // Auto-tune reads each Controller block's r (input 1), y (input 2) and u
   // under its id path: "ctrl.r", "motor/ctrl.u". A signal name never has a
   // dot, so no scope channel lists these (and no Sink lookup reads them).
@@ -734,12 +848,12 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     if (outNode < 0) throw new Error(`${path}: add an Out block for the plant output y`);
     if (extNode < 0) warnings.push(`${path}: no In block, so the plant ignores u`);
   }
-  for (const nd of nodes) nd.inputs.forEach((s, i) => { if (s < 0) warnings.push(`${path}: ${nd.name} input ${i + 1} is not connected (reads 0)`); });
+  for (const nd of nodes) if (!nd.dead) nd.inputs.forEach((s, i) => { if (s < 0) warnings.push(`${path}: ${nd.name} input ${i + 1} is not connected (reads 0)`); });
 
   // Evaluation order: blocks whose output does not depend on their input
   // first, then pass-through blocks after their inputs.
-  const order = nodes.map((nd, i) => i).filter((i) => !nodes[i].ft);
-  const pending = new Set(nodes.map((nd, i) => i).filter((i) => nodes[i].ft));
+  const order = nodes.map((nd, i) => i).filter((i) => !nodes[i].ft && !nodes[i].dead);
+  const pending = new Set(nodes.map((nd, i) => i).filter((i) => nodes[i].ft && !nodes[i].dead));
   let progress = true;
   while (pending.size && progress) {
     progress = false;
@@ -763,7 +877,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   let n = 0, bound = 0;
   const stateNodes = [];
   for (const nd of nodes) {
-    if (nd.kind !== 'ss' && nd.kind !== 'ode' && nd.kind !== 'int') continue;
+    if ((nd.kind !== 'ss' && nd.kind !== 'ode' && nd.kind !== 'int') || nd.dead) continue;
     nd.nx = nd.kind === 'int' ? 1 : nd.kind === 'ss' ? nd.ss.n : typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n;
     nd.off = n; n += nd.nx; bound = Math.max(bound, nd.bound);
     if (nd.nx > 0) stateNodes.push(nd);
@@ -779,7 +893,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const vals = new Float64Array(nodes.length);
   // Sampled blocks; observers first, so a controller sampling at the same
   // instant already sees the new estimate.
-  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl').sort((a, b) => b.observer - a.observer);
+  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl' && !nd.dead).sort((a, b) => b.observer - a.observer);
   const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
   // Every sampled block's Ts: simulateSystem puts each sample instant k·Ts on
   // its integration grid.
@@ -796,7 +910,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // not: in the page, background jobs this compile did not ask for (a plan
     // for a variant no longer running) are dropped then.
     // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
-    const job = (opts.designs ?? defaultDesigns()).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }), { guest: !opts.designs && defaultDesigns() !== SYNC_DESIGNS });
+    const job = (opts.designs ?? defaultDesigns()).begin(diagram, () => compileDiagram(structuredClone(given), path, { mode: 'model' }), { guest: !opts.designs && defaultDesigns() !== SYNC_DESIGNS });
     for (const nd of ctrls) {
       if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
       const inputs = blockInputNames(diagram, nd.idPath);
@@ -816,7 +930,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   // two records it runs from the one to the other, so an input held by a
   // Controller (it changes only at its samples) comes out exactly delayed,
   // not spread over a step (which shortened the dead time by half a step).
-  const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
+  const delays = nodes.filter((nd) => !nd.dead && (nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0))).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
   let h = 0;
   // left: the end of an integration step reads the value the step ran on
   // (the left limit), not the one a sample there puts out after it.
@@ -908,6 +1022,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const probeSrc = probeList.map(([, k]) => origin(k)), outSrc = outNode >= 0 ? origin(outNode) : -1;
   const self = {
     n, bound, warnings, minTs, sampleTimes, states, designs,
+    // Sinks in a branch a mask switched off: not compiled, they read "off".
+    off: offSinks,
     setStep(step) { h = step; },
     // Called at each completed step with the state there: a controller whose
     // sample is due reads its inputs and sets its held output; the outputs are
@@ -960,7 +1076,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     },
     // External plants (Live mode): y is written by the caller, u() reads what
     // the diagram feeds the block after the last eval.
-    externals: externals.map((k) => ({ name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])) })),
+    externals: externals.filter((k) => !nodes[k].dead).map((k) => ({ name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])) })),
     // Who feeds what around the (first) External plant, by signal name
     // (Live mode: full scales, the ramp-in, the plant's log):
     //   sinks    { name: { output: j } }  a Sink showing the plant's output j

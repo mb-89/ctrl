@@ -5977,7 +5977,7 @@ const ELEMENTS = {
   terminator: { label: 'Terminator', group: 'Signals', params: [], ports: () => [1, 0], formula: 'ends a signal' },
   switch: {
     label: 'Switch', group: 'Math', formula: 'passes one input',
-    params: [num('inputs', 'Inputs', 2, { min: 2, int: true }), num('position', 'Position', 1, { min: 1, int: true })],
+    params: [num('inputs', 'Inputs', 2, { min: 2, int: true }), num('position', 'Position', 1, { min: 1, int: true, maskable: true })],
     ports: (p) => [p.inputs, 1],
   },
   inport: { label: 'In', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [0, 1], formula: 'u' },
@@ -6000,7 +6000,7 @@ const ELEMENTS = {
   },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1, { inf: true }), num('max', 'Max', 1, { inf: true })], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
-  noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
+  noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0, maskable: true })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
   cartPole: {
     label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ, v, ω', outputs: ['x', 'θ', 'v', 'ω'], ports: () => [1, 4],
     params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
@@ -6189,9 +6189,10 @@ function diagramTypes() {
   return [...Object.keys(ELEMENTS), ...Object.keys(BLOCKS.plant)];
 }
 
-function blockPorts(block) {
+function blockPorts(block, scope = null) {
   if (block.type === 'subsystem') {
-    const count = (t) => Math.max(0, ...block.diagram.blocks.filter((b) => b.type === t).map((b) => b.params.port));
+    const inner = maskScope(block, scope);
+    const count = (t) => Math.max(0, ...block.diagram.blocks.filter((b) => b.type === t && portPresent(b, inner)).map((b) => b.params.port));
     return [count('inport'), count('outport')];
   }
   return diagramBlockDef(block.type).ports(block.params);
@@ -6218,11 +6219,36 @@ function formulaValue(src, scope, where) {
 }
 function fieldNumber(raw, p, scope, where) {
   if (!isFormula(raw)) return Number(raw);
-  if (p.int) throw new Error(`${where}: a whole number, not a formula`);
+  if (p.int && !p.maskable) throw new Error(`${where}: a whole number, not a formula`);
   const v = formulaValue(raw, scope, where);
+  if (p.int && Number.isFinite(v) && !Number.isInteger(v)) throw new Error(`${where}: ${String(raw).trim()} = ${v}; it must be a whole number`);
   if (Number.isNaN(v) || (!Number.isFinite(v) && !p.inf)) throw new Error(`${where}: ${String(raw).trim()} = ${Number.isNaN(v) ? 'not a number' : v > 0 ? 'inf' : '-inf'}; it must be finite`);
   return v;
 }
+const MASK_KINDS = ['toggle', 'choice'];
+const toggleValue = (raw) => (raw === true || raw === 'on' ? 1 : raw === false || raw === 'off' ? 0 : Number(raw) === 0 || Number(raw) === 1 ? Number(raw) : NaN);
+function toggleField(raw, outer, at) {
+  const v = isFormula(raw) && raw !== 'on' && raw !== 'off' ? formulaValue(raw, outer, at) : toggleValue(raw);
+  if (v !== 0 && v !== 1) throw new Error(`${at}: a toggle is 0 or 1 (off or on), not ${raw}`);
+  return { v, kept: isFormula(raw) && raw !== 'on' && raw !== 'off' ? String(raw).trim() : v };
+}
+function choiceField(raw, options, outer, at) {
+  if (options.includes(raw)) return { v: options.indexOf(raw) + 1, kept: raw };
+  let v;
+  try { v = isFormula(raw) ? formulaValue(raw, outer, at) : Number(raw); } catch { v = NaN; }
+  if (!Number.isInteger(v) || v < 1 || v > options.length) throw new Error(`${at}: one of ${options.join(', ')}, not ${raw}`);
+  return { v, kept: isFormula(raw) ? String(raw).trim() : options[v - 1] };
+}
+function maskScope(b, outer = null) {
+  if (!b.mask?.length) return outer;
+  try { return normalizeMask(b, b.id, outer, true).scope; } catch { return null; }
+}
+function portPresent(b, scope) {
+  if (!b.when) return true;
+  if (!scope) return true;
+  try { return formulaValue(b.when, scope, `${b.id}.when`) !== 0; } catch { return true; }
+}
+
 function normalizeMask(b, where, outer, resolve) {
   const given = b.params && typeof b.params === 'object' ? Object.keys(b.params) : [];
   if (b.mask === undefined || b.mask === null) {
@@ -6240,20 +6266,44 @@ function normalizeMask(b, where, outer, resolve) {
     const unit = String(f.unit ?? '1').trim() || '1';
     if (unit.length > 12 || /[<>"{}]/.test(unit)) throw new Error(`${at}.unit: a short unit such as m, N, rad/s, or 1`);
     const out = { key, label: String(f.label ?? key), unit };
+    if (f.kind !== undefined && !MASK_KINDS.includes(f.kind)) throw new Error(`${at}.kind: one of ${MASK_KINDS.join(', ')} (or none: a number)`);
+    if (f.kind) out.kind = f.kind;
+    if (f.kind === 'choice') {
+      if (!Array.isArray(f.options) || f.options.length < 2 || !f.options.every((o) => typeof o === 'string' && /^[A-Za-z][A-Za-z0-9 _-]{0,23}$/.test(o)) || new Set(f.options).size < f.options.length) throw new Error(`${at}.options: two or more different words, such as ["voltage", "current"]`);
+      out.options = [...f.options];
+    }
     for (const k of ['min', 'max', 'default']) {
       if (f[k] === undefined || f[k] === null || f[k] === '') continue;
-      const v = Number(f[k]);
-      if (Number.isNaN(v)) throw new Error(`${at}.${k}: a number`);
+      if (k === 'default' && f.kind === 'choice') {
+        if (!out.options.includes(f.default)) throw new Error(`${at}.default: one of ${out.options.join(', ')}`);
+        out.default = f.default;
+        continue;
+      }
+      const v = k === 'default' && f.kind === 'toggle' ? toggleValue(f[k]) : Number(f[k]);
+      if (Number.isNaN(v)) throw new Error(`${at}.${k}: ${f.kind === 'toggle' && k === 'default' ? '0 or 1 (off or on)' : 'a number'}`);
       out[k] = v;
     }
     if (out.min !== undefined && out.max !== undefined && out.min > out.max) throw new Error(`${at}: min ${out.min} is above max ${out.max}`);
+    if (f.under !== undefined) out.under = String(f.under);
+    if (f.physical) out.physical = true;
     return out;
   });
+  for (const f of mask) {
+    if (f.under === undefined) continue;
+    const [k, opt] = f.under.split(':'), of = mask.find((g) => g.key === k);
+    if (!of || (of.kind !== 'toggle' && of.kind !== 'choice') || (opt === undefined) !== (of.kind === 'toggle') || (opt !== undefined && !of.options.includes(opt))) throw new Error(`${where}.mask(${f.key}).under: a toggle's key, or a choice's key:option, of this mask`);
+  }
   for (const k of given) if (!keys.has(k)) throw new Error(`${where}.params: "${k}" is not on the mask (${[...keys].join(', ')})`);
   const label = b.name ?? b.id, values = new Map(), params = {};
   for (const f of mask) {
-    const raw = b.params?.[f.key] ?? f.default;
     const at = `${where}.params.${f.key}`;
+    if (f.kind) {
+      const { v, kept } = f.kind === 'toggle' ? toggleField(b.params?.[f.key] ?? f.default ?? 0, outer, at) : choiceField(b.params?.[f.key] ?? f.default ?? f.options[0], f.options, outer, at);
+      values.set(f.key, v);
+      params[f.key] = resolve ? v : kept;
+      continue;
+    }
+    const raw = b.params?.[f.key] ?? f.default;
     if (raw === undefined || raw === null || raw === '') throw new Error(`${at}: needs a value`);
     const v = isFormula(raw) ? formulaValue(raw, outer, at) : Number(raw);
     if (Number.isNaN(v)) throw new Error(`${at}: expected a number or a formula`);
@@ -6326,7 +6376,8 @@ function normalizeParams(type, params = {}, where, scope = null, resolve = false
     out[p.key] = v;
   }
   if (type === 'integrator' && values.min !== undefined && values.max !== undefined && values.min > values.max) throw new Error(`${where}: min ${values.min} is above max ${values.max}`);
-  if (type === 'switch') out.position = Math.min(out.position, out.inputs);
+  if (type === 'switch' && typeof out.position === 'number') out.position = Math.min(out.position, out.inputs);
+  if (type === 'switch' && values.position > out.inputs) throw new Error(`${where}.position: ${params.position} = ${values.position}; the Switch has ${out.inputs} inputs`);
   return out;
 }
 
@@ -6344,6 +6395,12 @@ function normalizeDiagram(d, path = 'plant', opts = {}) {
     const out = { id: b.id, type: b.type, params: m ? m.params ?? {} : normalizeParams(b.type, b.params, at, scope, resolve), x: Number(b.x) || 0, y: Number(b.y) || 0 };
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
+    if ((b.type === 'inport' || b.type === 'outport') && b.when !== undefined && b.when !== null && b.when !== '') {
+      if (!isFormula(b.when) && !Number.isFinite(Number(b.when))) throw new Error(`${at}.when: a formula in the mask's names (0: the port is not there)`);
+      formulaValue(String(b.when), scope, `${at}.when`);
+      out.when = String(b.when).trim();
+    }
+    if (resolve && b.type === 'switch' && isFormula(b.params?.position)) Object.defineProperty(out, 'fixed', { value: true });
     if (m?.mask) out.mask = m.mask;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`, { scope: m.scope, resolve });
     if (resolve && b.type === 'fcn' && scope) Object.defineProperty(out, 'consts', { value: scopeMap(scope) });
@@ -6361,7 +6418,7 @@ function normalizeDiagram(d, path = 'plant', opts = {}) {
     for (const [e, side] of [[f, 1], [t, 0]]) {
       const b = byId[e.id];
       if (!b) throw new Error(`${path}.wires[${i}]: no block "${e.id}"`);
-      const n = blockPorts(b)[side];
+      const n = blockPorts(b, scope)[side];
       if (!(e.port >= 0 && e.port < n)) throw new Error(`${path}.wires[${i}]: ${b.id} has no ${side ? 'output' : 'input'} ${e.port}`);
     }
     return { from: f.port ? `${f.id}:${f.port}` : f.id, to: t.port ? `${t.id}:${t.port}` : t.id };
@@ -6428,7 +6485,38 @@ function modelError(code, message, hint = '') {
 const fmt = (v) => String(Number(Number(v).toPrecision(3)));
 const NONE = [];
 
+function prune(nodes) {
+  const deadEdge = [];
+  for (const nd of nodes) {
+    if (nd.kind !== 'switch' || !nd.fixed) continue;
+    nd.inputs.forEach((s, slot) => { if (slot !== nd.pick && s >= 0) deadEdge.push(s); });
+    Object.assign(nd, { kind: 'pass', inputs: [nd.inputs[nd.pick] ?? -1] });
+  }
+  const off = new Set();
+  if (!deadEdge.length) return off;
+  const uses = nodes.map(() => []);
+  const feeds = (nd) => (nd.kind === 'tap' ? [nd.parent] : nd.inputs);
+  nodes.forEach((nd, i) => { for (const s of feeds(nd)) if (s >= 0) uses[s].push(i); });
+  const deadUses = new Map();
+  for (const s of deadEdge) deadUses.set(s, (deadUses.get(s) ?? 0) + 1);
+  const cand = new Set(), stack = [...deadUses.keys()];
+  while (stack.length) { const i = stack.pop(); if (cand.has(i)) continue; cand.add(i); for (const s of feeds(nodes[i])) if (s >= 0) stack.push(s); }
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const i of cand) {
+      const live = uses[i].some((d) => !cand.has(d) && !nodes[d].end);
+      const toOff = deadUses.has(i) || uses[i].some((d) => cand.has(d));
+      if (live || !toOff) { cand.delete(i); changed = true; }
+    }
+  }
+  for (const i of cand) off.add(i);
+  nodes.forEach((nd, i) => { if (nd.end && nd.inputs[0] >= 0 && off.has(nd.inputs[0])) off.add(i); });
+  for (const i of off) nodes[i].dead = true;
+  return off;
+}
+
 function compileDiagram(diagram, path = 'plant', opts = {}) {
+  const given = diagram;
   if (hasFormulas(diagram)) diagram = normalizeDiagram(diagram, path, { resolve: true });
   const model = opts.mode === 'model';
   const standalone = opts.standalone || model;
@@ -6447,7 +6535,8 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       const name = `${prefix}${b.name ?? b.id}`, idPath = `${ids}${b.id}`;
       if (b.type === 'subsystem') {
         const inner = level(b.diagram, `${name}/`, `${idPath}/`, false);
-        const ports = (t) => b.diagram.blocks.filter((x) => x.type === t).sort((a, c) => a.params.port - c.params.port);
+        const scope = maskScope(b);
+        const ports = (t) => b.diagram.blocks.filter((x) => x.type === t && portPresent(x, scope)).sort((a, c) => a.params.port - c.params.port);
         outs[b.id] = ports('outport').map((x) => inner.outs[x.id][0]);
         ins[b.id] = ports('inport').map((x) => inner.ins[x.id][0]);
         continue;
@@ -6462,13 +6551,13 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       if (b.type === 'sink') {
         if (probeList.some(([n2]) => n2 === b.params.name)) throw new Error(`${path}: two signals named "${b.params.name}"`);
-        const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+        const k = add({ kind: 'pass', name, ft: true, inputs: [-1], end: true, sink: b.params.name });
         probeList.push([b.params.name, k]);
         outs[b.id] = []; ins[b.id] = [[k, 0]];
         continue;
       }
       if (b.type === 'terminator') {
-        const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
+        const k = add({ kind: 'pass', name, ft: true, inputs: [-1], end: true });
         outs[b.id] = []; ins[b.id] = [[k, 0]];
         continue;
       }
@@ -6533,7 +6622,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       else if (b.type === 'sum') Object.assign(node, { kind: 'sum', signs: [...b.params.signs].map((c) => (c === '-' ? -1 : 1)), ft: true });
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
       else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, y0: b.params.y0, ft: model || b.params.L <= 0 });
-      else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
+      else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true, fixed: !!b.fixed });
       else if (b.type === 'fcn') {
         const eq = compileEquations(b.params, b.consts);
         Object.assign(node, { kind: 'fcn', eq, v: new Float64Array(eq.n), outv: new Float64Array(eq.out.length), ft: true });
@@ -6552,6 +6641,12 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     return { outs, ins };
   }
   level(diagram, '', '', true);
+  const off = prune(nodes);
+  if (off.size) {
+    for (let q = probeList.length - 1; q >= 0; q--) if (off.has(probeList[q][1])) probeList.splice(q, 1);
+    for (let q = ctrlNodes.length - 1; q >= 0; q--) if (off.has(ctrlNodes[q][1])) ctrlNodes.splice(q, 1);
+  }
+  const offSinks = [...off].filter((i) => nodes[i].sink).map((i) => nodes[i].sink);
   for (const [key, k] of ctrlNodes) {
     const [r = -1, y = -1] = nodes[k].inputs;
     if (r >= 0) probeList.push([`${key}.r`, r]);
@@ -6562,10 +6657,10 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     if (outNode < 0) throw new Error(`${path}: add an Out block for the plant output y`);
     if (extNode < 0) warnings.push(`${path}: no In block, so the plant ignores u`);
   }
-  for (const nd of nodes) nd.inputs.forEach((s, i) => { if (s < 0) warnings.push(`${path}: ${nd.name} input ${i + 1} is not connected (reads 0)`); });
+  for (const nd of nodes) if (!nd.dead) nd.inputs.forEach((s, i) => { if (s < 0) warnings.push(`${path}: ${nd.name} input ${i + 1} is not connected (reads 0)`); });
 
-  const order = nodes.map((nd, i) => i).filter((i) => !nodes[i].ft);
-  const pending = new Set(nodes.map((nd, i) => i).filter((i) => nodes[i].ft));
+  const order = nodes.map((nd, i) => i).filter((i) => !nodes[i].ft && !nodes[i].dead);
+  const pending = new Set(nodes.map((nd, i) => i).filter((i) => nodes[i].ft && !nodes[i].dead));
   let progress = true;
   while (pending.size && progress) {
     progress = false;
@@ -6582,7 +6677,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   let n = 0, bound = 0;
   const stateNodes = [];
   for (const nd of nodes) {
-    if (nd.kind !== 'ss' && nd.kind !== 'ode' && nd.kind !== 'int') continue;
+    if ((nd.kind !== 'ss' && nd.kind !== 'ode' && nd.kind !== 'int') || nd.dead) continue;
     nd.nx = nd.kind === 'int' ? 1 : nd.kind === 'ss' ? nd.ss.n : typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n;
     nd.off = n; n += nd.nx; bound = Math.max(bound, nd.bound);
     if (nd.nx > 0) stateNodes.push(nd);
@@ -6594,13 +6689,13 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   }
 
   const vals = new Float64Array(nodes.length);
-  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl').sort((a, b) => b.observer - a.observer);
+  const ctrls = nodes.filter((nd) => nd.kind === 'ctrl' && !nd.dead).sort((a, b) => b.observer - a.observer);
   const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
   const sampleTimes = [...new Set(ctrls.map((nd) => nd.Ts))];
 
   const designs = [];
   if (laws) {
-    const job = (opts.designs ?? defaultDesigns()).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }), { guest: !opts.designs && defaultDesigns() !== SYNC_DESIGNS });
+    const job = (opts.designs ?? defaultDesigns()).begin(diagram, () => compileDiagram(structuredClone(given), path, { mode: 'model' }), { guest: !opts.designs && defaultDesigns() !== SYNC_DESIGNS });
     for (const nd of ctrls) {
       if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
       const inputs = blockInputNames(diagram, nd.idPath);
@@ -6613,7 +6708,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
     job.end();
   }
-  const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
+  const delays = nodes.filter((nd) => !nd.dead && (nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0))).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
   let h = 0;
   let left = false;
   let ideal = false;
@@ -6692,6 +6787,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   const probeSrc = probeList.map(([, k]) => origin(k)), outSrc = outNode >= 0 ? origin(outNode) : -1;
   const self = {
     n, bound, warnings, minTs, sampleTimes, states, designs,
+    off: offSinks,
     setStep(step) { h = step; },
     sample(t, X, o, u) {
       for (const nd of ctrls) {
@@ -6725,7 +6821,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       for (const nd of nodes) if (nd.kind === 'src' && nd.signal !== null) sources[nd.signal] = nd.fn(t);
       return { t, X: Float64Array.from(X.subarray(o, o + n)), held, inputs, sources };
     },
-    externals: externals.map((k) => ({ name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])) })),
+    externals: externals.filter((k) => !nodes[k].dead).map((k) => ({ name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])) })),
     links() {
       const ext = externals[0] ?? -1;
       const outOf = (i) => { const o = origin(i); return o >= 0 && nodes[o].kind === 'tap' && nodes[o].parent === ext ? nodes[o].j : undefined; };
@@ -7016,7 +7112,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   return self;
 }
 
-return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, maskValues, formulaIn, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
+return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, MASK_KINDS, maskValues, formulaIn, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
 })();
 // ---- core/sim.js
 __mods['core/sim.js'] = (() => {
@@ -7313,7 +7409,7 @@ function simulateSystem(diagram, signals, sim, opts = {}) {
     return again;
   }
   const ms = (globalThis.performance?.now() ?? Date.now()) - t0;
-  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, bound, stiffness: { start: el.stiff, end }, ms } };
+  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, bound, stiffness: { start: el.stiff, end }, ms, ...(el.off?.length ? { off: el.off } : {}) } };
   if (until !== undefined) res.snapshot = unstable ? null : el.snapshot(K * Ts, X);
   return res;
 }
