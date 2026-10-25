@@ -10,7 +10,7 @@
 // try a sweep of its own. Nothing but the record is kept, on Keep; the model
 // is computed from it whenever it is needed.
 
-import { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord, discriminateSteps } from '../core/identify.js';
+import { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord, discriminateSteps, fitSupply, shakeWanted } from '../core/identify.js';
 import { controllerBlocks, placeVariant, baseName } from '../core/autotune.js';
 import { normalizeVariant } from '../core/controllers.js';
 import { AS_FAST, formatSpeed } from '../core/speed.js';
@@ -24,7 +24,7 @@ const RENDER = 100;     // ms between two renders of the progress while it runs
 const MAX_SWEEP = 4000; // samples a sweep keeps, at most
 const PLOTS = {
   check: { label: 'Check', about: 'The Check: what was measured (a test the model was not fitted to) against the model\'s prediction and its 2σ band, with the reference.' },
-  bode: { label: 'Bode', about: 'How much of a swing at each frequency the model passes, as the sampled loop sees it, with its 2σ band; the kernel\'s estimate dotted ("what the data say without choosing a shape").' },
+  bode: { label: 'Bode', about: 'How much of a swing at each frequency the model passes, as the sampled loop sees it, with its 2σ band; when the Shake ran, the measured points with their ±2σ bars, one colour per place.' },
   step: { label: 'Step', about: 'The model\'s response to one unit more of u, from rest, with its 2σ band; the kernel\'s dotted.' },
   where: { label: 'Where', about: 'The gain at each place the test sat, with its 2σ bar: where it differs, one linear model is a compromise. Faint: a place the test spent little time in.' },
   size: { label: 'Size', about: 'The apparent gain of each push of the Nudge against its size: a gain that grows with the push is friction or a dead band.' },
@@ -390,10 +390,22 @@ export function createIdentifyTab(host, app, display, record) {
       const b = modelBode(model, w);
       const dB = (x) => 20 * Math.log10(Math.max(x, 1e-12));
       const mag = b.mag.map(dB), lo = Array.from(b.lo, (x) => dB(x)), hi = Array.from(b.hi, (x) => dB(x));
-      const [y0, y1] = extent([...mag, ...hi].filter((v) => v > -200));
+      // The Shake's measured points (§6.7), each place in its own colour, with ±2σ bars.
+      const pts = (model.frf ?? []).flatMap((x, p) => x.f.map((f, j) => ({ w: 2 * Math.PI * f, m: Math.hypot(...x.G[j]), sd: x.sd[j], p })));
+      const inRange = pts.filter((q) => q.w >= w[0] && q.w <= w.at(-1));
+      const [y0, y1] = extent([...mag, ...hi, ...inRange.map((q) => dB(q.m))].filter((v) => v > -200));
       plot.frame({ x0: w[0], x1: w.at(-1), y0: Math.max(y0, y1 - 80), y1, xlog: true, xlabel: 'rad/s', ylabel: '|G| dB' });
-      plot.clip(() => { band(w, lo, hi, cols[0]); plot.line(w, mag, { color: cols[0], width: 1.6 }); });
-      note.textContent = `|G|, as the loop sampled at ${fmtTime(model.Ts)} sees it, with its 2σ band; phase ${num(b.phase[Math.floor(w.length / 2)], 3)}° at ${num(w[Math.floor(w.length / 2)], 3)} rad/s (hover the plot keys for more)`;
+      plot.clip(() => {
+        band(w, lo, hi, cols[0]);
+        plot.line(w, mag, { color: cols[0], width: 1.6 });
+        for (const q of inRange) {
+          const color = cols[1 + (q.p % 3)];
+          plot.line([q.w, q.w], [dB(Math.max(q.m - 2 * q.sd, q.m * 1e-3)), dB(q.m + 2 * q.sd)], { color, width: 1 });
+          plot.mark(q.w, dB(q.m), { shape: 'dot', color, size: 4 });
+        }
+      });
+      const shook = (model.frf ?? []).map((x) => `at ${num(x.place, 3)}: ${Math.round(100 * (x.within ?? 0))} % of the lines within 2σ, ${num(x.distortion.share, 2)} % not linear`).join('; ');
+      note.textContent = `|G|, as the loop sampled at ${fmtTime(model.Ts)} sees it, with its 2σ band${shook ? `; dots: the Shake ${shook}` : ''}; phase ${num(b.phase[Math.floor(w.length / 2)], 3)}° at ${num(w[Math.floor(w.length / 2)], 3)} rad/s`;
     } else if (st.plot === 'where') {
       const pl = model.where ?? [];
       if (!pl.length) { plot.frame({ x0: 0, x1: 1, y0: 0, y1: 1 }); plot.note('one place only'); return; }
@@ -499,7 +511,7 @@ export function createIdentifyTab(host, app, display, record) {
       // The fit pause: fitted in slices on the record so far, then supplied.
       j.fitting = true;
       const gen = identifySteps(compactRecord(m.record), { plan: j.plan, upto: m.needs.upto });
-      work(j, gen, (pre) => { j.pre = pre; j.fitting = false; app.live.identify.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {}); });
+      work(j, gen, (pre) => { j.pre = pre; j.fitting = false; app.live.identify.supply('fit', { ...fitSupply(pre), shake: !m.record.log.some((e) => e.kind === 'shake') && shakeWanted(pre) }); });
     } else if (m.needs?.kind === 'discriminate') {
       // After the Check: do two shapes still tie? Then the test that tells them apart (input 56).
       j.fitting = true;

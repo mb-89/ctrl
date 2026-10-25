@@ -127,6 +127,7 @@ const LOG_KEYS = {
   pause: ['i0', 'i1', 'waited'],
   check: ['i0', 'iStart', 'iEnd'],
   discriminate: ['i0', 'iStart', 'iEnd', 'shape', 'a', 'n', 'f', 'at', 'left', 'candidates'],
+  shake: ['i0', 'iStart', 'iEnd', 'place', 'N', 'kmax', 'seed', 'starts', 'amps', 'left'],
   end: ['code', 'message', 'i', 't', 'check'],
   stop: ['i', 'code'],
   note: ['i', 'text'],

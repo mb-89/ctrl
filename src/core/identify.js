@@ -18,10 +18,10 @@ import { controllerBlocks, upstreamSource, drain } from './autotune.js';
 import { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } from './diagram.js';
 import { CONTROLLERS } from './controllers.js';
 import { referenceFn, gaussAt } from './signals.js';
-import { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText, discriminationSignal } from './experiment.js';
+import { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText, discriminationSignal, excitationOf } from './experiment.js';
 import {
   STRUCTURES, CHOICE, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
-  fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded,
+  fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded, frf,
 } from './fit.js';
 import { cholesky } from './linalg.js';
 import { createStepRunner } from './live.js';
@@ -366,7 +366,8 @@ function readLog(record) {
   const all = (kind) => log.filter((e) => e.kind === kind);
   return {
     listen: one('listen'), rungs: all('rung'), look: one('look'), laws: all('law'), tries: all('try'), ladder: one('ladder'),
-    supply: one('supply'), pause: one('pause'), check: one('check'), discriminate: one('discriminate'), end: one('end'), notes: all('note'),
+    // The fitting data end at the last fit pause (after the Shake, when it ran).
+    supply: all('supply').filter((e) => (e.what ?? 'fit') === 'fit').at(-1) ?? null, pause: one('pause'), check: one('check'), discriminate: one('discriminate'), shakes: all('shake'), end: one('end'), notes: all('note'),
   };
 }
 
@@ -386,13 +387,17 @@ function restBefore(record, a, w) {
 
 // A closed-loop segment [a, b): the rest before it, the law running before
 // it, and every switch inside it.
-function closedSegment(record, laws, a, b, w, role) {
+// excites: the log's entries of what was added to the law's output (a Shake
+// place, the test that tells two shapes apart), with the limits u was held to.
+function closedSegment(record, laws, a, b, w, role, { excites = [], limits = null } = {}) {
   const rest = restBefore(record, a, w);
   let before = null;
   for (const e of laws) if (e.i < a) before = e;
+  const ex = excites.filter((e) => e && e.iStart < b && e.iEnd > a);
   return {
     kind: 'closed', role, i0: a, i1: b, yStart: rest.y, uStart: rest.u, rPrev: nan(record.r[Math.max(0, a - 1)]),
     before: before ? lawOf(before) : null, switches: laws.filter((e) => e.i >= a && e.i < b).map(lawOf),
+    ...(ex.length ? { excites: ex, limits } : {}),
   };
 }
 
@@ -417,13 +422,15 @@ export function segmentsOf(record, plan, { upto = null } = {}) {
   const iL = L.i1 - 1;
   const hold = g.laws.find((e) => e.role === 'hold') ?? null;
   const iHold = hold ? hold.i : F;
+  const exOpts = { excites: [...g.shakes, g.discriminate].filter(Boolean), limits: [plan.umin, plan.umax] };
   const o0 = g.rungs[0].i0, o1 = Math.min(iHold, F);
   if (o1 - o0 > 2) out.open = { kind: 'open', role: 'nudge', i0: o0, i1: o1, yStart: L.y0 + L.slope * (o0 - iL), uStart: plan.u0, slope: L.slope, iL, level: L.y0 };
   if (hold && iHold < F) {
-    const cuts = [iHold, ...g.tries.filter((T) => T.settled && T.iSwitch > iHold && T.iSwitch < F).map((T) => T.iSwitch)];
+    // Each try from its settle, and each Shake place from where its tones start.
+    const cuts = [iHold, ...g.tries.filter((T) => T.settled && T.iSwitch > iHold && T.iSwitch < F).map((T) => T.iSwitch), ...g.shakes.filter((e) => e.iStart > iHold && e.iStart < F).map((e) => e.iStart)].sort((x, y) => x - y);
     cuts.forEach((a, j) => {
       const b = j + 1 < cuts.length ? cuts[j + 1] : F;
-      if (b - a > 2) out.closed.push(closedSegment(record, g.laws, a, b, w, j === 0 ? 'hold' : 'try'));
+      if (b - a > 2) out.closed.push(closedSegment(record, g.laws, a, b, w, j === 0 ? 'hold' : g.shakes.some((e) => e.iStart === a) ? 'shake' : 'try', exOpts));
     });
   }
   const band = plan.band, span = band[1] - band[0];
@@ -443,7 +450,7 @@ export function segmentsOf(record, plan, { upto = null } = {}) {
   if (ck && ck.i1 - ck.i0 > 2) {
     const start = [ck.iStart, ck.i0].find((a) => finite(a) && a < ck.i1 - 2 && settledAt(a)) ?? out.closed.at(-1)?.i0 ?? ck.i0;
     const rest = settledAt(start);
-    const c = closedSegment(record, g.laws, start, ck.i1, w, 'check');
+    const c = closedSegment(record, g.laws, start, ck.i1, w, 'check', exOpts);
     out.check = { ...c, ...(rest ? { yStart: rest.y, uStart: rest.u } : {}), from: start >= ck.i0 ? start : ck.i0, left: ck.left };
   }
   // Where's hold curve (§6.6): where y stood still under the loop (its range
@@ -505,9 +512,11 @@ function fitSegment(record, seg, L, Ts) {
   const hold = ys.map((y) => !finite(y));
   const r = Float64Array.from(rs);
   const before = seg.before;
-  // A test input added to the law's output (the test that tells two shapes
-  // apart, input 56), rebuilt from the log, as the experiment played it.
-  const ex = seg.excite ? { sig: discriminationSignal(seg.excite, Ts), from: seg.excite.from, lo: seg.excite.umin, hi: seg.excite.umax } : null;
+  // What was added to the law's output (the Shake's tones, the test that
+  // tells two shapes apart), rebuilt from the log, as the experiment played it.
+  const exs = (seg.excites ?? []).map((e) => excitationOf(e, Ts)).filter(Boolean);
+  const [uLo, uHi] = seg.limits ?? [-Infinity, Infinity];
+  const added = (i) => { let v = 0; for (const x of exs) { const j = i - x.from; if (j >= 0 && j < x.values.length) v += x.values[j]; } return v; };
   out.law = () => {
     let law = before ? piLaw(before, bumpless(before, seg.uStart, seg.rPrev, seg.yStart), before.umin, before.umax, Ts) : null;
     let uLast = seg.uStart;
@@ -516,7 +525,7 @@ function fitSegment(record, seg, L, Ts) {
       const e = at.get(k);
       if (e) law = piLaw(e, bumpless(e, uLast, r[k], yh), e.umin, e.umax, Ts);
       let u = law ? law.step(r[k], yh) : uLast;
-      if (ex && law && idx[k] >= ex.from) u = Math.min(ex.hi, Math.max(ex.lo, u + (ex.sig[idx[k] - ex.from] ?? 0)));
+      if (exs.length && law && idx[k] >= 0) u = Math.min(uHi, Math.max(uLo, u + added(idx[k])));
       uLast = u;
       return u;
     };
@@ -787,7 +796,9 @@ export function modelSentences(model, names = {}) {
     const at = (v) => withU(fmtNum(v, 2), n.yUnit);
     out.push(`Behaves differently at different places: near ${at(a.level)}, ${one}${S.integrating ? ' for 1 s' : ''} moves it ${at(a.gain)}; near ${at(b.level)}, ${at(b.gain)}. The model is a compromise between them.`);
   }
-  if (model.sizeNote) out.push(model.sizeNote);
+  // The Shake's measure goes before the Nudge's hint of friction (§8: at most six).
+  if (finite(model.distortion) && model.distortion >= GRADE.distortion[0]) out.push(`About ${Math.round(model.distortion)} % of the response at this size is not linear.`);
+  else if (model.sizeNote) out.push(model.sizeNote);
   const noise = model.noise;
   const noiseLine = !noise ? null : noise.none ? 'This plant has no noise; real plants do.'
     : noise.steps && !(noise.sigma > 0.5 * noise.q / Math.sqrt(12)) ? `Noise on ${n.y}: only its steps of ${withU(fmtNum(noise.q, 2), n.yUnit)} (an encoder).`
@@ -840,7 +851,8 @@ function easedFrom(g, plan) {
 }
 
 // The onset test (input 56, decisions.md v2.9): after each visible push of
-// the Nudge, the time y has gone a tenth of the way to its peak response in
+// the Nudge (each starts at rest; a try's step may not: the oven still
+// cooling read an onset of 40 ms through its 0.1 s pipe), the time y has gone a tenth of the way to its peak response in
 // the push's direction and stays beyond its noise (four floors) for two
 // samples. The earliest over the pushes, { t, i (the rung) }, or null. A
 // tenth, not the first sample out of the noise: a shape's dead time also
@@ -851,18 +863,23 @@ function easedFrom(g, plan) {
 export const ONSET = { share: 0.1, floors: 4, hold: 2, peakFloors: 20 };
 function onsetOf(record, rungs, floor, Ts) {
   let best = null;
+  // d: the response from where the push started, in its direction; the onset
+  // where it has gone a tenth of the way to its peak, beyond the noise.
+  const read = (d, at) => {
+    const peak = Math.max(...d.filter(finite));
+    if (!(peak > ONSET.peakFloors * floor)) return;
+    const bar = Math.max(ONSET.floors * floor, ONSET.share * peak);
+    for (let k = 0; k + ONSET.hold <= d.length; k++) {
+      if (d.slice(k, k + ONSET.hold).every((v) => v > bar)) { const t = k * Ts; if (!best || t < best.t) best = { t, at }; return; }
+    }
+  };
   for (const R of rungs) {
     if (!R.visible || !Number.isInteger(R.i0) || !Number.isInteger(R.T)) continue;
     const dir = (R.dir ?? 1) * (R.sign ?? 1);
     const end = Math.min(record.y.length, R.i0 + 1 + R.T + 1);
     const d = [];
     for (let i = R.i0; i < end; i++) { const y = nan(record.y[i]); d.push(finite(y) ? dir * (y - (R.base + (R.slope ?? 0) * (i - (R.ic ?? R.i0)))) : NaN); }
-    const peak = Math.max(...d.filter(finite));
-    if (!(peak > ONSET.peakFloors * floor)) continue;
-    const bar = Math.max(ONSET.floors * floor, ONSET.share * peak);
-    for (let k = 0; k + ONSET.hold <= d.length; k++) {
-      if (d.slice(k, k + ONSET.hold).every((v) => v > bar)) { const t = k * Ts; if (!best || t < best.t) best = { t, rung: R.n }; break; }
-    }
+    read(d, `rung ${R.n}`);
   }
   return best;
 }
@@ -1142,7 +1159,11 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
   // whatever its fit: the model saw the pushes only.
   const check = chosen.check;
   const kernelGap = check && kernelFit !== null ? kernelFit - check.fit : 0;
-  let grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
+  // The Shake (§6.7): the frequency response at each place it ran, its
+  // distortion, and how much of it the model holds within 2σ.
+  const shakes = shakeResponses(record, g.shakes, chosen, Ts);
+  const distortion = shakes.length ? Math.max(...shakes.map((x) => x.distortion.share)) : null;
+  let grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, distortion, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
   const early = { budget: 'the test ended after the first look', slow: 'the test ended after the first look', away: 'the gentle controller pushed the wrong way', hold: 'the gentle controller did not hold' }[g.end?.code];
   if (early) grade = { mark: '✕', why: [early] };
   if (chosen.unsupported) grade = { mark: '✕', why: [chosen.unsupported, ...grade.why.filter((w) => w !== chosen.unsupported)] };
@@ -1175,7 +1196,7 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
     fit: chosen.fitted, check: checkOut,
     where, holds: seg.holds.map((h) => ({ y: h.y, u: h.u })), whereSpread: { spread, flagged }, size, sizeNote,
     kernel: kernel ? { g: Array.from(kernel.g), sd: Array.from(kernel.sd), Ts: kernel.Ts, decimate: kernel.decimate, integrating: kernel.integrating, rate: kernel.rate ? { value: kernel.rate.value, sd: kernel.rate.sd } : null, fit: kernelFit } : null,
-    eased: easedFrom(g, plan), discrimination,
+    eased: easedFrom(g, plan), discrimination, frf: shakes, distortion,
     grade: grade.mark, why: grade.why, warnings,
     segments: { open: seg.open ? [seg.open.i0, seg.open.i1] : null, closed: seg.closed.map((c) => [c.i0, c.i1]), check: seg.check ? [seg.check.from, seg.check.i1] : null, fitted: seg.F },
   };
@@ -1378,7 +1399,7 @@ export function identifyRun(project, path = null, settings = {}, { plan: ready =
         // The fit pause: fitted at once on the data so far, as Keep stores it.
         const upto = exp.needs.upto;
         pre = yield* tagged(identifySteps(compactRecord(exp.record()), { plan, upto }), 'pause');
-        exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+        exp.supply('fit', fitSupply(pre, exp));
       } else if (exp.needs?.kind === 'discriminate') {
         // After the Check: do two shapes still tie? Then a test that tells them apart.
         exp.supply('discriminate', yield* tagged(discriminateSteps(exp.record(), plan, pre), 'discriminate'));
@@ -1402,6 +1423,17 @@ export function identifyRun(project, path = null, settings = {}, { plan: ready =
   return { known, plan, settings: s, vary, factors, runner, exp, names: runner.names(), steps: steps(), stop: () => exp.stop(), get pre() { return pre; } };
 }
 
+// What the page supplies at a fit pause: the model's shape and numbers, and,
+// at the first pause, whether the Shake should look closer (§5.6: when the
+// ladder's model is unsure, ! or ✕ for any reason but that no Check ran yet).
+export function shakeWanted(model) {
+  return !model?.ok || model.why.some((w) => w !== 'no Check ran');
+}
+export function fitSupply(model, exp = null) {
+  const first = !exp || !exp.record().log.some((e) => e.kind === 'shake' || (e.kind === 'note' && /the Shake/.test(e.text)));
+  return { ...(model?.ok ? { structure: model.structure, params: model.params } : {}), shake: first && shakeWanted(model) };
+}
+
 // What the page answers the experiment after the Check (input 56): the
 // model so far (the pause's fits, the Check graded) and, if two shapes tie,
 // the test that tells them apart. For the page and the live loop too.
@@ -1420,6 +1452,37 @@ function* tagged(gen, stage) {
 // settings, vary, record, model, end, time, tries }.
 export function identify(project, path = null, settings = {}) {
   return drain(identifyRun(project, path, settings).steps);
+}
+
+// The Shake's frequency response at each place (§6.7, fit.js frf): its
+// measured periods (those without a lost cycle, the ramp's left out), u as
+// the plant applied it; Ĝ with its 2σ at the excited lines, the distortion,
+// the model's sampled response G_d there (the zero-order hold and the
+// fractional dead time: §6.7) and the share of lines it holds within 2σ.
+function shakeResponses(record, shakes, model, Ts) {
+  const out = [];
+  const ramp = EXPERIMENT.shake.ramp.length;
+  let d = null;
+  try { d = discretise(model.structure, model.p ?? model.params, Ts); } catch { d = null; }
+  for (const e of shakes) {
+    if (e.left) continue;
+    const ex = excitationOf(e, Ts);
+    const lost = (a, b) => (record.gaps ?? []).some(([i]) => i >= a && i < b);
+    const keep = e.starts.slice(ramp).filter((a, j) => e.amps[ramp + j] === e.amps.at(-1) && !lost(a, a + e.N) && a + e.N <= record.y.length);
+    if (keep.length < 2) continue;
+    const col = (src, a) => Array.from({ length: e.N }, (_, j) => { const v = nan(src[a + j]); return finite(v) ? v : 0; });
+    const U = keep.map((a) => col(record.applied?.some((v) => v !== null) ? record.applied.map((v, i) => (v === null ? record.u[i] : v)) : record.u, a));
+    const Y = keep.map((a) => col(record.y, a));
+    let F;
+    try { F = frf(U, Y, { excited: ex.lines.excited, detect: ex.lines.detect, Ts }); } catch { continue; }
+    const Gd = d ? F.f.map((f) => discreteAt(d, 2 * Math.PI * f * Ts)) : null;
+    const inside = Gd ? F.G.filter((g, j) => Math.hypot(g.re - Gd[j][0], g.im - Gd[j][1]) <= 2 * F.sd[j]).length / F.G.length : null;
+    out.push({
+      place: e.place, periods: keep.length, f: F.f, G: F.G.map((g) => [g.re, g.im]), sd: F.sd, model: Gd,
+      distortion: { share: F.distortion.share, odd: F.distortion.odd, even: F.distortion.even }, within: inside,
+    });
+  }
+  return out;
 }
 
 // ---- Telling two shapes apart (input 56)
@@ -1504,7 +1567,7 @@ export function designDiscrimination(model, record, plan) {
 export function tellApart(record, plan, models) {
   const g = readLog(record), D = g.discriminate, Ts = record.Ts;
   if (!D || !g.listen) return {};
-  const seg = { ...closedSegment(record, g.laws, D.iStart, D.iEnd, Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9)), 'discriminate'), excite: { shape: D.shape, a: D.a, n: D.n, f: D.f, from: D.iStart, umin: plan.umin, umax: plan.umax } };
+  const seg = closedSegment(record, g.laws, D.iStart, D.iEnd, Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9)), 'discriminate', { excites: [D], limits: [plan.umin, plan.umax] });
   const fs = fitSegment(record, seg, g.listen, Ts);
   const out = {};
   for (const m of models) {
