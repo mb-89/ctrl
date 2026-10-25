@@ -2,6 +2,14 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the report is HTML, at most a page per option ([input 59](../input/2026-10-25-59-benchmark-report-html-one-page-per-option.md))
+
+The person: "The output of the benchmark should be itself HTML … you can bake in pictures and graphs where it makes sense"; "don't make it too big … not more than one page per option that was in the comparison, not including the table itself." Built in `pugh.js` ([pugh.md](pugh.md), "The report"; [benchmark.md](benchmark.md) §2.10):
+- **One standalone HTML page**: inline SVG, no script, no file outside it, `@page` A4, the page's design-system tokens with print fallbacks. Bottom line first (the suggestion, its robustness, the main reason), a sensitivity figure, the matrix, the runners-up, a line for each option that does not fit, then one compact section per option that fits (better and worse than the datum, weak spots, at most two figures).
+- **Figures are data**: series to plot (roles option, datum, reference, other; panels sharing x) or ready SVG, per option; the benchmark supplies two: its run (y over r, u below) and its first smooth move, against the datum's.
+- **The budget is tested** by printing to PDF in Chromium and counting pages with and without the sections; the deadbeat motor's report (13 candidates, 6 fitting) prints on **4 A4 pages** (budget 7): [../research/benchmark-report-deadbeat.html](../research/benchmark-report-deadbeat.html).
+- **Interpretations**: Markdown stays only as text for a terminal or an agent (the CLI's default output, the MCP tool's text), not as a report; options that do not fit get a line and no figures; the report drops what explains the method rather than the choice (the numbers table of every criterion, the gains, the worst varied runs, the refusals of types that cannot run): those are in the tab's Details and `--json`; a page count by printing, not a size proxy.
+
 ## 2026-10-25 · v2.9: the Pugh decision framework, generic ([input 57](../input/2026-10-25-57-pugh-framework-generic.md))
 
 The person: "we are using PUG matrices in other places too. So if you find a better way of weighing options, that can be reused for other things, then feel free to do that. Not at a cost of the quality of what we're doing here." Built on `feat/benchmark-design` ([pugh.md](pugh.md); research [../research/benchmark.md](../research/benchmark.md) §6):

@@ -1,6 +1,6 @@
 # The Pugh decision framework
 
-Reader: whoever needs to choose between options against criteria, in this project or another one, and whoever changes `src/core/pugh.js`. **Status: built 2026-10-25** ([input 57](../input/2026-10-25-57-pugh-framework-generic.md)): the module, its CLI and its tests. The controller benchmark ([benchmark.md](benchmark.md)) is its first user. Research and sources: [../research/benchmark.md](../research/benchmark.md) §1, §3, §4, §6.
+Reader: whoever needs to choose between options against criteria, in this project or another one, and whoever changes `src/core/pugh.js`. **Status: built 2026-10-25** ([input 57](../input/2026-10-25-57-pugh-framework-generic.md)): the module, its CLI and its tests; **the report is HTML, at most a page per option, with figures** ([input 59](../input/2026-10-25-59-benchmark-report-html-one-page-per-option.md)). The controller benchmark ([benchmark.md](benchmark.md)) is its first user. Research and sources: [../research/benchmark.md](../research/benchmark.md) §1, §3, §4, §6.
 
 ## Bottom line
 
@@ -11,12 +11,14 @@ Reader: whoever needs to choose between options against criteria, in this projec
 - **who fits** and, for each one that does not, **why**;
 - the **ranking** and the **suggestion**, with any higher-ranked candidate that may not be suggested;
 - the **reverse sensitivity**: for each runner-up, the single-weight change at which it ties and whether that change is reasonable; the smallest change of all weights; each candidate's share of seeded random weights (SMAA's rank-1 acceptability); and a *robust* or *sensitive* verdict, all by rule;
-- the **weak spots** of the suggestion, as a hint for a hybrid (Pugh's controlled convergence).
+- the **weak spots** of the suggestion, as a hint for a hybrid (Pugh's controlled convergence);
+- **the report as one standalone HTML page**: the bottom line first, the matrix, one compact section per option that fits with its figures, a line for each that does not; **at most one printed page per option**, the matrix aside (see "The report").
 
 It is deterministic (seeded, no clock), has no imports, and can be copied into another project as one file. Run it on any matrix file with:
 
 ```
-node tools/pugh.mjs matrix.json [--md | --html | --json]
+node tools/pugh.mjs matrix.json -o report.html     # the report
+node tools/pugh.mjs matrix.json [--html | --json]  # to the terminal: the decision as Markdown text, or the HTML, or the result as data
 ```
 
 [tools/pugh-example.json](../../tools/pugh-example.json) chooses a message queue, with three measured and two judged criteria, three raters on one of them, a hard gate and a ratio gate.
@@ -37,7 +39,7 @@ node tools/pugh.mjs matrix.json [--md | --html | --json]
 | **Reasonable, robust** | Reasonable: every weight within ±step (default 1) of its default and above 0. Robust: no reasonable single-weight change ties a runner-up, and the winner takes at least `robustShare` (default 75 %) of the draws; otherwise sensitive. A tie at the current weights reads "tied now" and is sensitive | Mechanical (input 55: "it can't be judgment") |
 | **Weak spots** | For each row where the suggestion is worse than the datum, the fitting candidates that are better there | Pugh's step 5, combine the strong concepts, as a hint; it changes nothing (research §6) |
 
-**Interpretations** (decisions v2.9, input 57): judged marks are relative to the datum, not absolute ratings; several raters combine by the median, and their spread enters the sensitivity draws; the weak spots are a hint only, iterating stays with people; the module is not in the page's bundle until the benchmark is built.
+**Interpretations** (decisions v2.9, inputs 57 and 59): the report is HTML and Markdown stays as text for terminals and agents; at most two figures per option, none for options that do not fit; the page budget measured by printing;  judged marks are relative to the datum, not absolute ratings; several raters combine by the median, and their spread enters the sensitivity draws; the weak spots are a hint only, iterating stays with people; the module is not in the page's bundle until the benchmark is built.
 
 ## The matrix file
 
@@ -64,7 +66,13 @@ JSON, one object. Every field but `criteria` and `candidates` is optional.
       "suggestable": true,          // false: ranked, never suggested
       "keep": true,                 // what is in use now
       "tieBreak": 0.12,             // equal totals: lower first
-      "note": "" }
+      "note": "",                   // a sentence for its section
+      "figures": [                  // optional, at most two are shown
+        { "title": "Its run", "xLabel": "t (s)", "xRange": [0, 5],
+          "panels": [ { "yLabel": "y", "series": [
+            { "label": "y", "x": [0, 1, 2], "y": [0, 0.9, 1], "role": "option" },   // option | datum | reference | other
+            { "label": "datum", "x": [0, 1, 2], "y": [0, 0.7, 1], "role": "datum" } ] } ] },
+        { "title": "Ready-made", "svg": "<svg …>…</svg>" } ] }
   ],
   "gates": [ { "criterion": "latency", "maxRatio": 2, "why": "fails the main job" },
              { "criterion": "throughput", "min": 5000 } ],
@@ -89,16 +97,31 @@ const result = decide(matrix);
 //   sensitivity: { winner, verdict: 'robust' | 'sensitive', share, step, draws, seed, robustShare,
 //                  runnersUp: [{ key, label, total, share, tie: { criterion, from, to, now, reasonable } | null, minChange: { rel, maxStep } | null }], all },
 //   weakSpots: [{ criterion, mark, strongerAt: [keys] }], notes: [sentences] }
-renderMarkdown(result)   // the bottom line, the matrix, the ranking, the runners-up table, the weak spots
-renderHtml(result)       // the same as an HTML fragment; colours from the page's tokens (--ink, --line, --tone-green-ink, --tone-red-ink, --font-ui) with fallbacks
+renderHtml(result, { standalone = true, sections = true })   // the report: a whole HTML page (standalone: false gives the <section> alone, for a page with the tokens)
+renderMarkdown(result)   // the decision as text, for a terminal or an agent
+bottomLine(result), mainReason(result), plotSvg(figure), sensitivitySvg(result)   // the parts
+// each result candidate also has gains and losses: [{ criterion, mark, contribution }], largest first, and its figures
 ```
 
-**The report reads bottom line first**: "Suggestion: **Managed queue** (+6 against the datum Current queue); robust: it wins 94.8 % of the weight draws within ±1." Then the matrix, the ranking and what was not ranked with why, then the runners-up (their tie points, whether reasonable, the all-weights change, their share of the draws), then the weak spots.
+## The report
+
+The person (input 59): "The output of the benchmark should be itself HTML … you can bake in pictures and graphs where it makes sense … don't make it too big … not more than one page per option that was in the comparison, not including the table itself." So the report is **one standalone HTML page**: inline SVG, no script, no file outside it (the only URL in it is SVG's namespace), `@page` A4 (it prints on Letter as well), the page's design-system tokens as CSS variables with the light theme's values as fallbacks, so it reads the same on screen, inside the page and on paper. In order:
+
+1. **The bottom line**: the suggestion, its robustness, the main reason. "Suggestion: **Managed queue** (+6 against the datum Current queue); robust: it wins 94.8 % of the weight draws within ±1; mainly Ease of operation (++), Throughput (msg/s) (+), against p99 latency (ms) (−)." The main reason is the suggestion's two largest weighted gains against the datum and its largest loss.
+2. **The sensitivity at a glance** (a figure the module draws): the winner's share of the draws; for each runner-up, the weight it hangs on, that weight's default, its reasonable band and the tie point (red when the tie is reasonable).
+3. **The matrix**, the runners-up table, and **the options that do not fit, one line each** with why.
+4. **One compact section per option that fits**, in ranking order: where it is better and where worse than the datum (its largest weighted marks), the weak spots for the suggestion, its note, and **at most two figures**.
+
+**Figures are data**: an option brings its own (series the module plots, or ready SVG), or none. Series have a role (option, datum, reference, other) that sets the line: the option solid in the page's blue, the datum dashed, a reference dotted in yellow; panels stack and share x; each series is thinned to the extremes of 150 buckets, so a long run stays small.
+
+**The page budget**: at most one printed page per option compared, the matrix aside. What keeps it: sections are short by construction (a heading, two or three lines, two figures of about 60 mm), never split across pages (`break-inside: avoid`), and options that do not fit get no section. **Measured** in `test/pugh.test.mjs` by printing to PDF in Chromium (Playwright, A4) and counting pages, with the sections and without them: the difference may not exceed the number of options. The benchmark's deadbeat motor (13 candidates, 6 fitting, two figures each): **4 pages** on A4 and on Letter, 1 for the bottom line, matrix and not-fitting lines, 3 for the six sections; the budget allows 7. Printing was chosen over a size proxy because it measures what the person counts, pages.
+
+**Markdown** stays as the command line's text (`node tools/pugh.mjs matrix.json`) and an agent's: a terminal cannot show HTML, an agent reads text. It has the same bottom line, matrix and runners-up, without figures.
 
 ## In the benchmark
 
-The benchmark ([benchmark.md](benchmark.md) §2.7–§2.9) builds one matrix per run: its thirteen measured criteria (lower is better), the main-job ratio gates (×2) and the Ms gate (≤ 2; the prototype 3), the datum preference (the tuned PID, then the running variant), `suggestable: false` for plant changes, `keep` for the running variant, `tieBreak` = J, and seed 55. `tools/benchmark-prototype.mjs` does exactly that; its rankings, marks, totals, fits and verdicts are identical, on all eleven systems it was run on, to its own scoring before (checked line by line; only the wording of the reasons changed).
+The benchmark ([benchmark.md](benchmark.md) §2.7–§2.9) builds one matrix per run: its thirteen measured criteria (lower is better), the main-job ratio gates (×2) and the Ms gate (≤ 2; the prototype 3), the datum preference (the tuned PID, then the running variant), `suggestable: false` for plant changes, `keep` for the running variant, `tieBreak` = J, and seed 55. `tools/benchmark-prototype.mjs` does exactly that; its rankings, marks, totals, fits and verdicts are identical, on all eleven systems it was run on, to its own scoring before (checked line by line; only the wording of the reasons changed). Its `--report dir` writes each system's HTML report with two figures per option (its run, y over r and u below, and its first smooth move, against the datum's dashed); `--matrix dir` writes the matrix. Example: [../research/benchmark-report-deadbeat.html](../research/benchmark-report-deadbeat.html).
 
 ## Tests
 
-`test/pugh.test.mjs`: the mark bands at their edges, both directions, the floor; a small matrix checked by hand (marks, totals, ranking); judged marks with raters (median, spread) and the datum shift; hard and ratio gates, the datum fallback, the reason word; the sensitivity's tie points against a brute-force scan of each weight, the all-weights change against its closed form and a random search; the verdict (robust, sensitive, tied now); determinism; the report's bottom line first; refusals naming the place; the example file and the CLI.
+`test/pugh.test.mjs`: the mark bands at their edges, both directions, the floor; a small matrix checked by hand (marks, totals, ranking); judged marks with raters (median, spread) and the datum shift; hard and ratio gates, the datum fallback, the reason word; the sensitivity's tie points against a brute-force scan of each weight, the all-weights change against its closed form and a random search; the verdict (robust, sensitive, tied now); determinism; the report's bottom line first (and the main reason), a whole page with nothing outside it and no script; figures (plotted, thinned, at most two, bad ones refused); **the page budget** on the deadbeat matrix (`test/fixtures/pugh-deadbeat.json`, its real numbers, synthetic curves of the benchmark's size), printed to PDF in Chromium, skipped where Playwright is not installed; refusals naming the place; the example file and the CLI.

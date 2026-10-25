@@ -1,7 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { decide, markOf, worseRatio, normalizeMatrix, renderMarkdown, renderHtml, bottomLine, PughError } from '../src/core/pugh.js';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { decide, markOf, worseRatio, normalizeMatrix, renderMarkdown, renderHtml, bottomLine, mainReason, plotSvg, PughError } from '../src/core/pugh.js';
+
+const require = createRequire(import.meta.url);
+let chromium = null;
+try { ({ chromium } = require(process.env.PLAYWRIGHT || '/opt/node22/lib/node_modules/playwright')); } catch { /* not installed */ }
 
 const close = (a, b, tol, what = '') => assert.ok(Math.abs(a - b) <= tol, `${what} ${a} vs ${b} (tol ${tol})`);
 
@@ -158,15 +166,23 @@ test('deterministic: the same matrix gives the same result, the seed moves only 
 test('the report: the bottom line first, then the matrix and the runners-up', () => {
   const r = decide(small()), md = renderMarkdown(r), lines = md.split('\n');
   assert.equal(lines[0], '# Small');
-  assert.match(lines[2], /^Suggestion: \*\*B\*\* \(\+8 against the datum D\); robust: it wins [\d.]+ % of the weight draws within ±1\.$/);
+  assert.match(lines[2], /^Suggestion: \*\*B\*\* \(\+8 against the datum D\); robust: it wins [\d.]+ % of the weight draws within ±1; mainly speed \(\+\+\), err \(\+\)\.$/);
+  assert.equal(mainReason(r), 'mainly speed (++), err (+)');
   assert.ok(md.indexOf('| Criterion') > md.indexOf('Suggestion'));
   assert.ok(md.indexOf('Runners-up') > md.indexOf('| Criterion'));
   const keep = decide({ ...small(), candidates: [{ key: 'D', keep: true, values: { err: 0.1, speed: 99, cost: 0 } }, ...small().candidates.slice(1)] });
   assert.match(bottomLine(keep), /^Keep \*\*D\*\*: nothing beats it/);
+  // The HTML report: a whole page, nothing outside it, no script, the bottom
+  // line before the matrix, the page's tokens with fallbacks.
   const html = renderHtml(r);
+  assert.match(html, /^<!doctype html>/);
   assert.match(html, /<strong>B<\/strong>/);
-  assert.match(html, /var\(--ink, /);
+  assert.ok(html.indexOf('class="bottom"') < html.indexOf('<table'));
+  assert.match(html, /--tone-green: #008300/);
+  assert.match(html, /var\(--tone-green, #008300\)/);
+  assert.doesNotMatch(html, /<script|src="http|href="http|@import/);
   assert.doesNotMatch(renderHtml({ ...r, title: '<script>' }), /<script>/);
+  assert.doesNotMatch(renderHtml(r, { standalone: false }), /<!doctype|<style>/);
 });
 
 test('bad matrices are refused with the place named', () => {
@@ -188,3 +204,60 @@ test('the example file decides, and the CLI prints the same report', async () =>
   const out = execFileSync(process.execPath, [new URL('../tools/pugh.mjs', import.meta.url).pathname, new URL('../tools/pugh-example.json', import.meta.url).pathname], { encoding: 'utf8' });
   assert.equal(out, renderMarkdown(r));
 });
+
+// Figures as data: series plotted to inline SVG, ready SVG passed through,
+// at most two per option.
+const wave = (n, f, a = 1) => ({ x: Array.from({ length: n }, (_, i) => (5 * i) / (n - 1)), y: Array.from({ length: n }, (_, i) => a * Math.sin((f * 5 * i) / (n - 1))) });
+const figure = (k) => ({
+  title: `figure ${k}`, xLabel: 't (s)',
+  panels: [
+    { yLabel: 'y', series: [{ label: 'r', ...wave(400, 1), role: 'reference' }, { label: 'datum', ...wave(400, 1.1), role: 'datum' }, { label: 'y', ...wave(400, 0.9), role: 'option' }] },
+    { yLabel: 'u', series: [{ label: 'datum', ...wave(400, 7, 10), role: 'datum' }, { label: 'u', ...wave(400, 8, 12), role: 'option' }] },
+  ],
+});
+
+test('figures: plotted from series, thinned, at most two per option, bad ones refused', () => {
+  const svg = plotSvg(normalizeMatrix({ ...small(), candidates: [{ ...small().candidates[0], figures: [figure(1)] }] }).candidates[0].figures[0]);
+  assert.match(svg, /^<svg[^>]*viewBox/);
+  assert.equal((svg.match(/<polyline/g) || []).length, 5);
+  assert.ok(svg.length < 60000, `thinned: ${svg.length} characters`);
+  const mx = small();
+  mx.candidates[2].figures = [figure(1), figure(2), figure(3), { title: 'ready', svg: '<svg id="mine"></svg>' }];
+  const html = renderHtml(decide(mx));
+  assert.equal((html.match(/<figure>/g) || []).length, 2);
+  assert.throws(() => normalizeMatrix({ ...small(), candidates: [{ key: 'D', figures: [{ title: 'x', series: [{ x: [1], y: [1, 2] }] }] }] }), /same length/);
+  assert.throws(() => normalizeMatrix({ ...small(), candidates: [{ key: 'D', figures: [{ title: 'x', series: [{ x: [0, 1], y: [1, 2], role: 'hero' }] }] }] }), /role/);
+});
+
+// The page budget (input 59): at most one printed page per option compared,
+// the matrix aside. Measured by printing to PDF (A4) in Chromium and
+// counting pages: the report with the per-option sections against the same
+// report without them. The deadbeat motor's matrix (13 candidates, 6 fit)
+// with two figures for each option that fits, of the size the benchmark
+// draws (400 points, two panels, five series), synthetic curves.
+test('the deadbeat report stays within one page per option', { skip: !chromium && 'Playwright is not installed' }, async () => {
+  const mx = JSON.parse(readFileSync(new URL('./fixtures/pugh-deadbeat.json', import.meta.url), 'utf8'));
+  const first = decide(mx);
+  for (const c of mx.candidates) if (first.ranking.includes(c.key)) c.figures = [figure(1), figure(2)];
+  const res = decide(mx);
+  assert.equal(res.candidates.length, 13);
+  assert.equal(res.suggestion.label, 'State feedback');
+  const dir = mkdtempSync(join(tmpdir(), 'pugh-'));
+  const browser = await chromium.launch();
+  try {
+    const pages = async (html, name) => {
+      const file = join(dir, name);
+      writeFileSync(file, html);
+      const page = await browser.newPage();
+      await page.goto(pathToFileURL(file).href);
+      const pdf = await page.pdf({ format: 'A4', preferCSSPageSize: true });
+      await page.close();
+      return (pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+    };
+    const full = await pages(renderHtml(res), 'full.html'), base = await pages(renderHtml(res, { sections: false }), 'base.html');
+    const options = res.ranking.length;
+    assert.ok(full - base <= options, `${full} pages with the sections, ${base} without: more than one page for each of ${options} options`);
+    assert.ok(full <= base + options && full >= base, `${full} pages`);
+  } finally { await browser.close(); }
+});
+

@@ -6,16 +6,18 @@
 //
 //   decide(matrix)          → the result (data): marks, totals, fits, ranking,
 //                             suggestion, weight sensitivity, weak spots
-//   renderMarkdown(result)  → the report as Markdown, bottom line first
-//   renderHtml(result)      → the same as an HTML fragment (the page's tokens
-//                             as CSS variables, with fallbacks)
+//   renderHtml(result)      → the report: one standalone HTML page, bottom
+//                             line first, figures as inline SVG, at most a
+//                             printed page per option (the page's tokens as
+//                             CSS variables, with print fallbacks)
+//   renderMarkdown(result)  → the decision as text, for a terminal or an agent
 //
 // The matrix (a plain object; the file shape is in pugh.md):
 //   { title?, criteria: [{ key, label?, weight, better: 'lower'|'higher',
 //       tolerance?, floor?, kind?: 'measured'|'judged' }],
 //     candidates: [{ key, label?, values?: {criterion: number},
 //       marks?: {criterion: −2…2 | [−2…2, …] (several raters)}, fits?, whyNot?,
-//       suggestable?, keep?, tieBreak?, note? }],
+//       suggestable?, keep?, tieBreak?, note?, figures?: [figure] }],
 //     gates?: [{ criterion, maxRatio | max | min, why? }],
 //     datum?: { prefer: [candidate keys] },
 //     strong?: 2, sensitivity?: { step, draws, seed, robustShare, runnersUp } }
@@ -84,9 +86,10 @@ export function normalizeMatrix(m) {
       marks[k] = list;
     }
     if (c.tieBreak !== undefined && !finite(c.tieBreak)) fail('bad-candidate', `${where}.tieBreak: a number`);
+    const figures = (c.figures ?? []).map((f, j) => normalizeFigure(f, `${where}.figures[${j}]`, fail));
     return {
       key: c.key, label: String(c.label ?? c.key), values, marks, fits: c.fits !== false, whyNot: c.fits === false ? String(c.whyNot ?? 'does not fit') : '',
-      suggestable: c.suggestable !== false, keep: !!c.keep, tieBreak: c.tieBreak ?? null, note: c.note ? String(c.note) : '',
+      suggestable: c.suggestable !== false, keep: !!c.keep, tieBreak: c.tieBreak ?? null, note: c.note ? String(c.note) : '', figures,
     };
   });
   const gates = (m.gates ?? []).map((g, i) => {
@@ -107,6 +110,35 @@ export function normalizeMatrix(m) {
   return {
     title: String(m.title ?? 'Decision'), criteria, candidates, gates, datum: { prefer }, strong,
     sensitivity: { step: s.step, draws: Math.round(s.draws), seed: s.seed, robustShare: s.robustShare, runnersUp: Math.round(s.runnersUp) },
+  };
+}
+
+// A figure for the report: ready SVG, or panels of series to plot (stacked,
+// sharing x). { title, svg } | { title, xLabel?, xRange?: [x0, x1],
+// panels: [{ yLabel?, series: [{ label, x: [], y: [], role?: 'option' |
+// 'datum' | 'reference' | 'other' }] }] } ('series' alone is one panel).
+const ROLES = ['option', 'datum', 'reference', 'other'];
+function normalizeFigure(f, where, fail) {
+  if (!f || typeof f !== 'object' || typeof f.title !== 'string') fail('bad-figure', `${where}.title: a title`);
+  if (typeof f.svg === 'string') return { title: f.title, svg: f.svg };
+  const panels = f.panels ?? (f.series ? [{ yLabel: f.yLabel, series: f.series }] : null);
+  if (!Array.isArray(panels) || !panels.length) fail('bad-figure', `${where}: svg, or panels (or series) to plot`);
+  if (f.xRange && !(Array.isArray(f.xRange) && f.xRange.length === 2 && f.xRange.every(finite) && f.xRange[1] > f.xRange[0])) fail('bad-figure', `${where}.xRange: [x0, x1], x0 < x1`);
+  return {
+    title: f.title, xLabel: f.xLabel ? String(f.xLabel) : '', xRange: f.xRange ?? null,
+    panels: panels.map((p, k) => {
+      if (!Array.isArray(p?.series) || !p.series.length) fail('bad-figure', `${where}.panels[${k}].series: a list of series`);
+      return {
+        yLabel: p.yLabel ? String(p.yLabel) : '',
+        series: p.series.map((sr, i) => {
+          const at = `${where}.panels[${k}].series[${i}]`;
+          if (!Array.isArray(sr?.x) || !Array.isArray(sr?.y) || sr.x.length !== sr.y.length || sr.x.length < 2) fail('bad-figure', `${at}: x and y, lists of the same length (2 or more)`);
+          const role = sr.role ?? 'other';
+          if (!ROLES.includes(role)) fail('bad-figure', `${at}.role: one of ${ROLES.join(', ')}`);
+          return { label: String(sr.label ?? ''), x: sr.x, y: sr.y, role };
+        }),
+      };
+    }),
   };
 }
 
@@ -220,9 +252,14 @@ export function decide(matrix) {
     const stronger = ranking.filter((r) => r !== best && (r.marks_[c.key] ?? -Infinity) > mk).map((r) => r.key);
     weakSpots.push({ criterion: c.key, mark: mk, strongerAt: stronger });
   }
+  // Why each ranks where it does: its marks times their weights, the largest
+  // gains and losses against the datum.
+  const parts = (r) => criteria.map((c, i) => ({ criterion: c.key, mark: r.marks_[c.key], contribution: (r.marks_[c.key] ?? 0) * weights[i] })).filter((x) => x.contribution);
   const out = (r) => ({
     key: r.key, label: r.label, values: r.values, marks: r.marks_, spread: r.spread, total: r.total, fits: r.fits, whyNot: r.whyNot,
-    suggestable: r.suggestable, keep: r.keep, tieBreak: r.tieBreak, note: r.note, datum: r === datum,
+    suggestable: r.suggestable, keep: r.keep, tieBreak: r.tieBreak, note: r.note, datum: r === datum, figures: r.figures,
+    gains: parts(r).filter((x) => x.contribution > 0).sort((a, b) => b.contribution - a.contribution),
+    losses: parts(r).filter((x) => x.contribution < 0).sort((a, b) => a.contribution - b.contribution),
   });
   return {
     version: PUGH_VERSION, title: m.title, strong, criteria, weights, gates: m.gates,
@@ -311,6 +348,13 @@ export function sensitivity(cands, criteria, w, opts = DEFAULTS) {
 }
 
 // ---- Reports -----------------------------------------------------------------
+// The report is HTML (input 59): one standalone page, its graphs inline SVG,
+// no script, printable. Bottom line first (the suggestion, its robustness,
+// the main reason), then the matrix, then one compact section per option
+// that fits (why it ranks where it does, its weak spots, at most two
+// figures), a line for each one that does not. The page budget: at most one
+// printed page per option compared, the matrix aside. Markdown stays as the
+// command line's text (renderMarkdown).
 
 export function fmt(v, digits = 3) {
   if (v === null || v === undefined) return '—';
@@ -322,9 +366,18 @@ const signed = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${fmt(Math.abs(v))}`;
 const pct = (v) => `${fmt(100 * v)} %`;
 const labelOf = (res, key) => res.candidates.find((c) => c.key === key)?.label ?? key;
 const critLabel = (res, key) => res.criteria.find((c) => c.key === key)?.label ?? key;
+const listOf = (res, xs, n = 3) => xs.slice(0, n).map((x) => `${critLabel(res, x.criterion)} (${SYMBOL[Math.round(x.mark)]})`).join(', ');
 
-// The bottom line, one sentence: what to choose, and how much it depends on
-// the weights.
+// The main reason, in words: the suggestion's largest gains against the datum.
+export function mainReason(res) {
+  const c = res.suggestion && res.candidates.find((x) => x.key === res.suggestion.key);
+  if (!c) return '';
+  if (c.datum) return res.ranking.length > 1 ? 'no other option that fits beats it' : 'it is the only option that fits';
+  return c.gains.length ? `mainly ${listOf(res, c.gains, 2)}${c.losses.length ? `, against ${listOf(res, c.losses, 1)}` : ''}` : '';
+}
+
+// The bottom line, one sentence: what to choose, how much it depends on the
+// weights, and the main reason.
 export function bottomLine(res) {
   const s = res.suggestion;
   if (!s) return 'No candidate fits.';
@@ -333,8 +386,9 @@ export function bottomLine(res) {
   const rob = !sv ? 'the only candidate that fits and may be suggested'
     : sv.verdict === 'robust' ? `robust: it wins ${pct(sv.share)} of the weight draws within ±${fmt(sv.step)}`
       : `sensitive: it wins ${pct(sv.share)} of the weight draws within ±${fmt(sv.step)}${(() => { const f = sv.runnersUp.find((x) => x.tie?.reasonable || x.tie?.now); return f ? `; ${f.label} ${f.tie.now ? 'ties it now' : `ties if ${critLabel(res, f.tie.criterion)} goes ${fmt(f.tie.from)} → ${fmt(f.tie.to)}`}` : ''; })()}`;
+  const why = s.keep ? '' : mainReason(res);
   const above = s.above.length ? ` Ranked above it but not to be suggested: ${s.above.map((k) => labelOf(res, k)).join(', ')}.` : '';
-  return `${head}; ${rob}.${above}`;
+  return `${head}; ${rob}${why ? `; ${why}` : ''}.${above}`;
 }
 
 function runnerRows(res) {
@@ -347,6 +401,7 @@ function runnerRows(res) {
   ]);
 }
 
+// Text for a terminal or an agent (the command line's default output).
 export function renderMarkdown(res) {
   const L = [`# ${res.title}`, '', bottomLine(res), ''];
   const cols = res.candidates;
@@ -370,25 +425,172 @@ export function renderMarkdown(res) {
 const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
-// An HTML fragment: its colours are the page's design-system tokens (ink,
-// lines, the green and red tones), with fallbacks, so it fits the page and
-// still reads on its own.
-export function renderHtml(res) {
+// ---- Figures (inline SVG) ---------------------------------------------------
+
+// Colours are the page's design-system tokens, with the light theme's values
+// as fallbacks, so a report reads on screen, in the page and on paper.
+const STROKE = {
+  option: 'var(--tone-blue, #2874d0)', datum: 'var(--ink-2, #3a4249)', reference: 'var(--tone-yellow, #b98000)', other: 'var(--tone-magenta, #c2477a)',
+};
+const DASH = { datum: '4 3', reference: '1 2' };
+const n4 = (v) => Number(v.toFixed(2));
+// Round axis ends and a few ticks (1, 2, 5 × 10ⁿ).
+function ticks(lo, hi, n = 4) {
+  if (!(hi > lo)) { hi = lo + 1; lo -= 1; }
+  const raw = (hi - lo) / n, p = 10 ** Math.floor(Math.log10(raw)), step = [1, 2, 5, 10].map((k) => k * p).find((x) => x >= raw);
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9 * step; v += step) out.push(Number(v.toPrecision(12)));
+  return out;
+}
+// At most 300 points a series, the extremes of each bucket kept.
+function thin(x, y, x0, x1, n = 150) {
+  const idx = [];
+  for (let i = 0; i < x.length; i++) if (x[i] >= x0 && x[i] <= x1 && finite(y[i])) idx.push(i);
+  if (idx.length <= 2 * n) return idx;
+  const out = [], per = idx.length / n;
+  for (let b = 0; b < n; b++) {
+    const part = idx.slice(Math.floor(b * per), Math.floor((b + 1) * per));
+    if (!part.length) continue;
+    let lo = part[0], hi = part[0];
+    for (const i of part) { if (y[i] < y[lo]) lo = i; if (y[i] > y[hi]) hi = i; }
+    out.push(...(lo < hi ? [lo, hi] : lo > hi ? [hi, lo] : [lo]));
+  }
+  return out;
+}
+
+export function plotSvg(fig, { width = 320, panelHeight = 90 } = {}) {
+  if (fig.svg) return fig.svg;
+  const left = 38, right = 6, top = 4, gap = 8, bottom = 22;
+  const all = fig.panels.flatMap((p) => p.series);
+  const xs = all.flatMap((sr) => [Math.min(...sr.x), Math.max(...sr.x)]);
+  const [x0, x1] = fig.xRange ?? [Math.min(...xs), Math.max(...xs)];
+  const H = top + fig.panels.length * (panelHeight + gap) - gap + bottom, W = width;
+  const X = (v) => left + ((v - x0) / (x1 - x0 || 1)) * (W - left - right);
+  const g = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(fig.title)}" style="font-family:var(--font-ui, sans-serif);font-size:8px">`];
+  fig.panels.forEach((p, k) => {
+    const y0p = top + k * (panelHeight + gap);
+    let lo = Infinity, hi = -Infinity;
+    for (const sr of p.series) for (const i of thin(sr.x, sr.y, x0, x1)) { lo = Math.min(lo, sr.y[i]); hi = Math.max(hi, sr.y[i]); }
+    if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
+    const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.1 || 1; lo -= pad; hi += pad;
+    const Y = (v) => y0p + panelHeight - ((v - lo) / (hi - lo)) * panelHeight;
+    g.push(`<rect x="${left}" y="${y0p}" width="${W - left - right}" height="${panelHeight}" fill="none" stroke="var(--line, rgba(0,0,0,.15))"/>`);
+    for (const t of ticks(lo, hi, 3)) g.push(`<line x1="${left}" x2="${W - right}" y1="${n4(Y(t))}" y2="${n4(Y(t))}" stroke="var(--line, rgba(0,0,0,.15))" stroke-width="0.5"/><text x="${left - 3}" y="${n4(Y(t) + 3)}" text-anchor="end" fill="var(--ink-2, #3a4249)">${esc(fmt(t))}</text>`);
+    if (p.yLabel) g.push(`<text x="${left + 3}" y="${y0p + 9}" fill="var(--ink-2, #3a4249)">${esc(p.yLabel)}</text>`);
+    // The option on top: draw reference, datum, other, then the option.
+    const order = ['reference', 'datum', 'other', 'option'];
+    for (const sr of [...p.series].sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role))) {
+      const pts = thin(sr.x, sr.y, x0, x1).map((i) => `${n4(X(sr.x[i]))},${n4(Y(Math.min(hi, Math.max(lo, sr.y[i]))))}`).join(' ');
+      g.push(`<polyline points="${pts}" fill="none" stroke="${STROKE[sr.role]}" stroke-width="${sr.role === 'option' ? 1.4 : 1}"${DASH[sr.role] ? ` stroke-dasharray="${DASH[sr.role]}"` : ''}/>`);
+    }
+  });
+  const yb = H - bottom;
+  for (const t of ticks(x0, x1, 5)) g.push(`<text x="${n4(X(t))}" y="${yb + 10}" text-anchor="middle" fill="var(--ink-2, #3a4249)">${esc(fmt(t))}</text>`);
+  if (fig.xLabel) g.push(`<text x="${W - right}" y="${yb + 19}" text-anchor="end" fill="var(--ink-2, #3a4249)">${esc(fig.xLabel)}</text>`);
+  // The legend, once, from the first panel's series.
+  let lx = left;
+  for (const sr of fig.panels[0].series) {
+    if (!sr.label) continue;
+    g.push(`<line x1="${lx}" x2="${lx + 12}" y1="${yb + 16}" y2="${yb + 16}" stroke="${STROKE[sr.role]}" stroke-width="1.4"${DASH[sr.role] ? ` stroke-dasharray="${DASH[sr.role]}"` : ''}/><text x="${lx + 15}" y="${yb + 19}" fill="var(--ink, #15191c)">${esc(sr.label)}</text>`);
+    lx += 22 + 4.2 * sr.label.length;
+  }
+  g.push('</svg>');
+  return g.join('');
+}
+
+// The sensitivity at a glance: the winner's share of the draws, and for each
+// runner-up the weight it hangs on: its default, the reasonable band
+// (±step), and the tie point.
+export function sensitivitySvg(res, { width = 480 } = {}) {
+  const sv = res.sensitivity;
+  if (!sv) return '';
+  const rows = sv.runnersUp.filter((x) => x.tie && !x.tie.now), rowH = 22, top = 24, left = 190, right = 30;
+  const H = top + Math.max(1, rows.length) * rowH + 12, W = width;
+  const hiW = Math.max(1, ...rows.map((x) => Math.max(x.tie.to, x.tie.from + sv.step))) * 1.05;
+  const X = (v) => left + (Math.max(0, Math.min(hiW, v)) / hiW) * (W - left - right);
+  const g = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="weight sensitivity" style="font-family:var(--font-ui, sans-serif);font-size:9px">`];
+  const winW = (W - left - right) * sv.share;
+  g.push(`<text x="0" y="12" fill="var(--ink, #15191c)">${esc(labelOf(res, sv.winner).slice(0, 34))} wins</text><rect x="${left}" y="4" width="${W - left - right}" height="10" fill="none" stroke="var(--line, rgba(0,0,0,.15))"/><rect x="${left}" y="4" width="${n4(winW)}" height="10" fill="${sv.verdict === 'robust' ? 'var(--tone-green, #008300)' : 'var(--tone-red, #c4302f)'}"/><text x="${W - right + 3}" y="12" fill="var(--ink, #15191c)">${esc(pct(sv.share))}</text>`);
+  rows.forEach((x, k) => {
+    const y = top + k * rowH + 10, w = x.tie.from;
+    g.push(`<text x="0" y="${y - 2}" fill="var(--ink, #15191c)">${esc(x.label.slice(0, 34))}</text><text x="0" y="${y + 8}" fill="var(--ink-2, #3a4249)">ties if ${esc(critLabel(res, x.tie.criterion).slice(0, 26))}: ${esc(fmt(w))} → ${esc(fmt(x.tie.to))}</text>`);
+    g.push(`<line x1="${left}" x2="${W - right}" y1="${y}" y2="${y}" stroke="var(--line, rgba(0,0,0,.15))"/>`);
+    g.push(`<rect x="${n4(X(Math.max(0, w - sv.step)))}" y="${y - 4}" width="${n4(X(w + sv.step) - X(Math.max(0, w - sv.step)))}" height="8" fill="var(--tone-green, #008300)" opacity="0.18"/>`);
+    g.push(`<line x1="${n4(X(w))}" x2="${n4(X(w))}" y1="${y - 5}" y2="${y + 5}" stroke="var(--ink, #15191c)"/>`);
+    g.push(`<path d="M${n4(X(x.tie.to))},${y - 5} l4,5 l-4,5 l-4,-5 z" fill="${x.tie.reasonable ? 'var(--tone-red, #c4302f)' : 'var(--ink-2, #3a4249)'}"/>`);
+  });
+  if (!rows.length) g.push(`<text x="0" y="${top + 10}" fill="var(--ink-2, #3a4249)">No single weight makes a runner-up tie.</text>`);
+  g.push(`<text x="${left}" y="${H - 1}" fill="var(--ink-2, #3a4249)">the weight: | its default, band: ±${esc(fmt(sv.step))} (reasonable), ◆ where they tie</text>`);
+  g.push('</svg>');
+  return g.join('');
+}
+
+// ---- The HTML report ------------------------------------------------------------
+
+const MAX_FIGURES = 2;
+const CSS = `
+:root { --ink: #15191c; --ink-2: #3a4249; --ink-3: #4f5860; --line: rgba(0,0,0,.15); --paper: #ffffff;
+  --tone-green: #008300; --tone-red: #c4302f; --tone-blue: #2874d0; --tone-yellow: #b98000; --tone-magenta: #c2477a;
+  --font-ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif; }
+@page { size: A4; margin: 12mm 12mm 14mm; }
+.pugh { color: var(--ink); font: 9.5pt/1.35 var(--font-ui); max-width: 186mm; margin: 0 auto; }
+body { margin: 0; padding: 8mm 0; background: var(--paper); }
+.pugh h1 { font-size: 15pt; margin: 0 0 2mm; } .pugh h2 { font-size: 11pt; margin: 0 0 1mm; }
+.pugh .bottom { font-size: 11pt; margin: 0 0 3mm; }
+.pugh table { border-collapse: collapse; font-size: 7.5pt; width: 100%; }
+.pugh th, .pugh td { padding: 1px 3px; border-bottom: 1px solid var(--line); text-align: center; vertical-align: bottom; }
+.pugh th:first-child, .pugh td:first-child { text-align: left; min-width: 30mm; }
+.pugh p.dim { margin: 0.6mm 0; }
+.pugh .plus { color: var(--tone-green); font-weight: 600; } .pugh .minus { color: var(--tone-red); font-weight: 600; }
+.pugh .dim { color: var(--ink-2); } .pugh .datum { background: rgba(0,0,0,.04); }
+.pugh .option { break-inside: avoid; page-break-inside: avoid; border-top: 1px solid var(--line); margin-top: 4mm; padding-top: 2mm; }
+.pugh .option p { margin: 0.5mm 0; }
+.pugh .figs { display: flex; gap: 4mm; margin-top: 1.5mm; } .pugh figure { margin: 0; flex: 1 1 0; min-width: 0; }
+.pugh figcaption { font-size: 7.5pt; color: var(--ink-2); }
+.pugh .head { break-inside: avoid; }
+@media print { body { padding: 0; } }`;
+
+// The report as a standalone HTML page (standalone: false gives the <section>
+// alone, for a page that has the tokens already). sections: false leaves the
+// per-option sections out (what the page budget is measured against).
+export function renderHtml(res, { standalone = true, sections = true } = {}) {
   const cols = res.candidates;
-  const cell = 'padding:2px 8px;border-bottom:1px solid var(--line, rgba(0,0,0,.15));text-align:center';
-  const tone = (mk) => (mk > 0 ? 'color:var(--tone-green-ink, #1b6b2a)' : mk < 0 ? 'color:var(--tone-red-ink, #9b1c1c)' : '');
-  const h = [`<section class="pugh" style="color:var(--ink, #15191c);font-family:var(--font-ui, system-ui, sans-serif)">`, `<h2>${esc(res.title)}</h2>`, `<p>${bold(bottomLine(res))}</p>`];
-  h.push(`<table style="border-collapse:collapse"><thead><tr><th style="${cell};text-align:left">Criterion (weight)</th>${cols.map((c) => `<th style="${cell}">${esc(c.label)}${c.datum ? ' (datum)' : ''}</th>`).join('')}</tr></thead><tbody>`);
-  for (const cr of res.criteria) h.push(`<tr><td style="${cell};text-align:left">${esc(cr.label)}${cr.kind === 'judged' ? ' (judged)' : ''} (${fmt(cr.weight)})</td>${cols.map((c) => { const mk = c.marks[cr.key]; return `<td style="${cell};${tone(mk ?? 0)}">${c.datum ? 'D' : mk === null ? '?' : esc(SYMBOL[Math.round(mk)])}</td>`; }).join('')}</tr>`);
-  h.push(`<tr><th style="${cell};text-align:left">Weighted</th>${cols.map((c) => `<th style="${cell}">${c.datum ? '0' : esc(signed(c.total))}</th>`).join('')}</tr>`);
-  h.push(`<tr><td style="${cell};text-align:left">Fits</td>${cols.map((c) => `<td style="${cell}" title="${esc(c.whyNot)}">${c.fits ? 'yes' : 'no'}</td>`).join('')}</tr></tbody></table>`);
+  const cls = (mk) => (mk > 0 ? 'plus' : mk < 0 ? 'minus' : '');
+  const h = ['<section class="pugh">', `<h1>${esc(res.title)}</h1>`, `<p class="bottom">${bold(bottomLine(res))}</p>`];
+  if (res.sensitivity) h.push(`<div class="head" style="max-width:150mm">${sensitivitySvg(res)}</div>`);
+  h.push(`<p class="dim">Datum: <strong>${esc(res.datum.label)}</strong>. Marks: ++ much better, + better, S the same within the tolerance, − worse, −− much worse (beyond ×${esc(fmt(res.strong))}), ? not judged (counts as S).</p>`);
+  h.push(`<table><thead><tr><th>Criterion (weight)</th>${cols.map((c) => `<th${c.datum ? ' class="datum"' : ''}>${esc(c.label)}</th>`).join('')}</tr></thead><tbody>`);
+  for (const cr of res.criteria) h.push(`<tr><td>${esc(cr.label)}${cr.kind === 'judged' ? ' (judged)' : ''} (${esc(fmt(cr.weight))})</td>${cols.map((c) => { const mk = c.marks[cr.key]; return `<td class="${c.datum ? 'datum' : cls(mk ?? 0)}">${c.datum ? 'D' : mk === null ? '?' : esc(SYMBOL[Math.round(mk)])}</td>`; }).join('')}</tr>`);
+  h.push(`<tr><th>Weighted</th>${cols.map((c) => `<th${c.datum ? ' class="datum"' : ''}>${c.datum ? '0' : esc(signed(c.total))}</th>`).join('')}</tr>`);
+  h.push(`<tr><td>Fits</td>${cols.map((c) => `<td class="${c.fits ? '' : 'minus'}">${c.fits ? 'yes' : 'no'}</td>`).join('')}</tr></tbody></table>`);
   if (res.sensitivity) {
-    h.push(`<table style="border-collapse:collapse;margin-top:8px"><thead><tr>${['Runner-up', 'Total', 'Ties when one weight changes', 'Reasonable', 'All weights together', 'Share of draws'].map((t) => `<th style="${cell}">${t}</th>`).join('')}</tr></thead><tbody>`);
-    for (const row of runnerRows(res)) h.push(`<tr>${row.map((v) => `<td style="${cell}">${esc(v)}</td>`).join('')}</tr>`);
+    h.push(`<h2 style="margin-top:3mm">Runners-up</h2><table><thead><tr>${['Runner-up', 'Total', 'Ties when one weight changes', `Reasonable (±${esc(fmt(res.sensitivity.step))})`, 'All weights together', 'Share of draws'].map((t) => `<th>${t}</th>`).join('')}</tr></thead><tbody>`);
+    for (const row of runnerRows(res)) h.push(`<tr>${row.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`);
     h.push('</tbody></table>');
   }
   const out = cols.filter((c) => !c.fits);
-  if (out.length) h.push(`<p style="color:var(--ink-2, #3a4249)">Not ranked: ${esc(out.map((c) => `${c.label}: ${c.whyNot}`).join('; '))}.</p>`);
+  if (out.length) h.push(`<h2 style="margin-top:3mm">Not fitting</h2>${out.map((c) => `<p class="dim">${esc(c.label)}: ${esc(c.whyNot)}.</p>`).join('')}`);
+  if (sections) {
+    res.ranking.forEach((key, i) => {
+      const c = cols.find((x) => x.key === key);
+      const lines = [`<h2>${i + 1}. ${esc(c.label)} <span class="dim">(${c.datum ? 'the datum' : esc(signed(c.total))})</span></h2>`];
+      if (c.datum) lines.push('<p>The datum: every other option is marked against it.</p>');
+      else {
+        if (c.gains.length) lines.push(`<p><span class="plus">Better</span> than the datum on ${esc(listOf(res, c.gains, 4))}.</p>`);
+        if (c.losses.length) lines.push(`<p><span class="minus">Worse</span> on ${esc(listOf(res, c.losses, 4))}.</p>`);
+        if (!c.gains.length && !c.losses.length) lines.push('<p>The same as the datum on every criterion.</p>');
+      }
+      if (key === res.suggestion?.key && res.weakSpots.length) lines.push(`<p class="dim">Weak spots (for a hybrid): ${esc(res.weakSpots.map((w) => `${critLabel(res, w.criterion)}${w.strongerAt.length ? ` (better there: ${w.strongerAt.slice(0, 3).map((k) => labelOf(res, k)).join(', ')})` : ''}`).join('; '))}.</p>`);
+      else if (!c.suggestable) lines.push('<p class="dim">Not to be suggested (it needs a change outside the options), but compared.</p>');
+      if (c.note) lines.push(`<p class="dim">${esc(c.note)}</p>`);
+      const figs = (c.figures ?? []).slice(0, MAX_FIGURES);
+      if (figs.length) lines.push(`<div class="figs">${figs.map((f) => `<figure>${plotSvg(f)}<figcaption>${esc(f.title)}</figcaption></figure>`).join('')}</div>`);
+      h.push(`<div class="option">${lines.join('')}</div>`);
+    });
+  }
+  if (res.notes.length) h.push(...res.notes.map((n) => `<p class="dim">Note: ${esc(n)}.</p>`));
   h.push('</section>');
-  return h.join('\n');
+  const body = h.join('\n');
+  if (!standalone) return body;
+  return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(res.title)}</title><style>${CSS}</style></head><body>\n${body}\n</body></html>\n`;
 }
