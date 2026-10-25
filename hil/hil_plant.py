@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.9"
-# dependencies = ["websockets>=13"]
+# requires-python = ">=3.10"
+# dependencies = ["websockets>=13", "mini-racer>=0.12"]
 # ///
 """Loop Tuner external plant: a simulated plant that runs in real time on your
 computer and stands in for real hardware in Loop Tuner's Live (HIL) mode.
+It simulates any model of Loop Tuner's System library with the page's own
+simulation (loop-tuner-core.js, beside this script, which the page puts in
+the zip), in V8 (mini-racer, which uv installs).
 
     uv run hil_plant.py                     a DC motor swinging an arm, 100 Hz
-    uv run hil_plant.py --mode reference    the same, with its own controller
-    uv run hil_plant.py --plant heater      a heater and a temperature
-    uv run hil_plant.py --dyno              the motor with a load-torque input too
-    python3 hil_plant.py --check            the physics for 3 s, no server
-    python3 hil_plant.py --describe         what it tells the page about itself
-    python3 hil_plant.py --help             every option
+    uv run hil_plant.py --list              the models it can run
+    uv run hil_plant.py --model "Triple pendulum"
+    uv run hil_plant.py --random            any model, unknown until --show-params
+    uv run hil_plant.py --mode reference    the model runs its own controller
+    uv run hil_plant.py --dyno              with its disturbance as an input too
+    uv run hil_plant.py --check             the model for one period, no server
+    uv run hil_plant.py --describe          what it tells the page about itself
+    uv run hil_plant.py --help              every option
 
 A window opens with a big red STOP (an emergency stop, latched until Reset),
 Run/Stop and the state of the link; without a display (or with --no-gui) the
@@ -24,18 +29,19 @@ the keys here; the page follows.
 
 Two modes. Control (the default): the page is the controller and sends the
 control effort every cycle (plus its reference r and error e, which this
-script only logs). Reference (--mode reference): this script runs its own
-controller, with its limits and its monitoring, and the page sends the
-reference. Log (--mode log): no inputs at all; the plant holds its own
-setpoint and the page only records.
+script only logs). Reference (--mode reference): the model runs its own
+controller, with its limits, and the page sends the reference. Log (--mode
+log): no inputs at all; the model's controller holds its own reference and
+the page only records.
 
-The plant the page does not know: each physical parameter differs from
-nominal by a random factor within +-15 % (--vary), a new plant each start
-unless --seed is given; --show-params prints the true values. The page is
-told the ports, their units, full scales and hard ranges, never the
-physics: it has to identify the plant, as it would a real one. It has no
-disturbance input unless --dyno offers one (a load torque), as a rig with a
-dynamometer would.
+The plant the page does not know: each physical parameter of the model
+differs from nominal by a random factor within +-15 % (--vary), its effects
+(friction, ripple, a resonance ...) are on or off at random (--detail), a new
+plant each start unless --seed is given; --show-params prints what was
+drawn. The page is told the ports, their units, full scales and hard ranges,
+never the model or its physics: it has to identify the plant, as it would a
+real one. It has no disturbance input unless --dyno offers one, as a rig
+with a dynamometer would.
 
 The protocol (JSON-RPC 2.0, one message per WebSocket text frame, at
 ws://127.0.0.1:8765; the README has it in a paragraph):
@@ -56,22 +62,22 @@ ws://127.0.0.1:8765; the README has it in a paragraph):
   Every frame goes out in the order it was made: the "running" a start
   causes comes before start's result.
 
-This script owns the clock: every cycle it integrates the physics, sends the
+This script owns the clock: every cycle it integrates the model, sends the
 outputs y and applies each input u from the moment it arrives. It is also the
 safety authority: it clamps every input to its limits, and if no u comes for
 10 cycles, the page goes away while running, an output leaves its hard range
-(which describe declares) or is not a number, the cycle itself fails, or STOP is pressed (here or on
-the page), it applies the safe inputs, stops the run and latches an
-emergency stop (E-stop) until Reset. Who latched it resets it: a STOP
-pressed here is reset here, one from the page on the page.
+(which describe declares) or is not a number, the cycle itself fails, or STOP
+is pressed (here or on the page), it applies the safe inputs, stops the run
+and latches an emergency stop (E-stop) until Reset. Who latched it resets it:
+a STOP pressed here is reset here, one from the page on the page.
 
 To put real hardware behind Loop Tuner, keep the server, the cycle, the
-watchdog and the window, and replace a plant class (Motor, Heater) with your
-device's I/O: its ports describe it, advance() applies the inputs for a span
-of time, outputs() reads the measurements, safe() puts the safe inputs on the
-device at once. Give the device a watchdog of its own too (its drive goes
-safe when this script stops talking to it): this script cannot act once its
-process is gone.
+watchdog and the window, and replace CorePlant with your device's I/O: its
+inputs and outputs describe it, cycle() applies the inputs for each span of
+the cycle and reads the measurements, running() starts and stops it, safe()
+puts the safe inputs on the device at once. Give the device a watchdog of its
+own too (its drive goes safe when this script stops talking to it): this
+script cannot act once its process is gone.
 """
 
 import argparse
@@ -119,117 +125,97 @@ def beyond(v, bound):
     return repr(v)
 
 
-class Motor:
-    """A DC motor (armature resistance R, inductance L, torque and back-EMF
-    constant k) turning an arm with an unbalanced mass: gravity pulls with
-    m g l sin(angle), angle 0 hanging down, positive counter-clockwise. Viscous
-    friction b and Coulomb friction Tc (smoothed around standstill) brake it;
-    `load` is an extra torque on the shaft, from a test rig, positive along
-    +angle. A controller has to beat gravity (it needs integral action to hold
-    the arm up) and friction, with the motor's 12 V."""
+CORE_FILE = "loop-tuner-core.js"
+DEFAULT_MODEL = "DC motor with an unbalanced arm"
 
-    NAME = "DC motor with an unbalanced arm (simulated)"
-    R, L, k = 2.0, 4e-3, 0.1        # ohm, H, N·m/A (= V·s/rad)
-    J, b = 2.5e-3, 2e-3             # kg·m², N·m·s/rad
-    Tc, w_eps = 0.01, 0.01          # N·m, rad/s
-    mgl = 0.1                       # N·m: the arm's unbalance
-    H = 5e-4                        # s: integration substep (the electrical time constant is 2 ms)
-    # The physical parameters, which the page is not told (see plant_params).
-    PHYSICS = {"R": "ohm", "L": "H", "k": "N·m/A", "J": "kg·m²", "b": "N·m·s/rad", "Tc": "N·m", "mgl": "N·m"}
 
-    # The ports: what drives it (the effort, then test inputs, offered only
-    # with --dyno), what it measures, each with its full scale (min ... max).
-    # The outputs' hard ranges are its monitoring: beyond one the plant stops
-    # itself (E-stop). The arm stays below the horizontal-and-a-half; a PID
-    # (Kp 10, Ki 20, Kd 0.6) peaks at about 1.8 rad, 16 rad/s and 7 A on a
-    # plant varied by 15 %.
-    EFFORT = port("V", "V", -12.0, 12.0, safe=0.0)
-    TESTS = [port("load", "N·m", -0.2, 0.2, safe=0.0, kind="disturbance")]
-    OUTPUTS = [port("angle", "rad", -math.pi, math.pi, hard=(-2.5, 2.5)), port("speed", "rad/s", -120.0, 120.0, hard=(-60.0, 60.0)),
-               port("current", "A", -12.0, 12.0, hard=(-10.0, 10.0))]
-    # Its own controller (reference and log modes): a PID on the angle.
-    REFERENCE = port("r", "rad", -3.0, 3.0, safe=0.0, measures="angle")
-    OWN = {"Kp": 10.0, "Ki": 20.0, "Kd": 0.6, "Tf": 0.01}
-    SETPOINT = 1.0                   # rad: what it holds in log mode
+def js_message(err):
+    """The message of an error thrown in the core, without its stack."""
+    text = str(err)
+    m = re.search(r"(?:Error|TypeError|RangeError|ReferenceError): (.+)", text)
+    return m.group(1).strip() if m else text.strip().splitlines()[-1]
 
-    def __init__(self, params=None):
-        for name, value in (params or {}).items():
-            setattr(self, name, value)
-        self.i = self.w = self.angle = 0.0
 
-    def rates(self, i, w, angle, V, load):
-        di = (V - self.R * i - self.k * w) / self.L
-        friction = self.b * w + self.Tc * math.tanh(w / self.w_eps)
-        dw = (self.k * i - friction - self.mgl * math.sin(angle) + load) / self.J
-        return di, dw, w
+class CorePlant:
+    """A model of Loop Tuner's System library, simulated by the page's own
+    core (loop-tuner-core.js) in V8: the model's plant, varied and with its
+    effects switched from one seed, stepped on the page's grid. Its inputs
+    and outputs (names, units, full scales, hard ranges, kinds) come from
+    the model; describe sends them, and nothing else, to the page."""
 
-    def advance(self, span, u):
-        """Integrates `span` seconds with the inputs u = [V, load] held (fixed-step RK4)."""
-        if span <= 0:
-            return
-        n = max(1, math.ceil(span / self.H - 1e-9))
-        h = span / n
-        V, load = u
-        s = (self.i, self.w, self.angle)
-        for _ in range(n):
-            k1 = self.rates(*s, V, load)
-            k2 = self.rates(*(x + 0.5 * h * d for x, d in zip(s, k1)), V, load)
-            k3 = self.rates(*(x + 0.5 * h * d for x, d in zip(s, k2)), V, load)
-            k4 = self.rates(*(x + h * d for x, d in zip(s, k3)), V, load)
-            s = tuple(x + h / 6 * (a + 2 * b + 2 * c + d) for x, a, b, c, d in zip(s, k1, k2, k3, k4))
-        self.i, self.w, self.angle = s
+    def __init__(self, args):
+        path = getattr(args, "core", None) or os.path.join(os.path.dirname(os.path.abspath(__file__)), CORE_FILE)
+        if not os.path.isfile(path):
+            sys.exit(f"{CORE_FILE} is missing (looked for {path}): it comes in the zip the page offers "
+                     "(Plant tab, Download the plant), beside this script; or give its place with --core")
+        try:
+            from py_mini_racer import MiniRacer
+        except ImportError:
+            sys.exit("hil_plant.py needs mini-racer (V8 for Python) and websockets: run it with uv "
+                     "(sh runme.sh, runme.cmd, or uv run hil_plant.py), which installs both")
+        self.js = MiniRacer()
+        with open(path, encoding="utf-8") as f:
+            self.js.eval(f.read())
+        self.lib = "LoopTunerCore['core/hilsim.js']"
+        sets = {}
+        for item in getattr(args, "set", []) or []:
+            name, _, value = item.partition("=")
+            try:
+                sets[name] = float(value)
+            except ValueError:
+                self.close()
+                sys.exit(f"--set {item}: NAME=NUMBER")
+        opts = {"model": args.model, "random": bool(getattr(args, "random", False)), "vary": args.vary, "seed": args.seed,
+                "detail": getattr(args, "detail", "random"), "set": sets, "mode": args.mode, "dyno": bool(getattr(args, "dyno", False)),
+                "rate": args.rate, "setpoint": getattr(args, "setpoint", None)}
+        try:
+            d = json.loads(self.js.eval(f"{self.lib}.startSimPlant({json.dumps(opts)})"))
+        except Exception as err:  # a model it does not know, an effect, a parameter
+            self.close()
+            sys.exit(js_message(err))
+        self.name, self.inputs, self.outputs, self.draws, self.text = d["name"], d["inputs"], d["outputs"], d["draws"], d["text"]
 
-    def outputs(self):
-        return [self.angle, self.w, self.i]
+    def cycle(self, segments):
+        """Integrates the cycle's spans in order, each [seconds, inputs] with
+        its inputs held, and returns the outputs at its end (NaN for one that
+        is not a number)."""
+        try:
+            text = self.js.eval(f"JSON.stringify(__plant.cycle({json.dumps(segments)}))")
+        except Exception as err:  # an error in the model: the cycle fails, saying what it was
+            raise RuntimeError(js_message(err)) from None
+        return self.numbers(text)
+
+    def measure(self):
+        """The outputs now."""
+        return self.numbers(self.js.eval("JSON.stringify(__plant.outputs())"))
+
+    @staticmethod
+    def numbers(text):
+        return [float("nan") if v is None else float(v) for v in json.loads(text)]
+
+    def restore(self):
+        """Puts the model back to its start (its initial state)."""
+        self.js.eval("__plant.restore()")
+
+    def running(self, on):
+        """The plant starts or stops: a model running its own controller
+        (reference and log modes) starts it afresh, or gates it off (its
+        effort safe) while stopped."""
+        self.js.eval(f"__plant.running({'true' if on else 'false'})")
 
     def safe(self, u):
         """Puts the safe inputs u on the device at once, outside the cycle: on
         an E-stop, a stop, a failed cycle and at shutdown. A simulation applies
-        its inputs in advance(), so there is nothing to do here; real hardware
+        its inputs in cycle(), so there is nothing to do here; real hardware
         writes u to its outputs (a drive to 0 V, a heater off) and must not
         fail."""
 
-
-class Heater:
-    """A heater warming a thermal mass C that loses heat to the room (at Ta)
-    through a conductance G; the heater gives up to Pmax at 100 %, and the
-    thermometer lags by tau. Exact for a lumped body."""
-
-    NAME = "Heater and thermal mass (simulated)"
-    C, G, Pmax, tau, Ta = 10.0, 2.0, 160.0, 1.0, 20.0   # J/K, W/K, W, s, °C
-    PHYSICS = {"C": "J/K", "G": "W/K", "Pmax": "W", "tau": "s", "Ta": "°C"}
-    EFFORT = port("P", "%", 0.0, 100.0, safe=0.0)
-    TESTS = []
-    OUTPUTS = [port("T", "°C", 0.0, 120.0, hard=(0.0, 110.0))]
-    REFERENCE = port("r", "°C", 20.0, 100.0, safe=20.0, measures="T")
-    OWN = {"Kp": 6.0, "Ki": 1.5, "Kd": 0.0, "Tf": 0.1}
-    SETPOINT = 50.0
-
-    def __init__(self, params=None):
-        for name, value in (params or {}).items():
-            setattr(self, name, value)
-        self.T = self.Ts = self.Ta
-
-    def advance(self, span, u):
-        if span <= 0:
-            return
-        n = max(1, math.ceil(span / 0.01 - 1e-9))
-        h = span / n
-        P = u[0]
-        for _ in range(n):
-            dT = (self.Pmax * P / 100.0 - self.G * (self.T - self.Ta)) / self.C
-            dTs = (self.T - self.Ts) / self.tau
-            self.T += h * dT
-            self.Ts += h * dTs
-
-    def outputs(self):
-        return [self.Ts]
-
-    def safe(self, u):
-        """As Motor.safe: nothing to do in a simulation."""
-
-
-PLANTS = {"motor": Motor, "heater": Heater}
+    def close(self):
+        """Ends V8's thread, or it would keep the process alive."""
+        try:
+            self.js.close()
+        except Exception:  # closed already
+            pass
 
 
 class Stats:
@@ -246,72 +232,17 @@ class Stats:
         return {"mean": round(sum(v) / len(v), 3) if v else None, "max": round(max(v), 3) if v else None}
 
 
-class OwnController:
-    """The plant's own controller (reference and log modes): a PID on the
-    measured output, derivative on the measurement, filtered by Tf; its
-    output clamped to the effort's limits, the integral held at a limit. A
-    result that is not a number (a measurement that is not one) is the safe
-    effort, and the controller starts afresh."""
-
-    def __init__(self, gains, effort, dt):
-        self.g, self.lo, self.hi, self.dt = gains, effort["min"], effort["max"], dt
-        self.safe = effort["safe"]
-        self.reset()
-
-    def reset(self):
-        self.i = 0.0
-        self.y_prev = None
-        self.d = 0.0
-
-    def step(self, r, y):
-        g, dt = self.g, self.dt
-        e = r - y
-        if self.y_prev is not None and g["Kd"]:
-            a = dt / (g["Tf"] + dt)
-            self.d += a * ((y - self.y_prev) / dt - self.d)
-        self.y_prev = y
-        u = g["Kp"] * e + self.i - g["Kd"] * self.d
-        if not math.isfinite(u):
-            self.reset()
-            return self.safe
-        ui = self.i + g["Ki"] * e * dt
-        if self.lo < g["Kp"] * e + ui - g["Kd"] * self.d < self.hi:
-            self.i = ui
-        return min(self.hi, max(self.lo, u))
-
-
 class Plant:
     def __init__(self, args):
         self.args = args
         self.rate = args.rate
         self.dt = 1.0 / args.rate
-        self.Model = PLANTS[args.plant]
-        self.model = self.Model(plant_params(args))
         self.mode = args.mode
-        M = self.Model
-        # Test inputs (a load torque) only with --dyno: a rig without a
-        # dynamometer has none. Without it they hold their safe values.
-        dyno = getattr(args, "dyno", False)
-        tests = list(M.TESTS) if dyno else []
-        self.hidden = [] if dyno else [p["safe"] for p in M.TESTS]
-        if self.mode == "control":
-            self.inputs = [dict(M.EFFORT, kind="effort")] + tests
-            self.outputs = list(M.OUTPUTS)
-        elif self.mode == "reference":
-            self.inputs = [dict(M.REFERENCE, kind="reference")] + tests
-            self.outputs = list(M.OUTPUTS) + [dict(M.EFFORT, kind="effort")]
-        else:  # log: no inputs; it holds its own setpoint and reports it
-            self.inputs = []
-            self.outputs = list(M.OUTPUTS) + [dict(M.EFFORT, kind="effort"), dict(M.REFERENCE, name="setpoint")]
-        for o in self.outputs:
-            o.pop("safe", None)
-            o.pop("measures", None)
-        self.own = OwnController(M.OWN, M.EFFORT, self.dt) if self.mode != "control" else None
-        self.measured = [o["name"] for o in M.OUTPUTS].index(M.REFERENCE["measures"])
-        self.setpoint = args.setpoint if args.setpoint is not None else M.SETPOINT
+        self.model = CorePlant(args)
+        self.inputs = self.model.inputs
+        self.outputs = self.model.outputs
         self.safe = [p["safe"] for p in self.inputs]
         self.u = list(self.safe)          # the inputs applied now
-        self.effort = M.EFFORT["safe"]    # the effort the own controller applies
         self.pending = []                 # (arrival time, u) received since the last cycle
         self.client = None                # the one connected page
         self.outbox = None                # its frames, sent in the order made
@@ -454,7 +385,7 @@ class Plant:
     def describe(self, _params=None):
         d = {
             "protocol": PROTOCOL,
-            "name": self.Model.NAME + ("" if self.mode == "control" else f", {self.mode} mode"),
+            "name": self.model.name,
             "mode": self.mode,
             "rate_hz": self.rate,
             "watchdog_cycles": self.args.watchdog,
@@ -477,13 +408,16 @@ class Plant:
             self.log_names = []
         self.log_values = [None] * len(self.log_names)
         if not self.running:
+            # A model beyond a hard range (an unstable one that fell while it
+            # waited) is set up again, as someone at a rig would before a run.
+            if self.beyond(self.model.measure()):
+                self.model.restore()
+                say("the model was beyond a hard range: put back to its start for this run")
             self.k_start = self.k              # the next cycle is seq 0, t 0
             self.since_u = 0
             self.sent.clear()
             self.u = list(self.safe)
             self.last_take = None
-            if self.own:
-                self.own.reset()
             self.set_running(True, by, "")
             if self.bench:
                 self.bench.begin()
@@ -498,7 +432,6 @@ class Plant:
         """The safe inputs, now: for the next cycle, and on the device at once
         (the plant class's safe(), for when the cycle does not run again)."""
         self.u = list(self.safe)
-        self.effort = self.Model.EFFORT["safe"]
         self.pending.clear()
         try:
             self.model.safe(self.applied())
@@ -535,6 +468,7 @@ class Plant:
         if self.running == on:
             return
         self.running = on
+        self.model.running(on)
         say(("started" if on else "stopped") + f" by the {by}" + (f": {reason}" if reason else ""))
         self.event(("start" if on else "stop") + f" by the {by}" + (f" ({reason})" if reason else ""))
         self.notify("running", {"running": on, "by": by, "reason": reason, "t": self.t()})
@@ -607,6 +541,16 @@ class Plant:
         self.notify("estop", {"reason": reason, "t": self.t()})
         self.stop(by="plant", reason=f"E-STOP: {reason}")
 
+    def beyond(self, y):
+        """The first output beyond its hard range, as "angle 2.6 rad beyond
+        2.5", or None."""
+        for o, v in zip(self.outputs, y):
+            lo, hi = o.get("hard_min"), o.get("hard_max")
+            bound = lo if lo is not None and v < lo else hi if hi is not None and v > hi else None
+            if bound is not None:
+                return f"{o['name']} {beyond(v, bound)} {o['unit']} beyond {bound:g}"
+        return None
+
     def monitor(self, y):
         """An output that is not a number, or beyond its hard range, latches
         an E-stop: "angle 2.6 rad beyond 2.5"."""
@@ -614,12 +558,9 @@ class Plant:
             if not math.isfinite(v):
                 self.trip(f"{o['name']} is not a number")
                 return
-        for o, v in zip(self.outputs, y):
-            lo, hi = o.get("hard_min"), o.get("hard_max")
-            bound = lo if lo is not None and v < lo else hi if hi is not None and v > hi else None
-            if bound is not None:
-                self.trip(f"{o['name']} {beyond(v, bound)} {o['unit']} beyond {bound:g}")
-                return
+        out = self.beyond(y)
+        if out:
+            self.trip(out)
 
     def cycle_ended(self, task):
         """The cycle never ends by itself: if it failed, the inputs go safe
@@ -669,29 +610,22 @@ class Plant:
     # ---- the cycle
 
     def applied(self):
-        """The plant's inputs in its model's order: [effort, tests...]; the
-        tests --dyno does not offer at their safe values."""
-        if self.mode == "control":
-            return list(self.u) + self.hidden
-        return [self.effort] + list(self.u[1:]) + self.hidden if self.inputs else [self.effort] + [p["safe"] for p in self.Model.TESTS]
+        """The inputs applied now, in the order describe lists them."""
+        return list(self.u)
 
     def cycle(self, now, last, span):
         """One cycle: the physics over the last `span` seconds, each u applied
         from the moment it arrived; the plant's own controller; the watchdog
         and the monitoring; then y."""
-        at = 0.0
+        at, segments = 0.0, []
         for arrived, u in self.pending:
             off = min(max(arrived - last, 0.0), span)
-            self.model.advance(off - at, self.applied())
+            segments.append([off - at, self.applied()])
             self.u, at = u, off
-        self.model.advance(span - at, self.applied())
+        segments.append([span - at, self.applied()])
         had_u = bool(self.pending)
         self.pending.clear()
-        y = self.model.outputs()
-        if self.own:
-            r = self.setpoint if self.mode == "log" else self.u[0]
-            self.effort = self.own.step(r, y[self.measured]) if self.running and not self.estop_reason else self.Model.EFFORT["safe"]
-            y = y + [self.effort] + ([self.setpoint] if self.mode == "log" else [])
+        y = self.model.cycle(segments)
         self.last_y = y
         if self.running:
             self.monitor(y)
@@ -783,7 +717,7 @@ class Plant:
         return "running" if self.running else "stopped, page connected" if self.client else "no page"
 
     def reading(self):
-        y = getattr(self, "last_y", None) or self.model.outputs()
+        y = getattr(self, "last_y", None) or self.model.measure()
         return "  ".join(f"{o['name']} {v:+.3g} {o['unit']}" for o, v in zip(self.outputs, y))
 
 
@@ -879,64 +813,39 @@ class Bench:
         print("bench-json: " + json.dumps(res), flush=True)
 
 
-def plant_params(args):
-    """The plant this run simulates: by default every physical parameter
-    differs from the nominal one by a random factor within ±15 % (--vary), so
-    the page, which is not told, has to identify it as it would a real one.
-    --seed gives the same plant again; --set fixes a parameter."""
-    Model = PLANTS[args.plant]
-    rng = random.Random(args.seed)
-    params = {}
-    for name in Model.PHYSICS:
-        params[name] = getattr(Model, name) * (1 + args.vary * rng.uniform(-1, 1))
-    for item in args.set:
-        name, _, value = item.partition("=")
-        if name not in Model.PHYSICS:
-            sys.exit(f"--set {item}: one of {', '.join(Model.PHYSICS)}")
-        params[name] = float(value)
-    return params
-
-
 def check_trip(args):
-    """--check, its monitoring: the nominal plant's cycle at full effort,
+    """--check, its monitoring: the nominal model's cycle at full effort,
     without a page, until an output leaves its hard range and the plant
-    E-stops (the motor's arm swings up; a heater whose losses are halved
-    overheats). True if it did, with the safe inputs applied."""
-    a = argparse.Namespace(**{**vars(args), "mode": "control", "vary": 0.0, "set": ["G=1"] if args.plant == "heater" else [], "log": None, "bench": 0})
+    E-stops (the arm swings up, a pendulum falls, an oven overheats). True if
+    it did, with the safe inputs applied."""
+    a = argparse.Namespace(**{**vars(args), "mode": "control", "vary": 0.0, "detail": "all", "set": [], "log": None, "bench": 0})
     p = Plant(a)
     p.running = True
+    p.model.running(True)
     p.u = [p.inputs[0]["max"]] + p.safe[1:]
     for k in range(int(60 * p.rate)):
         p.cycle(0.0, 0.0, p.dt)
         if p.estop_reason:
             break
     print(f"E-stop after {k * p.dt:.2f} s at full {p.inputs[0]['name']}: {p.estop_reason}")
+    p.model.close()
     return p.estop_reason is not None and " beyond " in p.estop_reason and not p.running and p.u == p.safe
 
 
 def check(args):
-    """--check: 3 s of the nominal physics without a server. The motor under a
-    PD at 100 Hz rises to about 1.2 rad (gravity leaves an offset without
-    integral action); its own PID (reference mode) holds 1.5 rad; the heater's
-    own PI reaches 50 °C. Then each E-stops at full effort when an output
-    leaves its hard range."""
-    if args.plant == "heater":
-        m, own = Heater(), OwnController(Heater.OWN, Heater.EFFORT, 0.01)
-        for _ in range(3000):
-            m.advance(0.01, [own.step(50.0, m.outputs()[0])])
-        print(f"T {m.Ts:.2f} °C after 30 s of its own PI towards 50 °C")
-        return 0 if 48 < m.Ts < 52 and check_trip(args) else 1
-    m = Motor()
-    for _ in range(300):
-        V = max(-12.0, min(12.0, 6 * (1.5 - m.angle) - 0.6 * m.w))
-        m.advance(0.01, [V, 0.0])
-    print(f"angle {m.angle:.3f} rad, speed {m.w:.3f} rad/s, current {m.i:.3f} A after 3 s of PD control towards 1.5 rad")
-    ok = 1.0 < m.angle < 1.4
-    m, own = Motor(), OwnController(Motor.OWN, Motor.EFFORT, 0.01)
-    for _ in range(300):
-        m.advance(0.01, [own.step(1.5, m.angle), 0.0])
-    print(f"angle {m.angle:.3f} rad after 3 s of its own PID (reference mode) towards 1.5 rad")
-    return 0 if ok and abs(m.angle - 1.5) < 0.02 and check_trip(args) else 1
+    """--check: the model as the System library has it (nominal, its own
+    controller) for one period of its signals, without a server: its outputs
+    at the end; then full effort until an output leaves its hard range and
+    the plant E-stops."""
+    m = CorePlant(argparse.Namespace(**{**vars(args), "mode": "control", "vary": 0.0, "set": [], "random": False, "detail": "all"}))
+    try:
+        text = m.js.eval(f"{m.lib}.checkText({json.dumps({'model': args.model})})")
+    except Exception as err:
+        m.close()
+        sys.exit(js_message(err))
+    m.close()
+    print(text)
+    return 0 if "not a number" not in text and check_trip(args) else 1
 
 
 # ---- the keys at the plant
@@ -1037,10 +946,12 @@ async def serve(args, plant, ready=None):
     plant.loop = asyncio.get_running_loop()
     plant.done = asyncio.Event()
     async with ws_serve(plant.handler, args.host, args.port, max_size=2 ** 20):
-        varied = f"varied by up to ±{args.vary:.0%} (seed {args.seed}; the same plant again: --seed {args.seed})" if args.vary else "nominal (--vary 0)"
-        say(f"Loop Tuner external plant: {plant.describe()['name']}; {varied}; the page is not told the physics.")
+        what = "a model drawn at random" if args.random else plant.model.draws["system"]
+        varied = f"varied by up to ±{args.vary:.0%}" if args.vary else "nominal (--vary 0)"
+        say(f"Loop Tuner external plant: {what}, {varied}, its effects {args.detail}; seed {args.seed} (the same plant again: --seed {args.seed}). "
+            "The page is told its inputs and outputs only, never the model or its physics.")
         if args.show_params:
-            say("this plant: " + ", ".join(f"{n} {getattr(plant.model, n):.4g} {u}" for n, u in plant.Model.PHYSICS.items()))
+            say("this plant:\n  " + plant.model.text.replace("\n", "\n  "))
         say(f"listening on ws://{args.host}:{args.port} at {args.rate:g} Hz; watchdog {args.watchdog} cycles"
             + (f"; logging to {args.log}" if args.log else "") + (f"; bench: {args.bench:g} s from the next Run" if args.bench else "") + ".")
         say("In Loop Tuner: System library > a HIL system > Load; Plant tab > Connect; then Run.")
@@ -1055,27 +966,46 @@ async def serve(args, plant, ready=None):
             await plant.shutdown(f"the plant's cycle failed ({plant.failed})" if plant.failed else "the plant was shut down")
 
 
+def project_model(path):
+    """--model FILE.json: the system of a project the page saved, as the core
+    takes a model ({ name, signals, diagram })."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            project = json.load(f)
+        system = project["system"]
+        return {"name": project.get("title") or os.path.basename(path), "signals": system.get("signals", {}), "diagram": system["plant"]["diagram"]}
+    except (OSError, ValueError, KeyError, TypeError) as err:
+        sys.exit(f"--model {path}: not a Loop Tuner project with a diagram ({err})")
+
+
 def main():
     p = argparse.ArgumentParser(description="Loop Tuner external plant (HIL demo): a simulated plant in real time, for Live mode.")
-    p.add_argument("--plant", choices=sorted(PLANTS), default="motor", help="which plant: motor (a DC motor swinging an unbalanced arm; the default) or heater")
+    p.add_argument("--model", default=DEFAULT_MODEL, metavar="NAME",
+                   help=f'which model of the System library to simulate (--list lists them; default "{DEFAULT_MODEL}"), or a project file (.json) saved by the page')
+    p.add_argument("--random", action="store_true", help="any model, drawn with the seed; only --show-params says which")
+    p.add_argument("--list", action="store_true", help="list the models it can run, with their inputs and outputs, and exit")
+    p.add_argument("--detail", default="random", metavar="WHICH",
+                   help="the model's effects (friction, ripple, a resonance ...): random (each on or off; the default), all, none, or the comma list of those on")
+    p.add_argument("--core", metavar="PATH", help=f"where {CORE_FILE} is (default: beside this script)")
+    p.add_argument("--plant", help=argparse.SUPPRESS)
     p.add_argument("--mode", choices=["control", "reference", "log"], default="control",
-                   help="control: the page sends the control effort (the default); reference: this plant runs its own controller and the page sends the reference; "
-                        "log: no inputs, the plant holds its own setpoint and the page records")
-    p.add_argument("--setpoint", type=float, default=None, help="--mode log: the setpoint it holds (default: 1 rad, 50 °C)")
+                   help="control: the page sends the control effort (the default); reference: the model runs its own controller and the page sends the reference; "
+                        "log: no inputs, the model's controller holds its own reference and the page records")
+    p.add_argument("--setpoint", type=float, default=None, help="--mode log: hold this reference (default: the model's own reference signal)")
     p.add_argument("--host", default="127.0.0.1", help="address to listen on (default 127.0.0.1: this computer only)")
     p.add_argument("--port", type=int, default=8765, help="port (default 8765)")
     p.add_argument("--rate", type=float, default=100.0, help="cycle rate in Hz (default 100; up to 200 measured sound with the default watchdog; at 500 or 1000 raise --watchdog and expect late cycles)")
     p.add_argument("--watchdog", type=int, default=10, help="E-stop after this many cycles without u (default 10)")
     p.add_argument("--dyno", action="store_true",
-                   help="offer the test inputs too (the motor: a load torque, a disturbance input); by default the plant has none, as a rig without a dynamometer")
+                   help="offer the model's disturbances as inputs too (a load torque, a push); by default the plant has none, as a rig without a dynamometer")
     p.add_argument("--slew", type=float, default=0.0, metavar="PCT",
                    help="limit how fast each input may change, in %% of its range per second (default 0: no limit; the page ramps in at 10 %%/s itself)")
     p.add_argument("--vary", type=float, default=0.15, metavar="F",
                    help="each physical parameter differs from nominal by a random factor within ±F, unknown to the page (default 0.15; 0: the nominal plant)")
-    p.add_argument("--seed", type=int, default=None, help="seed for --vary: the same plant again (default: a new one each start; it is printed)")
+    p.add_argument("--seed", type=int, default=None, help="seed for every draw (--random, --detail, --vary): the same plant again (default: a new one each start; it is printed)")
     p.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
-                   help="fix a physical parameter (motor: " + ", ".join(Motor.PHYSICS) + "; heater: " + ", ".join(Heater.PHYSICS) + ")")
-    p.add_argument("--show-params", action="store_true", help="print the plant's true physical parameters (the page is never told)")
+                   help="fix a physical parameter after the draw (its name as --show-params prints it)")
+    p.add_argument("--show-params", action="store_true", help="print what was drawn: the model, its effects, its physical parameters, where its ranges came from (the page is never told)")
     p.add_argument("--log", metavar="FILE.csv", help="write every cycle (t, outputs, inputs, r and e from the page) and every event to a CSV file")
     p.add_argument("--bench", type=float, default=0.0, metavar="SECONDS",
                    help="measure the next run for SECONDS (rate, jitter, round trip, late, dropped), print the figures and end")
@@ -1087,21 +1017,32 @@ def main():
                         "(serve the page from localhost then; recommended for real hardware)")
     p.add_argument("--spin", type=float, default=2.0 if sys.platform == "win32" else 0.0, metavar="MS",
                    help="wait out the last MS milliseconds of each cycle actively, for coarse OS timers (default: 2 on Windows, else 0)")
-    p.add_argument("--check", action="store_true", help="run 3 s of the nominal physics without a server and exit")
+    p.add_argument("--check", action="store_true", help="run the nominal model with its own controller for one period, then at full effort until it E-stops, without a server, and exit")
     p.add_argument("--describe", action="store_true", help="print the answer to describe (JSON) and exit")
     args = p.parse_args()
+    if args.plant:
+        sys.exit('--plant is gone: the plant is any model of the System library, --model NAME (--list lists them); '
+                 f'the motor is --model "{DEFAULT_MODEL}", the heater\'s place is taken by --model "Oven, badly tuned"')
     if args.seed is None:
         args.seed = random.randrange(10000)
+    if args.model.endswith(".json"):
+        args.model = project_model(args.model)
+    if args.list:
+        m = CorePlant(argparse.Namespace(**{**vars(args), "random": False, "vary": 0.0, "detail": "all", "set": []}))
+        print(m.js.eval(f"{m.lib}.listModels()"))
+        m.close()
+        return
     if args.check:
         sys.exit(check(args))
     plant = Plant(args)
     if args.describe:
         print(json.dumps(plant.describe(), ensure_ascii=False))
+        plant.model.close()
         return
     try:
         import websockets  # noqa: F401
     except ImportError:
-        sys.exit("hil_plant.py needs websockets 13 or newer:\n  uv run hil_plant.py        (installs it by itself)\n  pip install 'websockets>=13' && python3 hil_plant.py")
+        sys.exit("hil_plant.py needs websockets 13 or newer: run it with uv (sh runme.sh, runme.cmd, or uv run hil_plant.py), which installs it")
     where = f"ws://{args.host}:{args.port}"
     title = f"Loop Tuner plant: {plant.describe()['name']} · {where}"
     gui = "--no-gui" if args.no_gui else window(plant, title, where)
@@ -1130,6 +1071,7 @@ def main():
         sys.exit(f"cannot listen on {args.host}:{args.port}: {err}")
     finally:
         end_timers()
+        plant.model.close()
     if plant.failed:
         sys.exit(f"the plant's cycle failed ({plant.failed}): it applied its safe inputs and ended")
 

@@ -1,7 +1,7 @@
 // A small formula language for y(t), compiled to a function without eval, so
 // the page and Node compute the same values and nothing typed can run code.
 //   numbers, t, pi, e;  + - * / ^ (power), unary minus, parentheses;
-//   sin cos tan asin acos atan exp log ln log10 sqrt abs floor ceil round sign
+//   sin cos tan asin acos atan sinh cosh tanh exp log ln log10 sqrt abs floor ceil round sign
 //   min(a, b) max(a, b) pow(a, b) mod(a, b), step(x) (1 for x >= 0), clamp(x, lo, hi)
 // Example: 0.5*sin(2*pi*3*t) + step(t - 0.2)
 
@@ -9,6 +9,7 @@ const FN1 = {
   sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan,
   exp: Math.exp, log: Math.log, ln: Math.log, log10: Math.log10, sqrt: Math.sqrt, abs: Math.abs,
   floor: Math.floor, ceil: Math.ceil, round: Math.round, sign: Math.sign, step: (x) => (x >= 0 ? 1 : 0),
+  sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh,
 };
 const FN2 = { min: Math.min, max: Math.max, pow: Math.pow, mod: (a, b) => a - b * Math.floor(a / b), atan2: Math.atan2 };
 const FN3 = { clamp: (x, lo, hi) => Math.min(hi, Math.max(lo, x)) };

@@ -6,12 +6,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createLiveLoop, createLiveRunner, liveProblem, keptWires, NAN_CYCLES } from '../src/core/live.js';
 import { checkDescription, externalParams } from '../src/core/hil.js';
 import { normalizeDiagram } from '../src/core/diagram.js';
 import { normalizeReference } from '../src/core/signals.js';
-import { SCRIPT, startPlant, connectPlant } from './plant.mjs';
+import { SCRIPT, UV, startPlant, connectPlant, coreFile, pyProbe } from './plant.mjs';
 import { buildHtml } from '../build.mjs';
 
 const DESC = {
@@ -222,18 +224,21 @@ test('every page names loopTuner.help() where an agent looks first: the head, th
 
 // ---- The plant script.
 
-test('hil_plant.py, without a server: numbers, its own controller and monitoring on NaN, a failed cycle, who resets whose STOP (when python3 is here)', (t) => {
-  const probe = `
-import asyncio, importlib.util, json, sys, types
-spec = importlib.util.spec_from_file_location('hp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-m.say = lambda text: None
-a = types.SimpleNamespace(rate=100.0, plant='motor', mode='reference', setpoint=None, log=None, bench=0, watchdog=10, slew=0.0, vary=0.0, seed=1, set=[], allow_origin=[], strict_origin=False)
-p = m.Plant(a)
+test('hil_plant.py, without a server: numbers, its own controller and monitoring on NaN, a failed cycle, who resets whose STOP (when uv can run it here)', (t) => {
+  const res = pyProbe(`
+import asyncio
+p = m.Plant(args(mode='reference'))
 safe = []
 p.model.safe = lambda u: safe.append(list(u))
 out = {'number': [m.number(10 ** 400), m.number(True), m.number(1.5), m.number(float('nan')), m.number('1')]}
-own = m.OwnController(m.Motor.OWN, m.Motor.EFFORT, 0.01)
-out['own'] = [own.step(1.0, float('nan')), own.step(1.0, 0.0)]
+# The model's own controller acts only while the plant runs: stopped, its effort is safe.
+p.u = [1.0]
+p.cycle(0.0, 0.0, p.dt)
+stopped = p.last_y[-1]
+p.set_running(True, 'page', '')
+p.cycle(0.0, 0.0, p.dt)
+out['own'] = [stopped, p.last_y[-1] > 0]
+p.set_running(False, 'page', '')
 p.running = True
 p.take_u({'seq': [1], 'u': [10 ** 400]})
 out['u'] = p.pending[-1][1]
@@ -260,16 +265,13 @@ f = loop.create_future(); f.set_exception(ZeroDivisionError('float division by z
 safe.clear()
 p.cycle_ended(f)
 out['failed'] = [p.estop_reason, p.failed, p.done.is_set(), len(safe) > 0]
+p.model.close()
 print(json.dumps(out))
-`;
-  let res;
-  try { res = execFileSync('python3', ['-I', '-B', '-c', probe, SCRIPT], { stdio: 'pipe' }).toString(); } catch (err) {
-    if (err.code === 'ENOENT') { t.skip('no python3'); return; }
-    throw err;
-  }
+`);
+  if (res === null) { t.skip('uv with websockets and mini-racer in its cache is not here'); return; }
   const out = JSON.parse(res.trim().split('\n').at(-1));
   assert.deepEqual(out.number, [null, null, 1.5, null, null], 'too large for a float, a bool, NaN, a string: not numbers');
-  assert.deepEqual(out.own, [0, 10], 'its PID gives the safe effort for a NaN measurement, and starts afresh');
+  assert.deepEqual(out.own, [0, true], 'the model\'s own controller: the safe effort while stopped, acting while running');
   assert.deepEqual(out.u, [0], 'a u of 10^400 is the safe value, and a seq that is a list does no harm');
   assert.deepEqual(out.nan, ['angle is not a number', 'monitor', false, true], 'monitoring: latched, stopped, safe inputs on the device');
   assert.match(out.page_resets_key, /STOP was pressed at the plant: reset it there/);
@@ -329,20 +331,19 @@ test('hil_plant.py: frames in the order made, malformed messages answered and su
 });
 
 test('hil_plant.py: a cycle that fails ends the script with the error, its inputs safe (when it can run here)', async (t) => {
-  // A plant whose physics fails at once (no inertia: a division by zero);
-  // what the page hears then is checked without a server above.
-  let res = null;
-  for (const [cmd, args] of [['python3', ['-I', SCRIPT, '--no-gui', '--port', '0', '--set', 'J=0']], ['uv', ['run', '--offline', '--quiet', SCRIPT, '--no-gui', '--port', '0', '--set', 'J=0']]]) {
-    try { execFileSync(cmd, args, { stdio: 'pipe', timeout: 20000, input: '' }); res = { status: 0 }; break; } catch (err) {
-      if (err.code === 'ENOENT') continue;
-      const text = `${err.stdout}${err.stderr}`;
-      if (/needs websockets/.test(text)) continue;
-      res = { status: err.status, text };
-      break;
-    }
-  }
-  if (!res) { t.skip('neither python3 with websockets nor uv with websockets in its cache'); return; }
+  // A model whose cycle fails at once (a core whose plant throws, as a device
+  // that stops answering would); what the page hears then is checked
+  // without a server above.
+  const broken = join(tmpdir(), `loop-tuner-core-broken-${process.pid}.js`);
+  writeFileSync(broken, `${readFileSync(coreFile(), 'utf8')}
+(() => { const lib = LoopTunerCore['core/hilsim.js'], start = lib.startSimPlant;
+  lib.startSimPlant = (o) => { const r = start(o); globalThis.__plant.cycle = () => { throw new Error('the device stopped answering'); }; return r; }; })();\n`);
+  let res;
+  try { execFileSync('uv', [...UV, SCRIPT, '--no-gui', '--port', '0', '--core', broken], { stdio: 'pipe', timeout: 20000, input: '' }); res = { status: 0 }; } catch (err) {
+    if (err.code === 'ENOENT' || /No solution|offline/.test(String(err.stderr))) { t.skip('uv with websockets and mini-racer in its cache is not here'); return; }
+    res = { status: err.status, text: `${err.stdout}${err.stderr}` };
+  } finally { rmSync(broken, { force: true }); }
   assert.equal(res.status, 1);
-  assert.match(res.text, /Traceback[\s\S]*ZeroDivisionError/);
-  assert.match(res.text, /the plant's cycle failed \(ZeroDivisionError: float division by zero\): it applied its safe inputs and ended/);
+  assert.match(res.text, /Traceback[\s\S]*RuntimeError: the device stopped answering/);
+  assert.match(res.text, /the plant's cycle failed \(RuntimeError: the device stopped answering\): it applied its safe inputs and ended/);
 });

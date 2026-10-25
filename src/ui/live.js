@@ -20,6 +20,7 @@ import { createLiveLoop, liveKey, liveScales, liveProblem, followPorts } from '.
 import { normalizeDiagram } from '../core/diagram.js';
 import { sweepStart } from '../core/trace.js';
 import { zipFiles } from '../core/zip.js';
+import { simulatorCore, CORE_FILE } from '../core/hilsim.js';
 import { num, parseSI } from './units.js';
 
 const MAX_SWEEP = 200000;
@@ -32,8 +33,15 @@ const ms = (v) => (Number.isFinite(v) ? `${v < 10 ? v.toFixed(2) : v.toFixed(1)}
 // A key's lamp (design-system.md, Lit): data-lamp "ok", "warn", "bad", or off.
 const lamp = (el, v) => { if (v) el.dataset.lamp = v; else delete el.dataset.lamp; };
 
+// The plant's files: hil/ and this page's own core, cut from its script, so
+// the plant simulates with exactly the code this page runs (an exported page
+// carries its own). In Node (no page) only hil/.
+export function plantFiles(script = typeof document === 'object' ? document.getElementById('lt-script')?.textContent ?? '' : '') {
+  const core = simulatorCore(script);
+  return { ...HIL_FILES, ...(core ? { [CORE_FILE]: core } : {}) };
+}
 // The plant's files as one zip; runme.sh stays executable.
-export const plantZip = () => zipFiles(Object.entries(HIL_FILES).map(([name, data]) => ({ name: `hil-plant/${name}`, data, mode: name.endsWith('.sh') ? 0o755 : 0o644 })));
+export const plantZip = (files = plantFiles()) => zipFiles(Object.entries(files).map(([name, data]) => ({ name: `hil-plant/${name}`, data, mode: name.endsWith('.sh') ? 0o755 : 0o644 })));
 
 export function createLive(app, display, record, panelHost) {
   const $ = (id) => document.getElementById(id);
@@ -568,7 +576,7 @@ export function createLive(app, display, record, panelHost) {
     hold: (onOff) => setHold(onOff),
     settings: (s) => settings(s),
     downloadPlant: () => downloadPlant(),
-    plantFiles: () => ({ ...HIL_FILES }),
+    plantFiles: () => plantFiles(),
     state: () => ({
       state: linkState(), detail, pending, message: app.lastMessage(), run: display.mode, estop, hold: !!hold, mode: modeOf(),
       plant: desc ? { name: desc.name, rate_hz: desc.rate_hz, mode: desc.mode, inputs: desc.inputs, outputs: desc.outputs } : null,
