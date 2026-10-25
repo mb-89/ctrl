@@ -2,6 +2,14 @@
 
 Reader: whoever builds detail levels in Loop Tuner, or wants to know why [../output/detail-levels.md](../output/detail-levels.md) decided what it did. The person's words are in [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md), last section ("detail levels … Spice, I think, has that … the interfaces stay more or less the same … the model introduces more calculations and more parameters … if I increase detail level, the control works worse").
 
+## The person's answers (2026-10-25)
+
+The person answered the output's four questions ([input 13](../input/2026-10-25-13-detail-levels-answers.md)). Where this file proposed otherwise, the answers win, and the statements below are marked:
+- **A global level with local overrides, not a cap.** A global level applies to every subsystem without an override; a subsystem may override it, above or below; each runs at most the highest level it has; a Clear button removes every override. No separate "Highest".
+- **Levels are compared with Single runs; the display does not change.** The proposals for keeping the previous level's run (count only changed runs at every speed, or a slow speed for the example) are dropped.
+- **Detail is in the Plant tab**, not the header.
+- **The example rings**, as this research chose: the capacitive-load ringing every electrical engineer knows. A two-pole op-amp's oscillation stays a possible later experiment. The ringing frequency against C_L was added by a new check (Sources): at level 3, 727, 541, 374 and 178 kHz at 500 pF, 1 nF, 2.2 nF and 10 nF, with the overshoots and settling times below unchanged.
+
 ## Reviewer's corrections
 
 Two independent reviews (2026-10-25) re-ran every level with their own RK4 code, at steps of 10 ns and 1 ns, with no repository code. The headline numbers held: L2's 350 ns rise and 90°, L3's 37.6 % and 33.0° at 519 kHz, L4's 18.7 % and 0.579 V, the phase margins against C_L, the neutral-value and agreement gaps, the two-pole op-amp's oscillation above 7.07 nF (bounded with slew and rails at 383 kHz, 0.19 V p-p), and the datasheet values. What they corrected, and where it is applied in the output:
@@ -29,15 +37,15 @@ Two independent reviews (2026-10-25) re-ran every level with their own RK4 code,
 18. **Level 1 had no machine check of "much slower than 1 MHz".** Applied: a rate mode for Valid range, |Δu|/Δt between record samples; level 1 checks v_in against the slew rate. It catches every step on the 20 µs screen (8 V/µs) and passes the 1 kHz sine (3.1·10⁻³ V/µs); the sentence says slower signals near the bandwidth are not caught.
 
 **Design (applied in the output; the reasons are there)**
-19. The global cap did not reach every compile site (the Plant tab's check, Live, the v1 loop, the design layer's model compiles, the CLI), and the acquisition key hashes `simOf(p)`, not `p.sim`. Applied: `applyDetail` and one `runDiagram(project)`; `detail` in `simOf`.
+19. The global cap (now the global level) did not reach every compile site (the Plant tab's check, Live, the v1 loop, the design layer's model compiles, the CLI), and the acquisition key hashes `simOf(p)`, not `p.sim`. Applied: `applyDetail` and one `runDiagram(project)`; `detail` in `simOf`.
 20. Run information never reached the page: the acquisition keeps only `{ t, signals }`, so today's "stiff system" warning is never shown, and `loopTuner.run()` returns nothing. Applied: `info` in the acquisition, `loopTuner.info()`, built with the step bound.
 21. Block id paths become ambiguous across levels (variant stores, designs, Auto-tune's probes, `locate`). Applied: Controllers, Observers and live plants are refused inside subsystems with levels; nested paths carry the level (`board@3/opamp`).
 22. `plantKey` "with the subsystem's mask" re-designed on edits only other levels read. Applied: the running level's diagram with formulas resolved to numbers, without Valid range blocks or level fields.
 23. The Plant tab's check compiled only the running level and outlined errors by name. Applied: it compiles the viewed level; levels that do not compile are marked.
 24. Readers of a subsystem's `.diagram` were missing from the migration list (Live's `copyParams`, HIL, Auto-tune, the Controller, Analysis and Auto-tune tabs, the Plant tab, `systemTags`), and a grep for `.diagram` would hit legitimate uses. Applied: listed, and a test loads a subsystem with levels through each.
-25. Cut: `adds` (the name says it), `requires` (merged into Valid range as a parameter mode, drawn on the canvas), "Highest" (a question for the person), Auto-tune's "Tune on", Analysis's "Plant" choice and "as designed" overlay (the cap does all of these), the Detail table, units on In and Out (unchecked labels), per-level steps on every compile (static counts; the step from the run), and `designDetail` (no shipped example uses it; cap, design and Copy as numbers do the experiment).
+25. Cut: `adds` (the name says it), `requires` (merged into Valid range as a parameter mode, drawn on the canvas), "Highest" (a question for the person; answered: the global level at its largest number does it), Auto-tune's "Tune on", Analysis's "Plant" choice and "as designed" overlay (the cap, now the global level, does all of these), the Detail table, units on In and Out (unchecked labels), per-level steps on every compile (static counts; the step from the run), and `designDetail` (no shipped example uses it; cap, design and Copy as numbers do the experiment).
 26. Mask fields gain `min` and `max`, since the floors of C_L and R_o need them.
-27. "A whole load sets the entry's speed" reversed instrument.md's rule and discarded the person's speed. Applied: the faded comparison is proposed through the roadmap's open question (count only changed runs at every speed), with a temporary speed as the fallback; both go to the person.
+27. "A whole load sets the entry's speed" reversed instrument.md's rule and discarded the person's speed. Applied: the faded comparison is proposed through the roadmap's open question (count only changed runs at every speed), with a temporary speed as the fallback; both go to the person. The person answered: neither; levels are compared with Single runs, and nothing changes (input 13).
 28. Terminology: "level" already means diagram nesting, the spectrogram's colour levels and the scheduled PI's operating levels, and "badge" a scope channel's badge. Applied: "detail level" in UI text, a "level chip", renamed nesting helpers. One `--warn`/`--bad` pair for both themes.
 29. Smaller: Valid range is a Terminator in model mode, not a Sink; compile messages carry the level, state labels do not; deleting to one level gives a plain subsystem; "used from L3" counts blocks only.
 30. **Stale statements.** feat/smc is merged (`5b45451`), so the motor's transfer-function form is on main. The first draft is on main as `a7bafdf`; its summary's "nothing is committed" was wrong. feat/designs rewrote large parts of `diagram.js` and `simulateSystem`, so it is merged before this plan is built.
@@ -72,10 +80,10 @@ Marks used below: **(inference)** is reasoning, not a source. **(simulation)** i
 - **The counter-example is the Modelica Standard Library's op-amps.** IdealOpAmp, OpAmp and OpAmpDetailed have 3, 4 and 5 pins and no shared interface, so swapping one for another means rewiring. The Simscape and Simulink options that let ports change with fidelity (conditional ports, "allow flexible interface") are the same drift. The person wants the opposite.
 - **Recommended:**
   - any subsystem may hold ordered, named levels with identical ports, each an ordinary diagram;
-  - chosen per subsystem, capped globally;
+  - a global level with local overrides per subsystem (the person's answer; first proposed as a choice per subsystem, capped globally);
   - one parameter set on the subsystem's mask;
   - each level states its validity and checks it with blocks on its canvas;
-  - designs see what runs; "design simple, run detailed" is cap, design or tune, keep the numbers, raise the cap.
+  - designs see what runs; "design simple, run detailed" is: set the global level low, design or tune, keep the numbers, raise it.
 - **First example: an op-amp follower driving a cable.** An MCP6001-class part on ±2.5 V drives 1 nF ∥ 10 kΩ (simulation):
   - At the gain–bandwidth level it is perfect: phase margin 90°, no overshoot, 10–90 % in 350 ns.
   - Add the op-amp's output resistance driving the cable: phase margin 33°, 37.6 % overshoot, within 1 % only after 4.0 µs.
@@ -102,6 +110,7 @@ The three threads' numbers were re-run (`dlv/check*.mjs`). These changed (items 
 6. **The comparison between levels needs the previous run to stay.**
    - Earlier runs fade once per sweep at a finite speed. A 20 µs screen sweeps every frame at any speed the page reaches, so the previous level's run would be gone in five frames.
    - At 4·10⁻⁶× the screen sweeps in 5 s and the faded run stays about 25 s. Counting only changed runs at every speed keeps it with no special speed (Reviewer's corrections 27).
+   - The person compares levels with Single runs instead, after which earlier runs stay; nothing changes (input 13).
 7. **Near the rails the large-signal level is pessimistic.**
    - Clamping the op-amp's internal node at the swing limit, with R_o and 10 kΩ after it, leaves the pin at 2.358 V for a 2.4 V input.
    - The datasheet promises 25 mV from the rail. The constant R_o overstates the drop at DC: a CMOS rail-to-rail output's impedance changes with frequency (Green).
@@ -162,7 +171,7 @@ Confirmed and kept:
 | **Simulink Control Design** | – | `linearize(…, blocksub)`, slTuner `BlockSubs` | – | The precedent for designing on a different level than runs; not built until an example needs it |
 | **Simscape** | ports may change with fidelity (thermal port H on the detailed level only) | a Fidelity parameter on the block; the Semiconductor Switch Selector changes fidelity "without replacing a block or reentering parameter values" | "Parameter values that are common to both blocks carry over" | Copy: pick the lowest fidelity that answers the question; "To simulate in real time, use the equivalent model … To validate the results, use the detailed model". Avoid: compiled insides (black box), conditional ports |
 | **Modelica `replaceable … constrainedby`** | the redeclared type "shall be a subtype of the constraining type" (§7.3.2) | `choicesAllMatching` drop-down | modifiers in the constraining clause "are automatically applied … in any subsequent redeclaration" | Copy: a checked interface, shared modifiers. Modelica.Fluid.System's system-wide defaults are a precedent for a global setting with local override |
-| **Amesim** | the component keeps its icon | per component in Submodel mode; **Premier submodel** applies "the simplest mathematical models for all components" | – | Copy: the global "simplest" switch (our Detail ≤ 1) |
+| **Amesim** | the component keeps its icon | per component in Submodel mode; **Premier submodel** applies "the simplest mathematical models for all components" | – | Copy: the global "simplest" switch (our Detail 1) |
 | **Verilog-2001 configs, Cadence Hierarchy Editor** | fixed by the design | a global ordered view list with a stop view; per-instance override | – | Copy: global default plus per-instance choice |
 | **SystemC TLM-2.0** | sockets and the base protocol fixed | coding style: loosely timed (speed) or approximately timed (accuracy) | – | Copy: detail as "points along a spectrum" behind a fixed interface |
 | **Validity frames** (Zeigler's experimental frame; Van Acker et al.) | – | – | – | Copy: a model carries the range where it is valid |
@@ -199,9 +208,9 @@ Confirmed and kept:
 ## Recommendations
 
 1. **Levels on any subsystem.**
-   - Each level is `{ name, valid, diagram }`, chosen by a 1-based `level`. The name says what it adds.
-   - A global `sim.detail`: a cap.
-   - The level that runs is min(chosen, cap).
+   - Each level is `{ name, valid, diagram }`. The name says what it adds.
+   - A global level `sim.detail`, and a local override `level` (1-based) on a subsystem.
+   - The level that runs is the override, else the global level, at most the highest level the subsystem has; a Clear button removes every override (the person's answer, input 13; first proposed as a cap, min(chosen, cap)).
    - Levels are fixed at compile (Simulink's update diagram).
    - Only the running level compiles; every level normalises ("analyze all choices").
 2. **Identical ports, strictly (PLECS, not Simulink's flexible interface).**
@@ -213,9 +222,9 @@ Confirmed and kept:
 4. **One parameter set on the subsystem's mask** (SPICE `.subckt` parameters, Modelica constraining modifiers, the Simscape selector). The panel marks which level uses each parameter and greys those the running level does not. Floors where a neutral value is also stiff (C_L ≥ 1 pF, R_o ≥ 1 Ω).
 5. **Validity, stated and checked on the canvas.** A sentence per level, and Valid range blocks on a signal's value, its rate, or a parameter formula. The run reports the first violation and names the level that models it, after binning and validity frames, without choosing the level automatically. The sentence says what the checks cannot catch.
 6. **Neutral values give the level below** (SPICE's defaults): bit for bit where representable, a limit bounded by the physics otherwise.
-7. **Designs see what runs.** The experiment is cap, design or tune, keep the numbers (Copy as numbers, or Auto-tune's result), raise the cap. Designing on less detail than runs (`blocksub`) waits for an example.
+7. **Designs see what runs.** The experiment is: set the global level low, design or tune, keep the numbers (Copy as numbers, or Auto-tune's result), raise it. Designing on less detail than runs (`blocksub`) waits for an example.
 8. **An eigenvalue step bound before any stiff level ships** (the sliding-mode research's Recommendation 9): the largest eigenvalue magnitude of a finite-difference Jacobian at the start state, joined to the per-block bounds, in `el.bound` at compile.
-9. **The example: the op-amp follower and a cable**, 20 µs at 2 µs/div, opening at level 1, with the previous level's run kept faded. Second: the motor's armature as a level.
+9. **The example: the op-amp follower and a cable**, 20 µs at 2 µs/div, opening at level 1, its levels compared with Single runs (input 13). Second: the motor's armature as a level.
 
 ## Pitfalls
 
@@ -237,7 +246,7 @@ Confirmed and kept:
 - **A constant R_o is a simplification.** It cannot fit both datasheet phase-margin points (60 pF and 500 pF), it overstates the drop near the rails, and it passes a fifth of the part's short-circuit current.
 - **Neutral values are not always representable.** R_o = 0 or C_L = 0 make 1/R_o or 1/C_L infinite, and both make the level stiff. Test those as limits with a bound from the physics, and keep floors (C_L ≥ 1 pF, R_o ≥ 1 Ω), so the level never gets stiffer than a screen can afford.
 - **Datasheet drift and conditions.** Name the part and revision, not a family ("the 741"), and the conditions of each value (load, supply).
-- **The faded comparison is per sweep.** A fast sweep erases the previous level's run before it can be compared.
+- **The faded comparison is per sweep.** A fast sweep erases the previous level's run before it can be compared. Single runs keep it, which is how the person compares levels (input 13).
 
 ## Sources
 
@@ -271,4 +280,5 @@ Confirmed and kept:
 - The first review: `/tmp/claude-0/-home-user-ctrl/281fed85-1c0b-52ae-b29a-1fd26dd76401/scratchpad/dlx/` (`sim.mjs`, the four levels; `main.mjs`, the example; `pm.mjs`, phase margins and sensitivity; `checks.mjs`, `checks2.mjs`; `exact.mjs`, exact responses; `wide.mjs`, 1 ms/div; `twopole.mjs`, the two-pole oscillation).
 - The second review: `/tmp/claude-0/-home-user-ctrl/281fed85-1c0b-52ae-b29a-1fd26dd76401/scratchpad/review/` (`jac.mjs`, step bounds of every library system on main; `opamp.mjs`, RK4 of levels 2 to 4).
 - This revision's re-checks: `/tmp/claude-0/-home-user-ctrl/281fed85-1c0b-52ae-b29a-1fd26dd76401/scratchpad/dlr/` (`nums.mjs` and `nums2.mjs`, settling robustness, peaks against C_L, eigenvalue steps; `nums3.mjs`, exact responses after each edge; `lim.mjs` and `lim2.mjs`, the R_o limit; `sine.mjs`; `energy.mjs` and `charge.mjs`; `pm.mjs`, closed-form margins).
+- The ringing check after the person's answers: `/tmp/claude-0/-home-user-ctrl/281fed85-1c0b-52ae-b29a-1fd26dd76401/scratchpad/dl13/ringing/ringing.mjs` (level 3's closed-loop poles and phase margin per C_L, and an RK4 run of the example at 10 ns: overshoot, ringing frequency from the crossings of the final value, settling; levels 3 and 4 on the second step).
 - The datasheet text: `/tmp/claude-0/-home-user-ctrl/281fed85-1c0b-52ae-b29a-1fd26dd76401/scratchpad/dl/mcp6001.txt`.

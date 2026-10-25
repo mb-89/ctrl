@@ -16,7 +16,7 @@ Reader: whoever picks the next piece of work.
 - The scope's XY mode with Δ (the error over the reference), its gestures, status and refit on a mode change ([instrument.md](instrument.md)).
 - System library: ten 5-second systems, nine of them controlled (motor, following a sine, the motor in sliding mode, encoder errors with a shaft resonance, conical tank, pendulum swing-up, triple pendulum swinging up from hanging, the badly tuned oven, the HIL motor), with disturbances.
 - Earlier runs fade over five runs for comparison.
-- Live (HIL) mode: an External plant block, a plant outside the page over WebSocket (JSON-RPC 2.0, 100 Hz, the plant sets the cycle and defines the signals), watchdogs and a latched E-stop on both sides (the page's E-STOP key, the plant's stop key), Run and Stop through the plant, the loop in a Web Worker, live edits of every controller and observer parameter; `hil-plant.zip` (`hil_plant.py` with runme.sh and runme.ps1) and the "HIL: external motor" system; `window.loopTuner.live` for agents ([hil.md](hil.md)).
+- Live (HIL) mode: an External plant block, a plant outside the page over WebSocket (JSON-RPC 2.0, 100 Hz, the plant sets the cycle and defines the signals), watchdogs and a latched E-stop on both sides (the header's E-STOP, the plant's window with its red STOP), Run and Stop through the plant and nothing running by itself, Single finishing the run, full scales and the ramp-in, both modes (control with r and e for the plant's log; reference, with its own library system), Hold, the Live controls in the Plant tab's panel, the loop in a Web Worker, live edits of every controller and observer parameter; `hil-plant.zip` (`hil_plant.py` with its window or console, `--mode`, `--plant`, `--vary`, `--log`, `--bench`; runme.sh, runme.cmd and runme.ps1, on uv's own Python); 200 Hz measured sound; the page's own guide for agents (`loopTuner.help()`), every key answering through the API; who latched an E-stop resets it ([hil.md](hil.md)).
 - Speed in the header: simulated time at any factor (1× real time, 0.1× … ∞ as fast as possible), never faster than the page simulates the screen (∞ runs at that speed), saved with the project; the achieved speed measured beside it; Auto-tune runs at it, each run lasting its own length; held at 1× while a live plant is connected ([instrument.md](instrument.md#speed)).
 - Saving traces: Save ▾ stores the screen with every signal (CSV, JSON) or as a picture (PNG); the live record keeps the last minutes of every live signal; saved traces open as dashed references, stepped through when longer than the screen ([instrument.md](instrument.md#save-the-live-record-and-references)).
 - Spectrogram levels: a strip with the amplitudes' histogram and draggable levels (after pyqtgraph), automatic by default, per signal; and a colour switch, Absolute or Above noise (dB above the noise at each frequency) ([instrument.md](instrument.md)).
@@ -29,10 +29,21 @@ Reader: whoever picks the next piece of work.
 1. **Auto-tune, more**: the goal saved in the project; a robustness check against plant variations; flipping through a block's variants; AMIGO and Cohen–Coon rules, phase-margin placement from the relay's measured point; simulations in a Worker; tuning a designed variant's own inputs (Q, R, Tcl) rather than its twin's numbers.
 2. **Controller, more**: variants built as diagrams (freeform), MIMO, more library entries (lead/lag, observer-based state feedback, MPC).
 3. **Analysis, more**: the gain marker on the locus, the gang of four, Nichols, disk margins, and the root locus in a Worker for loops with long dead times ([analysis.md](analysis.md), "Not built yet"); an Observer's own dynamics in the loop (observer types need `linear`, [designs.md](designs.md)).
+4. **The diagram lays itself out** ([diagram-layout.md](diagram-layout.md), designed, not built; the person's [input 11](../input/2026-10-25-11-diagram-auto-layout.md)). In its §12 steps:
+   - vendor ELK (elkjs 0.12.0) with its manifest and licence notice;
+   - the layout in `src/core/layout.js`: feedback found from the wires, the return path mirrored, ELK called synchronously, cached, re-measured on an idle machine;
+   - the build's vendored section and the provenance and standalone tests;
+   - the edits in core: insert on a wire, delete with joining, move, swap, branch, group, Ungroup;
+   - x, y and flip dropped from the format and the library;
+   - the Plant tab drawing the layout with a 200 ms glide;
+   - the gestures (drop onto a wire, click to insert, Del joins, drag along a wire to branch, keyboard, Quick insert);
+   - the narrow window and the Playwright checks.
+
+   Coordinate with feat/design-system and feat/designs, which touch `src/ui/plant.js`.
 
 ## Later
 
-- Live, more ([hil.md](hil.md#not-yet)), from the person's words of 2026-10-24: a plant that runs its own loop and takes the reference r from the page ("we could also be sending the reference value"); signals the plant only logs ("use our page here just to log stuff"); an agent tuning a live loop through MCP ("could we also connect an agent to that web page"); identifying the live plant, which varies by up to ±15 % and is not described to the page, so Auto-tune and Analysis work for HIL ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)); then several External blocks, remote plants (wss://, a token), a trigger for live sweeps, a plant recording on its own side. Check `runme.ps1` and the plant's timing on Windows (untested here).
+- Live, more ([hil.md](hil.md#not-yet)), from the person's words of 2026-10-24: signals the plant only logs (outputs that are not ports); an agent tuning a live loop through MCP ("could we also connect an agent to that web page"); identifying the live plant, which varies by up to ±15 % and is not described to the page, so Auto-tune and Analysis work for HIL ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)); then several External blocks, remote plants (wss://, a token), a trigger for live sweeps, binary frames above 200 Hz. Check `runme.cmd`, `runme.ps1` and the plant's timing on Windows (untested here; `--bench 30` before relying on 100 Hz).
 - 3D views (URDF); MIMO; WebAssembly for the simulation core if a feature needs the speed (the person: fine, not required); system identification from measured data (Arb input + measured output); WebAssembly if a feature needs the speed.
 
 - Sliding mode, later (research Recommendation 9): a model-based law (equivalent control) and implicit super-twisting as designed twins, now that the design layer is in; `s` as a controller signal on the scope; the Motor in Gain/Sum/Integrator form, after a step bound that sees integrator loops (a finite-difference Jacobian in `compileDiagram`), and a **Product** primitive (copper loss, electrical and mechanical power as exact signals; the cart–pole rebuild needs it too); Levant's robust differentiator as an Observer; a spacecraft axis with on/off thrusters (phase-plane control with deadband and hysteresis) as a second example; "time at a limit" in the CLI's metrics.
@@ -40,13 +51,19 @@ Reader: whoever picks the next piece of work.
 ## Plant editor, not yet
 
 - Subsystem mask: subsystem parameters that set inner blocks' parameters (the person, 2026-10-24).
-- Ungroup; copy and paste; multiple plant inputs and outputs; the disturbance as a Source at the plant input.
+- Copy and paste; multiple plant inputs and outputs; the disturbance as a Source at the plant input. (Ungroup is now part of [diagram-layout.md](diagram-layout.md).)
+- After the layout ([diagram-layout.md](diagram-layout.md) §13):
+  - vector wires for the triple pendulum's 8 state wires, with [robot.md](robot.md) §2;
+  - best of several seeds or thoroughness 50, if the idle-machine timings allow;
+  - the layout in a Worker, only if a level exceeds 100 ms;
+  - a CLI command that draws a diagram.
 
 ## Open questions
 
 - Header bar: move the file actions into a menu? (Person raised it, 2026-10-24; later: keep the header as it is for now, with the time control and E-STOP joining it.)
+- Diagram layout ([diagram-layout.md](diagram-layout.md) §4, interpretations): should Del join a block's neighbours by default, with Shift+Del deleting without joining? Most tools make joining the variant. And is the main line the longest path to a Sink? In the mass–spring–damper that makes the spring energy the line's end and x a tap.
 - Speed at ∞ on a plain sweep: answered by review (not by the person yet; decisions.md, time control after review). The screen's simulation is timed, ∞ runs at that speed and no setting runs faster, so ∞ reads the simulation's own speed, as Auto-tune's ∞ does. It still depends on the time per division, since the simulation takes 2000 steps for any screen: the oven reads 170–300× on a 5 s screen and 0.7× on a 10 ms one, the DC motor 5–9× on a 100 ms one, the encoder 32× and the triple pendulum 63× on 5 s screens (build container). Ask the person: is that the limit they meant, and should a finite speed above it replay the screen faster than it can be simulated (1× real time on a 10 ms screen) instead of being held to it?
-- Earlier runs at high speed: at ∞ only a changed run fades the others; at 100× on a 5 s screen the run before an edit is gone in about 0.2 s. Count only changed runs at every speed (then at 1× an old run stays until the next edit), or fade by time? Ask the person.
+- ~~Earlier runs at high speed~~: answered: no change (2026-10-25, [input 13](../input/2026-10-25-13-detail-levels-answers.md)). At a finite speed every sweep still fades the earlier runs; at ∞ only a changed run does. To compare (detail levels, or any edit), the person runs Single runs and compares the traces, which stay and fade over five runs. ("So we don't need to change anything about the system.")
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
 - ~~Should the input repeat with its period?~~ Settled (2026-10-24): it repeats; no play-once mode.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?
@@ -56,3 +73,11 @@ Reader: whoever picks the next piece of work.
 ## Backlog, at the very end (the person, 2026-10-24)
 
 - **Controller benchmark with a Pugh matrix and a report.** Once a plant is identified (and we trust the model), tune every controller type the library knows on it (PID with feedforward and anti-windup, state feedback/LQR, gain scheduling, sliding mode variants, …), score each against criteria (following, disturbance rejection, overshoot, robustness to the plant's ±15 % variation, effort and actuator wear, noise sensitivity, complexity) in a Pugh matrix against a datum (the PID), pick the best and produce a report. The person: "If we have nothing else … you can try to do that benchmark mode on your own." Input file 10.
+- **Detail levels** ([detail-levels.md](detail-levels.md), designed and answered): at the very end; "If we get everything else done, then we can add detail levels" (2026-10-25, input 14).
+
+## Later, from the PUMA notes (2026-10-25, input 14)
+
+- Views bind to visible Sinks; deleting a Sink that a view or a channel uses warns and names who uses it (replaces the hidden probes once the 3D view runs).
+- Joint end stops for the robot, then an Off variant (without stops the arm would fall through itself).
+- Revisit how the robot controller is modelled (diagram variants) once it runs.
+

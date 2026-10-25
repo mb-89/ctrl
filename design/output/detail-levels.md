@@ -1,13 +1,13 @@
 # Detail levels
 
-Reader: whoever builds detail levels (levels of a subsystem, the step bound they need, the validity checks, the op-amp example) or changes a model so it can have them. The person's words are in [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md), last section. The research, with every number checked, is in [../research/detail-levels.md](../research/detail-levels.md); its first section lists what two reviews corrected in this plan. Three prerequisites are shared with [transparent-models.md](transparent-models.md) and defined there:
+Reader: whoever builds detail levels (levels of a subsystem, the step bound they need, the validity checks, the op-amp example) or changes a model so it can have them. The person's words are in [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md), last section; their answers to this page's questions are in [input 13](../input/2026-10-25-13-detail-levels-answers.md) (§14). The research, with every number checked, is in [../research/detail-levels.md](../research/detail-levels.md); its first section lists what two reviews corrected in this plan. Three prerequisites are shared with [transparent-models.md](transparent-models.md) and defined there:
 - subsystem masks and formula parameters;
 - the Integrator with limits;
 - the Equations block.
 
 Where the code and this page differ once it is built, the code wins and this page is fixed.
 
-**Any subsystem can hold several levels of detail: ordered, named diagrams with identical ports, each one openable.** The person picks the level per subsystem on its block (a level chip, `L2/4`), or caps every subsystem at once ("Detail ≤ 1"). The level that runs is the chosen one, lowered by the cap. Each level's name says what it adds ("+ output resistance and cable"); the page shows how many states and parameters it costs and where it is valid. When a run leaves that validity, the page says so. The person's experiment works with what runs: cap the detail, design or tune, keep the numbers, raise the cap, and watch the loop get worse. The first example is a circuit board: an op-amp follower driving a cable. At levels 1 and 2 the follower is perfect. At level 3 the op-amp's output resistance meets the cable's capacitance, and the same steps overshoot 38 % and ring for 4 µs. Level 4 adds slewing, which changes the large step.
+**Any subsystem can hold several levels of detail: ordered, named diagrams with identical ports, each one openable.** A global level (**Detail**, in the Plant tab) applies to every subsystem with levels. A subsystem may override it on its block (a level chip, `L2/4`), above or below. The level that runs is the override if there is one, else the global level, in both cases at most the highest level the subsystem has: a global 4 runs level 2 on a block with two. **Clear**, beside the global level, removes every override at once; undo restores them. Each chip shows whether its block is overridden or clamped. Each level's name says what it adds ("+ output resistance and cable"); the page shows how many states and parameters it costs and where it is valid. When a run leaves that validity, the page says so. The person's experiment works with what runs: set the global level low, design or tune, keep the numbers, raise it, and watch the loop get worse. Levels are compared with Single runs: earlier runs stay on screen, fading, as after any edit. The first example is a circuit board: an op-amp follower driving a cable. At levels 1 and 2 the follower is perfect. At level 3 the op-amp's output resistance meets the cable's capacitance, and the same steps overshoot 38 % and ring at 541 kHz for 4 µs: the ringing every electrical engineer knows, more as the cable grows. Level 4 adds slewing, which changes the large step.
 
 (The person: "you can have a model of something and it has different detail levels … the interfaces stay more or less the same, but … the model introduces more calculations and more parameters … if I increase detail level, the control works worse because then there are some effects that we didn't model right, and everything we model should support this detail level separation.")
 
@@ -20,7 +20,7 @@ Where the code and this page differ once it is built, the code wins and this pag
 5. **Each level is valid somewhere and says where.** A level carries a validity sentence and Valid range blocks: on a signal's value, on its rate, or on a parameter formula. The page reports when a run leaves them. What the checks cannot catch, the sentence says. Each level is held by tests to its own physics inside that validity (§9).
 6. **Neutral values reproduce the level below.** With the added parameters at their neutral values (a limit at ±∞, a coefficient of 1, a time constant of 0), level k + 1 equals level k, bit for bit, where the neutral value can be represented. Where it cannot (a resistance going to 0), it approaches level k as the parameter goes to its floor, and a test bounds the gap by the physics.
 7. **No black boxes.** Every level is an ordinary diagram of blocks that can be opened, its validity checks included. Nothing is compiled or hidden.
-8. **Only the running level runs; every level is checked.** Normalisation checks all levels (ports, names, formulas). The compile builds only the running level, so unused levels cost nothing. Changing a level or the cap is a structural edit: the system compiles and runs again, and the previous run fades for comparison.
+8. **Only the running level runs; every level is checked.** Normalisation checks all levels (ports, names, formulas). The compile builds only the running level, so unused levels cost nothing. Changing the global level or an override, or Clear, is a structural edit: the system compiles and runs again, and earlier runs stay, fading, as after any edit.
 9. **A design sees what runs.** Designs, Auto-tune and Analysis use the running levels. To keep a design made on a simple level, copy it as numbers (Auto-tune's results already are numbers) before raising the detail. Pinning a design to less detail than runs waits for an example that needs it (§13).
 10. **Controllers, Observers and live plants sit outside subsystems with levels.** Their variants, designs, tuning and probes are keyed by the block's path, which would be ambiguous across levels.
 11. **Every model is built so a level can be added.** A new physics model is a subsystem whose ports are its terminals, with its parameters on its mask, and each effect a named block or group of blocks.
@@ -42,41 +42,46 @@ Where the code and this page differ once it is built, the code wins and this pag
           "params": { "value": "CL", "max": "1/(20*pi*GBW*Ro)", "says": "it assumes a cable below {1/(20*pi*GBW*Ro):F}, its pole a decade above the crossover (level 3 models the cable)" } } ],
         "wires": [ … ] } },
     { "name": "+ gain–bandwidth", "valid": "…", "diagram": { … } }
-  ],
-  "level": 1 }
+  ] }
 ```
+
+With `"level": 3` beside `levels`, the Board would run level 3 whatever the global level. The example has no override.
 
 - `mask` and `params` are the subsystem mask of [transparent-models.md](transparent-models.md) §1.4. Levels add optional `min` and `max` to a mask field, as block parameters have them (`num(…, { min })` in `diagram.js`). Loading refuses a value outside them with a sentence; the wheel and SI entry stop at them.
 - `levels`: two or more `{ name, valid, diagram }`.
   - `name` is short (at most 32 characters), unique within the subsystem, and says what the level adds. The page uses it wherever it must say what a lower level leaves out.
   - `valid` is a sentence. `{formula:unit}` in it is evaluated over the mask and printed with an SI prefix (`{GBW:Hz}` reads "1 MHz"; `siUnit` from `ui/units.js`, which has no DOM, so the CLI uses it too; it gains the prefix `p`). Its numbers follow the parameters, and it needs no unit constants.
   - `diagram` is an ordinary diagram. Its Valid range blocks are the level's machine checks (§4).
-- `level`: the chosen level, **1-based** (`L1` is `"level": 1`; default 1). It is 1-based because the person reads levels and the cap as numbers ("Detail ≤ 2"). A Controller's `variant` is 0-based: that is a different thing.
-- A subsystem without `levels` keeps its `diagram`, exactly as today: it is a one-level subsystem. A subsystem with both `diagram` and `levels` is refused with a sentence. Deleting levels down to one turns the subsystem back into a plain one with `diagram`.
+- `level` (optional): the subsystem's **local override**, **1-based** (`L3` is `"level": 3`). Absent, the subsystem runs the global level. It is 1-based because the person reads levels as numbers ("Detail 2", `L2/4`). A Controller's `variant` is 0-based: that is a different thing.
+- A subsystem without `levels` keeps its `diagram`, exactly as today: it is a one-level subsystem. A subsystem with both `diagram` and `levels` is refused with a sentence. Deleting levels down to one turns the subsystem back into a plain one with `diagram`, without `level`.
 - In code, every read goes through `core/levels.js`, which imports only `formula.js`:
   - `subLevels(b)` returns `b.levels`, or `[{ name: '', diagram: b.diagram }]`;
   - `levelDiagram(b, k)`;
-  - `runningLevel(b, cap)`;
-  - `applyDetail(diagram, cap)`: a copy in which every subsystem with levels, at every depth, has `level` set to its running level;
+  - `runningLevel(b, global)`;
+  - `applyDetail(diagram, global)`: a copy in which every subsystem with levels, at every depth, has `level` set to its running level;
+  - `clearOverrides(diagram)`: a copy without `level` on any subsystem, at every depth, inside every level (also those that do not run);
   - `checkPorts(b, where)`;
   - `maskScope(b, outer)`;
   - `levelText(sentence, scope)`.
 
-**Which level runs.**
-- `runningLevel = min(level, cap ?? ∞, n)`, where `cap` is the project's global setting `sim.detail` (§3.2).
-- Nested subsystems with levels are resolved independently, at every depth.
-- **One place applies the cap.** `runDiagram(project)` in `project.js` returns `applyDetail(plantDiagram(project.system.plant), project.sim.detail)`: the diagram as it runs. Every compile site uses it instead of reading `system.plant.diagram`:
+**Which level runs** ([input 13](../input/2026-10-25-13-detail-levels-answers.md)).
+- `runningLevel = min(level ?? global, n)`, where `level` is the subsystem's override, `global` the project's global level `sim.detail` (default 1, §3.2) and `n` the number of levels the subsystem has.
+  - Global 4 on a subsystem with 2 levels runs level 2: it is **clamped**. So is an override above `n`, which only a file written by hand or a deleted level can leave.
+  - An override may be above or below the global level. Global 1 with the Board overridden to 3 runs the Board at 3 and every other subsystem at 1.
+  - There is no separate "Highest": the global level at its largest number runs every subsystem without an override at its most detailed level.
+- Nested subsystems with levels are resolved independently, at every depth: a nested subsystem follows the global level unless it has its own override; its parent's override does not pass down.
+- **One place applies the detail.** `runDiagram(project)` in `project.js` returns `applyDetail(plantDiagram(project.system.plant), project.sim.detail)`: the diagram as it runs. Every compile site uses it instead of reading `system.plant.diagram`:
   - `simulateSystem` through `evaluateSystem`;
   - the Plant tab's check (`ui/plant.js`, the `compileDiagram` call near line 336; it forces the viewed level, §3.1);
-  - Live (`live.js` `build`). Its `update()` compares the applied diagram, so changing the cap during Live rebuilds;
+  - Live (`live.js` `build`). Its `update()` compares the applied diagram, so changing the global level, an override or Clear during Live rebuilds;
   - the v1 loop path (`sim.js`, via `plantDiagram`);
   - the model compiles of the design layer (`project.js` and the closure in `compileDiagram`, on feat/designs);
   - `cli.mjs`.
   
   The editors (Plant tab, Controller tab) keep editing the stored diagram.
-- `simOf(project)` gains `detail`, so the acquisition key (`acqKeyOf` in `app.js`, which hashes `simOf(p)`) changes with the cap and the screen runs again.
+- `simOf(project)` gains `detail`, so the acquisition key (`acqKeyOf` in `app.js`, which hashes `simOf(p)`) changes with the global level and the screen runs again. Overrides sit in the plant, which the key already hashes (`p.system`).
 - **Paths through levels.** A subsystem inside a level is addressed with the level in its path segment: `board@3/opamp`. The Plant tab's open path, `loopTuner.level()` and `el.levels` use these paths. Top-level subsystems are plain ids (`board`).
-- The compile records `el.levels: [{ path, name, chosen, running, n, names, states, blocks, params, valid }]` for the UI, the CLI and agents. `states`, `blocks` and `params` are lists, one entry per level, counted from the diagrams without compiling them: an Integrator is 1 state, a transfer function its order; `params` counts the mask fields read by blocks (not by validity checks). The running level's step comes from the run (§5).
+- The compile records `el.levels: [{ path, name, override, running, clamped, n, names, states, blocks, params, valid }]` for the UI, the CLI and agents. `override` is the subsystem's `level` or `null`; `clamped` is true when the override or the global level is above `n`. `states`, `blocks` and `params` are lists, one entry per level, counted from the diagrams without compiling them: an Integrator is 1 state, a transfer function its order; `params` counts the mask fields read by blocks (not by validity checks). The running level's step comes from the run (§5).
 
 ### 2.2 The port check
 
@@ -132,14 +137,17 @@ Editing the mask's fields themselves (adding or renaming a parameter) is JSON on
 
 ### 3.1 Per subsystem: the level chip, the panel, the level tabs
 
-**On the canvas**, a subsystem with levels carries a level chip at its top right, in the chip style of the one design system:
-- `L2/4`: level 2 of 4 runs.
-- `L1/4 ↓`: the cap lowered it. Its tooltip reads "capped by Detail ≤ 1; chosen: L3".
-- The chip turns `--warn` with a `!` when the running level left its validity (§4), and `--bad` when the run needed more steps than the cap allows (§5). The tooltip gives the sentence.
+**On the canvas**, a subsystem with levels carries a level chip at its top right, in the chip style of the one design system. At a glance it says which level runs and why:
+- `L2/4`, outlined: level 2 of 4 runs, from the global level.
+- `L3/4`, filled: **overridden** on this block. Its tooltip reads "set on this block; global level 1".
+- `L2/2 ↓`: **clamped**: the global level (or the override) is above the levels the block has. Its tooltip reads "global level 4; Board has 2 levels". An overridden block that is clamped is filled and carries the `↓`.
+- The chip turns `--warn` with a `!` when the running level left its validity (§4), and `--bad` when the run needed more steps than the step cap allows (§5). The tooltip gives the sentence.
+
+Filled against outlined is a difference of shape, not only of colour, so it reads in both themes and without colour vision.
 
 **The block's formula line** shows the running level's name ("+ output resistance and cable").
 
-**A click on the chip** opens a menu of the levels by name, with the running one marked. Choosing one sets `level`, as one undo step. This is the quick way to step through levels while watching the scope. The menu stays inside the viewport, as every popover must ([input 12](../input/2026-10-25-12-popovers-cut-off.md)).
+**A click on the chip** opens a menu: **Global level (L1)** at the top, then the levels by name, with the running one marked. Choosing a level sets this block's override (`level`); choosing Global level removes it. Each is one undo step. This is the quick way to step through one block's levels. The menu stays inside the viewport, as every popover must ([input 12](../input/2026-10-25-12-popovers-cut-off.md)).
 
 **The parameters panel** (subsystem selected) has three parts:
 - **Parameters**: the mask's fields (§2.3), with SI prefixes and the wheel, as everywhere. Each is marked "used from L3", and greyed "not used at L2" when the running level's blocks do not read it.
@@ -151,30 +159,40 @@ Editing the mask's fields themselves (adding or renaming a parameter) is JSON on
   - A level that does not compile is marked with its first error. The levels are compiled when the panel is shown, not on every compile.
   - Opening a row that does not run shows its step on demand, from that level's Jacobian at rest (§5).
 
-  A click chooses a level. **Duplicate as next level** inserts a copy after it, named "<name> (copy)", and chooses it. **Rename**, **Delete** and **↑ ↓** reorder. Deleting down to one level makes the subsystem a plain one again.
+  A click on a row sets the override to that level, as the chip's menu does. **Duplicate as next level** inserts a copy after it, named "<name> (copy)", and sets the override to it, so the copy runs. **Rename**, **Delete** and **↑ ↓** reorder. Deleting down to one level makes the subsystem a plain one again.
   - A one-level subsystem shows only **Add a level**, which turns it into two levels with the same diagram.
-  - Moving or deleting the chosen level keeps the choice on the same diagram.
+  - Moving a level keeps an override on the same diagram. Deleting the overridden level removes the override: the subsystem follows the global level again.
 - **Open**, as today.
 
 **Opening.**
 - Double-clicking the subsystem opens the running level. The breadcrumb reads "Plant › Board (L3 + output resistance and cable)".
 - A row of level tabs sits above the canvas inside the subsystem: `L1 Ideal · L2 + gain–bandwidth · ● L3 + output resistance and cable · L4 + large signal`. The dot marks the level that runs. The tab being viewed uses `.tab.on`, the one "selected" style.
-- Viewing a level does not change what runs. A level that does not run is fully editable, under a quiet line: "Level 4 does not run (Board runs level 3) · Run this level".
+- Viewing a level does not change what runs. A level that does not run is fully editable, under a quiet line: "Level 4 does not run (Board runs level 3) · Run this level". Run this level sets the override.
 - **The Plant tab's check compiles what is viewed.** Today it compiles the root diagram and outlines errors by matching node names (`ui/plant.js`, near line 340). With levels it compiles `applyDetail` with each subsystem on the open path forced to its viewed level, so an error outlines the block in the level on screen, never a same-named block in another level.
 - Each level's diagram is laid out like any diagram, as the auto-layout plan decides ([input 11](../input/2026-10-25-11-diagram-auto-layout.md)).
 - Esc and the breadcrumb go back up, as today.
 
-### 3.2 Globally: Detail
+### 3.2 Globally: the global level, in the Plant tab
 
-- **The Plant tab's panel, with nothing selected**, gains a **Detail** row with a select: **As chosen** (default) · **≤ 1** · **≤ 2** · … (up to one below the most levels any subsystem has). The row appears only when some subsystem has levels. "≤ 1" is Amesim's "Premier submodel": every model at its simplest.
-- **On the display**, the status line carries a chip whenever the setting is not As chosen ("Detail ≤ 1"). A click opens the Plant tab on that panel. It also carries the first validity sentence of the run, if there is one. In Live mode the chip's tooltip says it applies to the page's models, not the live plant.
-- No table of subsystems: no example has two subsystems with levels, and each block's chip already shows its state.
-- Saved as `sim.detail` (§10): absent (As chosen) or an integer ≥ 1. Loading a whole system from the library sets it from the entry, which has none: As chosen. Undo covers it.
+The person: "I have a global level that sets everything that I didn't set by hand. Then I have a local override … And then I have a … clear button where I clear the local overrides and everything is put back onto the global level" ([input 13](../input/2026-10-25-13-detail-levels-answers.md)).
+
+- **The Plant tab's panel, with nothing selected**, gains a **Detail** row:
+  - a select of the global level, **1**, **2**, … up to the most levels any subsystem has; default 1;
+  - beside it, **Clear**, with the number of overrides ("Clear 2 overrides"). Its tooltip lists them ("Board L3, Motor L1"). It is disabled when there is none.
+  
+  The row appears only when some subsystem has levels.
+- Detail 1 is Amesim's "Premier submodel": every model at its simplest, except the blocks overridden by hand. The largest number puts every block without an override at its most detailed level.
+- **Clear** removes every override, at every depth and inside every level (`clearOverrides`, §2.1), so every subsystem runs the global level again. It is one undo step; undo restores the overrides.
+- **Only in the Plant tab** ("it belongs into the plant. It doesn't belong into the header"). The header and the display carry no Detail control and no Detail chip. The display's status line still shows the first validity report of the run, which names the subsystem and its level (§4). In Live mode the row's tooltip says it applies to the page's models, not the live plant.
+- No table of subsystems: no example has two subsystems with levels, and each block's chip already says whether it is overridden or clamped.
+- Saved as `sim.detail` (§10): absent (1) or an integer ≥ 1. A stored value above every subsystem's levels is kept and clamped per subsystem. Undo covers it.
+- **The library.** Each System library entry carries the global level that runs its models as today, and no overrides (§7). Loading a whole system, or its plant alone, sets the global level from the entry, since it belongs to the plant; loading only its input leaves it.
 - Agents:
-  - `window.loopTuner.detail(k?)` sets or reads it (`null` or a number) and returns `{ detail, subsystems: el.levels }`.
-  - `window.loopTuner.level(path, k?)` does the same for one subsystem.
+  - `window.loopTuner.detail(k?)` sets or reads the global level (a number) and returns `{ detail, subsystems: el.levels }`.
+  - `window.loopTuner.level(path, k?)` sets or reads one subsystem's override; `k = null` removes it. It returns that subsystem's entry of `el.levels`.
+  - `window.loopTuner.clearOverrides()` does what Clear does and returns as `detail()`.
   - `window.loopTuner.info()` returns the last run's information: `{ validity, warnings, steps, h }` (§4).
-  - The CLI takes `--detail <k>` on `run`, `design` and `autotune`, and prints validity reports and warnings.
+  - The CLI takes, on `run`, `design` and `autotune`: `--detail <k>` (the global level), `--level <path>=<k>` (an override, repeatable) and `--clear-overrides` (applied before `--level`). It prints validity reports and warnings.
 
 ### 3.3 The scope and missing signals
 
@@ -247,14 +265,14 @@ With the norm, the encoder example would hit the step cap and the triple's run w
 **The op-amp's steps.** Level 2 needs steps ≤ 80 ns, levels 3 and 4 ≤ 140 ns. On the 20 µs screen every level takes the record's 2000 steps of 10 ns. At 1 ms/div, level 2 takes 63 substeps per 5 µs record (126 k steps) and level 3 takes 36 (72 k).
 
 **Too many steps.**
-- A detailed level on a long screen can need more steps than the cap (400 000). At 10 ms/div the op-amp needs 1.26 M steps at level 2 and 712 k at level 3.
+- A detailed level on a long screen can need more steps than the step cap (400 000). At 10 ms/div the op-amp needs 1.26 M steps at level 2 and 712 k at level 3.
 - The run is still drawn, as today, but the warning becomes specific and reaches the page (§4). It names the fastest state's subsystem and level: "Board L3 needs steps of 140 ns; this 100 ms screen would take 712 k steps; it ran 400 k: inaccurate. Shorten the screen or lower the level."
 - The level chip turns `--bad`.
 - An implicit or multirate solver is not built (§13).
 
 **Floors.** The neutral values that cannot be represented are also the stiff ones, so the mask stops short of them:
 - C_L ≥ 1 pF: level 3 then needs 0.24 ns steps (86 k on the 20 µs screen);
-- R_o ≥ 1 Ω: 0.50 ns steps (40 k). At 0.1 Ω it would need exactly the 400 k cap.
+- R_o ≥ 1 Ω: 0.50 ns steps (40 k). At 0.1 Ω it would need exactly the 400 k step cap.
 
 Each floor alone fits a screen. Both at once (|λ| ≈ 1/(R_o·C_L) = 10¹² 1/s) do not, and the warning says so.
 
@@ -275,10 +293,10 @@ All three use the running levels, through `runDiagram` (§2.1). Nothing in them 
 - **Model compiles** take the applied diagram, so the plant a block sees ([designs-in-the-page.md](designs-in-the-page.md) §4) is the running levels.
 - **`plantKey`** replaces each subsystem with levels by its running level's diagram with formulas resolved to numbers, and leaves out Valid range blocks and the level fields (`name`, `valid`), as it leaves out Sink names today. Consequences:
   - editing a level that does not run, or a mask value that only other levels or validity checks read (C_L while level 1 runs), never re-designs;
-  - editing the running level or a value it reads does, and so does changing which level runs, by its choice or by the cap.
+  - editing the running level or a value it reads does, and so does changing which level runs, by an override, the global level or Clear.
   
   This refines transparent-models.md §1.4's "plantKey includes the mask values": a mask value counts when a running block reads it.
-- **Refusals gain a hint about detail.** LQR on the motor at level 2 sees the armature current, which no input measures: "LQR needs every state measured. This block sees angle and speed but not Motor/armature (Motor L2): set Detail ≤ 1, wire the current to an input, or add a Kalman Observer."
+- **Refusals gain a hint about detail.** LQR on the motor at level 2 sees the armature current, which no input measures: "LQR needs every state measured. This block sees angle and speed but not Motor/armature (Motor L2): set Detail to 1 or the Motor to L1, wire the current to an input, or add a Kalman Observer."
 - **Copy as numbers** ([designs-in-the-page.md](designs-in-the-page.md)) names what the design saw when the plant has levels: "LQR (numbers, Motor L1)".
 - A Kalman Observer and the Controller it serves see the same levels, since both see what runs.
 - **Plans** (`trajectory`) are keyed by the plant they see, so they follow the same rules.
@@ -290,11 +308,11 @@ All three use the running levels, through `runDiagram` (§2.1). Nothing in them 
 **Identify** (designed, not built) experiments on the plant as it runs.
 
 **The person's experiment, with a Controller:**
-1. Set Detail ≤ 1.
+1. Set Detail to 1 in the Plant tab (Clear first if a block is overridden), and press Single.
 2. Design (then Copy as numbers), or run Auto-tune, or tune by hand.
-3. Set Detail back to As chosen. The numbers run on the detailed levels; the previous run stays faded beside the new one.
+3. Set Detail back up (2 for the motor examples) and press Single. The numbers run on the detailed levels; the earlier run stays on screen, faded, beside the new one.
 
-A designed variant left live would re-design on the detailed plant at step 3 and hide the degradation. That is why step 2 keeps numbers.
+To change one model only, override its block instead (its chip) and Clear afterwards. A designed variant left live would re-design on the detailed plant at step 3 and hide the degradation. That is why step 2 keeps numbers.
 
 ## 7. Every model gets levels
 
@@ -303,7 +321,7 @@ What "everything we model should support this detail level separation" means her
 - every shipped model is built as a subsystem that can take levels (Rule 11);
 - each model gets the levels that are physically meaningful, valid and cheap to test.
 
-The level each System library entry runs today is kept as its chosen level, so no example changes when its model gains levels. A test checks this bit for bit.
+The level each System library entry runs today is kept: each entry carries the global level that runs it (`sim.detail` 2 for the motor examples and the carts, 1 for the tank and the op-amp board) and no overrides. So no example changes when its model gains levels, and the person's experiment (§6) needs no Clear first. A test checks this bit for bit.
 
 | Model (systems that use it) | Levels (today's model in bold) | Validity of the lowest level | When |
 |---|---|---|---|
@@ -329,6 +347,8 @@ The PUMA 560 robot is built the same way: rigid bodies are L1; joint friction, m
 
 **One thing, with a second on request:** the effect the simpler levels did not model makes a loop that looked perfect ring. Then large signals change it again.
 
+**The misbehaviour every electrical engineer knows.** The person asked for one ("I guess it should ring", [input 13](../input/2026-10-25-13-detail-levels-answers.md)). An op-amp follower driving a cable rings, and rings more, longer and slower as the cable's capacitance grows: the op-amp's output resistance and the cable add a pole inside the loop. That is level 3 here.
+
 **The board.**
 - An op-amp of the MCP6001 class (1 MHz CMOS, rail-to-rail; numbers from datasheet DS20001733L, typical at 25 °C) on ±2.5 V, so signals are ground-referenced and everything starts at rest at 0.
 - Wired as a voltage follower.
@@ -346,8 +366,8 @@ Both read on one scale. A 50 mV step and a 1.45 V step, as first researched, can
 **Screen and opening.**
 - 2 µs/div, position 0.
 - Channels: 1 v_in and 2 v_out at 0.1 V/div, offset −0.4 V (0 to 0.8 V, so the 10 nF experiment's first peak, 0.79 V at level 3, stays on screen); 3 i_out at 0.5 mA/div (at 10 nF it leaves the screen, 3.9 mA at level 3; Auto brings it back); 4 off.
-- Opens running in the Plant tab on the diagram (no view), so the Board's level chip is what the person sees.
-- **The faded comparison.** Earlier runs fade once per sweep at a finite speed. A 20 µs screen sweeps many times a second at any speed the page reaches, so the previous level's run would be gone at once. Preferred: answer the open question in [roadmap.md](roadmap.md) ("Earlier runs at high speed") with "count only changed runs at every speed". A level change is a changed run, so the previous level's run stays faded until the next change, and the example needs no speed of its own. This needs the person's yes (§14). If they want slow-motion drawing instead, the entry carries `ui.speed` 4·10⁻⁶× (the 20 µs screen sweeps in 5 s) and the speed becomes temporary: loading a system without one restores the speed the person last set. That changes [instrument.md](instrument.md#speed)'s "a project without it leaves the speed as it is" for library loads only.
+- Opens running in the Plant tab on the diagram (no view), at global level 1 (`sim.detail: 1`) with no override, so the Board's level chip is what the person sees.
+- **Comparing levels: with Single runs, nothing new.** The person: "if I want to compare levels, … I would run a number of single runs and compare the traces. So we don't need to change anything" ([input 13](../input/2026-10-25-13-detail-levels-answers.md)). Running, the 20 µs screen sweeps many times a second, so an earlier level's run fades at once. After Single, earlier runs stay on screen and fade over five runs, as today ([instrument.md](instrument.md)). The notes say to step through the levels with Single. The display, its fading and the speed do not change for levels, and the entry carries no speed.
 - Tags: No controller, Nonlinear (some level is), **Detail levels** (a new feature tag: `systemTags` gives it to any system with a subsystem that has levels).
 
 **Mask** (8 parameters):
@@ -380,7 +400,7 @@ R_o is a physics input, as a motor's R and L are; the test names its source and 
 
 **Notes** (shipped, so no quotes, names or dates):
 
-> A circuit board: an op-amp (a 1 MHz CMOS part on ±2.5 V) wired as a voltage follower drives 1 nF of cable into a 10 kΩ input. The input steps to 80 mV at 1 µs (a small signal), then to 0.5 V at 10 µs (a large one). The Board has four levels of detail with the same ports, and opens at level 1, an ideal op-amp: v_out is exactly v_in. Raise it one level at a time (click L1/4 on the Board); the previous run stays, faded. Level 2 adds the gain–bandwidth: the edges take 0.35 µs, a perfect follower. Level 3 adds the op-amp's output resistance driving the cable: both steps now overshoot 38 % and ring for 4 µs, the effect the simpler levels left out (they say so: they assume a cable below 32 pF). At 10 µs level 3 also says it has left its validity: a step that large makes the op-amp slew. Level 4 adds slewing and the output swing: the small step rings exactly as at level 3, the large one rises more slowly (0.8 µs) and overshoots 19 %. Try the cable C_L on the Board: at 10 nF level 3 keeps ringing past the end of the screen.
+> A circuit board: an op-amp (a 1 MHz CMOS part on ±2.5 V) wired as a voltage follower drives 1 nF of cable into a 10 kΩ input. The input steps to 80 mV at 1 µs (a small signal), then to 0.5 V at 10 µs (a large one). The Board has four levels of detail with the same ports, and opens at level 1, an ideal op-amp: v_out is exactly v_in. Press Single (S), then raise the level one at a time (click L1/4 on the Board, or Detail with nothing selected) and press Single after each: the earlier levels stay on screen, fading. Level 2 adds the gain–bandwidth: the edges take 0.35 µs, a perfect follower. Level 3 adds the op-amp's output resistance driving the cable, a pole inside the loop: both steps now overshoot 38 % and ring at 540 kHz for 4 µs. That is the ringing of an op-amp driving a cable, which the simpler levels left out (they say so: they assume a cable below 32 pF). At 10 µs level 3 also says it has left its validity: a step that large makes the op-amp slew. Level 4 adds slewing and the output swing: the small step rings exactly as at level 3, the large one rises more slowly (0.8 µs) and overshoots 19 %. Turn the cable C_L on the Board at level 3: the more cable, the more it rings, and the longer and slower (500 pF: 23 % at 730 kHz; 10 nF: 74 % at 180 kHz, still ringing at the end of the screen).
 
 **Expected numbers.** RK4 at the record step of 10 ns, the same to the digits shown at 1 ns. Steps are measured 10–90 %. "Within x %" is the time after the step when the output stays within x % of the step. L3's small step is quoted at 1 % and L4's large step at 2 %, because those are the bands that do not sit on a knife-edge (research, Reviewer's corrections 1).
 
@@ -388,20 +408,20 @@ R_o is a physics input, as a motor's R and L are; the test names its source and 
 |---|---|---|---|---|
 | L1 | exact copy | exact copy | not modelled | at load: "C_L 1 nF; it assumes a cable below 32.1 pF"; at 1.00 µs: v_in changes at 8 V/µs, beyond the 0.6 V/µs slew rate |
 | L2 | no overshoot (< 0.001 %), 350 ns, within 2 % after 0.62 µs; phase margin 90° | the same shape | not modelled | at load: as L1; at 10.00 µs: v+ − v− 0.42 V beyond ±95.5 mV (slewing) |
-| L3 | **37.6 %** (peak 110 mV, 0.92 µs after the step), 370 ns, within 1 % after 4.0 µs; **phase margin 33.0° at 519 kHz** | 37.6 % (peak 0.658 V) | 1.04 mA | at 10.00 µs: slewing |
+| L3 | **37.6 %** (peak 110 mV, 0.92 µs after the step), 370 ns, **rings at 541 kHz** (1.85 µs period), within 1 % after 4.0 µs; **phase margin 33.0° at 519 kHz** | 37.6 % (peak 0.658 V) | 1.04 mA | at 10.00 µs: slewing |
 | L4 | identical to L3, bit for bit, until 10 µs | 0.80 µs, peak 0.579 V (**18.7 %**), within 2 % after 3.6 µs | 0.54 mA | none (v_op peaks at 0.73 V; C_L·SR·R_o = 0.30 V) |
 
-**Turning the knob C_L at level 3** (follower phase margin; small-step overshoot and settling):
+**Turning the knob C_L at level 3** (follower phase margin; small-step overshoot, ringing frequency and settling). The more cable, the more it rings, the longer, and the slower. The ringing frequency is the damped frequency of the closed-loop poles; the RK4 run measures it within 0.3 % from the crossings of the final value. All of this table was recomputed for this revision (research, Sources: the ringing check).
 
-| C_L | Phase margin | Overshoot | Within 1 % after | L4's cable check |
-|---|---|---|---|---|
-| 60 pF | 80.5° | none | 0.64 µs | passes |
-| 500 pF | 45.0° | 23.3 % | 2.2 µs | passes |
-| 1 nF | 33.0° | 37.6 % | 4.0 µs | passes |
-| 2.2 nF | 22.6° | 52.6 % | 8.5 µs | passes |
-| 10 nF | 10.7° | 74.3 % | not before the next step; still ringing at 20 µs | fails: above 8.3 nF |
+| C_L | Phase margin | Overshoot | Ringing | Within 1 % after | L4's cable check |
+|---|---|---|---|---|---|
+| 60 pF | 80.5° | none | none (damping ratio 1.21) | 0.64 µs | passes |
+| 500 pF | 45.0° | 23.3 % | 727 kHz | 2.2 µs | passes |
+| 1 nF | 33.0° | 37.6 % | 541 kHz | 4.0 µs | passes |
+| 2.2 nF | 22.6° | 52.6 % | 374 kHz | 8.5 µs | passes |
+| 10 nF | 10.7° | 74.3 % | 178 kHz | not before the next step; still ringing at 20 µs | fails: above 8.3 nF |
 
-**This op-amp rings but never oscillates.** A one-pole op-amp plus the R_o·C_L pole is a two-pole loop, so its phase margin approaches 0° as C_L grows but never crosses it, and the limiters' gain cannot add phase. Real oscillation needs an op-amp with a second pole below its gain–bandwidth (research, "The capacitive-load trap"). Ringing makes the person's point, and it keeps the example to one thing.
+**This op-amp rings; it never oscillates.** A one-pole op-amp plus the R_o·C_L pole is a two-pole loop, so its phase margin approaches 0° as C_L grows but never crosses it, and the limiters' gain cannot add phase. An op-amp with a second pole below its gain–bandwidth could oscillate outright with enough cable; that is not built (§13; research, "The capacitive-load trap"). Ringing is what the person asked for, and it keeps the example to one thing.
 
 **The fix the notes do not take:** an isolation resistor (datasheet §4.3). It is a later "try" if the person wants a second experiment.
 
@@ -442,7 +462,7 @@ New `test/levels.test.mjs` and `test/opamp.test.mjs`; edits to `physics.test.mjs
      - |L2 − L3| ≤ 1.2·(R_o/R_L)·A·f/GBW (0.030 mV; measured 0.0248) after the first 10 µs. Before, the sine's slope jump at t = 0 gives 0.53 mV. The cause is the R_o/R_L divider: the op-amp must drive v_op = (1 + R_o/R_L)·v_out, so its error grows by that factor. The output pole adds about 1.5 µV.
    - Steps below SR/(2π·GBW): L3 and L4 identical bit for bit (90 mV). Above, they differ (100 mV: 0.635 mV).
    - Motor: L1 and L2 within 1 % for a 0.2 Hz voltage sine (0.4 % by the transfer functions), and more than a factor 2 apart at 50 Hz, so the level adds something.
-4. **The example's degradation** (the library entry as loaded, each level forced in turn): the table of §8 within the stated digits (overshoot ± 0.3 %; rise and peak times ± 1 record step; settling times ± 0.05 µs; the 18.7 % and 0.579 V ± 0.5 %), the validity reports of §8's last column, and L4 reporting none.
+4. **The example's degradation** (the library entry as loaded, each level run in turn by the global level): the table of §8 within the stated digits (overshoot ± 0.3 %; rise and peak times ± 1 record step; settling times ± 0.05 µs; the 18.7 % and 0.579 V ± 0.5 %), the validity reports of §8's last column, and L4 reporting none. **The ringing grows with the cable**: at level 3, over the C_L table of §8, the overshoot rises (none, 23.3, 37.6, 52.6, 74.3 %, ± 0.3 %), and the ringing frequency, measured from the crossings of the final value, is within 1 % of the closed-loop poles' damped frequency (727, 541, 374, 178 kHz).
 5. **Guards over every library system with levels:**
    - every level has a name and a validity sentence;
    - identical ports (port check);
@@ -453,7 +473,7 @@ New `test/levels.test.mjs` and `test/opamp.test.mjs`; edits to `physics.test.mjs
    - the running levels of every system are unchanged by this work: the motor examples' runs are bit for bit the same as before;
    - `systemTags` gives "Detail levels".
 6. **Data:**
-   - round-trip of `levels`, `level`, `inf`, mask `min` and `max`, the three kinds of Valid range, and `sim.detail`, inside a masked subsystem with formulas (the mask's own tests are transparent-models.md §8.5);
+   - round-trip of `levels`, `level` (present and absent), `inf`, mask `min` and `max`, the three kinds of Valid range, and `sim.detail` (present and absent), inside a masked subsystem with formulas (the mask's own tests are transparent-models.md §8.5);
    - every refusal sentence of §2;
    - old files load unchanged;
    - a file with both `diagram` and `levels` is refused;
@@ -467,9 +487,9 @@ New `test/levels.test.mjs` and `test/opamp.test.mjs`; edits to `physics.test.mjs
    - Live, the v1 loop path and `Model.bound` get the bound through `el.bound`.
 8. **Design layer** (a test project: the motor's angle loop, measurements angle and speed, an `lqr` variant):
    - with the motor at L2: `states-not-measured` with the detail hint;
-   - with Detail ≤ 1: status ok;
-   - cache, at Detail ≤ 1: a hit after editing L2's diagram, after editing a Valid range, after moving a block, and after choosing L1 instead of L2 (L1 runs either way); a re-design after editing L1, after editing R, and after setting Detail back to As chosen;
-   - Copy as numbers at Detail ≤ 1 names "Motor L1", and its numbers run unchanged at Detail As chosen.
+   - at Detail 1: status ok;
+   - cache, at Detail 1: a hit after editing L2's diagram, after editing a Valid range, after moving a block, and after overriding the Motor to L1 (L1 runs either way); a re-design after editing L1, after editing R, after setting Detail to 2, and after overriding the Motor to L2 at Detail 1;
+   - Copy as numbers at Detail 1 names "Motor L1", and its numbers run unchanged at Detail 2.
 9. **Validity:**
    - a value check reports the first sample at or beyond its range, with t and value, once;
    - a rate check reports a step on a 20 µs screen and not the 1 kHz sine, nor the step at 1 ms/div;
@@ -478,33 +498,42 @@ New `test/levels.test.mjs` and `test/opamp.test.mjs`; edits to `physics.test.mjs
    - `info` reaches the page: after a run, `loopTuner.info()` returns the validity reports and warnings, and the status line shows the first.
 10. **Readers of a subsystem's diagram:** a project whose subsystem has levels goes through each reader listed in §11 (copy for Live, the HIL finder, Auto-tune's walks, the Controller, Analysis and Auto-tune tabs, the Plant tab's navigation and summary, `systemTags`) without error, and each reads the running level. This replaces a grep for `.diagram`, which would also hit the legitimate `plant.diagram`, `ctx.diagram` and `e.diagram`.
 11. **Bundle:** `bundleScript()` parses with `core/levels.js` in MODULES before `diagram`.
+12. **Which level runs** (`test/levels.test.mjs`; a project with subsystems of 2 and 4 levels, one nested inside a level of the other):
+    - at global levels 1, 2 and 4, with no override, an override below and one above the global level, the running level of each is min(override, else global, n): global 4 runs the 2-level subsystem at 2, marked `clamped`;
+    - a parent's override does not pass to a nested subsystem;
+    - an override above `n` in a file is clamped and marked;
+    - Clear (`clearOverrides`) removes every override, at every depth and inside levels that do not run, in one undo step; undo restores them all;
+    - `el.levels` reports `override`, `running` and `clamped` for each; `loopTuner.detail`, `level` and `clearOverrides` and the CLI's `--detail`, `--level` and `--clear-overrides` give the same running levels.
 
 ## 10. Project format (additions; still `loop-tuner/2`)
 
 - **Subsystem:**
   - `mask` and `params`, and formula strings in number fields: as [transparent-models.md](transparent-models.md) §1.4 and §6 define them. A mask field may carry `min` and `max`. Formulas may also stand in a transfer function's `num` and `den` entries, and may use `inf`.
   - `levels` (optional, two or more): `[{ name, valid, diagram }]`.
-  - `level` (1-based, default 1).
+  - `level` (optional, 1-based): the local override. Absent, the subsystem runs the global level.
 
   Without `levels`, `diagram` as today.
 - **Block changes:**
   - The Integrator's `x0`, `min`, `max`, `unit` and `angle`: as transparent-models.md §1.3 defines them. A limit of ±inf counts as none.
   - New block `validRange`: `name`, and `params: { of?: "value" | "rate", value?, min?, max?, says }`. With `value` it has no input.
-- **`sim.detail`** (optional): absent (as chosen), or an integer ≥ 1 (a cap).
-- **System library entries**: `ui.speed` only if the person chooses slow-motion drawing (§8).
+- **`sim.detail`** (optional): the global level, an integer ≥ 1; absent means 1. A subsystem runs min(its `level`, else `sim.detail`, its number of levels) (§2.1).
+- **System library entries** carry `sim.detail` (§7) and no `level`.
 
 ```json
-"sim": { "detail": 1 }
+"sim": { "detail": 2 }
 ```
+
+With this, a subsystem of 4 levels without `level` runs level 2, one with `"level": 4` runs level 4, and one of 2 levels with `"level": 3` runs level 2.
 
 ## 11. Migration
 
 - **Old files load unchanged.** Subsystems without levels keep `diagram`, numbers stay numbers, and nothing old changes meaning, so the format version stays.
 - **Scope channels** naming a Sink in any level are kept on load.
 - **Library entries:**
-  - The motor's Motor subsystem gains its mask (R, L, K, J, b) and levels with `level: 2`, so the motor examples run as before (test 5).
-  - The open tank gains its L2 with `level: 1`; the carts gain theirs with `level: 2`.
-  - My blocks keep a subsystem whole: mask and levels.
+  - The motor's Motor subsystem gains its mask (R, L, K, J, b) and levels, and the motor examples carry `sim.detail: 2`, so they run as before (test 5).
+  - The open tank gains its L2, and its entries keep global level 1; the carts gain theirs, and their entries carry `sim.detail: 2`.
+  - No entry carries an override.
+  - My blocks keep a subsystem whole: mask, levels and its override, if any.
 - **Code that reads a subsystem's `.diagram`** moves to the `levels.js` helpers, each covered by test 10:
   - core: `blockPorts`, `normalizeDiagram`, `compileDiagram`'s nesting walk (renamed `flatten`), `diagramNames` (`diagram.js`); `copyParams` (`live.js`, near line 35: a TypeError in any live system with levels otherwise); `findExternal` (`hil.js`, near line 161); Auto-tune's walks and `locate` (`autotune.js`, near lines 48, 59, 68, 91, 110 and 112); `systemTags` (`systems.js`, near line 57); `plantKey` and `blockInputNames` (feat/designs);
   - UI: the Controller tab (`ui/controller.js`, near lines 66, 72 and 101), Analysis (`ui/analysis.js`, near line 74), the Auto-tune tab (`ui/autotune.js`, near line 84), the Plant tab's navigation, new subsystem, summary and breadcrumb (`ui/plant.js`, near lines 132, 165, 277 and 362), the views' signal lists.
@@ -515,7 +544,7 @@ New `test/levels.test.mjs` and `test/opamp.test.mjs`; edits to `physics.test.mjs
 
 **First, merge feat/designs into main.** It rewrote large parts of `diagram.js` (641 lines changed against main) and `simulateSystem`, so building the step bound or levels on main first means doing them twice. transparent-models.md's step 0 needs the same merge. The branch has main merged in (decisions v2.7.2) and waits to land.
 
-0. **Record.** Rules of §1 and the interpretations of §14 into decisions.md, replacing "being designed" with "designed, not built". The README's row for this page: drop "A design can be pinned to a lower level than the one that runs" and say "designs, Auto-tune and Analysis use what runs; the experiment is cap, design or tune, keep the numbers, raise the cap". Roadmap entries. The person's words are already saved (input 10).
+0. **Record.** Rules of §1 and the interpretations of §14 into decisions.md. The person's answers are already there (v2.8, detail levels answered), and their words are saved (inputs 10 and 13). The README's row for this page is current. Roadmap entries.
 1. **Eigenvalue step bound and run info** (§5, §4):
    - the Jacobian's largest eigenvalue at compile, folded into `el.bound` (and so into Live, `sim.js` and `Model.bound`), with Quantizer as identity and Noise as 0; the end-of-run check in `simulateSystem`; the specific stiffness warning naming the fastest state's block (levels come later);
    - `info` kept by the page's acquisition in both branches, shown on the status line, and `loopTuner.info()`. Today's warnings reach the person from here on.
@@ -537,42 +566,40 @@ New `test/levels.test.mjs` and `test/opamp.test.mjs`; edits to `physics.test.mjs
 3. **The Valid range block** in its three modes, with `info.validity`, the status sentence and the CLI's print. Test 9.
 4. **Levels in the core:**
    - `core/levels.js` (in MODULES before `diagram`); `levels` and `level` on subsystems; the port check; Sinks across levels; the refusal of Controllers, Observers and live plants inside levels;
-   - `applyDetail` and `runDiagram(project)` at every compile site (§2.1); `sim.detail` in the project and in `simOf`;
-   - `el.levels` with static counts; paths with `@k`; compile messages with the level ("Board L3/sat"), state labels without;
+   - the global level `sim.detail` (default 1) and the override `level`; `runningLevel`, `applyDetail` and `clearOverrides`; `runDiagram(project)` at every compile site (§2.1); `detail` in `simOf`;
+   - `el.levels` with `override`, `running`, `clamped` and static counts; paths with `@k`; compile messages with the level ("Board L3/sat"), state labels without;
    - `diagramNames` with `from`; channel names kept;
    - every reader of §11 through the helpers; the nesting helpers renamed;
-   - `--detail` in the CLI; `loopTuner.detail()` and `level()`.
+   - `--detail`, `--level` and `--clear-overrides` in the CLI; `loopTuner.detail()`, `level()` and `clearOverrides()`.
 
-   Tests 5 (structure guards), 6, 10 and 11.
+   Tests 5 (structure guards), 6, 10, 11 and 12.
 5. **Levels in the Plant tab:**
-   - the level chip with its menu; the Levels list (choose, Add a level, Duplicate as next level, rename, delete, reorder; counts, step, last run; levels that do not compile marked);
+   - the level chip, outlined or filled (overridden), with `↓` when clamped, and its menu (Global level, then the levels); the Levels list (a click overrides, Add a level, Duplicate as next level, rename, delete, reorder; counts, step, last run; levels that do not compile marked);
    - level tabs inside, ports edited across levels, and the check compiled at the viewed level;
-   - the Detail row (only when levels exist) and the display's chip;
-   - "not modelled at Lk" on channel badges (`.badge.nosig`); the `--warn` and `--bad` pair; undo for each.
+   - the Detail row in the Plant tab's panel (only when levels exist): the global level and Clear, with the count of overrides;
+   - "not modelled at Lk" on channel badges (`.badge.nosig`); the `--warn` and `--bad` pair; undo for each, and one undo step for Clear.
 
-   Checked in the browser (Playwright): choose levels by chip, cap, open a level, edit a port in one level, an error outlined in the viewed level only.
+   Checked in the browser (Playwright): set the global level; override one block above it and one below, and see both chips filled; see a clamped chip; Clear, and undo it; open a level; edit a port in one level; an error outlined in the viewed level only.
 6. **Stiffness warning by level**: the warning names the subsystem and level, and the chip turns `--bad`. Test 7, middle part.
 7. **The example** "Op-amp follower and a cable" (§8):
-   - the board's four levels from primitives, with their Valid range blocks, the notes, the tag;
-   - the faded comparison as the person answers (§14): counting changed runs at every speed, or a temporary `ui.speed`.
+   - the board's four levels from primitives, with their Valid range blocks, the notes, the tag; the entry at global level 1 (`sim.detail: 1`), with no override and no speed of its own.
 
-   Tests 1, 2 and 3 for the board, and test 4. Then system-library.md's table and a "How the board was modelled" paragraph. Browser check: step through the levels and see the faded comparison and the validity line.
-8. **Motor levels.** Mask (R, L, K, J, b) and L1 and L2 on the shared Motor subsystem (`motorDiagram` and the encoder's), chosen level 2. Tests 1, 2 and 3 for the motor, and the bit-for-bit guard. The sliding-mode example's notes gain one sentence: Motor L1 makes the relay look perfect; L2, the real motor, chatters.
+   Tests 1, 2 and 3 for the board, and test 4. Then system-library.md's table and a "How the board was modelled" paragraph. Browser check: step through the levels with Single runs and see the earlier levels stay, fading, and the validity line; turn C_L at level 3 and see the ringing grow.
+8. **Motor levels.** Mask (R, L, K, J, b) and L1 and L2 on the shared Motor subsystem (`motorDiagram` and the encoder's); the motor examples at global level 2. Tests 1, 2 and 3 for the motor, and the bit-for-bit guard. The sliding-mode example's notes gain one sentence: Motor L1 makes the relay look perfect; L2, the real motor, chatters.
 9. **The design layer, Auto-tune and Analysis on levels** (§6): model compiles from `runDiagram`; `plantKey` of the running level resolved to numbers; the detail hint in refusals; Copy as numbers naming the levels; Auto-tune's rows and Analysis's header naming the levels. Test 8. Browser check: the experiment of §6 on the motor.
 10. **Physics levels**, each after its open subsystem exists ([transparent-models.md](transparent-models.md) steps 4 and 7):
-    - the tank's L2 (Cd, pump lag), chosen level 1;
-    - the carts' L1 (ideal) and L3 (drive) around today's model as L2, chosen level 2.
+    - the tank's L2 (Cd, pump lag); its entries at global level 1;
+    - the carts' L1 (ideal) and L3 (drive) around today's model as L2; their entries at global level 2.
 
     Tests 1 and 2 for each. The carts' behaviour tests stay green unchanged.
 11. **Docs sweep:**
-    - plant-editor.md (levels, the level chip, Valid range), project-format.md, system-library.md, controller-proposal.md (Copy as numbers with levels), autotune.md, analysis.md, instrument.md (if the speed rule changes);
-    - AGENTS.md (`--detail`, `loopTuner.detail`, `loopTuner.info`);
+    - plant-editor.md (levels, the level chip, the global level and Clear, Valid range), project-format.md, system-library.md, controller-proposal.md (Copy as numbers with levels), autotune.md, analysis.md;
+    - AGENTS.md (`--detail`, `--level`, `--clear-overrides`, `loopTuner.detail`, `level`, `clearOverrides`, `info`);
     - the roadmap, the output README's status, the page's Help (a short "Detail levels" section).
 
 Dependencies:
 - feat/designs merged first, then steps 1 to 8 in order.
 - Step 2 is shared with transparent-models.md.
-- Step 7 waits for the person's answer on the faded comparison only for its last bullet.
 - Step 10 needs transparent-models.md's steps 4 and 7.
 
 ## 13. Not built
@@ -582,9 +609,10 @@ Dependencies:
 - **Ports that differ between levels** (Simulink's flexible interface, Simscape's conditional ports). Refused by design.
 - **Unordered alternatives for plant subsystems** (variant subsystems). Controllers have variants; a level is an ordered rank.
 - **Linearised levels.** A level is a physical model; linearising is the design layer's job.
-- **Designing on less detail than runs** (`designDetail` on a designed variant, Simulink Control Design's `blocksub`), until an example needs it. Cap, design and Copy as numbers does the same by hand (§6). When built: the plant a block sees is `applyDetail(applyDetail(d, cap), k)`, min(running, k) in every case; the Computed box names what the design does not know from the level names between; a Kalman Observer and its Controller must see the same levels. The candidate example is an LQR on the motor's angle loop with angle and speed measured: designed on L1, it runs on L2, which has the current.
-- **"Highest"**, a setting that raises every subsystem to its most detailed level, until the person asks for it (§14).
-- **Auto-tune's "Tune on" field and Analysis's "Plant" choice and "as designed" overlay.** The cap does the same: cap, tune or look, raise the cap.
+- **Designing on less detail than runs** (`designDetail` on a designed variant, Simulink Control Design's `blocksub`), until an example needs it. Lowering the global level, designing and Copy as numbers does the same by hand (§6). When built: in the plant a block sees, each subsystem runs min(its running level, k); the Computed box names what the design does not know from the level names between; a Kalman Observer and its Controller must see the same levels. The candidate example is an LQR on the motor's angle loop with angle and speed measured: designed on L1, it runs on L2, which has the current.
+- **A separate "Highest".** The global level at its largest number does it (§2.1, input 13).
+- **Auto-tune's "Tune on" field and Analysis's "Plant" choice and "as designed" overlay.** The global level does the same: lower it, tune or look, raise it.
+- **Anything new on the display for comparing levels**: no change to the fading, no slow speed for the example, no count of changed runs. Levels are compared with Single runs, as any edit is (input 13).
 - **A table of subsystems with levels** in the Plant tab. Each block's chip shows its state.
 - **Units on In and Out ports.** Nothing propagates units through wires.
 - **Parameter corners and Monte Carlo sets** (SPICE `.lib` corners). These belong to robustness against plant variations (roadmap).
@@ -595,21 +623,28 @@ Dependencies:
   - a frequency- and current-dependent output impedance, and with it the short-circuit current limit;
   - a smooth slewing onset (Boyle's input pair);
   - the isolation-resistor fix;
-  - a real oscillation (it needs a two-pole op-amp).
+  - a two-pole op-amp, which could oscillate outright with enough cable; the example rings (§8).
 - **Motor and pendulum levels beyond those in §7:** Coulomb and stick–slip friction (they need a stick state, not a sign function, to stay right in RK4), cogging, thermal drift, PWM switching. The research found that PWM and dead time are invisible to a ms speed loop.
 - **Encrypted or compiled models**: never.
 
-## 14. Interpretations (for the decision log) and questions for the person
+## 14. The person's answers, and interpretations (for the decision log)
 
+The person answered this page's four questions on 2026-10-25 ([input 13](../input/2026-10-25-13-detail-levels-answers.md); decisions.md, "v2.8: detail levels, answered"):
+1. **Comparing levels: no change.** "if I want to compare levels, what I would do is that I would run a number of single runs and compare the traces. So we don't need to change anything about the system." Earlier runs keep fading as today. Both proposals (count only changed runs at every speed, or a slow speed for the example) are dropped, and the roadmap's "Earlier runs at high speed" is closed with no change (§8).
+2. **A global level with local overrides, not a cap.** "a global level that sets everything that I didn't set by hand. Then I have a local override … a … clear button where I clear the local overrides and everything is put back onto the global level … if I say global level is 4, but one element only has 2 detail levels, then it can only go to level 2." No separate "Highest" (§2.1, §3.1, §3.2).
+3. **Detail is in the Plant tab.** "it belongs into the plant. It doesn't belong into the header." (§3.2.)
+4. **The op-amp rings.** "Choose a behavior that is something that a electrical engineer will be familiar with. I guess it should ring." The follower driving a cable rings, more as C_L grows; a two-pole op-amp that oscillates is not built (§8, §13).
+
+**Interpretations:**
 - **"The interfaces stay more or less the same"** is read as **identical ports**. Extra quantities a higher level models are Sinks inside it. "More or less" is covered by the parameters: a lower level ignores some.
-- **The cap.** The global setting caps ("≤ k"), as told to the person.
-- **Designs see what runs.** Designs, Auto-tune and Analysis use the running levels. The experiment is: cap, design or tune, keep the numbers, raise the cap. Pinning a design to a lower level waits for an example.
+- **The global level and overrides.** The level that runs is min(override, else global, n). An override may be above or below the global level. A nested subsystem follows the global level unless it has its own override. The person said "a lock on or clear button where I clear the local overrides": Clear removes the overrides, and undo restores them; nothing locks them away. The chip's menu also removes one override (Global level). A filled chip marks an override, `↓` a clamp.
+- **The global level's default and the library.** Absent, it is 1. Each library entry carries the global level that runs its models as today and no overrides, so the experiment needs no Clear first. Loading a system's plant sets it, since it belongs to the plant.
+- **Only in the Plant tab.** No Detail control in the header and no Detail chip on the display. The display's status line keeps the validity report, which names the level.
+- **Designs see what runs.** Designs, Auto-tune and Analysis use the running levels. The experiment is: set the global level low, design or tune, keep the numbers, raise it. Pinning a design to a lower level waits for an example.
 - **Validity is drawn, not hidden.** A level's machine checks are Valid range blocks on its canvas, editable in the existing panel, in three modes (value, rate, parameter). Where they cannot reach, the sentence says so.
-- **The example opens at level 1**, whose validity line already says the cable is too large for it (C_L 1 nF > 32 pF). Build up from simple: the simple model knew its limit, and the run shows why.
+- **The example opens at level 1** (global level 1), whose validity line already says the cable is too large for it (C_L 1 nF > 32 pF). Build up from simple: the simple model knew its limit, and the run shows why.
+- **The ringing is the familiar one**: an op-amp driving a capacitive load through its output resistance. At level 3 it overshoots 23.3 to 74.3 % and rings at 727 to 178 kHz as C_L goes from 500 pF to 10 nF (§8).
 - **R_o** is a physics input taken from the datasheet's 500 pF point, assuming the AC table's 10 kΩ load, and checked by a test, not computed in the page.
 - **One K for the motor.** Torque and back-EMF constants are equal in SI units, so the mask holds one (Rule 4).
-- **Questions:**
-  - The faded comparison: count only changed runs at every speed (then the previous level's run stays at any speed, and this is the roadmap's open question answered), or keep fading per sweep and give the op-amp example a slow speed that lasts only while it is loaded?
-  - Is "Highest" (every subsystem at its most detailed level) wanted beside the cap?
-  - Should the global Detail sit in the header with the time control instead of the Plant tab?
-  - Ringing, or a real oscillation with a two-pole op-amp?
+
+**Still open:** none. The interpretations that go beyond the person's words (the default of 1, entries carrying their global level, a plant load setting it, no Detail chip on the display, the chip's Global level item) are this page's, and change if the person says otherwise.

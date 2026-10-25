@@ -54,6 +54,7 @@ const TONE = {
   'Sliding mode': 'red',
   'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
   Disturbance: 'violet', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
+  'Reference mode': 'aqua', 'Controller in the plant': 'green',
 };
 // A value without its own tone gets one from its label, so it stays put.
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
@@ -79,7 +80,9 @@ export function systemTags(e) {
   if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
-  if (!ctrls.length) add('No controller', 'none');
+  // In reference mode the plant runs its own controller: none in the page.
+  const ownLoop = blocks.some((b) => b.type === 'external' && (b.params?.kinds ?? []).includes('reference'));
+  if (!ctrls.length) add(ownLoop ? 'Controller in the plant' : 'No controller', 'none');
   for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') for (const t of variantTags(v, CONTROLLERS[v.type]?.label ?? v.type)) add(t, 'controller');
   for (const b of obs) for (const v of b.variants ?? []) for (const t of variantTags(v, 'Observer')) add(t, 'observer');
   // A disturbance only when d plays something: a Source d whose signal has

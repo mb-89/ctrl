@@ -6,6 +6,7 @@
 //   import { buildHtml } ...  -> used by the CLI to embed a project
 
 import { stripComments } from './tools/strip-comments.mjs';
+import { AGENT_NOTE } from './src/core/guide.js';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -13,14 +14,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MODULES = [
   'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/speed.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/linearize.js', 'core/planner.js', 'core/design.js', 'core/controllers.js', 'core/structure.js', 'core/observers.js', 'core/hil.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/spectrum.js', 'core/analysis.js', 'core/autotune.js',
-  'core/live.js', 'core/trace.js', 'core/zip.js',
-  'ui/units.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/measure.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/ctldiagram.js', 'ui/controller.js', 'ui/autotune.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/speed.js', 'ui/app.js',
+  'core/ramp.js', 'core/live.js', 'core/trace.js', 'core/zip.js', 'core/guide.js',
+  'ui/units.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/measure.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/ctldiagram.js', 'ui/controller.js', 'ui/autotune.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/speed.js', 'ui/limited.js', 'ui/app.js',
 ];
 
 // Live mode offers the external plant for download: the files of hil/ ride in
 // the bundle as __HIL_FILES (ui/live.js zips them), so an exported page has
-// them too.
-const HIL_FILES = ['hil_plant.py', 'runme.sh', 'runme.ps1', 'README.txt'];
+// them too. They are kept as written (no comment stripping), so they must
+// carry no provenance either (test/provenance.test.mjs).
+const HIL_FILES = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README.txt'];
 const hilFiles = () => `// hil/: the external plant, offered under Live\nconst __HIL_FILES = ${JSON.stringify(Object.fromEntries(HIL_FILES.map((f) => [f, readFileSync(join(ROOT, 'hil', f), 'utf8')])))};`;
 
 // Each module runs in its own function scope; its exports go into a registry
@@ -45,6 +47,11 @@ export function bundleScript() {
   return `(() => {\n'use strict';\nconst __mods = {};\n${hilFiles()}\n${parts.join('\n')}\n})();\n`;
 }
 
+// ui/limited.js runs inline as well, before the first paint: it hides the
+// warning below the header where the environment is full, so it never
+// flashes; where no script runs, the warning stays.
+const limitedCheck = () => `<script id="lt-limited-check">(() => {\n${stripComments(readFileSync(join(ROOT, 'src/ui/limited.js'), 'utf8')).replace(/^export\s+/gm, '')}\ntry { markLimited(window); } catch { }\n})();</script>`;
+
 const FONTS = '<link id="lt-fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@400;600&display=swap">';
 
 const ICON = {
@@ -59,8 +66,10 @@ const HELP = `
 <p>An oscilloscope for control loops. The display shows the signals of the loop; you set the loop up in the tabs below, one step at a time: the Input tab makes the signals, the Plant tab wires the system as a block diagram, the Controller tab chooses and tunes its controllers, the Auto-tune tab improves them by simulation. Earlier runs stay faded on the display for five runs, so a change can be compared with before.</p>
 <h3>Display</h3>
 <div class="keys">
-  <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record at the speed set in the header (1×: real time), over and over.</span>
-  <span><kbd>S</kbd></span><span>Single: one sweep, then stop</span>
+  <span><kbd>R</kbd></span><span>Run / Stop. Running sweeps the record at the speed set in the header (1×: real time), over and over. With an External plant, Run and Stop start and stop it.</span>
+  <span><kbd>S</kbd></span><span>Single: one sweep, then stop. Pressed while running, the sweep under way finishes, then the scope stops.</span>
+  <span><kbd>E</kbd></span><span>E-STOP, with an External plant connected (also the red key in the header)</span>
+  <span><kbd>H</kbd></span><span>Hold, while a live plant runs: the screen freezes, the plant and the live record go on</span>
   <span><kbd>A</kbd></span><span>Auto Scale: fit the timebase and every channel to the data</span>
   <span>Knobs</span><span>Drag, scroll, or focus and use the arrow keys. Double-click a Position knob to zero it. Click a readout to type a value (20m, 100 ms).</span>
   <span>Channel keys</span><span>Select a channel for the Vertical knobs; press again to turn it off</span>
@@ -72,7 +81,7 @@ const HELP = `
   <span>Spectrogram levels</span><span>The strip at the right edge: a histogram of the amplitudes shown (dB) beside the colour bar. Below the floor is black, above the ceiling the brightest colour. Drag a handle or the band between them; the wheel moves the floor, <kbd>Shift</kbd> + wheel the ceiling; double-click for automatic levels (the floor 10 dB above the median, the noise). Levels belong to the signal shown; Run Control › Levels types them (↑ ↓: 1 dB, Shift: 10 dB).</span>
 </div>
 <p><b>Speed</b>, in the header, sets how fast simulated time runs: 1× is real time, 10× ten times faster, 0.1× slower; type any factor, or -1 or inf for <b>∞</b>, as fast as possible. No speed runs faster than this page simulates the screen (timed after each change); ∞ runs at that, so it depends on the system and on the time per division (a finer screen takes more steps per second). Beside it, the speed achieved over the last second; its tooltip gives the simulation's speed. Auto-tune runs at it too. With a live plant connected it stays at 1× (a lock shows it): the plant owns the clock.</p>
-<p>The screen is the record: what you see is simulated and swept, at that speed. <b>Save ▾</b>, under the screen, stores it: every signal as CSV or JSON, or a picture (PNG). <b>Open…</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>); <b>◀ ▶</b> step through one longer than the screen.</p>
+<p>The screen is the record: what you see is simulated and swept, at that speed. <b>Save ▾</b>, under the screen, stores it: every signal as CSV or JSON, <b>Screenshot (PNG)</b> (the screen with its status line and channel badges), or <b>Copy image</b> to the clipboard. <b>Open…</b> shows a saved trace dashed on the channels with the same names, until you clear it (<b>ref ✕</b>); <b>◀ ▶</b> step through one longer than the screen.</p>
 <h3>Signal generator</h3>
 <p>Press a waveform key to draft a component: the display shows it dashed on its own and added to the signal. Adjust it, then <b>Add</b>. Click a component in the stack to edit it. The input repeats with its <b>Period</b>; Auto Scale shows one period. <b>Function</b> takes a formula in t, such as <code>0.3*sin(2*pi*4*t) + step(t-0.5)</code>.</p>
 <div class="keys">
@@ -89,24 +98,27 @@ const HELP = `
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3>Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %; in a list such as Q, click into a value first), or add a variant from the library.</p>
-<p>Variants <b>from the plant</b> (LQR, PI from the plant, swing-up with an LQR catch, the planned swing-up, and an Observer's Kalman filter) hold only weights, levels and limits: their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off), sliding mode, super-twisting; for an Observer, a Luenberger observer and finite differences. The sliding modes read the measured rate on input 3. Try <b>DC motor, sliding mode</b>: its XY view is the phase portrait, and the line's slope λ sets how the error decays.</p>
+<p>Variants <b>from the plant</b> (LQR, PI from the plant, swing-up with an LQR catch, the planned swing-up, and an Observer's Kalman filter) hold only inputs (weights, levels, times, limits and hand gains such as a feedforward or the swing-up's energy gain): their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off), sliding mode, super-twisting; for an Observer, a Luenberger observer and finite differences. The sliding modes read the measured rate on input 3. Try <b>DC motor, sliding mode</b>: its XY view is the phase portrait, and the line's slope λ sets how the error decays.</p>
 <h3>Auto-tune</h3>
 <p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. Every run the tuner tries sweeps across the display at the header's <b>Speed</b> and lasts its own length, one period of the input, whatever the screen shows (a 5 s run takes 5 s at 1×, half a second at 10×); at ∞ it computes as fast as it can and shows each improvement. The scope's Stop stops the tuning too. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>. A relay or step result that scores worse than what runs, or that is unstable where the run starts, is added but does not run. A variant from the plant is tuned as its Copy as numbers twin, from the numbers its design computes now, and the result is a hand variant beside it; a planned swing-up has no gains to tune (change its inputs in the Controller tab).</p>
 <h3>Analysis</h3>
 <p>The loop a Controller block closes, linearised from the plant it sees, with the running variant's own law: whether it is stable, its gain, phase and delay margins, Ms, the poles, root locus, Bode, Nyquist and the linear step, discrete at the block's Ts as it runs. <b>At rest</b>, <b>Start</b> or <b>Scope time</b> picks where it is linearised (the scope's time follows the cursor or the sweep). A law that has no linear model there (a relay, the ideal sliding mode, super-twisting, a swing-up pumping energy), a plan not made yet, or a plant outside the page is named, with the reason. Where the linear model does not hold (a kink at that point, or u at a limit), it says so first and grades nothing.</p>
-<h3>Live (HIL)</h3>
-<p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time. Try <b>HIL: external motor</b> from the System library: Run Control gets a second row, <b>Connect</b>, <b>E-STOP</b>, <b>Reset</b>. <b>plant script…</b> under it gives you <code>hil-plant.zip</code>: unzip it and run <code>sh runme.sh</code> (Linux, macOS) or <code>runme.ps1</code> (Windows), which install what they need; with uv, <code>uv run hil_plant.py</code>. Then Connect. Every cycle the plant sends its outputs, the page runs the diagram and answers with the controller's output; edit the controller meanwhile and it takes effect at the next sample. <b>Run</b> and <b>Stop</b> start and stop the plant (each Run is a fresh run from t = 0), <b>Single</b> runs one screen. E-STOP on the page, Enter in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until Reset. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them.</p>
+<h3 id="help-live">Live (HIL)</h3>
+<p>A system with an <b>External plant</b> block (Plant tab, group Live) runs against a plant outside the page, in real time; <b>HIL: external motor</b> in the System library is made for it. Its plant, <b>hil-plant.zip</b> (Plant tab, <b>Download the plant (zip)</b>), is a simulated DC motor swinging an unbalanced arm that stands in for real hardware: replace it with your device behind the same protocol, in any language. To run it, unzip it and run <code>sh runme.sh</code> (Linux, macOS) or double-click <code>runme.cmd</code> (Windows; it runs <code>runme.ps1</code>); they install what it needs (uv, which brings its own Python and the websockets package) and start it, in a window with a red <b>STOP</b> that also says where it listens. Then <b>Connect</b> in the Plant tab.</p>
+<p>Nothing runs by itself. Offline the scope stands still and says OFFLINE. Connect opens the link and reads the plant's ports; the plant stays stopped. <b>Run</b> starts the plant and the sweep: first every reference moves to its waveform's first value at no more than 10 % of its full scale per second (the status line counts down), then the loop runs. Every channel spans its signal's full scale, for orientation. <b>Stop</b> stops both; <b>Single</b> runs one sweep and stops the plant (pressed while running, the sweep under way finishes first). <b>Hold</b> (<kbd>H</kbd>) freezes the screen while the plant runs on. Tune the controller meanwhile: a parameter takes effect at the next sample. A variant from the plant does not run against an External plant (the page has no model of a plant outside it): it puts out u = 0 and says why.</p>
+<p><b>E-STOP</b> (the red key in the header, or <kbd>E</kbd>), <b>STOP</b> in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until <b>Reset</b>: a STOP pressed at the plant is reset at the plant, the page's E-STOP on the page. The plant tells the page when it stops or starts at its own keys, and the page follows at once. In <b>reference mode</b> (<b>HIL: external motor, reference mode</b>, with the plant started as <code>sh runme.sh --mode reference</code>) the plant runs its own controller and the page sends the references: the page's controllers and Auto-tune are not in the loop. The plant varies its physics by up to 15 % at every start and does not tell the page. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them. <b>Live settings</b> in the Plant tab set the ramp-in and the references' full scales, saved with the system.</p>
 <h3>System library</h3>
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
-<h3>For agents</h3>
-<pre>node cli.mjs help</pre>
-<p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it), <code>speed(x?)</code> (sets the speed: a factor, or -1 for as fast as possible; returns the setting, the factor in effect, the achieved speed, the simulation's speed and why it is held at 1×, if it is), <code>autotune({ method, goal })</code>, <code>designs()</code> (what the designed controllers and observers computed), <code>whenDesigned()</code> (resolves once no plan is being made, with the same list) and <code>loopModel(path, op)</code> (the loop a Controller closes, linearised at <code>'origin'</code>, <code>'initial'</code>, <code>{ y: [levels] }</code> or <code>{ t: seconds }</code>: the plant it sees and its law, as state space); <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
-<p>Live: <code>loopTuner.live.connect(url?)</code>, <code>.disconnect()</code>, <code>.estop()</code>, <code>.reset()</code>, <code>.state()</code> (connection, run mode, the plant's ports and figures, how edits were taken). To tune while it runs, change a variant's parameters with <code>getProject()</code> and <code>setProject(p)</code>: they take effect at the next sample. Traces: <code>loopTuner.record.screen('csv' | 'json')</code> (every signal on the screen), <code>.live(format)</code> (the live record), <code>.reference(text, name)</code>, <code>.clearReferences()</code>, <code>.state()</code>. The protocol, for plants of your own: JSON-RPC 2.0 over a WebSocket, described in <code>hil_plant.py</code>'s header and in the repository's design/output/hil.md.</p>
+<p>Shown in a limited environment, such as a file preview that runs the page in a sandbox, a warning below the header stays, says what does not work there, and what to do: download the file and open it in your browser.</p>
+<h3 id="help-for-agents">For agents</h3>
+<p>Everything a person does here an agent can do through <code>window.loopTuner</code>: <code>loopTuner.help()</code> returns this guide as data, <code>loopTuner.api</code> lists every method. (In the Loop Tuner repository, <code>node cli.mjs help</code> gives the command line's own help.)</p>
+<pre class="guide" id="help-agents"></pre>
 <p><button class="key primary" id="help-close">Close</button></p>`;
 
 const SHELL = `<div id="lt-shell" class="app">
+<p class="sr-only" id="agent-note">${AGENT_NOTE}</p>
 <header class="bar">
   <div class="brand">${ICON.logo}Loop Tuner</div>
   <input id="title" class="title" aria-label="Project title" spellcheck="false">
@@ -119,6 +131,7 @@ const SHELL = `<div id="lt-shell" class="app">
     </div>
     <span class="sep"></span>
     <div class="popwrap"><button id="syslib" class="btn" aria-haspopup="true" aria-expanded="false" title="Complete systems: load one whole, or only its input, plant or controller">System library ▾</button><div id="syslib-pop" class="popover" hidden></div></div>
+    <button id="estop" class="btn estop" type="button" aria-label="Emergency stop (E)" data-state="off" hidden disabled>E-STOP</button>
     <span class="sep"></span>
     <button id="undo" class="btn icon" title="Undo (Ctrl+Z)" aria-label="Undo">${ICON.undo}</button>
     <button id="redo" class="btn icon" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">${ICON.redo}</button>
@@ -128,8 +141,12 @@ const SHELL = `<div id="lt-shell" class="app">
     <button id="export" class="btn" data-standalone title="Download this page with the project inside, to send to someone">Export HTML</button>
     <button id="copy" class="btn" title="Copy the project JSON">Copy JSON</button>
     <button id="copy-html" class="btn" data-framed title="Copy a standalone HTML page with the project inside">Copy HTML</button>
-    <button id="help" class="btn icon" title="Help and keyboard shortcuts (?)" aria-label="Help">?</button>
+    <button id="help" class="btn icon" title="Help and keyboard shortcuts (?); for agents: loopTuner.help()" aria-label="Help, and a guide for agents: loopTuner.help()">?</button>
     <input type="file" id="file" accept=".json,.html,application/json,text/html" hidden>
+  </div>
+  <div id="lt-limited" class="limited" role="alert">
+    <span class="limited-icon" aria-hidden="true">⚠</span>
+    <div class="limited-text"><b>Warning: limited environment.</b> This page is running in a limited environment, such as a file preview, and its performance is degraded: saving and the autosave, downloads and Live (HIL) do not work here, and it may run slower. For full function, <b>download this file and open it in your browser.</b> <span id="lt-limited-why"></span></div>
   </div>
 </header>
 <main class="instrument">
@@ -171,9 +188,9 @@ export function buildHtml({ project = null, fragment = false } = {}) {
     // Only the hosted page gets the host's save adapter; the standalone page
     // (and every page it exports) knows nothing of the host.
     const host = '<script id="lt-host">window.__ltHost = { saver: () => window.claude?.use?.(\'downloads\') ?? Promise.resolve(null) };</script>';
-    return `<title>${esc(title)}</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n${FONTS}\n<style id="lt-style">${css}</style>\n${host}\n${body}\n`;
+    return `<title>${esc(title)}</title>\n<meta name="description" content="${esc(AGENT_NOTE)}">\n<meta name="claude:viewport-fit-sides" content="cover">\n${FONTS}\n<style id="lt-style">${css}</style>\n${host}\n${limitedCheck()}\n${body}\n`;
   }
-  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(title)}</title>\n${FONTS}\n<style id="lt-style">${css}</style>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
+  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(title)}</title>\n<meta name="description" content="${esc(AGENT_NOTE)}">\n${FONTS}\n<style id="lt-style">${css}</style>\n${limitedCheck()}\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

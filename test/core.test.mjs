@@ -247,7 +247,11 @@ test('2D views compile and move with the signals; library parts combine', async 
   const fromLoop = normalizeProject(applySystem(EXAMPLES[0], msd, ['input', 'plant']));
   assert.equal(fromLoop.candidates.length, 0, 'a whole load leaves no controller of an older project behind');
   assert.equal(loopReady({ ...fromLoop, candidates: EXAMPLES[0].candidates }), false, 'a diagram with its own Sources is never run as a loop plant');
-  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && (!s.ui.view || s.plant.views.some((v) => v.name === s.ui.view))), 'every system opens running, on a view it has');
+  // A system with an External plant opens stopped: nothing runs until the
+  // plant is connected and Run is pressed (design/output/hil.md).
+  const live = (s) => JSON.stringify(s.plant.diagram ?? {}).includes('"type":"external"');
+  assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === (live(s) ? 'stop' : 'run') && (!s.ui.view || s.plant.views.some((v) => v.name === s.ui.view))), 'every system opens running (a live one stopped), on a view it has');
+  assert.equal(SYSTEM_LIBRARY.filter(live).length, 2, 'two live systems: control and reference mode');
   assert.equal(SYSTEM_LIBRARY.find((s) => s.name.includes('badly tuned'))?.ui.tab, 'tune', 'the system made for Auto-tune opens on that tab');
   assert.deepEqual(p.ui, { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' }, 'a whole load brings how the system opens');
   assert.deepEqual(normalizeProject({ ui: { run: 'fast', tab: 'plant', extra: 1 } }).ui, { tab: 'plant' }, 'unknown ui values are dropped');

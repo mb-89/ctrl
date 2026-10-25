@@ -375,6 +375,7 @@ export function createPlantEditor(root, app) {
       let html = `<h3 class="glabel">${esc(def.label)}</h3><div class="pform">`;
       if (!['source', 'sink', 'inport', 'outport'].includes(b.type)) html += field('name', 'Label', b.name ?? '', 'text', 'optional');
       for (const p of def.params) {
+        if (p.kind === 'hidden') continue;  // set elsewhere (the External block's full scales: Live settings)
         const v = b.params[p.key];
         const hint = p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}${p.nullable ? ` · empty: ${p.nullable}` : ''}`;
         html += field(`p:${p.key}`, p.label, p.kind === 'vector' || Array.isArray(v) ? v.join(', ') : p.kind ? v : v === null ? '' : num(v, 6), p.kind ?? 'number', hint);

@@ -339,6 +339,16 @@ export function evaluateSystem(project, { designs } = {}) {
   return simulateSystem(plant.diagram, project.system.signals, sim, { designs });
 }
 
+// What the designed variants compute, without a run: { designs } as in
+// evaluateSystem's info. The page does not simulate a plant outside it
+// (Live mode, offline), but a variant from the plant still says why it is
+// refused there.
+export function designSystem(project, { designs } = {}) {
+  const plant = project.system.plant;
+  if (plant?.type !== 'diagram') return [];
+  return compileDiagram(plant.diagram, 'plant', { standalone: true, designs }).designs ?? [];
+}
+
 // ---- Analysis hooks (design/output/designs.md, "For the Analysis tab")
 
 // The plant a Controller or Observer sees (el.seen) at an operating point,

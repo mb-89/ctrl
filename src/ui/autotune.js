@@ -69,6 +69,7 @@ export function createAutotuneTab(host, app, display) {
       </section>
     </div>
     <div class="ctempty" id="tu-empty" hidden></div>`;
+  host.insertAdjacentHTML('afterbegin', '<div class="notloop" id="tu-notloop" role="note" hidden></div>');
   const $ = (s) => host.querySelector(s);
 
   const root = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
@@ -100,8 +101,17 @@ export function createAutotuneTab(host, app, display) {
 
   function renderSetup() {
     const c = current();
+    // Reference mode (Live): the plant runs its own controller; Auto-tune is
+    // not in the loop and does not start (tuneContext refuses).
+    const notLoop = ['reference', 'log'].includes(app.hilMode?.());
+    $('#tu-notloop').hidden = !notLoop || !c;
+    if (notLoop) $('#tu-notloop').innerHTML = '<b>Not in the loop.</b> This system\'s plant runs its own controller (reference mode): Auto-tune has nothing here to tune, and Start stays off.';
     $('.tune').hidden = !c;
     $('#tu-empty').hidden = !!c;
+    if (!c && notLoop) {
+      $('#tu-empty').innerHTML = '<div class="later-box"><h3 class="glabel">Auto-tune is not in the loop</h3><p>In reference mode the External plant runs its own controller, with its own limits and monitoring; the page only sends the references and records. There is no controller here for Auto-tune to tune. To tune a controller in this page, use a plant in control mode, such as <b>HIL: external motor</b>.</p></div>';
+      return;
+    }
     if (!c) {
       $('#tu-empty').innerHTML = '<div class="later-box"><h3 class="glabel">Nothing to tune</h3><p>Auto-tune improves a <b>Controller</b> block of the plant. Add one in the Plant tab (library, Control group), or load a controlled system from the <b>System library</b>: <b>Oven, badly tuned</b> is made for this tab.</p></div>';
       return;

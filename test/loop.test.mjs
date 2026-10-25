@@ -11,7 +11,7 @@ import { CONTROLLERS, normalizeVariant } from '../src/core/controllers.js';
 import { planLaw } from '../src/core/planner.js';
 import { createDesignStore, lqrDesign } from '../src/core/design.js';
 import { c2d, eig } from '../src/core/linalg.js';
-import { normalizeProject, evaluateSystem, autoTimebase, simOf, linearizeBlock, loopModel } from '../src/core/project.js';
+import { normalizeProject, evaluateSystem, designSystem, autoTimebase, simOf, linearizeBlock, loopModel } from '../src/core/project.js';
 import { SYSTEM_LIBRARY, applySystem } from '../src/core/systems.js';
 import { DEFAULT_PROJECT } from '../src/core/examples.js';
 
@@ -285,4 +285,8 @@ test('loopModel on main\'s systems: sliding mode linear only in its boundary lay
   const st = evaluateSystem(hil).info.designs[0];
   assert.equal(st.status, 'error');
   assert.equal(st.error.code, 'external-plant');
+  // The page does not simulate it offline; the design still says why.
+  const [off] = designSystem(hil);
+  assert.equal(off.status, 'error');
+  assert.equal(off.error.code, 'external-plant');
 });
