@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: one click for both downloads; the MCP server explains itself ([input 36](../input/2026-10-25-36-zips-runme-mcp-explains-itself.md))
+
+The person: "I want the MCP server and the plant to download as a zip file, and they both have a runme ... a runme ps1, a runme shell, and a readme md. So no matter what, I just click the runme and it does everything. I don't need ... any options I can figure out with the help flag ... if we start the MCP server, the README and also the server itself should explain a bit how somebody who's not familiar with MCP servers would get an agent to work with that ... what you wrote here in the message ... the server should explain it itself."
+- **Both zips alike**: `runme.sh`, `runme.ps1` (and `runme.cmd`, so a double-click works on Windows, where a .ps1 opens in an editor), `README.md`. Clicking runme installs what is missing and starts with sensible defaults; every option is in `--help`, none is needed.
+- **The MCP server explains itself** on start and in its README: what an MCP server is in two sentences, how to connect an agent (the exact command or config for common MCP clients, with the server's own path filled in), that the page it serves is at the printed address, and what to ask the agent (help me tune this, let's look at this identification together).
+- **Naming MCP clients**: the person asked for the explanation given in chat, which names Claude Code; the page carries the zips, and its provenance rule forbids names of the person, accounts, repositories and sessions. Interpretation: products that act as MCP clients (Claude Code, Claude Desktop, VS Code, Cursor and others) may be named in the MCP server's own help and README, as instructions; the provenance test keeps forbidding the person's identifiers, `claude.ai`, the host's adapter and everything else on its list.
+
 ## 2026-10-25 · v2.9: a deadbeat example; the benchmark's Pugh matrix; no holding back on usage ([input 34](../input/2026-10-25-34-hu-lin-scheduling-variable.md), [input 35](../input/2026-10-25-35-deadbeat-and-pugh-matrix.md))
 
 - **Hu–Lin, reproduced**: the person remembers the paper gave everything except how to compute one important scheduling variable, which they once had to work out; the session reproduces the paper's results and derives that variable, with the derivation written down.
