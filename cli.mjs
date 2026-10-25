@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { buildHtml } from './build.mjs';
 import { SLOTS, BLOCKS, blockDef, normalizeBlock } from './src/core/blocks.js';
 import { METRICS, METRIC } from './src/core/metrics.js';
-import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, uniqueName, nextColor, describeController, fmt, loopReady, referenceTrace, autoTimebase } from './src/core/project.js';
+import { normalizeProject, evaluateProject, evaluateCandidate, evaluateSystem, findCandidate, uniqueName, nextColor, describeController, fmt, loopReady, referenceTrace, autoTimebase } from './src/core/project.js';
 import { SIGNALS, normalizeComponent, describeComponent } from './src/core/signals.js';
 import { runTune, tunableParams } from './src/core/tune.js';
 import { DEFAULT_PROJECT } from './src/core/examples.js';
@@ -39,6 +39,8 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
                                         page's Auto-tune tab does; --save puts the result into the block as a
                                         variant of its own (running if it scores better); --ff also tunes
                                         the feedforward gains (Kff, Kv, Ka) that are 0
+  run <project> [--json]                simulate the system (the diagram) over the screen, as the page does, and
+                                        print what the run reported: validity, warnings, steps, step bound
   trace <project> [--candidate <name>] [--every 10] [--json]
                                         time series t, r, y, u, ym, d as CSV
   design <project> [--block <path>] [--json]
@@ -47,7 +49,7 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
   html <project> [-o out.html]          a standalone page with the project inside, to share
   extract <page.html>                   print the project inside an exported page
 
-  --json prints machine-readable output for eval, try, tune, autotune and design.
+  --json prints machine-readable output for eval, try, tune, autotune, run and design.
   --set takes controller parameters (Kp=2) or slot.param for a what-if on another
   slot of this candidate only (plant.tau=2, sensor.type=lag). Lists: num=[1,2].
 `;
@@ -349,6 +351,18 @@ switch (cmd) {
     for (const n of res.notes ?? []) console.log(`  note: ${n}`);
     if (!res.better) console.log(`  ${res.unstableAtStart ? 'the result is not run' : 'the result scores no better than the running variant'}${res.worse ? `: ${res.worse}` : ''}`);
     if (opt.save) console.log(res.better ? `saved: “${res.variant.name}” now runs in ${pos[1]}` : `saved: “${res.variant.name}” added to ${pos[1]}; “${res.before.variant.name}” keeps running`);
+    break;
+  }
+  case 'run': {
+    const project = readProject(pos[1]);
+    const res = evaluateSystem(project);
+    const { validity = [], warnings, h, substeps, steps, bound, stiffness, ms } = res.info;
+    const info = { validity, warnings, h, substeps, steps, bound, stiffness, ms };
+    if (opt.json) { console.log(JSON.stringify({ title: project.title, samples: res.t.length, signals: Object.keys(res.signals), info }, null, 2)); break; }
+    console.log(`${project.title}: ${res.t.length} samples of ${Object.keys(res.signals).join(', ')}`);
+    if (h !== undefined) console.log(`  step ${fmt(h)} s (${substeps} per record step, ${steps} steps), bound ${fmt(bound)} 1/s (largest |λ| ${fmt(stiffness.start.bound)} at the start${stiffness.end ? `, ${fmt(stiffness.end.bound)} at the end` : ''}), ${fmt(ms)} ms`);
+    for (const v of validity) console.log(`  ! ${v.says}`);
+    for (const w of warnings) console.log(`  ! ${w}`);
     break;
   }
   case 'trace': {

@@ -795,7 +795,21 @@ function step125(v, dir) {
   return ladder[Math.max(0, Math.min(ladder.length - 1, i + dir))];
 }
 
-return { ceil125, step125 };
+const PREFIXES = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n'], [1e-12, 'p']];
+
+function si(v, digits = 3) {
+  if (v === 0) return '0 ';
+  if (!Number.isFinite(v)) return '— ';
+  const a = Math.abs(v);
+  const [f, p] = PREFIXES.find(([f]) => a >= f * 0.9995) ?? PREFIXES[PREFIXES.length - 1];
+  return `${Number((v / f).toPrecision(digits))} ${p}`;
+}
+
+function siUnit(v, unit, digits) {
+  return `${si(v, digits)}${unit}`.replace(/ $/, '');
+}
+
+return { ceil125, step125, si, siUnit };
 })();
 // ---- core/speed.js
 __mods['core/speed.js'] = (() => {
@@ -4936,6 +4950,8 @@ __mods['core/diagram.js'] = (() => {
 
 const { BLOCKS, blockDef, normalizeBlock } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
+const { eig, csolve } = __mods['core/linalg.js'];
+const { siUnit } = __mods['core/scale.js'];
 const { gaussAt } = __mods['core/signals.js'];
 const { compileExpr } = __mods['core/expr.js'];
 const { CONTROLLERS, normalizeVariant, makeLaw } = __mods['core/controllers.js'];
@@ -5423,6 +5439,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
   let h = 0;
   let left = false;
+  let ideal = false;
   const histAt = (nd, tau, y0 = 0) => {
     const hist = nd.hist;
     if (tau < 0 || !hist.length) return y0;
@@ -5446,8 +5463,8 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         case 'delay': y = model || nd.L <= 0 ? inOf(nd) : histAt(nd, t - nd.L, nd.y0 ?? (nd.hist.length ? nd.hist[0] : inOf(nd))); break;
         case 'switch': y = inOf(nd, nd.pick); break;
         case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
-        case 'quant': y = model ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
-        case 'noise': y = model ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
+        case 'quant': y = model || ideal ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
+        case 'noise': y = model || ideal ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
         case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
         case 'tap': y = nd.see >= 0 ? X[o + nd.see] : nodes[nd.parent].outv[nd.j]; break;
         case 'ctrl': y = nd.u; break;
@@ -5538,6 +5555,48 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       return { sinks, sources, ctrls };
     },
   };
+
+  const jacobian = (X0, t) => {
+    const X = Float64Array.from(X0), f0 = new Float64Array(n), f1 = new Float64Array(n);
+    const J = Array.from({ length: n }, () => new Array(n).fill(0));
+    ideal = true;
+    try {
+      self.eval(t, X, 0, 0, f0);
+      for (let j = 0; j < n; j++) {
+        const x = X[j], dx = (x + 1e-6 * Math.max(1, Math.abs(x))) - x;
+        X[j] = x + dx;
+        self.eval(t, X, 0, 0, f1);
+        X[j] = x;
+        for (let i = 0; i < n; i++) J[i][j] = (f1[i] - f0[i]) / dx;
+      }
+    } finally { ideal = false; }
+    self.eval(t, X, 0, 0, null);
+    return J;
+  };
+  self.stiffness = (X0, t = 0) => {
+    if (!n) return { bound: 0, state: null };
+    const J = jacobian(X0, t);
+    if (!J.every((row) => row.every(Number.isFinite))) return { bound: 0, state: null, note: 'the rates are not finite at this state' };
+    let top = { re: 0, im: 0 }, mag = 0;
+    for (const z of eig(J)) { const a = Math.hypot(z.re, z.im); if (a > mag) { mag = a; top = z; } }
+    let state = null;
+    if (mag > 0) {
+      const s = 1 + 1e-7;
+      const v = csolve(J.map((row, i) => row.map((a, j) => a - (i === j ? top.re * s : 0))), J.map((row, i) => row.map((a, j) => (i === j ? -top.im * s : 0))), new Array(n).fill(1), new Array(n).fill(0));
+      if (v) { let k = 0; for (let i = 1; i < n; i++) if (Math.hypot(v.xr[i], v.xi[i]) > Math.hypot(v.xr[k], v.xi[k])) k = i; state = states[k]?.label ?? null; }
+    }
+    return { bound: mag, state };
+  };
+  {
+    const X0 = new Float64Array(n);
+    self.init(X0, 0);
+    const s = self.stiffness(X0, 0);
+    self.blockBound = bound;
+    self.stiff = s;
+    self.bound = s.bound > bound * (1 + 1e-6) ? s.bound : bound;
+  }
+  self.stiffWarning = (hmax, need, ran, T) => `${self.stiff.state ? `'${self.stiff.state}' needs` : 'this plant needs'} steps of ${siUnit(hmax, 's')}; this ${siUnit(T, 's')} screen would take ${siUnit(need, '', 3)} steps; it ran ${siUnit(ran, '', 3)}: inaccurate. Shorten the screen`;
+
   if (!model) return self;
 
   const owner = new Int32Array(n);   
@@ -5680,7 +5739,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       states: Array.from(keep, (g) => ({ ...states[g] })),
       outputs: labels.map((label) => ({ label, angle: false, unit: '' })),
       delay, sensors, through: [...through],
-      bound: Math.max(0, ...kept.map((nd) => nd.bound)),
+      bound: Math.max(self.bound, ...kept.map((nd) => nd.bound)),
       warnings: notes,
       f(x, u, dx) {
         evaluate(x, u, sliceF);
@@ -5769,6 +5828,7 @@ const { blockDef, SLOTS } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
 const { compileDiagram, plantDiagram, wrapPlant } = __mods['core/diagram.js'];
 const { referenceFn } = __mods['core/signals.js'];
+const { siUnit } = __mods['core/scale.js'];
 const MAX_SAMPLES = 200000;
 const MAX_STEPS = 400000;
 const BLOWUP = 1e8;
@@ -5966,10 +6026,14 @@ function gaussian(seed) {
 
 const ns = (x) => Math.round(x * 1e9);
 const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a; };
-function stepPlan(T, bound, sampleTimes = [], K = 1, warnings = []) {
+function stepPlan(T, bound, sampleTimes = [], K = 1, warnings = [], who = null) {
   const hmax = bound > 0 ? 0.5 / bound : T;
   let need = Math.max(1, Math.ceil(T / hmax - 1e-9));
-  if (K * need > MAX_STEPS) { need = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
+  if (K * need > MAX_STEPS) {
+    const ran = Math.max(1, Math.floor(MAX_STEPS / K));
+    warnings.push(`${who ? `'${who}' needs` : 'this plant needs'} steps of ${siUnit(hmax, 's')}; this ${siUnit(K * T, 's')} screen would take ${siUnit(K * need, '')} steps; it ran ${siUnit(K * ran, '')}: inaccurate. Shorten the screen`);
+    need = ran;
+  }
   if (!sampleTimes.length) return { m: need, split: false };
   let g = ns(T);
   for (const Ts of sampleTimes) g = gcd(g, ns(Ts));
@@ -5982,7 +6046,9 @@ const substeps = (...a) => stepPlan(...a).m;
 
 const onGrid = (t) => Math.round(t * 1e9) / 1e9;
 
-function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
+function simulateSystem(diagram, signals, sim, opts = {}) {
+  const { designs, until } = opts;
+  const t0 = globalThis.performance?.now() ?? Date.now();
   const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
   let K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
   if (until !== undefined) {
@@ -5992,7 +6058,8 @@ function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
   const el = compileDiagram(diagram, 'plant', { sources, standalone: true, designs });
   const warnings = [...el.warnings];
-  const { m, split } = stepPlan(Ts, el.bound, el.sampleTimes, K, warnings);
+  const bound = Math.max(el.bound, Number(opts.bound) || 0);
+  const { m, split } = stepPlan(Ts, bound, el.sampleTimes, K, warnings, el.stiff.state);
   const h = Ts / m, N = el.n;
   el.setStep(h);
   const X = new Float64Array(N), Xt = new Float64Array(N);
@@ -6040,7 +6107,16 @@ function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
       el.record();
     }
   }
-  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs } };
+  const end = unstable ? null : el.stiffness(X, K * Ts);
+  if (end && !(opts.bound > 0) && end.bound > bound * (1 + 1e-6) && stepPlan(Ts, end.bound, el.sampleTimes, K).m > m) {
+    const again = simulateSystem(diagram, signals, sim, { ...opts, bound: end.bound });
+    again.info.warnings.unshift(`stiffer later in the run: ${end.state ? `'${end.state}'` : 'the plant'} needs steps of ${siUnit(0.5 / end.bound, 's')} at ${siUnit(K * Ts, 's')}, against ${siUnit(h, 's')} at the start; run again with them`);
+    again.info.stiffness.start = el.stiff;
+    again.info.ms = (globalThis.performance?.now() ?? Date.now()) - t0;
+    return again;
+  }
+  const ms = (globalThis.performance?.now() ?? Date.now()) - t0;
+  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, bound, stiffness: { start: el.stiff, end }, ms } };
   if (until !== undefined) res.snapshot = unstable ? null : el.snapshot(K * Ts, X);
   return res;
 }
@@ -11040,6 +11116,7 @@ const GUIDE = {
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
     M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
     M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
+    M('loopTuner.info()', '', 'What the screen\'s last run reported: validity reports (a model used outside where it holds), warnings (a stiff plant and the step it needs, a run made again because the plant grew stiffer, a signal that diverged, an input not connected), the integration step h, steps, the step bound (the blocks\' own and the Jacobian\'s largest eigenvalue at the start), the Jacobian\'s at the start and the end, and the run\'s ms. The status line under the screen shows the first report or warning.', 'loopTuner.info()', '{ validity, warnings, h, substeps, steps, bound, stiffness: { start, end }, ms } or null'),
     M('loopTuner.whenDesigned()', '', 'Resolves once no design is being computed in the background (a plan for the planned swing-up takes seconds; meanwhile the block runs u = 0 or its previous plan) and the display shows the run that uses it. Await it before judging a run.', 'await loopTuner.whenDesigned()', 'a promise of designs()'),
     M('loopTuner.loopModel(path, op)', 'path: a Controller block\'s id path; op: "origin" (at rest), "initial" (the start), { y: [levels] } or { t: seconds }', 'The loop the Controller closes, as the Analysis tab draws it: the plant it sees linearised at op, and the running variant\'s own law, as state space. Refused, with the reason, where there is none (a relay, a kink at op, a plant outside the page).', 'loopTuner.loopModel("ctrl", "initial")', '{ plant: { A, B, C, D, delay, ... }, ctrl: { A, B, C, D }, Ts, opLabel, variantName, warnings }'),
     M('loopTuner.live.state()', '', 'The live link: state ("offline", "connecting", "open", "running"), pending ("run" or "stop" while the plant has not answered a key yet), message (the last message the page showed), estop ({ by, reason } or null), mode ("control", "reference", "log"), the plant\'s ports, ramp ({ left, to } while the references ramp in), link and plant figures, hold.', 'loopTuner.live.state().state'),

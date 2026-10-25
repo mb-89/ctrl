@@ -13,6 +13,8 @@
 
 import { BLOCKS, blockDef, normalizeBlock } from './blocks.js';
 import { tf2ss, rootBound } from './poly.js';
+import { eig, csolve } from './linalg.js';
+import { siUnit } from './scale.js';
 import { gaussAt } from './signals.js';
 import { compileExpr } from './expr.js';
 import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
@@ -612,6 +614,10 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   // left: the end of an integration step reads the value the step ran on
   // (the left limit), not the one a sample there puts out after it.
   let left = false;
+  // ideal: a Jacobian is being taken (stiffness, below): quantizers are the
+  // identity and noise adds 0, as in model mode, so a perturbation that
+  // crosses a quantizer step does not inflate the bound.
+  let ideal = false;
   const histAt = (nd, tau, y0 = 0) => {
     const hist = nd.hist;
     if (tau < 0 || !hist.length) return y0;
@@ -639,8 +645,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         case 'delay': y = model || nd.L <= 0 ? inOf(nd) : histAt(nd, t - nd.L, nd.y0 ?? (nd.hist.length ? nd.hist[0] : inOf(nd))); break;
         case 'switch': y = inOf(nd, nd.pick); break;
         case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
-        case 'quant': y = model ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
-        case 'noise': y = model ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
+        case 'quant': y = model || ideal ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
+        case 'noise': y = model || ideal ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
         case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
         // An observer's estimate looked through (model mode) reads the state it stands for.
         case 'tap': y = nd.see >= 0 ? X[o + nd.see] : nodes[nd.parent].outv[nd.j]; break;
@@ -765,6 +771,61 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       return { sinks, sources, ctrls };
     },
   };
+
+  // ---- Stiffness: the step bound sees loops through integrators -----------
+  // (design/output/detail-levels.md §5.) Each block's own bound (a transfer
+  // function's poles, a physics block's) misses a fast loop built from
+  // Integrators and Gains. So the rates' Jacobian is taken by forward
+  // differences at a state (sampled blocks hold their outputs, an External
+  // plant its last values) and the largest magnitude of its eigenvalues
+  // joins the blocks' bounds in el.bound, which every stepper reads
+  // (simulateSystem, Live, the loop path, a Model's bound).
+  const jacobian = (X0, t) => {
+    const X = Float64Array.from(X0), f0 = new Float64Array(n), f1 = new Float64Array(n);
+    const J = Array.from({ length: n }, () => new Array(n).fill(0));
+    ideal = true;
+    try {
+      self.eval(t, X, 0, 0, f0);
+      for (let j = 0; j < n; j++) {
+        const x = X[j], dx = (x + 1e-6 * Math.max(1, Math.abs(x))) - x;
+        X[j] = x + dx;
+        self.eval(t, X, 0, 0, f1);
+        X[j] = x;
+        for (let i = 0; i < n; i++) J[i][j] = (f1[i] - f0[i]) / dx;
+      }
+    } finally { ideal = false; }
+    self.eval(t, X, 0, 0, null);
+    return J;
+  };
+  // { bound: the largest |λ|, state: the label of the state that mode moves
+  // most (from one step of inverse iteration), or why there is none }.
+  self.stiffness = (X0, t = 0) => {
+    if (!n) return { bound: 0, state: null };
+    const J = jacobian(X0, t);
+    if (!J.every((row) => row.every(Number.isFinite))) return { bound: 0, state: null, note: 'the rates are not finite at this state' };
+    let top = { re: 0, im: 0 }, mag = 0;
+    for (const z of eig(J)) { const a = Math.hypot(z.re, z.im); if (a > mag) { mag = a; top = z; } }
+    let state = null;
+    if (mag > 0) {
+      const s = 1 + 1e-7;
+      const v = csolve(J.map((row, i) => row.map((a, j) => a - (i === j ? top.re * s : 0))), J.map((row, i) => row.map((a, j) => (i === j ? -top.im * s : 0))), new Array(n).fill(1), new Array(n).fill(0));
+      if (v) { let k = 0; for (let i = 1; i < n; i++) if (Math.hypot(v.xr[i], v.xi[i]) > Math.hypot(v.xr[k], v.xi[k])) k = i; state = states[k]?.label ?? null; }
+    }
+    return { bound: mag, state };
+  };
+  {
+    const X0 = new Float64Array(n);
+    self.init(X0, 0);
+    const s = self.stiffness(X0, 0);
+    self.blockBound = bound;
+    self.stiff = s;
+    // The difference quotient is good to about 1e-6: an |λ| that close to
+    // the blocks' bound is that bound (the encoder's 1000.0000002 is 1000).
+    self.bound = s.bound > bound * (1 + 1e-6) ? s.bound : bound;
+  }
+  // A step plan's warning when the step cap binds: who needs the step.
+  self.stiffWarning = (hmax, need, ran, T) => `${self.stiff.state ? `'${self.stiff.state}' needs` : 'this plant needs'} steps of ${siUnit(hmax, 's')}; this ${siUnit(T, 's')} screen would take ${siUnit(need, '', 3)} steps; it ran ${siUnit(ran, '', 3)}: inaccurate. Shorten the screen`;
+
   if (!model) return self;
 
   // ---- The plant a block sees (design/output/designs.md) -----------------
@@ -934,7 +995,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       states: Array.from(keep, (g) => ({ ...states[g] })),
       outputs: labels.map((label) => ({ label, angle: false, unit: '' })),
       delay, sensors, through: [...through],
-      bound: Math.max(0, ...kept.map((nd) => nd.bound)),
+      bound: Math.max(self.bound, ...kept.map((nd) => nd.bound)),
       warnings: notes,
       // ẋ = f(x, u) over the kept states; allocation-free.
       f(x, u, dx) {
