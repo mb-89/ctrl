@@ -181,7 +181,11 @@ export function createLive(app, display, record, panelHost) {
       updates[m.how] = (updates[m.how] ?? 0) + 1;
       if (m.how === 'rebuilt') tell('The diagram changed: the controllers start afresh.');
     } else if (m.type === 'error') tell(`Live: ${m.message}`);
+    else if (m.type === 'identify') onIdentify?.(m);
   }
+  // Identify's test on the plant (ui/identify.js): its messages, and the
+  // connection a model was measured on (a new one may be a new plant).
+  let onIdentify = null, connection = 0;
   // The scope's mode, without going through the plant (it told us already).
   function screen(m, restart = false) {
     if (m === 'stop' && hold) setHold(false);
@@ -196,7 +200,7 @@ export function createLive(app, display, record, panelHost) {
     // Every state the loop reports is the answer to the last start or stop
     // (an overtaken one reports nothing), or news that overrides it.
     pending = null;
-    if (s === 'connecting') { estop = null; desc = null; link = null; plantStatus = null; programKey = ''; ramp = null; }
+    if (s === 'connecting') { connection++; estop = null; desc = null; link = null; plantStatus = null; programKey = ''; ramp = null; }
     if (s === 'running') { estop = null; attach(); }
     if (s === 'open' && d === 'reset') estop = null;
     if (s === 'open' && was === 'running') { ramp = null; if (hold) setHold(false); }
@@ -633,6 +637,22 @@ export function createLive(app, display, record, panelHost) {
         return;
       }
       sendProgram();
+    },
+    // Identify on the plant: what it describes, the link, which connection
+    // this is, and the test's messages (start, the fit's supply, Stop).
+    identify: {
+      describe: () => desc,
+      link: () => ({ connected: connected(), estop: !!estop }),
+      connection: () => connection,
+      on: (fn) => { onIdentify = fn; },
+      async start(msg) {
+        if (!host || !connected()) return { error: 'connect the plant first' };
+        sendProgram();
+        pending = 'run'; render();
+        return ask({ type: 'identify', ...msg }, 8000);
+      },
+      supply: (data) => host?.post({ type: 'supply', data }),
+      stop: () => host?.post({ type: 'identifyStop' }),
     },
     // Why the speed is held at 1×: connected, the plant owns the clock.
     lockReason: () => (connected() ? 'Live: the external plant owns the clock, so time runs at 1×. Disconnect to change the speed.' : null),

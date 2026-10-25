@@ -231,7 +231,7 @@ export function normalizeIdentify(raw) {
 // speed of time (a positive factor, or -1: as fast as possible).
 // Unknown values are dropped.
 export const UI_RUN = ['run', 'stop', 'single'];
-export const UI_TABS = ['input', 'plant', 'controller', 'tune', 'analysis'];
+export const UI_TABS = ['input', 'plant', 'controller', 'identify', 'tune', 'analysis'];
 export function normalizeUi(ui) {
   if (!ui || typeof ui !== 'object') return null;
   const out = {};

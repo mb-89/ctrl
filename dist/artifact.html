@@ -553,6 +553,35 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .tunote { padding: 0 var(--space-3) var(--space-1); font-size: var(--text-xs); line-height: 1.35; color: var(--ink-3); }
 .tustatus { flex: 0 0 auto; min-height: 18px; }
 .tuplot { display: block; width: 100%; height: 118px; flex: 0 0 auto; border-radius: var(--radius-sm); background: var(--screen); }
+.ident { display: grid; grid-template-columns: minmax(200px, 260px) minmax(220px, 280px) minmax(240px, 1fr) minmax(260px, 1fr); gap: var(--space-7); align-items: stretch; height: 100%; min-height: 0; }
+.ident > .gcol { min-height: 0; overflow: auto; }
+.ident .seg { align-self: flex-start; flex-wrap: wrap; }
+.idknown { display: flex; flex-direction: column; gap: var(--space-3); }
+.idrow { font-size: var(--text-sm); line-height: 1.35; overflow-wrap: anywhere; }
+.idpf { display: flex; flex-direction: column; gap: var(--space-1); }
+.idpair { display: flex; align-items: center; gap: var(--space-2); color: var(--ink-3); }
+.idpair .field { width: 0; flex: 1 1 60px; text-align: right; }
+.idchips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.idchips:empty { display: none; }
+.idchip { pointer-events: none; }
+.idmeters { display: flex; flex-direction: column; gap: var(--space-2); }
+.idmeter { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); }
+.idbar { position: relative; display: block; height: var(--space-4); border-radius: var(--radius-sm); background: var(--lcd); overflow: hidden; }
+.idfill { position: absolute; left: 0; top: 0; bottom: 0; }
+.idfill-push { background: var(--ch-4); }
+.idfill-room { background: var(--ch-3); }
+.idmax { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--screen-ink); }
+.idmark { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--screen-label); }
+.idrange { margin-top: var(--space-1); }
+.idstart { width: 3px; margin-left: -1px; background: var(--ch-4); }
+.idstrip { display: block; width: 100%; height: 64px; flex: 0 0 auto; border-radius: var(--radius-sm); background: var(--screen); cursor: pointer; }
+.idsent { margin: 0; padding-left: var(--space-6); font-size: var(--text-base); line-height: 1.4; }
+.idsent li + li { margin-top: var(--space-1); }
+.idchain { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-xs); color: var(--ink-3); }
+.idchain .chip { color: var(--ink); }
+.idcands .item { display: flex; justify-content: space-between; gap: var(--space-4); }
+.idkeys { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.idplot { display: block; width: 100%; height: 220px; flex: 0 0 auto; border-radius: var(--radius-sm); background: var(--screen); }
 .an { display: grid; grid-template-columns: minmax(230px, 290px) 1fr; gap: var(--space-6); height: 100%; min-height: 0; }
 .an-side { overflow: auto; min-height: 0; }
 .kw { border-collapse: collapse; font-size: var(--text-sm); width: 100%; }
@@ -602,6 +631,8 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
   .ctl > .gcol { overflow: visible; }
   .tune { grid-template-columns: minmax(0, 1fr); height: auto; }
   .tune > .tuprogress { order: -1; }
+  .ident { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .ident > .idexp { order: -1; }
   .an { grid-template-columns: 1fr; }
   .an-grid { grid-template-columns: 1fr; }
 }
@@ -764,6 +795,7 @@ try { markLimited(window); } catch { }
     <div id="tab-input" role="tabpanel"></div>
     <div id="tab-plant" role="tabpanel" hidden></div>
     <div id="tab-controller" role="tabpanel" hidden></div>
+    <div id="tab-identify" role="tabpanel" hidden></div>
     <div id="tab-tune" role="tabpanel" hidden></div>
     <div id="tab-analysis" role="tabpanel" hidden></div>
     <div id="tab-later" role="tabpanel" hidden></div>
@@ -813,6 +845,8 @@ try { markLimited(window); } catch { }
 <h3 class="label">Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %; in a list such as Q, click into a value first), or add a variant from the library.</p>
 <p>Variants <b>from the plant</b> (LQR, PI from the plant, PID + feedforward from the plant, swing-up with an LQR catch, the planned swing-up, and an Observer's Kalman filter) hold only inputs (weights, levels, times, limits and hand gains such as a feedforward or the swing-up's energy gain): their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off), sliding mode, super-twisting; for an Observer, a Kalman filter on a model you give (for a plant the page cannot see), a Luenberger observer and finite differences. The sliding modes read the measured rate on input 3. A Controller with <b>lanes</b> runs one law per element of its vector inputs (the PUMA's six axis loops), each lane's numbers computed for that lane; its <b>ff</b> input adds a feedforward (the torque the arm's model says the motion takes) inside the limits. <b>Speed PI from the plant</b> puts each lane's speed loop at a bandwidth ω you choose. Try <b>DC motor, sliding mode</b>: its XY view is the phase portrait, and the line's slope λ sets how the error decays.</p>
+<h3 class="label">Identify</h3>
+<p>Finds the plant a Controller block drives, by experiment, for someone who knows no control theory. The tab says what the page already knows (u's range and where it starts, y's range, the reference) and asks two things, both prefilled: how far y <b>may move within</b>, and how long the test may take. <b>Start</b> runs one test that eases in, stage by stage: <b>Listen</b> (u held still: the noise), <b>Nudge</b> (tiny pushes back and forth, each larger only while the last stayed well inside the room), <b>Hold</b> (a deliberately gentle controller), <b>Ease in</b> (your reference again and again, each try asking for a 30 % quicker controller, until one rings, comes near the edge or stops improving) and <b>Check</b> (a test the model is not fitted to, its prediction drawn first). The meters show how hard it pushes and how much of the room it has used; the scope sweeps each try. Then the model in a few plain sentences, as a chain of blocks with ± ranges, the shapes it tried with their fit on the Check, and the gentlest controller that held (<b>Add as variant</b>). <b>Keep</b> stores the measured record with the project (the model is always computed from it); <b>Copy as blocks</b> puts the model into My blocks. Stop is soft: the controller brings y back first. It runs at the header's Speed. Try it on <b>Oven, badly tuned</b>.</p>
 <h3 class="label">Auto-tune</h3>
 <p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. Every run the tuner tries sweeps across the display at the header's <b>Speed</b> and lasts its own length, one period of the input, whatever the screen shows (a 5 s run takes 5 s at 1×, half a second at 10×); at ∞ it computes as fast as it can and shows each improvement. The scope's Stop stops the tuning too. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>. A relay or step result that scores worse than what runs, or that is unstable where the run starts, is added but does not run. A variant from the plant is tuned as its Copy as numbers twin, from the numbers its design computes now, and the result is a hand variant beside it; a planned swing-up has no gains to tune (change its inputs in the Controller tab).</p>
 <h3 class="label">Analysis</h3>
@@ -6143,7 +6177,7 @@ function createExperiment(plan) {
   const st = {
     stage: 'listen', rung: 0, try: 0, push: 0, pushMax: 0, room: 0, roomMax: 0, status: '', tries: [],
     marks: { push: [null, null], room: [E.nudge.room, E.nudge.backoff] },
-    t: 0, budget: P.budget, done: false, end: null, stop: false,
+    t: 0, budget: P.budget, done: false, end: null, stop: false, checkAt: null,
   };
   const now = () => (k - k0) * Ts;
   const left = () => P.budget - now();
@@ -6676,6 +6710,7 @@ function createExperiment(plan) {
     if (s === 'left') return endBand(`${names.y} left 'may move within' before the Check: the page stopped the plant`);
     const iS = i, kS = k, N = check.length;
     rFn = (kk) => check[Math.min(N - 1, kk - kS)];
+    st.checkAt = iS;
     while (k - kS < N) {
       if (!holds()) return endBand(`${names.y} left 'may move within' during the Check: the page stopped the plant`, { check: { i0, iStart: iS } });
       const u = law.step(r, y);
@@ -6687,8 +6722,27 @@ function createExperiment(plan) {
     return null;
   }
 
+  function* recheck() {
+    yield* listen();
+    if (st.done || stopping) return null;
+    if (!inBand(listenInfo.y0)) return finish('outside', `${names.y} is at ${yU(listenInfo.y0)}, outside 'may move within': widen it, or bring the plant inside first`);
+    chips.nudge = '–'; chips.ease = '–'; chips.shake = '–';
+    test = testR; check = P.check?.r ? P.check.r.slice() : testR.slice();
+    enter('hold');
+    const g = P.law, lim = g.lim ?? [P.umin, P.umax];
+    switchTo(g, 'hold', lim);
+    const ok = yield* settle(check[0], 4 * ((g.tauC ?? 1) + (g.theta ?? 0)) + E.hold.slack, `Holding ${names.y} at ${yU(check[0])} with the controller that held before`, true);
+    if (ok === 'left') return finish('band', `${names.y} left 'may move within' under the controller that held before: the page stopped the plant`);
+    if (ok === 'away') return finish('away', `the controller that held before pushed ${names.y} away from ${yU(check[0])}: the page stopped the plant; the plant has changed`);
+    inc = { gains: g, tauC: g.tauC, J: Infinity, n: 0, lim };
+    yield* runCheck();
+    if (st.done || stopping) return null;
+    return finish('done', 'Checked again: the plant is stopped');
+  }
+
 
   function* program() {
+    if (P.kind === 'recheck') return yield* recheck();
     yield* listen();
     if (st.done || stopping) return null;
     const L = listenInfo;
@@ -13814,7 +13868,7 @@ function normalizeIdentify(raw) {
 }
 
 const UI_RUN = ['run', 'stop', 'single'];
-const UI_TABS = ['input', 'plant', 'controller', 'tune', 'analysis'];
+const UI_TABS = ['input', 'plant', 'controller', 'identify', 'tune', 'analysis'];
 function normalizeUi(ui) {
   if (!ui || typeof ui !== 'object') return null;
   const out = {};
@@ -17147,9 +17201,10 @@ function rk4Of(el, X) {
 
 const scopeProbes = (el) => el.probes().flatMap(([n], i) => (n.includes('.') ? [] : [i]));
 
-function createLiveRunner(diagram, signals) {
+function createLiveRunner(diagram, signals, { identify = null } = {}) {
   const fns = {};
   let own, key, el, ext, keep, X, rk4, tPrev, h, links, ramp = null, started = false, log = [], period = Infinity;
+  let exp = null, law = null, kNow = 0;
   let sigs = {};
 
   function setSignals(next) {
@@ -17161,8 +17216,18 @@ function createLiveRunner(diagram, signals) {
   function build(d) {
     own = normalizeDiagram(structuredClone(d));
     key = structureKey(own);
-    const sources = new Proxy({}, { get: (_, name) => (t) => (started && ramp ? ramp.value(name, t) : wave(name)(0)) });
+    if (identify) {
+      let block = null, level = own;
+      for (const id of identify.key.split('/')) { block = level?.blocks.find((b) => b.id === id); level = block?.diagram; }
+      if (block?.type !== 'controller') throw new Error(`Identify: no Controller block ${identify.key}`);
+      block.variants = [{ name: 'Identify', type: 'experiment', params: { plan: identify.plan } }];
+      block.variant = 0;
+    }
+    const played = (name) => (name === identify.source ? (exp ? exp.reference(kNow) : identify.plan.test.r?.[0] ?? identify.plan.test.r0) : identify.hold?.[name] ?? 0);
+    const sources = new Proxy({}, { get: (_, name) => (t) => (identify ? played(name) : started && ramp ? ramp.value(name, t) : wave(name)(0)) });
     el = compileDiagram(own, 'plant', { standalone: true, sources });
+    law = identify ? el.laws[identify.key] : null;
+    exp = law?.experiment ?? null;
     keep = scopeProbes(el);
     if (el.externals.length !== 1) throw new Error(el.externals.length ? 'one External plant per system, for now' : 'this system has no External plant block: add one from the Live group in the Plant tab');
     ext = el.externals[0];
@@ -17187,7 +17252,7 @@ function createLiveRunner(diagram, signals) {
     });
   }
   function makeRamp() {
-    const played = diagramNames(own).sources.filter((n) => sigs[n]);
+    const played = identify ? [] : diagramNames(own).sources.filter((n) => sigs[n]);
     period = Math.max(...played.map((n) => sigs[n].period), 0) || Infinity;
     const fs = fullScales(ext.params, links);
     ramp = createRampIn({ refs: played.map((name) => ({ name, fn: wave(name), fs: fs[name] ? fs[name][1] - fs[name][0] : null })), period, rate: ext.params.ramp / 100 });
@@ -17219,8 +17284,10 @@ function createLiveRunner(diagram, signals) {
     get log() { return log.map(({ name, unit }) => ({ name, unit })); },
     get period() { return period; },
     ramp: () => (ramp && started ? ramp.state() : null),
-    step(t, y) {
+    get experiment() { return exp; },
+    step(t, y, at = null) {
       const missing = [];
+      if (at) kNow = at.k;
       for (let j = 0; j < ext.y.length; j++) {
         if (Number.isFinite(y[j])) ext.y[j] = y[j];
         else missing.push(ext.params.outputs[j]);
@@ -17244,6 +17311,7 @@ function createLiveRunner(diagram, signals) {
       }
       el.eval(t, X, 0, 0, null);
       if (tPrev !== null) el.recordLeft();
+      if (at && law) law.at(at.k, at.applied);
       el.sample(t, X, 0, 0);
       el.record();
       tPrev = t;
@@ -17442,6 +17510,7 @@ function createLiveLoop(post, env = globalThis) {
   let batch = empty(), lastFlush = 0, names = [], lastRamp = null;
   let appliedOn = false, appliedUnits = {};
   let id = 0, gen = 0, bad = 0;
+  let ident = null, identNext = null;
   const calls = new Map();
   const programWaiters = [], closeWaiters = [];
 
@@ -17467,6 +17536,7 @@ function createLiveLoop(post, env = globalThis) {
     if (latched) return;
     latched = { by, reason };
     halt();
+    identEnd(reason);
     post({ type: 'estop', by, reason });
     if (open()) say('open', 'e-stop');
   }
@@ -17496,11 +17566,13 @@ function createLiveLoop(post, env = globalThis) {
   }
   function makeRunner() {
     if (!program) throw new Error('nothing to run yet');
-    runner = createLiveRunner(program.diagram, program.signals);
+    runner = createLiveRunner(program.diagram, program.signals, { identify: ident });
     appliedOn = false;
     sampleNames();
   }
   function begin(by) {
+    ident = by === 'page' ? identNext : null;
+    identNext = null;
     makeRunner();
     post({ type: 'run', by });  
     stats = createLinkStats(desc.rate_hz);
@@ -17516,7 +17588,8 @@ function createLiveLoop(post, env = globalThis) {
     armed = true;
     if (!runner || !running) return;
     let res;
-    try { res = runner.step(m.t, m.y); } catch (err) { trip(`the diagram failed: ${err.message}`, 'the page\'s diagram failed'); return; }
+    const sampleAt = ident ? { k: Math.round(m.t / ident.plan.Ts), applied: m.applied?.[ident.applied] } : null;
+    try { res = runner.step(m.t, m.y, sampleAt); } catch (err) { trip(`the diagram failed: ${err.message}`, 'the page\'s diagram failed'); return; }
     if (res.missing.length) {
       if (++bad >= NAN_CYCLES) { trip(`no number for ${res.missing.join(', ')} in ${bad} cycles`, `the page got no number for ${res.missing.join(', ')}`); return; }
     } else bad = 0;
@@ -17529,7 +17602,26 @@ function createLiveLoop(post, env = globalThis) {
     batch.values.push(appliedOn ? [...res.values, ...Array.from({ length: n }, (_, i) => (m.applied?.length === n ? m.applied[i] : NaN))] : res.values);
     lastRamp = res.ramp && res.ramp.phase === 'ramp' ? { left: res.ramp.left, to: res.ramp.to, first: res.ramp.first } : null;
     if (at - lastFlush >= 33) { lastFlush = at; flush(); }
+    if (ident) identTell(at);
     if (stats && at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
+  }
+
+  function identTell(at) {
+    const exp = runner?.experiment;
+    if (!exp) return;
+    const st = exp.state;
+    if (exp.needs && !ident.asked) { ident.asked = true; post({ type: 'identify', state: st, needs: exp.needs, record: exp.record() }); return; }
+    if (!exp.needs) ident.asked = false;
+    if (st.checkAt !== null && !ident.checkSent) { ident.checkSent = true; post({ type: 'identify', state: st, check: exp.found.check, record: exp.record() }); return; }
+    if (st.done || exp.stopAsked) { identEnd(null); handlers.stop(); return; }
+    if (at - ident.posted >= 100) { ident.posted = at; post({ type: 'identify', state: st }); }
+  }
+  function identEnd(reason) {
+    const exp = runner?.experiment;
+    if (!ident || !exp) { ident = null; return; }
+    if (reason) exp.abort(reason);
+    ident = null;
+    post({ type: 'identify', state: exp.state, done: true, record: exp.record() });
   }
 
   function onText(text) {
@@ -17596,6 +17688,7 @@ function createLiveLoop(post, env = globalThis) {
         for (const c of calls.values()) c.reject(new Error('connection closed'));
         calls.clear();
         if (wasRunning && !latched) latch('page', 'connection lost');
+        identEnd('the connection was lost');
         say('closed', e.reason || (opened ? 'the connection was lost' : e.code === 1006 ? 'no plant answered at that address (or this page may not open connections)' : `code ${e.code}`));
         for (const w of closeWaiters.splice(0)) w();
       };
@@ -17614,8 +17707,24 @@ function createLiveLoop(post, env = globalThis) {
     async start() {
       try { await start(); return {}; } catch (err) { fail(err.message); post({ type: 'refused', message: err.message }); return { error: err.message }; }
     },
+    async identify({ key, plan, source, hold, applied }) {
+      identNext = { key, plan, source, hold, applied, posted: 0, asked: false };
+      try { await start(); return {}; } catch (err) { identNext = null; ident = null; return { error: err.message }; }
+    },
+    supply({ data }) {
+      const exp = runner?.experiment;
+      if (!ident || !exp?.needs) return { error: 'nothing waits for a fit' };
+      exp.supply('fit', data ?? {});
+      return {};
+    },
+    identifyStop() {
+      if (!ident) return {};
+      runner?.experiment?.stop();
+      return {};
+    },
     async stop() {
       const my = ++gen;
+      if (ident) identEnd('stopped');
       halt();
       try { await call('stop'); } catch {   }
       if (my !== gen) return {};
@@ -18684,14 +18793,14 @@ function varyDiagram(diagram, share, seed) {
 }
 
 
-function identify(project, path = null, settings = {}) {
+function identifyRun(project, path = null, settings = {}, { plan: ready = null, recheck = null } = {}) {
   const known = knownFor(project, path);
-  if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: it is identified in the page while connected, which comes with the Identify tab (not built yet)', 'identify() simulates the plant; a live plant runs in the page');
+  if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: it is identified in the page while connected', 'identify() simulates the plant; a live plant runs in the page');
   const stored = project.system.identify?.[known.block.key] ?? {};
   const given = Object.fromEntries(Object.entries(settings ?? {}).filter(([, v]) => v !== undefined));
   const merged = { ...stored, ...given };
   const s = settingsFor(known, merged);
-  const plan = planExperiment(known, s);
+  const plan = ready ?? planExperiment(known, s);
   const vary = merged.vary ?? null;
   let diagram = project.system.plant.diagram, factors = null;
   if (vary) {
@@ -18708,26 +18817,158 @@ function identify(project, path = null, settings = {}) {
   exp = runner.law(known.block.key).experiment;
   const most = Math.ceil((plan.budget + EXPERIMENT.pause.wait + 10) / Ts);
   let pre = null;
-  for (let k = 0; k <= most && !exp.state.done; k++) {
-    runner.step();
-    if (exp.needs) {
-      const upto = exp.needs.upto;
-      pre = drain(identifySteps(compactRecord(exp.record()), { plan, upto }));
-      exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+  function* steps() {
+    for (let k = 0; k <= most && !exp.state.done; k++) {
+      const v = runner.step();
+      yield { kind: 'sample', k: v.k, t: v.t, values: v.values };
+      if (exp.needs) {
+        const upto = exp.needs.upto;
+        pre = yield* tagged(identifySteps(compactRecord(exp.record()), { plan, upto }), 'pause');
+        exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+      }
     }
+    if (!exp.state.done) exp.stop();
+    const record = compactRecord(exp.record());
+    if (recheck) {
+      const end = exp.state.end;
+      return { ok: end.code === 'done', block: known.block, plan, record, end: { code: end.code, message: end.message }, time: record.y.length * Ts, recheck: recheckFit(recheck.model, record, recheck.record) };
+    }
+    const model = yield* tagged(identifySteps(record, { plan, structure: s.structure, reuse: pre }), 'model');
+    const end = exp.state.end;
+    return {
+      ok: !!model.ok, block: known.block, plan, settings: { band: s.band.value, budget: s.budget.value, structure: s.structure },
+      vary: vary ? { share: vary.share, seed: vary.seed, factors } : null,
+      record, model, end: { code: end.code, message: end.message }, time: record.y.length * Ts, tries: exp.state.tries,
+    };
   }
-  if (!exp.state.done) exp.stop();
-  const record = compactRecord(exp.record());
-  const model = drain(identifySteps(record, { plan, structure: s.structure, reuse: pre }));
-  const end = exp.state.end;
-  return {
-    ok: !!model.ok, block: known.block, plan, settings: { band: s.band.value, budget: s.budget.value, structure: s.structure },
-    vary: vary ? { share: vary.share, seed: vary.seed, factors } : null,
-    record, model, end: { code: end.code, message: end.message }, time: record.y.length * Ts, tries: exp.state.tries,
-  };
+  return { known, plan, settings: s, vary, factors, runner, exp, names: runner.names(), steps: steps(), stop: () => exp.stop(), get pre() { return pre; } };
 }
 
-return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, identifySteps, linearModel, twinSubsystem, varyDiagram, identify };
+function* tagged(gen, stage) {
+  for (;;) { const s = gen.next(); if (s.done) return s.value; yield { kind: 'fit', stage }; }
+}
+
+function identify(project, path = null, settings = {}) {
+  return drain(identifyRun(project, path, settings).steps);
+}
+
+
+const RECHECK = { points: 5 };
+
+function planRecheck(plan, model, record) {
+  const g = readLog(record);
+  if (!model?.ok || !g.check) throw new IdentifyError('recheck', 'this model had no Check to repeat: identify again', 'Check again repeats a test that ended done');
+  const r = record.r.slice(g.check.iStart, g.check.iEnd).map((v) => nan(v));
+  let law = null;
+  for (const e of g.laws) if (e.i <= g.check.iStart) law = e;
+  if (!law || r.length < 2) throw new IdentifyError('recheck', 'this model had no Check to repeat: identify again');
+  return { ...structuredClone(plan), kind: 'recheck', test: { r }, check: { r }, law: { Kp: law.Kp, Ki: law.Ki, tauC: law.tauC ?? 1, theta: model.params.theta ?? 0, lim: [law.umin, law.umax] } };
+}
+
+function recheckFit(model, record, original = null) {
+  const now = checkReplayFit(model, record);
+  if (now === null) return { fit: null, was: model.check?.fit ?? null, still: false, message: 'the Check did not run: identify again' };
+  const was = (original && checkReplayFit(model, original)) ?? model.check?.fit ?? model.fit;
+  const still = now >= was - RECHECK.points;
+  return { fit: now, was, still, message: still ? `still fits ✓ (${pctText(now)} % now, ${pctText(was)} % when it was identified)` : `the plant has changed: identify again (${pctText(now)} % now, ${pctText(was)} % when it was identified) ✕` };
+}
+function checkReplayFit(model, record) {
+  const g = readLog(record);
+  if (!g.check || !g.listen) return null;
+  const Ts = record.Ts, w = Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9));
+  const seg = closedSegment(record, g.laws, g.check.iStart, g.check.iEnd, w, 'check');
+  const fs = fitSegment(record, seg, g.listen, Ts);
+  const yh = simulateSegment(discretise(model.structure, model.params, Ts), fs).y;
+  const y = [], h = [];
+  for (let k = 0; k < yh.length; k++) if (finite(fs.y[k])) { y.push(fs.y[k]); h.push(yh[k]); }
+  return y.length > 2 ? fitPercent(y, h) : null;
+}
+
+
+function modelSamples(model, count = 50) {
+  if (!model?.structure) return [];
+  return parameterSamples(model.structure, model.params, model.cov, model.Ts, count);
+}
+
+function predictCheck(model, record, { at, r }) {
+  const Ts = model.Ts, N = r.length;
+  const w = Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9));
+  const a = Math.min(at, model.segments?.closed?.at(-1)?.[0] ?? at);
+  const ahead = { ...record, y: [...record.y.slice(0, at), ...new Array(N).fill(0)], u: [...record.u.slice(0, at), ...new Array(N).fill(0)], r: [...record.r.slice(0, at), ...r], applied: [] };
+  const g = readLog(record);
+  const seg = closedSegment(ahead, g.laws, a, at + N, w, 'check');
+  const fs = fitSegment(ahead, seg, g.listen, Ts);
+  const run = (p) => {
+    try { return simulateSegment(discretise(model.structure, p, Ts), fs).y.subarray(at - a); } catch { return null; }
+  };
+  const y = run(model.params);
+  return { y, ...spreadOf(modelSamples(model).map(run).filter(Boolean), y) };
+}
+
+function spreadOf(curves, y) {
+  const lo = new Float64Array(y.length), hi = new Float64Array(y.length);
+  for (let k = 0; k < y.length; k++) {
+    let ss = 0, n = 0;
+    for (const c of curves) if (finite(c[k])) { ss += (c[k] - y[k]) ** 2; n++; }
+    const b = n ? 2 * Math.sqrt(ss / n) : 0;
+    lo[k] = y[k] - b; hi[k] = y[k] + b;
+  }
+  return { lo, hi };
+}
+
+function modelStep(model, seconds) {
+  const Ts = model.Ts, N = Math.max(2, Math.ceil(seconds / Ts) + 1);
+  const run = (p) => { try { return simulateSegment(discretise(model.structure, p, Ts), { u: new Float64Array(N).fill(1), yStart: 0, uStart: 0, n: N }).y; } catch { return null; } };
+  const y = run(model.params);
+  const t = Float64Array.from({ length: N }, (_, k) => k * Ts);
+  return { t, y, ...spreadOf(modelSamples(model).map(run).filter(Boolean), y) };
+}
+
+function modelBode(model, w) {
+  const Ts = model.Ts;
+  const resp = (p) => {
+    let d;
+    try { d = discretise(model.structure, p, Ts); } catch { return null; }
+    return w.map((om) => discreteAt(d, om * Ts));
+  };
+  const g = resp(model.params);
+  const mag = g.map((z) => Math.hypot(z[0], z[1]));
+  const phase = [];
+  let last = 0;
+  g.forEach((z, i) => { let ph = (Math.atan2(z[1], z[0]) * 180) / Math.PI; if (i) while (ph - last > 180) ph -= 360; if (i) while (ph - last < -180) ph += 360; phase.push(ph); last = ph; });
+  const curves = modelSamples(model).map(resp).filter(Boolean).map((c) => c.map((z) => Math.hypot(z[0], z[1])));
+  const { lo, hi } = spreadOf(curves, Float64Array.from(mag));
+  return { w, mag, phase, lo, hi };
+}
+
+function discreteAt(d, Om) {
+  const n = d.n, zr = Math.cos(Om), zi = Math.sin(Om);
+  const ar = d.Phi.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v)), ai = d.Phi.map((row, i) => row.map((_, j) => (i === j ? zi : 0)));
+  const iz = [Math.cos(-Om), Math.sin(-Om)];
+  const br = d.G0.map((g0, i) => g0 + d.G1[i] * iz[0]), bi = d.G1.map((g1) => g1 * iz[1]);
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.hypot(ar[r][c], ai[r][c]) > Math.hypot(ar[piv][c], ai[piv][c])) piv = r;
+    [ar[c], ar[piv]] = [ar[piv], ar[c]]; [ai[c], ai[piv]] = [ai[piv], ai[c]]; [br[c], br[piv]] = [br[piv], br[c]]; [bi[c], bi[piv]] = [bi[piv], bi[c]];
+    const pr = ar[c][c], pi = ai[c][c], den = pr * pr + pi * pi;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const fr = (ar[r][c] * pr + ai[r][c] * pi) / den, fi = (ai[r][c] * pr - ar[r][c] * pi) / den;
+      for (let j = c; j < n; j++) { const xr = ar[c][j], xi = ai[c][j]; ar[r][j] -= fr * xr - fi * xi; ai[r][j] -= fr * xi + fi * xr; }
+      const xr = br[c], xi = bi[c]; br[r] -= fr * xr - fi * xi; bi[r] -= fr * xi + fi * xr;
+    }
+  }
+  let sr = 0, si = 0;
+  for (let c = 0; c < n; c++) {
+    const pr = ar[c][c], pi = ai[c][c], den = pr * pr + pi * pi;
+    const xr = (br[c] * pr + bi[c] * pi) / den, xi = (bi[c] * pr - br[c] * pi) / den;
+    sr += d.C[c] * xr; si += d.C[c] * xi;
+  }
+  const mr = Math.cos(-d.m * Om), mi = Math.sin(-d.m * Om);
+  return [sr * mr - si * mi, sr * mi + si * mr];
+}
+
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, identify, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {
@@ -18963,6 +19204,8 @@ const GUIDE = {
     M('loopTuner.single()', '', 'Single: one sweep, then stop. Pressed while running, the sweep under way finishes, then it stops (live: then the plant stops).', 'loopTuner.single()', '{ ok, why, run, live }'),
     M('loopTuner.speed(x?)', 'x: a factor, or -1 for as fast as possible', 'How fast simulated time runs; held at 1 while a plant is connected.', 'loopTuner.speed(10)', '{ speed, effective, achieved, simulation, locked }'),
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
+    M('loopTuner.identify(opts?)', 'opts: { block (id path, default the first), band: [lo, hi], budget: seconds of plant time (30, 60, 120, 300, 600), vary: { share, seed } (a hidden variation of a simulated plant), keep }', 'Identifies the plant a Controller block drives, as the Identify tab\'s Start does: one experiment that eases in (Listen, Nudge, Hold, Ease in, Check) on a copy of the diagram at the header\'s Speed (speed(-1) for as fast as possible), then the model from its record. band, budget and vary are stored as the block\'s settings (one undo step); keep stores the record with the project.', 'await loopTuner.identify({ keep: true })', 'a promise of { ok, sentences, grade, why, structure, params, sd, chain, check: { fit, ceiling, kernel }, eased, candidates, where, warnings, end, time, tries, kept }'),
+    M('loopTuner.identified(block?)', 'block: a Controller block\'s id path', 'The model in use for the block: the last test run in the page, else its kept test in use; null while none (or while it is computed from a kept record).', 'loopTuner.identified("ctrl")?.sentences', 'the same report as identify(), or null'),
     M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
     M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter, a Luenberger observer\'s placed poles) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
     M('loopTuner.info()', '', 'What the screen\'s last run reported: validity reports (a model used outside where it holds), warnings (a stiff plant and the step it needs, a run made again because the plant grew stiffer, a signal that diverged, an input not connected), the integration step h, steps, the step bound (the blocks\' own and the Jacobian\'s largest eigenvalue at the start), the Jacobian\'s at the start and the end, and the run\'s ms. The status line under the screen shows the first report or warning.', 'loopTuner.info()', '{ validity, warnings, h, substeps, steps, bound, stiffness: { start, end }, ms } or null'),
@@ -24980,6 +25223,752 @@ function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 
 return { createAutotuneTab };
 })();
+// ---- ui/identify.js
+__mods['ui/identify.js'] = (() => {
+
+const { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord } = __mods['core/identify.js'];
+const { controllerBlocks, placeVariant, baseName } = __mods['core/autotune.js'];
+const { normalizeVariant } = __mods['core/controllers.js'];
+const { AS_FAST, formatSpeed } = __mods['core/speed.js'];
+const { num, parseSI } = __mods['ui/units.js'];
+const { palette: C, fade } = __mods['ui/palette.js'];
+const { createPlot, extent } = __mods['ui/plots.js'];
+const SLICE = 30;       
+const FRAME = 0.25;     
+const RENDER = 100;     
+const MAX_SWEEP = 4000; 
+const PLOTS = {
+  check: { label: 'Check', about: 'The Check: what was measured (a test the model was not fitted to) against the model\'s prediction and its 2σ band, with the reference.' },
+  bode: { label: 'Bode', about: 'How much of a swing at each frequency the model passes, as the sampled loop sees it, with its 2σ band; the kernel\'s estimate dotted ("what the data say without choosing a shape").' },
+  step: { label: 'Step', about: 'The model\'s response to one unit more of u, from rest, with its 2σ band; the kernel\'s dotted.' },
+  where: { label: 'Where', about: 'The gain at each place the test sat, with its 2σ bar: where it differs, one linear model is a compromise. Faint: a place the test spent little time in.' },
+  size: { label: 'Size', about: 'The apparent gain of each push of the Nudge against its size: a gain that grows with the push is friction or a dead band.' },
+  more: { label: 'More', about: 'What is left after the model, on the Check: its autocorrelation against the 99 % band (and what the loop gives white noise, dashed); χ²/dof of every candidate.' },
+};
+const TIPS = {
+  gain: 'K: how much more y one unit more of u gives, once it has settled',
+  rate: 'k′: how fast y moves per unit of u (the plant integrates: it keeps moving as long as it is pushed)',
+  delay: 'θ: how long before y responds at all (a dead time)',
+  lag: 'τ: how long y takes to get about two thirds of the way',
+  freq: 'f: how fast it swings',
+  damping: 'ζ: how quickly a swing dies out; 0.7 swings once, 0.1 rings for a long time',
+};
+
+function createIdentifyTab(host, app, display, record) {
+  const st = { target: null, plot: 'check' };
+  let job = null;             
+  const fresh = new Map();    
+  const models = new Map();   
+  let computing = null;       
+  const checks = new Map();   
+  const connections = new Map(); 
+
+  host.innerHTML = `
+    <div class="ident">
+      <section class="gcol" aria-label="What we know">
+        <div class="ghead"><h3 class="label">What we know</h3></div>
+        <div id="id-blocks" class="ctblocks"></div>
+        <div id="id-known" class="idknown"></div>
+        <p class="note" id="id-why" role="alert"></p>
+      </section>
+      <section class="gcol idexp" aria-label="Experiment">
+        <div class="ghead"><h3 class="label">Experiment</h3><button class="btn btn-sm" id="id-start">Start</button></div>
+        <div class="idchips" id="id-chips" role="list" aria-label="Stages"></div>
+        <div class="idmeters" id="id-meters"></div>
+        <div class="note tustatus" id="id-status" role="status"></div>
+        <div class="idchips" id="id-tries" aria-label="Tries"></div>
+        <p class="hint mono" id="id-time"></p>
+        <canvas class="idstrip" id="id-strip" aria-label="The whole record: u and y with the stages; click a stage to see it on the scope" hidden></canvas>
+      </section>
+      <section class="gcol" aria-label="Model">
+        <div class="ghead"><h3 class="label">Model</h3></div>
+        <div id="id-model"></div>
+      </section>
+      <section class="gcol" aria-label="Check">
+        <div class="ghead"><h3 class="label">Check</h3></div>
+        <div class="seg" id="id-plots" role="radiogroup" aria-label="Plot"></div>
+        <canvas class="idplot" id="id-plot" aria-label="The plot"></canvas>
+        <p class="hint" id="id-plotnote"></p>
+      </section>
+    </div>
+    <div id="id-empty" hidden></div>`;
+  const $ = (s) => host.querySelector(s);
+  const plot = createPlot($('#id-plot'));
+
+  const root = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
+  const blocks = () => controllerBlocks(root());
+  const current = () => { const all = blocks(); return all.find((c) => c.key === st.target) ?? all[0] ?? null; };
+  const stored = (key) => app.project.system.identify?.[key] ?? {};
+  function context() {
+    const c = current();
+    if (!c) return { why: null };
+    let known, settings, plan = null, why = null, hint = '';
+    const L = app.live?.identify;
+    try {
+      known = knownFor(app.project, c.path, app.live?.owns() ? { describe: L.describe(), link: L.link() } : {});
+      settings = identifySettings(app.project, c.path, { known });
+    } catch (err) { return { c, why: err.message, hint: err.hint ?? '' }; }
+    try { plan = planExperiment(known, settings); } catch (err) { why = err.message; hint = err.hint ?? ''; }
+    const rate = L?.describe()?.rate_hz;
+    if (!why && known.live && rate && Math.abs(known.Ts * rate - Math.round(known.Ts * rate)) > 1e-6) { why = `the block's Ts (${fmtTime(known.Ts)}) is not a whole number of the plant's cycles (${num(rate, 4)} Hz)`; hint = 'set Ts in the Plant tab'; }
+    return { c, known, settings, plan, why, hint };
+  }
+  const plantKey = () => JSON.stringify(root(), function (k, v) { if (k === 'x' || k === 'y' ? typeof v === 'number' && this.id !== undefined : k === 'variants' || k === 'variant') return undefined; return v; });
+
+
+  function source(key) {
+    const f = fresh.get(key);
+    if (f && f.plant === plantKey() && f.keptAs === null) return { kind: 'fresh', plan: f.result.plan, record: f.result.record, name: f.name, result: f.result };
+    if (f && f.plant !== plantKey()) fresh.delete(key);
+    const s = stored(key), kept = s.kept ?? [];
+    if (!kept.length) return null;
+    const i = Math.min(kept.length - 1, Math.max(0, s.use ?? kept.length - 1));
+    return { kind: 'kept', index: i, plan: kept[i].plan, record: kept[i].record, name: kept[i].name };
+  }
+  const recordHash = (rec) => { const s = JSON.stringify(rec); let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return `${s.length}:${h >>> 0}`; };
+  const modelKey = (src, structure) => `${recordHash(src.record)}|${structure ?? ''}`;
+  function modelOf(key) {
+    const src = source(key);
+    if (!src) return { src: null, model: null };
+    const structure = stored(key).structure ?? null;
+    const mk = modelKey(src, structure);
+    if (models.has(mk)) return { src, model: models.get(mk) };
+    if (!computing || computing.mk !== mk) {
+      const reuse = [...models.values()].find((m) => m.recordHash === recordHash(src.record)) ?? null;
+      computing = { mk, gen: identifySteps(src.record, { plan: src.plan, structure, reuse }) };
+      setTimeout(computeSlice, 0);
+    }
+    return { src, model: null };
+  }
+  function computeSlice() {
+    const w = computing;
+    if (!w) return;
+    const t0 = performance.now();
+    try {
+      for (;;) {
+        const s = w.gen.next();
+        if (s.done) { remember(w.mk, s.value); computing = null; renderAll(); return; }
+        if (performance.now() - t0 > SLICE) break;
+      }
+    } catch (err) { computing = null; app.toast(`Could not compute the model: ${err.message}`); return; }
+    setTimeout(computeSlice, 0);
+  }
+  function remember(mk, model) {
+    Object.defineProperty(model, 'recordHash', { value: mk.split('|')[0], enumerable: false });
+    models.set(mk, model);
+    if (models.size > 24) models.delete(models.keys().next().value);
+  }
+
+
+  function renderKnown() {
+    const ctx = context();
+    const { c, known, settings } = ctx;
+    const all = blocks();
+    $('#id-blocks').innerHTML = all.length > 1
+      ? all.map((x) => `<button class="btn btn-block" data-path="${esc(x.key)}" aria-pressed="${x.key === c?.key}" ${job ? 'disabled' : ''}>${esc(x.where)}</button>`).join('')
+      : c ? `<div class="heading">${esc(c.where)}</div>` : '';
+    if (!known) { $('#id-known').innerHTML = ''; $('#id-why').innerHTML = ctx.why ? `<span class="text-bad">✕ ${esc(ctx.why)}</span>${ctx.hint ? `<br><span class="hint">${esc(ctx.hint)}</span>` : ''}` : ''; return ctx; }
+    const u = known.u, y = known.y, U = (v, unit) => `${num(v, 4)}${unit ? ` ${unit}` : ''}`;
+    const from = { plant: 'from the plant', controller: 'from the Controller tab', both: 'from the plant and the Controller tab' }[u.from] ?? '';
+    const startFrom = u.start === 'plant' ? 'the plant\'s safe value' : u.start === 'controller' ? 'the running variant\'s start output' : 'u at rest';
+    const bandFrom = { r: 'from r\'s range', plant: 'from the plant', yours: 'yours' }[settings.band.from] ?? '';
+    const lock = job ? 'disabled' : '';
+    const hard = settings.hard;
+    const rows = [
+      `<div class="idrow mono">${esc(u.name)} → ${esc(y.name)} · Ts ${esc(fmtTime(known.Ts))}</div>`,
+      `<div class="idrow" title="u's range: the running variant's u min and u max${u.from !== 'controller' ? ', within the plant\'s' : ''}; it starts at ${esc(startFrom)}">${esc(u.name)} may go ${esc(U(u.min, u.unit))} … ${esc(U(u.max, u.unit))} · starts at ${esc(U(u.u0, u.unit))} <span class="hint">(${esc(from)})</span>${rangeBar(u.min, u.max, u.u0)}</div>`,
+      hard.from === 'plant'
+        ? `<div class="idrow">${esc(y.name)} never beyond ${esc(U(hard.value[0], y.unit))} … ${esc(U(hard.value[1], y.unit))} <span class="hint">(from the plant)</span></div>`
+        : `<label class="idpf" title="Where the plant itself would stop (E-stop). Leave empty if you do not know: the band below is then all the page goes by."><span class="flabel">${esc(y.name)} never beyond</span><span class="idpair"><input class="field field-sm mono" data-k="hard0" value="${hard.value ? esc(num(hard.value[0], 4)) : ''}" placeholder="don't know" ${lock}><span>…</span><input class="field field-sm mono" data-k="hard1" value="${hard.value ? esc(num(hard.value[1], 4)) : ''}" placeholder="don't know" ${lock}></span><span class="hint">${esc(y.unit)}</span></label>`,
+      known.r ? `<div class="idrow">r runs ${esc(U(known.r.lo, y.unit))} … ${esc(U(known.r.hi, y.unit))} <span class="hint">(Input tab)</span></div>` : '<div class="idrow hint">no reference: the test plays a staircase of its own</div>',
+      `<label class="idpf" title="How far the test may move ${esc(y.name)}: the page eases in and backs off before it reaches an edge. Default: r's range widened by a third of its span on each side, inside the plant's range."><span class="flabel">${esc(y.name)} may move within</span><span class="idpair"><input class="field field-sm mono" data-k="band0" value="${settings.band.value ? esc(num(settings.band.value[0], 4)) : ''}" ${lock}><span>…</span><input class="field field-sm mono" data-k="band1" value="${settings.band.value ? esc(num(settings.band.value[1], 4)) : ''}" ${lock}></span><span class="hint">${esc(y.unit)}${bandFrom ? ` · ${esc(bandFrom)}` : ''}</span></label>`,
+      `<label class="idpf" title="Plant time: the test eases in for as long as this allows, and always keeps time for the Check."><span class="flabel">The test may take</span><select class="field field-sm" id="id-budget" ${lock}>${BUDGETS.map((b) => `<option value="${b}" ${b === settings.budget.value ? 'selected' : ''}>${b < 60 ? `${b} s` : `${b / 60} min`}</option>`).join('')}</select></label>`,
+    ];
+    if (!editing($('#id-known'))) $('#id-known').innerHTML = rows.join('');
+    $('#id-why').innerHTML = ctx.why ? `<span class="text-bad">✕ ${esc(ctx.why)}</span>${ctx.hint ? `<br><span class="hint">${esc(ctx.hint)}</span>` : ''}` : '';
+    return ctx;
+  }
+  const editing = (el) => el.contains(document.activeElement) && document.activeElement.matches('input, select');
+
+  function setSetting(key, name, value) {
+    app.editProject((p) => {
+      const all = (p.system.identify ??= {});
+      const e = (all[key] ??= {});
+      if (value === null) delete e[name]; else e[name] = value;
+      if (!Object.keys(e).length) delete all[key];
+      if (!Object.keys(all).length) delete p.system.identify;
+    });
+  }
+
+
+  function renderExperiment(ctx) {
+    const b = $('#id-start');
+    b.textContent = job ? (job.stopping ? 'Stopping…' : 'Stop') : 'Start';
+    b.className = `btn btn-sm${job ? ' btn-danger' : ''}`;
+    b.disabled = job ? !!job.stopping : !!ctx.why || !ctx.plan;
+    b.title = job ? 'Stop: the excitation ends, the controller brings y back, the record so far is kept' : 'Start the test: it eases in, and the plant may move within the band';
+    const s = stateOf(job) ?? shownState();
+    const chips = s?.chips ?? ['Listen', 'Nudge', 'Hold', 'Ease in', 'Shake', 'Check'].map((label) => ({ label, mark: '' }));
+    $('#id-chips').innerHTML = chips.map((x) => `<span class="btn btn-sm idchip" role="listitem" ${x.mark === 'lit' ? 'aria-pressed="true"' : ''} title="${esc(STAGE_ABOUT[x.label] ?? '')}">${x.mark && x.mark !== 'lit' ? `${esc(x.mark)} ` : ''}${esc(x.label)}</span>`).join('');
+    $('#id-meters').innerHTML = s ? meter('push', 'push', s.push, s.pushMax, s.marks.push, 'How hard the test pushes: |u − u₀| as % of u\'s range, and the largest so far') + meter('room', 'room used', s.room, s.roomMax, s.marks.room, 'How much of the room y may use the test has used: easing in stops at the first mark, the page backs off at the second') : '';
+    const status = job ? (job.fitting ? 'Fitting the model…' : s?.status ?? 'Starting the plant…') : s ? s.status : ctx.why ? '' : 'Press Start: the page runs one test that eases in. The plant may move within the band.';
+    $('#id-status').textContent = status ?? '';
+    $('#id-tries').innerHTML = (s?.tries ?? []).map((t, i) => `<span class="chip" title="Try ${i + 1}">${i + 1} ${esc(t)}</span>`).join('');
+    $('#id-time').textContent = s ? `Plant time ${clock(s.t)} of ${clock(s.budget)}${job ? ` · ${formatSpeed(app.speed())}` : ''}` : '';
+    const rec = !job ? source(current()?.key)?.record : null;
+    $('#id-strip').hidden = !rec;
+    if (rec) drawStrip(rec);
+  }
+  function shownState() {
+    const f = fresh.get(current()?.key);
+    return f && f.plant === plantKey() ? f.state : null;
+  }
+  function meter(id, label, v, max, marks, title) {
+    const pct = (x) => `${Math.round(100 * Math.min(1, Math.max(0, x)))}`;
+    return `<div class="idmeter" title="${esc(title)}"><span class="flabel">${esc(label)}</span><span class="idbar" role="meter" aria-label="${esc(label)}" aria-valuenow="${pct(v)}" aria-valuemin="0" aria-valuemax="100"><span class="idfill idfill-${id}" style="width:${pct(v)}%"></span><span class="idmax" style="left:${pct(max)}%"></span>${marks.filter((m) => m !== null).map((m) => `<span class="idmark" style="left:${pct(m)}%"></span>`).join('')}</span><span class="mono hint">${pct(v)} % · ${pct(max)} %</span></div>`;
+  }
+
+  function drawStrip(rec) {
+    const cv = $('#id-strip'), r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    if (!r.width) return;
+    const W = r.width, H = r.height;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = C().bg; g.fillRect(0, 0, W, H);
+    const n = rec.y.length, x = (i) => (i / Math.max(1, n - 1)) * W;
+    const stages = (rec.log ?? []).filter((e) => e.kind === 'stage');
+    stages.forEach((e, j) => {
+      const a = x(e.i ?? 0), b = x(stages[j + 1]?.i ?? n);
+      g.fillStyle = j % 2 ? C().hover : C().veil; g.fillRect(a, 0, b - a, H);
+      g.fillStyle = C().label; g.font = `9px ${C().mono}`; g.textBaseline = 'top';
+      const label = STAGE_SHORT[e.stage] ?? e.stage;
+      if (b - a > g.measureText(label).width + 6) g.fillText(label, a + 2, 2);
+    });
+    const line = (v, color) => {
+      const [lo, hi] = extent(v.filter((q) => q !== null), 0.1);
+      g.strokeStyle = color; g.lineWidth = 1; g.beginPath();
+      let pen = false;
+      for (let i = 0; i < n; i += Math.max(1, Math.floor(n / (2 * W)))) {
+        if (v[i] === null) { pen = false; continue; }
+        const px = x(i), py = H - 2 - ((v[i] - lo) / (hi - lo)) * (H - 14);
+        if (pen) g.lineTo(px, py); else { g.moveTo(px, py); pen = true; }
+      }
+      g.stroke();
+    };
+    line(rec.u, C().ch[3]);
+    line(rec.y, C().ch[2]);
+  }
+
+
+  function renderModel() {
+    const c = current();
+    const box = $('#id-model');
+    if (!c) { box.innerHTML = ''; return null; }
+    if (job) { box.innerHTML = '<p class="note muted">The model comes when the test ends.</p>'; return null; }
+    const { src, model } = modelOf(c.key);
+    if (!src) { box.innerHTML = '<p class="note muted">No test yet. The model, in a few plain sentences, comes when a test ends.</p>'; return null; }
+    if (!model) { box.innerHTML = '<p class="note muted">Computing the model from the record…</p>'; return null; }
+    const s = stored(c.key);
+    const out = [];
+    const ended = src.record.end !== 'done' ? src.record.log.findLast((e) => e.kind === 'end')?.message : null;
+    if (ended) out.push(`<p class="note text-warn">! From a test that ended early: ${esc(ended)}</p>`);
+    if (!model.ok) {
+      out.push(`<ul class="idsent">${model.sentences.map((t) => `<li class="text-bad">${esc(t)}</li>`).join('')}</ul>`);
+    } else {
+      out.push(`<ul class="idsent">${model.sentences.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`);
+      const mark = model.grade === '✓' ? 'text-ok' : model.grade === '!' ? 'text-warn' : 'text-bad';
+      out.push(`<p class="note"><b class="${mark}">${esc(model.grade)}</b> ${esc(model.why.length ? model.why.join('; ') : 'explains the test well')}</p>`);
+      out.push(`<div class="idchain mono" aria-label="The model as blocks">In → ${model.chain.map((x) => `<span class="chip" title="${esc(TIPS[x.kind === 'gain' && model.label.startsWith('integrator') ? 'rate' : x.kind] ?? x.label)}">${esc(x.value === null ? x.label : `${x.label} ${withBar(x.value, x.sd)}${x.unit ? ` ${x.unit}` : ''}`)}</span>`).join(' → ')} → Out</div>`);
+      out.push(`<p class="hint">${esc(model.chosen)}</p>`);
+      out.push(`<div class="choices idcands" role="radiogroup" aria-label="Candidates">${model.candidates.map((x) => `<button class="item" role="radio" data-structure="${esc(x.structure)}" aria-checked="${x.structure === model.structure}" title="${esc(x.why.join('; ') || x.glyph)}"><span>${esc(x.label)}<span class="hint"> · ${esc(x.glyph)}</span></span><span class="mono">${Number.isFinite(x.fit) ? `${fitText(x.fit)} %` : '–'} ${esc(x.grade)}</span></button>`).join('')}</div>`);
+    }
+    if (model.eased) {
+      out.push(`<p class="note">The gentlest controller that held: PI, Kp ${esc(num(model.eased.Kp, 3))}, Ki ${esc(num(model.eased.Ki, 3))}${model.eased.try ? ` (try ${model.eased.try})` : ' (the Hold\'s)'} <button class="btn btn-sm" id="id-variant" title="Adds it to the block as a variant of its own, “… · eased in”: hand numbers you choose to keep">Add as variant</button></p>`);
+    }
+    const keys = [];
+    if (src.kind === 'fresh') keys.push('<button class="btn btn-sm" id="id-keep" title="Stores the measured record with the project (one undo step); the model is computed from it whenever it is needed">Keep</button>');
+    if (model.ok && model.check) keys.push('<button class="btn btn-sm" id="id-recheck" title="Runs Listen, then the controller that held and the Check alone (about 10–20 s), and compares the plant with the model: still fits, or the plant has changed">Check again</button>');
+    if (model.ok) keys.push('<button class="btn btn-sm" id="id-copy" title="Puts the model as a subsystem of the Plant library\'s own blocks into My blocks: these numbers no longer follow the plant">Copy as blocks</button>');
+    if (keys.length) out.push(`<div class="idkeys">${keys.join('')}</div>`);
+    const L = app.live?.owns() ? app.live.identify : null;
+    const conn = src.kind === 'fresh' ? fresh.get(c.key)?.connection : connections.get(recordHash(src.record));
+    if (L && (conn === undefined || conn === null || conn !== L.connection())) out.push('<p class="note text-warn">! Measured on an earlier connection: the plant may have changed. Check again tells.</p>');
+    const ck = checks.get(c.key);
+    if (ck) out.push(`<p class="note ${ck.ended ? 'text-bad' : ck.still ? 'text-ok' : 'text-bad'}">Check again: ${esc(ck.ended ?? ck.message)}</p>`);
+    out.push(src.kind === 'fresh' ? '<p class="hint">Not kept: Keep saves it with the project.</p>' : `<p class="hint">Kept: ${esc(src.name)}.</p>`);
+    const kept = s.kept ?? [];
+    if (kept.length > 1 || (kept.length && src.kind === 'fresh')) {
+      out.push(`<div class="choices" role="radiogroup" aria-label="Kept tests">${kept.map((k, i) => `<button class="item" role="radio" data-use="${i}" aria-checked="${src.kind === 'kept' && src.index === i}"><span>${esc(k.name)}</span><span class="hint">${esc(clock(k.record.y.length * k.record.Ts))}</span></button>`).join('')}</div>`);
+    }
+    if (model.warnings?.length) out.push(`<details class="more"><summary class="disclosure label"><span class="chev"></span>Notes</summary>${model.warnings.map((w) => `<p class="note">${esc(w)}</p>`).join('')}</details>`);
+    box.innerHTML = out.join('');
+    box.querySelectorAll('[data-structure]').forEach((el) => { el.onclick = () => { if (el.dataset.structure !== model.structure) setSetting(c.key, 'structure', el.dataset.structure); }; });
+    box.querySelectorAll('[data-use]').forEach((el) => { el.onclick = () => { const f = fresh.get(c.key); if (f) f.keptAs = -1; setSetting(c.key, 'use', Number(el.dataset.use)); }; });
+    $('#id-keep')?.addEventListener('click', () => keep(c, src));
+    $('#id-copy')?.addEventListener('click', () => copyBlocks(model, src));
+    $('#id-recheck')?.addEventListener('click', () => start('recheck'));
+    $('#id-variant')?.addEventListener('click', () => addVariant(c, model));
+    return model;
+  }
+
+  function keep(c, src) {
+    const f = fresh.get(c.key);
+    if (!f) return;
+    let index = 0;
+    app.editProject((p) => {
+      const all = (p.system.identify ??= {});
+      const e = (all[c.key] ??= {});
+      e.kept ??= [];
+      e.kept.push({ name: f.name, plan: structuredClone(src.plan), record: structuredClone(src.record) });
+      index = e.use = e.kept.length - 1;
+    });
+    f.keptAs = index;
+    app.toast(`Kept “${f.name}” with the project: the record; the model is computed from it. Ctrl+Z goes back.`);
+  }
+  function copyBlocks(model, src) {
+    const name = `identified ${model.names.y} · ${src.name.split(' · ').pop()}`;
+    app.saveToLibrary(name, twinSubsystem(model, { name }));
+    app.toast(`Copied “${name}” to My blocks (Plant tab): these numbers no longer follow the plant.`);
+  }
+  function addVariant(c, model) {
+    const e = model.eased;
+    const block = c.block, running = block.variants[block.variant ?? 0];
+    const base = `${baseName(running.name)} · eased in`;
+    const taken = new Set(block.variants.map((v) => v.name));
+    let name = base.slice(0, 40);
+    for (let i = 2; taken.has(name); i++) name = `${base.slice(0, 36)} ${i}`;
+    const variant = normalizeVariant({ name, type: 'pid', params: { Kp: e.Kp, Ki: e.Ki, Kd: 0, Tf: 0.01, b: 1, Tr: 0, Kff: 0, Kv: 0, Ka: 0, u0: running.params?.u0 ?? 0, umin: e.umin, umax: e.umax, aw: 'clamp', Tt: 0 } });
+    app.editProject((p) => placeVariant(p, c.path, variant, { run: false }));
+    app.toast(`Added “${name}” to ${c.where}: the PI that held, proven on the plant. Run it in the Controller tab.`);
+  }
+
+
+  function renderPlots(model) {
+    $('#id-plots').innerHTML = Object.entries(PLOTS).map(([k, x]) => `<button class="btn btn-sm" role="radio" data-plot="${k}" aria-checked="${k === st.plot}" title="${esc(x.about)}">${x.label}</button>`).join('');
+    host.querySelectorAll('[data-plot]').forEach((el) => { el.onclick = () => { st.plot = el.dataset.plot; renderPlots(model); }; });
+    drawPlot(model);
+  }
+  function drawPlot(model) {
+    const note = $('#id-plotnote');
+    note.textContent = '';
+    if (!$('#id-plot').getBoundingClientRect().width) return;
+    if (!model?.ok) { plot.frame({ x0: 0, x1: 1, y0: 0, y1: 1 }); plot.note(job ? 'the test runs: the plots come with the model' : 'no model yet'); return; }
+    const n = model.names, cols = C().ch;
+    const src = source(current()?.key);
+    if (st.plot === 'check') {
+      const ck = model.check;
+      if (!ck) { plot.frame({ x0: 0, x1: 1, y0: 0, y1: 1 }); plot.note('no Check ran'); return; }
+      const N = ck.yhat.length, t = Array.from({ length: N }, (_, k) => (ck.i0 + k) * model.Ts);
+      const r = t.map((_, k) => src?.record.r[ck.i0 + k] ?? null);
+      const lo = ck.yhat.map((v, k) => v - ck.band[k]), hi = ck.yhat.map((v, k) => v + ck.band[k]);
+      const [y0, y1] = extent([...ck.y, ...lo, ...hi, ...r]);
+      plot.frame({ x0: t[0], x1: t[N - 1], y0, y1, xunit: 's', ylabel: n.yUnit ? `${n.y} (${n.yUnit})` : n.y });
+      plot.clip(() => {
+        band(t, lo, hi, cols[0]);
+        plot.line(t, r, { color: C().label, dash: [4, 3], width: 1 });
+        plot.line(t, ck.y, { color: cols[1], width: 1.2 });
+        plot.line(t, ck.yhat, { color: cols[0], width: 1.6 });
+      });
+      note.textContent = `measured (${n.y}) against the model's prediction and its 2σ band: ${fitText(ck.fit)} % (the noise allows ${fitText(ck.ceiling)} %)`;
+    } else if (st.plot === 'step') {
+      const slow = Math.max(...model.chain.filter((x) => ['lag', 'delay'].includes(x.kind)).map((x) => x.value), 1 / (model.params.f ?? Infinity) * 3, 10 * model.Ts);
+      const sp = modelStep(model, Math.min(6 * slow + (model.params.theta ?? 0), 600));
+      const kern = model.kernel ? kernelCurve(model.kernel, sp.t.at(-1)) : null;
+      const [y0, y1] = extent([...sp.lo, ...sp.hi, 0, ...(kern ? kern.s : [])]);
+      plot.frame({ x0: 0, x1: sp.t.at(-1), y0, y1, xunit: 's', ylabel: `${n.y} per ${n.uUnit || n.u}` });
+      plot.clip(() => {
+        band(sp.t, sp.lo, sp.hi, cols[0]);
+        if (kern) plot.line(kern.t, kern.s, { color: cols[2], dash: [2, 3], width: 1.2 });
+        plot.line(sp.t, sp.y, { color: cols[0], width: 1.6 });
+      });
+      note.textContent = `the model's step: one ${n.uUnit || 'unit'} more of ${n.u}, from rest${kern ? '; dotted: the kernel (no shape chosen)' : ''}`;
+    } else if (st.plot === 'bode') {
+      const nyq = Math.PI / model.Ts, slowest = Math.max(...model.chain.filter((x) => x.kind === 'lag').map((x) => x.value), model.params.f ? 1 / (2 * Math.PI * model.params.f) : 0, model.Ts);
+      const wa = Math.min(0.05 / slowest, nyq / 1e3), w = Array.from({ length: 160 }, (_, i) => wa * (nyq / wa) ** (i / 159));
+      const b = modelBode(model, w);
+      const dB = (x) => 20 * Math.log10(Math.max(x, 1e-12));
+      const mag = b.mag.map(dB), lo = Array.from(b.lo, (x) => dB(x)), hi = Array.from(b.hi, (x) => dB(x));
+      const [y0, y1] = extent([...mag, ...hi].filter((v) => v > -200));
+      plot.frame({ x0: w[0], x1: w.at(-1), y0: Math.max(y0, y1 - 80), y1, xlog: true, xlabel: 'rad/s', ylabel: '|G| dB' });
+      plot.clip(() => { band(w, lo, hi, cols[0]); plot.line(w, mag, { color: cols[0], width: 1.6 }); });
+      note.textContent = `|G|, as the loop sampled at ${fmtTime(model.Ts)} sees it, with its 2σ band; phase ${num(b.phase[Math.floor(w.length / 2)], 3)}° at ${num(w[Math.floor(w.length / 2)], 3)} rad/s (hover the plot keys for more)`;
+    } else if (st.plot === 'where') {
+      const pl = model.where ?? [];
+      if (!pl.length) { plot.frame({ x0: 0, x1: 1, y0: 0, y1: 1 }); plot.note('one place only'); return; }
+      const xs = pl.map((p) => p.level), ys = pl.flatMap((p) => [p.gain - 2 * p.gainSd, p.gain + 2 * p.gainSd]);
+      const [x0, x1] = extent([...xs, ...pl.map((p) => p.from), ...pl.map((p) => p.to)]), [y0, y1] = extent([...ys, 0]);
+      plot.frame({ x0, x1, y0, y1, xlabel: `place (${n.y}${n.yUnit ? `, ${n.yUnit}` : ''})`, ylabel: 'gain' });
+      for (const p of pl) {
+        const color = p.seen >= GRADE.seen ? cols[0] : fade(cols[0], C().alpha.unselected);
+        plot.line([p.level, p.level], [p.gain - 2 * p.gainSd, p.gain + 2 * p.gainSd], { color, width: 1.4 });
+        plot.mark(p.level, p.gain, { shape: 'dot', color, size: 6 });
+      }
+      note.textContent = `the gain at each place, ±2σ${model.whereSpread.flagged ? ': it differs by place, so one linear model is a compromise' : ''}`;
+    } else if (st.plot === 'size') {
+      const sz = model.size ?? [];
+      if (!sz.length) { plot.frame({ x0: 0, x1: 1, y0: 0, y1: 1 }); plot.note('no pushes at one length to compare'); return; }
+      const [x0, x1] = extent([0, ...sz.map((p) => p.a)]), [y0, y1] = extent([0, ...sz.map((p) => p.gain)]);
+      plot.frame({ x0, x1, y0, y1, xlabel: `push (${n.u}${n.uUnit ? `, ${n.uUnit}` : ''})`, ylabel: 'apparent gain' });
+      for (const p of sz) plot.mark(p.a, p.gain, { shape: p.complete ? 'dot' : 'o', color: cols[0], size: 6 });
+      note.textContent = model.sizeNote ?? 'the apparent gain of each push of the Nudge: about the same at every size';
+    } else {
+      const ck = model.check;
+      if (!ck) { plot.frame({ x0: 0, x1: 1, y0: 0, y1: 1 }); plot.note('no Check ran'); return; }
+      const r = ck.autocorrelation, lags = r.map((_, i) => i + 1);
+      plot.frame({ x0: 0, x1: lags.length + 1, y0: -1, y1: 1, xlabel: 'lag (samples)', ylabel: 'autocorrelation' });
+      plot.line([0, lags.length + 1], [ck.limit, ck.limit], { color: C().label, dash: [4, 3], width: 1 });
+      plot.line([0, lags.length + 1], [-ck.limit, -ck.limit], { color: C().label, dash: [4, 3], width: 1 });
+      r.forEach((v, i) => plot.line([i + 1, i + 1], [0, v], { color: Math.abs(v) > ck.limit ? C().bad : cols[0], width: 2 }));
+      note.textContent = `χ²/dof: ${model.candidates.map((x) => `${x.label} ${Number.isFinite(x.chi2dof) ? num(x.chi2dof, 3) : '–'}`).join(' · ')}${model.check.kernel !== null ? ` · the kernel explains ${fitText(model.check.kernel)} % of the Check` : ''}`;
+    }
+  }
+  function band(x, lo, hi, color) {
+    const g = plot.g;
+    g.fillStyle = fade(color, C().alpha.past);
+    g.globalAlpha = 1;
+    g.beginPath();
+    let started = false;
+    for (let i = 0; i < x.length; i++) { const px = plot.X(x[i]), py = plot.Y(hi[i]); if (!Number.isFinite(py)) continue; if (started) g.lineTo(px, py); else { g.moveTo(px, py); started = true; } }
+    for (let i = x.length - 1; i >= 0; i--) { const py = plot.Y(lo[i]); if (Number.isFinite(py)) g.lineTo(plot.X(x[i]), py); }
+    g.closePath();
+    g.save(); g.globalCompositeOperation = 'lighter'; g.fill(); g.restore();
+  }
+
+
+  function start(kind = 'identify') {
+    const ctx = context();
+    if (job || !ctx.plan) { if (ctx.why) app.toast(ctx.why); return null; }
+    let plan = ctx.plan, recheck = null;
+    if (kind === 'recheck') {
+      const { src, model } = modelOf(ctx.c.key);
+      try { plan = planRecheck(src.plan, model, src.record); } catch (err) { app.toast(err.message); return null; }
+      recheck = { model, record: src.record };
+    }
+    let run = null;
+    if (!ctx.known.live) {
+      try { run = identifyRun(app.project, ctx.c.path, {}, kind === 'recheck' ? { plan, recheck } : {}); } catch (err) { app.toast(err instanceof IdentifyError ? err.message : `Could not start: ${err.message}`); return null; }
+      plan = run.plan;
+    }
+    app.beginEdit();
+    const known = ctx.known;
+    const sc = app.project.scope, shows = (nm) => sc.channels.some((ch) => ch.on && ch.source === nm), names = app.signalNames();
+    if (names.includes(known.y.name) && names.includes(known.u.name) && !shows(known.y.name) && !shows(known.u.name)) {
+      Object.assign(sc.channels[2], { source: known.y.name, on: true, ...scaleFor(plan.band) });
+      Object.assign(sc.channels[3], { source: known.u.name, on: true, ...scaleFor([plan.umin, plan.umax]) });
+    }
+    record.removeReferences((nm) => nm.startsWith(REF));
+    job = {
+      kind, live: known.live, run, plan, recheck, key: ctx.c.key, path: ctx.c.path, where: ctx.c.where, plant: app.project.system.plant, mode: display.mode, names: run?.names ?? [], known,
+      wall: performance.now(), target: 0, tPlant: 0, timer: 0, fitting: false, stopping: false, rendered: 0, stageKey: '', checkDrawn: false,
+      sweep: null, done: null, past: null, lastT: null, resolve: [], state: null, pre: null, work: null,
+    };
+    app.changedView();
+    if (job.live) startLive(job);
+    else {
+      display.clearRuns();
+      display.setFeed(poll);
+      app.setRunMode('run');
+      schedule();
+    }
+    renderAll();
+    return job;
+  }
+  const stateOf = (j) => (j ? (j.live ? j.state : j.run.exp.state) : null);
+
+  async function startLive(j) {
+    const L = app.live.identify;
+    const desc = L.describe();
+    L.on((m) => { if (job === j) onLive(j, m); });
+    j.connection = L.connection();
+    app.setRunMode('run');
+    const hold = Object.fromEntries(j.plan.others.map((o) => [o.name, o.value]));
+    const res = await L.start({ key: j.key, plan: j.plan, source: j.known.r?.source ?? null, hold, applied: desc.inputs.map((p) => p.name).indexOf(j.known.u.name) });
+    if (res?.error && job === j) end({ status: `Could not start the test on the plant: ${res.error}` });
+  }
+  function onLive(j, m) {
+    j.state = m.state;
+    if (m.needs) {
+      j.fitting = true;
+      const gen = identifySteps(compactRecord(m.record), { plan: j.plan, upto: m.needs.upto });
+      work(j, gen, (pre) => { j.pre = pre; j.fitting = false; app.live.identify.supply(pre.ok ? { structure: pre.structure, params: pre.params } : {}); });
+    }
+    if (m.check && j.pre && !j.checkDrawn) { j.checkDrawn = true; drawPrediction(j, m.record, m.state.checkAt, m.check); }
+    if (m.done) {
+      const record = compactRecord(m.record);
+      const end0 = record.log.find((e) => e.kind === 'end') ?? { code: record.end, message: m.state.status };
+      const base = { ok: false, block: { path: j.path, key: j.key, where: j.where }, plan: j.plan, record, end: { code: end0.code, message: end0.message }, time: record.y.length * j.plan.Ts, tries: m.state.tries };
+      if (j.kind === 'recheck') { finish({ ...base, ok: end0.code === 'done', recheck: recheckFit(j.recheck.model, record, j.recheck.record) }); return; }
+      j.fitting = true;
+      work(j, identifySteps(record, { plan: j.plan, structure: stored(j.key).structure ?? null, reuse: j.pre }), (model) => finish({ ...base, ok: !!model.ok, model, settings: { structure: stored(j.key).structure ?? null } }));
+    }
+    if (performance.now() - j.rendered > RENDER) { j.rendered = performance.now(); renderExperiment(context()); }
+  }
+  function work(j, gen, then) {
+    const go = () => {
+      if (job !== j) return;
+      const t0 = performance.now();
+      try {
+        for (;;) { const s = gen.next(); if (s.done) { then(s.value); return; } if (performance.now() - t0 > SLICE) break; }
+      } catch (err) { end({ status: `Stopped: ${err.message}.` }); return; }
+      setTimeout(go, 0);
+    };
+    setTimeout(go, 0);
+  }
+
+  const schedule = () => { if (job && !job.timer) job.timer = setTimeout(() => { if (job) { job.timer = 0; tick(); } }, app.speed() === AS_FAST || job.fitting ? 0 : 16); };
+  function tick() {
+    if (app.project.system.plant !== job.plant) { end({ status: 'Stopped: the plant changed during the test.', gone: true }); return; }
+    const sp = app.speed(), now = performance.now();
+    if (sp !== AS_FAST) job.target = (job.fitting ? job.tPlant : job.target) + Math.min(FRAME, (now - job.wall) / 1000) * sp;
+    job.wall = now;
+    const t0 = performance.now(), tBefore = job.tPlant;
+    for (;;) {
+      if (sp !== AS_FAST && !job.fitting && job.tPlant >= job.target) break;
+      let s;
+      try { s = job.run.steps.next(); } catch (err) { end({ status: `Stopped: ${err.message}.` }); return; }
+      if (s.done) { app.timeRan(t0 / 1000, 0); app.timeRan(performance.now() / 1000, job.tPlant - tBefore); finish(s.value); return; }
+      if (s.value.kind === 'sample') { job.fitting = false; sample(s.value); } else job.fitting = true;
+      if (performance.now() - t0 > SLICE) break;
+    }
+    app.timeRan(t0 / 1000, 0);
+    app.timeRan(performance.now() / 1000, job.tPlant - tBefore);
+    if (performance.now() - job.rendered > RENDER) { job.rendered = performance.now(); renderExperiment(context()); }
+    schedule();
+  }
+  function sample(v) {
+    job.tPlant = v.t;
+    const s = job.run.exp.state;
+    const key = `${s.stage}|${s.try}|${s.checkAt ?? ''}`;
+    const cut = key !== job.stageKey && ['hold', 'ease', 'shake', 'check'].includes(s.stage);
+    job.stageKey = key;
+    addSample(v.t, v.values, cut);
+    if (s.checkAt !== null && !job.checkDrawn) { job.checkDrawn = true; drawPrediction(job, job.run.exp.record(), s.checkAt, job.run.exp.found.check); }
+  }
+  function windowOf() {
+    const tb = app.project.scope.timebase;
+    const w0 = Math.max(0, tb.position);
+    return [w0, Math.max(tb.position + 10 * tb.scale - w0, 1e-6)];
+  }
+  const view = (s) => ({ t: s.t.subarray(0, s.n), signals: Object.fromEntries(job.names.map((nm, j) => [nm, s.cols[j].subarray(0, s.n)])) });
+  function addSample(t, vals, cut) {
+    const [w0, W] = windowOf();
+    if (cut || !job.sweep || job.sweep.w0 !== w0 || job.sweep.W !== W || t - job.sweep.start >= W - 1e-9) {
+      if (job.sweep?.n) job.done = view(job.sweep);
+      const Ts = job.plan.Ts, every = Math.max(1, Math.ceil(W / Ts / MAX_SWEEP)), cap = Math.ceil(W / Ts / every) + 2;
+      job.sweep = { w0, W, start: t, every, k: 0, n: 0, cap, t: new Float64Array(cap), cols: job.names.map(() => new Float64Array(cap)) };
+    }
+    const s = job.sweep;
+    job.lastT = t;
+    if (s.k++ % s.every || s.n >= s.cap) return;
+    s.t[s.n] = s.w0 + (t - s.start);
+    for (let j = 0; j < vals.length; j++) s.cols[j][s.n] = vals[j];
+    s.n++;
+  }
+  function poll() {
+    const s = job?.sweep;
+    const out = { data: s ? view(s) : { t: new Float64Array(0), signals: {} }, scan: s && job.lastT !== null ? s.w0 + (job.lastT - s.start) : windowOf()[0], done: job?.done ?? null, past: null };
+    if (job) job.done = null;
+    return out;
+  }
+  function drawPrediction(j, rec, i0, ref) {
+    const pre = j.live ? j.pre : j.run.pre;
+    if (!pre?.ok || !ref || j.kind === 'recheck') return;
+    let p;
+    try { p = predictCheck(pre, rec, { at: i0, r: ref }); } catch { return; }
+    const [w0] = windowOf(), Ts = j.plan.Ts;
+    const t0 = j.live ? i0 * Ts : w0;
+    const t = Float64Array.from(p.y, (_, k) => t0 + k * Ts);
+    record.trace({ t, signals: { [j.known.y.name]: p.y } }, `${REF}${j.known.y.name} · predicted`);
+  }
+
+  function finish(result) {
+    const j = job;
+    if (j.kind === 'recheck') {
+      const rc = result.recheck;
+      checks.set(j.key, { ...rc, connection: j.connection ?? null, ended: result.end.code === 'done' ? null : result.end.message });
+      end({ status: result.end.code === 'done' ? `Check again: ${rc.message}` : result.end.message });
+      return;
+    }
+    const name = `${j.known.y.name} · ${new Date().toTimeString().slice(0, 5)}`;
+    checks.delete(j.key);
+    fresh.set(j.key, { result, name, state: stateOf(j), plant: plantKey(), keptAs: null, connection: j.live ? j.connection : null });
+    if (j.live) connections.set(recordHash(result.record), j.connection);
+    const mk = modelKey({ record: result.record }, result.settings.structure);
+    remember(mk, result.model);
+    end({ status: result.end.message, result });
+  }
+  function end({ status = '', result = null, gone = false } = {}) {
+    if (!job) return;
+    clearTimeout(job.timer);
+    const j = job;
+    job = null;
+    app.endEdit();
+    if (!j.live) {
+      display.setFeed(null);
+      if (!gone) { app.showLoop(); display.clearRuns(); }
+      app.setRunMode(j.mode === 'single' ? 'stop' : j.mode);
+    } else app.setRunMode('stop');
+    record.removeReferences((nm) => nm.startsWith(REF));
+    if (result?.model && !j.live) showRecord(result, j);
+    if (status) app.toast(status);
+    for (const f of j.resolve) f(result);
+    renderAll();
+  }
+  function showRecord(res, j) {
+    const rec = res.record, Ts = rec.Ts, n = rec.y.length, [w0] = windowOf();
+    const t = Float64Array.from({ length: n }, (_, i) => w0 + i * Ts);
+    const col = (a) => Float64Array.from(a, (v) => (v === null ? NaN : v));
+    const signals = { [j.known.y.name]: col(rec.y), [j.known.u.name]: col(rec.u) };
+    if (j.known.r?.source) signals[j.known.r.source] = col(rec.r);
+    const name = `${REF}record`;
+    record.trace({ t, signals }, name);
+    const ck = res.model.check;
+    if (ck) {
+      const yh = new Float64Array(n).fill(NaN);
+      ck.yhat.forEach((v, k) => { yh[ck.i0 + k] = v; });
+      record.trace({ t, signals: { [j.known.y.name]: yh } }, `${REF}${j.known.y.name} · model`);
+      record.showReference(name, ck.i0 * Ts + w0);
+    }
+  }
+  function stop() {
+    if (!job || job.stopping) return;
+    job.stopping = true;
+    if (job.live) app.live.identify.stop(); else job.run.stop();
+    renderAll();
+  }
+
+  function renderAll() {
+    if (host.hidden && !job) return;
+    const c = current();
+    $('.ident').hidden = !c;
+    $('#id-empty').hidden = !!c;
+    if (!c) {
+      $('#id-empty').innerHTML = '<div class="notice"><h3 class="label">Nothing to identify</h3><p class="note">Identify finds the plant a <b>Controller</b> block drives, by one experiment that eases in. Add a Controller block in the Plant tab, or load a controlled system from the <b>System library</b>, such as <b>Oven, badly tuned</b>.</p></div>';
+      return;
+    }
+    const ctx = renderKnown();
+    renderExperiment(ctx);
+    const model = renderModel();
+    renderPlots(model);
+    bind();
+  }
+  function bind() {
+    host.querySelectorAll('[data-path]').forEach((el) => { el.onclick = () => { if (job) return; st.target = el.dataset.path; renderAll(); }; });
+    const c = current();
+    const budget = $('#id-budget');
+    if (budget) budget.onchange = () => { const v = Number(budget.value); budget.blur(); setSetting(c.key, 'budget', v === 120 ? null : v); };
+    host.querySelectorAll('#id-known input[data-k]').forEach((inp) => {
+      inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } };
+      inp.onblur = () => {
+        if (inp.dataset.cancel || job) { delete inp.dataset.cancel; setTimeout(renderAll); return; }
+        const kind = inp.dataset.k.slice(0, -1);
+        const a = $(`[data-k="${kind}0"]`).value.trim(), b = $(`[data-k="${kind}1"]`).value.trim();
+        if (kind === 'hard' && !a && !b) { setSetting(c.key, 'hard', null); return; }
+        if (kind === 'band' && !a && !b) { setSetting(c.key, 'band', null); return; }
+        const lo = parseSI(a), hi = parseSI(b);
+        if (!(Number.isFinite(lo) && Number.isFinite(hi))) { if (a && b) app.toast('Enter two numbers, low and high.'); return; }
+        if (!(hi > lo)) { app.toast('The low end goes first, below the high end.'); setTimeout(renderAll); return; }
+        const was = stored(c.key)[kind];
+        if (was && was[0] === lo && was[1] === hi) return;
+        setSetting(c.key, kind, [lo, hi]);
+      };
+    });
+  }
+  $('#id-start').onclick = () => { if (job) stop(); else start('identify'); };
+  $('#id-strip').addEventListener('click', (e) => {
+    const rec = source(current()?.key)?.record;
+    if (!rec) return;
+    const r = e.currentTarget.getBoundingClientRect(), i = Math.round(((e.clientX - r.left) / r.width) * (rec.y.length - 1));
+    const stages = (rec.log ?? []).filter((x) => x.kind === 'stage');
+    const at = [...stages].reverse().find((x) => (x.i ?? 0) <= i) ?? stages[0];
+    if (!at) return;
+    if (!record.showReference(`${REF}record`, (at.i ?? 0) * rec.Ts + windowOf()[0])) {
+      const res = fresh.get(current().key)?.result;
+      if (res) { showRecord(res, { known: knownFor(app.project, current().path) }); record.showReference(`${REF}record`, (at.i ?? 0) * rec.Ts + windowOf()[0]); }
+    }
+    app.toast(`On the scope, dashed: the ${STAGE_SHORT[at.stage] ?? at.stage} of the test (◀ ▶ under the screen step through the record).`);
+  });
+  new ResizeObserver(() => { if (!host.hidden) { const c = current(); drawPlot(c && !job ? modelOf(c.key).model : null); const rec = c && !job ? source(c.key)?.record : null; if (rec) drawStrip(rec); } }).observe($('#id-plot'));
+
+  function tag() {
+    if (!job || job.live) return null;
+    const s = stateOf(job);
+    const stage = job.fitting ? 'fitting' : `${(STAGE_SHORT[s.stage] ?? s.stage).toLowerCase()}${s.stage === 'ease' ? ` ${s.try}` : ''}`;
+    return { lamp: 'warn', outline: true, text: 'Identify', note: `${stage} · push ${Math.round(100 * s.push)} % · room ${Math.round(100 * s.room)} %`, state: 'identify' };
+  }
+
+  function api(opts = {}) {
+    if (job) return Promise.reject(new Error('identify: a test is running; wait for it, or stop it'));
+    if (opts.block) st.target = String(opts.block);
+    const c = current();
+    if (!c) return Promise.reject(new Error('identify: there is no Controller block'));
+    const before = structuredClone(app.project.system.identify ?? null);
+    const set = { band: opts.band, budget: opts.budget, vary: opts.vary };
+    if (Object.values(set).some((v) => v !== undefined)) app.editProject((p) => { const e = ((p.system.identify ??= {})[c.key] ??= {}); for (const [k, v] of Object.entries(set)) if (v !== undefined) e[k] = v; });
+    const j = start();
+    if (!j) { if (before === null) delete app.project.system.identify; else app.project.system.identify = before; return Promise.reject(new Error(`identify: ${context().why ?? 'cannot start'}`)); }
+    return new Promise((resolve) => j.resolve.push(resolve)).then((res) => {
+      if (!res) return { ok: false, why: 'stopped before the end' };
+      if (opts.keep) keep(c, { plan: res.plan, record: res.record });
+      return report(res.model, { end: res.end, time: res.time, tries: res.tries, kept: !!opts.keep });
+    });
+  }
+  function identified(block) {
+    const c = block ? blocks().find((x) => x.key === String(block)) : current();
+    if (!c) return null;
+    const { model } = modelOf(c.key);
+    return model ? report(model) : null;
+  }
+
+  return {
+    render() { if (!host.hidden) renderAll(); },
+    shown: renderAll,
+    tag,
+    stop() { if (job) stop(); },
+    running: () => !!job,
+    scopeStopped() { if (job) stop(); },
+    api: { identify: api, identified },
+  };
+}
+
+const REF = 'identify · ';
+const STAGE_SHORT = { listen: 'Listen', nudge: 'Nudge', hold: 'Hold', ease: 'Ease in', shake: 'Shake', check: 'Check' };
+const STAGE_ABOUT = {
+  Listen: 'u held still for 3 s: the page measures the noise and any drift',
+  Nudge: 'tiny pushes back and forth, each a little larger or longer, only while the last one stayed well inside the room',
+  Hold: 'a deliberately gentle controller, built from the Nudge, brings y to where the reference starts',
+  'Ease in': 'your reference again and again, each try asking the controller to be 30 % quicker, until a try rings, comes near the edge or stops improving',
+  Shake: 'a mix of tones under the gentle loop, only when the model is unsure',
+  Check: 'a test the model has not seen, its prediction drawn first',
+};
+
+function report(model, extra = {}) {
+  const m = JSON.parse(JSON.stringify(model));
+  delete m.cov;
+  return { ok: !!m.ok, sentences: m.sentences, grade: m.grade, why: m.why, structure: m.structure ?? null, params: m.params ?? null, sd: m.sd ?? null, chain: m.chain ?? [], check: m.check ? { fit: m.check.fit, ceiling: m.check.ceiling, kernel: m.check.kernel } : null, eased: m.eased ?? null, candidates: (m.candidates ?? []).map((c) => ({ structure: c.structure, fit: c.fit, grade: c.grade })), where: m.where ?? [], warnings: m.warnings ?? [], ...extra };
+}
+
+function kernelCurve(k, T) {
+  const dt = k.Ts, D = k.decimate ?? 1, n = k.g.length, N = Math.max(n, Math.ceil(T / dt));
+  const t = [0], s = [0];
+  let m = 0;
+  for (let I = 1; I <= N; I++) { m += I <= n ? k.g[I - 1] : k.rate ? k.rate.value * D : 0; t.push(I * dt); s.push(m); }
+  return { t, s };
+}
+
+function rangeBar(lo, hi, at) {
+  const pct = Math.round((100 * (at - lo)) / (hi - lo));
+  return `<span class="idbar idrange" aria-hidden="true"><span class="idmark idstart" style="left:${Math.min(100, Math.max(0, pct))}%"></span></span>`;
+}
+const scaleFor = ([lo, hi]) => ({ scale: Number(((hi - lo) / 8).toPrecision(3)), offset: Number((-(lo + hi) / 2).toPrecision(6)) || 0 });
+const fitText = (x) => (x >= 99 && x < 100 ? Math.min(99.9, Math.round(x * 10) / 10).toFixed(1) : String(Math.round(x)));
+function fmtTime(t) { return t < 1 ? `${num(t * 1000, 3)} ms` : `${num(t, 3)} s`; }
+function clock(s) { const m = Math.floor(s / 60), r = Math.floor(s - 60 * m); return `${m}:${String(r).padStart(2, '0')}`; }
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+return { createIdentifyTab };
+})();
 // ---- ui/layout.js
 __mods['ui/layout.js'] = (() => {
 
@@ -25291,12 +26280,17 @@ function createRecord(app, display) {
     $('rc-back')?.addEventListener('click', () => step(-1));
     $('rc-fwd')?.addEventListener('click', () => step(1));
   }
-  function addReference(text, name) {
-    const tr = parseTrace(text);
+  function addReference(text, name) { return addTrace(parseTrace(text), name); }
+  function addTrace(tr, name, { at = null, quiet = false } = {}) {
     if (tr.t.length < 1) throw new Error('no samples');
     const r = { name, ...tr, t0: tr.t[0], t1: tr.t[tr.t.length - 1], step: 0, shift: null };
     refs.push(r);
+    if (at !== null) {
+      const [w0, w1] = windowOf(), W = Math.max(w1 - w0, 1e-9);
+      r.step = Math.floor((at + refShift(r.t0, r.t1, w0, W) - w0) / W + 1e-9);
+    }
     placeRefs();
+    if (quiet) return Object.keys(tr.signals);
     const all = Object.keys(tr.signals), shown = all.filter((nm) => app.project.scope.channels.some((c) => c.on && c.source === nm));
     const where = r.part[1] < r.part[0] ? '' : `, ${partText(r)}${r.range[0] < r.range[1] ? ' (◀ ▶ move through it)' : ''}`;
     app.toast(shown.length ? `Reference “${name}”: ${listed(shown)} dashed on the scope${where}${shown.length < all.length ? `; ${listed(all.filter((x) => !shown.includes(x)))} not on a channel` : ''}`
@@ -25328,6 +26322,17 @@ function createRecord(app, display) {
       screenshot: async () => { const blob = await screenshot(); return new Promise((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsDataURL(blob); }); },
       reference: (text, name = 'reference') => addReference(text, name),
       clearReferences: () => { refs.length = 0; display.setRefs([]); renderRefs(); },
+      trace: (tr, name, opts) => addTrace(tr, name, { quiet: true, ...opts }),
+      removeReferences: (match) => { for (let i = refs.length - 1; i >= 0; i--) if (match(refs[i].name)) refs.splice(i, 1); placeRefs(); },
+      showReference: (name, at) => {
+        const r = refs.find((x) => x.name === name);
+        if (!r) return false;
+        const [w0, w1] = windowOf(), W = Math.max(w1 - w0, 1e-9);
+        const step = Math.floor((at + refShift(r.t0, r.t1, w0, W) - w0) / W + 1e-9);
+        for (const x of refs) x.step = step;
+        placeRefs();
+        return true;
+      },
       state: () => ({ recorded: rec.span(), seconds, signals: [...rec.names], references: refs.map((r) => ({ name: r.name, shown: r.part })) }),
     },
   };
@@ -25476,7 +26481,9 @@ function createLive(app, display, record, panelHost) {
       updates[m.how] = (updates[m.how] ?? 0) + 1;
       if (m.how === 'rebuilt') tell('The diagram changed: the controllers start afresh.');
     } else if (m.type === 'error') tell(`Live: ${m.message}`);
+    else if (m.type === 'identify') onIdentify?.(m);
   }
+  let onIdentify = null, connection = 0;
   function screen(m, restart = false) {
     if (m === 'stop' && hold) setHold(false);
     if (display.mode === m && !restart) return;
@@ -25488,7 +26495,7 @@ function createLive(app, display, record, panelHost) {
     const was = state;
     state = s; detail = d;
     pending = null;
-    if (s === 'connecting') { estop = null; desc = null; link = null; plantStatus = null; programKey = ''; ramp = null; }
+    if (s === 'connecting') { connection++; estop = null; desc = null; link = null; plantStatus = null; programKey = ''; ramp = null; }
     if (s === 'running') { estop = null; attach(); }
     if (s === 'open' && d === 'reset') estop = null;
     if (s === 'open' && was === 'running') { ramp = null; if (hold) setHold(false); }
@@ -25870,6 +26877,20 @@ function createLive(app, display, record, panelHost) {
       }
       sendProgram();
     },
+    identify: {
+      describe: () => desc,
+      link: () => ({ connected: connected(), estop: !!estop }),
+      connection: () => connection,
+      on: (fn) => { onIdentify = fn; },
+      async start(msg) {
+        if (!host || !connected()) return { error: 'connect the plant first' };
+        sendProgram();
+        pending = 'run'; render();
+        return ask({ type: 'identify', ...msg }, 8000);
+      },
+      supply: (data) => host?.post({ type: 'supply', data }),
+      stop: () => host?.post({ type: 'identifyStop' }),
+    },
     lockReason: () => (connected() ? 'Live: the external plant owns the clock, so time runs at 1×. Disconnect to change the speed.' : null),
     data: () => (feeding ? (hold ? hold.data : sweep ? view(sweep) : null) : null),
     tag() {
@@ -26174,6 +27195,7 @@ const { createPlantEditor } = __mods['ui/plant.js'];
 const { drawnValues, refitSwitched } = __mods['ui/xyview.js'];
 const { createControllerTab } = __mods['ui/controller.js'];
 const { createAutotuneTab } = __mods['ui/autotune.js'];
+const { createIdentifyTab } = __mods['ui/identify.js'];
 const { loopOverlays, autotune, placeVariant, tuneReport, withVariant } = __mods['core/autotune.js'];
 const { createAnalysisTab } = __mods['ui/analysis.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
@@ -26194,6 +27216,7 @@ const TABS = [
   { key: 'input', label: 'Input' },
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
+  { key: 'identify', label: 'Identify' },
   { key: 'tune', label: 'Auto-tune' },
   { key: 'analysis', label: 'Analysis' },
 ];
@@ -26510,7 +27533,11 @@ function startApp() {
   }
 
   app.setMode = (m) => {
-    if (m === 'stop') tuneTab?.scopeStopped();
+    if (m === 'stop') {
+      tuneTab?.scopeStopped();
+      if (identifyTab?.running() && live?.owns()) { identifyTab.scopeStopped(); app.runChanged(); return { display: display.mode, plant: null, why: null }; }
+      identifyTab?.scopeStopped();
+    }
     if (live?.owns()) { const r = live.key(m); app.runChanged(); return r; }
     display.setMode(m); app.runChanged();
     return { display: display.mode, plant: null, why: null };
@@ -26556,6 +27583,7 @@ function startApp() {
 
   let live = null;  
   let tuneTab = null;  
+  let identifyTab = null;  
   app.speedLock = () => live?.lockReason() ?? null;
   app.speedChanged = () => autosave();
   const speed = createSpeed(app);
@@ -26573,7 +27601,7 @@ function startApp() {
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
     onTime: () => app.onScopeTime?.(),
-    liveTag: () => live?.tag(),
+    liveTag: () => live?.tag() ?? identifyTab?.tag(),
     runNote: () => app.runNote(),
     speed: () => speed.effective(),
     simRate: () => app.simRate({ retime: true }),
@@ -26587,6 +27615,7 @@ function startApp() {
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
   live = createLive(app, display, record, $('tab-plant').querySelector('.pprops'));
+  app.live = live;
   app.hilMode = () => { const hit = app.project.system.plant?.type === 'diagram' ? findExternal(app.project.system.plant.diagram) : null; return hit ? blockMode(hit.block.params) : null; };
   const controllerTab = createControllerTab($('tab-controller'), app);
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
@@ -26599,6 +27628,9 @@ function startApp() {
   app.playRun = (d, past) => { display.play(d, past); controls.render(display.mode); };  
   app.setRunMode = (m) => { display.setMode(m); controls.render(display.mode); };
   tuneTab = createAutotuneTab($('tab-tune'), app, display);
+  app.editProject = (fn) => { app.beginEdit(); fn(app.project); app.endEdit(); changed(); };
+  app.changedView = () => changed({ data: false });
+  identifyTab = createIdentifyTab($('tab-identify'), app, display, record.api);
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="btn tab" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -26609,6 +27641,8 @@ function startApp() {
     $('tab-plant').hidden = app.tab !== 'plant';
     $('tab-controller').hidden = app.tab !== 'controller';
     if (app.tab === 'controller') controllerTab.shown();
+    $('tab-identify').hidden = app.tab !== 'identify';
+    if (app.tab === 'identify') identifyTab.shown();
     $('tab-tune').hidden = app.tab !== 'tune';
     if (app.tab === 'tune') tuneTab.shown();
     $('tab-analysis').hidden = app.tab !== 'analysis';
@@ -26658,6 +27692,7 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    if (app.tab === 'identify') identifyTab.render();
     if (app.tab === 'tune') tuneTab.render();
     if (app.tab === 'analysis') analysisTab.render();
     live.changed();  
@@ -26951,6 +27986,8 @@ function startApp() {
     live: live.api,  
     limited,  
     record: record.api,  
+    identify: (opts) => identifyTab.api.identify(opts),
+    identified: (block) => identifyTab.api.identified(block),
     autotune: (opts = {}) => {
       tuneTab.stop();
       let res;

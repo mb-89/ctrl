@@ -414,7 +414,7 @@ export function createExperiment(plan) {
   const st = {
     stage: 'listen', rung: 0, try: 0, push: 0, pushMax: 0, room: 0, roomMax: 0, status: '', tries: [],
     marks: { push: [null, null], room: [E.nudge.room, E.nudge.backoff] },
-    t: 0, budget: P.budget, done: false, end: null, stop: false,
+    t: 0, budget: P.budget, done: false, end: null, stop: false, checkAt: null,
   };
   const now = () => (k - k0) * Ts;
   const left = () => P.budget - now();
@@ -1089,6 +1089,9 @@ export function createExperiment(plan) {
     if (s === 'left') return endBand(`${names.y} left 'may move within' before the Check: the page stopped the plant`);
     const iS = i, kS = k, N = check.length;
     rFn = (kk) => check[Math.min(N - 1, kk - kS)];
+    // Where the Check's reference starts (record index): the page draws the
+    // model's prediction from here (§5.7).
+    st.checkAt = iS;
     while (k - kS < N) {
       if (!holds()) return endBand(`${names.y} left 'may move within' during the Check: the page stopped the plant`, { check: { i0, iStart: iS } });
       const u = law.step(r, y);
@@ -1100,9 +1103,31 @@ export function createExperiment(plan) {
     return null;
   }
 
+  // ---- Check again (§14): Listen, then the controller that held brings y
+  // to the Check's start and the Check runs under it; no Nudge, no tries.
+  // plan.kind 'recheck', plan.law { Kp, Ki, tauC, theta, lim }.
+  function* recheck() {
+    yield* listen();
+    if (st.done || stopping) return null;
+    if (!inBand(listenInfo.y0)) return finish('outside', `${names.y} is at ${yU(listenInfo.y0)}, outside 'may move within': widen it, or bring the plant inside first`);
+    chips.nudge = '–'; chips.ease = '–'; chips.shake = '–';
+    test = testR; check = P.check?.r ? P.check.r.slice() : testR.slice();
+    enter('hold');
+    const g = P.law, lim = g.lim ?? [P.umin, P.umax];
+    switchTo(g, 'hold', lim);
+    const ok = yield* settle(check[0], 4 * ((g.tauC ?? 1) + (g.theta ?? 0)) + E.hold.slack, `Holding ${names.y} at ${yU(check[0])} with the controller that held before`, true);
+    if (ok === 'left') return finish('band', `${names.y} left 'may move within' under the controller that held before: the page stopped the plant`);
+    if (ok === 'away') return finish('away', `the controller that held before pushed ${names.y} away from ${yU(check[0])}: the page stopped the plant; the plant has changed`);
+    inc = { gains: g, tauC: g.tauC, J: Infinity, n: 0, lim };
+    yield* runCheck();
+    if (st.done || stopping) return null;
+    return finish('done', 'Checked again: the plant is stopped');
+  }
+
   // ---- The whole test
 
   function* program() {
+    if (P.kind === 'recheck') return yield* recheck();
     yield* listen();
     if (st.done || stopping) return null;
     const L = listenInfo;

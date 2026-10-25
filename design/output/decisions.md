@@ -29,6 +29,27 @@ The person, after the prototype ranked Hu–Lin first on "DC motor, deadbeat" wi
 - **"Measure it instead" by matching**: the sensor for an observer is the block output whose run matches the measured signal's rate within 5 %, so it works on the Servo motor main now has (the structure trace of the first prototype found no integrator there).
 - **Results**: sliding-mode motor, the boundary-layer sliding mode (+10, robust); oven, the PID, sensitive (the PI from the plant ties it, the feedforward ties if complexity's weight drops to 0.75); tank, keep the loaded schedule (robust); deadbeat motor, state feedback (+16, robust), Hu–Lin, LQR, the planned swing-up and the relay fail the main job.
 
+## 2026-10-25 · v2.9, Identify: on a live plant (§18 step 7)
+
+Built on branch `feat/identify-tab` from [identification.md](identification.md) §3, §5.5, §5.8, §14 (no new words from the person; [§5.11](identification.md#511-built-step-7-on-a-live-plant) and [§14.1](identification.md#141-built-step-7-the-connection-and-check-again) have the details):
+
+- **The live loop runs the experiment**, the page fits: `createLiveRunner(…, { identify })` gives the block the hidden law, plays r from the experiment and holds the others, without a ramp-in; the loop posts state, and the whole record at the pause, at the Check and at the end (interpretation of "record in chunks": whole records, simpler, about 1 MB at 2 min).
+- **The sample number is the plant's time over Ts**, and the tab refuses a Ts that is not a whole number of the plant's cycles (interpretation: a block sampling every n cycles would otherwise see a gap at each sample).
+- **The scope's Stop during a live test is soft** (§5.8): it goes to the experiment, not straight to the plant; the plant stops when the controller has brought y back. E-STOP stays the hard stop.
+- **Check again runs Listen first**, then the controller that held and the Check (interpretation of "Hold and Check alone": the controller's settling needs Listen's noise); **its verdict compares like with like**: the model's replay of the new Check against its replay of the original Check from the same starting point (the graded Check fit replays from an earlier rest and read 10 points higher on the arm, so every arm would have read "changed").
+- **The connection a model was measured on** is remembered for this page session only (a kept record from an earlier session counts as an earlier connection): it is not stored, since the page cannot know whether a later connection is the same plant.
+
+## 2026-10-25 · v2.9, Identify: the tab (§18 step 6)
+
+Built on branch `feat/identify-tab` from [identification.md](identification.md) §4 (no new words from the person; [§4.1](identification.md#41-built-step-6) has the details):
+
+- **`identifyRun`, one generator for the page and Node.** Interpretation of "the same code in simulation, the live worker and Node": the page does not reimplement `identify()`; it steps the same generator at the header's Speed, and fits at the pause before the next sample (in slices, while plant time stands), so a run in the page and `identify()` give the same record and model, the same JSON text.
+- **The Check's prediction is replayed as the fits replay** (`predictCheck`, from the last rest fitted, under the logged laws). Interpretation of §5.7 "the model … replayed with the incumbent's law": the incumbent alone, from where the plant is at the Check's start, missed the oven's measured Check by 3 °C (rms 1.6 °C); as built the prediction is the final Check replay to 1e-8 (rms 0.09 °C against the measurement).
+- **y and u go onto channels 3 and 4 only when no channel shows either** (§4: "if no channel shows the block's y or u"); the change is part of the run's undo step, and Keep is a step of its own.
+- **Add as variant does not run the variant**: interpretation, as Auto-tune's results that score worse are added; the eased-in PI is the gentlest that held, not a better one.
+- **The model shown** is the last test (memory only) until the plant's blocks change (a variant's edit does not drop it, so Add as variant keeps it), else the kept test in use.
+- **The tab says a live plant comes next** (step 7) rather than starting.
+
 ## 2026-10-25 · Identify, review fixes: the model, the file and the command line (after steps 0–5)
 
 The design review's conformance findings and the experiment review's sentence findings, fixed (no new words from the person):

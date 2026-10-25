@@ -11,6 +11,7 @@ import { createPlantEditor } from './plant.js';
 import { drawnValues, refitSwitched } from './xyview.js';
 import { createControllerTab } from './controller.js';
 import { createAutotuneTab } from './autotune.js';
+import { createIdentifyTab } from './identify.js';
 import { loopOverlays, autotune, placeVariant, tuneReport, withVariant } from '../core/autotune.js';
 import { createAnalysisTab } from './analysis.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
@@ -32,6 +33,7 @@ const TABS = [
   { key: 'input', label: 'Input' },
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
+  { key: 'identify', label: 'Identify' },
   { key: 'tune', label: 'Auto-tune' },
   { key: 'analysis', label: 'Analysis' },
 ];
@@ -430,7 +432,13 @@ function startApp() {
   // Returns { display, plant, why }: why says why a key was refused.
   app.setMode = (m) => {
     // The scope's Stop while Auto-tune sweeps its runs stops the tuning.
-    if (m === 'stop') tuneTab?.scopeStopped();
+    if (m === 'stop') {
+      tuneTab?.scopeStopped();
+      // Identify's test on a live plant stops softly: the controller brings y
+      // back first, then the plant stops (identification.md §5.8).
+      if (identifyTab?.running() && live?.owns()) { identifyTab.scopeStopped(); app.runChanged(); return { display: display.mode, plant: null, why: null }; }
+      identifyTab?.scopeStopped();
+    }
     if (live?.owns()) { const r = live.key(m); app.runChanged(); return r; }
     display.setMode(m); app.runChanged();
     return { display: display.mode, plant: null, why: null };
@@ -492,6 +500,7 @@ function startApp() {
   // Rendering
   let live = null;  // Live mode (ui/live.js), made below
   let tuneTab = null;  // the Auto-tune tab (ui/autotune.js), made below
+  let identifyTab = null;  // the Identify tab (ui/identify.js), made below
   // Speed, in the header (ui/speed.js): the factor every clock of the page
   // runs at, held at 1× while a live plant is connected (it owns the clock),
   // and the speed achieved.
@@ -512,7 +521,7 @@ function startApp() {
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
     onTime: () => app.onScopeTime?.(),
-    liveTag: () => live?.tag(),
+    liveTag: () => live?.tag() ?? identifyTab?.tag(),
     runNote: () => app.runNote(),
     speed: () => speed.effective(),
     simRate: () => app.simRate({ retime: true }),
@@ -528,6 +537,7 @@ function startApp() {
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
   live = createLive(app, display, record, $('tab-plant').querySelector('.pprops'));
+  app.live = live;
   // The mode of a system's External plant: control, reference (the plant
   // runs its own controller), log (it takes no inputs), or null (none).
   app.hilMode = () => { const hit = app.project.system.plant?.type === 'diagram' ? findExternal(app.project.system.plant.diagram) : null; return hit ? blockMode(hit.block.params) : null; };
@@ -549,6 +559,11 @@ function startApp() {
   app.playRun = (d, past) => { display.play(d, past); controls.render(display.mode); };  // one run swept once
   app.setRunMode = (m) => { display.setMode(m); controls.render(display.mode); };
   tuneTab = createAutotuneTab($('tab-tune'), app, display);
+  // An edit of the project as one undo step (the Identify tab's settings,
+  // Keep, Add as variant); changedView: the scope changed, not the run.
+  app.editProject = (fn) => { app.beginEdit(); fn(app.project); app.endEdit(); changed(); };
+  app.changedView = () => changed({ data: false });
+  identifyTab = createIdentifyTab($('tab-identify'), app, display, record.api);
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="btn tab" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -559,6 +574,8 @@ function startApp() {
     $('tab-plant').hidden = app.tab !== 'plant';
     $('tab-controller').hidden = app.tab !== 'controller';
     if (app.tab === 'controller') controllerTab.shown();
+    $('tab-identify').hidden = app.tab !== 'identify';
+    if (app.tab === 'identify') identifyTab.shown();
     $('tab-tune').hidden = app.tab !== 'tune';
     if (app.tab === 'tune') tuneTab.shown();
     $('tab-analysis').hidden = app.tab !== 'analysis';
@@ -614,6 +631,7 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    if (app.tab === 'identify') identifyTab.render();
     if (app.tab === 'tune') tuneTab.render();
     if (app.tab === 'analysis') analysisTab.render();
     live.changed();  // a running loop takes the edit at its next cycle
@@ -955,6 +973,13 @@ function startApp() {
     // amplitude, maxIter, feedforward, apply = true }. Applied, the result
     // goes into a variant of its own, running if it scores better: one undo
     // step.
+    // Identify a Controller block's plant by its experiment, as the Identify
+    // tab's Start does, at the header's Speed: opts { block, band, budget,
+    // vary, keep }; resolves with the model's report.
+    identify: (opts) => identifyTab.api.identify(opts),
+    // The model in use for a Controller block (the last test, else the kept
+    // one in use), or null.
+    identified: (block) => identifyTab.api.identified(block),
     autotune: (opts = {}) => {
       tuneTab.stop();
       let res;

@@ -272,7 +272,7 @@ The page's own time per cycle was 0.1–0.25 ms on average (at most 4–17 ms, a
 
 ## Not yet
 
-- Identifying the plant from the page (it varies by ±15 % and is a black box), so Auto-tune and Analysis work for HIL: designed in [identification.md](identification.md); its protocol step (hard ranges, applied inputs) is built, its core is being built (branch `feat/identify`).
+- Auto-tune and Analysis on the identified model, so they work for HIL ([identification.md](identification.md) step 9). Identify itself runs on a live plant (§5.11 there, built on branch `feat/identify-tab`).
 - A trigger for live sweeps, so that loops separated by a ramp-in line up on the screen.
 - Signals the plant only logs (outputs that are not ports).
 - An agent tuning through MCP; remote plants (wss://, a token); several External blocks; binary frames for rates above 200 Hz.
