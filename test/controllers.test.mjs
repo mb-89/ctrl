@@ -185,12 +185,34 @@ test('following a sine: PID + feedforward flattens the error figure (σ at least
     return lineFit(res.signals.r, e, Math.round(n * 0.3), n - 1);
   };
   const pid = figure('PID'), ff = figure('PID + feedforward');
+  const figureOf = (variant) => {
+    const p = normalizeProject(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY.find((x) => x.name.startsWith('Following a sine')), SYSTEM_PARTS));
+    p.scope.timebase = autoTimebase(p);
+    const c = p.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+    c.variants.push(variant);
+    c.variant = c.variants.length - 1;
+    const res = evaluateSystem(p);
+    const unit = (x) => ({ r: 'rad', angle: 'rad', V: 'V' })[x];
+    const e = ySignal(res, p.scope, 1, unit), n = res.t.length;
+    return lineFit(res.signals.r, e, Math.round(n * 0.3), n - 1);
+  };
   assert.ok(ff.sigma * 5 < pid.sigma, `σ: PID ${pid.sigma}, PID + feedforward ${ff.sigma}`);
   assert.ok(Math.abs(ff.a) < 0.005 && Math.abs(ff.a) < Math.abs(pid.a) / 5, `the line lies flat: slope ${ff.a} (PID ${pid.a})`);
+  // The same PID, its feedforward computed from the motor (pidFF): nothing
+  // computable stored. Kv = Ke + R·b/Kt (the motor's inverse, 0.7) + Kd = 1.7,
+  // the value once set by hand; the run is the one the hand value gave.
   const v = SYSTEM_LIBRARY.find((s) => s.name.startsWith('Following a sine')).plant.diagram.blocks.find((b) => b.type === 'controller').variants;
-  const a = v.find((x) => x.name === 'PID').params, b = v.find((x) => x.name === 'PID + feedforward').params;
-  assert.deepEqual({ ...b, Kv: 0 }, { ...a, Kv: 0 }, 'the same PID, plus Kv');
-  assert.ok(b.Kv > 0);
+  const a = v.find((x) => x.name === 'PID'), b = v.find((x) => x.name === 'PID + feedforward');
+  assert.equal(b.type, 'pidFF');
+  const { order, ...feedback } = b.params;
+  assert.deepEqual(feedback, a.params, 'the same PID');
+  assert.equal(order, '1', 'the velocity term');
+  const { res } = runSystem('Following a sine', 'PID + feedforward');
+  const [st] = res.info.designs;
+  assert.equal(st.status, 'ok');
+  assert.ok(Math.abs(st.values.Kv - 1.7) < 1e-9 && st.values.Kff === 0 && st.values.Ka === 0, JSON.stringify(st.values));
+  const hand = figureOf({ name: 'hand', type: 'pid', params: { ...a.params, Kv: 1.7 } });
+  assert.ok(Math.abs(hand.sigma - ff.sigma) < 1e-12 * pid.sigma, `the hand Kv 1.7 gave σ ${hand.sigma}, the computed one ${ff.sigma}`);
 });
 
 test('every type in the library still runs its default and keeps u inside its limits', () => {

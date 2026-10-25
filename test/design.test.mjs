@@ -361,6 +361,8 @@ test('guard: the library stores inputs only, never numbers computed from a plant
     // from the plant, an open question for the person; roadmap.)
     assert.ok(lib[v.type].designed || ['pid', 'off', 'slidingMode', 'superTwisting'].includes(v.type), `${v.name}: ${v.type} holds numbers; use a designed type`);
     assert.ok(!('u0' in (v.params ?? {})), `${v.name}: a start output is a trim value, computed from the plant`);
+    // A feedforward that follows r is the plant's inverse: computed (pidFF), never a hand number in the library.
+    for (const k of ['Kff', 'Kv', 'Ka']) assert.ok(!v.params?.[k], `${v.name}: ${k} ${v.params?.[k]} is computable from the plant; use pidFF`);
   }
   for (const b of delays) assert.ok(b.params.y0 === null || b.params.y0 === undefined || b.params.y0 === 0, `${b.name}: y0 ${b.params.y0} is a computed start flow; leave it empty`);
   const src = readFileSync(new URL('../src/core/plants.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '').replace(/'(?:[^'\\]|\\.)*'/g, "''");
@@ -502,4 +504,47 @@ test('cli: node cli.mjs design prints what the running designed variants compute
   assert.deepEqual(json.designs.map((d) => [d.path, d.type, d.status]), [['ctrl', 'swingUpLqr', 'ok']]);
   assert.ok(json.designs[0].rows.some((r) => r.label === 'K' && r.value.length === 4));
   assert.ok(!/"values"/.test(JSON.stringify(json)), 'no numbers but the rows');
+});
+
+test('pidFF: the feedforward is the plant\'s inverse plus what the PID takes away; refusals in sentences', async () => {
+  const { inverseSeries } = await import('../src/core/design.js');
+  // 2/(s + 1): 1/G = 0.5 + 0.5 s. An integrator with a lag, 1/(s (s + 1)): s + s².
+  assert.deepEqual(inverseSeries({ A: [[-1]], b: [1], c: [2], d: 0 }).h, [0.5, 0.5, 0]);
+  const integ = inverseSeries({ A: [[0, 1], [0, -1]], b: [0, 1], c: [1, 0], d: 0 }).h;
+  [0, 1, 1].forEach((v, i) => assert.ok(Math.abs(integ[i] - v) < 1e-12, `h${i} ${integ[i]}`));
+  // The motor from V to the angle: Kt / (s ((L s + R)(J s + b) + Kt Ke)), so
+  // 1/G = (R b + Kt Ke)/Kt · s + (R J + L b)/Kt · s² + …: Kv = Ke + R b/Kt,
+  // Ka = (R J + L b)/Kt, plus Kd and less Kd·Tf from the PID; Kff = Kp (1 − b).
+  const [R, L, J, b, K] = [1, 0.01, 0.02, 0.1, 0.5];
+  const ff = (params) => statusOf(project('Following a sine', [{ name: 'ff', type: 'pidFF', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, umin: -12, umax: 12, ...params } }]));
+  const all = ff({ b: 0.6 });
+  assert.equal(all.status, 'ok', JSON.stringify(all.error));
+  const close = (a, x, what) => assert.ok(Math.abs(a - x) < 1e-9, `${what}: ${a}, not ${x}`);
+  close(all.values.Kff, 30 * 0.4, 'Kff');
+  close(all.values.Kv, K + (R * b) / K + 1, 'Kv');
+  close(all.values.Ka, (R * J + L * b) / K - 0.02, 'Ka');
+  assert.deepEqual(all.rows.map((r) => r.label), ['plant inverse', 'feedforward']);
+  const one = ff({ order: '1' }).values;
+  assert.deepEqual([one.Kff, one.Ka], [0, 0]);
+  close(one.Kv, 1.7, 'Kv, velocity only');
+  // In a file: inputs only.
+  assert.throws(() => normalizeVariant({ type: 'pidFF', params: { Kp: 1, Kv: 1.7 } }), /pidFF computes Kff, Kv and Ka from the plant .*use Copy as numbers \(a PID variant\)/);
+  // Copy as numbers: a PID with those numbers, running the same.
+  const twin = CONTROLLERS.pidFF.manual(normalizeVariant({ type: 'pidFF', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02 } }).params, all.values);
+  assert.equal(twin.type, 'pid');
+  // A path with a zero in the right half-plane, and one with a zero at the origin, are refused.
+  const plantOf = (num, den) => normalizeDiagram({
+    blocks: [
+      { id: 'r', type: 'source', params: { signal: 'r' } },
+      { id: 'ctrl', type: 'controller', params: { inputs: 2, Ts: 0.01 }, variants: [{ name: 'ff', type: 'pidFF', params: { Kp: 1 } }] },
+      { id: 'g', type: 'tf', params: { num, den } },
+      { id: 'y', type: 'sink', params: { name: 'y' } },
+    ],
+    wires: [{ from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'g' }, { from: 'g', to: 'y' }, { from: 'g', to: 'ctrl:1' }],
+  });
+  const refused = (d) => compileDiagram(d, 'plant', { standalone: true, designs: createDesignStore() }).designs[0].error;
+  const nmp = refused(plantOf([-1, 1], [1, 2, 1]));
+  assert.equal(nmp?.code, 'nonminimum-phase', JSON.stringify(nmp));
+  assert.match(nmp.message, /a zero at s = 1 in the right half-plane: its inverse is unstable/);
+  assert.equal(refused(plantOf([1, 0], [1, 2, 1]))?.code, 'zero-at-origin');
 });

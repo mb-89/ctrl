@@ -773,7 +773,7 @@ try { markLimited(window); } catch { }
 <p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
 <h3 class="label">Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %; in a list such as Q, click into a value first), or add a variant from the library.</p>
-<p>Variants <b>from the plant</b> (LQR, PI from the plant, swing-up with an LQR catch, the planned swing-up, and an Observer's Kalman filter) hold only inputs (weights, levels, times, limits and hand gains such as a feedforward or the swing-up's energy gain): their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off), sliding mode, super-twisting; for an Observer, a Luenberger observer and finite differences. The sliding modes read the measured rate on input 3. Try <b>DC motor, sliding mode</b>: its XY view is the phase portrait, and the line's slope λ sets how the error decays.</p>
+<p>Variants <b>from the plant</b> (LQR, PI from the plant, PID + feedforward from the plant, swing-up with an LQR catch, the planned swing-up, and an Observer's Kalman filter) hold only inputs (weights, levels, times, limits and hand gains such as a feedforward or the swing-up's energy gain): their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off), sliding mode, super-twisting; for an Observer, a Kalman filter on a model you give (for a plant the page cannot see), a Luenberger observer and finite differences. The sliding modes read the measured rate on input 3. Try <b>DC motor, sliding mode</b>: its XY view is the phase portrait, and the line's slope λ sets how the error decays.</p>
 <h3 class="label">Auto-tune</h3>
 <p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. Every run the tuner tries sweeps across the display at the header's <b>Speed</b> and lasts its own length, one period of the input, whatever the screen shows (a 5 s run takes 5 s at 1×, half a second at 10×); at ∞ it computes as fast as it can and shows each improvement. The scope's Stop stops the tuning too. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>. A relay or step result that scores worse than what runs, or that is unstable where the run starts, is added but does not run. A variant from the plant is tuned as its Copy as numbers twin, from the numbers its design computes now, and the result is a hand variant beside it; a planned swing-up has no gains to tune (change its inputs in the Controller tab).</p>
 <h3 class="label">Analysis</h3>
@@ -2713,7 +2713,7 @@ function refuseKinks(lin, what) {
   throw new DesignError('kink', `${what} needs slopes, and the plant has a kink at ${lin.op.label}: ${lin.kinks[0]}`, 'choose an operating point away from the limit or kink, or move the limit');
 }
 
-function firstOrderFit(lin, k = 0) {
+function pathRealisation(lin, k = 0) {
   if (!(k >= 0 && k < lin.m)) throw new DesignError('bad-output', `no measurement ${k + 1}; this block has ${lin.m}`);
   const label = lin.outputs[k].label, uName = lin.input.label;
   const n = lin.n, d = lin.D[k][0];
@@ -2729,7 +2729,12 @@ function firstOrderFit(lin, k = 0) {
   for (let i = 0; i < n; i++) if (fromU[i] && toY[i]) path.push(i);
   if (!path.length && d === 0) throw new DesignError('no-path', `${uName} does not reach ${label}`, 'check the wiring from the controller output to the plant and on to this measurement');
   const mr = minreal(path.map((i) => path.map((j) => lin.A[i][j])), path.map((i) => lin.B[i][0]), path.map((j) => lin.C[k][j]));
-  const A = mr.A, B = mr.b, C = mr.c, r = A.length;
+  return { A: mr.A, b: mr.b, c: mr.c, d, label, uName };
+}
+
+function firstOrderFit(lin, k = 0) {
+  const { A, b: B, c: C, d, label, uName } = pathRealisation(lin, k);
+  const r = A.length;
   if (!r) {
     if (d === 0) throw new DesignError('zero-gain', `${uName} has no static effect on ${label}`, 'pole cancellation needs a plant whose output settles away from 0');
     return { K: d, tau: 0, theta: lin.delay[k] ?? 0, label, warnings: [] };
@@ -2749,7 +2754,7 @@ function firstOrderFit(lin, k = 0) {
   return { K, tau, theta: lin.delay[k] ?? 0, label, warnings };
 }
 
-return { DesignError, parseOp, opLabel, operatingPoint, trim, linearize, refuseKinks, firstOrderFit };
+return { DesignError, parseOp, opLabel, operatingPoint, trim, linearize, refuseKinks, pathRealisation, firstOrderFit };
 })();
 // ---- core/planner.js
 __mods['core/planner.js'] = (() => {
@@ -3153,8 +3158,8 @@ return { PLAN_VERSION, substeps, planTransfer, runPlan, alongPlan, alongPlanStep
 // ---- core/design.js
 __mods['core/design.js'] = (() => {
 
-const { c2d, dlqr, dlqe, eig, solve, inv, rank, mul, transpose, equilibrate } = __mods['core/linalg.js'];
-const { DesignError, operatingPoint, linearize, firstOrderFit, refuseKinks } = __mods['core/linearize.js'];
+const { c2d, dlqr, dlqe, eig, solve, inv, rank, mul, transpose, equilibrate, tzeros } = __mods['core/linalg.js'];
+const { DesignError, operatingPoint, linearize, firstOrderFit, pathRealisation, refuseKinks } = __mods['core/linearize.js'];
 const { PLAN_VERSION, planTransfer, alongPlanSteps, tvlqrGains, planValues, planLaw, verifyLoop, runPlan } = __mods['core/planner.js'];
 const fmt = (v) => (Number.isFinite(v) ? String(Number(Number(v).toPrecision(4))) : String(v));
 const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
@@ -3577,6 +3582,51 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
   return { values, rows, warnings, quality: { ok: outputs === n } };
 }
 
+function inverseSeries(path) {
+  const { A, b, c, d } = path, n = A.length;
+  const P = new Array(n + 1).fill(0), N = new Array(n + 1).fill(0);
+  P[n] = 1;
+  let M = A.map((row, i) => row.map((_, j) => (i === j ? 1 : 0)));
+  for (let k = 1; k <= n + 1; k++) {
+    if (k <= n) N[n - k] += c.reduce((s, ci, i) => s + ci * M[i].reduce((t, mij, j) => t + mij * b[j], 0), 0);
+    if (k > n) break;
+    const AM = mul(A, M);
+    P[n - k] = -AM.reduce((s, row, i) => s + row[i], 0) / k;
+    M = AM.map((row, i) => row.map((v, j) => v + (i === j ? P[n - k] : 0)));
+  }
+  for (let j = 0; j <= n; j++) N[j] += d * P[j];
+  const scale = Math.max(...N.map(Math.abs));
+  const zeros = n ? tzeros({ A, B: b.map((v) => [v]), C: [c], D: d }) : [];
+  const poles = n ? eig(A) : [];
+  if (!(Math.abs(N[0]) > 1e-12 * scale)) return { h: null, zeros, poles };
+  const h0 = P[0] / N[0], h1 = ((P[1] ?? 0) - h0 * (N[1] ?? 0)) / N[0], h2 = ((P[2] ?? 0) - h0 * (N[2] ?? 0) - h1 * (N[1] ?? 0)) / N[0];
+  return { h: [h0, h1, h2], zeros, poles };
+}
+
+function feedforwardDesign(p, ctx) {
+  const lin = ctx.linearize('origin');
+  refuseKinks(lin, 'a feedforward from the plant');
+  if (!lin.m) throw new DesignError('no-measurement', 'this block has no measurement to follow r with', 'wire the measurement to input 2');
+  const path = pathRealisation(lin, 0), { label, uName } = path;
+  const { h, zeros, poles } = inverseSeries(path);
+  const size = Math.max(1, ...poles.map((q) => Math.hypot(q.re, q.im)));
+  const rhp = zeros.filter((z) => z.re > 1e-9 * size);
+  if (rhp.length) throw new DesignError('nonminimum-phase', `the path from ${uName} to ${label} has a zero at s = ${fmt(rhp[0].re)}${rhp[0].im ? ` ± ${fmt(Math.abs(rhp[0].im))}i` : ''} in the right half-plane: its inverse is unstable, so no feedforward follows r through it`, 'use the feedback alone, or a hand feedforward (PID)');
+  if (!h) throw new DesignError('zero-at-origin', `${uName} has no steady effect on ${label} (a zero at s = 0): no input holds ${label} at a steady r`, 'measure what u moves at rest (an angle, not a speed of a motor that ramps), or use the feedback alone');
+  const order = Number(p.order);
+  const Kff = h[0] + p.Kp * (1 - p.b), Kv = order >= 1 ? h[1] + p.Kd : 0, Ka = order >= 2 ? h[2] - p.Kd * p.Tf : 0;
+  const unit = lin.outputs[0].unit ? ` ${lin.outputs[0].unit}` : '';
+  const warnings = [];
+  const theta = lin.delay?.[0] ?? 0;
+  if (theta > 0) warnings.push(`dead time ${fmt(theta)} s on ${label} is not in this feedforward: u comes ${fmt(theta)} s before ${label} follows`);
+  const rows = [
+    { label: 'plant inverse', value: h, labels: ['h0', 'h1', 'h2'], note: `1/G(s) ≈ h0 + h1 s + h2 s², ${uName} per ${label}` },
+    { label: 'feedforward', value: [Kff, Kv, Ka], labels: ['Kff', 'Kv', 'Ka'], note: order >= 2 ? `with Kp (1 − b), Kd and Kd·Tf of the PID` : order === 1 ? 'with Kp (1 − b) and Kd of the PID; Ka off' : 'with Kp (1 − b) of the PID; Kv and Ka off' },
+  ];
+  if (theta > 0) rows.push({ label: 'dead time θ', value: theta, note: 's, left out' });
+  return { values: { Kff, Kv, Ka }, rows, warnings, at: `${label}${unit} at the origin` };
+}
+
 function piCancel(fit, Tcl) {
   return { Kp: fit.tau / (fit.K * Tcl), Ki: 1 / (fit.K * Tcl) };
 }
@@ -3673,12 +3723,12 @@ function trajectoryDesign(p, ctx) {
   return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }
 
-return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, poleOf, kalmanDesign, piCancel, scheduledPIDesign, trajectoryDesign };
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, poleOf, kalmanDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
 
-const { lqrDesign, scheduledPIDesign, trajectoryDesign, poleOf } = __mods['core/design.js'];
+const { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, poleOf } = __mods['core/design.js'];
 const { DesignError } = __mods['core/linearize.js'];
 const { planLaw } = __mods['core/planner.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
@@ -3869,6 +3919,19 @@ const CONTROLLERS = {
     },
     linear: twinLinear('scheduledPI'),
   },
+  pidFF: {
+    label: 'PID + feedforward from the plant', summary: 'PID; Kff, Kv, Ka from the plant\'s inverse',
+    designed: true, version: 1, computes: ['Kff', 'Kv', 'Ka'], twin: 'pid',
+    params: [
+      num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1, { help: 'weights r in the P part only; the feedforward makes up for it' }), PREFILTER,
+      { key: 'order', label: 'Feedforward', default: '2', kind: 'choice', options: { 0: 'static: Kff', 1: 'and velocity: Kv', 2: 'and acceleration: Ka' }, help: 'how many terms of the plant\'s inverse: Kff (the input that holds y at r), Kv (per r/s), Ka (per r/s²)' },
+      START, ...LIMITS, ...WINDUP,
+    ],
+    design: (p, ctx) => feedforwardDesign(p, ctx),
+    make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.pidFF.manual(p, values), Ts) : OFF; },
+    manual: (p, values) => ({ type: 'pid', params: { Kp: p.Kp, Ki: p.Ki, Kd: p.Kd, Tf: p.Tf, b: p.b, Tr: p.Tr, Kff: values.Kff, Kv: values.Kv, Ka: values.Ka, u0: p.u0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt } }),
+    linear: twinLinear('pidFF'),
+  },
   swingUp: {
     label: 'Swing-up (Lyapunov) + state feedback', summary: 'energy pumping, then u = kr r − K · y',
     params: [...SWING, vec('K', 'Gains K', [-1, -30, -2, -5], { per: 'measurement' }), num('kr', 'Prefilter kr', -1), ...LIMITS],
@@ -4042,6 +4105,7 @@ function normalizeParam(spec, v, where) {
 }
 
 function normalizeVariant(v, where = 'variant', lib = CONTROLLERS, ctx = undefined) {
+  if (lib[v?.type]?.migrate) v = lib[v.type].migrate(v);
   const def = lib[v?.type];
   if (!def) throw new Error(`${where}.type: one of ${Object.keys(lib).join(', ')}`);
   const given = (def.computes ?? []).filter((k) => v.params?.[k] !== undefined);
@@ -4460,6 +4524,12 @@ function scheduledPI(p, o) {
   return below(d, `Kp, Ki, u0 from the plant at y = ${p.at.map(fmt).join(', ')}; Tcl ${secs(p.Tcl)}`, 'PI from the plant');
 }
 
+function pidFF(p, o) {
+  const v = o.values;
+  const d = pid({ Kp: p.Kp, Ki: p.Ki, Kd: p.Kd, Tf: p.Tf, b: p.b, Tr: p.Tr, Kff: v?.Kff ?? UNKNOWN, Kv: v?.Kv ?? UNKNOWN, Ka: v?.Ka ?? UNKNOWN, u0: p.u0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt }, o);
+  return below(d, `Kff, Kv, Ka: the plant's inverse at its origin, with the PID's Kp (1 − b) and Kd; order ${p.order}`, 'PID + feedforward from the plant');
+}
+
 function swingUpLqr(p, o) {
   const v = o.values;
   const d = swingUp({ ...p, K: v?.K ?? unknown(4), kr: v?.kr ?? UNKNOWN }, o);
@@ -4495,7 +4565,12 @@ function kalman(p, o) {
   return estimator(p, o, 'kalman', { n, m, lines });
 }
 
-const LAYOUTS = { pid, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+function kalmanModel(p, o) {
+  const lines = ['L from your model A, B, C, Q and R (Riccati)', `Q ${p.Q.map(fmt).join(' ')}  R ${p.R.map(fmt).join(' ')}`];
+  return estimator(p, o, 'kalman', { lines });
+}
+
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {
   const layout = LAYOUTS[variant.type];
@@ -4509,7 +4584,7 @@ return { DIAGRAM_WIDTH, fmt, limitsText, NOTE_CHAR, describeVariant, DESCRIBED_T
 // ---- core/observers.js
 __mods['core/observers.js'] = (() => {
 
-const { c2d } = __mods['core/linalg.js'];
+const { c2d, dlqe } = __mods['core/linalg.js'];
 const { kalmanDesign } = __mods['core/design.js'];
 const { normalizeVariant } = __mods['core/controllers.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
@@ -4580,6 +4655,21 @@ const OBSERVERS = {
     },
     make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.kalman.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
     manual: (p, values) => ({ type: 'luenberger', params: { A: [...values.A], B: [...values.B], C: [...values.C], L: [...values.L] } }),
+    migrate: (v) => (['A', 'B', 'C'].some((k) => v.params?.[k] !== undefined) && v.params?.L === undefined ? { ...v, type: 'kalmanModel' } : v),
+  },
+  kalmanModel: {
+    label: 'Kalman filter, own model', summary: 'x̂ = model prediction + L (y − C x̂), L from your model, Q and R',
+    params: [...MODEL, vec('Q', 'Process noise Q (diag)', [1, 1], { min: 0 }), vec('R', 'Measurement noise R (diag)', [1], { min: 0 })],
+    check(p) { const bad = checkModel(p); if (bad) return bad; if (p.Q.length !== p.B.length) return 'Q needs one value per state'; if (p.R.length !== p.C.length / p.B.length) return 'R needs one value per measurement'; if (!p.R.every((v) => v > 0)) return 'R: each above 0'; return ''; },
+    make(p, Ts) {
+      return estimator(p, ['A', 'B', 'C', 'Q', 'R'], () => {
+        const { n, m, A, B, C } = model(p);
+        const { Ad, Bd } = c2d(A, B, Ts);
+        const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
+        const { L } = dlqe(Ad, C, diag(p.Q), diag(p.R));
+        return { n, m, Ad, Bd, C, L };
+      });
+    },
   },
   luenberger: {
     label: 'Luenberger observer', summary: 'x̂ = model prediction + L (y − C x̂), L given',
@@ -6965,7 +7055,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Following a sine (XY)',
-    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line. PID + feedforward adds a velocity feedforward Kv, set by hand, so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
+    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line. PID + feedforward adds a velocity feedforward Kv that the page computes from the motor (the voltage per rad/s its inverse needs, plus the PID\'s Kd, which the derivative on the angle takes away), so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time. Try its Feedforward choice "and acceleration": Ka from the motor\'s inertia flattens the figure about four times more.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'sine', params: { amplitude: 1, frequency: 0.2 } }] },
       d: { period: PERIOD, components: [] },
@@ -6976,7 +7066,7 @@ const EXAMPLE_PLANTS = [
       { name: 'P', type: 'pid', params: { Kp: 3, umin: -12, umax: 12 } },
       { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
       { name: 'PID', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, umin: -12, umax: 12 } },
-      { name: 'PID + feedforward', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, Kv: 1.7, umin: -12, umax: 12 } },
+      { name: 'PID + feedforward', type: 'pidFF', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, order: '1', umin: -12, umax: 12 } },
     ]),
     views: motorViews(),
   },
@@ -8013,7 +8103,7 @@ function fromPlant(e) {
 
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = {
-  pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -11131,7 +11221,7 @@ const GUIDE = {
     M('loopTuner.speed(x?)', 'x: a factor, or -1 for as fast as possible', 'How fast simulated time runs; held at 1 while a plant is connected.', 'loopTuner.speed(10)', '{ speed, effective, achieved, simulation, locked }'),
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
     M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
-    M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, the swing-ups, a Kalman filter) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
+    M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
     M('loopTuner.whenDesigned()', '', 'Resolves once no design is being computed in the background (a plan for the planned swing-up takes seconds; meanwhile the block runs u = 0 or its previous plan) and the display shows the run that uses it. Await it before judging a run.', 'await loopTuner.whenDesigned()', 'a promise of designs()'),
     M('loopTuner.loopModel(path, op)', 'path: a Controller block\'s id path; op: "origin" (at rest), "initial" (the start), { y: [levels] } or { t: seconds }', 'The loop the Controller closes, as the Analysis tab draws it: the plant it sees linearised at op, and the running variant\'s own law, as state space. Refused, with the reason, where there is none (a relay, a kink at op, a plant outside the page).', 'loopTuner.loopModel("ctrl", "initial")', '{ plant: { A, B, C, D, delay, ... }, ctrl: { A, B, C, D }, Ts, opLabel, variantName, warnings }'),
     M('loopTuner.live.state()', '', 'The live link: state ("offline", "connecting", "open", "running"), pending ("run" or "stop" while the plant has not answered a key yet), message (the last message the page showed), estop ({ by, reason } or null), mode ("control", "reference", "log"), the plant\'s ports, ramp ({ left, to } while the references ramp in), link and plant figures, hold.', 'loopTuner.live.state().state'),
@@ -15638,6 +15728,7 @@ const { num, parseSI } = __mods['ui/units.js'];
 const { drawStructure } = __mods['ui/ctldiagram.js'];
 const ABOUT = {
   off: 'No control: the plant gets u = 0. Shows what the plant does on its own.',
+  pidFF: 'A PID whose feedforward the page computes from the plant as it is wired: the plant\'s inverse at low frequency (from u to the first measurement, at its origin), so the input a moving reference needs comes from r itself, plus what the PID\'s own parts take away while y follows r (Kp (1 − b), Kd and Kd·Tf). Feedforward chooses the terms: Kff, then Kv, then Ka. Kp, Ki, Kd are yours; change the plant and the feedforward follows. Dead time is left out and reported.',
   pid: 'The workhorse. P reacts to the error, I removes what is left, D damps (on the measurement, filtered by Tf). b weights the reference in P; the prefilter Tr (Vorfilter) smooths reference jumps. Feedforward puts out what following r takes, from r alone: Kff·r, Kv·dr/dt, Ka·d²r/dt². u min/max are the actuator limits; anti-windup (clamping, back-calculation with Tt, or off) keeps the integral from winding up at a limit.',
   stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
   lqr: 'State feedback whose gains are computed from the plant as it is wired: the page linearises it at its origin and solves the discrete LQR problem. Q weighs the error of each measurement, R the effort; every state must be measured. Change the plant and the gains follow.',
@@ -15650,6 +15741,7 @@ const ABOUT = {
   relay: 'On/off control, as a thermostat: full push one way or the other by the sign of the error, switching once it passes ±ε. Around a setpoint it makes the loop oscillate; the Auto-tune tab reads Ku and Pu from that oscillation.',
   slidingMode: 'Sliding mode (inputs r, y, ẏ): drives s = λ·e + ė to zero by switching u = u0 ± K. On the line s = 0 the error decays as e^(−λt) whatever the inertia or the load, so λ sets how the loop settles. φ = 0 is the textbook relay: robust, but it chatters at the sampling rate, hard on the actuator. φ > 0 is a boundary layer: proportional inside |s| < φ (a stiff PD, Kp = K·λ/φ, Kd = K/φ), smooth, but a load leaves an error. Needs a clean ẏ; put a differentiator in the diagram, not in the law.',
   superTwisting: 'Super-twisting, a second-order sliding mode (inputs r, y, ẏ): u = k1·√|s|·sign(s) + v, with the integral part v rising at k2 by the sign of s. The voltage is continuous and v rejects a constant load; actuator dynamics leave a small ripple, and a long reaching phase winds v up, so s overshoots the line before it slides. Size k1, k2 for the weakest plant.',
+  kalmanModel: 'A Kalman filter on a model you give: ẋ = A x + B u, y = C x, row by row. The page discretises it at Ts and computes the steady-state gain L from Q (the variance of the noise on each state) and R (on each measurement). For a plant the page cannot see, such as an External plant; on a plant it can see, the Kalman filter from the plant computes the model as well.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
 };
@@ -18412,16 +18504,20 @@ function startApp() {
 
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch {   }
-  try {
-    if (saved && saved.base === base) app.project = normalizeProject(saved.project);
-    else {
+  let bootNote = '', fromSaved = false;
+  if (saved && saved.base === base) {
+    try { app.project = normalizeProject(saved.project); fromSaved = true; } catch (err) { bootNote = `The work this browser kept could not be read (${err.message}); opened the page's own project instead.`; }
+  }
+  if (!fromSaved) {
+    try {
       app.project = normalizeProject(JSON.parse(startText));
       if (!embeddedText) fitScope();  
+    } catch (err) {
+      app.project = normalizeProject(structuredClone(DEFAULT_PROJECT));
+      bootNote = `The embedded project could not be read (${err.message}); opened a new one instead.`;
     }
-  } catch (err) {
-    app.project = normalizeProject(structuredClone(DEFAULT_PROJECT));
-    setTimeout(() => toast(`The embedded project could not be read (${err.message}); opened a new one instead.`));
   }
+  if (bootNote) setTimeout(() => toast(bootNote));
   renderTabs();
   changed();
   layout = createSplitters($('lt-shell'));

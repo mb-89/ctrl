@@ -25,7 +25,7 @@ You work on a project file (`.json`, or an exported `.html` page with the projec
 
 ## A v2 project: auto-tune a Controller block
 
-Projects whose plant is a block diagram with a **Controller block** (every controlled system in the page's System library) are tuned with `autotune`, the same core as the page's Auto-tune tab ([design/output/autotune.md](design/output/autotune.md)). A variant computed from the plant (LQR, PI from the plant, swing-up with an LQR catch) is tuned as its Copy as numbers twin, from the numbers its design computes, and the result is a hand variant; a planned swing-up has no gains to tune (change its inputs instead):
+Projects whose plant is a block diagram with a **Controller block** (every controlled system in the page's System library) are tuned with `autotune`, the same core as the page's Auto-tune tab ([design/output/autotune.md](design/output/autotune.md)). A variant computed from the plant (LQR, PI from the plant, PID + feedforward from the plant, swing-up with an LQR catch) is tuned as its Copy as numbers twin, from the numbers its design computes, and the result is a hand variant; a planned swing-up has no gains to tune (change its inputs instead):
 
 ```
 node cli.mjs autotune p.json                                   # Nelder–Mead on IAE + effort + overshoot beyond 10 %
@@ -54,7 +54,7 @@ It prints the running variant and the result side by side (cost, overshoot, gain
 
 - `node cli.mjs help`: every command.
 - `node cli.mjs blocks [slot]`: block types and their parameters with ranges; `node cli.mjs metrics`: what a goal can use.
-- `node cli.mjs design <project> [--block <path>] [--json]`: what each running designed variant (LQR, PI from the plant, a swing-up with an LQR catch, a planned swing-up, a Kalman filter) computed from the plant, its warnings, or why it was refused; `node cli.mjs new --system "Triple pendulum" -o p.json` writes a System library entry as a project.
+- `node cli.mjs design <project> [--block <path>] [--json]`: what each running designed variant (LQR, PI from the plant, PID + feedforward from the plant, a swing-up with an LQR catch, a planned swing-up, a Kalman filter) computed from the plant, its warnings, or why it was refused; `node cli.mjs new --system "Triple pendulum" -o p.json` writes a System library entry as a project.
 - **Designed variants hold inputs only** ([design/output/designs.md](design/output/designs.md)): tune them through their inputs (Q, R, the levels `at`, Tcl, T), never by writing K, kr, Kp, Ki, u0 or a model into them: a file that has those is refused. For numbers of your own, use a hand type (`stateFeedback`, `pid`, `gainScheduled`, `swingUp`, `luenberger`), as the page's Copy as numbers does.
 - Project file: [design/output/project-format.md](design/output/project-format.md).
 - In a browser: see **Through the browser** below.

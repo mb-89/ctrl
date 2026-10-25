@@ -341,7 +341,10 @@ export function refuseKinks(lin, what) {
 // a zero (an angle, then its derivative) do not get in the way. Refusals:
 // 'integrating-plant' (a pole at 0 left), 'unstable-plant' (a pole in the
 // right half-plane), 'zero-gain', 'no-path'.
-export function firstOrderFit(lin, k = 0) {
+// The path from u to measurement k as a minimal realisation (minreal:
+// balanced, then only the modes u moves and y_k sees): { A, b, c, d, label,
+// uName }. Refuses 'bad-output' and 'no-path'.
+export function pathRealisation(lin, k = 0) {
   if (!(k >= 0 && k < lin.m)) throw new DesignError('bad-output', `no measurement ${k + 1}; this block has ${lin.m}`);
   const label = lin.outputs[k].label, uName = lin.input.label;
   const n = lin.n, d = lin.D[k][0];
@@ -358,7 +361,12 @@ export function firstOrderFit(lin, k = 0) {
   for (let i = 0; i < n; i++) if (fromU[i] && toY[i]) path.push(i);
   if (!path.length && d === 0) throw new DesignError('no-path', `${uName} does not reach ${label}`, 'check the wiring from the controller output to the plant and on to this measurement');
   const mr = minreal(path.map((i) => path.map((j) => lin.A[i][j])), path.map((i) => lin.B[i][0]), path.map((j) => lin.C[k][j]));
-  const A = mr.A, B = mr.b, C = mr.c, r = A.length;
+  return { A: mr.A, b: mr.b, c: mr.c, d, label, uName };
+}
+
+export function firstOrderFit(lin, k = 0) {
+  const { A, b: B, c: C, d, label, uName } = pathRealisation(lin, k);
+  const r = A.length;
   if (!r) {
     if (d === 0) throw new DesignError('zero-gain', `${uName} has no static effect on ${label}`, 'pole cancellation needs a plant whose output settles away from 0');
     return { K: d, tau: 0, theta: lin.delay[k] ?? 0, label, warnings: [] };

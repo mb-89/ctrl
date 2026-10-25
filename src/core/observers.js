@@ -14,8 +14,11 @@
 // controllers): its model and gain are computed from the plant the Observer
 // sees, and a file holds only Q and R. Copy as numbers turns it into a
 // Luenberger observer with the same A, B, C and L, which runs the same.
+// A plant the page cannot see (an External plant, Live mode) has no model to
+// design with: there a Kalman filter takes the model you type in
+// (kalmanModel), and the page computes its gain L from it, Q and R.
 
-import { c2d } from './linalg.js';
+import { c2d, dlqe } from './linalg.js';
 import { kalmanDesign } from './design.js';
 import { normalizeVariant } from './controllers.js';
 
@@ -98,6 +101,28 @@ export const OBSERVERS = {
     },
     make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.kalman.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
     manual: (p, values) => ({ type: 'luenberger', params: { A: [...values.A], B: [...values.B], C: [...values.C], L: [...values.L] } }),
+    // A file from before the design layer typed its model in (A, B, C with Q
+    // and R): it opens as the Kalman filter on that model.
+    migrate: (v) => (['A', 'B', 'C'].some((k) => v.params?.[k] !== undefined) && v.params?.L === undefined ? { ...v, type: 'kalmanModel' } : v),
+  },
+  kalmanModel: {
+    // The steady-state Kalman filter on a model you give (ẋ = A x + B u,
+    // y = C x, row by row): the page discretises it at Ts and computes L by
+    // the Riccati equation from the variances Q (per state) and R (per
+    // measurement). For a plant the page cannot see; on one it can, the
+    // Kalman filter from the plant computes the model too.
+    label: 'Kalman filter, own model', summary: 'x̂ = model prediction + L (y − C x̂), L from your model, Q and R',
+    params: [...MODEL, vec('Q', 'Process noise Q (diag)', [1, 1], { min: 0 }), vec('R', 'Measurement noise R (diag)', [1], { min: 0 })],
+    check(p) { const bad = checkModel(p); if (bad) return bad; if (p.Q.length !== p.B.length) return 'Q needs one value per state'; if (p.R.length !== p.C.length / p.B.length) return 'R needs one value per measurement'; if (!p.R.every((v) => v > 0)) return 'R: each above 0'; return ''; },
+    make(p, Ts) {
+      return estimator(p, ['A', 'B', 'C', 'Q', 'R'], () => {
+        const { n, m, A, B, C } = model(p);
+        const { Ad, Bd } = c2d(A, B, Ts);
+        const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
+        const { L } = dlqe(Ad, C, diag(p.Q), diag(p.R));
+        return { n, m, Ad, Bd, C, L };
+      });
+    },
   },
   luenberger: {
     label: 'Luenberger observer', summary: 'x̂ = model prediction + L (y − C x̂), L given',

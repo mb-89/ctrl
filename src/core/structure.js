@@ -457,6 +457,12 @@ function scheduledPI(p, o) {
   return below(d, `Kp, Ki, u0 from the plant at y = ${p.at.map(fmt).join(', ')}; Tcl ${secs(p.Tcl)}`, 'PI from the plant');
 }
 
+function pidFF(p, o) {
+  const v = o.values;
+  const d = pid({ Kp: p.Kp, Ki: p.Ki, Kd: p.Kd, Tf: p.Tf, b: p.b, Tr: p.Tr, Kff: v?.Kff ?? UNKNOWN, Kv: v?.Kv ?? UNKNOWN, Ka: v?.Ka ?? UNKNOWN, u0: p.u0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt }, o);
+  return below(d, `Kff, Kv, Ka: the plant's inverse at its origin, with the PID's Kp (1 − b) and Kd; order ${p.order}`, 'PID + feedforward from the plant');
+}
+
 function swingUpLqr(p, o) {
   const v = o.values;
   const d = swingUp({ ...p, K: v?.K ?? unknown(4), kr: v?.kr ?? UNKNOWN }, o);
@@ -494,7 +500,13 @@ function kalman(p, o) {
   return estimator(p, o, 'kalman', { n, m, lines });
 }
 
-const LAYOUTS = { pid, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+// A Kalman filter on your model: the page computes L from it, Q and R.
+function kalmanModel(p, o) {
+  const lines = ['L from your model A, B, C, Q and R (Riccati)', `Q ${p.Q.map(fmt).join(' ')}  R ${p.R.map(fmt).join(' ')}`];
+  return estimator(p, o, 'kalman', { lines });
+}
+
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 // def: the type's library entry, for the generic picture of a type without its own.
 export function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {

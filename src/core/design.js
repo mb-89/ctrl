@@ -12,8 +12,8 @@
 //   trajectoryDesign(p, ctx)                       a swing-up plan with TV-LQR along it (planner.js)
 //   kalmanDesign(lin, { Q, R, Ts, outputs })       the steady-state Kalman filter of an Observer
 
-import { c2d, dlqr, dlqe, eig, solve, inv, rank, mul, transpose, equilibrate } from './linalg.js';
-import { DesignError, operatingPoint, linearize, firstOrderFit, refuseKinks } from './linearize.js';
+import { c2d, dlqr, dlqe, eig, solve, inv, rank, mul, transpose, equilibrate, tzeros } from './linalg.js';
+import { DesignError, operatingPoint, linearize, firstOrderFit, pathRealisation, refuseKinks } from './linearize.js';
 import { PLAN_VERSION, planTransfer, alongPlanSteps, tvlqrGains, planValues, planLaw, verifyLoop, runPlan } from './planner.js';
 
 const fmt = (v) => (Number.isFinite(v) ? String(Number(Number(v).toPrecision(4))) : String(v));
@@ -567,6 +567,68 @@ export function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
     stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
   };
   return { values, rows, warnings, quality: { ok: outputs === n } };
+}
+
+// The low-frequency inverse of a path (pathRealisation): G(s) = N(s)/P(s)
+// by Faddeev–LeVerrier on the minimal realisation, P(s) = det(sI − A),
+// N(s) = c adj(sI − A) b + d P(s); then 1/G = P/N as a power series about
+// s = 0, h0 + h1 s + h2 s² (an integrating plant has h0 = 0). N(0) = 0 is a
+// zero at the origin: the plant passes no steady input, and its inverse has
+// no series. → { h: [h0, h1, h2], zeros, poles }.
+export function inverseSeries(path) {
+  const { A, b, c, d } = path, n = A.length;
+  const P = new Array(n + 1).fill(0), N = new Array(n + 1).fill(0);
+  P[n] = 1;
+  let M = A.map((row, i) => row.map((_, j) => (i === j ? 1 : 0)));
+  for (let k = 1; k <= n + 1; k++) {
+    // M = M_(k−1): its term c M b sits at s^(n − k).
+    if (k <= n) N[n - k] += c.reduce((s, ci, i) => s + ci * M[i].reduce((t, mij, j) => t + mij * b[j], 0), 0);
+    if (k > n) break;
+    const AM = mul(A, M);
+    P[n - k] = -AM.reduce((s, row, i) => s + row[i], 0) / k;
+    M = AM.map((row, i) => row.map((v, j) => v + (i === j ? P[n - k] : 0)));
+  }
+  for (let j = 0; j <= n; j++) N[j] += d * P[j];
+  const scale = Math.max(...N.map(Math.abs));
+  const zeros = n ? tzeros({ A, B: b.map((v) => [v]), C: [c], D: d }) : [];
+  const poles = n ? eig(A) : [];
+  if (!(Math.abs(N[0]) > 1e-12 * scale)) return { h: null, zeros, poles };
+  const h0 = P[0] / N[0], h1 = ((P[1] ?? 0) - h0 * (N[1] ?? 0)) / N[0], h2 = ((P[2] ?? 0) - h0 * (N[2] ?? 0) - h1 * (N[1] ?? 0)) / N[0];
+  return { h: [h0, h1, h2], zeros, poles };
+}
+
+// The reference feedforward of a pidFF variant (designs-in-the-page.md §15):
+// the inverse of the path from u to the first measurement, linearised at the
+// plant's origin, to second order, 1/G(s) ≈ h0 + h1 s + h2 s², plus what the
+// PID's own parts on y take away while y follows r: the P part Kp (b − 1) r,
+// and the derivative on the measurement, −Kd s/(Tf s + 1) r ≈ −Kd s r +
+// Kd Tf s² r. So Kff = h0 + Kp (1 − b), Kv = h1 + Kd, Ka = h2 − Kd Tf, up to
+// p.order (0: Kff; 1: and Kv; 2: and Ka). Dead time is left out and reported;
+// the sampling's half-sample delays are not compensated. Refusals: a kink,
+// no measurement, no path, a zero at the origin, a zero in the right
+// half-plane (the inverse would be unstable).
+export function feedforwardDesign(p, ctx) {
+  const lin = ctx.linearize('origin');
+  refuseKinks(lin, 'a feedforward from the plant');
+  if (!lin.m) throw new DesignError('no-measurement', 'this block has no measurement to follow r with', 'wire the measurement to input 2');
+  const path = pathRealisation(lin, 0), { label, uName } = path;
+  const { h, zeros, poles } = inverseSeries(path);
+  const size = Math.max(1, ...poles.map((q) => Math.hypot(q.re, q.im)));
+  const rhp = zeros.filter((z) => z.re > 1e-9 * size);
+  if (rhp.length) throw new DesignError('nonminimum-phase', `the path from ${uName} to ${label} has a zero at s = ${fmt(rhp[0].re)}${rhp[0].im ? ` ± ${fmt(Math.abs(rhp[0].im))}i` : ''} in the right half-plane: its inverse is unstable, so no feedforward follows r through it`, 'use the feedback alone, or a hand feedforward (PID)');
+  if (!h) throw new DesignError('zero-at-origin', `${uName} has no steady effect on ${label} (a zero at s = 0): no input holds ${label} at a steady r`, 'measure what u moves at rest (an angle, not a speed of a motor that ramps), or use the feedback alone');
+  const order = Number(p.order);
+  const Kff = h[0] + p.Kp * (1 - p.b), Kv = order >= 1 ? h[1] + p.Kd : 0, Ka = order >= 2 ? h[2] - p.Kd * p.Tf : 0;
+  const unit = lin.outputs[0].unit ? ` ${lin.outputs[0].unit}` : '';
+  const warnings = [];
+  const theta = lin.delay?.[0] ?? 0;
+  if (theta > 0) warnings.push(`dead time ${fmt(theta)} s on ${label} is not in this feedforward: u comes ${fmt(theta)} s before ${label} follows`);
+  const rows = [
+    { label: 'plant inverse', value: h, labels: ['h0', 'h1', 'h2'], note: `1/G(s) ≈ h0 + h1 s + h2 s², ${uName} per ${label}` },
+    { label: 'feedforward', value: [Kff, Kv, Ka], labels: ['Kff', 'Kv', 'Ka'], note: order >= 2 ? `with Kp (1 − b), Kd and Kd·Tf of the PID` : order === 1 ? 'with Kp (1 − b) and Kd of the PID; Ka off' : 'with Kp (1 − b) of the PID; Kv and Ka off' },
+  ];
+  if (theta > 0) rows.push({ label: 'dead time θ', value: theta, note: 's, left out' });
+  return { values: { Kff, Kv, Ka }, rows, warnings, at: `${label}${unit} at the origin` };
 }
 
 // A PI that cancels the lag of a first-order fit K e^(−θs) / (τs + 1):

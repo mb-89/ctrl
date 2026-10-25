@@ -96,7 +96,11 @@ test('kalman: inputs only in a file; the Luenberger twin runs bit for bit; refus
   const v = obsOf(p).variants[0];
   assert.deepEqual(v.params, { Q: [0.5], R: null });
   assert.deepEqual(normalizeVariant({ type: 'kalman', params: { R: '' } }, 'variant', OBSERVERS).params.R, null);
-  assert.throws(() => normalizeVariant({ type: 'kalman', params: { A: [0, 1, 0, 0], B: [0, 1], C: [1, 0] } }, 'variant', OBSERVERS), /variant\.params\.A: kalman computes A, B, C and L from the plant and Q and R; to set them by hand use Copy as numbers \(a Luenberger observer variant\)/);
+  // The computed numbers with L, as a Copy would hold them, are refused …
+  assert.throws(() => normalizeVariant({ type: 'kalman', params: { A: [0, 1, 0, 0], B: [0, 1], C: [1, 0], L: [0.5, 10] } }, 'variant', OBSERVERS), /variant\.params\.A: kalman computes A, B, C and L from the plant and Q and R; to set them by hand use Copy as numbers \(a Luenberger observer variant\)/);
+  // … a typed-in model without L (a file from before the design layer) is
+  // the Kalman filter on that model, with L computed in the page.
+  assert.equal(normalizeVariant({ type: 'kalman', params: { A: [0, 1, 0, 0], B: [0, 1], C: [1, 0], Q: [1, 1], R: [1] } }, 'variant', OBSERVERS).type, 'kalmanModel');
   assert.throws(() => normalizeVariant({ type: 'kalman', params: { R: [1, 0] } }, 'variant', OBSERVERS), /R: each above 0/);
   assert.ok(!/"(A|B|C|L)"/.test(JSON.stringify(p.system.plant)), 'no model in the file');
 
@@ -214,4 +218,36 @@ test('kalman: Q = 0 on a plant that does not decay by itself is refused, saying 
   assert.equal(st.error.code, 'not-detectable');
   assert.match(st.error.message, /^the estimate's error would not die out: Q gives no process noise to a mode that does not decay by itself \(\|z\| = 1\.0\d+\), so the filter would trust its model there for ever$/);
   assert.equal(st.error.hint, 'give Q a value above 0');
+});
+
+test('a Kalman filter on a model you give (kalmanModel): L computed in the page; old files with a typed-in model open as it', async () => {
+  const { dlqe, c2d } = await import('../src/core/linalg.js');
+  const { makeLaw } = await import('../src/core/controllers.js');
+  // A double integrator, position measured: L by the Riccati equation, here and in the law.
+  const Ts = 0.01, params = { A: [0, 1, 0, 0], B: [0, 1], C: [1, 0], Q: [0.01, 1], R: [0.04] };
+  const v = normalizeVariant({ name: 'KF', type: 'kalmanModel', params }, 'variant', OBSERVERS);
+  const { Ad, Bd } = c2d([[0, 1], [0, 0]], [[0], [1]], Ts);
+  const { L } = dlqe(Ad, [[1, 0]], [[0.01, 0], [0, 1]], [[0.04]]);
+  const law = makeLaw(v, Ts, OBSERVERS);
+  // The filter by hand, in filter form, against the law: the same estimates.
+  let x = [0, 0], first = true;
+  for (let k = 0; k < 200; k++) {
+    const u = Math.sin(0.05 * k), y = 0.3 * Math.cos(0.03 * k);
+    if (!first) x = [Ad[0][0] * x[0] + Ad[0][1] * x[1] + Bd[0][0] * u, Ad[1][0] * x[0] + Ad[1][1] * x[1] + Bd[1][0] * u];
+    first = false;
+    const e = y - x[0];
+    x = [x[0] + L[0][0] * e, x[1] + L[1][0] * e];
+    const got = law.step([u, y]);
+    assert.ok(Math.abs(got[0] - x[0]) < 1e-12 && Math.abs(got[1] - x[1]) < 1e-12, `sample ${k}`);
+  }
+  // A project saved before the design layer, a Kalman filter with its model
+  // typed in: it opens (it was refused whole), runs, and stays a model of its own.
+  const p = lagProject();
+  obsOf(p).variants = [{ name: 'KF (typed)', type: 'kalman', params: { A: [-2], B: [2], C: [1], Q: [0.5], R: [0.01] } }];
+  const opened = normalizeProject(JSON.parse(JSON.stringify(p)));
+  const kv = obsOf(opened).variants[0];
+  assert.deepEqual([kv.type, kv.params.A, kv.params.R], ['kalmanModel', [-2], [0.01]]);
+  const run = evaluateSystem(opened, { designs: createDesignStore() });
+  assert.deepEqual(run.info.designs, [], 'nothing designed: the model is the file\'s');
+  assert.ok(Object.values(run.signals).every((sig) => sig.every(Number.isFinite)));
 });

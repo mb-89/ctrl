@@ -44,7 +44,7 @@
 // computation (a plan; the tab folds it away), `tune: false` one auto-tune
 // leaves alone.
 
-import { lqrDesign, scheduledPIDesign, trajectoryDesign, poleOf } from './design.js';
+import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, poleOf } from './design.js';
 import { DesignError } from './linearize.js';
 import { planLaw } from './planner.js';
 
@@ -294,6 +294,26 @@ export const CONTROLLERS = {
     },
     linear: twinLinear('scheduledPI'),
   },
+  pidFF: {
+    // A PID whose reference feedforward is computed from the plant this block
+    // sees (designs-in-the-page.md §15; design.js, feedforwardDesign): the
+    // plant's inverse at low frequency, h0 + h1 s + h2 s², from u to the first
+    // measurement at the plant's origin, plus what the PID's P (b ≠ 1) and D
+    // parts take away while y follows r. The feedback gains are hand inputs;
+    // order says how many terms (Kff; Kv; Ka) are used. It runs as the PID
+    // with those numbers (Copy as numbers).
+    label: 'PID + feedforward from the plant', summary: 'PID; Kff, Kv, Ka from the plant\'s inverse',
+    designed: true, version: 1, computes: ['Kff', 'Kv', 'Ka'], twin: 'pid',
+    params: [
+      num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1, { help: 'weights r in the P part only; the feedforward makes up for it' }), PREFILTER,
+      { key: 'order', label: 'Feedforward', default: '2', kind: 'choice', options: { 0: 'static: Kff', 1: 'and velocity: Kv', 2: 'and acceleration: Ka' }, help: 'how many terms of the plant\'s inverse: Kff (the input that holds y at r), Kv (per r/s), Ka (per r/s²)' },
+      START, ...LIMITS, ...WINDUP,
+    ],
+    design: (p, ctx) => feedforwardDesign(p, ctx),
+    make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.pidFF.manual(p, values), Ts) : OFF; },
+    manual: (p, values) => ({ type: 'pid', params: { Kp: p.Kp, Ki: p.Ki, Kd: p.Kd, Tf: p.Tf, b: p.b, Tr: p.Tr, Kff: values.Kff, Kv: values.Kv, Ka: values.Ka, u0: p.u0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt } }),
+    linear: twinLinear('pidFF'),
+  },
   swingUp: {
     // For a pendulum on a cart, inputs r, x, θ, v, ω (θ = 0 upright). Far from
     // upright it pumps energy: with E = ½ l² ω² + g l (cos θ − 1), zero at the
@@ -524,6 +544,8 @@ function normalizeParam(spec, v, where) {
 // Observer block); both share this format. ctx: what the block gives the
 // variant ({ inputs }), when known, for checks that need it.
 export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS, ctx = undefined) {
+  // A type may take an older form of itself (a file from before it was designed).
+  if (lib[v?.type]?.migrate) v = lib[v.type].migrate(v);
   const def = lib[v?.type];
   if (!def) throw new Error(`${where}.type: one of ${Object.keys(lib).join(', ')}`);
   const given = (def.computes ?? []).filter((k) => v.params?.[k] !== undefined);

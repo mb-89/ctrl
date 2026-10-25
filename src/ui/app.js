@@ -901,16 +901,22 @@ function startApp() {
   // Boot: the embedded project, unless this browser has newer work on it.
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch { /* storage unavailable */ }
-  try {
-    if (saved && saved.base === base) app.project = normalizeProject(saved.project);
-    else {
+  // Work kept in this browser that cannot be read opens the page's own
+  // project, and says so (it said the embedded project could not be read).
+  let bootNote = '', fromSaved = false;
+  if (saved && saved.base === base) {
+    try { app.project = normalizeProject(saved.project); fromSaved = true; } catch (err) { bootNote = `The work this browser kept could not be read (${err.message}); opened the page's own project instead.`; }
+  }
+  if (!fromSaved) {
+    try {
       app.project = normalizeProject(JSON.parse(startText));
       if (!embeddedText) fitScope();  // the library's system, scaled as when it is loaded
+    } catch (err) {
+      app.project = normalizeProject(structuredClone(DEFAULT_PROJECT));
+      bootNote = `The embedded project could not be read (${err.message}); opened a new one instead.`;
     }
-  } catch (err) {
-    app.project = normalizeProject(structuredClone(DEFAULT_PROJECT));
-    setTimeout(() => toast(`The embedded project could not be read (${err.message}); opened a new one instead.`));
   }
+  if (bootNote) setTimeout(() => toast(bootNote));
   renderTabs();
   changed();
   layout = createSplitters($('lt-shell'));
