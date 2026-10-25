@@ -52,6 +52,35 @@ const fmt = (v, d = 3) => (v === null || v === undefined ? '—' : !finite(v) ? 
 // The level of the diagram that holds the block, and the block's wires.
 function level(diagram, path) { let d = diagram; for (const id of path.slice(0, -1)) d = d.blocks.find((b) => b.id === id).diagram; return d; }
 
+// The plant's name, for the heading (input 70: "name the controller
+// benchmark by the system that we are actually running", never by a
+// controller). The plant is the first subsystem (or external plant) that
+// the Controller's output reaches, through plain blocks (a pipe's delay, a
+// gain). Its name, or the project title's first part (before its first
+// comma: the system, where the rest names the variant) when that part names
+// the same thing more fully ("DC motor" for the block "Motor"). A plant of
+// plain blocks only (the oven) has no name of its own: the title's first
+// part; a title without a comma, the title.
+function plantName(project, ctx) {
+  const lv = level(ctx.diagram, ctx.path), first = project.title.split(',')[0].trim();
+  const seen = new Set(), queue = [ctx.path.at(-1)];
+  while (queue.length) {
+    const id = queue.shift();
+    for (const w of lv.wires) {
+      if (parseEnd(w.from).id !== id) continue;
+      const to = lv.blocks.find((b) => b.id === parseEnd(w.to).id);
+      if (!to || seen.has(to.id) || to.id === ctx.path.at(-1)) continue;
+      seen.add(to.id);
+      if (to.type === 'subsystem' || to.type === 'external') {
+        const name = (to.name ?? to.id).trim();
+        return first.toLowerCase().includes(name.toLowerCase()) ? first : name[0].toUpperCase() + name.slice(1);
+      }
+      if (!['sink', 'scope', 'terminator'].includes(to.type)) queue.push(to.id);
+    }
+  }
+  return first;
+}
+
 // A copy whose Controller reads only r and y1: the relay and step tests are
 // for one measurement, and a PID reads only y1 anyway.
 function sisoProject(project, ctx) {
@@ -682,7 +711,7 @@ function benchmark(name) {
     row.whyNot = row.diverged ? 'diverges on the nominal plant' : row.varyBad ? `diverges on ${row.varyBad} of ${SWEEP} plants within ±15 %` : row.margins.stable === false ? `unstable at r's middle (${row.margins.note})` : row.margins.startUnstable ? `unstable where the run starts (${row.margins.startUnstable}); it rests there only because it starts in balance` : '';
   }
   const moveWindow = steps.length && tau ? [ls.t[steps[0]] - 0.1 * Math.min(...gaps) * dtS, ls.t[steps[0]] + Math.min(...gaps) * dtS] : null;
-  return { name: project.title, rows, refusals, changed, T, standard: std?.change ?? null, tau, moveWindow, step: st?.ok ? `${st.method === 'relay' ? 'relay' : st.model}` : st?.why, R, U };
+  return { name: project.title, plant: plantName(loaded, ctx0), rows, refusals, changed, T, standard: std?.change ?? null, tau, moveWindow, step: st?.ok ? `${st.method === 'relay' ? 'relay' : st.model}` : st?.why, R, U };
 }
 
 // A run thinned for the report's figures: every k-th sample (at most 400),
@@ -715,10 +744,10 @@ function matrixOf(b, datumIndex = -1) {
   const keyOf = (i) => `c${i}`;
   const pid = b.rows.findIndex((r) => r.type === 'pid' && !r.loaded && !r.plantChange), loadedRow = b.rows.findIndex((r) => r.loaded);
   return {
-    title: b.name, kind: 'Controller benchmark',
+    title: b.plant, kind: 'Controller benchmark', nouns: { options: 'controllers', datum: 'the one set up now' },
     criteria: CRITERIA.map((cr) => ({ key: cr.key, label: cr.label, weight: cr.w, better: 'lower', tolerance: cr.tol, floor: cr.abs })),
     candidates: b.rows.map((r, i) => ({
-      key: keyOf(i), label: r.name,
+      key: keyOf(i), label: r.loaded ? r.name.replace('As loaded: ', '') : r.name,
       values: Object.fromEntries(CRITERIA.filter((cr) => typeof r[cr.key] === 'number').map((cr) => [cr.key, r[cr.key]])),
       fits: r.fits, whyNot: r.whyNot, suggestable: !r.plantChange, keep: !!r.loaded, tieBreak: r.J,
       ...(r.plantChange ? { note: `A plant change: ${r.plantChange}.` } : {}),
@@ -728,8 +757,12 @@ function matrixOf(b, datumIndex = -1) {
     })),
     // The main job against the datum (input 55) and the Ms bound.
     gates: [...CRITERIA.filter((cr) => cr.job).map((cr) => ({ criterion: cr.key, maxRatio: JOB_MAX, why: 'fails the main job' })), { criterion: 'ms', max: MS_MAX, why: "fragile, at r's middle" }],
-    // The tuned PID (input 48); the running variant when the PID does not fit.
-    datum: { prefer: [pid, loadedRow].filter((i) => i >= 0).map(keyOf) },
+    // The controller set up now (input 70, replacing input 48's tuned PID),
+    // even when it fails a gate: the person chose it, and its vetoes show.
+    // Only when it could not be measured (it diverges: nothing to mark
+    // against) the tuned PID, and the result says why.
+    datum: { prefer: [b.rows[loadedRow]?.diverged ? pid : loadedRow].filter((i) => i >= 0).map(keyOf) },
+    ...(b.rows[loadedRow]?.diverged ? { notes: [`the controller set up now diverges on the benchmark's tests, so nothing can be marked against it; the datum is the tuned PID instead`] } : {}),
     sensitivity: { step: STEP, draws: 4000, seed: 55, holdShare: 0.75, runnersUp: 3 },
   };
 }
@@ -780,7 +813,7 @@ for (const name of SYSTEMS) {
     out.push('\nThe feedforward\'s share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):\n');
     for (const r of ffRows) out.push(`- ${r.name} (Kff ${fmt(r.ffShare.Kff)}, Kv ${fmt(r.ffShare.Kv)}, Ka ${fmt(r.ffShare.Ka)}, prefilter Tr ${fmt(r.ffShare.Tr)} s): ${fmt(100 * r.ffShare.steps, 2)} % on the system's steps, ${r.ffShare.move === null ? '—' : `${fmt(100 * r.ffShare.move, 2)} %`} on the smooth move; following IAE ${fmt(r.track, 2)} (steps), ${fmt(r.move, 2)} (move), against the datum's ${fmt(datum.track, 2)} and ${fmt(datum.move, 2)}.`);
   }
-  out.push(`\nPugh matrix: datum **${datum.name}**${datum.fits ? '' : ' (does not fit, but no fitting PID or loaded variant to take its place)'}; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights ${w.join(', ')}.\n`);
+  out.push(`\nPugh matrix: datum **${datum.name}**${datum.loaded ? ', the controller set up now' : ' (the controller set up now diverges: nothing to mark against it)'}${datum.fits ? '' : ` (it fails: ${datum.whyNot}; kept as the datum, the person chose it)`}; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights ${w.join(', ')}.\n`);
   out.push(`| Criterion (weight) | ${b.rows.map((r) => r.name.replace('As loaded', 'Loaded')).join(' | ')} |`);
   out.push(`|---|${b.rows.map(() => ':-:').join('|')}|`);
   CRITERIA.forEach((cr, i) => out.push(`| ${cr.label} (${cr.w}) | ${marks.map((m, k) => (b.rows[k] === datum ? 'D' : m[i] === null ? '?' : SYMBOL[m[i]])).join(' | ')} |`));

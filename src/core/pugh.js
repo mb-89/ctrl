@@ -13,7 +13,9 @@
 //   renderMarkdown(result)  → the decision as text, for a terminal or an agent
 //
 // The matrix (a plain object; the file shape is in pugh.md):
-//   { title?, kind? (what is decided, for the heading: 'Controller benchmark'), criteria: [{ key, label?, weight, better: 'lower'|'higher',
+//   { title?, kind? (what is decided, for the heading: 'Controller benchmark'),
+//     nouns?: { options: 'controllers', datum: 'the one set up now' } (the
+//     subtitle's words), notes?: [the caller's notes], criteria: [{ key, label?, weight, better: 'lower'|'higher',
 //       tolerance?, floor?, kind?: 'measured'|'judged' }],
 //     candidates: [{ key, label?, values?: {criterion: number},
 //       marks?: {criterion: −2…2 | [−2…2, …] (several raters)}, fits?, whyNot?,
@@ -148,7 +150,7 @@ function pughEngine() {
       return out;
     });
     return {
-      title: String(m.title ?? 'Decision'), kind: String(m.kind ?? 'Decision'), criteria, candidates, gates, datum: { prefer }, strong, overrides,
+      title: String(m.title ?? 'Decision'), kind: String(m.kind ?? 'Decision'), nouns: { options: String(m.nouns?.options ?? 'options'), datum: String(m.nouns?.datum ?? 'the datum') }, notes: Array.isArray(m.notes) ? m.notes.map(String) : [], criteria, candidates, gates, datum: { prefer }, strong, overrides,
       sensitivity: { step: s.step, draws: Math.round(s.draws), seed: s.seed, holdShare: s.holdShare, runnersUp: Math.round(s.runnersUp) },
     };
   }
@@ -233,7 +235,7 @@ function pughEngine() {
     const criteria = m0.criteria.map((c) => ({ ...c, ...(critOv.get(c.key) ?? {}), defaults: { weight: c.weight, tolerance: c.tolerance } }));
     const m = { ...m0, criteria };
     const weights = criteria.map((c) => c.weight);
-    const notes = [];
+    const notes = [...m.notes];
     // Vetoes, one per reason (input 64): the caller's verdict, each hard gate
     // that fails, each ratio gate that fails, and the person's own. A tool's
     // veto can be lifted by the person, each on its own, with a comment; the
@@ -343,7 +345,7 @@ function pughEngine() {
       losses: parts(r).filter((x) => x.contribution < 0).sort((a, b) => a.contribution - b.contribution),
     });
     const result = {
-      version: PUGH_VERSION, title: m.title, kind: m.kind, strong, criteria, weights, gates: m.gates, input: matrix, nudgeUnit,
+      version: PUGH_VERSION, title: m.title, kind: m.kind, nouns: m.nouns, strong, criteria, weights, gates: m.gates, input: matrix, nudgeUnit,
       datum: { key: datum.key, label: datum.label, fits: datum.fits, whyNot: datum.whyNot },
       candidates: rows.map(out),
       ranking: ranking.map((r) => r.key),
@@ -686,7 +688,7 @@ function pughEngine() {
     // table. Everything else opens: the changes, the runners-up, each row.
     const nIn = res.candidates.filter((c) => c.fits).length, nOut = res.candidates.length - nIn;
     const h = [`<section class="rpt${live ? ' live' : ''}">`, `<h1>${esc(res.kind)}: ${esc(res.title)}</h1>`,
-      `<p class="dim rpt-sub">${res.candidates.length} options compared on ${res.criteria.length} criteria against the datum, ${esc(res.datum.label)}; ${nIn} in${nOut ? `, ${nOut} vetoed` : ''}.</p>`,
+      `<p class="dim rpt-sub">${res.candidates.length} ${esc(res.nouns.options)} compared on ${res.criteria.length} criteria against ${esc(res.nouns.datum)}, ${esc(res.datum.label)}; ${nIn} in${nOut ? `, ${nOut} vetoed` : ''}.${res.datum.fits ? '' : ` <span class="minus">${esc(res.datum.label)} itself fails: ${esc(res.datum.whyNot)}.</span>`}</p>`,
       `<p class="rpt-bottom" data-bottom>${bold(bottomLine(res))}</p>`];
     // The keys, live only: Undo, Save, Export, Print (what is open, or
     // everything), and the theme (the page's own; print is always light).

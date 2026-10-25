@@ -51,6 +51,8 @@ JSON, one object. Every field but `criteria` and `candidates` is optional.
 {
   "title": "Which message queue",                       // the report's heading
   "kind": "Decision",                                   // what is decided, before the title in the heading (default "Decision")
+  "nouns": { "options": "options", "datum": "the datum" }, // the subtitle's words ("controllers", "the one set up now")
+  "notes": [],                                          // the caller's notes, listed with the tool's
   "criteria": [
     { "key": "latency",            // a name, unique
       "label": "p99 latency (ms)", // shown; default: the key
