@@ -4,7 +4,7 @@ Reader: the agent who builds the PUMA example (vector signals, the URDF, the rig
 
 **The person's notes on this plan (2026-10-25, [input 14](../input/2026-10-25-14-puma-notes-size.md)); they override the plan where they differ:**
 - The renderer may be a vendored library (for example three.js, inlined); our own WebGL renderer is not required. It must be real 3D with CAD-like navigation and a fallback where WebGL is missing. Size is no reason to choose (the page may grow to 20 MB).
-- The scope opens on four channels: the references a_r, b_r and the actual values a, b. The error e and the shoulder current i2 stay available as sources and Measure lines.
+- **Torques are the point** ([input 15](../input/2026-10-25-15-puma-torques.md)): every joint's torque τ1 … τ6 (N·m at the joint) is a signal, and so are the shares the model computes (inertial, Coriolis, gravity, friction). The scope opens on the two error components in the circle's frame (e_a, e_b, mm) and the shoulder and elbow torques (τ2, τ3). References, actual values, motor currents stay available as sources and Measure lines.
 - Hidden probes are accepted to get the view running; later, views bind to visible Sinks and deleting a Sink in use warns.
 - No Off variant until joint end stops are modelled (later).
 - Built as planned for now; diagram variants may come back if the modelling needs them.

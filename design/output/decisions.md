@@ -2,6 +2,12 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: the PUMA's torques are signals ([input 15](../input/2026-10-25-15-puma-torques.md))
+
+The person: "what would be quite important is that we get signals for the [torques]. That's actually the thing that's special ... maybe we can have in the [oscilloscope] two signals for the error and then [torques] of two joints, because that's really something that we struggle with usually, calculating the [torques], simulating the [torques]. And then by increasing the complexity of the model, we would see ... the change first and foremost in the [torques] and the efforts, and not necessarily in the control values".
+- **Every joint's torque is a signal** (τ1 … τ6, N·m at the joint: what the motor and gear apply), next to the motor currents. Interpretation: also the parts of the torque the model computes (the feedforward's inertial, Coriolis, gravity and friction shares) are signals, so the scope can show what the torque is made of.
+- **The scope opens on the error and two torques**: the two error components in the circle's frame (e_a, e_b, mm) and the torques of the shoulder and elbow (τ2, τ3), which carry gravity and the inertial load. This replaces input 14's "two references, two actual values" as the default (interpretation: the person was unsure, "I don't know if I even want"; the references and actual values stay one channel switch away). A more detailed model (detail levels, later) shows first in these torques and efforts.
+
 ## 2026-10-25 · v2.8: page size; notes on the PUMA plan ([input 14](../input/2026-10-25-14-puma-notes-size.md))
 
 - **Size is no reason to skimp.** "If the full HTML is below, I guess, 20 or 30 megabytes, that's sufficient. We don't skimp on anything. I mean, don't waste space". The page may grow to 20 MB (interpretation: the lower figure, as the budget); a library, a font or data is weighed by what it does, not by its bytes; nothing is carried that nothing uses.
