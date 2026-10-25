@@ -1,11 +1,11 @@
 // The plant Auto-tune and Analysis work on (design/output/identification.md
 // §10, §12): the diagram, or the model the Identify tab identified. One
 // choice per Controller block, shared by both tabs and the Identify tab's
-// "Use for Auto-tune and Analysis", for this page session (the model it
-// names is computed from a record whenever it is needed). On a plant
-// outside the page (an External block) there is no diagram to simulate:
-// the identified model is always used, and without one both tabs say to
-// identify first.
+// "Use for Auto-tune and Analysis": a design input stored with the block's
+// Identify settings (system.identify[key].source, one undo step). On a
+// plant outside the page (an External block) there is no diagram to
+// simulate: the identified model is always used, and without one both tabs
+// say to identify first.
 
 import { findExternal } from '../core/hil.js';
 import { num } from './units.js';
@@ -13,10 +13,9 @@ import { num } from './units.js';
 export const IDENTIFY_FIRST = 'identify the plant first (Identify tab)';
 
 export function createPlantSource(app) {
-  const chosen = new Map();   // block key → 'identified' | 'diagram'
   const diagram = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
   const hil = () => !!(diagram() && findExternal(diagram()));
-  const get = (key) => (hil() ? 'identified' : chosen.get(key) ?? 'diagram');
+  const get = (key) => (hil() ? 'identified' : app.project.system.identify?.[key]?.source ?? 'diagram');
   // The identified model for a block, as the Identify tab has it, or null.
   const inUse = (key) => app.identifiedFor?.(key) ?? null;
 
@@ -35,7 +34,7 @@ export function createPlantSource(app) {
     const on = get(key);
     const use = inUse(key);
     if (on === 'diagram') return { on, use, why: null, note: '' };
-    if (!use) return { on, use, why: IDENTIFY_FIRST, note: '' };
+    if (!use) return { on, use, why: hil() ? `the plant runs outside the page and is a black box: Auto-tune and Analysis use its identified model; ${IDENTIFY_FIRST}` : IDENTIFY_FIRST, note: '' };
     if (!use.model) return { on, use, why: null, wait: true, note: 'Computing the model from the record…' };
     if (!use.model.ok) return { on, use, why: `the test gives no model: ${use.model.sentences?.[0] ?? ''} Identify again (Identify tab)`, note: '' };
     const notes = [label(use)];
@@ -62,8 +61,14 @@ export function createPlantSource(app) {
     el.querySelectorAll('[data-plantsrc]').forEach((b) => { b.onclick = () => { set(key, b.dataset.plantsrc); then?.(); }; });
   }
   function set(key, v) {
-    if (v === 'identified') chosen.set(key, v); else chosen.delete(key);
-    app.plantSourceChanged?.();
+    if (get(key) === v) return;
+    app.editProject((p) => {
+      const all = (p.system.identify ??= {});
+      const e = (all[key] ??= {});
+      if (v === 'identified') e.source = v; else delete e.source;
+      if (!Object.keys(e).length) delete all[key];
+      if (!Object.keys(all).length) delete p.system.identify;
+    });
   }
 
   return { hil, get, set, state, label, html, bind };

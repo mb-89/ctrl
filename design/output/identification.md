@@ -259,7 +259,7 @@ There are no new colours.
 - **The plots** (Check, Bode, Step, Where, Size, More) draw with `ui/plots.js`. Bode is the sampled model's response (`modelBode`: the zero-order hold and the fractional dead time, as §6.7 asks), with its 2σ band from the parameter samples; the kernel's step is dotted on Step; More shows the residuals' autocorrelation against its band and χ²/dof per candidate.
 - **Keep** stores `{ name, plan, record }` (one undo step); **Copy as blocks** saves `twinSubsystem(model)` to My blocks; **Add as variant** adds the eased-in PI as "<name> · eased in" without running it. `loopTuner.identify(opts)` runs the tab's test and resolves with the model's report; `loopTuner.identified(block)` returns the model in use.
 - **Measured** in Chromium (1440 and 390 px, light and dark, no console errors, nothing beyond the viewport): the oven at ∞ in 0.4 s (two lags, 98.9 % on the Check, the CLI's numbers), the DC motor in 0.9 s (integrator · lag, 99.9 %); at 20× the oven's 112 s take 6 s.
-- **Not yet**: "Use for Auto-tune and Analysis" (9), Try on the plant (10), Compare and Hide a variation (11).
+- **Not yet**: Try on the plant (10), Compare and Hide a variation (11).
 
 ## 5. The experiment
 
@@ -828,22 +828,23 @@ The tank shows the limit of one linear model across a strongly nonlinear range. 
 
 ### 10.1 Built (step 9)
 
-`src/core/identify.js` (`twinOp`, `twinDiagram`, `modelPush`, `twinProject`, `modelTuneSteps`, `keptModel`), `src/ui/plantsource.js`, the Auto-tune tab. Where the build made §10 more precise ([decisions.md](decisions.md), v2.9):
+`twinOp`, `twinSubsystem`, `twinDiagram`, `modelPush`, `twinProject`, `modelTuneSteps` and `keptModel` in `src/core/identify.js`; `resultName(…, { model })` in `autotune.js`; `src/ui/plantsource.js`; the Auto-tune tab; `node cli.mjs autotune --plant identified`; the MCP server's `autotune` with `plant`. Reconciled from two builds ([decisions.md](decisions.md), v2.9). Where the build made §10 more precise:
 
-- **One shared choice per block**, for the page session: "Plant: [the diagram | the model]" in Auto-tune's Controller column and in Analysis, and **Use for Auto-tune and Analysis** in Identify's model column (lit while it is in use). The line under the keys names the model ("T · test 1: two lags, ! explains 99 %", or "the test just run, not kept"), and on a live plant measured on an earlier connection, "! Measured on an earlier connection: the plant may have changed. Check again tells (Identify tab)." On a plant outside the page only the model is offered.
-- **The twin** rests at the first hold (u₀, y₀: Equations "u − u₀" and "y₀ + y" around the chain); the plant is cut off (u's wires into it, an External block, and the Sinks that showed it go; the measurement's Sink shows the twin).
-- **The push** is a step of 20 % of the u between the reference's levels (for a plant that settles, at least r's span over K), at least 1 % of u's range, from where d first steps (else 60 % of the period), its sign leaving the controller the larger share of its range. Oven: +12.3 % at 3.6 s; motor: +0.24 V at 3.2 s.
-- **Auto-tune runs unchanged on the twin project** (Iterate, Relay, Step); results are "· auto-tuned (model)", "· relay T–L (model)", "· SIMC (model)"; the status ends "119 runs on the model (the test just run, not kept: two lags, ! explains 99 %). Cost on the model 0.0974 · on the diagram 0.11 (it started at 1.28 there)", and the result list has a Diagram row. On a plant outside the page the result is added, not run (Try on the plant, step 10).
-- **The command line**: `node cli.mjs autotune <project> --plant identified` tunes on the kept test in use (`keptModel`), prints the model, the push and the cost on the diagram, and `--json` carries them as `plant`. In the page, `loopTuner.autotune({ plant: "identified" })` and `loopTuner.plantSource(block, v)`.
-- **Measured (test 13, the whole harness)**: identified through a sensor, tuned with Iterate on the model, scored noise-free on the true plant against Iterate on the plant itself:
+- **One choice per block**, `system.identify[key].source` ("identified"; absent: the diagram), set from "Plant: [the diagram | the model]" in Auto-tune's Controller column and in Analysis, or from Identify's **Use for Auto-tune and Analysis** (lit while in use). The line under the keys names the model ("T · test 1: two lags, ! explains 99 %", "the test just run, not kept"), and on a live plant measured on an earlier connection says the plant may have changed. On a plant outside the page only the model is offered; without one both tabs say in red "… identify the plant first (Identify tab)".
+- **The twin** rests at the first hold (Equations "u − u₀" and "y₀ + y"); its dead time follows its dynamics, so it agrees with the exact replay to 3e-7 (test 11 asserts 2e-6 with a dead time too). The plant is cut off: u's wires into it, an External block and the Sinks that showed it go; the measurement's Sink shows the twin.
+- **The push** is a step of 20 % of the u between the reference's levels (for a plant that settles, at least r's span over K), at least 1 % of u's range: where d plays, from d's first step, the way d pushes (oven: +12.3 % at 3.6 s; motor: +0.24 V at 3.2 s); else in the middle of r's longest still stretch, against r's step into it (the arm: at 1.75 s, pushing down after r's step up).
+- **Auto-tune runs unchanged on the twin project** (Iterate, Relay, Step); results are "· auto-tuned (model)", "· relay T–L (model)", "· SIMC (model)"; the status ends "119 runs on the model (…). Cost on the model 0.0974 · on the diagram 0.11 (it started at 1.28 there)", and the result list has a Diagram row. On a plant outside the page the result is added, not run (Try on the plant, step 10).
+- **Agents**: `node cli.mjs autotune <project> --plant identified` (the kept test in use; `--json` carries `plant`), the MCP `autotune` tool's `plant: "identified"`, and in the page `loopTuner.autotune({ plant })` and `loopTuner.plantSource(block, v)`.
+- **Measured (test 13, the whole harness)**: identified through a sensor (noise, an encoder), tuned with Iterate on the model, scored noise-free on the true plant against Iterate on the plant itself:
 
 | | Oven | Motor | Tank | Arms 1–5 (±15 %) |
 |---|---|---|---|---|
 | Model, Check fit | two lags, 99 % | integrator · lag, 99.9 % | lag, 92.5 % | resonance, 79–85 % |
 | Plant time | 112 s | 51 s | 72 s | 79–85 s |
-| Cost tuned on the model, on the plant | 0.135 | 0.116 | 0.121 | 0.380–0.396 |
-| Tuned on the plant itself | 0.120 | 0.114 | 0.073 | 0.367–0.376 |
-| Ratio | 1.13 | 1.01 | 1.66 (reported) | 1.02–1.07 |
+| Ratio to tuning on the plant itself | 1.13 | 1.01 | 2.2 (reported) | 1.03–1.13 |
+
+- **On the real plant script** (seed 1, measured on the first build, before the reconciliation): before identifying, both tabs said to identify first; after a 33 s test (a resonance, 90 % on the Check), `loopTuner.autotune()` tuned the P on the model, and Analysis gave gain margin ×13.7 (×9.9 … ×14.6), phase margin 48° (40 … 53°), Ms 1.75 (1.68 … 1.93).
+- **Not yet**: Auto-tune on the model while a live plant is connected sweeps at 1× (the plant owns the clock).
 
 ## 11. Try on the plant (HIL)
 
@@ -897,10 +898,10 @@ The step is then "✕ did not behave as predicted".
 
 `identifiedLoop`, `loopRanges` and `measuredPoints` in `src/core/identify.js`; `app.loopModel(path, 'identified')` and `loopTuner.loopModel(path, "identified")`; the Analysis tab.
 
-- **The loop** is the chosen structure's `linearModel` with the running variant's linear law, read in the middle of the range the test visited (where u at a limit is judged); the operating-point keys hide on the model. A variant from the plant is refused with a sentence.
-- **Ranges** in brackets after the gain, phase and delay margins and Ms, over the 50 parameter samples and the places the test sat at: the motor's gain margin ×1.6 (×1.58 … ×1.65); the notes say how many of those variants are unstable with the running law (all 53 for the badly tuned oven, which is unstable on the diagram too).
-- **The Shake's points** on the Bode plot, L·Ĝ/G_d at each excited line with 2σ bars (the simulated arm at 5 min: 12 points at two places).
-- Checked in Chromium (`tools/identify-model-check.mjs`): the oven and the motor identified, tuned on the model and read in Analysis, light and dark, 1440 and 390 px, no console errors, nothing beyond the viewport.
+- **The loop** is the chosen structure's `linearModel` with the running variant's linear law, read in the middle of the range the test visited (where u at a limit is judged), labelled with that range; the operating-point keys hide on the model. A variant from the plant is refused with a sentence.
+- **Ranges** in brackets after the gain, phase and delay margins and Ms, over the 50 parameter samples and the places (the motor's gain margin ×1.6 (×1.58 … ×1.65)); the notes count those unstable with the running law.
+- **The Shake's points** on the Bode plot, L·Ĝ/G_d at each excited line of each place, with 2σ bars (the simulated arm at 5 min: 12 points at two places).
+- Checked in Chromium (`tools/identify-model-check.mjs`): the oven, the motor and the simulated arm identified, tuned on the model and read in Analysis, light and dark, 1440 and 390 px, no console errors, nothing beyond the viewport.
 
 ## 13. Simulated plants: the teaching comparison
 

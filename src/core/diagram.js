@@ -1306,7 +1306,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // A plant outside the page (an External plant, Live mode) has no model
     // here: what u drives, or what the measurements read, runs elsewhere.
     const outside = nodes.find((nd, i) => nd.kind === 'xplant' && (fromCut[i] || nd.i === cut || nodes.some((tp, j) => tp.kind === 'tap' && tp.parent === i && toMeas[j])));
-    if (outside) throw modelError('external-plant', `the plant runs outside the page (External plant '${outside.name}'): the page has no model of it to design with or analyse`, 'identify it first (the Identify tab is designed, not built yet), or set the gains by hand and tune it live');
+    if (outside) throw modelError('external-plant', `the plant runs outside the page (External plant '${outside.name}'): the page has no model of it to design with or analyse`, 'set the gains by hand and tune it live, or identify it (Identify tab) and tune it on the model in Auto-tune; designs from an identified model come later');
     // The slices: only the nodes the kept rates read (for f), and those the
     // measurements read too (for y).
     const sliceOf = (starts) => { const used = walk(starts, reads); return Int32Array.from(order.filter((i) => used[i] && i !== cut)); };

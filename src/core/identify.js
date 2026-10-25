@@ -1234,7 +1234,7 @@ export function linearModel(model) {
 }
 
 // The twin as a subsystem of the Plant library's own blocks (§10; no black
-// boxes): In → gain K (or k′) → dead time → lags or a resonance → integrator
+// boxes): In → gain K (or k′) → integrator → lags or a resonance → dead time
 // → noise → quantiser → Out. push: an added Sum at its input with a second
 // In for the test push. noise: false leaves out the noise and the quantiser.
 // op: { u0, y0 }, the place the twin rests at (u₀ holds y₀): Equations
@@ -1257,7 +1257,6 @@ export function twinSubsystem(model, { push = false, noise = true, id = 'twin', 
   if (op && op.u0) add({ id: 'u0', type: 'fcn', name: 'u − u₀', params: { inputs: 'u', eqs: `du = u - ${num(op.u0)}`, outputs: 'du' } });
   const gainKey = GAIN(S);
   add({ id: 'gain', type: 'gain', name: S.integrating ? 'rate k′' : 'gain K', params: { K: p[gainKey] } });
-  if (p.theta > 0) add({ id: 'dead', type: 'delay', name: 'dead time θ', params: { L: p.theta, y0: 0 } });
   if (S.integrating) add({ id: 'int', type: 'integrator', name: 'integrator', params: { K: 1 } });
   if (model.structure === 'lag' || model.structure === 'intLag') add({ id: 'lag', type: 'firstOrder', name: 'lag τ', params: { K: 1, tau: p.tau } });
   if (model.structure === 'lags') {
@@ -1265,6 +1264,10 @@ export function twinSubsystem(model, { push = false, noise = true, id = 'twin', 
     add({ id: 'lag2', type: 'firstOrder', name: 'lag τ₂', params: { K: 1, tau: p.tau2 } });
   }
   if (model.structure === 'resonance' || model.structure === 'intRes') add({ id: 'res', type: 'secondOrder', name: 'resonance f, ζ', params: { K: 1, wn: 2 * Math.PI * p.f, zeta: p.zeta } });
+  // The dead time after the dynamics (the same model: they commute): the Dead
+  // time block interpolates its input between integration steps, exact for
+  // a smooth input, half a step off for a held one (§17, test 11).
+  if (p.theta > 0) add({ id: 'dead', type: 'delay', name: 'dead time θ', params: { L: p.theta, y0: 0 } });
   if (op && op.y0) add({ id: 'y0', type: 'fcn', name: 'y₀ + y', params: { inputs: 'dy', eqs: `y = dy + ${num(op.y0)}`, outputs: 'y' } });
   if (noise && model.noise?.sigma > 0) add({ id: 'noise', type: 'noise', name: 'noise σ', params: { std: model.noise.sigma, seed: 1 } });
   if (noise && model.noise?.q > 0) add({ id: 'quant', type: 'quantizer', name: 'steps q', params: { q: model.noise.q } });
@@ -1826,9 +1829,31 @@ export function twinDiagram(diagram, path, model, { push = null } = {}) {
 // The test push (§10): the model has no path for the tester's d, and r alone
 // would tune a weak integral, so a step at the twin's input: 20 % of the u
 // the eased-in loop needed between the reference's levels, at least 1 % of
-// u's range; where the tester's d steps, else at 60 % of the period; its sign
-// leaves the controller the larger share of its range to answer with.
-export const PUSH = { share: 0.2, least: 0.01, at: 0.6 };
+// u's range; where the tester's d first steps and the way it pushes, else
+// in the middle of r's longest still stretch against r's step into it (else
+// at 60 % of the period); with no step to go by, the sign that leaves the
+// controller the larger share of its range.
+export const PUSH = { share: 0.2, least: 0.01, at: 0.6, grid: 1000 };
+// The middle of the longest stretch over which r stands still (wrapping
+// round the period), so a push there is answered alone, not mixed into a
+// step of r, and the step of r into it: { at, step }; null when r never
+// stands still or there is none.
+function stillestTime(sig, period) {
+  if (!sig) return null;
+  const f = referenceFn(sig), n = PUSH.grid, dt = period / n;
+  const v = Array.from({ length: n }, (_, k) => f((k + 0.5) * dt));
+  const tol = 1e-9 * Math.max(1, ...v.map(Math.abs));
+  const moves = [];
+  for (let k = 0; k < n; k++) if (Math.abs(v[(k + 1) % n] - v[k]) > tol) moves.push(k);
+  if (!moves.length || moves.length > n / 2) return null;
+  let best = null;
+  moves.forEach((k, i) => {
+    const next = moves[(i + 1) % moves.length] + (i + 1 === moves.length ? n : 0), len = next - k;
+    if (!best || len > best.len) best = { k, len };
+  });
+  const k0 = best.k + 1;
+  return { at: ((k0 + best.len / 2) * dt) % period, step: v[k0 % n] - v[best.k] };
+}
 export function modelPush(project, path, model) {
   const signals = project.system.signals;
   const period = Math.max(...Object.values(signals).map((s) => s.period));
@@ -1849,19 +1874,32 @@ export function modelPush(project, path, model) {
   if (Number.isFinite(range)) size = Math.max(size, PUSH.least * range);
   if (!(size > 0)) size = PUSH.least * Math.max(1, Math.abs(twinOp(model).u0));
   const source = upstreamSource(project.system.plant.diagram, path, 0);
-  let at = null;
-  for (const [name, s] of Object.entries(signals)) {
+  // Where d plays: when it first steps, and the way it pushes (the tester's
+  // own disturbance; it is taken to act at the plant's input).
+  let at = null, sign = 0;
+  for (const [name, sg] of Object.entries(signals)) {
     if (name === source) continue;
-    const c = (s.components ?? []).filter((x) => x.enabled !== false && x.params?.amplitude).sort((a, b) => (a.params.time ?? 0) - (b.params.time ?? 0))[0];
-    if (c) { at = c.params.time ?? 0; break; }
+    const c = (sg.components ?? []).filter((x) => x.enabled !== false && finite(x.params?.amplitude) && x.params.amplitude !== 0).sort((x, y) => (x.params.time ?? 0) - (y.params.time ?? 0))[0];
+    if (c) { at = c.params.time ?? 0; sign = Math.sign(c.params.amplitude); break; }
   }
-  if (at === null || !(at >= 0 && at < period)) at = PUSH.at * period;
-  // The u that holds r where the push comes: through the gain for a plant
-  // that settles, else the mean u that held.
-  const op = twinOp(model);
-  let uh = us.length ? us.reduce((a, b) => a + b, 0) / us.length : op.u0;
-  if (!S.integrating && source && signals[source] && Math.abs(model.params.K) > 0) uh = op.u0 + (referenceFn(signals[source])(at) - op.y0) / model.params.K;
-  const sign = Number.isFinite(range) && hi - uh > uh - lo ? -1 : 1;
+  const op = twinOp(model), gain = model.params[GAIN(S)];
+  const r = source && signals[source] ? referenceFn(signals[source]) : null;
+  if (at === null || !(at >= 0 && at < period)) {
+    // Else alone, in r's longest still stretch, and against r's last step
+    // there (a push the way r stepped reads as overshoot, which the cost
+    // charges apart, and tunes a bolder controller: on the arm Kp 1.6
+    // against 0.8, 1.5 × against 1.04 × of the best on the arm itself).
+    const still = stillestTime(signals[source], period);
+    at = still?.at ?? PUSH.at * period;
+    sign = still?.step && gain ? -Math.sign(still.step) * Math.sign(gain) : 0;
+  }
+  // No step to go by: the sign that leaves the controller the larger share
+  // of its range, at the u that holds r there.
+  if (!sign) {
+    let uh = us.length ? us.reduce((x, y) => x + y, 0) / us.length : op.u0;
+    if (!S.integrating && r && Math.abs(model.params.K) > 0) uh = op.u0 + (r(at) - op.y0) / model.params.K;
+    sign = Number.isFinite(range) && hi - uh > uh - lo ? -1 : 1;
+  }
   return { size, at, sign, signal: { period, components: [{ type: 'step', params: { amplitude: sign * size, time: at } }] } };
 }
 

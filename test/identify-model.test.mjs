@@ -51,15 +51,20 @@ test('the twin rests where the test began (u₀ holds y₀), with negative value
   assert.ok(Math.sqrt(rms / a.length) < 2, `rms ${Math.sqrt(rms / a.length)}`);
 });
 
-test('the test push: 20 % of the u between the reference\'s levels (at least 1 % of u\'s range), where d steps, its sign leaving the controller room', () => {
+test('the test push: 20 % of the u between the reference\'s levels (at least 1 % of u\'s range), where d steps and the way it pushes, else alone against r\'s step', () => {
   const o = modelPush(oven.p, ['ctrl'], oven.res.model);
-  // r spans 60 °C, K ≈ 0.98: about 12 % of heat; d steps at 3.6 s; u holds 60 °C at ~61 % of 0 … 100: more room below, so the push heats.
+  // r spans 60 °C, K ≈ 0.98: about 12 % of heat; d heats from 3.6 s, so the push heats there.
   assert.ok(Math.abs(o.size - (0.2 * 60) / oven.res.model.params.K) < 1e-9, `${o.size}`);
   assert.equal(o.at, 3.6);
   assert.equal(o.sign, 1);
   const m = modelPush(motor.p, ['ctrl'], motor.res.model);
   assert.equal(m.at, 3.2);
-  assert.ok(m.size > 0);
+  assert.ok(m.size > 0 && m.sign === 1, 'the way d pushes');
+  // Without d: alone, in the middle of r's longest still stretch (r steps up
+  // to 2 rad at 0.25 s, down at 1.5 s), against r's step into it.
+  const quiet = structuredClone(motor.p); quiet.system.signals.d.components = [];
+  const q = modelPush(quiet, ['ctrl'], motor.res.model);
+  assert.ok(Math.abs(q.at - 0.875) < 0.01 && q.sign === -1, `${q.at} ${q.sign}`);
 });
 
 test('names: "… (model)", and the base name stripped of it; Auto-tune runs unchanged on the twin', () => {
@@ -124,4 +129,19 @@ test('the command line: autotune --plant identified tunes on the kept test\'s mo
   assert.match(rep.after.variant.name, /\(model\)$/);
   const kept = keptModel(normalizeProject(JSON.parse(readFileSync(file, 'utf8'))));
   assert.equal(kept.model.structure, oven.res.model.structure);
+});
+
+test('the MCP server: autotune with plant "identified" tunes on the kept test\'s model, as the command line does', async () => {
+  const { startServer, stopAll } = await import('../tools/mcp-client.mjs');
+  const p = structuredClone(oven.p);
+  p.system.identify = { ctrl: { kept: [{ name: 'T · test 1', plan: oven.res.plan, record: oven.res.record }], use: 0 } };
+  const s = startServer();
+  try {
+    await s.call('set_project', { project: 'oven', json: JSON.parse(JSON.stringify(normalizeProject(p))) });
+    const rep = await s.call('autotune', { method: 'step', plant: 'identified' });
+    assert.ok(rep.ok && rep.plant.on === 'model' && rep.plant.onDiagram.after < rep.plant.onDiagram.before, JSON.stringify(rep.plant));
+    assert.match(rep.after.variant.name, /· SIMC \(model\)$/);
+    await s.call('set_project', { project: 'oven', json: JSON.parse(JSON.stringify(oven.p)) });
+    await assert.rejects(s.call('autotune', { plant: 'identified' }), /identify the plant first/);
+  } finally { stopAll(); }
 });

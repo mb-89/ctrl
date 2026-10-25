@@ -579,7 +579,6 @@ function startApp() {
   // tabs that show it when it is ready or the choice changes.
   app.identifiedFor = (key) => identifyTab.inUse(key);
   app.identifiedChanged = () => { if (app.tab === 'tune') tuneTab.render(); if (app.tab === 'analysis') analysisTab.render(); };
-  app.plantSourceChanged = () => { app.identifiedChanged(); if (app.tab === 'identify') identifyTab.render(); };
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="btn tab" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -1017,7 +1016,8 @@ function startApp() {
       return rep;
     },
     // Which plant Auto-tune and Analysis work on for a block: "diagram" or
-    // "identified" (always on a plant outside the page); with v, sets it.
+    // "identified" (always on a plant outside the page); with v, sets it
+    // (a design input of the block's Identify settings, one undo step).
     plantSource: (block, v) => {
       const key = block ? String(block) : controllerBlocks(app.project.system.plant?.diagram)[0]?.key;
       if (v !== undefined) {

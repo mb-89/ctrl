@@ -1536,9 +1536,10 @@ export function tuneReport(res) {
 
 // ---- Variants -----------------------------------------------------------
 
-// The name a variant had before any tuning suffix this module adds.
+// The name a variant had before any tuning suffix this module adds (and
+// Identify's "· eased in"; "(model)": tuned on the identified model).
 export function baseName(name) {
-  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?)( \(model\))?( \d+)?)+$/, '');
+  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?|eased in)( \(model\))?( \d+)?)+$/, '');
 }
 
 // The name for a method's result: "<base> · auto-tuned", "· relay T–L" (by

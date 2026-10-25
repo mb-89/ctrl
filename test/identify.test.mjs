@@ -210,17 +210,17 @@ test('11. the twin subsystem simulates the same as replay, open and closed loop;
         const want = simulateSegment(discretise(name, params, Ts), seg).y;
         let worst = 0, scale = 0;
         for (let j = 0; j < N; j++) { worst = Math.max(worst, Math.abs(got[j] - want[j])); scale = Math.max(scale, Math.abs(want[j])); }
-        // Without a dead time the twin is the replay to RK4's accuracy. With one,
-        // the diagram's Dead time block interpolates its input between
-        // integration steps (here one step is Ts): on a held input that moves
-        // each jump by up to half a step, 1–3 % of the response here.
-        assert.ok(worst <= (theta ? 3.5e-2 : 2e-6) * scale, `${name} θ ${theta} ${closed ? 'closed' : 'open'}: ${worst} of ${scale}`);
+        // The twin is the replay to RK4's accuracy, with a dead time too: it
+        // sits after the dynamics, where its input is smooth (before them, on
+        // the held u, the Dead time block's interpolation moved each jump by
+        // up to half a step: 1–3 % of the response).
+        assert.ok(worst <= 2e-6 * scale, `${name} θ ${theta} ${closed ? 'closed' : 'open'}: ${worst} of ${scale}`);
       }
     }
   }
   // With the noise the plant showed and the test push (§10).
   const t2 = twinSubsystem(modelOf('lag', MODELS.lag, { sigma: 0.01, q: 0.002 }), { push: true });
-  assert.deepEqual(t2.diagram.blocks.map((b) => b.type), ['inport', 'inport', 'sum', 'gain', 'delay', 'firstOrder', 'noise', 'quantizer', 'outport']);
+  assert.deepEqual(t2.diagram.blocks.map((b) => b.type), ['inport', 'inport', 'sum', 'gain', 'firstOrder', 'delay', 'noise', 'quantizer', 'outport']);
   assert.ok(normalizeDiagram(t2.diagram));
 });
 
