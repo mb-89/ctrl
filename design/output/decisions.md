@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: the diagram lays itself out ([input 11](../input/2026-10-25-11-diagram-auto-layout.md))
+
+The person: "it's not necessary that we place things in arbitrary positions ... sorts everything from left to right. And draws the lines automatically ... drop new elements onto lines, and then they get connected"; today's lines "sometimes go in weird loops. And you can't drag the lines individually"; "if you can find an auto router, I would be fine with that ... there is an existing solution for something like this, and we don't have to reinvent it."
+
+- **Direction:** the Plant tab's diagram is laid out by the page, left to right, with wires routed automatically; blocks are not placed by hand. A block dropped onto a wire is inserted into it and wired.
+- **An existing layout and routing library**, not our own. It must work inside the one standalone page (inlined, no network), keep its licence notice, and pass the provenance test. Which one, and how feedback loops, subsystems and insertion behave, is researched and designed in [diagram-layout.md](diagram-layout.md) (in progress).
+
 ## 2026-10-24 · v2.7: time control, after review
 
 Two reviews of the first build (no new words from the person). What changed, and the interpretations it took:
