@@ -68,14 +68,22 @@ export function contSim(num, den, theta, Ts, sub = 40) {
 // A structure's plant (STRUCTURES[name].tf(p)) run for N samples, open loop
 // on u or closed loop under law() ((k, y) => u), with measurement noise
 // noise(k) added to y (what the law reads and what is recorded).
-export function runPlant(tf, Ts, N, { u = null, law = null, noise = null } = {}) {
+//   input: a static map from the recorded u to what drives the plant (an
+//     actuator's nonlinearity, such as u + a·u³).
+//   gaps: [[k, len], …], seq gaps: just before sample k the plant runs len
+//     cycles more with the last u held, and none of them is recorded (the
+//     law's k counts recorded samples only).
+export function runPlant(tf, Ts, N, { u = null, law = null, noise = null, input = null, gaps = [] } = {}) {
   const cs = contSim(tf.num, tf.den, tf.delay ?? 0, Ts);
   const y = new Float64Array(N), uu = new Float64Array(N);
   const l = law ? law() : null;
+  const lost = new Map(gaps.map(([k, len]) => [k, len]));
+  const drive = (v) => (input ? input(v) : v);
   for (let k = 0; k < N; k++) {
+    for (let j = 0; j < (lost.get(k) ?? 0); j++) cs.advance(drive(uu[k - 1] ?? 0));
     y[k] = cs.output() + (noise ? noise(k) : 0);
     uu[k] = l ? l(k, y[k]) : u[k];
-    cs.advance(uu[k]);
+    cs.advance(drive(uu[k]));
   }
   return { y, u: uu };
 }

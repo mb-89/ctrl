@@ -1,7 +1,7 @@
 // Linear algebra for analysing and designing loops: matrix basics (with the
 // Cholesky factorisation, for least squares and fits), the matrix
 // exponential and zero-order-hold discretisation, eigenvalues of a general
-// real matrix, discrete LQR and Kalman gains (Riccati equations), and the
+// real matrix and of a symmetric one (with its eigenvectors), discrete LQR and Kalman gains (Riccati equations), and the
 // frequency response, stability margins, root locus and zeros of SISO models.
 // Pure functions, no DOM: shared by browser and Node.
 //
@@ -191,6 +191,115 @@ export function cholSolve(L, b) {
     for (let j = 0; j < m; j++) Xi[j] /= L[i][i];
   }
   return vec ? X.map((r) => r[0]) : X;
+}
+
+// The eigenvalues of a symmetric matrix A (only its lower triangle is read),
+// ascending, by Householder reduction to tridiagonal form and the implicit QL
+// method with shifts (the algorithms of EISPACK's tred2 and tql2).
+// vectors: true also returns the eigenvectors, the columns of V
+// (A V = V diag(values), VᵀV = I); project: [b, …] returns Vᵀb for each b
+// without forming V (every transformation is applied to b alone: O(n²) each
+// instead of O(n³)). Returns { values, vectors?, projected? }.
+export function eigSym(A, { vectors = false, project = [] } = {}) {
+  const n = square(A, 'eigSym');
+  // The lower triangle, row by row in one flat array: a[i·n + j], j ≤ i.
+  const a = new Float64Array(n * n);
+  for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) a[i * n + j] = A[i][j];
+  if (!a.every(Number.isFinite)) throw new Error('eigSym: matrix has non-finite entries');
+  const P = project.map((b) => {
+    if (b.length !== n) throw new Error(`eigSym: a projected vector must have ${n} entries`);
+    return Float64Array.from(b);
+  });
+  const V = vectors ? Array.from({ length: n }, (_, i) => Float64Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))) : null;
+  // Householder: H = I − βvvᵀ zeroes column k below its subdiagonal; A ← HAH,
+  // b ← Hb, V ← VH (so V = H₀H₁… and b = …H₁H₀b = Vᵀb).
+  const v = new Float64Array(n), p = new Float64Array(n);
+  for (let k = 0; k < n - 2; k++) {
+    let tail = 0;
+    for (let i = k + 2; i < n; i++) tail += a[i * n + k] * a[i * n + k];
+    if (tail === 0) continue;
+    const x0 = a[(k + 1) * n + k], sigma = Math.sqrt(x0 * x0 + tail);
+    const alpha = x0 > 0 ? -sigma : sigma;
+    const beta = 1 / (sigma * (sigma + Math.abs(x0)));
+    v[k + 1] = x0 - alpha;
+    for (let i = k + 2; i < n; i++) v[i] = a[i * n + k];
+    // p = βAv from the lower triangle (each entry used for its row and its
+    // column), w = p − (βpᵀv/2)v, then A ← A − vwᵀ − wvᵀ on the lower triangle
+    // of rows and columns k+1 …
+    p.fill(0, k + 1);
+    for (let i = k + 1; i < n; i++) {
+      const o = i * n, vi = v[i];
+      let s = a[o + i] * vi;
+      for (let j = k + 1; j < i; j++) { const x = a[o + j]; s += x * v[j]; p[j] += x * vi; }
+      p[i] += s;
+    }
+    let pv = 0;
+    for (let i = k + 1; i < n; i++) { p[i] *= beta; pv += p[i] * v[i]; }
+    const K = (beta * pv) / 2;
+    for (let i = k + 1; i < n; i++) p[i] -= K * v[i];
+    for (let i = k + 1; i < n; i++) {
+      const o = i * n, vi = v[i], wi = p[i];
+      for (let j = k + 1; j <= i; j++) a[o + j] -= vi * p[j] + wi * v[j];
+    }
+    a[(k + 1) * n + k] = alpha;
+    for (let i = k + 2; i < n; i++) a[i * n + k] = 0;
+    for (const b of P) {
+      let s = 0;
+      for (let i = k + 1; i < n; i++) s += v[i] * b[i];
+      s *= beta;
+      for (let i = k + 1; i < n; i++) b[i] -= s * v[i];
+    }
+    if (V) {
+      for (const row of V) {
+        let s = 0;
+        for (let i = k + 1; i < n; i++) s += row[i] * v[i];
+        s *= beta;
+        for (let i = k + 1; i < n; i++) row[i] -= s * v[i];
+      }
+    }
+  }
+  // Implicit QL on the tridiagonal d (diagonal), e (e[i] couples d[i], d[i+1]).
+  const d = Float64Array.from({ length: n }, (_, i) => a[i * n + i]);
+  const e = Float64Array.from({ length: n }, (_, i) => (i < n - 1 ? a[(i + 1) * n + i] : 0));
+  const rotate = (i, s, c) => {
+    for (const b of P) { const t = b[i + 1]; b[i + 1] = s * b[i] + c * t; b[i] = c * b[i] - s * t; }
+    if (V) for (const row of V) { const t = row[i + 1]; row[i + 1] = s * row[i] + c * t; row[i] = c * row[i] - s * t; }
+  };
+  for (let l = 0; l < n; l++) {
+    let iter = 0, m;
+    do {
+      for (m = l; m < n - 1; m++) {
+        const dd = Math.abs(d[m]) + Math.abs(d[m + 1]);
+        if (Math.abs(e[m]) + dd === dd) break;
+      }
+      if (m !== l) {
+        if (iter++ === 60) throw new Error('eigSym: no convergence');
+        let g = (d[l + 1] - d[l]) / (2 * e[l]);
+        let r = Math.hypot(g, 1);
+        g = d[m] - d[l] + e[l] / (g + (g >= 0 ? r : -r));
+        let s = 1, c = 1, q = 0, i;
+        for (i = m - 1; i >= l; i--) {
+          const f = s * e[i], b = c * e[i];
+          e[i + 1] = r = Math.hypot(f, g);
+          if (r === 0) { d[i + 1] -= q; e[m] = 0; break; }
+          s = f / r; c = g / r;
+          g = d[i + 1] - q;
+          r = (d[i] - g) * s + 2 * c * b;
+          q = s * r;
+          d[i + 1] = g + q;
+          g = c * r - b;
+          rotate(i, s, c);
+        }
+        if (r === 0 && i >= l) continue;
+        d[l] -= q; e[l] = g; e[m] = 0;
+      }
+    } while (m !== l);
+  }
+  const order = Array.from({ length: n }, (_, i) => i).sort((x, y) => d[x] - d[y] || x - y);
+  const out = { values: order.map((i) => d[i]) };
+  if (V) out.vectors = V.map((row) => order.map((i) => row[i]));
+  if (project.length) out.projected = P.map((b) => order.map((i) => b[i]));
+  return out;
 }
 
 // ---- Matrix exponential and discretisation

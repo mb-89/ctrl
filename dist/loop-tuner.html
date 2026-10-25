@@ -885,6 +885,101 @@ function cholSolve(L, b) {
   return vec ? X.map((r) => r[0]) : X;
 }
 
+function eigSym(A, { vectors = false, project = [] } = {}) {
+  const n = square(A, 'eigSym');
+  const a = new Float64Array(n * n);
+  for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) a[i * n + j] = A[i][j];
+  if (!a.every(Number.isFinite)) throw new Error('eigSym: matrix has non-finite entries');
+  const P = project.map((b) => {
+    if (b.length !== n) throw new Error(`eigSym: a projected vector must have ${n} entries`);
+    return Float64Array.from(b);
+  });
+  const V = vectors ? Array.from({ length: n }, (_, i) => Float64Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))) : null;
+  const v = new Float64Array(n), p = new Float64Array(n);
+  for (let k = 0; k < n - 2; k++) {
+    let tail = 0;
+    for (let i = k + 2; i < n; i++) tail += a[i * n + k] * a[i * n + k];
+    if (tail === 0) continue;
+    const x0 = a[(k + 1) * n + k], sigma = Math.sqrt(x0 * x0 + tail);
+    const alpha = x0 > 0 ? -sigma : sigma;
+    const beta = 1 / (sigma * (sigma + Math.abs(x0)));
+    v[k + 1] = x0 - alpha;
+    for (let i = k + 2; i < n; i++) v[i] = a[i * n + k];
+    p.fill(0, k + 1);
+    for (let i = k + 1; i < n; i++) {
+      const o = i * n, vi = v[i];
+      let s = a[o + i] * vi;
+      for (let j = k + 1; j < i; j++) { const x = a[o + j]; s += x * v[j]; p[j] += x * vi; }
+      p[i] += s;
+    }
+    let pv = 0;
+    for (let i = k + 1; i < n; i++) { p[i] *= beta; pv += p[i] * v[i]; }
+    const K = (beta * pv) / 2;
+    for (let i = k + 1; i < n; i++) p[i] -= K * v[i];
+    for (let i = k + 1; i < n; i++) {
+      const o = i * n, vi = v[i], wi = p[i];
+      for (let j = k + 1; j <= i; j++) a[o + j] -= vi * p[j] + wi * v[j];
+    }
+    a[(k + 1) * n + k] = alpha;
+    for (let i = k + 2; i < n; i++) a[i * n + k] = 0;
+    for (const b of P) {
+      let s = 0;
+      for (let i = k + 1; i < n; i++) s += v[i] * b[i];
+      s *= beta;
+      for (let i = k + 1; i < n; i++) b[i] -= s * v[i];
+    }
+    if (V) {
+      for (const row of V) {
+        let s = 0;
+        for (let i = k + 1; i < n; i++) s += row[i] * v[i];
+        s *= beta;
+        for (let i = k + 1; i < n; i++) row[i] -= s * v[i];
+      }
+    }
+  }
+  const d = Float64Array.from({ length: n }, (_, i) => a[i * n + i]);
+  const e = Float64Array.from({ length: n }, (_, i) => (i < n - 1 ? a[(i + 1) * n + i] : 0));
+  const rotate = (i, s, c) => {
+    for (const b of P) { const t = b[i + 1]; b[i + 1] = s * b[i] + c * t; b[i] = c * b[i] - s * t; }
+    if (V) for (const row of V) { const t = row[i + 1]; row[i + 1] = s * row[i] + c * t; row[i] = c * row[i] - s * t; }
+  };
+  for (let l = 0; l < n; l++) {
+    let iter = 0, m;
+    do {
+      for (m = l; m < n - 1; m++) {
+        const dd = Math.abs(d[m]) + Math.abs(d[m + 1]);
+        if (Math.abs(e[m]) + dd === dd) break;
+      }
+      if (m !== l) {
+        if (iter++ === 60) throw new Error('eigSym: no convergence');
+        let g = (d[l + 1] - d[l]) / (2 * e[l]);
+        let r = Math.hypot(g, 1);
+        g = d[m] - d[l] + e[l] / (g + (g >= 0 ? r : -r));
+        let s = 1, c = 1, q = 0, i;
+        for (i = m - 1; i >= l; i--) {
+          const f = s * e[i], b = c * e[i];
+          e[i + 1] = r = Math.hypot(f, g);
+          if (r === 0) { d[i + 1] -= q; e[m] = 0; break; }
+          s = f / r; c = g / r;
+          g = d[i + 1] - q;
+          r = (d[i] - g) * s + 2 * c * b;
+          q = s * r;
+          d[i + 1] = g + q;
+          g = c * r - b;
+          rotate(i, s, c);
+        }
+        if (r === 0 && i >= l) continue;
+        d[l] -= q; e[l] = g; e[m] = 0;
+      }
+    } while (m !== l);
+  }
+  const order = Array.from({ length: n }, (_, i) => i).sort((x, y) => d[x] - d[y] || x - y);
+  const out = { values: order.map((i) => d[i]) };
+  if (V) out.vectors = V.map((row) => order.map((i) => row[i]));
+  if (project.length) out.projected = P.map((b) => order.map((i) => b[i]));
+  return out;
+}
+
 
 const PADE13 = [64764752532480000, 32382376266240000, 7771770303897600, 1187353796428800, 129060195264000, 10559470521600, 670442572800, 33522128640, 1323241920, 40840800, 960960, 16380, 182, 1];
 const THETA13 = 5.371920351148152;
@@ -1407,7 +1502,7 @@ function rank(M, tol) {
   return diag.filter((x) => x > t).length;
 }
 
-return { zeros, eye, mul, add, scale, transpose, solve, inv, det, cholesky, cholSolve, expm, c2d, eig, eigPerturbed, dare, dlqr, dlqe, csolve, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank };
+return { zeros, eye, mul, add, scale, transpose, solve, inv, det, cholesky, cholSolve, eigSym, expm, c2d, eig, eigPerturbed, dare, dlqr, dlqe, csolve, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank };
 })();
 // ---- core/scale.js
 __mods['core/scale.js'] = (() => {
@@ -5770,7 +5865,7 @@ return { nextPow2, fft, WINDOWS, coherentGain, amplitudeSpectrum, spectrogram, d
 // ---- core/fit.js
 __mods['core/fit.js'] = (() => {
 
-const { c2d, cholesky, cholSolve } = __mods['core/linalg.js'];
+const { c2d, cholesky, cholSolve, eigSym } = __mods['core/linalg.js'];
 const { fft, nextPow2 } = __mods['core/spectrum.js'];
 const TWO_PI = 2 * Math.PI;
 
@@ -6280,7 +6375,425 @@ function crossCorrelation(res, u, lags = 25) {
   return { r, band, outside, worst, independent: looksWhite(outside, worst) };
 }
 
-return { STRUCTURES, paramInfo, discretise, simulateSegment, lmSteps, lm, noiseTransfer, parameterCov, fitStructureSteps, fitStructure, CHOICE, unsupported, chooseStructure, fitPercent, noiseCeiling, Z99, WHITE, whiteness, crossCorrelation };
+
+function tcIncrements(n, lambda) {
+  const e = new Float64Array(n);
+  for (let j = 0; j < n; j++) e[j] = j < n - 1 ? lambda ** (j + 1) * (1 - lambda) : lambda ** n;
+  return e;
+}
+
+function tcInverse(n, lambda) {
+  if (!(lambda > 0 && lambda < 1)) throw new Error('tcInverse: λ must lie between 0 and 1');
+  const e = tcIncrements(n, lambda);
+  const diag = new Float64Array(n), off = new Float64Array(Math.max(0, n - 1));
+  for (let i = 0; i < n; i++) diag[i] = 1 / e[i] + (i > 0 ? 1 / e[i - 1] : 0);
+  for (let i = 0; i < n - 1; i++) off[i] = -1 / e[i];
+  return { diag, off };
+}
+
+const KERNEL = { maxTaps: 150, maxEvaluations: 40, grid: [0.5, 1, 2, 4, 8, 16, 32, 64, 128], tol: 0.01 };
+
+const GOLD = (Math.sqrt(5) - 1) / 2;
+
+function* goldenSteps(f, lo, hi, tol, budget) {
+  if (budget < 2) return { x: NaN, f: Infinity };
+  let a = lo, b = hi;
+  let c = b - GOLD * (b - a), d = a + GOLD * (b - a);
+  let fc = f(c);
+  yield;
+  let fd = f(d), used = 2;
+  yield;
+  let best = fc <= fd ? { x: c, f: fc } : { x: d, f: fd };
+  while (b - a > tol && used < budget) {
+    if (fc <= fd) { b = d; d = c; fd = fc; c = b - GOLD * (b - a); fc = f(c); if (fc < best.f) best = { x: c, f: fc }; }
+    else { a = c; c = d; fc = fd; d = a + GOLD * (b - a); fd = f(d); if (fd < best.f) best = { x: d, f: fd }; }
+    used++;
+    yield;
+  }
+  return best;
+}
+const golden = (...args) => drain(goldenSteps(...args));
+
+function* tcKernelSteps(u, y, { n, decimate = 1, cover, integrating = false, u0 = 0, y0 = 0, from = 0, Ts } = {}) {
+  const N = y.length;
+  if (u.length !== N) throw new Error('tcKernel: u and y differ in length');
+  let D = decimate, taps = n;
+  if (cover !== undefined) {
+    if (!(cover >= 1)) throw new Error('tcKernel: cover must be at least one sample');
+    D = Math.max(1, Math.ceil(cover / KERNEL.maxTaps));
+    taps = Math.ceil(cover / D);
+  }
+  if (!Number.isInteger(D) || D < 1) throw new Error('tcKernel: decimate must be a whole number ≥ 1');
+  if (!Number.isInteger(taps) || taps < 1 || taps > KERNEL.maxTaps) throw new Error(`tcKernel: n must be a whole number of taps, 1 … ${KERNEL.maxTaps}`);
+  if (!(from >= 0) || N - from < 3) throw new Error('tcKernel: too few samples');
+  if (u.every((v) => v === u0)) throw new Error('tcKernel: u does not move');
+  const M = N - from;
+  const ub = new Float64Array(N);
+  let run = 0;
+  for (let t = 0; t < N; t++) {
+    run += u[t] - u0;
+    if (t >= D) run -= u[t - D] - u0;
+    ub[t] = run / D;
+  }
+  const Y = Float64Array.from(y, (v) => v - y0);
+  const X = integrating ? new Float64Array(N) : null;
+  if (X) for (let k = 1; k < N; k++) X[k] = X[k - 1] + u[k - 1] - u0;
+  const R = Array.from({ length: taps }, () => new Float64Array(taps));
+  const C = new Float64Array(N);
+  for (let dl = 0; dl < taps; dl++) {
+    const sh = dl * D;
+    let s = 0;
+    for (let t = 0; t < N - 1; t++) { if (t >= sh) s += ub[t] * ub[t - sh]; C[t] = s; }
+    for (let i = 0; i + dl < taps; i++) {
+      const hi = N - 2 - i * D, lo = Math.max(0, from - 1 - i * D);
+      const v = hi < lo ? 0 : C[hi] - (lo > 0 ? C[lo - 1] : 0);
+      R[i][i + dl] = R[i + dl][i] = v;
+    }
+  }
+  const cross = (Z) => {
+    const r = new Float64Array(taps);
+    for (let i = 0; i < taps; i++) {
+      let s = 0;
+      for (let k = Math.max(from, 1 + i * D); k < N; k++) s += ub[k - 1 - i * D] * Z[k];
+      r[i] = s;
+    }
+    return r;
+  };
+  const dot = (a, b) => { let s = 0; for (let k = from; k < N; k++) s += a[k] * b[k]; return s; };
+  const YY = dot(Y, Y), XX = X ? dot(X, X) : 0, XY = X ? dot(X, Y) : 0;
+  const B = R.map((row) => Float64Array.from(row));
+  for (const row of B) for (let j = 1; j < taps; j++) row[j] += row[j - 1];
+  for (let i = 1; i < taps; i++) for (let j = 0; j < taps; j++) B[i][j] += B[i - 1][j];
+  const cumsum = (r) => { for (let j = 1; j < taps; j++) r[j] += r[j - 1]; return r; };
+  const cy = cumsum(cross(Y)), cx = X ? cumsum(cross(X)) : null;
+  const dof = X ? M - 1 : M;
+  const LOG2PI1 = 1 + Math.log(2 * Math.PI);
+
+  const setup = (lambda) => {
+    const s = tcIncrements(taps, lambda).map(Math.sqrt);
+    const W = B.map((row, j) => Array.from(row, (v, k) => s[j] * v * s[k]));
+    return { s, W, b: Array.from(cy, (v, j) => s[j] * v), bx: cx && Array.from(cx, (v, j) => s[j] * v) };
+  };
+  const profile = (vals, pb, px) => {
+    const f = (x) => {
+      const eta = Math.exp(x);
+      let yy = YY, xy = XY, xx = XX, ld = 0;
+      for (let i = 0; i < vals.length; i++) {
+        const w = 1 / (eta + vals[i]);
+        yy -= pb[i] * pb[i] * w;
+        if (px) { xy -= px[i] * pb[i] * w; xx -= px[i] * px[i] * w; }
+        ld += Math.log1p(vals[i] / eta);
+      }
+      if (px && !(xx > 0)) return Infinity;
+      const q = px ? yy - (xy * xy) / xx : yy;
+      return q > 0 ? dof * Math.log(q / dof) + ld + (px ? Math.log(xx) : 0) + dof * LOG2PI1 : Infinity;
+    };
+    const top = Math.max(...vals);
+    if (!(top > 0)) return { x: Infinity, f: f(Infinity) };
+    const x0 = Math.log(top), xs = [];
+    for (let x = x0 - 35; x <= x0 + 10; x += 1) xs.push(x);
+    let bi = 0, bf = Infinity;
+    xs.forEach((x, i) => { const v = f(x); if (v < bf) { bf = v; bi = i; } });
+    const g = golden(f, xs[Math.max(0, bi - 1)], xs[Math.min(xs.length - 1, bi + 1)], 1e-6, 60);
+    return g.f <= bf ? g : { x: xs[bi], f: bf };
+  };
+  let evaluations = 0, best = null;
+  const tryA = (loga) => {
+    evaluations++;
+    const lambda = Math.exp(-Math.exp(loga) / taps);
+    const { W, b, bx } = setup(lambda);
+    const { values, projected } = eigSym(W, { project: bx ? [b, bx] : [b] });
+    const fit = profile(values.map((v) => Math.max(0, v)), projected[0], projected[1]);
+    if (!best || fit.f < best.f) best = { lambda, eta: Math.exp(fit.x), f: fit.f };
+    return fit.f;
+  };
+  const grid = KERNEL.grid.map(Math.log), fs = [];
+  for (const x of grid) { fs.push(tryA(x)); yield { evaluation: evaluations }; }
+  const ib = fs.indexOf(Math.min(...fs));
+  for (const _ of goldenSteps(tryA, grid[Math.max(0, ib - 1)], grid[Math.min(grid.length - 1, ib + 1)], KERNEL.tol, KERNEL.maxEvaluations - evaluations)) yield { evaluation: evaluations };
+
+  const { s, W, b, bx } = setup(best.lambda);
+  const g = new Float64Array(taps), sd = new Float64Array(taps);
+  const cov = Array.from({ length: taps }, () => new Float64Array(taps));
+  const out = { g, sd, cov, n: taps, decimate: D, integrating, Ts: Ts > 0 ? D * Ts : undefined, logLik: best.f, evaluations };
+  const eta = Number.isFinite(best.eta) ? best.eta : 1e300;
+  const o = X ? 1 : 0, m = taps + o;
+  const A = Array.from({ length: m }, () => new Array(m).fill(0)), rhs = new Array(m);
+  for (let i = 0; i < taps; i++) { for (let j = 0; j < taps; j++) A[o + i][o + j] = W[i][j]; A[o + i][o + i] += eta; rhs[o + i] = b[i]; }
+  if (X) { A[0][0] = XX; rhs[0] = XY; for (let i = 0; i < taps; i++) A[0][1 + i] = A[1 + i][0] = bx[i]; }
+  const L = cholesky(A);
+  const sol = cholSolve(L, rhs);
+  let fitted = 0;
+  for (let i = 0; i < m; i++) fitted += rhs[i] * sol[i];
+  const sigma2 = (YY - fitted) / dof;
+  out.hyper = { c: sigma2 / eta, lambda: best.lambda, sigma2, eta: best.eta };
+  const Ainv = cholSolve(L, A.map((_, i) => A.map((__, j) => (i === j ? 1 : 0))));
+  const rate = X ? sol[0] : 0;
+  for (let i = taps - 1, acc = 0; i >= 0; i--) { acc += s[i] * sol[o + i]; g[i] = acc + D * rate; }
+  for (let i = 0; i < taps; i++) for (let j = 0; j < taps; j++) cov[i][j] = sigma2 * s[i] * Ainv[o + i][o + j] * s[j];
+  for (const row of cov) for (let j = taps - 2; j >= 0; j--) row[j] += row[j + 1];
+  for (let i = taps - 2; i >= 0; i--) for (let j = 0; j < taps; j++) cov[i][j] += cov[i + 1][j];
+  if (X) {
+    const ci = new Float64Array(taps), vr = sigma2 * Ainv[0][0];
+    for (let i = taps - 1, acc = 0; i >= 0; i--) { acc += sigma2 * s[i] * Ainv[1 + i][0]; ci[i] = acc; }
+    for (let i = 0; i < taps; i++) for (let j = 0; j < taps; j++) cov[i][j] += D * (ci[i] + ci[j]) + D * D * vr;
+    out.rate = { value: rate, sd: Math.sqrt(Math.max(0, vr)), cov: Float64Array.from(ci, (v) => v + D * vr) };
+  }
+  for (let i = 0; i < taps; i++) sd[i] = Math.sqrt(Math.max(0, cov[i][i]));
+  return out;
+}
+
+const tcKernel = (u, y, opts) => drain(tcKernelSteps(u, y, opts));
+
+function kernelStep(kernel, count = kernel.n) {
+  const { g, cov, decimate: D, rate } = kernel, n = g.length;
+  const t = new Float64Array(count + 1), s = new Float64Array(count + 1), sd = new Float64Array(count + 1);
+  let m = 0, v = 0;
+  for (let I = 0; I <= count; I++) {
+    if (I > 0 && I <= n) {
+      const i = I - 1;
+      let q = 0;
+      for (let j = 0; j < i; j++) q += cov[i][j];
+      v += 2 * q + cov[i][i];
+      m += g[i];
+    }
+    let mi = m, vi = v;
+    if (I > n && rate) {
+      const a = (I - n) * D;
+      let cg = 0;
+      for (let i = 0; i < n; i++) cg += rate.cov[i];
+      mi += a * rate.value;
+      vi += 2 * a * cg + a * a * rate.sd * rate.sd;
+    }
+    t[I] = kernel.Ts ? I * kernel.Ts : I * D;
+    s[I] = mi;
+    sd[I] = Math.sqrt(Math.max(0, vi));
+  }
+  return { t, s, sd };
+}
+
+function kernelGuess(kernel, Ts) {
+  const { g, decimate: D, integrating, rate } = kernel, n = g.length, dt = D * Ts;
+  const t = [0], c = [0];
+  let fin;
+  if (integrating) {
+    fin = D * (rate?.value ?? 0);
+    for (let i = 0; i < n; i++) { t.push((i + 0.5) * dt); c.push(g[i]); }
+  } else {
+    fin = 0;
+    for (let i = 0; i < n; i++) { fin += g[i]; t.push((i + 1) * dt); c.push(fin); }
+  }
+  if (!(Math.abs(fin) > 0) || !Number.isFinite(fin)) return null;
+  const yv = c.map((v) => v / fin);
+  const when = (level) => {
+    for (let I = 1; I < yv.length; I++) if (yv[I] >= level) return t[I - 1] + ((level - yv[I - 1]) / (yv[I] - yv[I - 1])) * (t[I] - t[I - 1]);
+    return t[t.length - 1];
+  };
+  const theta = when(0.02);
+  const tau = Math.max(dt, when(0.632) - theta);
+  const guess = integrating ? { kp: fin / (D * Ts), tau, theta } : { K: fin, tau, theta };
+  let peak = 0, at = 0;
+  for (let I = 0; I < yv.length; I++) if (yv[I] > peak) { peak = yv[I]; at = t[I]; }
+  if (peak > 1.02 && at > theta) {
+    const ln = Math.log(peak - 1), zeta = -ln / Math.sqrt(Math.PI ** 2 + ln * ln);
+    guess.zeta = zeta;
+    guess.f = 1 / (2 * (at - theta) * Math.sqrt(1 - zeta * zeta));
+  }
+  return guess;
+}
+
+
+function seeded(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x9e3779b9) | 0;
+    let z = s;
+    z = Math.imul(z ^ (z >>> 16), 0x85ebca6b);
+    z = Math.imul(z ^ (z >>> 13), 0xc2b2ae35);
+    return ((z ^ (z >>> 16)) >>> 0) / 4294967296;
+  };
+}
+
+const oddNear = (x) => 2 * Math.round((x - 1) / 2) + 1;
+
+function multisineLines({ N, kmax, kmin = 1, count = 60, seed = 1 } = {}) {
+  if (!(N >= 4) || N & (N - 1)) throw new Error('multisineLines: N must be a power of two ≥ 4');
+  const top = Math.min(Math.floor(kmax), N / 2 - 1);
+  const first = Math.max(1, kmin % 2 ? Math.ceil(kmin) : Math.ceil(kmin) + 1);
+  if (!(top >= first)) throw new Error('multisineLines: no odd harmonic between kmin and kmax');
+  const target = Math.ceil(1.5 * count);
+  const quasiLog = (r) => {
+    const c = [first];
+    for (;;) {
+      const k = Math.max(c[c.length - 1] + 2, oddNear(c[c.length - 1] * r));
+      if (k > top) return c;
+      c.push(k);
+    }
+  };
+  let cand = quasiLog(1);
+  if (cand.length > target) {
+    let lo = 0, hi = Math.log(top / first) + 1;
+    for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; if (quasiLog(Math.exp(mid)).length > target) lo = mid; else hi = mid; }
+    cand = quasiLog(Math.exp(hi));
+  }
+  const rnd = seeded(seed), excited = [];
+  for (let i = 0; i < cand.length; i += 3) {
+    const group = cand.slice(i, i + 3);
+    const out = group.length === 3 ? Math.floor(rnd() * 3) : -1;
+    group.forEach((k, j) => { if (j !== out) excited.push(k); });
+  }
+  const on = new Set(excited), last = excited[excited.length - 1];
+  const odd = [], even = [];
+  for (let k = 1; k <= last; k++) if (!on.has(k)) (k % 2 ? odd : even).push(k);
+  return { excited, detect: { odd, even } };
+}
+
+function crestFactor(x) {
+  let peak = 0, ss = 0;
+  for (let i = 0; i < x.length; i++) { peak = Math.max(peak, Math.abs(x[i])); ss += x[i] * x[i]; }
+  return ss > 0 ? peak / Math.sqrt(ss / x.length) : Infinity;
+}
+
+const MULTISINE = { iterations: 20, clip: 1.4 };
+function multisine({ N, lines, peak = 1, seed = 1, phases = 'random', iterations = MULTISINE.iterations } = {}) {
+  if (!(N >= 4) || N & (N - 1)) throw new Error('multisine: N must be a power of two ≥ 4');
+  if (!lines?.length) throw new Error('multisine: no lines');
+  if (lines.some((k) => !Number.isInteger(k) || k < 1 || k >= N / 2) || new Set(lines).size !== lines.length) throw new Error(`multisine: lines must be distinct whole harmonics 1 … ${N / 2 - 1}`);
+  if (!(peak > 0)) throw new Error('multisine: peak must be positive');
+  const F = lines.length, rnd = seeded(seed);
+  let phi = phases === 'schroeder' ? lines.map((_, i) => (-Math.PI * (i + 1) * i) / F) : lines.map(() => 2 * Math.PI * rnd());
+  const re = new Float64Array(N), im = new Float64Array(N);
+  const synth = () => {
+    re.fill(0); im.fill(0);
+    lines.forEach((k, i) => {
+      const c = Math.cos(phi[i]) / 2, s = Math.sin(phi[i]) / 2;
+      re[k] = c; im[k] = -s; re[N - k] = c; im[N - k] = s;
+    });
+    fft(re, im);
+    return Float64Array.from(re);
+  };
+  let x = synth(), best = x, bestCf = crestFactor(x);
+  for (let it = 0; it < iterations; it++) {
+    let ss = 0;
+    for (let t = 0; t < N; t++) ss += x[t] * x[t];
+    const c = MULTISINE.clip * Math.sqrt(ss / N);
+    for (let t = 0; t < N; t++) { re[t] = Math.max(-c, Math.min(c, x[t])); im[t] = 0; }
+    fft(re, im);
+    phi = lines.map((k) => Math.atan2(im[k], re[k]));
+    x = synth();
+    const cf = crestFactor(x);
+    if (cf < bestCf) { best = x; bestCf = cf; }
+  }
+  let m = 0;
+  for (let t = 0; t < N; t++) m = Math.max(m, Math.abs(best[t]));
+  return best.map((v) => (v * peak) / m);
+}
+
+
+function wholePeriods({ start = 0, N, count, gaps = [], breaks = [] } = {}) {
+  if (!(N >= 1) || !(count >= 0)) throw new Error('wholePeriods: N and count are needed');
+  const at = [...gaps.map((g) => (Array.isArray(g) ? g[0] : g)), ...breaks];
+  const kept = [], dropped = [];
+  for (let i = 0; i < count; i++) {
+    const a = start + i * N, b = a + N;
+    (at.some((k) => k >= a && k < b) ? dropped : kept).push(i);
+  }
+  return { kept, dropped, starts: kept.map((i) => start + i * N) };
+}
+
+function frf(U, Y, { excited, detect = null, Ts } = {}) {
+  const P = U.length;
+  if (P < 2 || Y.length !== P) throw new Error('frf: needs at least 2 periods of u and of y');
+  const N = U[0].length;
+  if (!(N >= 4) || N & (N - 1)) throw new Error('frf: a period must be a power of two ≥ 4 samples');
+  if ([...U, ...Y].some((x) => x.length !== N)) throw new Error('frf: every period must have N samples');
+  if (!excited?.length) throw new Error('frf: no excited lines');
+  const H = N / 2, lines = [...excited].sort((a, b) => a - b);
+  if (lines.some((k) => !Number.isInteger(k) || k < 1 || k >= H)) throw new Error(`frf: excited lines must be whole harmonics 1 … ${H - 1}`);
+  const on = new Set(lines), top = lines[lines.length - 1];
+  const det = detect ?? (() => {
+    const odd = [], even = [];
+    for (let k = 1; k <= top; k++) if (!on.has(k)) (k % 2 ? odd : even).push(k);
+    return { odd, even };
+  })();
+  const mean = (Xs) => {
+    const re = new Float64Array(H + 1), im = new Float64Array(H + 1);
+    const spec = Xs.map((x) => {
+      const r = Float64Array.from(x), i = new Float64Array(N);
+      fft(r, i);
+      for (let k = 0; k <= H; k++) { re[k] += r[k] / P; im[k] += i[k] / P; }
+      return { r, i };
+    });
+    return { re, im, spec };
+  };
+  const u = mean(U), y = mean(Y);
+  const vU = new Float64Array(H + 1), vY = new Float64Array(H + 1), cRe = new Float64Array(H + 1), cIm = new Float64Array(H + 1);
+  for (let p = 0; p < P; p++) {
+    const su = u.spec[p], sy = y.spec[p];
+    for (let k = 0; k <= H; k++) {
+      const ur = su.r[k] - u.re[k], ui = su.i[k] - u.im[k], yr = sy.r[k] - y.re[k], yi = sy.i[k] - y.im[k];
+      vU[k] += (ur * ur + ui * ui) / (P - 1);
+      vY[k] += (yr * yr + yi * yi) / (P - 1);
+      cRe[k] += (yr * ur + yi * ui) / (P - 1);
+      cIm[k] += (yi * ur - yr * ui) / (P - 1);
+    }
+  }
+  const amp = 2 / N;
+  const G = [], sd = [], Ua = [], Ya = [], noise = [];
+  for (const k of lines) {
+    const ur = u.re[k], ui = u.im[k], yr = y.re[k], yi = y.im[k];
+    const uu = ur * ur + ui * ui, yy = yr * yr + yi * yi;
+    const g = { re: (yr * ur + yi * ui) / uu, im: (yi * ur - yr * ui) / uu };
+    const dr = yr * ur + yi * ui, di = yi * ur - yr * ui, dd = dr * dr + di * di;
+    const cross = dd > 0 ? (cRe[k] * dr + cIm[k] * di) / dd : 0;
+    const rel = vY[k] / P / yy + vU[k] / P / uu - (2 * cross) / P;
+    G.push(g);
+    sd.push(Math.sqrt(Math.max(0, (g.re * g.re + g.im * g.im) * rel)));
+    Ua.push(amp * Math.sqrt(uu));
+    Ya.push(amp * Math.sqrt(yy));
+    noise.push(amp * Math.sqrt(vY[k] / P));
+  }
+  const neighbours = (k) => {
+    let lo = 0, hi = lines.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (lines[mid] < k) lo = mid; else hi = mid; }
+    if (lines[lo] > k) return [lo];
+    if (lines[hi] < k) return [hi];
+    return lo === hi ? [lo] : [lo, hi];
+  };
+  const yPow = (i) => y.re[lines[i]] ** 2 + y.im[lines[i]] ** 2;
+  const nearSum = new Float64Array(lines.length), nearCount = new Float64Array(lines.length);
+  const tally = (ks) => {
+    let dist = 0, resp = 0, noisePow = 0, used = 0;
+    for (const k of ks) {
+      if (!(k >= 1 && k < H) || on.has(k)) continue;
+      used++;
+      const nb = neighbours(k);
+      const d = y.re[k] ** 2 + y.im[k] ** 2 - vY[k] / P;
+      dist += d;
+      noisePow += vY[k] / P;
+      resp += nb.reduce((s, i) => s + yPow(i), 0) / nb.length;
+      const i = nb.length === 1 ? nb[0] : k - lines[nb[0]] <= lines[nb[1]] - k ? nb[0] : nb[1];
+      nearSum[i] += d; nearCount[i]++;
+    }
+    return { dist: Math.max(0, dist), resp, level: amp * Math.sqrt(Math.max(0, dist) / Math.max(1, used)), noise: noisePow, n: used };
+  };
+  const o = tally(det.odd ?? []), e = tally(det.even ?? []);
+  const pct = (d, r) => (r > 0 ? 100 * Math.sqrt(d / r) : 0);
+  const near = lines.map((k, i) => (nearCount[i] ? (amp * Math.sqrt(Math.max(0, nearSum[i]) / nearCount[i])) / Ua[i] : null));
+  const out = {
+    lines, G, sd, U: Ua, Y: Ya, noise,
+    distortion: {
+      share: Math.hypot(pct(o.dist, o.resp), pct(e.dist, e.resp)), odd: pct(o.dist, o.resp), even: pct(e.dist, e.resp),
+      level: { odd: o.level, even: e.level, noise: amp * Math.sqrt((o.noise + e.noise) / Math.max(1, o.n + e.n)) },
+      near,
+    },
+    periods: P,
+  };
+  if (Ts > 0) out.f = lines.map((k) => k / (N * Ts));
+  return out;
+}
+
+return { STRUCTURES, paramInfo, discretise, simulateSegment, lmSteps, lm, noiseTransfer, parameterCov, fitStructureSteps, fitStructure, CHOICE, unsupported, chooseStructure, fitPercent, noiseCeiling, Z99, WHITE, whiteness, crossCorrelation, tcInverse, KERNEL, tcKernelSteps, tcKernel, kernelStep, kernelGuess, multisineLines, crestFactor, MULTISINE, multisine, wholePeriods, frf };
 })();
 // ---- core/analysis.js
 __mods['core/analysis.js'] = (() => {

@@ -1,6 +1,6 @@
 # Identify: finding the plant by experiment
 
-Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; being built on branch `feat/identify` in the steps of §18 (done: 0, the record; 2, the numerics in `src/core/fit.js`).** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
+Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; being built on branch `feat/identify` in the steps of §18 (done: 0, the record; 2, the numerics in `src/core/fit.js`; 3, the kernel, the multisine and the frequency response, also in `fit.js`).** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
 
 The person's words ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)):
 
@@ -412,7 +412,7 @@ With the tester's d left on, the gentle loop left the band on the tank and came 
   - at most about 60 lines, log-spaced;
   - in each group of three consecutive odd candidates, one is left out at random (an odd detection line);
   - even lines are left out.
-- The crest factor is lowered by 20 fixed clip-and-restore iterations.
+- The crest factor is lowered by 20 fixed clip-and-restore iterations. Built: each clips at 1.4 × the rms, keeps the phases the spectrum then has and restores the lines (clipping at a share of the peak converged more slowly). Measured over 10 seeds: crest factor 1.7–1.9 at N 256 (18 lines), 1.8–2.0 at 512 (34 lines), 2.3–2.7 at 4096 (60 lines over 765 harmonics); random phases alone give 2.5–3.8 and Schroeder's 2.4–3.3 on such sparse lines. `multisineLines` chooses the lines (the candidates thinned by a ratio when there are more than 90), `multisine` makes one period, both from the seed.
 
 **Gaps.** A period with a `seq` gap or a guard event is dropped and repeated once. The DFT is never computed across a gap.
 
@@ -537,6 +537,15 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
 - the distortion sentence;
 - the grade.
 
+**Built** (`frf`, `wholePeriods` in `fit.js`; tests 8 and 9):
+- Exact on a linear plant in closed loop: Ĝ equals the plant's discrete transfer function to 1e-8 at every excited line (lag, resonance, integrator with lag, each with a fractional dead time).
+- `sd` is the standard deviation of Ĝ as a complex number, √E|Ĝ − G|². Measured with noise under a brisk PI (40 seeds, 800 lines): the ±2σ bars hold the truth at 91.9 % of lines, as the F(2, 6) distribution of four periods predicts (92 %). Near crossover the mean squared error is 1.09 × sd² with the U–Y covariance term and 0.55 × the variance without it, so leaving it out would make those bars 1.4× too wide.
+- The spread between periods assumes the noise forgets within a period. Where the loop's noise spectrum is steep (the lowest lines, under integral action) the spread overstates the variance of the mean up to 3×; a lightly damped loop's ringing noise does the same near its resonance. The bars are then too wide there; pooled over the lines they were never too narrow in these measurements.
+- **The distortion share** is per line, as designed, with the noise removed in power (the detection line's |Ȳ|² less σ²_Ȳ), not in amplitude. The odd and the even detection lines each give a share against the response at their neighbouring excited lines; the share adds the two in power. Pooling all detection lines into one ratio instead would dilute a cubic's odd distortion by the empty even lines (7.8 % would read 3.8 %).
+- Measured with a cubic actuator v = u + a·u³ under the Shake (a lag under a PI): about u = 0 only odd distortion (a = 1: 7.8 %, even 0.000 %); half the push, a quarter of it (2.0 %), as a cubic must; a = 6: 33 %; held at r = 0.5, where the cubic also bends one way, odd 7.9 % and even 7.2 %; a linear plant 0.000 % with noise. In open loop, what the odd detection lines show is what lands on the excited lines: the spread of Ĝ·Ū over 30 phase realisations is 0.87 × the detection lines' level. In closed loop that spread is larger by |1 + GC|² (the loop feeds the distortion back), so the share is read from the detection lines, not from Ĝ's spread.
+- A period with a `seq` gap at or inside it, or a guard event, is dropped (`wholePeriods`); the experiment plays one more. Measured: the four kept periods give Ĝ to 3e-6 (the period after the gap still carries a 1e-5 transient), the four taken across the gap 6 % off.
+- The grade's ✕ above 30 % comes with the Shake (step 8).
+
 ### 6.8 The kernel reference (one click deep)
 
 - **The estimate.** A regularised impulse response from u to y (lags 1…n; the TC kernel, P(i, j) = c·λ^max(i,j); Pillonetto et al. 2014; Chen, Ohlsson & Ljung 2012).
@@ -547,6 +556,15 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
   - an order-free curve with its band on the Step and Bode plots ("what the data say without choosing a shape");
   - start values for §6.3;
   - a ceiling: when the chosen structure's Check fit is 5 or more points under the kernel's (replayed the same way), the model says "the shapes on offer miss something here", and the grade drops to !.
+
+**Built** (`tcKernel`, `tcKernelSteps`, `kernelStep`, `kernelGuess`, `tcInverse` in `fit.js`; `eigSym` in `linalg.js`; test 10):
+- **Decimation keeps y at its full rate.** A tap is the sum of the impulse response over D lags, and its regressor the mean of u over those lags; every regressor lies strictly in the past, so with white noise the estimate is consistent in closed loop (measured: a lag and an integrator under a PI, the steady gain within 3σ of the truth). Block-averaging y as well would add a lag-0 term that feedback biases. Measured on the research's example: 150 taps of 20 ms fit as well as 300 of 10 ms (below).
+- **An integrating plant is fitted as a rate**, not on Δy: y − y0 = r·Σ(u − u0) plus a TC part that holds the difference from the rate, r with a flat prior, integrated out of the likelihood. On Δy the noise is coloured (v[k] − v[k−1]) and the loop feeds it back: under a PI, k′ came out 3.45 for a true 3 on every seed; as a rate it is within 1.3σ. g is then y's own impulse response, the same for both kinds.
+- **The search.** λ = e^(−a/n), a on a grid of 9 decays (0.5 … 128 over the n taps), then golden section in log a to 1 %: about 22 evaluations, never above 40. Each evaluation is one symmetric eigendecomposition of E^½ Uᵀ ΦᵀΦ U E^½, where K = U E Uᵀ and K⁻¹ = U⁻ᵀ E⁻¹ U⁻¹ is the tridiagonal inverse; it gives −2 log L for every c in O(n), with σ² profiled exactly. "One Cholesky per evaluation" cannot search λ alone: c and σ² would need their own search at each λ. An eigendecomposition costs about four Choleskys (10 ms at 150 taps). The estimate and its covariance then take one Cholesky.
+- **Checked against the direct N×N formulas**: −2 log L, the posterior mean and covariance, and the rate with its variance agree to 1e-9; 1 % changes of c, λ or σ² all raise −2 log L.
+- **The research's example** (2e^(−0.1s)/((0.5s + 1)(0.1s + 1)), Ts 10 ms, a random binary ±1, 30 s, SNR 3): impulse-response fit 94.3–96.1 %, mean 95.1 % over 10 seeds; gain 1.93–2.05; σ within 6 %. SNR here is the ratio of standard deviations; with it, 300 taps undecimated give 94.4–95.3 %, the research's 95.6 %. As a ratio of variances (more noise) the fit is 91.4–94.2 %.
+- **Start values** (`kernelGuess`): the gain from the sum (k′ from the rate), θ where the step reaches 2 %, τ at 63 % less θ, f and ζ from an overshoot. Measured: two lags K 2.0, θ 0.14 (true 0.1), τ 0.55; a resonance f within 15 %, ζ within 30 %; an integrator k′ within 2 %.
+- The kernel is a generator (`tcKernelSteps`, a yield per evaluation) so the page can slice it.
 
 ## 7. Validation and grades
 
@@ -776,7 +794,7 @@ export function identify(project, path, settings)           // Node and CLI: the
 //   frf?: [{ level, f, G, sd, noise, distortion }], kernel?: { g, sd, Ts }, eased: { Kp, Ki, tauC },
 //   sentences, grade, warnings, connection }
 
-// src/core/fit.js (no DOM; built in step 2)
+// src/core/fit.js (no DOM; built in steps 2 and 3)
 // A segment: { y, yStart, uStart, u (open loop: as applied) | law (closed loop: () => (k, ŷ) => u), weight }
 export const STRUCTURES                                    // lag, lags, resonance, intLag, intRes:
                                                            //   { name, label, glyph, integrating, params, tf(p), ss(p),
@@ -791,15 +809,26 @@ export function noiseTransfer(d, segment)                 // the replayed loop's
 export function parameterCov(J, A, parts, s2)             // σ̂²A⁻¹, or with S on closed-loop segments (§6.5)
 export function unsupported(structure, p, { length })     // the ✕ reason, or null (§6.4)
 export function chooseStructure(candidates)               // → { index, why } (§6.4); CHOICE holds the thresholds
-export function tcKernel(u, y, { n, decimate, integrating }) // → { g, sd, hyper }            (step 3)
-export function multisine({ N, lines, detect, peak, seed })  // → Float64Array (one period)  (step 3)
-export function frf(U, Y, { excited, detect })             // → { G, sd, noise, distortion } (step 3)
+export function* tcKernelSteps(u, y, { n, decimate, cover, integrating, u0, y0, from, Ts }) // built in step 3: yields per
+export const tcKernel                                      //   evaluation; → { g, sd, cov, n, decimate, integrating, rate?,
+                                                           //   Ts, hyper: { c, lambda, sigma2, eta }, logLik, evaluations }
+export function tcInverse(n, lambda)                       // the TC kernel's tridiagonal inverse → { diag, off }
+export function kernelStep(kernel, count)                  // → { t, s, sd }: y's step response with its band
+export function kernelGuess(kernel, Ts)                    // → { K | kp, tau, theta, f?, zeta? }: start values (§6.3)
+export const KERNEL                                        // maxTaps 150, maxEvaluations 40, the grid of decays, tol
+export function multisineLines({ N, kmax, kmin, count, seed }) // → { excited, detect: { odd, even } }
+export function multisine({ N, lines, peak, seed, phases })   // → Float64Array (one period); MULTISINE: 20 passes, clip
+export function crestFactor(x)
+export function wholePeriods({ start, N, count, gaps, breaks }) // → { kept, dropped, starts }
+export function frf(U, Y, { excited, detect, Ts })         // U, Y: whole periods → { lines, f?, G, sd, U, Y, noise,
+                                                           //   distortion: { share, odd, even, level, near }, periods }
 export function fitPercent(y, yhat)
 export function noiseCeiling(y, floor)
 export function whiteness(res, lags = 25)                   // → { r, band, outside, worst, white }
 export function crossCorrelation(res, u, lags = 25)         // → { r, band, outside, worst, independent }
 
-// src/core/linalg.js gains cholesky(A) and cholSolve(L, b) (the kernel, LM).
+// src/core/linalg.js gains cholesky(A) and cholSolve(L, b) (the kernel, LM), and eigSym(A, { vectors, project })
+//   (symmetric eigenvalues by Householder and QL; the kernel's search).
 // src/core/live.js gains createStepRunner(diagram, signals, { Ts, sources }), shared with createLiveRunner:
 //   one controller sample at a time, Sources overridable; the worker runs the experiment law and
 //   posts { identify: state } and record chunks; the page posts { supply }.

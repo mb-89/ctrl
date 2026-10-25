@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { zeros, eye, mul, add, transpose, solve, inv, det, cholesky, cholSolve, expm, c2d, eig, dare, dlqr, dlqe, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank } from '../src/core/linalg.js';
+import { zeros, eye, mul, add, transpose, solve, inv, det, cholesky, cholSolve, eigSym, expm, c2d, eig, dare, dlqr, dlqe, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank } from '../src/core/linalg.js';
 import { polyMul } from '../src/core/poly.js';
 
 const close = (actual, expected, tol, what = '') => assert.ok(Math.abs(actual - expected) <= tol, `${what} ${actual} vs ${expected} (tol ${tol})`);
@@ -57,6 +57,37 @@ test('cholesky: L·Lᵀ = A with L lower; cholSolve equals LU\'s solve; a matrix
   assert.deepEqual(cholesky([[4]]), [[2]]);
   assert.throws(() => cholesky([[1, 2], [2, 1]]), /not positive definite/);
   assert.throws(() => cholesky([[0, 0], [0, 1]]), /not positive definite/);
+});
+
+test('eigSym: the eigenvalues eig finds, A·V = V·Λ with VᵀV = I, and Vᵀb without forming V; graded and repeated eigenvalues', () => {
+  const rnd = lcg(31);
+  for (const n of [1, 2, 3, 9, 40]) {
+    const M = Array.from({ length: n }, () => Array.from({ length: n }, rnd));
+    const A = add(M, transpose(M));
+    const b = Array.from({ length: n }, rnd), c = Array.from({ length: n }, rnd);
+    const r = eigSym(A, { vectors: true, project: [b, c] });
+    const ev = eig(A).map((z) => z.re).sort((x, y) => x - y);
+    r.values.forEach((v, i) => close(v, ev[i], 1e-12 * n, `n ${n} λ${i}`));
+    for (let i = 1; i < n; i++) assert.ok(r.values[i - 1] <= r.values[i], 'ascending');
+    const V = r.vectors;
+    closeM(mul(A, V), V.map((row) => row.map((v, j) => v * r.values[j])), 1e-12 * n, `n ${n} A·V`);
+    closeM(mul(transpose(V), V), eye(n), 1e-13 * n, `n ${n} VᵀV`);
+    [b, c].forEach((x, q) => mul(transpose(V), x.map((v) => [v])).forEach(([v], j) => close(r.projected[q][j], v, 1e-13 * n, `n ${n} Vᵀb`)));
+    // Without vectors: the same values and projections.
+    const r2 = eigSym(A, { project: [b] });
+    assert.deepEqual(r2.values, r.values);
+    assert.deepEqual(r2.projected[0], r.projected[0]);
+    assert.equal(r2.vectors, undefined);
+  }
+  // Graded (entries from 1 down to 1e-24, as a kernel's W) and a repeated eigenvalue.
+  const g = Array.from({ length: 12 }, (_, i) => 10 ** (-i));
+  const G = g.map((a, i) => g.map((b, j) => a * b * (i === j ? 2 : 1)));
+  const rg = eigSym(G, { vectors: true });
+  closeM(mul(G, rg.vectors), rg.vectors.map((row) => row.map((v, j) => v * rg.values[j])), 1e-15, 'graded');
+  close(rg.values.reduce((s, v) => s + v, 0), G.reduce((s, r, i) => s + r[i], 0), 1e-15, 'graded: the sum is the trace');
+  const rep = eigSym([[2, 0, 0], [0, 2, 0], [0, 0, 5]]);
+  assert.deepEqual(rep.values, [2, 2, 5]);
+  assert.throws(() => eigSym([[1, NaN], [NaN, 1]]), /non-finite/);
 });
 
 test('expm matches a rotation and a diagonal', () => {

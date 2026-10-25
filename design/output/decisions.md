@@ -2,6 +2,19 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · Identify, being built: the kernel, the multisine and the frequency response (§18 step 3)
+
+Built on branch `feat/identify` from [identification.md](identification.md) §5.6, §6.7 and §6.8 (no new words from the person): `tcKernel`, `kernelStep`, `kernelGuess`, `tcInverse`, `multisineLines`, `multisine`, `frf` and `wholePeriods` in `src/core/fit.js`, and `eigSym` in linalg.js. Where the build made the design more precise, or measured it wrong:
+
+- **The kernel's search: one eigendecomposition per λ, not one Cholesky.** The design searches λ alone (a grid, then golden section, at most 40 evaluations), so c and σ² must be found at each λ. With K = U E Uᵀ (the tridiagonal inverse's factor) one symmetric eigendecomposition of E^½ Uᵀ ΦᵀΦ U E^½ gives −2 log L for every c in O(n), σ² profiled exactly; a Cholesky gives it for one (c, λ) only. It costs about four Choleskys (10 ms at 150 taps); about 22 evaluations; the estimate takes one Cholesky. Checked against the direct N×N formulas to 1e-9.
+- **Decimation keeps y at its full rate**: a tap sums the impulse response over D lags, its regressor is u's mean over them, and every regressor is strictly past, so with white noise the kernel is consistent under feedback. Interpretation of "block-averaged and decimated": averaging y too would add a lag-0 term the loop biases.
+- **An integrating plant is fitted as a rate plus a decaying TC part, not on Δy** (the design's "fitted on Δy"). Measured under a PI: on Δy, whose noise is coloured and fed back, k′ came out 3.45 for a true 3 on every seed; as a rate, within 1.3σ.
+- **The research's example reproduced**: 2e^(−0.1s)/((0.5s + 1)(0.1s + 1)), 30 s, SNR 3 as a ratio of standard deviations: impulse-response fit 94.3–96.1 % (mean 95.1 %) at 150 taps of 20 ms, against the research's 95.6 % at 300 taps (300 taps here: 94.4–95.3 %). As a ratio of variances the fit is 91.4–94.2 %; the research's numbers match the first reading.
+- **The multisine's clip-and-restore clips at 1.4 × the rms** (a share of the peak converged more slowly in 20 passes): crest factor 1.7–2.0 for 18–34 lines, 2.3–2.7 for 60 lines over 765 harmonics. Schroeder's phases are offered beside the design's random ones; on these sparse, log-spaced lines they start no better.
+- **The distortion share**: per line, the noise removed in power, odd and even detection lines each against the response at their neighbouring excited lines, the two added in power. Pooling all detection lines would let a cubic's empty even lines halve its share. Measured with a cubic actuator: odd only about its centre, quartered by half the push, odd and even away from it; in open loop the odd detection lines' level is 0.87 × what lands on the excited lines (30 phase realisations).
+- **Ĝ's bars**: from the spread between periods with the U–Y covariance term, as designed; under a brisk PI they hold the truth at 91.9 % of lines (four periods predict 92 %); without the covariance they would be 1.4× too wide near crossover. Where the loop's noise spectrum is steep (under integral action, near a lightly damped resonance) the spread overstates the variance up to 3×: too wide, not too narrow.
+- **A period with a `seq` gap at or inside it is dropped** (`wholePeriods`), also a gap just before its first sample (the plant's steady state is broken). The period after a gap still carries a small transient (1e-5 of Ĝ on a lag); the experiment (step 8) may want to drop it too.
+
 ## 2026-10-25 · Identify, being built: the numerics (§18 step 2)
 
 Built on branch `feat/identify` from [identification.md](identification.md) (no new words from the person): `cholesky`, `cholSolve` (linalg.js) and `src/core/fit.js`. Where the build made the design more precise, or measured it wrong:
