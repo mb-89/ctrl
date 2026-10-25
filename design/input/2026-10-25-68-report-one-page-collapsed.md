@@ -1,0 +1,3 @@
+# The report is one page with nothing expanded (2026-10-25)
+
+> Please rebuild the report. It still shows me the old one. To me, it seems like if the plots and details are now in an expandable table, then the report would only be one page. I guess give it another heading then, so it's clear what it is. And then this whole thing is in one page and I can expand stuff if I need to see more, right? Also the changes by the person. I don't think I need this. Like, we can have a number of changes and then you expand it if you want to see them in detail. I feel like we should aim to that. Without anything expanded, the report should be one page. Bottom line up front. Then I guess whatever these sliders are, and then the table, and the rest is expanded.
