@@ -15756,7 +15756,7 @@ function tuneContext(project, path) {
   if (plant?.type !== 'diagram') throw new Error('the plant is not a block diagram yet');
   const ext = externalBlock(plant.diagram);
   if (ext && blockMode(EXTERNAL_BLOCK.normalize(ext.params)) !== 'control') throw new Error(`the plant runs its own controller (External plant ${ext.name ?? ext.id}, reference mode): the page's controllers and Auto-tune are not in the loop`);
-  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, and Auto-tune needs an identified model of it (Identify, not built yet). Until then, tune it live in the Controller tab`);
+  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, and Auto-tune tunes on an identified model of it: identify the plant first (Identify tab), or tune it live in the Controller tab`);
   const all = controllerBlocks(plant.diagram);
   const key = path ? [].concat(path).join('/') : null;
   const hit = (key && all.find((c) => c.key === key)) || all[0];
@@ -16836,13 +16836,13 @@ function tuneReport(res) {
 
 
 function baseName(name) {
-  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?)( \d+)?)+$/, '');
+  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?)( \(model\))?( \d+)?)+$/, '');
 }
 
-function resultName(block, method, rule = 'tl', simc = 'tight') {
+function resultName(block, method, rule = 'tl', simc = 'tight', { model = false } = {}) {
   const running = block.variants[block.variant ?? 0];
   const base = baseName(running.name);
-  const suffix = method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`;
+  const suffix = (method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`) + (model ? ' (model)' : '');
   const named = (s) => `${base.slice(0, Math.max(0, 40 - s.length))}${s}`;
   const plain = named(suffix);
   if (running.name === plain || (running.name.startsWith(plain) && /^ \d+$/.test(running.name.slice(plain.length)))) return running.name;
@@ -17845,7 +17845,8 @@ return { NAN_CYCLES, createLiveRunner, createStepRunner, liveScales, keptWires, 
 // ---- core/identify.js
 __mods['core/identify.js'] = (() => {
 
-const { controllerBlocks, upstreamSource, drain } = __mods['core/autotune.js'];
+const { controllerBlocks, upstreamSource, drain, autotuneSteps, resultName, tuneContext, runVariant, costScales, runCost, variantCost } = __mods['core/autotune.js'];
+const { openLoop, openLoopPoles, closedLoopSides, frequencyData, loopMargins } = __mods['core/analysis.js'];
 const { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } = __mods['core/diagram.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
 const { referenceFn, gaussAt } = __mods['core/signals.js'];
@@ -17857,6 +17858,7 @@ const {
 const { cholesky } = __mods['core/linalg.js'];
 const { createStepRunner } = __mods['core/live.js'];
 const { physicalMaskKeys } = __mods['core/physics.js'];
+const { findExternal } = __mods['core/hil.js'];
 class IdentifyError extends Error {
   constructor(code, message, hint = '') {
     super(message);
@@ -18799,7 +18801,7 @@ function linearModel(model) {
   };
 }
 
-function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = null } = {}) {
+function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = null, op = null } = {}) {
   if (!model?.structure) throw new Error('twinSubsystem: no model was identified');
   const p = model.params, S = STRUCTURES[model.structure];
   const blocks = [], wires = [];
@@ -18812,6 +18814,8 @@ function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = 
     add({ id: 'sum', type: 'sum', params: { signs: '++' } });
     wires.push({ from: 'push', to: 'sum:1' });
   }
+  const num = (v) => String(Number(v.toPrecision(12)));
+  if (op && op.u0) add({ id: 'u0', type: 'fcn', name: 'u − u₀', params: { inputs: 'u', eqs: `du = u - ${num(op.u0)}`, outputs: 'du' } });
   const gainKey = GAIN(S);
   add({ id: 'gain', type: 'gain', name: S.integrating ? 'rate k′' : 'gain K', params: { K: p[gainKey] } });
   if (p.theta > 0) add({ id: 'dead', type: 'delay', name: 'dead time θ', params: { L: p.theta, y0: 0 } });
@@ -18822,6 +18826,7 @@ function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = 
     add({ id: 'lag2', type: 'firstOrder', name: 'lag τ₂', params: { K: 1, tau: p.tau2 } });
   }
   if (model.structure === 'resonance' || model.structure === 'intRes') add({ id: 'res', type: 'secondOrder', name: 'resonance f, ζ', params: { K: 1, wn: 2 * Math.PI * p.f, zeta: p.zeta } });
+  if (op && op.y0) add({ id: 'y0', type: 'fcn', name: 'y₀ + y', params: { inputs: 'dy', eqs: `y = dy + ${num(op.y0)}`, outputs: 'y' } });
   if (noise && model.noise?.sigma > 0) add({ id: 'noise', type: 'noise', name: 'noise σ', params: { std: model.noise.sigma, seed: 1 } });
   if (noise && model.noise?.q > 0) add({ id: 'quant', type: 'quantizer', name: 'steps q', params: { q: model.noise.q } });
   add({ id: 'y', type: 'outport', name: model.names?.y ?? 'y', params: { port: 1 } });
@@ -19149,7 +19154,219 @@ function discreteAt(d, Om) {
   return [sr * mr - si * mi, sr * mi + si * mr];
 }
 
-return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
+
+function levelOf(diagram, path) {
+  let level = diagram;
+  for (const id of path.slice(0, -1)) level = level.blocks.find((b) => b.id === id).diagram;
+  return { level, block: level.blocks.find((b) => b.id === path.at(-1)) };
+}
+const freeId = (level, base) => { let id = base; for (let i = 2; level.blocks.some((b) => b.id === id); i++) id = `${base}${i}`; return id; };
+
+function twinOp(model) {
+  const h = model.holds?.[0];
+  return { u0: h?.u ?? 0, y0: h?.y ?? 0 };
+}
+
+function twinDiagram(diagram, path, model, { push = null } = {}) {
+  if (!model?.structure) throw new IdentifyError('no-model', 'no model was identified', 'run a test in the Identify tab');
+  const d = structuredClone(diagram);
+  const { level, block } = levelOf(d, path);
+  if (!block) throw new IdentifyError('no-block', `there is no Controller block ${path.join('/')}`, 'choose one of the Controller blocks');
+  const into = wireTo(level, block.id, 1);
+  if (!into) throw new IdentifyError('unwired', 'wire the measurement to input 2', 'in the Plant tab');
+  const mEnd = parseEnd(into.from);
+  const id = freeId(level, 'twin');
+  const twin = twinSubsystem(model, { push: !!push, id, op: twinOp(model), name: 'identified model' });
+  const byId = (x) => level.blocks.find((b) => b.id === x);
+  const fromCtrl = (w) => { const e = parseEnd(w.from); return e.id === block.id; };
+  const cut = [], kept = [];
+  const dropExternal = (dd) => {
+    const gone = new Set(dd.blocks.filter((b) => b.type === 'external').map((b) => b.id));
+    dd.blocks = dd.blocks.filter((b) => !gone.has(b.id));
+    dd.wires = dd.wires.filter((w) => !gone.has(parseEnd(w.from).id) && !gone.has(parseEnd(w.to).id));
+    for (const b of dd.blocks) if (b.type === 'subsystem') dropExternal(b.diagram);
+  };
+  const dropSinks = (dd) => {
+    for (const b of dd.blocks) if (b.type === 'subsystem') {
+      const gone = new Set(b.diagram.blocks.filter((x) => x.type === 'sink').map((x) => { cut.push(x.params.name); return x.id; }));
+      b.diagram.blocks = b.diagram.blocks.filter((x) => !gone.has(x.id));
+      b.diagram.wires = b.diagram.wires.filter((w) => !gone.has(parseEnd(w.to).id));
+      dropSinks(b.diagram);
+    }
+  };
+  const wires = [];
+  for (const w of level.wires) {
+    const to = byId(parseEnd(w.to).id), from = parseEnd(w.from), src = byId(from.id);
+    if (to?.id === block.id && parseEnd(w.to).port === 1) continue;
+    if (to?.type === 'sink') {
+      if (from.id === mEnd.id && from.port === mEnd.port) { wires.push({ from: id, to: w.to }); kept.push(to.params.name); continue; }
+      if (src?.type === 'source' || from.id === block.id) { wires.push(w); kept.push(to.params.name); continue; }
+      cut.push(to.params.name);
+      to.cut = true;
+      continue;
+    }
+    if (fromCtrl(w) && from.port === 0) continue;   
+    wires.push(w);
+  }
+  level.blocks = level.blocks.filter((b) => !b.cut);
+  level.wires = wires;
+  dropSinks(level);
+  dropExternal(d);
+  level.blocks.push({ ...twin, x: block.x ?? 0, y: (block.y ?? 0) + 120 });
+  level.wires.push({ from: block.id, to: id }, { from: id, to: `${block.id}:1` });
+  if (push) {
+    const pid = freeId(level, 'push');
+    level.blocks.push({ id: pid, type: 'source', name: 'push at the input (model only)', params: { signal: push }, x: (block.x ?? 0) - 120, y: (block.y ?? 0) + 200 });
+    level.wires.push({ from: pid, to: `${id}:1` });
+  }
+  return { diagram: normalizeDiagram(d), twin: id, cut, kept };
+}
+
+const PUSH = { share: 0.2, least: 0.01, at: 0.6 };
+function modelPush(project, path, model) {
+  const signals = project.system.signals;
+  const period = Math.max(...Object.values(signals).map((s) => s.period));
+  const { block } = levelOf(project.system.plant.diagram, path);
+  const v = block.variants[block.variant ?? 0]?.params ?? {};
+  const lo = Number.isFinite(v.umin) ? v.umin : model.eased?.umin, hi = Number.isFinite(v.umax) ? v.umax : model.eased?.umax;
+  const range = Number.isFinite(lo) && Number.isFinite(hi) ? hi - lo : NaN;
+  const us = (model.holds ?? []).map((h) => h.u);
+  let moved = us.length > 1 ? Math.max(...us) - Math.min(...us) : 0;
+  const S = STRUCTURES[model.structure];
+  let span = NaN;
+  try { span = knownFor(project, path).r?.span; } catch { span = NaN; }
+  if (!S.integrating && Number.isFinite(span) && Math.abs(model.params.K) > 0) moved = Math.max(moved, span / Math.abs(model.params.K));
+  let size = PUSH.share * moved;
+  if (Number.isFinite(range)) size = Math.max(size, PUSH.least * range);
+  if (!(size > 0)) size = PUSH.least * Math.max(1, Math.abs(twinOp(model).u0));
+  const source = upstreamSource(project.system.plant.diagram, path, 0);
+  let at = null;
+  for (const [name, s] of Object.entries(signals)) {
+    if (name === source) continue;
+    const c = (s.components ?? []).filter((x) => x.enabled !== false && x.params?.amplitude).sort((a, b) => (a.params.time ?? 0) - (b.params.time ?? 0))[0];
+    if (c) { at = c.params.time ?? 0; break; }
+  }
+  if (at === null || !(at >= 0 && at < period)) at = PUSH.at * period;
+  const op = twinOp(model);
+  let uh = us.length ? us.reduce((a, b) => a + b, 0) / us.length : op.u0;
+  if (!S.integrating && source && signals[source] && Math.abs(model.params.K) > 0) uh = op.u0 + (referenceFn(signals[source])(at) - op.y0) / model.params.K;
+  const sign = Number.isFinite(range) && hi - uh > uh - lo ? -1 : 1;
+  return { size, at, sign, signal: { period, components: [{ type: 'step', params: { amplitude: sign * size, time: at } }] } };
+}
+
+function twinProject(project, path, model) {
+  const key = [].concat(path).join('/');
+  const hit = controllerBlocks(project.system.plant?.diagram).find((c) => c.key === key);
+  if (!hit) throw new IdentifyError('no-block', `there is no Controller block ${key}`, 'choose one of the Controller blocks');
+  const push = modelPush(project, hit.path, model);
+  let name = 'push';
+  for (let i = 2; project.system.signals[name]; i++) name = `push ${i}`;
+  const t = twinDiagram(project.system.plant.diagram, hit.path, model, { push: name });
+  const p = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: t.diagram }, signals: { ...project.system.signals, [name]: push.signal } } };
+  return { project: p, path: hit.path, push: { ...push, name }, cut: t.cut, kept: t.kept };
+}
+
+function* modelTuneSteps(project, path, model, opts = {}) {
+  const twin = twinProject(project, path, model);
+  const { block } = levelOf(project.system.plant.diagram, twin.path);
+  const name = opts.name ?? resultName(block, opts.method ?? 'iterate', opts.rule, opts.simc, { model: true });
+  const ctx = opts.diagram && !findExternal(project.system.plant.diagram) ? tuneContext(project, twin.path) : null;
+  const res = yield* autotuneSteps(twin.project, twin.path, { ...opts, name });
+  const out = { ...res, on: 'model', push: twin.push, cut: twin.cut, kept: twin.kept };
+  if (ctx && res.ok && res.variant) {
+    const g = res.goal;
+    const startRun = runVariant(ctx, ctx.variant);
+    const scales = costScales(startRun, ctx.key, ctx.variant);
+    const before = runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others });
+    yield { partial: true, phase: 'diagram', seconds: ctx.sim.duration };
+    const after = variantCost(ctx, res.variant, g, scales);
+    yield { partial: true, phase: 'diagram', seconds: ctx.sim.duration };
+    out.onDiagram = { before, after };
+  }
+  return out;
+}
+const modelTune = (project, path, model, opts) => drain(modelTuneSteps(project, path, model, opts));
+
+function identifiedLoop(project, path, model) {
+  const key = [].concat(path).join('/');
+  const hit = controllerBlocks(project.system.plant?.diagram).find((c) => c.key === key);
+  if (!hit) throw new IdentifyError('no-block', `there is no Controller block ${key}`, 'choose one of the Controller blocks');
+  const block = hit.block, variant = block.variants[block.variant ?? 0], def = CONTROLLERS[variant.type], Ts = block.params.Ts;
+  if (def?.designed) throw new IdentifyError('designed', `${variant.name} is computed from the plant's diagram, which the identified model is not`, 'analyse a hand variant on the model (its Copy as numbers in the Controller tab), or the diagram');
+  if (!def?.linear) throw new IdentifyError('no-linear', `${def?.label ?? variant.type} has no linear model`, 'analyse another variant');
+  const lin = linearModel(model), rest = twinOp(model), S = STRUCTURES[model.structure];
+  const lo = model.where?.length ? model.where[0].from : model.band?.[0], hi = model.where?.length ? model.where.at(-1).to : model.band?.[1];
+  const y = Number.isFinite(lo) && Number.isFinite(hi) ? (lo + hi) / 2 : rest.y0;
+  const op = { y0: y, u0: S.integrating || !(Math.abs(model.params.K) > 0) ? rest.u0 : rest.u0 + (y - rest.y0) / model.params.K };
+  let ctrl;
+  try { ctrl = def.linear(variant.params, Ts, { y: [op.y0] }, null); } catch (err) { throw new IdentifyError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'analyse another variant'); }
+  const loopTs = ctrl.Ts ?? Ts;
+  const plant = { ...lin, n: lin.A.length, m: 1, input: { label: lin.inputs[0].name }, op: { ...lin.op, x: new Float64Array(lin.A.length), u: op.u0, y: Float64Array.of(op.y0) }, kinks: [], idPath: hit.path, Ts: loopTs };
+  const warnings = [...lin.warnings];
+  if (ctrl.note) warnings.push(ctrl.note);
+  const { umin = -Infinity, umax = Infinity } = variant.params, tol = 1e-9 * Math.max(1, Math.abs(op.u0));
+  const atLimit = op.u0 >= umax - tol || op.u0 <= umin + tol;
+  if (atLimit) warnings.push(`${plant.input.label} = ${fmtNum(op.u0, 3)} is at its limit (${fmtNum(umin, 3)} to ${fmtNum(umax, 3)}) in the middle of the range identified: the controller saturates there, and the linear loop does not hold`);
+  return { plant, ctrl, Ts: loopTs, opLabel: lin.op.label, variantName: variant.name, type: variant.type, atLimit, warnings: [...new Set(warnings)], identified: true };
+}
+
+function loopRanges(project, path, model, { count = 50 } = {}) {
+  const loop = identifiedLoop(project, path, model);
+  const S = STRUCTURES[model.structure];
+  const sets = [...modelSamples(model, count)];
+  for (const pl of model.where ?? []) if (pl.seen >= GRADE.seen && Number.isFinite(pl.gain) && Number.isFinite(pl.scale)) sets.push({ ...model.params, [GAIN(S)]: pl.gain, [pl.scaleKey]: pl.scale });
+  if (!sets.length) return null;
+  const acc = { gm: [], pm: [], ms: [], dm: [] };
+  let unstable = 0;
+  for (const p of sets) {
+    const lin = linearModel({ ...model, params: p });
+    const plant = { ...loop.plant, A: lin.A, B: lin.B, C: lin.C, D: lin.D, delay: lin.delay };
+    try {
+      const L = openLoop(plant, loop.ctrl, loop.Ts);
+      if (closedLoopSides(L, 1).sides.some((s) => s !== 'in')) { unstable++; continue; }
+      const fd = frequencyData(L, { points: 200 });
+      const g = loopMargins(fd, loop.Ts, { L, poles: openLoopPoles(L) });
+      if (Number.isFinite(g.gmUp)) acc.gm.push(g.gmUp);
+      if (Number.isFinite(g.pm)) acc.pm.push(g.pm);
+      if (Number.isFinite(g.ms)) acc.ms.push(g.ms);
+      if (Number.isFinite(g.dm)) acc.dm.push(g.dm);
+    } catch { unstable++; }
+  }
+  const span = (v) => (v.length ? [Math.min(...v), Math.max(...v)] : null);
+  return { n: sets.length, unstable, gm: span(acc.gm), pm: span(acc.pm), ms: span(acc.ms), dm: span(acc.dm) };
+}
+
+function keptModel(project, path = null) {
+  const all = controllerBlocks(project.system.plant?.diagram);
+  const key = path ? [].concat(path).join('/') : all[0]?.key;
+  const s = project.system.identify?.[key] ?? {}, kept = s.kept ?? [];
+  if (!kept.length) throw new IdentifyError('no-model', 'identify the plant first: no test is kept for this block', 'node cli.mjs identify <project> --keep, or Keep in the Identify tab');
+  const i = Math.min(kept.length - 1, Math.max(0, s.use ?? kept.length - 1));
+  const model = drain(identifySteps(kept[i].record, { plan: kept[i].plan, structure: s.structure ?? null }));
+  if (!model.ok) throw new IdentifyError('no-model', `the kept test “${kept[i].name}” gives no model: ${model.sentences[0] ?? ''}`, 'identify the plant again');
+  return { model, name: kept[i].name, key };
+}
+
+function measuredPoints(model) {
+  const F = model?.frf;
+  if (!F?.G?.length || !model.structure) return [];
+  const Ts = model.Ts;
+  const f = F.f ?? F.lines.map((k) => k / (F.N * Ts));
+  const out = [];
+  F.G.forEach((g, i) => {
+    const w = 2 * Math.PI * f[i];
+    if (!(w > 0) || !(w < Math.PI / Ts)) return;
+    const b = modelBode(model, [w]), mag = b.mag[0], ph = (b.phase[0] * Math.PI) / 180;
+    if (!(mag > 0)) return;
+    const gr = g.re ?? g[0], gi = g.im ?? g[1];
+    const mr = mag * Math.cos(ph), mi = mag * Math.sin(ph), den = mr * mr + mi * mi;
+    const G = Math.hypot(gr, gi);
+    out.push({ w, ratio: { re: (gr * mr + gi * mi) / den, im: (gi * mr - gr * mi) / den }, bar: G > 0 ? (2 * (F.sd?.[i] ?? 0)) / G : 0 });
+  });
+  return out;
+}
+
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode, twinOp, twinDiagram, PUSH, modelPush, twinProject, modelTuneSteps, modelTune, identifiedLoop, loopRanges, keptModel, measuredPoints };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {
@@ -19387,11 +19604,12 @@ const GUIDE = {
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
     M('loopTuner.identify(opts?)', 'opts: { block (id path, default the first), band: [lo, hi], budget: seconds of plant time (30, 60, 120, 300, 600), vary: { share, seed } (a hidden variation of a simulated plant), keep }', 'Identifies the plant a Controller block drives, as the Identify tab\'s Start does: one experiment that eases in (Listen, Nudge, Hold, Ease in, Check) on a copy of the diagram at the header\'s Speed (speed(-1) for as fast as possible), then the model from its record. band, budget and vary are stored as the block\'s settings (one undo step); keep stores the record with the project.', 'await loopTuner.identify({ keep: true })', 'a promise of { ok, sentences, grade, why, structure, params, sd, chain, check: { fit, ceiling, kernel }, eased, candidates, where, warnings, end, time, tries, kept }'),
     M('loopTuner.identified(block?)', 'block: a Controller block\'s id path', 'The model in use for the block: the last test run in the page, else its kept test in use; null while none (or while it is computed from a kept record).', 'loopTuner.identified("ctrl")?.sentences', 'the same report as identify(), or null'),
-    M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
+    M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply, plant: "diagram" | "identified" (default: the block\'s plantSource) }', 'Auto-tunes a Controller block by simulation: of the diagram, or of the identified model in the plant\'s place with a test push at its input (results named "… (model)"; on a simulated plant scored on the diagram too: plant.onDiagram). For an External plant only the model exists: identify first; its result is added, not run.', 'loopTuner.autotune({ method: "step", plant: "identified" })', 'a report: { ok, why, before, after, plant?, ... }'),
+    M('loopTuner.plantSource(block?, v?)', 'block: a Controller block\'s id path; v: "diagram" or "identified"', 'Which plant the Auto-tune and Analysis tabs work on for the block, as their Plant keys and the Identify tab\'s Use for Auto-tune and Analysis set it; always "identified" for an External plant. With v, sets it (this page session).', 'loopTuner.plantSource("ctrl", "identified")', '"diagram" or "identified"'),
     M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter, a Luenberger observer\'s placed poles) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
     M('loopTuner.info()', '', 'What the screen\'s last run reported: validity reports (a model used outside where it holds), warnings (a stiff plant and the step it needs, a run made again because the plant grew stiffer, a signal that diverged, an input not connected), the integration step h, steps, the step bound (the blocks\' own and the Jacobian\'s largest eigenvalue at the start), the Jacobian\'s at the start and the end, and the run\'s ms. The status line under the screen shows the first report or warning.', 'loopTuner.info()', '{ validity, warnings, h, substeps, steps, bound, stiffness: { start, end }, ms } or null'),
     M('loopTuner.whenDesigned()', '', 'Resolves once no design is being computed in the background (a plan for the planned swing-up takes seconds; meanwhile the block runs u = 0 or its previous plan) and the display shows the run that uses it. Await it before judging a run.', 'await loopTuner.whenDesigned()', 'a promise of designs()'),
-    M('loopTuner.loopModel(path, op)', 'path: a Controller block\'s id path; op: "origin" (at rest), "initial" (the start), { y: [levels] } or { t: seconds }', 'The loop the Controller closes, as the Analysis tab draws it: the plant it sees linearised at op, and the running variant\'s own law, as state space. Refused, with the reason, where there is none (a relay, a kink at op, a plant outside the page).', 'loopTuner.loopModel("ctrl", "initial")', '{ plant: { A, B, C, D, delay, ... }, ctrl: { A, B, C, D }, Ts, opLabel, variantName, warnings }'),
+    M('loopTuner.loopModel(path, op)', 'path: a Controller block\'s id path; op: "origin" (at rest), "initial" (the start), { y: [levels] }, { t: seconds } or "identified" (the identified model, at its rest)', 'The loop the Controller closes, as the Analysis tab draws it: the plant it sees linearised at op (or the identified model), and the running variant\'s own law, as state space. Refused, with the reason, where there is none (a relay, a kink at op, a plant outside the page without op "identified").', 'loopTuner.loopModel("ctrl", "initial")', '{ plant: { A, B, C, D, delay, ... }, ctrl: { A, B, C, D }, Ts, opLabel, variantName, warnings }'),
     M('loopTuner.live.state()', '', 'The live link: state ("offline", "connecting", "open", "running"), pending ("run" or "stop" while the plant has not answered a key yet), message (the last message the page showed), estop ({ by, reason } or null), mode ("control", "reference", "log"), the plant\'s ports, ramp ({ left, to } while the references ramp in), link and plant figures, hold.', 'loopTuner.live.state().state'),
     M('loopTuner.live.connect(url?)', 'url: default the block\'s, ws://127.0.0.1:8765', 'Opens the link and reads the plant\'s description; resolves once the plant has described itself (or the link failed), so Run can follow at once. Nothing starts: the plant stays stopped until Run.', 'await loopTuner.live.connect()', 'a promise of state()'),
     M('loopTuner.live.disconnect()', '', 'Stops the plant, then closes the link.', 'await loopTuner.live.disconnect()', 'a promise of state() once the link is closed'),
@@ -19420,7 +19638,7 @@ const GUIDE = {
     'Save ▾ under the screen: #rc-save.',
   ],
   live: {
-    what: 'A system with an External plant block runs against a plant outside the page, in real time. HIL: an external plant is made for it: the controller against one External plant block, a black box. The page knows only the interface the plant describes when it connects (its inputs and outputs: names, units, full scales, hard ranges, kinds; the Plant tab shows it under Interface, and live.state() has it); the External block takes those ports, and the Sinks and channels follow the outputs. Tuning needs the plant identified first (Identify, to come): Auto-tune and Analysis say so. The downloadable example plant happens to simulate a DC motor swinging an arm, standing in for real hardware; the page is not told. Replace it with your device behind the same protocol, in any language.',
+    what: 'A system with an External plant block runs against a plant outside the page, in real time. HIL: an external plant is made for it: the controller against one External plant block, a black box. The page knows only the interface the plant describes when it connects (its inputs and outputs: names, units, full scales, hard ranges, kinds; the Plant tab shows it under Interface, and live.state() has it); the External block takes those ports, and the Sinks and channels follow the outputs. Tuning needs the plant identified first (the Identify tab): Auto-tune and Analysis then work on the identified model, and say so until there is one. The downloadable example plant happens to simulate a DC motor swinging an arm, standing in for real hardware; the page is not told. Replace it with your device behind the same protocol, in any language.',
     setup: [
       'Load the system: loopTuner.loadSystem("HIL: an external plant") (or "HIL with an agent", the same with an agent on the page through the MCP server). It opens stopped and OFFLINE: nothing runs until the plant is connected and Run is pressed.',
       'Get the plant: loopTuner.live.downloadPlant() saves hil-plant.zip (Plant tab: Download the plant (zip)). loopTuner.live.plantFiles() has its files as text.',
@@ -21203,6 +21421,67 @@ function decades(a, b) {
 
 return { niceTicks, extent, createPlot };
 })();
+// ---- ui/plantsource.js
+__mods['ui/plantsource.js'] = (() => {
+
+const { findExternal } = __mods['core/hil.js'];
+const { num } = __mods['ui/units.js'];
+const IDENTIFY_FIRST = 'identify the plant first (Identify tab)';
+
+function createPlantSource(app) {
+  const chosen = new Map();   
+  const diagram = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
+  const hil = () => !!(diagram() && findExternal(diagram()));
+  const get = (key) => (hil() ? 'identified' : chosen.get(key) ?? 'diagram');
+  const inUse = (key) => app.identifiedFor?.(key) ?? null;
+
+  function label(use) {
+    const m = use?.model;
+    if (!m?.ok) return use?.name ?? '';
+    const fit = m.check?.fit ?? m.fit;
+    return `${use.name}: ${m.label}, ${m.grade} explains ${Number.isFinite(fit) ? fitText(fit) : '?'} %`;
+  }
+
+  function state(key) {
+    const on = get(key);
+    const use = inUse(key);
+    if (on === 'diagram') return { on, use, why: null, note: '' };
+    if (!use) return { on, use, why: IDENTIFY_FIRST, note: '' };
+    if (!use.model) return { on, use, why: null, wait: true, note: 'Computing the model from the record…' };
+    if (!use.model.ok) return { on, use, why: `the test gives no model: ${use.model.sentences?.[0] ?? ''} Identify again (Identify tab)`, note: '' };
+    const notes = [label(use)];
+    if (use.earlier) notes.push('! Measured on an earlier connection: the plant may have changed. Check again tells (Identify tab).');
+    return { on, use, why: null, note: notes.join(' ') };
+  }
+
+  function html(key, { disabled = false } = {}) {
+    const s = state(key);
+    const lock = disabled ? 'disabled' : '';
+    const has = !!s.use?.model?.ok;
+    const keys = hil()
+      ? `<span class="hint">the identified model: the plant is outside the page</span>`
+      : `<span class="seg seg-fill" role="radiogroup" aria-label="Plant">`
+        + `<button class="btn btn-sm" data-plantsrc="diagram" role="radio" aria-checked="${s.on === 'diagram'}" title="The diagram: simulate the plant as it is built" ${lock}>the diagram</button>`
+        + `<button class="btn btn-sm" data-plantsrc="identified" role="radio" aria-checked="${s.on === 'identified'}" title="${esc(has ? 'The identified model: work on the model the Identify tab found' : 'The identified model: none yet, run a test in the Identify tab')}" ${lock || (!has && s.on !== 'identified' ? 'disabled' : '')}>the model</button></span>`;
+    const line = s.why ? `<span class="text-bad">✕ ${esc(s.why)}</span>` : s.note ? esc(s.note) : '';
+    return `<div class="pf plantsrc"><span class="flabel">Plant</span>${keys}</div>${line ? `<p class="note plantsrc-note">${line}</p>` : ''}`;
+  }
+  function bind(el, key, then) {
+    el.querySelectorAll('[data-plantsrc]').forEach((b) => { b.onclick = () => { set(key, b.dataset.plantsrc); then?.(); }; });
+  }
+  function set(key, v) {
+    if (v === 'identified') chosen.set(key, v); else chosen.delete(key);
+    app.plantSourceChanged?.();
+  }
+
+  return { hil, get, set, state, label, html, bind };
+}
+
+const fitText = (x) => (x >= 99 && x < 100 ? Math.min(99.9, Math.round(x * 10) / 10).toFixed(1) : num(Math.round(x), 3));
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+return { IDENTIFY_FIRST, createPlantSource };
+})();
 // ---- ui/analysis.js
 __mods['ui/analysis.js'] = (() => {
 
@@ -21210,7 +21489,7 @@ const { analyzeLoop, stepInfo, stepResponse, sPlanePoint, respondAt, phaseAt } =
 const { createPlot, extent } = __mods['ui/plots.js'];
 const { palette: C } = __mods['ui/palette.js'];
 const { num } = __mods['ui/units.js'];
-const { findExternal } = __mods['core/hil.js'];
+const { loopRanges, measuredPoints } = __mods['core/identify.js'];
 const OPS = [
   { key: 'origin', label: 'At rest', title: 'All states and u at 0 (the pendulums upright)' },
   { key: 'initial', label: 'Start', title: 'The state the run starts from' },
@@ -21238,8 +21517,9 @@ function createAnalysisTab(host, app) {
       <section class="gcol an-side" aria-label="Key numbers">
         <div class="ghead"><h3 class="label">Analysis</h3></div>
         <div id="an-blocks" class="ctblocks"></div>
+        <div id="an-src"></div>
         <div class="seg seg-fill" role="group" aria-label="Lane" id="an-lanes" hidden></div>
-        <div class="seg seg-fill" role="group" aria-label="Operating point">${OPS.map((o) => `<button class="btn btn-sm" data-op="${o.key}" title="${esc(o.title)}">${o.label}</button>`).join('')}</div>
+        <div class="seg seg-fill" role="group" aria-label="Operating point" id="an-ops">${OPS.map((o) => `<button class="btn btn-sm" data-op="${o.key}" title="${esc(o.title)}">${o.label}</button>`).join('')}</div>
         <div id="an-verdict" class="note"></div>
         <table class="kw" id="an-kw"></table>
         <div id="an-notes" class="note"></div>
@@ -21319,10 +21599,15 @@ function createAnalysisTab(host, app) {
     const n = c.block.params?.lanes > 1 ? c.block.params.lanes : 0;
     lane = Math.min(Math.max(1, lane), n || 1);
     const path = n ? [...c.path.slice(0, -1), `${c.path.at(-1)}[${lane}]`] : c.path;
-    if (findExternal(app.project.system.plant?.diagram)) return { c, all, error: 'The plant runs outside the page and is a black box: the page knows only its interface (Plant tab, Interface). Analysis needs an identified model of it, which Identify will give (not built yet).' };
     if (!app.loopModel) return { c, all, error: 'The analysis needs the plant a block sees, linearised at an operating point.' };
-    const spec = opSpec(), from = op === 't' ? app.scopeTimeFrom?.() : null;
-    const key = JSON.stringify([app.project.system, path, spec, app.designs?.generation ?? 0]);
+    const src = app.plantSource.state(c.path.join('/'));
+    if (src.on === 'identified') {
+      if (src.why) return { c, all, src, lanes: n, error: `${src.why[0].toUpperCase()}${src.why.slice(1)}.`, bad: true };
+      if (src.wait) return { c, all, src, lanes: n, error: src.note };
+    }
+    const identified = src.on === 'identified';
+    const spec = identified ? 'identified' : opSpec(), from = op === 't' && !identified ? app.scopeTimeFrom?.() : null;
+    const key = JSON.stringify([app.project.system, path, spec, app.designs?.generation ?? 0, identified ? src.note : '']);
     if (key === lastKey && last) { if (last.res) last.from = from; return last; }
     lastKey = key;
     try {
@@ -21330,9 +21615,10 @@ function createAnalysisTab(host, app) {
       const res = analyzeLoop(m.plant, m.ctrl, m.Ts);
       const st = res.stable ? stepInfo(m.plant, m.ctrl, m.Ts, { clPoles: res.clPoles }) : null;
       if (st) st.uPeak = Math.max(...stepResponse(m.plant, m.ctrl, m.Ts, Math.min(4000, Math.ceil(st.T / m.Ts))).u.map(Math.abs));
-      last = { c, all, m, res, st, spec, from, lanes: n };
+      last = { c, all, m, res, st, spec, from, lanes: n, src };
+      if (identified) { last.ranges = loopRanges(app.project, path, src.use.model); last.points = measuredPoints(src.use.model); }
     } catch (err) {
-      last = { c, all, lanes: n, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
+      last = { c, all, lanes: n, src, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
     }
     return last;
   }
@@ -21346,10 +21632,13 @@ function createAnalysisTab(host, app) {
     $('#an-lanes').innerHTML = v.lanes ? Array.from({ length: v.lanes }, (_, k) => `<button class="btn btn-sm" data-lane="${k + 1}" aria-pressed="${k + 1 === lane}" title="${esc(`${v.c.block.name ?? v.c.block.id} · lane ${k + 1}: the loop cut at its output`)}">${k + 1}</button>`).join('') : '';
     $('#an-lanes').querySelectorAll('[data-lane]').forEach((el) => el.addEventListener('click', () => { lane = Number(el.dataset.lane); render(); }));
     host.querySelectorAll('[data-op]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.op === op)));
+    const key = v.c?.path.join('/');
+    if (key) { $('#an-src').innerHTML = app.plantSource.html(key); app.plantSource.bind($('#an-src'), key); } else $('#an-src').innerHTML = '';
+    $('#an-ops').hidden = v.src?.on === 'identified';
     if (!v.res) {
       $('#an-verdict').innerHTML = '';
       $('#an-kw').innerHTML = '';
-      $('#an-notes').textContent = v.error ?? '';
+      $('#an-notes').innerHTML = v.bad ? '' : esc(v.error ?? '');
       return;
     }
     const { res, m, st } = v, g = res.margins, Ts = m.Ts;
@@ -21365,17 +21654,18 @@ function createAnalysisTab(host, app) {
     const rows = [];
     const row = (k, val, extra = '', title = '') => rows.push(`<tr title="${esc(title)}"><th>${k}</th><td>${val}</td><td>${extra}</td></tr>`);
     const factor = (k) => `×${num(k, 3)}`;
+    const R = v.ranges, span = (r, f) => (r ? ` <span class="hint" title="across what the model is unsure of">(${f(r[0])} … ${f(r[1])})</span>` : '');
     if (res.Z === 0) {
       const up = Number.isFinite(g.gmUp) ? `${factor(g.gmUp)} (${num(20 * Math.log10(g.gmUp), 3)} dB)` : '∞';
-      row('Gain margin', g.gmDown > 0 ? `${factor(g.gmDown)} … ${up}` : up, ok && Number.isFinite(g.gmUp) ? grade(gradeGm(g.gmUp)) : '', 'The loop gain may change by these factors before a closed-loop pole crosses the unit circle');
+      row('Gain margin', (g.gmDown > 0 ? `${factor(g.gmDown)} … ${up}` : up) + span(R?.gm, factor), ok && Number.isFinite(g.gmUp) ? grade(gradeGm(g.gmUp)) : '', 'The loop gain may change by these factors before a closed-loop pole crosses the unit circle');
     } else {
       const sg = g.stableGains;
       row('Stable for', sg ? `gain ${sg.lo > 0 ? factor(sg.lo) : '×0'} … ${Number.isFinite(sg.hi) ? factor(sg.hi) : '∞'}` : 'no gain', '', 'The loop is unstable as tuned; with its gain scaled by these factors every closed-loop pole would be inside the unit circle');
     }
-    if (res.Z === 0) row('Phase margin', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° at ${num(g.wc, 3)} rad/s` : '—', ok && Number.isFinite(g.pm) ? grade(gradePm(g.pm)) : '', 'At the crossover |L| = 1, the phase left before −180°');
+    if (res.Z === 0) row('Phase margin', (Number.isFinite(g.pm) ? `${num(g.pm, 3)}° at ${num(g.wc, 3)} rad/s` : '—') + span(R?.pm, (x) => `${num(x, 3)}°`), ok && Number.isFinite(g.pm) ? grade(gradePm(g.pm)) : '', 'At the crossover |L| = 1, the phase left before −180°');
     else row('Phase at |L| = 1', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° from −180° at ${num(g.wc, 3)} rad/s` : '—', '', 'At the crossover |L| = 1, how far the phase is from −180°; an unstable loop has no margin to read from it');
-    row('Delay margin', res.Z === 0 && Number.isFinite(g.dm) ? `${num(g.dm * 1000, 3)} ms (${num(g.dmSamples, 3)} Ts)` : '—', '', res.Z === 0 ? 'The extra dead time the loop tolerates' : 'An unstable loop has no dead time to spare');
-    row('Ms = max |S|', `${num(g.ms, 3)} at ${num(g.wMs, 3)} rad/s`, ok ? grade(gradeMs(g.ms)) : '', 'Peak sensitivity; 1/Ms is the closest approach to −1');
+    row('Delay margin', (res.Z === 0 && Number.isFinite(g.dm) ? `${num(g.dm * 1000, 3)} ms (${num(g.dmSamples, 3)} Ts)` : '—') + span(res.Z === 0 && R?.dm, (x) => `${num(x * 1000, 3)} ms`), '', res.Z === 0 ? 'The extra dead time the loop tolerates' : 'An unstable loop has no dead time to spare');
+    row('Ms = max |S|', `${num(g.ms, 3)} at ${num(g.wMs, 3)} rad/s` + span(R?.ms, (x) => num(x, 3)), ok ? grade(gradeMs(g.ms)) : '', 'Peak sensitivity; 1/Ms is the closest approach to −1');
     row('Mt = max |T|', `${num(g.mt, 3)}`, '', 'Peak complementary sensitivity');
     if (res.slowest) {
       const s = res.slowest.s, at = `s = ${num(s.re, 3)} ${s.im >= 0 ? '+' : '−'} ${num(Math.abs(s.im), 3)}j`;
@@ -21394,6 +21684,8 @@ function createAnalysisTab(host, app) {
       `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${v.lanes ? `${v.c.block.name ?? v.c.block.id} · lane ${lane} · ` : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
       ...(v.lanes ? [`Lane ${lane}'s loop alone: the other lanes run their law, every r held. Where r depends on the plant through a loop round this block (a robot's task law, k_x: q̇*), that loop is not in this analysis; what it holds (a joint's angle) can leave poles at s ≈ 0 here.`] : []),
       ...(m.warnings ?? []),
+      ...(R ? [`Ranges in brackets: across what the model is unsure of (${R.n} variants of it: its parameter samples and the places the test sat at)${R.unstable ? `; ${R.unstable === R.n ? 'all' : R.unstable} of them ${R.unstable === R.n ? 'are' : R.unstable === 1 ? 'is' : 'are'} unstable with ${m.variantName}` : ''}.`] : []),
+      ...(v.points?.length ? [`Bode: the Shake's measured points, with their 2σ bars.`] : []),
     ];
     const details = [
       ...(v.spec?.t !== undefined ? [`Scope time t = ${num(v.spec.t, 4)} s, ${FROM[v.from] ?? 'on the scope'}`] : []),
@@ -21449,6 +21741,13 @@ function createAnalysisTab(host, app) {
     plots.mag.clip(() => {
       plots.mag.line([a.x0, a.x1], [0, 0], { color: C().axis, width: 1, dash: [4, 3] });
       plots.mag.line(fd.w, dB, { color: C_L(), width: 1.8 });
+      for (const q of v.points ?? []) {
+        const Lw = respondAt(res.L, q.w), mag = Math.hypot(Lw.re, Lw.im) * Math.hypot(q.ratio.re, q.ratio.im);
+        if (!(mag > 0)) continue;
+        const d = 20 * Math.log10(mag);
+        if (q.bar > 0) plots.mag.line([q.w, q.w], [d + 20 * Math.log10(Math.max(1e-6, 1 - q.bar)), d + 20 * Math.log10(1 + q.bar)], { color: C().mark, width: 1 });
+        plots.mag.mark(q.w, d, { shape: 'o', color: C().mark, size: 3.5 });
+      }
       for (const c of g.gainCrossings) plots.mag.mark(c.w, 0, { shape: 'o', color: C_CL(), size: 4 });
       const P = plots.mag.P, sg = g.stableGains, unstable = res.Z > 0;
       for (const c of g.phaseCrossings) {
@@ -21467,6 +21766,7 @@ function createAnalysisTab(host, app) {
     plots.phase.clip(() => {
       for (let k = Math.ceil((b.y0 + 180) / 360); k * 360 - 180 <= b.y1; k++) plots.phase.line([b.x0, b.x1], [k * 360 - 180, k * 360 - 180], { color: C().axis, width: 1, dash: [4, 3] });
       plots.phase.line(fd.w, fd.phase, { color: C_L(), width: 1.8 });
+      for (const q of v.points ?? []) plots.phase.mark(q.w, phaseAt(fd, res.L, q.w) + (Math.atan2(q.ratio.im, q.ratio.re) * 180) / Math.PI, { shape: 'o', color: C().mark, size: 3.5 });
       for (const c of g.gainCrossings) {
         const ph = phaseAt(fd, res.L, c.w);
         plots.phase.line([c.w, c.w], [ph, ph - c.pm], { color: C_CL(), width: 1.5 });
@@ -24855,6 +25155,7 @@ return { createControllerTab };
 __mods['ui/autotune.js'] = (() => {
 
 const { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, SIMC, COSTS, GOAL, tauCSource, tauCShort } = __mods['core/autotune.js'];
+const { twinProject, modelTuneSteps } = __mods['core/identify.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
 const { num, parseSI } = __mods['ui/units.js'];
 const { AS_FAST, formatSpeed } = __mods['core/speed.js'];
@@ -24889,6 +25190,7 @@ function createAutotuneTab(host, app, display) {
       <section class="gcol" aria-label="Controller to tune">
         <div class="ghead"><h3 class="label">Controller</h3></div>
         <div id="tu-blocks" class="ctblocks"></div>
+        <div id="tu-src"></div>
         <ul class="lcd list turows" id="tu-now"></ul>
         <p class="note" id="tu-target"></p>
       </section>
@@ -24919,7 +25221,17 @@ function createAutotuneTab(host, app, display) {
   const root = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
   const blocks = () => controllerBlocks(root());
   const current = () => { const all = blocks(); return all.find((c) => c.key === st.target) ?? all[0] ?? null; };
-  const context = () => { try { return { ctx: tuneContext(app.project, current()?.path) }; } catch (err) { return { why: err.message }; } };
+  const context = () => {
+    const c = current();
+    const src = c ? app.plantSource.state(c.key) : null;
+    try {
+      if (src?.on !== 'identified') return { ctx: tuneContext(app.project, c?.path) };
+      if (src.why || src.wait) return { why: src.why ?? src.note, src };
+      const twin = twinProject(app.project, c.path, src.use.model);
+      return { ctx: tuneContext(twin.project, twin.path), twin, src };
+    } catch (err) { return { why: err.message, src }; }
+  };
+  const onModel = () => { const c = current(); return !!c && app.plantSource.get(c.key) === 'identified'; };
   const unitY = () => { const c = current(); return c ? app.unitOf(inputName(c, 1)) : ''; };
   function inputName(c, port) {
     let lv = root();
@@ -24960,12 +25272,14 @@ function createAutotuneTab(host, app, display) {
       ? all.map((x) => `<button class="btn btn-block" data-path="${esc(x.key)}" aria-pressed="${x.key === c.key}" ${job ? 'disabled' : ''}>${esc(x.where)}</button>`).join('')
       : `<div class="heading">${esc(c.where)}</div>`;
     const { ctx, why: noCtx } = context();
+    $('#tu-src').innerHTML = app.plantSource.html(c.key, { disabled: !!job });
+    app.plantSource.bind($('#tu-src'), c.key);
     const twin = ctx?.designed?.from ? ctx.variant : null;
     const why = noCtx ?? whyNot(ctx, st.method);
     $('#tu-now').innerHTML = `<li class="tuhead"><b>${esc(v.name)}</b><span class="hint">${esc(CONTROLLERS[v.type]?.label ?? v.type)} · running</span></li>`
       + (twin && !why ? `<li class="tunote">from the plant: tuned as a ${esc(CONTROLLERS[twin.type].label)}, from the numbers it computes now</li>` : '')
       + tunedValues(twin ?? v).map(([k, x]) => `<li class="turow"><span>${esc(k)}</span><span>${show(x)}</span></li>`).join('');
-    const into = job ? job.name : resultName(c.block, st.method, st.rule, st.simc);
+    const into = job ? job.name : resultName(c.block, st.method, st.rule, st.simc, { model: onModel() });
     const target = $('#tu-target');
     if (job) { target.innerHTML = `Into <b>${esc(into)}</b>`; target.title = `${shown.before?.variant.name ?? v.name} stays as it was.`; }
     else if (why) { target.innerHTML = `<span class="text-bad">${esc(why)}</span>`; target.title = ''; }
@@ -25035,6 +25349,8 @@ function createAutotuneTab(host, app, display) {
 
   function place(variant, run, from = null) {
     if (!job.edit) { app.beginEdit(); job.edit = true; }
+    if (job.model) from = null;
+    if (job.hil) run = false;
     app.tuneEdit((p) => placeVariant(p, job.path, variant, { run }), from);
     if (run) job.ran = true;
     shown.placed = structuredClone(variant);
@@ -25046,11 +25362,14 @@ function createAutotuneTab(host, app, display) {
     const why = noCtx ?? whyNot(ctx, st.method);
     if (!c || why) { app.toast(why ?? 'There is no Controller block to tune.'); return; }
     const goal = { ...st.goal };
-    const name = resultName(c.block, st.method, st.rule, st.simc);
-    const gen = autotuneSteps(app.project, c.path, { method: st.method, goal, rule: st.rule, simc: st.simc, amplitude: st.amplitude, maxIter: st.maxIter, feedforward: st.feedforward, name });
-    shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null, unit: unitY() };
+    const model = onModel(), hil = app.plantSource.hil();
+    const name = resultName(c.block, st.method, st.rule, st.simc, { model });
+    const opts = { method: st.method, goal, rule: st.rule, simc: st.simc, amplitude: st.amplitude, maxIter: st.maxIter, feedforward: st.feedforward, name };
+    const use = model ? app.plantSource.state(c.key).use : null;
+    const gen = model ? modelTuneSteps(app.project, c.path, use.model, { ...opts, diagram: !hil }) : autotuneSteps(app.project, c.path, opts);
+    shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null, unit: unitY(), on: model ? app.plantSource.label(use) : null };
     job = {
-      gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, ctx, mode: display.mode, startData: display.data,
+      gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, ctx, mode: display.mode, startData: display.data, model, hil,
       timer: 0, lookTimer: 0, improveTimer: 0, improvedAt: 0, stepMs: 0, queue: [], playing: false,
       edit: false, ran: false, swept: false, showing: false, applied: Infinity, runs: 0, bests: [display.data], seenBest: null, bestRun: null,
     };
@@ -25144,8 +25463,9 @@ function createAutotuneTab(host, app, display) {
     job.playing = true;
     app.playRun({ t: run.t, signals: run.signals }, job.bests.slice(0, 4));
     const sp = formatSpeed(app.speed());
-    shown.status = job.runs <= 1 ? `Scoring the running variant: its run sweeps at ${sp}.`
-      : `Run ${job.runs}${shown.iteration ? `, iteration ${shown.iteration}` : ''}, sweeping at ${sp}; the best so far fades behind it.`;
+    const where = job.model ? ' on the model' : '';
+    shown.status = job.runs <= 1 ? `Scoring the running variant${where}: its run sweeps at ${sp}.`
+      : `Run ${job.runs}${where}${shown.iteration ? `, iteration ${shown.iteration}` : ''}, sweeping at ${sp}; the best so far fades behind it.`;
     afterSweep(swept);
   }
   function swept() {
@@ -25182,7 +25502,7 @@ function createAutotuneTab(host, app, display) {
     if (res.method === 'iterate') {
       if (!res.ok) { end(`Could not run: ${res.why}.`); return; }
       const notes = res.notes?.length ? ` Note: ${res.notes.join('; ')}.` : '';
-      end((res.better ? 'Done: the cost stopped falling.' : 'Done: no better gains found; the running variant stays.') + notes);
+      end((res.better ? 'Done: the cost stopped falling.' : 'Done: no better gains found; the running variant stays.') + onModelText(res) + notes);
       return;
     }
     if (!res.run) { end(res.ok ? 'Done.' : `Could not run: ${res.why}.`); return; }
@@ -25205,14 +25525,22 @@ function createAutotuneTab(host, app, display) {
     });
   }
 
+  function onModelText(res) {
+    if (!job?.model) return '';
+    const out = [` ${job.runs} runs on the model (${shown.on}).`];
+    if (res.onDiagram && res.after) out.push(`Cost on the model ${num(res.after.J, 3)} · on the diagram ${num(res.onDiagram.after.J, 3)} (it started at ${num(res.onDiagram.before.J, 3)} there).`);
+    if (job.hil && res.ok && res.better) out.push(`${res.variant.name} was added, not run: Try on the plant comes next; until then run it in the Controller tab while you watch the plant.`);
+    return out.join(' ');
+  }
+
   function apply(res) {
     shown.res = res;
     if (!res.ok) { end(`The experiment gave no result: ${res.why}.`); return; }
     const notes = res.notes?.length ? ` Note: ${res.notes.join('; ')}.` : '';
-    if (res.better) { place(res.variant, true); end(`Done.${notes}`); return; }
+    if (res.better) { place(res.variant, true); end(`Done.${onModelText(res)}${notes}`); return; }
     place(res.variant, false);
     const x = `cost ×${num(res.after.J / res.before.cost.J, 2)}`;
-    end(`${res.unstableAtStart ? `The result is not run (${x} against ${res.before.variant.name})` : `The result scores worse than ${res.before.variant.name} (${x})`}${res.worse ? `: ${res.worse}` : ''}. It was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
+    end(`${res.unstableAtStart ? `The result is not run (${x} against ${res.before.variant.name})` : `The result scores worse than ${res.before.variant.name} (${x})`}${res.worse ? `: ${res.worse}` : ''}. It was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${onModelText(res)}${notes}`);
   }
 
   function stepStatus(res, u) {
@@ -25311,6 +25639,8 @@ function createAutotuneTab(host, app, display) {
         rows.push(row(k, after ? `${x === undefined ? '—' : show(x)} → ${show(y)}` : show(x), ''));
       }
     }
+    if (s.on) rows.push(row('Plant', 'identified model', '', '', s.on));
+    if (res?.onDiagram) rows.push(row('Diagram', `${num(res.onDiagram.before.J, 3)} → ${num(res.onDiagram.after.J, 3)}`, `×${num(res.onDiagram.after.J / res.onDiagram.before.J, 2)}`, res.onDiagram.after.J > res.onDiagram.before.J ? 'text-bad' : 'text-ok', 'The cost of the start and of the result on the diagram: the plant as built'));
     if (s.placed) rows.push(row('Into', s.placed.name, ''));
     $('#tu-result').innerHTML = rows.join('');
     $('#tu-status').textContent = s.status;
@@ -25538,6 +25868,14 @@ function createIdentifyTab(host, app, display, record) {
     Object.defineProperty(model, 'recordHash', { value: mk.split('|')[0], enumerable: false });
     models.set(mk, model);
     if (models.size > 24) models.delete(models.keys().next().value);
+    app.identifiedChanged?.();
+  }
+  function inUse(key) {
+    const { src, model } = modelOf(key);
+    if (!src) return null;
+    const L = app.live?.owns() ? app.live.identify : null;
+    const conn = src.kind === 'fresh' ? fresh.get(key)?.connection : connections.get(recordHash(src.record));
+    return { model, name: src.kind === 'kept' ? src.name : 'the test just run, not kept', kept: src.kind === 'kept', earlier: !!L && (conn === undefined || conn === null || conn !== L.connection()) };
   }
 
 
@@ -25670,6 +26008,10 @@ function createIdentifyTab(host, app, display, record) {
     const keys = [];
     if (src.kind === 'fresh') keys.push('<button class="btn btn-sm" id="id-keep" title="Stores the measured record with the project (one undo step); the model is computed from it whenever it is needed">Keep</button>');
     if (model.ok && model.check) keys.push('<button class="btn btn-sm" id="id-recheck" title="Runs Listen, then the controller that held and the Check alone (about 10–20 s), and compares the plant with the model: still fits, or the plant has changed">Check again</button>');
+    if (model.ok && !app.plantSource.hil()) {
+      const on = app.plantSource.get(c.key) === 'identified';
+      keys.push(`<button class="btn btn-sm" id="id-use" aria-pressed="${on}" title="${on ? 'Auto-tune and Analysis work on this model; press again for the diagram' : 'Auto-tune and Analysis work on this model instead of the diagram (each tab can switch back)'}">Use for Auto-tune and Analysis</button>`);
+    }
     if (model.ok) keys.push('<button class="btn btn-sm" id="id-copy" title="Puts the model as a subsystem of the Plant library\'s own blocks into My blocks: these numbers no longer follow the plant">Copy as blocks</button>');
     if (keys.length) out.push(`<div class="idkeys">${keys.join('')}</div>`);
     const L = app.live?.owns() ? app.live.identify : null;
@@ -25688,6 +26030,11 @@ function createIdentifyTab(host, app, display, record) {
     box.querySelectorAll('[data-use]').forEach((el) => { el.onclick = () => { const f = fresh.get(c.key); if (f) f.keptAs = -1; setSetting(c.key, 'use', Number(el.dataset.use)); }; });
     $('#id-keep')?.addEventListener('click', () => keep(c, src));
     $('#id-copy')?.addEventListener('click', () => copyBlocks(model, src));
+    $('#id-use')?.addEventListener('click', () => {
+      const on = app.plantSource.get(c.key) !== 'identified';
+      app.plantSource.set(c.key, on ? 'identified' : 'diagram');
+      app.toast(on ? 'Auto-tune and Analysis now work on the identified model.' : 'Auto-tune and Analysis work on the diagram again.');
+    });
     $('#id-recheck')?.addEventListener('click', () => start('recheck'));
     $('#id-variant')?.addEventListener('click', () => addVariant(c, model));
     return model;
@@ -26113,6 +26460,7 @@ function createIdentifyTab(host, app, display, record) {
     running: () => !!job,
     scopeStopped() { if (job) stop(); },
     api: { identify: api, identified },
+    inUse,
   };
 }
 
@@ -27380,7 +27728,9 @@ const { drawnValues, refitSwitched } = __mods['ui/xyview.js'];
 const { createControllerTab } = __mods['ui/controller.js'];
 const { createAutotuneTab } = __mods['ui/autotune.js'];
 const { createIdentifyTab } = __mods['ui/identify.js'];
-const { loopOverlays, autotune, placeVariant, tuneReport, withVariant } = __mods['core/autotune.js'];
+const { createPlantSource, IDENTIFY_FIRST } = __mods['ui/plantsource.js'];
+const { identifiedLoop, modelTune } = __mods['core/identify.js'];
+const { loopOverlays, autotune, placeVariant, tuneReport, withVariant, controllerBlocks } = __mods['core/autotune.js'];
 const { createAnalysisTab } = __mods['ui/analysis.js'];
 const { SIGNALS, normalizeComponent, referenceFn, sampleSignal } = __mods['core/signals.js'];
 const { DEFAULT_PROJECT } = __mods['core/examples.js'];
@@ -27585,7 +27935,12 @@ function startApp() {
   function designsChanged() { display.setData(acquire()); controllerTab.renderComputed(); if (app.tab === 'analysis') analysisTab.render(); renderChrome(); }
   app.cancelDesign = (key) => { if (designs.cancel(key)) { designsChanged(); toast('Planning cancelled'); } };
   app.retryDesign = (key) => { if (designs.retry(key)) designsChanged(); };
-  app.loopModel = (path, op) => loopModel(app.project, path, op, { designs });
+  app.loopModel = (path, op) => {
+    if (op !== 'identified') return loopModel(app.project, path, op, { designs });
+    const use = app.identifiedFor?.([].concat(path).join('/'));
+    if (!use?.model?.ok) throw Object.assign(new Error(use && !use.model ? 'the model is being computed from the record' : IDENTIFY_FIRST), { hint: '' });
+    return identifiedLoop(app.project, path, use.model);
+  };
   app.signalNames = () => channelNames(app.project);
   app.sourceNames = () => { const n = app.signalNames().filter((x) => app.project.system.signals[x]); return n.length ? n : ['r']; };
   app.nyquist = () => 0.5 / simOf(app.project).sampleTime;
@@ -27801,6 +28156,7 @@ function startApp() {
   live = createLive(app, display, record, $('tab-plant').querySelector('.pprops'));
   app.live = live;
   app.hilMode = () => { const hit = app.project.system.plant?.type === 'diagram' ? findExternal(app.project.system.plant.diagram) : null; return hit ? blockMode(hit.block.params) : null; };
+  app.plantSource = createPlantSource(app);
   const controllerTab = createControllerTab($('tab-controller'), app);
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
   const analysisTab = createAnalysisTab($('tab-analysis'), app);
@@ -27815,6 +28171,9 @@ function startApp() {
   app.editProject = (fn) => { app.beginEdit(); fn(app.project); app.endEdit(); changed(); };
   app.changedView = () => changed({ data: false });
   identifyTab = createIdentifyTab($('tab-identify'), app, display, record.api);
+  app.identifiedFor = (key) => identifyTab.inUse(key);
+  app.identifiedChanged = () => { if (app.tab === 'tune') tuneTab.render(); if (app.tab === 'analysis') analysisTab.render(); };
+  app.plantSourceChanged = () => { app.identifiedChanged(); if (app.tab === 'identify') identifyTab.render(); };
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="btn tab" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -28175,9 +28534,29 @@ function startApp() {
     autotune: (opts = {}) => {
       tuneTab.stop();
       let res;
-      try { res = autotune(app.project, opts.block ? String(opts.block).split('/') : null, opts); } catch (err) { return { ok: false, why: err.message }; }
-      if (res.ok && opts.apply !== false) { app.beginEdit(); placeVariant(app.project, res.path, res.variant, { run: res.better }); app.endEdit(); changed(); }
-      return tuneReport(res);
+      const path = opts.block ? String(opts.block).split('/') : null;
+      const key = path?.join('/') ?? controllerBlocks(app.project.system.plant?.diagram)[0]?.key;
+      const hil = app.plantSource.hil();
+      const onModel = (opts.plant ?? (key ? app.plantSource.get(key) : 'diagram')) === 'identified';
+      try {
+        if (onModel) {
+          const s = app.plantSource.state(key);
+          if (!s.use?.model?.ok) return { ok: false, why: s.why ?? s.note ?? IDENTIFY_FIRST };
+          res = modelTune(app.project, path ?? [key], s.use.model, { ...opts, diagram: !hil });
+        } else res = autotune(app.project, path, opts);
+      } catch (err) { return { ok: false, why: err.message }; }
+      if (res.ok && opts.apply !== false) { app.beginEdit(); placeVariant(app.project, res.path, res.variant, { run: res.better && !hil }); app.endEdit(); changed(); }
+      const rep = tuneReport(res);
+      if (onModel && res.push) rep.plant = { on: 'model', model: app.plantSource.label(app.plantSource.state(key).use), push: { size: res.push.sign * res.push.size, at: res.push.at }, ...(res.onDiagram ? { onDiagram: { before: res.onDiagram.before.J, after: res.onDiagram.after.J } } : {}) };
+      return rep;
+    },
+    plantSource: (block, v) => {
+      const key = block ? String(block) : controllerBlocks(app.project.system.plant?.diagram)[0]?.key;
+      if (v !== undefined) {
+        if (!['diagram', 'identified'].includes(v)) throw new Error('plantSource: "diagram" or "identified"');
+        app.plantSource.set(key, v);
+      }
+      return app.plantSource.get(key);
     },
   };
 

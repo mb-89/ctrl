@@ -149,6 +149,18 @@ export function createIdentifyTab(host, app, display, record) {
     Object.defineProperty(model, 'recordHash', { value: mk.split('|')[0], enumerable: false });
     models.set(mk, model);
     if (models.size > 24) models.delete(models.keys().next().value);
+    app.identifiedChanged?.();
+  }
+  // The model Auto-tune and Analysis use for a block: { model (null while it
+  // is computed), name (the kept test's, or "the test just run, not kept"),
+  // kept, earlier (measured on an earlier connection of a live plant) }, or
+  // null when there is no test.
+  function inUse(key) {
+    const { src, model } = modelOf(key);
+    if (!src) return null;
+    const L = app.live?.owns() ? app.live.identify : null;
+    const conn = src.kind === 'fresh' ? fresh.get(key)?.connection : connections.get(recordHash(src.record));
+    return { model, name: src.kind === 'kept' ? src.name : 'the test just run, not kept', kept: src.kind === 'kept', earlier: !!L && (conn === undefined || conn === null || conn !== L.connection()) };
   }
 
   // ---- Column 1: what we know, and the two things asked
@@ -289,6 +301,11 @@ export function createIdentifyTab(host, app, display, record) {
     const keys = [];
     if (src.kind === 'fresh') keys.push('<button class="btn btn-sm" id="id-keep" title="Stores the measured record with the project (one undo step); the model is computed from it whenever it is needed">Keep</button>');
     if (model.ok && model.check) keys.push('<button class="btn btn-sm" id="id-recheck" title="Runs Listen, then the controller that held and the Check alone (about 10–20 s), and compares the plant with the model: still fits, or the plant has changed">Check again</button>');
+    // Simulated plants choose; on a plant outside the page the model is always used (§10).
+    if (model.ok && !app.plantSource.hil()) {
+      const on = app.plantSource.get(c.key) === 'identified';
+      keys.push(`<button class="btn btn-sm" id="id-use" aria-pressed="${on}" title="${on ? 'Auto-tune and Analysis work on this model; press again for the diagram' : 'Auto-tune and Analysis work on this model instead of the diagram (each tab can switch back)'}">Use for Auto-tune and Analysis</button>`);
+    }
     if (model.ok) keys.push('<button class="btn btn-sm" id="id-copy" title="Puts the model as a subsystem of the Plant library\'s own blocks into My blocks: these numbers no longer follow the plant">Copy as blocks</button>');
     if (keys.length) out.push(`<div class="idkeys">${keys.join('')}</div>`);
     const L = app.live?.owns() ? app.live.identify : null;
@@ -307,6 +324,11 @@ export function createIdentifyTab(host, app, display, record) {
     box.querySelectorAll('[data-use]').forEach((el) => { el.onclick = () => { const f = fresh.get(c.key); if (f) f.keptAs = -1; setSetting(c.key, 'use', Number(el.dataset.use)); }; });
     $('#id-keep')?.addEventListener('click', () => keep(c, src));
     $('#id-copy')?.addEventListener('click', () => copyBlocks(model, src));
+    $('#id-use')?.addEventListener('click', () => {
+      const on = app.plantSource.get(c.key) !== 'identified';
+      app.plantSource.set(c.key, on ? 'identified' : 'diagram');
+      app.toast(on ? 'Auto-tune and Analysis now work on the identified model.' : 'Auto-tune and Analysis work on the diagram again.');
+    });
     $('#id-recheck')?.addEventListener('click', () => start('recheck'));
     $('#id-variant')?.addEventListener('click', () => addVariant(c, model));
     return model;
@@ -755,6 +777,7 @@ export function createIdentifyTab(host, app, display, record) {
     // The scope's Stop while the test runs: the test stops, softly.
     scopeStopped() { if (job) stop(); },
     api: { identify: api, identified },
+    inUse,
   };
 }
 

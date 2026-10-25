@@ -12,7 +12,9 @@ import { drawnValues, refitSwitched } from './xyview.js';
 import { createControllerTab } from './controller.js';
 import { createAutotuneTab } from './autotune.js';
 import { createIdentifyTab } from './identify.js';
-import { loopOverlays, autotune, placeVariant, tuneReport, withVariant } from '../core/autotune.js';
+import { createPlantSource, IDENTIFY_FIRST } from './plantsource.js';
+import { identifiedLoop, modelTune } from '../core/identify.js';
+import { loopOverlays, autotune, placeVariant, tuneReport, withVariant, controllerBlocks } from '../core/autotune.js';
 import { createAnalysisTab } from './analysis.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
@@ -280,7 +282,14 @@ function startApp() {
   // The loop a Controller closes, cut at its output, linearised at an
   // operating point ('origin', 'initial', { y }, { t }): for the Analysis
   // tab, with the page's designs (a plan is never made twice).
-  app.loopModel = (path, op) => loopModel(app.project, path, op, { designs });
+  // op 'identified': the loop on the model the Identify tab identified
+  // (identification.md §12), the running variant's law at the model's rest.
+  app.loopModel = (path, op) => {
+    if (op !== 'identified') return loopModel(app.project, path, op, { designs });
+    const use = app.identifiedFor?.([].concat(path).join('/'));
+    if (!use?.model?.ok) throw Object.assign(new Error(use && !use.model ? 'the model is being computed from the record' : IDENTIFY_FIRST), { hint: '' });
+    return identifiedLoop(app.project, path, use.model);
+  };
   // What a scope channel can show: only names the diagram gives (its Sources
   // and Sinks, r always), each with its unit.
   app.signalNames = () => channelNames(app.project);
@@ -541,6 +550,8 @@ function startApp() {
   // The mode of a system's External plant: control, reference (the plant
   // runs its own controller), log (it takes no inputs), or null (none).
   app.hilMode = () => { const hit = app.project.system.plant?.type === 'diagram' ? findExternal(app.project.system.plant.diagram) : null; return hit ? blockMode(hit.block.params) : null; };
+  // Auto-tune and Analysis work on the diagram or the identified model (ui/plantsource.js).
+  app.plantSource = createPlantSource(app);
   const controllerTab = createControllerTab($('tab-controller'), app);
   // Opens the Controller tab on one Controller block (path of block ids).
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
@@ -564,6 +575,11 @@ function startApp() {
   app.editProject = (fn) => { app.beginEdit(); fn(app.project); app.endEdit(); changed(); };
   app.changedView = () => changed({ data: false });
   identifyTab = createIdentifyTab($('tab-identify'), app, display, record.api);
+  // The model each block's Auto-tune and Analysis may work on, and the
+  // tabs that show it when it is ready or the choice changes.
+  app.identifiedFor = (key) => identifyTab.inUse(key);
+  app.identifiedChanged = () => { if (app.tab === 'tune') tuneTab.render(); if (app.tab === 'analysis') analysisTab.render(); };
+  app.plantSourceChanged = () => { app.identifiedChanged(); if (app.tab === 'identify') identifyTab.render(); };
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="btn tab" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -983,9 +999,32 @@ function startApp() {
     autotune: (opts = {}) => {
       tuneTab.stop();
       let res;
-      try { res = autotune(app.project, opts.block ? String(opts.block).split('/') : null, opts); } catch (err) { return { ok: false, why: err.message }; }
-      if (res.ok && opts.apply !== false) { app.beginEdit(); placeVariant(app.project, res.path, res.variant, { run: res.better }); app.endEdit(); changed(); }
-      return tuneReport(res);
+      const path = opts.block ? String(opts.block).split('/') : null;
+      const key = path?.join('/') ?? controllerBlocks(app.project.system.plant?.diagram)[0]?.key;
+      const hil = app.plantSource.hil();
+      // On the identified model (opts.plant, else the block's plant source): §10.
+      const onModel = (opts.plant ?? (key ? app.plantSource.get(key) : 'diagram')) === 'identified';
+      try {
+        if (onModel) {
+          const s = app.plantSource.state(key);
+          if (!s.use?.model?.ok) return { ok: false, why: s.why ?? s.note ?? IDENTIFY_FIRST };
+          res = modelTune(app.project, path ?? [key], s.use.model, { ...opts, diagram: !hil });
+        } else res = autotune(app.project, path, opts);
+      } catch (err) { return { ok: false, why: err.message }; }
+      if (res.ok && opts.apply !== false) { app.beginEdit(); placeVariant(app.project, res.path, res.variant, { run: res.better && !hil }); app.endEdit(); changed(); }
+      const rep = tuneReport(res);
+      if (onModel && res.push) rep.plant = { on: 'model', model: app.plantSource.label(app.plantSource.state(key).use), push: { size: res.push.sign * res.push.size, at: res.push.at }, ...(res.onDiagram ? { onDiagram: { before: res.onDiagram.before.J, after: res.onDiagram.after.J } } : {}) };
+      return rep;
+    },
+    // Which plant Auto-tune and Analysis work on for a block: "diagram" or
+    // "identified" (always on a plant outside the page); with v, sets it.
+    plantSource: (block, v) => {
+      const key = block ? String(block) : controllerBlocks(app.project.system.plant?.diagram)[0]?.key;
+      if (v !== undefined) {
+        if (!['diagram', 'identified'].includes(v)) throw new Error('plantSource: "diagram" or "identified"');
+        app.plantSource.set(key, v);
+      }
+      return app.plantSource.get(key);
     },
   };
 

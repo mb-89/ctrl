@@ -131,7 +131,7 @@ export function tuneContext(project, path) {
   // only outputs 0 here, so nothing could be learned from it.
   const ext = externalBlock(plant.diagram);
   if (ext && blockMode(EXTERNAL_BLOCK.normalize(ext.params)) !== 'control') throw new Error(`the plant runs its own controller (External plant ${ext.name ?? ext.id}, reference mode): the page's controllers and Auto-tune are not in the loop`);
-  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, and Auto-tune needs an identified model of it (Identify, not built yet). Until then, tune it live in the Controller tab`);
+  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, and Auto-tune tunes on an identified model of it: identify the plant first (Identify tab), or tune it live in the Controller tab`);
   const all = controllerBlocks(plant.diagram);
   const key = path ? [].concat(path).join('/') : null;
   const hit = (key && all.find((c) => c.key === key)) || all[0];
@@ -1538,18 +1538,19 @@ export function tuneReport(res) {
 
 // The name a variant had before any tuning suffix this module adds.
 export function baseName(name) {
-  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?)( \d+)?)+$/, '');
+  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?)( \(model\))?( \d+)?)+$/, '');
 }
 
 // The name for a method's result: "<base> · auto-tuned", "· relay T–L" (by
-// the rule), "· SIMC" or "· SIMC smooth" (by simc). A running variant that
+// the rule), "· SIMC" or "· SIMC smooth" (by simc), then " (model)" when it
+// was tuned on the identified model (model: true). A running variant that
 // already has the name (or a numbered one of it) keeps it: tuning again
 // updates it. Another variant of that name is never overwritten: the new one
 // is numbered.
-export function resultName(block, method, rule = 'tl', simc = 'tight') {
+export function resultName(block, method, rule = 'tl', simc = 'tight', { model = false } = {}) {
   const running = block.variants[block.variant ?? 0];
   const base = baseName(running.name);
-  const suffix = method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`;
+  const suffix = (method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`) + (model ? ' (model)' : '');
   const named = (s) => `${base.slice(0, Math.max(0, 40 - s.length))}${s}`;
   const plain = named(suffix);
   if (running.name === plain || (running.name.startsWith(plain) && /^ \d+$/.test(running.name.slice(plain.length)))) return running.name;
