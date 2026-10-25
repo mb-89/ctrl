@@ -8,6 +8,7 @@ The person: the page will be put into SharePoint, whose HTML preview is a sandbo
 - **Detect, then warn right below the header**, in words a tester understands, with what to do (download the file, open it in the browser). Interpretation: the signs are those the person named (no local storage; external resources cannot load) plus those a sandbox shows (an opaque origin, a sandboxed frame, no downloads, no workers), each checked without breaking the page.
 - **It works even where scripts do not run**: the warning is in the page's HTML from the start and the page's own script removes it when the environment is full (interpretation: a preview may run no script at all; then the static warning is all the person sees, which is the right message).
 - **Hosts the page knows are not limited**: inside the claude.ai artifact viewer (downloads through its capability) no warning shows.
+- **More precisely** ([input 17](../input/2026-10-25-17-limited-environment-details.md)): "in the SharePoint, scripts usually run ... if you referred to an external library, it wouldn't be able to be downloaded. And again, local storage wouldn't work ... it would be slower ... the [HIL] mode wouldn't work from there ... stuff that still works can still work, but we should always have this warning visible to understand that the overall performance is degraded." So: everything that works there keeps working; the warning stays visible the whole time (no dismissing it); it names what is lost there (saving and the autosave, downloads, Live/HIL, speed); the page carries nothing external, so nothing breaks for want of a library.
 - Built on its own branch (feat/limited-env); [instrument.md](instrument.md) gets the rule.
 
 ## 2026-10-25 · v2.8: the PUMA's torques are signals ([input 15](../input/2026-10-25-15-puma-torques.md))
@@ -44,7 +45,40 @@ The person answered the four questions of [detail-levels.md](detail-levels.md) �
 The person: "it's not necessary that we place things in arbitrary positions ... sorts everything from left to right. And draws the lines automatically ... drop new elements onto lines, and then they get connected"; today's lines "sometimes go in weird loops. And you can't drag the lines individually"; "if you can find an auto router, I would be fine with that ... there is an existing solution for something like this, and we don't have to reinvent it."
 
 - **Direction:** the Plant tab's diagram is laid out by the page, left to right, with wires routed automatically; blocks are not placed by hand. A block dropped onto a wire is inserted into it and wired.
-- **An existing layout and routing library**, not our own. It must work inside the one standalone page (inlined, no network), keep its licence notice, and pass the provenance test. Which one, and how feedback loops, subsystems and insertion behave, is researched and designed in [diagram-layout.md](diagram-layout.md) (in progress).
+- **An existing layout and routing library**, not our own. It must work inside the one standalone page (inlined, no network), keep its licence notice, and pass the provenance test. Researched and designed, not built: [diagram-layout.md](diagram-layout.md). The outcome:
+  - **ELK Layered, the Eclipse Layout Kernel (elkjs 0.12.0)**, vendored unmodified and called synchronously.
+    - Vendored is its engine file alone: 1.6 MB, EPL-2.0, sha256 pinned.
+    - Of 13 libraries surveyed and 6 approaches tried on the 11 diagram levels of the System library (120 wires), it was the only one with no wire through a block, none on top of another, and every wire on its port.
+    - Today's drawing has 32 wires through blocks and 1103 px of wire on wire.
+    - The page grows from 0.75 to 2.36 MB, well inside the 20 MB of [input 14](../input/2026-10-25-14-puma-notes-size.md).
+    - Runner-up FlexGraph (MIT, 41 KB): 16 days old, one author, 847 px of wire on wire in the triple pendulum.
+  - **We decide what is feedback, not ELK** (its own cycle breaking put the plant before r).
+    - A depth-first search from the Sources finds the back wires. The main line is the longest forward path to a Sink.
+    - The return path is the blocks walked back from a back wire with one wire in and one out, off the main line. They are drawn mirrored below the line.
+    - On all 11 levels this mirrors exactly the blocks the person flipped by hand (Ke, damping c, spring k, torque ripple, torque noise), so **Flip goes away**.
+    - Interpretation: where two Sinks compete, the longer path is the main line (the mass–spring–damper's line ends at its spring energy, x is a tap).
+  - **The picture's rules.**
+    - Measured with this plan's settings: 31 crossings in all against today's 43, 0 wires through blocks, 0 px wire on wire, 159 bends against 287, 55 of 57 main-line wires straight.
+    - Taps and outside inputs go above the line, the return path below, as preferences: forcing the order sent wires through blocks in 3 levels. Interpretation.
+    - A Sum takes input 1 from the left, fed-back inputs from below and others from above. Interpretation, after Simulink's round Sum.
+    - 56 px between columns gives every wire at least 30 px of straight line to drop on (120 of 120).
+  - **Editing.** These are interpretations:
+    - A block dropped onto a wire (or clicked into the selected wire) is wired in: input 1 takes the signal, output 1 the targets, signs unchanged, a Sink becomes a tap.
+    - **Del joins the neighbours** of a block that sits on one wire, and Shift+Del deletes without joining. Most tools make joining the variant, not the default. Ask the person.
+    - Wires are not dragged; a drag along a wire makes a branch.
+    - Dragging a block moves it onto another wire or reorders it in its column.
+    - Ungroup is added.
+    - Changes glide for 200 ms with the acted-on block held in place.
+  - **Nothing about the drawing is stored but the order of `blocks`.**
+    - `x`, `y` and `flip` are no longer written and are ignored when read; library systems lose them.
+    - Interpretation: no position hint is kept. Steering ELK by old positions raised crossings from 19 to 82 in the trial, and the picture must be the same on every machine and after Undo.
+    - An older page shows a new file's blocks stacked at the origin. Accepted.
+  - **Vendoring.**
+    - `vendor/elkjs-0.12.0/` with the licence text, our README, a manifest of sha256 hashes checked by the build and the tests, and `vendor/package.json` (CommonJS, or Node's `require` silently returns nothing in this ESM repository).
+    - It is inlined at the end of `lt-script`: out of the live worker, but in exported pages.
+    - It carries a notice comment and the EPL text, and Help gets an About line saying where the source is.
+    - The provenance test hashes each vendored section and applies its unchanged list to everything else. Vendored text gets the same list minus a per-library allow-list, which is empty for ELK.
+    - Interpretation: the full licence text is carried, though the EPL asks only for the statement for compiled code.
 
 ## 2026-10-24 · v2.7: time control, after review
 
