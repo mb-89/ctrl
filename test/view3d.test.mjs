@@ -1,6 +1,7 @@
 // The 3D view's math, in Node without a page: the orbit camera and its
 // projection, pan and zoom, the preset views and the view cube's 26 regions,
-// ribbons, dashes and fading paths, and picking links in a three.js scene.
+// ribbons, dashes and fading paths, picking links in a three.js scene, and
+// the cel shading: bands, outlines, and no texture but the light's ramp.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from '../src/vendor/three/three.module.min.js';
@@ -244,9 +245,11 @@ test('picking: a ray against the link meshes names the link, in either renderer'
   // The bounds hold every mesh.
   const b = V.robotBounds(robot.meshes);
   for (const p of [[-0.1, -0.1, -0.1], [1.05, 0, 0.5], [0, 1.1, 0.1]]) assert.ok(Math.hypot(...p.map((v, i) => v - b.center[i])) <= b.radius + 1e-9);
-  // The colour of a visual: its rgba (sRGB), else a neutral grey.
-  assert.equal(robot.meshes[2].material.color.getHexString(), 'ff8000');
-  assert.equal(robot.meshes[1].material.color.getHexString(), new THREE.Color().setRGB(0.72, 0.75, 0.78, THREE.SRGBColorSpace).getHexString());
+  // A visual's URDF colour gives its role; the role's token its colour.
+  assert.deepEqual(robot.meshes.map((m) => m.userData.role), ['dark', 'light', 'accent'], 'the grey block is dark, the post without a colour light');
+  V.styleRobot(robot, { parts: { light: [226, 221, 208, 1], dark: [89, 97, 107, 1], accent: [232, 105, 44, 1] }, outline: [21, 25, 28, 1] });
+  assert.equal(robot.meshes[2].material.color.getHexString(), 'e8692c');
+  assert.equal(robot.meshes[0].children[0].material.uniforms.color.value.getHexString(), '15191c', 'the outline');
   // Canvas mode draws coarser shapes.
   assert.ok(robot.meshes[1].userData.coarse.attributes.position.count < robot.meshes[1].geometry.attributes.position.count);
 });
@@ -255,4 +258,63 @@ test('setMatrix reads a row-major rotation and a position', () => {
   const m = V.setMatrix(new THREE.Matrix4(), { R: [0, -1, 0, 1, 0, 0, 0, 0, 1], p: [1, 2, 3] });
   near(new THREE.Vector3(1, 0, 0).applyMatrix4(m).toArray(), [1, 3, 3], 1e-12);
   near(new THREE.Vector3(0, 1, 0).applyMatrix4(m).toArray(), [0, 2, 3], 1e-12);
+});
+
+test('cel shading: three bands of light, the painter\'s the same as the shader\'s ramp', () => {
+  assert.ok(V.TOON_RAMP.length >= 3 && V.TOON_RAMP.length <= 4);
+  // Turned away, grazing, facing the light.
+  assert.deepEqual([-1, -0.3, 0, 0.3, 0.5, 0.9, 1].map(V.toonBand), [0, 0, 0.5, 0.5, 1, 1, 1]);
+  assert.equal(new Set([...Array(201)].map((_, i) => V.toonBand(-1 + i / 100))).size, 3, 'three bands, nothing between');
+  // Where three samples the ramp (dot · 0.5 + 0.5, nearest texel), the band is the same.
+  const ramp = V.toonRamp(), data = ramp.image.data;
+  for (let i = 0; i <= 200; i++) {
+    const ndl = -1 + i / 100, u = ndl * 0.5 + 0.5, texel = Math.min(data.length - 1, Math.floor(u * data.length));
+    near(data[texel] / 255, V.toonBand(ndl), 1 / 255, `dot ${ndl}`);
+  }
+  assert.equal(ramp.magFilter, THREE.NearestFilter); assert.equal(ramp.minFilter, THREE.NearestFilter);
+  // The trail fades in steps too.
+  assert.deepEqual([0, 0.002, 0.1, 0.34, 0.5, 0.7, 1].map(V.bandAlpha), [0, 0, 1 / 3, 2 / 3, 2 / 3, 1, 1]);
+  // Roles from URDF colours.
+  assert.deepEqual([null, [0.86, 0.84, 0.78, 1], [0.32, 0.34, 0.37, 1], [0.85, 0.27, 0.2, 1], [0.93, 0.55, 0.2, 1]].map(V.partRole), ['light', 'light', 'dark', 'accent', 'accent']);
+});
+
+test('outlines: a box has 12 hard edges, a cylinder its two rims, a sphere none; the hull\'s normals are smoothed', () => {
+  const seg = (g) => V.hardEdgePoints(g).length / 9;
+  assert.equal(seg(V.shapeGeometry({ type: 'box', size: [1, 2, 3] })), 12);
+  assert.equal(seg(V.shapeGeometry({ type: 'cylinder', radius: 0.1, length: 1 })), 2 * 48);
+  assert.equal(seg(V.shapeGeometry({ type: 'sphere', radius: 1 })), 0);
+  // The painter's edges of the coarse shapes: every edge borders two
+  // triangles (closed shapes), the hard ones as above.
+  for (const [geom, hard] of [[{ type: 'box', size: [1, 1, 1] }, 12], [{ type: 'cylinder', radius: 0.1, length: 1 }, 28], [{ type: 'sphere', radius: 1 }, 0]]) {
+    const E = V.meshEdges(V.shapeGeometry(geom, true));
+    let n = 0;
+    for (let e = 0; e < E.length; e += 5) { assert.ok(E[e + 3] >= 0, `${geom.type}: a border`); n += E[e + 4]; }
+    assert.equal(n, hard, geom.type);
+  }
+  // A box's corner: its three vertices there share one normal, diagonal.
+  const box = V.shapeGeometry({ type: 'box', size: [1, 1, 1] }), sn = V.smoothNormals(box), pos = box.attributes.position;
+  for (let i = 0; i < pos.count; i++) near([sn[3 * i], sn[3 * i + 1], sn[3 * i + 2]], [pos.getX(i), pos.getY(i), pos.getZ(i)].map((v) => Math.sign(v) / Math.sqrt(3)), 1e-6);
+});
+
+test('no texture but the light\'s ramp, and nothing loaded: shapes and colours are made by code', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/ui/view3d.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /Loader\b|\bfetch\(|XMLHttpRequest|new Image\b|\bimport\(|createImageBitmap|\b(Canvas|Video|Cube|Compressed|Data3D|DataArray|Depth)Texture\b|\.(png|jpe?g|gif|webp|ktx2?|hdr|exr|glb|gltf|obj|stl|dae|fbx|ttf|otf|woff2?)\b/i, 'view3d loads nothing and makes no other texture');
+  assert.equal(src.match(/new THREE\.DataTexture\(/g)?.length, 1, 'one texture is made: the ramp');
+  // Every texture a built robot holds is its ramp, a few bytes.
+  const robot = V.buildRobot(links), seen = new Set();
+  robot.group.traverse((o) => {
+    if (!o.material) return;
+    for (const v of Object.values(o.material)) if (v?.isTexture) seen.add(v);
+    for (const u of Object.values(o.material.uniforms ?? {})) if (u.value?.isTexture) seen.add(u.value);
+  });
+  assert.deepEqual([...seen], [robot.ramp]);
+  assert.ok(robot.ramp.isDataTexture && robot.ramp.image.data.length <= 4);
+  // Every surface is toon-shaded, with a hull and its hard edges.
+  for (const m of robot.meshes) {
+    assert.ok(m.material.isMeshToonMaterial);
+    assert.equal(m.material.gradientMap, robot.ramp);
+    assert.equal(m.children.length, 2);
+    assert.equal(m.children[0].material.side, THREE.BackSide);
+  }
 });

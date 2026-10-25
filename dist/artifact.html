@@ -53,6 +53,10 @@
   --axis-x: light-dark(#d0352b, #ff6259);
   --axis-y: light-dark(#23913a, #4fd46a);
   --axis-z: light-dark(#2a62d4, #5a9dff);
+  --part: light-dark(#e2ddd0, #cdc7b8);             
+  --part-dark: light-dark(#59616b, #6c7580);        
+  --part-accent: light-dark(#e8692c, #f47a3c);      
+  --part-line: light-dark(#15191c, #07090a);        
   --screen-ink: #ebf0f5;
   --screen-label: #c8d2da;
   --screen-line: #a0afbe;
@@ -12311,6 +12315,8 @@ function ribbonArrays(points, alpha = null) {
 }
 const onDash = (s, dash, gap) => !(dash > 0) || ((s % (dash + gap)) + dash + gap) % (dash + gap) <= dash;
 
+const FADE_BANDS = 3;
+const bandAlpha = (a) => (a <= 0.004 ? 0 : Math.ceil(a * FADE_BANDS - 1e-4) / FADE_BANDS);
 const RIBBON_VS = `
 attribute vec3 prev;
 attribute vec3 next;
@@ -12350,9 +12356,101 @@ varying float vAlpha;
 void main() {
   if (dash > 0.0 && mod(vArc, dash + gap) > dash) discard;
   if (vAlpha * opacity <= 0.004) discard;
-  gl_FragColor = vec4(color, opacity * vAlpha);
+  gl_FragColor = vec4(color, opacity * ceil(vAlpha * ${FADE_BANDS}.0 - 1e-4) / ${FADE_BANDS}.0);
   #include <colorspace_fragment>
 }`;
+function ribbonMaterial(resolution, { color, width, dash = 0, gap = 0, opacity = 1 }) {
+  const THREE = T();
+  return new THREE.ShaderMaterial({
+    vertexShader: RIBBON_VS, fragmentShader: RIBBON_FS, side: THREE.DoubleSide, transparent: true, depthWrite: false, depthTest: true,
+    uniforms: { resolution, width: { value: width }, color: { value: new THREE.Color(hexOf(color)) }, opacity: { value: opacity * color[3] }, dash: { value: dash }, gap: { value: gap } },
+  });
+}
+
+const TOON_RAMP = [0, 0, 0.5, 1];
+const LIGHT = { key: 2.2, ambient: 0.94, dir: [-0.45, 0.85, 0.5] };
+function toonBand(ndl) {
+  const n = TOON_RAMP.length;
+  return TOON_RAMP[Math.max(0, Math.min(n - 1, Math.floor((ndl * 0.5 + 0.5) * n)))];
+}
+function toonRamp() {
+  const THREE = T(), t = new THREE.DataTexture(Uint8Array.from(TOON_RAMP, (v) => Math.round(v * 255)), TOON_RAMP.length, 1, THREE.RedFormat);
+  t.minFilter = t.magFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  return t;
+}
+const OUTLINE = { silhouette: 1.6, edge: 1.2 };
+const EDGE_ANGLE = 30;
+const PART_ROLES = ['light', 'dark', 'accent'];
+function partRole(rgba) {
+  if (!rgba) return 'light';
+  const [r, g, b] = rgba, hi = Math.max(r, g, b), lo = Math.min(r, g, b);
+  return hi - lo > 0.3 ? 'accent' : 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? 'light' : 'dark';
+}
+
+const HULL_VS = `
+attribute vec3 smoothNormal;
+uniform vec2 resolution;
+uniform float width;
+void main() {
+  vec4 c = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec3 n = normalMatrix * smoothNormal;
+  vec2 d = vec2(n.x * projectionMatrix[0][0] * resolution.x, n.y * projectionMatrix[1][1] * resolution.y);
+  if (dot(d, d) > 1e-12) c.xy += normalize(d) * 2.0 * width / resolution * c.w;
+  gl_Position = c;
+}`;
+const HULL_FS = `
+uniform vec3 color;
+void main() {
+  gl_FragColor = vec4(color, 1.0);
+  #include <colorspace_fragment>
+}`;
+const placeKey = (pos, i) => `${Math.round(pos.getX(i) * 1e5) || 0},${Math.round(pos.getY(i) * 1e5) || 0},${Math.round(pos.getZ(i) * 1e5) || 0}`;
+function smoothNormals(geo) {
+  const pos = geo.attributes.position, nrm = geo.attributes.normal, n = pos.count, sum = new Map(), keys = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const k = keys[i] = placeKey(pos, i);
+    const s = sum.get(k) ?? [0, 0, 0];
+    s[0] += nrm.getX(i); s[1] += nrm.getY(i); s[2] += nrm.getZ(i);
+    sum.set(k, s);
+  }
+  const out = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++) out.set(unit(sum.get(keys[i])), 3 * i);
+  return out;
+}
+function hardEdgePoints(geo, angle = EDGE_ANGLE) {
+  const THREE = T(), e = new THREE.EdgesGeometry(geo, angle), p = e.attributes.position.array, out = [];
+  for (let i = 0; i < p.length; i += 6) out.push(p[i], p[i + 1], p[i + 2], p[i + 3], p[i + 4], p[i + 5], NaN, NaN, NaN);
+  e.dispose();
+  return out;
+}
+function meshEdges(geo, angle = EDGE_ANGLE) {
+  const pos = geo.attributes.position, idx = geo.index, n = idx ? idx.count : pos.count;
+  const at = (k) => (idx ? idx.getX(k) : k), ids = new Map(), id = (i) => {
+    const k = placeKey(pos, i);
+    if (!ids.has(k)) ids.set(k, ids.size);
+    return ids.get(k);
+  };
+  const v = (i) => [pos.getX(i), pos.getY(i), pos.getZ(i)], normals = [], byKey = new Map();
+  for (let k = 0; k < n; k += 3) {
+    const t = k / 3, tri = [at(k), at(k + 1), at(k + 2)];
+    const p0 = v(tri[0]), nr = cross(sub(v(tri[1]), p0), sub(v(tri[2]), p0));
+    normals[t] = norm(nr) > 1e-12 ? unit(nr) : null;
+    for (let j = 0; j < 3; j++) {
+      const a = tri[j], b = tri[(j + 1) % 3], ia = id(a), ib = id(b);
+      if (ia === ib) continue;
+      const key = ia < ib ? `${ia} ${ib}` : `${ib} ${ia}`, e = byKey.get(key);
+      if (e) e.t1 = t; else byKey.set(key, { a, b, t0: t, t1: -1 });
+    }
+  }
+  const out = [], c = Math.cos(angle * DEG);
+  for (const e of byKey.values()) {
+    const n0 = normals[e.t0], n1 = e.t1 >= 0 ? normals[e.t1] : null;
+    out.push(e.a, e.b, e.t0, e.t1, n0 && n1 && dot(n0, n1) < c ? 1 : 0);
+  }
+  return Int32Array.from(out);
+}
 
 const identity = { R: [1, 0, 0, 0, 1, 0, 0, 0, 1], p: [0, 0, 0] };
 function setMatrix(m, { R, p }) {
@@ -12370,20 +12468,32 @@ function shapeGeometry(geom, coarse = false) {
   }
   throw new Error(`unknown shape ${geom.type}`);
 }
-const DEFAULT_RGBA = [0.72, 0.75, 0.78, 1];
-function buildRobot(links) {
-  const THREE = T(), group = new THREE.Group(), byName = {}, meshes = [];
+function buildRobot(links, { resolution = { value: new (T().Vector2)(1, 1) } } = {}) {
+  const THREE = T(), group = new THREE.Group(), byName = {}, meshes = [], ramp = toonRamp();
+  const line = { value: new THREE.Color() };
   for (const link of links ?? []) {
     const g = new THREE.Group();
     g.name = link.name;
     g.matrixAutoUpdate = false;
     for (const v of link.visuals ?? []) {
-      const rgba = v.rgba ?? DEFAULT_RGBA;
-      const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color().setRGB(rgba[0], rgba[1], rgba[2], THREE.SRGBColorSpace), transparent: rgba[3] < 1, opacity: rgba[3] });
-      const mesh = new THREE.Mesh(shapeGeometry(v.geom), mat);
+      const alpha = v.rgba?.[3] ?? 1, geo = shapeGeometry(v.geom), coarse = shapeGeometry(v.geom, true);
+      const mesh = new THREE.Mesh(geo, new THREE.MeshToonMaterial({ gradientMap: ramp, transparent: alpha < 1, opacity: alpha }));
       mesh.matrixAutoUpdate = false;
       setMatrix(mesh.matrix, v.origin ?? identity);
-      mesh.userData = { link: link.name, coarse: shapeGeometry(v.geom, true) };
+      mesh.userData = { link: link.name, role: partRole(v.rgba), coarse, edges: meshEdges(coarse) };
+      geo.setAttribute('smoothNormal', new THREE.BufferAttribute(smoothNormals(geo), 3));
+      const hull = new THREE.Mesh(geo, new THREE.ShaderMaterial({
+        vertexShader: HULL_VS, fragmentShader: HULL_FS, side: THREE.BackSide,
+        uniforms: { resolution, width: { value: OUTLINE.silhouette }, color: line },
+      }));
+      const pts = hardEdgePoints(geo), r = ribbonArrays(pts), eg = new THREE.BufferGeometry();
+      for (const [name, k] of [['position', 3], ['prev', 3], ['next', 3], ['side', 1], ['arc', 1], ['alpha', 1]]) eg.setAttribute(name, new THREE.BufferAttribute(r[name], k));
+      eg.setIndex(r.index);
+      const edgeMat = ribbonMaterial(resolution, { color: [0, 0, 0, 1], width: OUTLINE.edge });
+      edgeMat.uniforms.color = line;
+      Object.assign(edgeMat, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 });
+      const edges = new THREE.Mesh(eg, edgeMat);
+      for (const o of [hull, edges]) { o.frustumCulled = false; o.userData.outline = true; mesh.add(o); }
       g.add(mesh);
       meshes.push(mesh);
     }
@@ -12391,7 +12501,11 @@ function buildRobot(links) {
     byName[link.name] = g;
   }
   group.updateMatrixWorld(true);
-  return { group, byName, meshes };
+  return { group, byName, meshes, ramp, line };
+}
+function styleRobot(robot, { parts, outline }) {
+  for (const m of robot.meshes) m.material.color.set(hexOf(parts[m.userData.role]));
+  robot.line.value.set(hexOf(outline));
 }
 function applyPoses(robot, poses) {
   for (const [name, pose] of Object.entries(poses ?? {})) {
@@ -12407,8 +12521,11 @@ function pickLink(camera, meshes, nx, ny) {
   return hit ? { link: hit.object.userData.link, point: hit.point.toArray(), distance: hit.distance } : null;
 }
 function robotBounds(meshes) {
-  const THREE = T(), box = new THREE.Box3();
-  for (const m of meshes) box.expandByObject(m);
+  const THREE = T(), box = new THREE.Box3(), b = new THREE.Box3();
+  for (const m of meshes) {
+    if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+    box.union(b.copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld));
+  }
   if (box.isEmpty()) return { center: [0, 0, 0], radius: 1 };
   const s = box.getBoundingSphere(new THREE.Sphere());
   return { center: s.center.toArray(), radius: Math.max(1e-3, s.radius) };
@@ -12438,15 +12555,15 @@ function createView3d(container, opts = {}) {
   const glCanvas = q('.v3d-gl'), cvCanvas = q('.v3d-cv'), labelsEl = q('.v3d-labels'), bar = q('.v3d-bar'), cubeEl = q('.v3d-cube'), triadEl = q('.v3d-triad'), tip = q('.v3d-tip'), note = q('.v3d-note');
 
   const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(FOV, 1, 0.01, 100);
-  const headlight = new THREE.DirectionalLight(0xffffff, 2.9), ambient = new THREE.AmbientLight(0xffffff, 1.05);
-  headlight.position.set(-0.4, 0.9, 0.75);
-  headlight.target.position.set(0, 0, 0);
-  camera.add(headlight, headlight.target);
+  const key = new THREE.DirectionalLight(0xffffff, LIGHT.key), ambient = new THREE.AmbientLight(0xffffff, LIGHT.ambient);
+  key.position.set(...LIGHT.dir);
+  key.target.position.set(0, 0, 0);
+  camera.add(key, key.target);
   scene.add(camera, ambient);
-  const robot = buildRobot(opts.links);
+  const resolution = { value: new THREE.Vector2(1, 1) };
+  const robot = buildRobot(opts.links, { resolution });
   scene.add(robot.group);
   const joints = opts.joints ?? [];
-  const resolution = { value: new THREE.Vector2(1, 1) };
   const paths = new Map();
   let frames = [], theme = null, grid = null, axisLines = [], frameLines = [];
   let w = 1, h = 1, dpr = 1, renderer = null, ctx2d = null, mode = 'canvas', destroyed = false;
@@ -12469,6 +12586,7 @@ function createView3d(container, opts = {}) {
       axis: [tok('--axis-x'), tok('--axis-y'), tok('--axis-z')],
       grid: mix(bg, ink, dark ? 0.12 : 0.08), gridMajor: mix(bg, ink, dark ? 0.24 : 0.18),
       ch: palette().ch.map(parseColor),
+      parts: { light: tok('--part'), dark: tok('--part-dark'), accent: tok('--part-accent') }, outline: tok('--part-line'),
     };
     probe.remove();
     if (!dark) theme.ch[0] = mix(theme.ch[0], ink, 0.35);
@@ -12487,12 +12605,7 @@ function createView3d(container, opts = {}) {
     else g.setIndex(new THREE.BufferAttribute(new Uint32Array(r.index), 1));
   }
   function ribbonMesh(points, alpha, { color, width, dash = 0, gap = 0, opacity = 1 }) {
-    const g = new THREE.BufferGeometry();
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: RIBBON_VS, fragmentShader: RIBBON_FS, side: THREE.DoubleSide, transparent: true, depthWrite: false, depthTest: true,
-      uniforms: { resolution, width: { value: width }, color: { value: new THREE.Color(hexOf(color)) }, opacity: { value: opacity * color[3] }, dash: { value: dash }, gap: { value: gap } },
-    });
-    const mesh = new THREE.Mesh(g, mat);
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), ribbonMaterial(resolution, { color, width, dash, gap, opacity }));
     mesh.frustumCulled = false;
     mesh.userData = { line: { points, alpha, color, width, dash, gap, opacity } };
     setRibbon(mesh, points, alpha);
@@ -12669,8 +12782,8 @@ function createView3d(container, opts = {}) {
       }
       g.stroke();
     }
-    const L = unit(sub(headlight.getWorldPosition(new THREE.Vector3()).toArray(), headlight.target.getWorldPosition(new THREE.Vector3()).toArray()));
-    const items = [];
+    const L = unit(sub(key.getWorldPosition(new THREE.Vector3()).toArray(), key.target.getWorldPosition(new THREE.Vector3()).toArray()));
+    const items = [], outline = cssOf(theme.outline), eps = 1e-6 * state.distance;
     const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
     for (const mesh of robot.meshes) {
       if (!mesh.visible) continue;
@@ -12682,7 +12795,7 @@ function createView3d(container, opts = {}) {
         wp[3 * i] = va.x; wp[3 * i + 1] = va.y; wp[3 * i + 2] = va.z;
         sp[i] = project(va.x, va.y, va.z);
       }
-      const n = idx ? idx.count : nv;
+      const n = idx ? idx.count : nv, depth = new Float64Array(n / 3).fill(NaN);   
       for (let k = 0; k < n; k += 3) {
         const i0 = idx ? idx.getX(k) : k, i1 = idx ? idx.getX(k + 1) : k + 1, i2 = idx ? idx.getX(k + 2) : k + 2;
         const a = sp[i0], b = sp[i1], c = sp[i2];
@@ -12690,10 +12803,19 @@ function createView3d(container, opts = {}) {
         if ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) >= 0) continue;   
         va.set(wp[3 * i0], wp[3 * i0 + 1], wp[3 * i0 + 2]); vb.set(wp[3 * i1], wp[3 * i1 + 1], wp[3 * i1 + 2]); vc.set(wp[3 * i2], wp[3 * i2 + 1], wp[3 * i2 + 2]);
         const nrm = vb.clone().sub(va).cross(vc.clone().sub(va)).normalize();
-        const lit = (ambient.intensity + headlight.intensity * Math.max(0, nrm.x * L[0] + nrm.y * L[1] + nrm.z * L[2])) / Math.PI;
+        const lit = (ambient.intensity + key.intensity * toonBand(nrm.x * L[0] + nrm.y * L[1] + nrm.z * L[2])) / Math.PI;
         tmpColor.copy(base).multiplyScalar(lit).add(em);
         tmpColor.r = Math.min(1, tmpColor.r); tmpColor.g = Math.min(1, tmpColor.g); tmpColor.b = Math.min(1, tmpColor.b);
-        items.push({ z: (a[2] + b[2] + c[2]) / 3, tri: [a, b, c], fill: tmpColor.getStyle(), alpha: mat.opacity });
+        depth[k / 3] = (a[2] + b[2] + c[2]) / 3;
+        items.push({ z: depth[k / 3], tri: [a, b, c], fill: tmpColor.getStyle(), alpha: mat.opacity });
+      }
+      const E = mesh.userData.edges;
+      for (let e = 0; e < E.length; e += 5) {
+        const a = sp[E[e]], b = sp[E[e + 1]], d0 = depth[E[e + 2]], d1 = E[e + 3] >= 0 ? depth[E[e + 3]] : NaN;
+        const f0 = d0 === d0, f1 = d1 === d1;
+        if (!a || !b || !(f0 || f1) || (f0 && f1 && !E[e + 4])) continue;
+        const silhouette = f0 !== f1;
+        items.push({ z: (f0 && f1 ? Math.min(d0, d1) : f0 ? d0 : d1) - eps, seg: [a, b], stroke: outline, width: silhouette ? 1.5 * OUTLINE.silhouette : OUTLINE.edge, alpha: mat.opacity, off: 0 });
       }
     }
     const lineItems = (m, out) => {
@@ -12705,7 +12827,7 @@ function createView3d(container, opts = {}) {
         if (!a || !b) continue;
         const len = Math.hypot(b[0] - a[0], b[1] - a[1]), off = run;
         run += len;
-        const al = (alpha ? (alpha[j] + alpha[j + 1]) / 2 : 1) * L2.opacity * L2.color[3];
+        const al = bandAlpha(alpha ? (alpha[j] + alpha[j + 1]) / 2 : 1) * L2.opacity * L2.color[3];
         if (al <= 0.004) continue;
         out.push({ z: Math.min(a[2], b[2]) - 1e-4 * state.distance, seg: [a, b], stroke: col, width: L2.width, alpha: al, dash: L2.dash > 0, off });
       }
@@ -12913,6 +13035,7 @@ function createView3d(container, opts = {}) {
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
 
   function restyle() {
+    styleRobot(robot, theme);
     buildGrid();
     buildAxes(true);
     buildFrames(true);
@@ -12956,6 +13079,7 @@ function createView3d(container, opts = {}) {
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect(); mo.disconnect(); media?.removeEventListener?.('change', onTheme);
       scene.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); o.userData?.coarse?.dispose(); });
+      robot.ramp.dispose();
       renderer?.dispose();
       root.remove();
     },
@@ -12963,7 +13087,7 @@ function createView3d(container, opts = {}) {
   return view;
 }
 
-return { orbitBasis, eyeOf, dirAngles, VIEWS, VIEW_KEYS, viewAngles, orbitBy, pixelSize, panBy, zoomAt, FLY, flyBy, fitDistance, easeAngles, placeCamera, CUBE_FACES, cubeRegions, cubeToScreen, cubeHit, cubeCell, parseColor, niceStep, pathPoints, thinPath, ribbonArrays, onDash, setMatrix, shapeGeometry, buildRobot, applyPoses, pickLink, robotBounds, projector, createView3d };
+return { orbitBasis, eyeOf, dirAngles, VIEWS, VIEW_KEYS, viewAngles, orbitBy, pixelSize, panBy, zoomAt, FLY, flyBy, fitDistance, easeAngles, placeCamera, CUBE_FACES, cubeRegions, cubeToScreen, cubeHit, cubeCell, parseColor, niceStep, pathPoints, thinPath, ribbonArrays, onDash, FADE_BANDS, bandAlpha, TOON_RAMP, LIGHT, toonBand, toonRamp, OUTLINE, EDGE_ANGLE, PART_ROLES, partRole, smoothNormals, hardEdgePoints, meshEdges, setMatrix, shapeGeometry, buildRobot, styleRobot, applyPoses, pickLink, robotBounds, projector, createView3d };
 })();
 // ---- ui/plant.js
 __mods['ui/plant.js'] = (() => {
