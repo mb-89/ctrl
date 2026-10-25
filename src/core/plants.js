@@ -77,10 +77,11 @@ const motorDiagram = (variants, { inputs = 2, Ts = 0.01 } = {}) => ({
         ...(inputs >= 3 ? [{ from: 'motor', to: 'ctrl:2' }, { from: 'r', to: 'esum' }, { from: 'int', to: 'esum:1' }, { from: 'esum', to: 'e' }] : []),
       ],
     });
-const motorViews = () => ([{
-      // The rotor turns with angle (counter-clockwise positive) inside a fixed
-      // dial; the yellow mark on the dial is the reference r.
-      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+const motorViews = () => shaftViews('Motor shaft', 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   i {i:5.1} A   load {d:3.1} N·m');
+// A shaft in a dial with a caption: the rotor turns with angle
+// (counter-clockwise positive); the yellow mark on the dial is r.
+const shaftViews = (name, caption) => ([{
+      name, kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
       shapes: [
         { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
         ...ticks(0.62),
@@ -91,7 +92,7 @@ const motorViews = () => ([{
           { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
         ] },
         { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   i {i:5.1} A   load {d:3.1} N·m', size: 13 },
+        { type: 'text', x: 0, y: -0.82, text: caption, size: 13 },
       ],
     }]);
 
@@ -99,6 +100,48 @@ const motorViews = () => ([{
 const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
   type: 'group', angle: (i * Math.PI) / 6, shapes: [{ type: 'line', x1: 0, y1: r, x2: 0, y2: r + (i % 3 ? 0.06 : 0.12), stroke: 'muted', lineWidth: i % 3 ? 1.5 : 3 }],
 }));
+
+// A servo axis: a torque drive moving an inertia, every state measured. The
+// Controller (variants given) commands the torque u, held to the drive's
+// limit; the drive answers with a lag, a load torque d brakes the rotor:
+//   torque drive 1/(τ·s + 1)   τ = 20 ms; its output is the torque
+//   rotor 1/(J·s + b)          J = 0.02 kg·m², b = 0.1 N·m·s/rad; out: the speed
+// The Controller reads r, the angle, the speed and the torque.
+const servoDiagram = (variants, { Ts = 0.002 } = {}) => ({
+  blocks: [
+    src('r', 30, 112, 'rad'),
+    src('d', 180, 230, 'N·m'),
+    ctrl(130, 90, 4, Ts, variants),
+    {
+      id: 'axis', type: 'subsystem', name: 'Axis', params: {}, x: 330, y: 96,
+      diagram: {
+        blocks: [
+          { id: 'u', type: 'inport', name: 'u', params: { port: 1 }, x: 30, y: 112 },
+          { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 230, y: 220 },
+          { id: 'drive', type: 'tf', name: 'torque drive 1/(τs + 1)', params: { num: [1], den: [0.02, 1], delay: 0 }, x: 130, y: 96 },
+          { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 260, y: 104 },
+          { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 370, y: 96 },
+          { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 540, y: 112 },
+          { id: 'T', type: 'outport', name: 'torque', params: { port: 2 }, x: 540, y: 30 },
+        ],
+        wires: [
+          { from: 'u', to: 'drive' }, { from: 'drive', to: 'tsum' }, { from: 'load', to: 'tsum:1' }, { from: 'tsum', to: 'rotor' },
+          { from: 'rotor', to: 'w' }, { from: 'drive', to: 'T' },
+        ],
+      },
+    },
+    { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+    sink('angle', 690, 106, 'rad'),
+    sink('speed', 690, 30, 'rad/s'),
+    sink('torque', 500, 200, 'N·m'),
+    sink('u', 330, 20, 'N·m'),
+  ],
+  wires: [
+    { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'axis' }, { from: 'ctrl', to: 'u' }, { from: 'd', to: 'axis:1' },
+    { from: 'axis', to: 'int' }, { from: 'axis', to: 'speed' }, { from: 'axis:1', to: 'torque' }, { from: 'int', to: 'angle' },
+    { from: 'int', to: 'ctrl:1' }, { from: 'axis', to: 'ctrl:2' }, { from: 'axis:1', to: 'ctrl:3' },
+  ],
+});
 
 // A cart on a track carrying a chain of rods (angles from upright), with the
 // control force F and the disturbance d as arrows on the cart, and the
@@ -298,6 +341,29 @@ export const EXAMPLE_PLANTS = [
       { name: 'Super-twisting', type: 'superTwisting', params: { lambda: 10, k1: 4, k2: 44, umin: -12, umax: 12 } },
     ], { inputs: 3, Ts: 0.001 }),
     views: motorViews(),
+  },
+  {
+    // The Hu–Lin variable gain against anti-windup (design/research/hu-lin.md):
+    // the same local LQR (Q, R) with a gain that grows as the angle nears r,
+    // with Hu and Lin's high gain, and clipped; a PID with each anti-windup.
+    name: 'Variable gain against anti-windup',
+    summary: 'A servo axis stepped far and near through a torque drive with a hard limit. Compare the Hu–Lin variable gain, which never saturates, with clipped LQR and anti-windup: what saturation costs, and each remedy.',
+    notes: 'A torque drive (its torque follows the command u with a 20 ms lag, limited to ±6 N·m) turns a rotor (J 0.02 kg·m², b 0.1 N·m·s/rad). The reference steps 5 rad at 0.25 s, far enough that every controller needs the limit, and back 0.5 rad at 2.75 s, a step none of them needs it for. The Controller reads the angle, the speed and the torque, every 2 ms. The scope shows r, the angle and u; switch on channel 4 for the speed.\n\nVariable gain (Hu–Lin): the page computes LQR gains for the weights ε·Q and R at 30 levels of ε from 0.0001 to 1, each with the largest ellipsoid around r on which its u cannot reach the limit; the ellipsoids are nested. At every sample the law takes the highest gain whose ellipsoid holds the error, interpolated between two levels. Far from r the gain is low, and it grows as the angle closes in: on the 5 rad step u rises to 4.9 N·m and never touches 6, the loop never opens, and the angle arrives with 0.5 % overshoot in 0.37 s (2 %). Its Computed box says how far the levels reach: a step of 17 rad from rest stays inside. Variable gain, high gain k 2 is Hu and Lin\'s own improvement, u = sat(2·K(ε)·e): it uses the limit for 0.08 s, arrives with no overshoot in 0.33 s, and takes the small step in 0.14 s.\n\nLQR, clipped: the gain the variable gain ends with, from the start, its u clipped at the limit. It sits there for 0.31 s and overshoots 11 %; on a plant with one more integration a clipped high gain opens the loop for good. PID, clamping (Kp 16, Ki 4, Kd 1.2, the best of a search on small steps): 0.7 % overshoot in 0.36 s, but the integral it gathered makes the small step after it settle in 1.3 s. PID, back-calculation with the rule-of-thumb tracking time Tt = √(Ti·Td) = 0.55 s pulls the integral far below while the P part alone is past the limit: it creeps toward r and has not settled after 2.5 s, and after the small step it passes r by 0.26 rad; set Tt to 4 s (= Ti) and it behaves (1.9 %, 0.34 s). PID, no anti-windup: 3.9 % overshoot and a tail that lasts the whole step.\n\nTry: change J by 20 % (open Axis, rotor den [0.016, 0.1] or [0.024, 0.1]): the variable gain keeps its shape (0.5 %, 0.34 to 0.40 s), designed again for the new rotor. Give d a load torque of 1 N·m: the variable gain is state feedback without an integral and holds the shaft 0.064 rad off r, where the PID\'s integral removes the error. Analysis shows the variable gain near r, where it is the LQR.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 5, time: 0.25 } }, { type: 'step', params: { amplitude: -0.5, time: 2.75 } }] },
+      d: { period: PERIOD, components: [] },
+    },
+    scope: { channels: channels('r', 'angle', 'u', { source: 'speed', on: false }) },
+    ui: ui('Servo shaft'),
+    diagram: servoDiagram([
+      { name: 'Variable gain (Hu–Lin)', type: 'huLin', params: { Q: [1000, 0, 0], R: 1, umin: -6, umax: 6 } },
+      { name: 'Variable gain, high gain k 2', type: 'huLin', params: { Q: [1000, 0, 0], R: 1, k: 2, umin: -6, umax: 6 } },
+      { name: 'LQR, clipped', type: 'lqr', params: { Q: [1000, 0, 0], R: 1, umin: -6, umax: 6 } },
+      { name: 'PID, clamping', type: 'pid', params: { Kp: 16, Ki: 4, Kd: 1.2, Tf: 0.005, aw: 'clamp', umin: -6, umax: 6 } },
+      { name: 'PID, back-calculation', type: 'pid', params: { Kp: 16, Ki: 4, Kd: 1.2, Tf: 0.005, aw: 'back', umin: -6, umax: 6 } },
+      { name: 'PID, no anti-windup', type: 'pid', params: { Kp: 16, Ki: 4, Kd: 1.2, Tf: 0.005, aw: 'off', umin: -6, umax: 6 } },
+    ]),
+    views: shaftViews('Servo shaft', 'angle {angle:5.2} rad   r {r:4.1} rad   u {u:5.2} N·m   torque {torque:5.2} N·m'),
   },
   {
     name: 'Encoder errors and torque ripple',

@@ -44,7 +44,7 @@
 // computation (a plan; the tab folds it away), `tune: false` one auto-tune
 // leaves alone.
 
-import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, poleOf } from './design.js';
+import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLinDesign, poleOf } from './design.js';
 import { DesignError } from './linearize.js';
 import { planLaw } from './planner.js';
 
@@ -402,6 +402,35 @@ export const CONTROLLERS = {
       return { ...staticLinear(0, Array.from(values.K.subarray(j * m, (j + 1) * m))), note: `the plan's gains at sample ${j} of ${steps} (t = ${((j + Math.round(p.start / Ts)) * Ts).toFixed(2)} s), frozen: along the plan they change every sample` };
     },
   },
+  huLin: {
+    // The Hu–Lin variable gain (design/research/hu-lin.md; design.js,
+    // huLinDesign): LQR gains for Q·ε and R, ε from `low` up to 1, each on
+    // its ellipsoid, nested, inside which its linear law cannot reach the
+    // limits. At each sample the law takes the highest level whose ellipsoid
+    // holds the error, interpolated between two levels (huLinLaw): far from
+    // r the gain is low, and it grows as y nears r, so u stays near the
+    // limit but inside it and the loop never opens. k > 1 is Hu and Lin's
+    // saturated high gain, u = sat(k·K(ε)·e). Every state measured, as LQR.
+    // There is no Copy as numbers: a table of ellipsoids is always computed.
+    label: 'Variable gain (Hu–Lin)', summary: 'u = us·r − K(ε)·(y − ys·r); ε, the gain, grows as y nears r',
+    designed: true, version: 1, computes: ['K', 'S', 'ys', 'us'],
+    params: [
+      ...WEIGHTS,
+      num('low', 'Lowest level ε', 1e-4, { positive: true, max: 1, tune: false, help: 'far from r the weights are ε·Q: smaller reaches farther and starts more gently' }),
+      num('levels', 'Levels', 30, { int: true, min: 2, max: 200, tune: false, help: 'gains between the lowest level and 1, on nested ellipsoids; the law interpolates between them' }),
+      num('k', 'High gain k', 1, { min: 1, help: 'Hu and Lin\'s saturated high gain, u = sat(k·K(ε)·e); 1 keeps u inside the limits' }),
+      num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }),
+      PREFILTER, ...LIMITS,
+    ],
+    design: (p, ctx) => huLinDesign(p, ctx),
+    make(p, Ts, values) { return values ? huLinLaw(p, Ts, values) : OFF; },
+    // Near r the error lies inside the highest level: the LQR there, times k.
+    linear(p, Ts, at, values) {
+      if (!values) throw noDesign('huLin');
+      const K = huLinGain(values, values.N - 1, 0).map((g) => g * p.k);
+      return { ...staticLinear(values.us + K.reduce((s, g, i) => s + g * values.ys[i], 0), K, p.Tr), note: 'the gain near r, where it is highest; farther from r it is lower' };
+    },
+  },
   relay: {
     // On/off control: u0 + d while the error is positive, u0 − d while it is
     // negative, switching only once e passes ±ε (hysteresis), so a noisy
@@ -495,6 +524,52 @@ export const CONTROLLERS = {
     linear() { throw Object.assign(new Error('super-twisting has no linear model: √|s| has infinite slope at s = 0'), { hint: 'analyse another variant (a sliding mode with a boundary layer is linear inside it)' }); },
   },
 };
+
+// The gains of level j, plus lam times the step to level j + 1.
+function huLinGain(v, j, lam) {
+  const K = v.K.slice(j * v.m, (j + 1) * v.m);
+  if (lam) for (let i = 0; i < v.m; i++) K[i] += lam * (v.K[(j + 1) * v.m + i] - K[i]);
+  return K;
+}
+// The level of the error e: eᵀ S_j e, where e lies inside level j's
+// ellipsoid while it is at most ū² (huLinDesign).
+function huLinForm(v, j, e) {
+  const o = j * v.m * v.m;
+  let g = 0;
+  for (let a = 0; a < v.m; a++) for (let b = 0; b < v.m; b++) g += e[a] * v.S[o + a * v.m + b] * e[b];
+  return g;
+}
+// Where e lies among the levels: { j, lam }, the highest level whose
+// ellipsoid holds e (the full gain near r), and how far toward the next it
+// has come (0 on level j's boundary, 1 on level j + 1's). Outside the lowest
+// level: j = 0, lam = 0, the lowest gain (its u may reach the limit there).
+export function huLinLevel(v, e, room) {
+  const lim = room > 0 ? room * room : 0;
+  let above = huLinForm(v, v.N - 1, e);
+  if (above <= lim) return { j: v.N - 1, lam: 0 };
+  for (let j = v.N - 2; j >= 0; j--) {
+    const g = huLinForm(v, j, e);
+    if (g <= lim) return { j, lam: (lim - g) / (above - g) };
+    above = g;
+  }
+  return { j: 0, lam: 0 };
+}
+// The law: u = us·rf − k·K(ε)·(y − ys·rf), held to the limits; ū is the room
+// they leave around us·rf, the input that holds y at rf.
+function huLinLaw(p, Ts, v) {
+  const pre = prefilter(p, Ts), e = new Array(v.m);
+  return {
+    step(x) {
+      const rf = pre(x[0]);
+      for (let i = 0; i < v.m; i++) e[i] = (x[i + 1] ?? 0) - v.ys[i] * rf;
+      const u0 = v.us * rf, { j, lam } = huLinLevel(v, e, Math.min(p.umax - u0, u0 - p.umin));
+      const K = huLinGain(v, j, lam);
+      let u = u0;
+      for (let i = 0; i < v.m; i++) u -= p.k * K[i] * e[i];
+      return clamp(u, p.umin, p.umax);
+    },
+  };
+}
 
 // The sliding variable s = λ·e + ė of both sliding-mode laws, from the inputs
 // [r, y, ẏ]: e = rf − y and ė = ṙf − ẏ, with rf the prefiltered reference and

@@ -3672,6 +3672,47 @@ function lqrDesign(lin, { Q, R, track = 1, Ts }) {
   return { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings };
 }
 
+function huLinDesign(p, ctx) {
+  if (!(Number.isFinite(p.umin) && Number.isFinite(p.umax))) throw new DesignError('no-limits', 'the variable gain keeps u inside its limits, and this variant has none: without a limit its gain would simply be the highest', 'set u min and u max to the actuator\'s limits, or use LQR');
+  const lin = ctx.linearize('origin');
+  const q = Array.isArray(p.Q) ? p.Q : [p.Q], N = p.levels;
+  const eps = Array.from({ length: N }, (_, i) => p.low ** (1 - i / (N - 1)));
+  const designs = eps.map((e) => lqrDesign(lin, { Q: q.map((v) => v * e), R: p.R, track: p.track, Ts: ctx.Ts }));
+  const { n, m, outputs } = lin, labels = outputs.map((o) => o.label);
+  const Ci = inv(lin.C);
+  const S = designs.map((d) => {
+    const Pi = inv(d.P), w = d.Kx.reduce((s, a, i) => s + a * d.Kx.reduce((t, b, j) => t + Pi[i][j] * b, 0), 0);
+    const M = d.P.map((row) => row.map((v) => v * w));
+    return mul(mul(transpose(Ci), M), Ci);
+  });
+  const warnings = [...new Set(designs.flatMap((d) => d.warnings))];
+  for (let i = 0; i + 1 < N; i++) {
+    const Ds = S[i + 1].map((row, a) => row.map((v, b) => (v + S[i + 1][b][a] - S[i][a][b] - S[i][b][a]) / 2));
+    const lo = Math.min(...eig(Ds).map((z) => z.re)), size = Math.max(...S[i + 1].flat().map(Math.abs));
+    if (lo < -1e-6 * size) { warnings.push(`the ellipsoids of ε = ${fmt(eps[i])} and ${fmt(eps[i + 1])} are not nested: there the gain may step back as the error shrinks`); break; }
+  }
+  let ys = new Array(m).fill(0), us = 0;
+  if (p.track) {
+    const M = [...lin.A.map((row, i) => [...row, lin.B[i][0]]), [...lin.C[p.track - 1], 0]];
+    const sol = rank(equilibrate(M).M) === n + 1 ? solve(M, [...new Array(n).fill(0), 1]) : [NaN];
+    if (!sol.every(Number.isFinite)) throw new DesignError('no-rest', `no input holds ${labels[p.track - 1]} at a steady r`, 'set r applies to 0, or track a measurement the plant can hold');
+    ys = mul(lin.C, sol.slice(0, n).map((v) => [v])).map((r) => r[0]);
+    us = sol[n];
+  }
+  const room = Math.min(p.umax, -p.umin);
+  const reach = (Sx) => { const g = ys.reduce((s, a, i) => s + a * ys.reduce((t, b, j) => t + Sx[i][j] * b, 0), 0); return g > 0 && room > 0 ? room / Math.sqrt(g) : Infinity; };
+  const unit = p.track && outputs[p.track - 1].unit ? ` ${outputs[p.track - 1].unit}` : '';
+  const rows = [
+    { label: 'K near r', value: designs[N - 1].K, labels, note: `ε = 1: Q, R as given` },
+    { label: 'K far', value: designs[0].K, labels, note: `ε = ${fmt(p.low)}: Q·ε` },
+    { label: 'levels', value: N, note: `ε = ${fmt(p.low)} … 1, nested ellipsoids` },
+    ...(p.track ? [{ label: 'reach', value: [reach(S[0]), reach(S[N - 1])], labels: ['inside', 'full gain'], note: `steps of ${labels[p.track - 1]}${unit} from rest the levels hold without reaching the limit` }] : []),
+    { label: 'slowest pole', value: designs[N - 1].rows.at(-1).value, note: 'near r' },
+  ];
+  const values = { m, N, eps, K: designs.flatMap((d) => d.K), S: S.flatMap((x) => x.flat()), ys, us };
+  return { values, rows, warnings };
+}
+
 function poleOf(lin) {
   const Ci = inv(lin.C), A = mul(mul(lin.C, lin.A), Ci), B = mul(lin.C, lin.B).map((b) => b[0]);
   const c = -B[3] / B[2], row = A[3].map((v, j) => v + c * A[2][j]), gl = row[1];
@@ -3966,12 +4007,12 @@ function trajectoryDesign(p, ctx) {
   return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }
 
-return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, poleOf, kalmanDesign, placedDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, huLinDesign, poleOf, kalmanDesign, placedDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
 
-const { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, poleOf } = __mods['core/design.js'];
+const { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLinDesign, poleOf } = __mods['core/design.js'];
 const { DesignError } = __mods['core/linearize.js'];
 const { planLaw } = __mods['core/planner.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
@@ -4240,6 +4281,25 @@ const CONTROLLERS = {
       return { ...staticLinear(0, Array.from(values.K.subarray(j * m, (j + 1) * m))), note: `the plan's gains at sample ${j} of ${steps} (t = ${((j + Math.round(p.start / Ts)) * Ts).toFixed(2)} s), frozen: along the plan they change every sample` };
     },
   },
+  huLin: {
+    label: 'Variable gain (Hu–Lin)', summary: 'u = us·r − K(ε)·(y − ys·r); ε, the gain, grows as y nears r',
+    designed: true, version: 1, computes: ['K', 'S', 'ys', 'us'],
+    params: [
+      ...WEIGHTS,
+      num('low', 'Lowest level ε', 1e-4, { positive: true, max: 1, tune: false, help: 'far from r the weights are ε·Q: smaller reaches farther and starts more gently' }),
+      num('levels', 'Levels', 30, { int: true, min: 2, max: 200, tune: false, help: 'gains between the lowest level and 1, on nested ellipsoids; the law interpolates between them' }),
+      num('k', 'High gain k', 1, { min: 1, help: 'Hu and Lin\'s saturated high gain, u = sat(k·K(ε)·e); 1 keeps u inside the limits' }),
+      num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }),
+      PREFILTER, ...LIMITS,
+    ],
+    design: (p, ctx) => huLinDesign(p, ctx),
+    make(p, Ts, values) { return values ? huLinLaw(p, Ts, values) : OFF; },
+    linear(p, Ts, at, values) {
+      if (!values) throw noDesign('huLin');
+      const K = huLinGain(values, values.N - 1, 0).map((g) => g * p.k);
+      return { ...staticLinear(values.us + K.reduce((s, g, i) => s + g * values.ys[i], 0), K, p.Tr), note: 'the gain near r, where it is highest; farther from r it is lower' };
+    },
+  },
   relay: {
     label: 'Relay (on/off)', summary: 'u = u0 ± d by the sign of e, hysteresis ε',
     params: [num('d', 'Amplitude d', 1, { unit: 'u', help: 'negative for a plant whose y falls when u rises' }), num('eps', 'Hysteresis ε', 0, { min: 0, help: 'switches when e = r − y passes +ε or −ε' }), num('u0', 'Bias u0', 0, { unit: 'u' }), ...LIMITS],
@@ -4310,6 +4370,43 @@ const CONTROLLERS = {
   },
 };
 
+function huLinGain(v, j, lam) {
+  const K = v.K.slice(j * v.m, (j + 1) * v.m);
+  if (lam) for (let i = 0; i < v.m; i++) K[i] += lam * (v.K[(j + 1) * v.m + i] - K[i]);
+  return K;
+}
+function huLinForm(v, j, e) {
+  const o = j * v.m * v.m;
+  let g = 0;
+  for (let a = 0; a < v.m; a++) for (let b = 0; b < v.m; b++) g += e[a] * v.S[o + a * v.m + b] * e[b];
+  return g;
+}
+function huLinLevel(v, e, room) {
+  const lim = room > 0 ? room * room : 0;
+  let above = huLinForm(v, v.N - 1, e);
+  if (above <= lim) return { j: v.N - 1, lam: 0 };
+  for (let j = v.N - 2; j >= 0; j--) {
+    const g = huLinForm(v, j, e);
+    if (g <= lim) return { j, lam: (lim - g) / (above - g) };
+    above = g;
+  }
+  return { j: 0, lam: 0 };
+}
+function huLinLaw(p, Ts, v) {
+  const pre = prefilter(p, Ts), e = new Array(v.m);
+  return {
+    step(x) {
+      const rf = pre(x[0]);
+      for (let i = 0; i < v.m; i++) e[i] = (x[i + 1] ?? 0) - v.ys[i] * rf;
+      const u0 = v.us * rf, { j, lam } = huLinLevel(v, e, Math.min(p.umax - u0, u0 - p.umin));
+      const K = huLinGain(v, j, lam);
+      let u = u0;
+      for (let i = 0; i < v.m; i++) u -= p.k * K[i] * e[i];
+      return clamp(u, p.umin, p.umax);
+    },
+  };
+}
+
 function surface(p, Ts) {
   const pre = prefilter(p, Ts);
   return (x) => {
@@ -4374,7 +4471,7 @@ function makeLaw(variant, Ts, lib = CONTROLLERS, values = null) {
 }
 
 
-return { ANTI_WINDUP, trackingTime, CONTROLLERS, CONTROLLER_TYPES, normalizeVariant, makeLaw };
+return { ANTI_WINDUP, trackingTime, CONTROLLERS, huLinLevel, CONTROLLER_TYPES, normalizeVariant, makeLaw };
 })();
 // ---- core/structure.js
 __mods['core/structure.js'] = (() => {
@@ -4758,6 +4855,15 @@ function lqr(p, o) {
   return below(d, `K, kr: LQR from the plant at its origin, ${weights(p)}`, 'LQR');
 }
 
+function huLin(p, o) {
+  const v = o.values, m = Math.max(1, o.inputs.length - 1);
+  const K = v ? v.K.slice((v.N - 1) * v.m, v.N * v.m).map((g) => g * p.k) : unknown(m);
+  const kr = v ? v.us + K.reduce((s, g, i) => s + g * v.ys[i], 0) : UNKNOWN;
+  const d = stateFeedback({ K, kr, Tr: p.Tr, umin: p.umin, umax: p.umax }, o);
+  const far = v ? `${fmt(p.k * v.K[0])}` : '–';
+  return below(below(d, `K near r; far from r it falls to ${far}… (ε ${fmt(p.low)}), so u stays inside`), `K(ε): LQR from the plant at ${p.levels} levels on nested ellipsoids, ${weights(p)}${p.k > 1 ? `, ×${fmt(p.k)}` : ''}`, 'Variable gain (Hu–Lin)');
+}
+
 function scheduledPI(p, o) {
   const v = o.values, n = p.at.length;
   const common = { Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, u0: v?.u0 ?? 0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
@@ -4819,7 +4925,7 @@ function luenbergerPlaced(p, o) {
   return estimator(p, o, 'luenberger', { n, m, lines: ['model from the plant, at its origin; L from the poles', `error poles at s = −${p.w.map(fmt).join(', −')} 1/s`] });
 }
 
-const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenbergerPlaced, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, huLin, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenbergerPlaced, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {
   const layout = LAYOUTS[variant.type];
@@ -7453,8 +7559,9 @@ const motorDiagram = (variants, { inputs = 2, Ts = 0.01 } = {}) => ({
         ...(inputs >= 3 ? [{ from: 'motor', to: 'ctrl:2' }, { from: 'r', to: 'esum' }, { from: 'int', to: 'esum:1' }, { from: 'esum', to: 'e' }] : []),
       ],
     });
-const motorViews = () => ([{
-      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+const motorViews = () => shaftViews('Motor shaft', 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   i {i:5.1} A   load {d:3.1} N·m');
+const shaftViews = (name, caption) => ([{
+      name, kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
       shapes: [
         { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
         ...ticks(0.62),
@@ -7465,13 +7572,49 @@ const motorViews = () => ([{
           { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
         ] },
         { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   i {i:5.1} A   load {d:3.1} N·m', size: 13 },
+        { type: 'text', x: 0, y: -0.82, text: caption, size: 13 },
       ],
     }]);
 
 const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
   type: 'group', angle: (i * Math.PI) / 6, shapes: [{ type: 'line', x1: 0, y1: r, x2: 0, y2: r + (i % 3 ? 0.06 : 0.12), stroke: 'muted', lineWidth: i % 3 ? 1.5 : 3 }],
 }));
+
+const servoDiagram = (variants, { Ts = 0.002 } = {}) => ({
+  blocks: [
+    src('r', 30, 112, 'rad'),
+    src('d', 180, 230, 'N·m'),
+    ctrl(130, 90, 4, Ts, variants),
+    {
+      id: 'axis', type: 'subsystem', name: 'Axis', params: {}, x: 330, y: 96,
+      diagram: {
+        blocks: [
+          { id: 'u', type: 'inport', name: 'u', params: { port: 1 }, x: 30, y: 112 },
+          { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 230, y: 220 },
+          { id: 'drive', type: 'tf', name: 'torque drive 1/(τs + 1)', params: { num: [1], den: [0.02, 1], delay: 0 }, x: 130, y: 96 },
+          { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 260, y: 104 },
+          { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 370, y: 96 },
+          { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 540, y: 112 },
+          { id: 'T', type: 'outport', name: 'torque', params: { port: 2 }, x: 540, y: 30 },
+        ],
+        wires: [
+          { from: 'u', to: 'drive' }, { from: 'drive', to: 'tsum' }, { from: 'load', to: 'tsum:1' }, { from: 'tsum', to: 'rotor' },
+          { from: 'rotor', to: 'w' }, { from: 'drive', to: 'T' },
+        ],
+      },
+    },
+    { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+    sink('angle', 690, 106, 'rad'),
+    sink('speed', 690, 30, 'rad/s'),
+    sink('torque', 500, 200, 'N·m'),
+    sink('u', 330, 20, 'N·m'),
+  ],
+  wires: [
+    { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'axis' }, { from: 'ctrl', to: 'u' }, { from: 'd', to: 'axis:1' },
+    { from: 'axis', to: 'int' }, { from: 'axis', to: 'speed' }, { from: 'axis:1', to: 'torque' }, { from: 'int', to: 'angle' },
+    { from: 'int', to: 'ctrl:1' }, { from: 'axis', to: 'ctrl:2' }, { from: 'axis:1', to: 'ctrl:3' },
+  ],
+});
 
 function cartView(name, rods, caption, box) {
   let chain = [];
@@ -7645,6 +7788,26 @@ const EXAMPLE_PLANTS = [
       { name: 'Super-twisting', type: 'superTwisting', params: { lambda: 10, k1: 4, k2: 44, umin: -12, umax: 12 } },
     ], { inputs: 3, Ts: 0.001 }),
     views: motorViews(),
+  },
+  {
+    name: 'Variable gain against anti-windup',
+    summary: 'A servo axis stepped far and near through a torque drive with a hard limit. Compare the Hu–Lin variable gain, which never saturates, with clipped LQR and anti-windup: what saturation costs, and each remedy.',
+    notes: 'A torque drive (its torque follows the command u with a 20 ms lag, limited to ±6 N·m) turns a rotor (J 0.02 kg·m², b 0.1 N·m·s/rad). The reference steps 5 rad at 0.25 s, far enough that every controller needs the limit, and back 0.5 rad at 2.75 s, a step none of them needs it for. The Controller reads the angle, the speed and the torque, every 2 ms. The scope shows r, the angle and u; switch on channel 4 for the speed.\n\nVariable gain (Hu–Lin): the page computes LQR gains for the weights ε·Q and R at 30 levels of ε from 0.0001 to 1, each with the largest ellipsoid around r on which its u cannot reach the limit; the ellipsoids are nested. At every sample the law takes the highest gain whose ellipsoid holds the error, interpolated between two levels. Far from r the gain is low, and it grows as the angle closes in: on the 5 rad step u rises to 4.9 N·m and never touches 6, the loop never opens, and the angle arrives with 0.5 % overshoot in 0.37 s (2 %). Its Computed box says how far the levels reach: a step of 17 rad from rest stays inside. Variable gain, high gain k 2 is Hu and Lin\'s own improvement, u = sat(2·K(ε)·e): it uses the limit for 0.08 s, arrives with no overshoot in 0.33 s, and takes the small step in 0.14 s.\n\nLQR, clipped: the gain the variable gain ends with, from the start, its u clipped at the limit. It sits there for 0.31 s and overshoots 11 %; on a plant with one more integration a clipped high gain opens the loop for good. PID, clamping (Kp 16, Ki 4, Kd 1.2, the best of a search on small steps): 0.7 % overshoot in 0.36 s, but the integral it gathered makes the small step after it settle in 1.3 s. PID, back-calculation with the rule-of-thumb tracking time Tt = √(Ti·Td) = 0.55 s pulls the integral far below while the P part alone is past the limit: it creeps toward r and has not settled after 2.5 s, and after the small step it passes r by 0.26 rad; set Tt to 4 s (= Ti) and it behaves (1.9 %, 0.34 s). PID, no anti-windup: 3.9 % overshoot and a tail that lasts the whole step.\n\nTry: change J by 20 % (open Axis, rotor den [0.016, 0.1] or [0.024, 0.1]): the variable gain keeps its shape (0.5 %, 0.34 to 0.40 s), designed again for the new rotor. Give d a load torque of 1 N·m: the variable gain is state feedback without an integral and holds the shaft 0.064 rad off r, where the PID\'s integral removes the error. Analysis shows the variable gain near r, where it is the LQR.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 5, time: 0.25 } }, { type: 'step', params: { amplitude: -0.5, time: 2.75 } }] },
+      d: { period: PERIOD, components: [] },
+    },
+    scope: { channels: channels('r', 'angle', 'u', { source: 'speed', on: false }) },
+    ui: ui('Servo shaft'),
+    diagram: servoDiagram([
+      { name: 'Variable gain (Hu–Lin)', type: 'huLin', params: { Q: [1000, 0, 0], R: 1, umin: -6, umax: 6 } },
+      { name: 'Variable gain, high gain k 2', type: 'huLin', params: { Q: [1000, 0, 0], R: 1, k: 2, umin: -6, umax: 6 } },
+      { name: 'LQR, clipped', type: 'lqr', params: { Q: [1000, 0, 0], R: 1, umin: -6, umax: 6 } },
+      { name: 'PID, clamping', type: 'pid', params: { Kp: 16, Ki: 4, Kd: 1.2, Tf: 0.005, aw: 'clamp', umin: -6, umax: 6 } },
+      { name: 'PID, back-calculation', type: 'pid', params: { Kp: 16, Ki: 4, Kd: 1.2, Tf: 0.005, aw: 'back', umin: -6, umax: 6 } },
+      { name: 'PID, no anti-windup', type: 'pid', params: { Kp: 16, Ki: 4, Kd: 1.2, Tf: 0.005, aw: 'off', umin: -6, umax: 6 } },
+    ]),
+    views: shaftViews('Servo shaft', 'angle {angle:5.2} rad   r {r:4.1} rad   u {u:5.2} N·m   torque {torque:5.2} N·m'),
   },
   {
     name: 'Encoder errors and torque ripple',
@@ -8794,7 +8957,7 @@ function fromPlant(e) {
 
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = {
-  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', huLin: 'State feedback', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -10679,6 +10842,7 @@ const UNTUNABLE = {
   swingUp: 'A swing-up switches between pumping energy and catching the pole; its gains do not act on r − y. Tune its catching gains as a State feedback variant.',
   relay: 'A relay has no gains to tune; the relay method uses one to find Ku and Pu.',
   trajectory: 'A planned swing-up follows a plan computed from the plant: it has no gains of its own to tune. Change its inputs (T, Q, R) in the Controller tab.',
+  huLin: 'The variable gain computes its gains from the plant, a table of them on nested ellipsoids: it has none of its own to tune. Change its inputs (Q, R, the lowest level, k) in the Controller tab.',
 };
 const undesigned = (v) => `${CONTROLLERS[v.type].label} computes its numbers from the plant, and has none now; see its Computed box in the Controller tab, or tune a hand variant`;
 
@@ -17421,6 +17585,7 @@ const ABOUT = {
   pid: 'The workhorse. P reacts to the error, I removes what is left, D damps (on the measurement, filtered by Tf). b weights the reference in P; the prefilter Tr (Vorfilter) smooths reference jumps. Feedforward puts out what following r takes, from r alone: Kff·r, Kv·dr/dt, Ka·d²r/dt². u min/max are the actuator limits; anti-windup (clamping, back-calculation with Tt, or off) keeps the integral from winding up at a limit.',
   stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
   lqr: 'State feedback whose gains are computed from the plant as it is wired: the page linearises it at its origin and solves the discrete LQR problem. Q weighs the error of each measurement, R the effort; every state must be measured. Change the plant and the gains follow.',
+  huLin: 'The variable gain of Hu and Lin: state feedback whose gain grows as y nears r, computed from the plant as it is wired. The page solves LQR for the weights ε·Q and R at levels ε from the lowest up to 1, each with the largest ellipsoid around r on which its u stays inside the limits; the ellipsoids are nested. At every sample the law takes the highest gain whose ellipsoid holds the error, interpolated between two levels: far from r a gentle gain, near it the full LQR, u near its limit but never past it, so the loop never opens. k above 1 is their saturated high gain: faster, with u at its limit a little. Every state must be measured; the limits must be set.',
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
   scheduledPI: 'A PI computed from the plant: at each level of the measurement the page finds the input that holds it, linearises the plant there and fits a first-order lag; Kp and Ki then cancel that lag so the loop answers with the time constant Tcl. One level gives a fixed PI, several a gain-scheduled one. It starts with the input that holds the level the plant starts at. The reference feedforward (Kff, Kv, Ka) and the anti-windup are yours, as in the PID.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',

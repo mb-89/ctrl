@@ -309,6 +309,7 @@ const UNTUNABLE = {
   swingUp: 'A swing-up switches between pumping energy and catching the pole; its gains do not act on r − y. Tune its catching gains as a State feedback variant.',
   relay: 'A relay has no gains to tune; the relay method uses one to find Ku and Pu.',
   trajectory: 'A planned swing-up follows a plan computed from the plant: it has no gains of its own to tune. Change its inputs (T, Q, R) in the Controller tab.',
+  huLin: 'The variable gain computes its gains from the plant, a table of them on nested ellipsoids: it has none of its own to tune. Change its inputs (Q, R, the lowest level, k) in the Controller tab.',
 };
 // A variant from the plant whose design has no numbers to start from.
 const undesigned = (v) => `${CONTROLLERS[v.type].label} computes its numbers from the plant, and has none now; see its Computed box in the Controller tab, or tune a hand variant`;
