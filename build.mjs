@@ -14,7 +14,7 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const MODULES = [
   'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/speed.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/structure.js', 'core/observers.js', 'core/hil.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/spectrum.js', 'core/analysis.js', 'core/autotune.js',
   'core/live.js', 'core/trace.js', 'core/zip.js',
-  'ui/units.js', 'ui/palette.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/measure.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/ctldiagram.js', 'ui/controller.js', 'ui/autotune.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/speed.js', 'ui/app.js',
+  'ui/units.js', 'ui/palette.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/measure.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/ctldiagram.js', 'ui/controller.js', 'ui/autotune.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/speed.js', 'ui/limited.js', 'ui/app.js',
 ];
 
 // Live mode offers the external plant for download: the files of hil/ ride in
@@ -44,6 +44,11 @@ export function bundleScript() {
   });
   return `(() => {\n'use strict';\nconst __mods = {};\n${hilFiles()}\n${parts.join('\n')}\n})();\n`;
 }
+
+// ui/limited.js runs inline as well, before the first paint: it hides the
+// warning below the header where the environment is full, so it never
+// flashes; where no script runs, the warning stays.
+const limitedCheck = () => `<script id="lt-limited-check">(() => {\n${stripComments(readFileSync(join(ROOT, 'src/ui/limited.js'), 'utf8')).replace(/^export\s+/gm, '')}\ntry { markLimited(window); } catch { }\n})();</script>`;
 
 // The page's two typefaces ride in it (Latin subsets, the weights it uses), so
 // it loads nothing from anywhere (test/standalone.test.mjs). IBM Plex is under
@@ -111,6 +116,7 @@ const HELP = `
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3 class="label">Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
+<p>Shown in a limited environment, such as a file preview that runs the page in a sandbox, a warning below the header stays, says what does not work there, and what to do: download the file and open it in your browser.</p>
 <h3 class="label">For agents</h3>
 <pre>node cli.mjs help</pre>
 <p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it), <code>speed(x?)</code> (sets the speed: a factor, or -1 for as fast as possible; returns the setting, the factor in effect, the achieved speed, the simulation's speed and why it is held at 1×, if it is) and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
@@ -143,6 +149,10 @@ const SHELL = `<div id="lt-shell" class="app">
     <button id="copy-html" class="btn" data-framed title="Copy a standalone HTML page with the project inside">Copy HTML</button>
     <button id="help" class="btn btn-icon" title="Help and keyboard shortcuts (?)" aria-label="Help">?</button>
     <input type="file" id="file" accept=".json,.html,application/json,text/html" hidden>
+  </div>
+  <div id="lt-limited" class="banner limited" data-lamp="warn" role="alert">
+    <span class="banner-icon" aria-hidden="true">⚠</span>
+    <div class="banner-text"><b>Warning: limited environment.</b> This page is running in a limited environment, such as a file preview, and its performance is degraded: saving and the autosave, downloads and Live (HIL) do not work here, and it may run slower. For full function, <b>download this file and open it in your browser.</b> <span id="lt-limited-why"></span></div>
   </div>
 </header>
 <main class="instrument">
@@ -184,9 +194,9 @@ export function buildHtml({ project = null, fragment = false } = {}) {
     // Only the hosted page gets the host's save adapter; the standalone page
     // (and every page it exports) knows nothing of the host.
     const host = '<script id="lt-host">window.__ltHost = { saver: () => window.claude?.use?.(\'downloads\') ?? Promise.resolve(null) };</script>';
-    return `<title>${esc(title)}</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n${FONTS()}\n<style id="lt-style">${css}</style>\n${host}\n${body}\n`;
+    return `<title>${esc(title)}</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n${FONTS()}\n<style id="lt-style">${css}</style>\n${host}\n${limitedCheck()}\n${body}\n`;
   }
-  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(title)}</title>\n${FONTS()}\n<style id="lt-style">${css}</style>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
+  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(title)}</title>\n${FONTS()}\n<style id="lt-style">${css}</style>\n${limitedCheck()}\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

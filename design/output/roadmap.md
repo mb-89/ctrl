@@ -28,6 +28,17 @@ Reader: whoever picks the next piece of work.
 1. **Auto-tune, more**: the goal saved in the project; a robustness check against plant variations; flipping through a block's variants; AMIGO and Cohen–Coon rules, phase-margin placement from the relay's measured point; simulations in a Worker.
 2. **Controller, more**: variants built as diagrams (freeform), MIMO, more library entries (lead/lag, observer-based state feedback, MPC).
 3. **Analysis, wired**: merge the design layer so `app.loopModel` gives the tab its plant; then the gain marker on the locus, the gang of four, Nichols, disk margins, and the root locus in a Worker for loops with long dead times ([analysis.md](analysis.md), "Not built yet").
+4. **The diagram lays itself out** ([diagram-layout.md](diagram-layout.md), designed, not built; the person's [input 11](../input/2026-10-25-11-diagram-auto-layout.md)). In its §12 steps:
+   - vendor ELK (elkjs 0.12.0) with its manifest and licence notice;
+   - the layout in `src/core/layout.js`: feedback found from the wires, the return path mirrored, ELK called synchronously, cached, re-measured on an idle machine;
+   - the build's vendored section and the provenance and standalone tests;
+   - the edits in core: insert on a wire, delete with joining, move, swap, branch, group, Ungroup;
+   - x, y and flip dropped from the format and the library;
+   - the Plant tab drawing the layout with a 200 ms glide;
+   - the gestures (drop onto a wire, click to insert, Del joins, drag along a wire to branch, keyboard, Quick insert);
+   - the narrow window and the Playwright checks.
+
+   Coordinate with feat/design-system and feat/designs, which touch `src/ui/plant.js`.
 
 ## Later
 
@@ -39,13 +50,19 @@ Reader: whoever picks the next piece of work.
 ## Plant editor, not yet
 
 - Subsystem mask: subsystem parameters that set inner blocks' parameters (the person, 2026-10-24).
-- Ungroup; copy and paste; multiple plant inputs and outputs; the disturbance as a Source at the plant input.
+- Copy and paste; multiple plant inputs and outputs; the disturbance as a Source at the plant input. (Ungroup is now part of [diagram-layout.md](diagram-layout.md).)
+- After the layout ([diagram-layout.md](diagram-layout.md) §13):
+  - vector wires for the triple pendulum's 8 state wires, with [robot.md](robot.md) §2;
+  - best of several seeds or thoroughness 50, if the idle-machine timings allow;
+  - the layout in a Worker, only if a level exceeds 100 ms;
+  - a CLI command that draws a diagram.
 
 ## Open questions
 
 - Header bar: move the file actions into a menu? (Person raised it, 2026-10-24; later: keep the header as it is for now, with the time control and E-STOP joining it.)
+- Diagram layout ([diagram-layout.md](diagram-layout.md) §4, interpretations): should Del join a block's neighbours by default, with Shift+Del deleting without joining? Most tools make joining the variant. And is the main line the longest path to a Sink? In the mass–spring–damper that makes the spring energy the line's end and x a tap.
 - Speed at ∞ on a plain sweep: answered by review (not by the person yet; decisions.md, time control after review). The screen's simulation is timed, ∞ runs at that speed and no setting runs faster, so ∞ reads the simulation's own speed, as Auto-tune's ∞ does. It still depends on the time per division, since the simulation takes 2000 steps for any screen: the oven reads 170–300× on a 5 s screen and 0.7× on a 10 ms one, the DC motor 5–9× on a 100 ms one, the encoder 32× and the triple pendulum 63× on 5 s screens (build container). Ask the person: is that the limit they meant, and should a finite speed above it replay the screen faster than it can be simulated (1× real time on a 10 ms screen) instead of being held to it?
-- Earlier runs at high speed: at ∞ only a changed run fades the others; at 100× on a 5 s screen the run before an edit is gone in about 0.2 s. Count only changed runs at every speed (then at 1× an old run stays until the next edit), or fade by time? Ask the person.
+- ~~Earlier runs at high speed~~: answered: no change (2026-10-25, [input 13](../input/2026-10-25-13-detail-levels-answers.md)). At a finite speed every sweep still fades the earlier runs; at ∞ only a changed run does. To compare (detail levels, or any edit), the person runs Single runs and compares the traces, which stay and fade over five runs. ("So we don't need to change anything about the system.")
 - Auto Scale with a reaction signal: one period of the input, or until the response settles? (Person: "we will see later".)
 - ~~Should the input repeat with its period?~~ Settled (2026-10-24): it repeats; no play-once mode.
 - Candidates on the display: a channel per candidate, or one channel with overlaid candidates (like reference waveforms on a scope)?
@@ -55,3 +72,11 @@ Reader: whoever picks the next piece of work.
 ## Backlog, at the very end (the person, 2026-10-24)
 
 - **Controller benchmark with a Pugh matrix and a report.** Once a plant is identified (and we trust the model), tune every controller type the library knows on it (PID with feedforward and anti-windup, state feedback/LQR, gain scheduling, sliding mode variants, …), score each against criteria (following, disturbance rejection, overshoot, robustness to the plant's ±15 % variation, effort and actuator wear, noise sensitivity, complexity) in a Pugh matrix against a datum (the PID), pick the best and produce a report. The person: "If we have nothing else … you can try to do that benchmark mode on your own." Input file 10.
+- **Detail levels** ([detail-levels.md](detail-levels.md), designed and answered): at the very end; "If we get everything else done, then we can add detail levels" (2026-10-25, input 14).
+
+## Later, from the PUMA notes (2026-10-25, input 14)
+
+- Views bind to visible Sinks; deleting a Sink that a view or a channel uses warns and names who uses it (replaces the hidden probes once the 3D view runs).
+- Joint end stops for the robot, then an Off variant (without stops the arm would fall through itself).
+- Revisit how the robot controller is modelled (diagram variants) once it runs.
+

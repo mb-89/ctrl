@@ -283,6 +283,14 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .badge[data-lamp] { background: var(--lit); border-color: var(--lit); color: var(--ink-on-lit); }
 .badge-outline[data-lamp] { background: transparent; color: var(--lit); }
 
+/* ==== Banner: a state in a sentence, across the page, that stays ===========
+   A symbol first (.banner-icon: ⚠), then the words (.banner-text). With a
+   lamp (data-lamp): filled in the lamp's colour, as a lit badge is. */
+.banner { display: flex; align-items: flex-start; gap: var(--space-4); padding: var(--space-4) var(--space-5); border: 2px solid var(--line-strong); border-radius: var(--radius); font-size: var(--text-base); line-height: 1.4; }
+.banner[data-lamp] { background: var(--lit); border-color: var(--ink-on-lit); color: var(--ink-on-lit); }
+.banner-icon { font-size: var(--text-lg); font-weight: 600; line-height: 1.1; }
+.banner-text { flex: 1 1 auto; min-width: 0; }
+
 /* ==== Panel and Card =======================================================
    .panel: a raised area (the controls, the tab panel). .card: a thing on a
    panel (the controller diagram). .lcd: a readout panel, dark in both themes.
@@ -340,6 +348,11 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .brand svg { width: 22px; height: 22px; }
 #title { flex: 1 1 180px; }
 .actions { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center; }
+/* The limited environment's warning (ui/limited.js): a banner, full width
+   below the header, shown from the first paint; the inline check hides it
+   where the page is whole. */
+.limited { flex: 1 0 100%; order: 99; }
+.lt-full .limited { display: none; }
 .sep { width: 1px; height: 20px; background: var(--line-strong); }
 /* Speed (ui/speed.js): a factor typed or picked from its menu, and the speed
    achieved beside it. Held at 1× by a live plant: read-only, in the

@@ -1,0 +1,3 @@
+# One servo motor model, its errors as detail (2026-10-25)
+
+> And then I really wonder if we would just make the errors in that we have in the spectrogram example, if we just make them high detail toggles in our servo motor or DC, in a servo motor model. I mean, the servo motor can also run speed controlled, right? So we would make them. So that would mean we show them in the spectrogram thing, but we could also just increase the level of the servos of the robot, and then the same errors would show up in the robot too. I mean, that would be cool. And it would also be reuse. So think about that.
