@@ -42,7 +42,7 @@ Reader: whoever picks the next piece of work.
 
    Coordinate with feat/design-system and feat/designs, which touch `src/ui/plant.js`.
 
-5. **One Servo motor** ([servo.md](servo.md), designed, not built; the person's [input 18](../input/2026-10-25-18-servo-motor-detail.md)). In its §11 steps:
+5. **One Servo motor** ([servo.md](servo.md), built on `feat/servo` but for the PUMA's joints, §15; the person's [input 18](../input/2026-10-25-18-servo-motor-detail.md)). In its §11 steps (all built but the last, which is a swap once `feat/puma` and `feat/servo` are merged, servo.md §15.5):
    - the minimal mask (numbers, toggles, a choice) and switches resolved at compile time;
    - built-in components stored by reference (`component`, `params`), opened read-only, Edit a copy into My blocks;
    - the DC motor examples, then the encoder example, on the component (free shaft);

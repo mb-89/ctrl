@@ -7,6 +7,7 @@ import { wireWidths } from '../core/vectors.js';
 import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames, maskValues, formulaIn, equationSheets } from '../core/diagram.js';
 import { isFormula } from '../core/formula.js';
 import { SYSTEM_LIBRARY } from '../core/systems.js';
+import { COMPONENTS, componentUse } from '../core/components.js';
 import { TEMPLATES } from '../core/physics.js';
 import { isPartType, framePorts, framesSvg, joinsSvg, join, dropParts, splitJoins, partFace } from './joins.js';
 import { num, parseSI } from './units.js';
@@ -64,7 +65,29 @@ function size(b) {
     return [Math.min(260, Math.max(130, 22 + 6.4 * (law?.length ?? 0))) + li + lo, Math.max(48, 18 * Math.max(...blockPorts(b)) + 12)];
   }
   const [ni, no] = blockPorts(b);
-  return [130, Math.max(48, 18 * Math.max(ni, no) + 12)];
+  // A component's use names its ports (u, τ_L or θ, …): wider, for the labels.
+  return [b.component ? 210 : 130, Math.max(48, 18 * Math.max(ni, no) + 12)];
+}
+// A subsystem's port names, from its In and Out blocks that are there.
+function subPorts(b, type) {
+  const n = blockPorts(b)[type === 'inport' ? 0 : 1];
+  return Array.from({ length: n }, (_, i) => b.diagram.blocks.find((x) => x.type === type && x.params.port === i + 1)?.name ?? '');
+}
+// A masked subsystem's face: its choices and the toggles that are on
+// ("voltage drive, free shaft · Coulomb friction").
+function maskLine(b) {
+  const pick = (f) => b.params[f.key];
+  const choices = b.mask.filter((f) => f.kind === 'choice').map((f) => { const v = pick(f); return `${typeof v === 'number' ? f.options[v - 1] : v} ${f.label.split(' ').at(-1).toLowerCase()}`; });
+  const on = b.mask.filter((f) => f.kind === 'toggle' && (pick(f) === 1 || pick(f) === true) && maskOpen(b, f)).map((f) => f.label);
+  return [choices.join(', '), on.join(', ')].filter(Boolean).join(' · ');
+}
+// Is a mask field shown: its toggle on, or its choice on that option?
+function maskOpen(b, f) {
+  if (!f.under) return true;
+  const [k, opt] = f.under.split(':'), of = b.mask.find((g) => g.key === k);
+  if (!of || !maskOpen(b, of)) return false;
+  const v = b.params[k];
+  return opt === undefined ? v === 1 || v === true : (typeof v === 'number' ? of.options[v - 1] : v) === opt;
 }
 // The room an Equations block's port names take inside it, left and right
 // (6.2 canvas units a character).
@@ -172,7 +195,15 @@ export function createPlantEditor(root, app) {
   const view = () => (views[path.join('/')] ??= { x: 20, y: 10, k: 1 });
 
   // Edits work on a copy, are validated, then committed with undo history.
+  // The use of a built-in component the open level sits in (its insides are read-only).
+  function inUse(p = path) {
+    let cur = rootDiagram();
+    for (const id of p) { const b = cur.blocks.find((x) => x.id === id); if (b?.component) return b; cur = b?.diagram ?? cur; }
+    return null;
+  }
   function edit(fn, { quiet } = {}) {
+    const use = inUse();
+    if (use) { app.toast(`${use.name ?? use.id} is a ${COMPONENTS[use.component]?.name ?? 'built-in component'}: its insides are read-only. Select it and press Edit a copy to change them; its mask is set where it is used.`); render(); return false; }
     const next = structuredClone(rootDiagram());
     const lv = levelOf(next);
     if (fn(lv, next) === false) return false;
@@ -233,6 +264,7 @@ export function createPlantEditor(root, app) {
         return item(tpl ? t : `type:${t}`, esc(def.label), `${def.label}: ${def.formula}.${tpl ? ' A subsystem you can open; its parameters are on its mask.' : ''} Drag onto the canvas, or click to add.`, `<span class="btn-note">${esc(def.formula)}</span>`);
       }).join(''));
     }
+    html += group('Components', Object.entries(COMPONENTS).map(([ref, c]) => item(`comp:${ref}`, esc(c.name), `${c.name}: ${c.summary} Drag onto the canvas, or click to add.`, `<span class="btn-note">${esc(c.summary)}</span>`)).join(''));
     html += group('My blocks', lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="hint">Select a subsystem and save it here.</div>');
     html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="btn btn-sm btn-block" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.summary} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="btn-note">plant</span></button>` : '')).join(''));
     $('#pl-lib').innerHTML = html;
@@ -259,6 +291,7 @@ export function createPlantEditor(root, app) {
     let added = null;
     edit((d) => {
       if (data.startsWith('type:')) added = newBlock(d, data.slice(5), x, y);
+      else if (data.startsWith('comp:')) added = newBlock(d, 'subsystem', x, y, componentUse(data.slice(5), {}));
       else if (data.startsWith('tpl:')) {
         const tpl = TEMPLATES[data.slice(4)];
         if (!tpl) return false;
@@ -277,7 +310,7 @@ export function createPlantEditor(root, app) {
   viewEl.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
   viewEl.addEventListener('drop', (e) => {
     const data = e.dataTransfer.getData('text/plain');
-    if (!data || !/^(type|lib|tpl):/.test(data)) return;
+    if (!data || !/^(type|lib|comp|tpl):/.test(data)) return;
     e.preventDefault();
     const p = toWorld(e);
     addFrom(data, p.x, p.y);
@@ -293,7 +326,7 @@ export function createPlantEditor(root, app) {
     const g = geom(b);
     const def = diagramBlockDef(b.type);
     const selected = sel.has(b.id);
-    const cls = `blk t-${b.type}${selected ? ' sel' : ''}${errs.has(b.id) ? ' err' : ''}`;
+    const cls = `blk t-${b.type}${selected ? ' sel' : ''}${errs.has(b.id) ? ' err' : ''}${offHere.has(b.id) ? ' off' : ''}`;
     const title = b.name ?? (b.type === 'source' ? b.params.signal : b.type === 'sink' ? b.params.name : b.type === 'inport' ? `In ${b.params.port}` : b.type === 'outport' ? `Out ${b.params.port}` : def.label);
     let shape, text = '';
     const cx = b.x + g.w / 2, cy = b.y + g.h / 2;
@@ -308,7 +341,8 @@ export function createPlantEditor(root, app) {
     } else if (b.type === 'switch') {
       // The switch symbol: the active input joined to the output.
       shape = `<rect class="body" x="${b.x}" y="${b.y}" width="${g.w}" height="${g.h}" rx="5"/>`;
-      const p = g.ins[b.params.position - 1], q = g.outs[0];
+      const pos = isFormula(b.params.position) ? formulaIn(b.params.position, maskValues(rootDiagram(), path)) : b.params.position;
+      const p = g.ins[Math.min(g.ins.length, Math.max(1, Number.isInteger(pos) ? pos : 1)) - 1], q = g.outs[0];
       const ix = p.x + (b.flip ? -10 : 10), ox = q.x + (b.flip ? 10 : -10);
       text = g.ins.map((pt) => `<circle class="swdot" cx="${pt.x + (b.flip ? -10 : 10)}" cy="${pt.y}" r="2.2"/>`).join('')
         + `<path class="swline" d="M${p.x},${p.y} H${ix} L${ox},${q.y} H${q.x}"/>`
@@ -326,12 +360,13 @@ export function createPlantEditor(root, app) {
       } else if (b.type === 'inport' || b.type === 'outport') {
         text = `<text class="bt" x="${cx}" y="${cy + 4.5}" text-anchor="middle">${esc(title)}</text>`;
       } else {
-        const sub = b.type === 'subsystem' ? `${b.diagram.blocks.length} blocks · open ↵` : summary(b);
+        const line = b.type === 'subsystem' && b.mask?.some((f) => f.kind) ? maskLine(b) || 'open ↵' : '', room = Math.floor((g.w - 18) / 6.4);
+        const sub = b.type === 'subsystem' ? (line ? (line.length > room ? `${line.slice(0, room - 1)}…` : line) : `${b.diagram.blocks.length} blocks · open ↵`) : summary(b);
         const left = b.x + 9 + (b.type === 'fcn' || isVector(def) ? labelRoom(b)[0] : 0);
-        text = `<text class="bt" x="${left}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${left}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
+        text = `${line.length > room ? `<title>${esc(line)}</title>` : ''}<text class="bt" x="${left}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${left}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
-    const outNames = outputNames(def, b.params), inNames = inputNamesOf(def, b.params);
+    const outNames = b.component ? subPorts(b, 'outport') : outputNames(def, b.params), inNames = b.component ? subPorts(b, 'inport') : inputNamesOf(def, b.params);
     const ports = g.outs.map((p, i) => (outNames[i] ? `<text class="pn" x="${p.x + (b.flip ? 8 : -8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'start' : 'end'}">${esc(outNames[i])}</text>` : '')).join('')
       + g.ins.map((p, i) => (inNames[i] ? `<text class="pn" x="${p.x + (b.flip ? -8 : 8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'end' : 'start'}">${esc(inNames[i])}</text>` : '')).join('')
       + g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
@@ -427,6 +462,14 @@ export function createPlantEditor(root, app) {
   const about = () => (app.project.notes ? more('about', 'About this system', app.project.notes.split('\n\n').map((p) => `<p class="note">${esc(p)}</p>`).join('')) : '');
 
   let compileMsg = '';
+  let offHere = new Set();
+  // The names of the subsystems along the path (as a compiled node's name has them).
+  function pathNames() {
+    const out = [];
+    let cur = rootDiagram();
+    for (const id of path) { const b = cur.blocks.find((x) => x.id === id); out.push(b?.name ?? id); cur = b?.diagram ?? cur; }
+    return out;
+  }
   let compiled = null;   // the last compile of the whole diagram (the equations sheets read it)
   function render() {
     renderReps();
@@ -440,10 +483,14 @@ export function createPlantEditor(root, app) {
     // Validity of the whole diagram, shown in the parameters panel.
     compileMsg = '';
     const errs = new Set();
+    offHere = new Set();
     try {
       const el = compileDiagram(rootDiagram(), 'plant', { standalone: true, laws: false, sources: Object.fromEntries(Object.keys(app.project.system.signals).map((n) => [n, () => 0])) });
       compileMsg = el.warnings.join('\n');
       compiled = el;
+      // Blocks a mask switched off are drawn faint (servo.md §1): not compiled.
+      const pre = pathNames().map((n) => `${n}/`).join('');
+      for (const b of d.blocks) if (el.offNodes.includes(`${pre}${b.name ?? b.id}`)) offHere.add(b.id);
     } catch (err) {
       compileMsg = err.message;
       compiled = null;
@@ -531,24 +578,42 @@ export function createPlantEditor(root, app) {
         html += `</div><h3 class="label">Mask</h3><div class="pform">`;
         const outer = maskValues(rootDiagram(), path);
         for (const f of b.mask) {
-          const v = b.params[f.key], range = [f.min !== undefined ? `min ${num(f.min, 6)}` : '', f.max !== undefined ? `max ${num(f.max, 6)}` : ''].filter(Boolean).join(' · ');
+          if (!maskOpen(b, f)) continue;   // folded under a toggle that is off, or another option
+          const v = b.params[f.key];
+          const deep = f.under ? ' pf-under' : '';
+          if (f.kind === 'toggle') {
+            const on = v === 1 || v === true, n = b.mask.filter((g) => g.under === f.key).length;
+            html += `<div class="pf pf-toggle${deep}"><button type="button" class="btn btn-sm" data-mtoggle="${esc(f.key)}" aria-pressed="${on}" title="${esc(f.key)}">${esc(f.label)}: ${on ? 'on' : 'off'}</button><span class="hint">${on ? '' : `not compiled${n ? `; ${n} field${n > 1 ? 's' : ''} inside` : ''}`}</span></div>`;
+            continue;
+          }
+          if (f.kind === 'choice') {
+            const cur = typeof v === 'number' ? f.options[v - 1] : v;
+            html += `<label class="pf${deep}"><span class="flabel">${esc(f.label)}</span><select class="field field-sm" data-mchoice="${esc(f.key)}">${f.options.map((o) => `<option value="${esc(o)}" ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select><span class="hint"></span></label>`;
+            continue;
+          }
+          const range = [f.min !== undefined ? `min ${num(f.min, 6)}` : '', f.max !== undefined ? `max ${num(f.max, 6)}` : ''].filter(Boolean).join(' · ');
           const shown = isFormula(v) ? `${v} ${(() => { const x = formulaIn(v, outer); return `→ ${Number.isFinite(x) ? num(x, 4) : x > 0 ? '∞' : '−∞'}`; })()}` : '';
-          html += field(`m:${f.key}`, `${f.label}${f.label !== f.key ? ` (${f.key})` : ''}`, isFormula(v) ? v : Number.isFinite(v) ? num(v, 6) : v > 0 ? 'inf' : '-inf', 'number', [shown, `unit: ${f.unit}`, range].filter(Boolean).join(' · '));
+          // The key is the field's name (what formulas read); the label, its unit and range below.
+          html += field(`m:${f.key}`, f.key, isFormula(v) ? v : Number.isFinite(v) ? num(v, 6) : v > 0 ? 'inf' : '-inf', 'number', [shown, f.label !== f.key ? f.label : '', f.unit !== '1' ? f.unit : '', range].filter(Boolean).join(' · ')).replace('class="pf"', `class="pf${deep}" title="${esc(f.label)}"`);
         }
       }
       html += '</div><div class="pbtns">';
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="btn btn-sm" data-act="flip">Flip</button>`;
-      if (b.type === 'subsystem') html += `<button class="btn btn-sm" data-act="open">Open</button><button class="btn btn-sm" data-act="save">Save to library</button>`;
+      if (b.type === 'subsystem') html += `<button class="btn btn-sm" data-act="open">Open</button>${b.component ? `<button class="btn btn-sm" data-act="copy" title="Make this use the project's own subsystem, with its insides editable; other uses stay as they are">Edit a copy</button>` : ''}<button class="btn btn-sm" data-act="save">Save to library</button>`;
       if (b.type === 'source') html += `<button class="btn btn-sm" data-act="signal">Edit signal ${esc(b.params.signal)}</button>`;
       if (b.type === 'controller') html += `<button class="btn btn-sm" data-act="controller">Open in the Controller tab</button>`;
       html += '</div>';
       if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="btn btn-sm" data-act="saveok">Save</button><button class="btn btn-sm" data-act="savecancel">Cancel</button></div>`;
       const role = { sink: ' · recorded: pick it as a scope channel source', source: ' · plays the signal made in the Input tab', terminator: ' · ends a signal without recording it', outport: ' · passes the signal up to the enclosing block', inport: ' · takes the signal from the enclosing block', switch: ' · double-click it on the canvas to move to the next input', controller: ` · runs “${esc(b.variants?.[b.variant]?.name ?? '')}”; double-click it to open the Controller tab` }[b.type] ?? '';
       html += `<p class="note">${esc(def.formula)}${role}</p>`;
+      if (b.component) html += `<p class="note">${esc(COMPONENTS[b.component]?.name ?? b.component)} (${esc(b.component)}), a built-in component: set it on its mask; open it to see how it is built (read-only).</p>`;
+      if (inUse()) html += `<p class="note">Inside ${esc(inUse().name ?? inUse().id)}, a built-in component: read-only. Its mask is set where it is used; Edit a copy there to change its insides.</p>`;
       html += sheetFold(b);
       box.innerHTML = html;
       keepOpen();
       bindFields(b);
+      box.querySelectorAll('[data-mtoggle]').forEach((btn) => btn.addEventListener('click', () => setMask(b, btn.dataset.mtoggle, btn.getAttribute('aria-pressed') === 'true' ? 0 : 1)));
+      box.querySelectorAll('[data-mchoice]').forEach((sel2) => sel2.addEventListener('change', () => setMask(b, sel2.dataset.mchoice, sel2.value)));
       box.querySelectorAll('[data-act]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.act, b)));
       return;
     }
@@ -560,6 +625,7 @@ export function createPlantEditor(root, app) {
     const names = diagramNames(rootDiagram());
     box.innerHTML = `<h3 class="label">Plant</h3>
       <p class="note"><b>Sources</b> ${names.sources.map(esc).join(', ') || 'none'} · <b>Sinks</b> ${names.sinks.map(esc).join(', ') || 'none'}</p>
+      ${inUse() ? `<p class="note">Inside ${esc(inUse().name ?? inUse().id)}, a ${esc(COMPONENTS[inUse().component]?.name ?? 'built-in component')} (${esc(inUse().component)}): read-only, drawn as it compiles (faint: switched off on its mask, not compiled). Set it on its mask where it is used; Edit a copy there to change its insides.</p>` : ''}
       ${compileMsg ? `<p class="note text-bad">${esc(compileMsg).replace(/\n/g, '<br>')}</p>` : '<p class="note">The diagram is valid.</p>'}
       ${about()}${more('edit', 'How to edit', '<p class="note">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p><p class="note">Mechanics parts (World, Rail, Hinge, Mass, Rod) meet at their frame ports, the small squares on their bottom edge: drag from one to another, or onto a join\'s dot, to join them (a join is one point; no signal flows on it). Select a join and press <kbd>Del</kbd> to remove it.</p>')}`;
     keepOpen();
@@ -630,7 +696,18 @@ export function createPlantEditor(root, app) {
     });
   }
 
+  // A toggle or a choice on a mask; a choice that removes ports drops their wires.
+  function setMask(b, key, value) {
+    edit((d) => {
+      const blk = d.blocks.find((x) => x.id === b.id);
+      blk.params[key] = value;
+      const [ni, no] = blockPorts(blk);
+      d.wires = d.wires.filter((w) => { const t = parseEnd(w.to), f = parseEnd(w.from); return !(t.id === blk.id && t.port >= ni) && !(f.id === blk.id && f.port >= no); });
+    });
+  }
+
   function act(what, b) {
+    if (what === 'copy') edit((d) => { const blk = d.blocks.find((x) => x.id === b.id); delete blk.component; delete blk.prefix; });
     if (what === 'flip') edit((d) => { const blk = d.blocks.find((x) => x.id === b.id); blk.flip = !blk.flip; if (!blk.flip) delete blk.flip; });
     if (what === 'open') enter(b.id);
     if (what === 'signal') app.editSignal(b.params.signal);

@@ -1,4 +1,9 @@
 {
+  "PUMA 560, a circle in space": {
+    "samples": 5001,
+    "signals": "a_r,b_r,ctl/servos[1].r,ctl/servos[1].u,ctl/servos[1].y,ctl/servos[2].r,ctl/servos[2].u,ctl/servos[2].y,ctl/servos[3].r,ctl/servos[3].u,ctl/servos[3].y,ctl/servos[4].r,ctl/servos[4].u,ctl/servos[4].y,ctl/servos[5].r,ctl/servos[5].u,ctl/servos[5].y,ctl/servos[6].r,ctl/servos[6].u,ctl/servos[6].y,e,ea,eb,ec,eo,i1,i2,i3,i4,i5,i6,q1,q2,q3,q4,q5,q6,sigma,tau1,tau2,tau3,tau4,tau5,tau6,tauC1,tauC2,tauC3,tauC4,tauC5,tauC6,tauF1,tauF2,tauF3,tauF4,tauF5,tauF6,tauG1,tauG2,tauG3,tauG4,tauG5,tauG6,tauI1,tauI2,tauI3,tauI4,tauI5,tauI6,x,xr,y,yr,z,zr",
+    "hash": "ef55693a"
+  },
   "Mass–spring–damper": {
     "samples": 2001,
     "signals": "Ekin,Epot,F,v,x",
@@ -6,33 +11,43 @@
   },
   "DC motor, position control": {
     "samples": 2001,
-    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed",
-    "hash": "d884117d"
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
+    "hash": "692b3c5f"
   },
   "Following a sine (XY)": {
     "samples": 2001,
-    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed",
-    "hash": "dc05c98d"
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
+    "hash": "98d538f5"
   },
   "DC motor, sliding mode": {
     "samples": 20001,
-    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,e,i,r,speed",
-    "hash": "dc5b9021"
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,e,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
+    "hash": "27ab4941"
+  },
+  "Variable gain against anti-windup": {
+    "samples": 2001,
+    "signals": "angle,ctrl.r,ctrl.u,ctrl.y,d,r,speed,torque,u",
+    "hash": "f3a827e7"
   },
   "Encoder errors and torque ripple": {
     "samples": 2001,
-    "signals": "V,ctrl.r,ctrl.u,ctrl.y,r,speed,speed_m",
-    "hash": "bf121d90"
+    "signals": "V,ctrl.r,ctrl.u,ctrl.y,i,r,speed,speed_m,tau_e,tau_f,tau_m,tau_r,v",
+    "hash": "a356789d"
   },
   "DC motor, speed from an encoder": {
     "samples": 5001,
-    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,encoder,est_error,estimate,i,r,speed",
-    "hash": "944cbb0c"
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,encoder,est_error,estimate,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
+    "hash": "5bfad072"
   },
   "DC motor, deadbeat": {
     "samples": 5001,
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed",
     "hash": "9226c00a"
+  },
+  "Gear backlash": {
+    "samples": 10001,
+    "signals": "ctrl.r,ctrl.u,ctrl.y,delta,e_L,i,i_ref,omega_m,r,tau,tau_e,tau_f,tau_m,tau_r,theta_L,theta_m,v",
+    "hash": "41f167c"
   },
   "Conical tank, gain scheduling": {
     "samples": 2001,
@@ -58,15 +73,5 @@
     "samples": 2001,
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,current,load,r,speed",
     "hash": "23d8e117"
-  },
-  "Variable gain against anti-windup": {
-    "samples": 2001,
-    "signals": "angle,ctrl.r,ctrl.u,ctrl.y,d,r,speed,torque,u",
-    "hash": "f3a827e7"
-  },
-  "PUMA 560, a circle in space": {
-    "samples": 5001,
-    "signals": "a_r,b_r,ctl/servos[1].r,ctl/servos[1].u,ctl/servos[1].y,ctl/servos[2].r,ctl/servos[2].u,ctl/servos[2].y,ctl/servos[3].r,ctl/servos[3].u,ctl/servos[3].y,ctl/servos[4].r,ctl/servos[4].u,ctl/servos[4].y,ctl/servos[5].r,ctl/servos[5].u,ctl/servos[5].y,ctl/servos[6].r,ctl/servos[6].u,ctl/servos[6].y,e,ea,eb,ec,eo,i1,i2,i3,i4,i5,i6,q1,q2,q3,q4,q5,q6,sigma,tau1,tau2,tau3,tau4,tau5,tau6,tauC1,tauC2,tauC3,tauC4,tauC5,tauC6,tauF1,tauF2,tauF3,tauF4,tauF5,tauF6,tauG1,tauG2,tauG3,tauG4,tauG5,tauG6,tauI1,tauI2,tauI3,tauI4,tauI5,tauI6,x,xr,y,yr,z,zr",
-    "hash": "ef55693a"
   }
 }

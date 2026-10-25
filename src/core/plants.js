@@ -18,6 +18,8 @@ import { conicalTank, cartPole, pendulumOnCart } from './physics.js';
 
 import { PUMA_SYSTEM } from './pumasystem.js';
 
+import { componentUse } from './components.js';
+
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
 // Scope channels 1–4: a signal name each (on), or { source, on, measure } for
@@ -31,7 +33,9 @@ const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: '
 const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
 const PERIOD = 5;
 
-// The DC motor, shared by the systems built on it: V and the load torque in,
+// The DC motor as Transfer function blocks (the deadbeat example, whose
+// controller measures the current: an output the Servo motor does not have).
+// V and the load torque in,
 // the speed out. Motor is built from blocks whose parameters are the
 // physics, each once (no black box; design/research/sliding-mode.md,
 // Recommendation 1):
@@ -63,26 +67,34 @@ const motorBlock = (x, y, { current = false } = {}) => ({
     ],
   },
 });
-// The motor with its angle: a Controller (variants given) sets the voltage
-// V, the load torque d brakes it. opts.inputs 3 also feeds the speed to the
-// Controller (input 3), and adds the error e = r − angle as a Sink; opts.Ts
-// is the Controller's sample time.
+// The DC motor with its angle, shared by the systems built on it: a
+// Controller (variants given) sets the voltage V, the load torque d brakes it.
+// Motor is the Servo motor component (design/output/servo.md), a voltage
+// drive on a free shaft with every switch off; its parameters are the
+// physics, each once, on its mask:
+//   R = 1 Ω, L = 10 mH        the armature; its current i is a Sink inside
+//   K = 0.5 N·m/A = V·s/rad   the torque and back-EMF constant (equal in SI
+//                             units, or the motor would make or lose energy)
+//   Jm = 0.02 kg·m², b = 0.1 N·m·s/rad   the rotor (load included) and its friction
+// The angle is its encoder's (Out 2, ideal with the encoder's switches off).
+// opts.inputs 3 also feeds the speed to the Controller (input 3), and adds
+// the error e = r − angle as a Sink; opts.Ts is the Controller's sample time.
+export const DC_MOTOR = { drive: 'voltage', R: 1, L: 0.01, K: 0.5, b: 0.1, Jm: 0.02, G: 1, shaft: 'free' };
 const motorDiagram = (variants, { inputs = 2, Ts = 0.01 } = {}) => ({
       blocks: [
         src('r', 30, 112, 'rad'),
         src('d', 180, 230, 'N·m'),
         ctrl(130, 90, inputs, Ts, variants),
-        motorBlock(330, 96),
-        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        componentUse('servo-motor@1', { id: 'motor', name: 'Motor', params: { ...DC_MOTOR }, x: 330, y: 90 }),
         sink('angle', 690, 106, 'rad'),
         sink('speed', 690, 30, 'rad/s'),
         sink('V', 330, 20, 'V'),
         ...(inputs >= 3 ? [{ id: 'esum', type: 'sum', params: { signs: '+-' }, x: 130, y: 300 }, sink('e', 200, 303, 'rad')] : []),
       ],
       wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
-        { from: 'motor', to: 'speed' }, { from: 'int', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
-        ...(inputs >= 3 ? [{ from: 'motor', to: 'ctrl:2' }, { from: 'r', to: 'esum' }, { from: 'int', to: 'esum:1' }, { from: 'esum', to: 'e' }] : []),
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor:1', to: 'angle' },
+        { from: 'motor:3', to: 'speed' }, { from: 'motor:1', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
+        ...(inputs >= 3 ? [{ from: 'motor:2', to: 'ctrl:2' }, { from: 'r', to: 'esum' }, { from: 'motor:1', to: 'esum:1' }, { from: 'esum', to: 'e' }] : []),
       ],
     });
 const motorViews = () => shaftViews('Motor shaft', 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   i {i:5.1} A   load {d:3.1} N·m');
@@ -234,6 +246,21 @@ const HIL_SYSTEM = {
   views: [],
 };
 
+// The encoder example's motor (servo.md §7.1): main's two first-order blocks
+// read as physics (armature K 1, τ 2 ms: R 1 Ω, L 2 mH; "inertia and
+// friction" K 200, τ 0.2 s: b 0.005, Jm 0.001), its errors exaggerated so
+// they show in the spectrogram: ripple 6× 0.05 N·m, torque noise σ 0.02,
+// the encoder's coupling at 70 Hz (439.8 rad/s, ζ 0.02), its 1× and 2×
+// angle errors, speed from the angle through a 1 ms filter.
+const ENCODER_MOTOR = {
+  drive: 'voltage', R: 1, L: 0.002, K: 0.1, b: 0.005, Jm: 0.001, G: 1, shaft: 'free',
+  ripple: 1, kr1: 6, Ar1: 0.05, pr1: 0, Ar2: 0, Ar3: 0,
+  torqueNoise: 1, sigma: 0.02, seed: 7,
+  coupling: 1, wc: 439.8, zc: 0.02,
+  encErrors: 1, ke1: 1, Ae1: 0.02, pe1: 0.5, ke2: 2, Ae2: 0.01, pe2: 1, Ae3: 0,
+  speedFromAngle: 1, Tf: 0.001,
+};
+
 export const EXAMPLE_PLANTS = [
   // The flagship first (the person, input 39): the page opens on it and the
   // System library shows it on top. A six-axis arm in 3D, controlled in its
@@ -336,7 +363,7 @@ export const EXAMPLE_PLANTS = [
     // open question for the person (roadmap).
     name: 'DC motor, sliding mode',
     summary: 'The motor under sliding-mode control, on its phase portrait. Compare the ideal relay, a boundary layer and super-twisting: a response the load cannot change, and what chattering costs.',
-    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure, switched on, counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: open Motor and triple J (rotor den [0.06, 0.1]): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (den [0.001, 1]): the relay chatters at 250 Hz and makes about five times the heat.',
+    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure, switched on, counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: select Motor and triple its rotor inertia Jm on its mask (0.06): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (L 1 mH): the relay chatters at 250 Hz and makes about five times the heat.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
       d: { period: PERIOD, components: [pulse(1, 3.2, 0.5)] },
@@ -380,7 +407,7 @@ export const EXAMPLE_PLANTS = [
   {
     name: 'Encoder errors and torque ripple',
     summary: 'A motor speeding up with encoder errors, torque ripple and a shaft resonance, in the spectrogram. Change the colour scale, try FFT or a notch: tell errors that follow the speed from a resonance, and spot aliasing.',
-    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing.\n\nUp there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB.\n\nTry FFT mode, and a notch filter on the channel.',
+    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible coupling that resonates at 70 Hz. The motor is the Servo motor: each of these is a switch on its mask. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing.\n\nUp there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB.\n\nTry FFT mode, and a notch filter on the channel. Or select Motor and switch its torque ripple off on its mask: the 6× line goes.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'ramp', params: { amplitude: 300, time: 0.5, rise: 4 } }] },
     },
@@ -393,41 +420,15 @@ export const EXAMPLE_PLANTS = [
           { name: 'PI speed', type: 'pid', params: { Kp: 0.5, Ki: 5, umin: -48, umax: 48 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
-        {
-          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
-          diagram: {
-            blocks: [
-              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
-              { id: 'load', type: 'inport', name: 'ripple torque', params: { port: 2 }, x: 300, y: 220 },
-              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.002 }, x: 200, y: 96 },
-              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.1 }, x: 360, y: 100 },
-              { id: 'tsum', type: 'sum', params: { signs: '++' }, x: 440, y: 104 },
-              { id: 'mech', type: 'firstOrder', name: 'inertia and friction', params: { K: 200, tau: 0.2 }, x: 510, y: 96 },
-              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.1 }, x: 360, y: 280, flip: true },
-            ],
-            wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
-              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
-            ],
-          },
-        },
-        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
-        { id: 'ripple', type: 'fcn', name: 'torque ripple 6×', params: { expr: '0.05*sin(6*u)' }, x: 500, y: 230, flip: true },
-        { id: 'rough', type: 'noise', name: 'torque noise', params: { std: 0.02, seed: 7 }, x: 330, y: 230, flip: true },
-        // The encoder sits on the load, behind a flexible shaft that resonates at 70 Hz.
-        { id: 'shaft', type: 'secondOrder', name: 'shaft resonance 70 Hz', params: { K: 1, wn: 439.8, zeta: 0.02 }, x: 650, y: 96 },
-        { id: 'enc', type: 'fcn', name: 'encoder 1× and 2× errors', params: { expr: 'u + 0.02*sin(u + 0.5) + 0.01*sin(2*u + 1)' }, x: 820, y: 96 },
-        { id: 'deriv', type: 'tf', name: 'speed from angle', params: { num: [1, 0], den: [0.001, 1], delay: 0 }, x: 990, y: 96 },
-        sink('speed_m', 1160, 106, 'rad/s'),
-        sink('speed', 650, 20, 'rad/s'),
+        { id: 'noload', type: 'gain', name: 'no load', params: { K: 0 }, x: 200, y: 220 },
+        componentUse('servo-motor@1', { id: 'motor', name: 'Motor', params: ENCODER_MOTOR, x: 330, y: 90 }),
+        sink('speed_m', 690, 106, 'rad/s'),
+        sink('speed', 690, 30, 'rad/s'),
         sink('V', 330, 20, 'V'),
       ],
       wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'ripple', to: 'rough' }, { from: 'rough', to: 'motor:1' }, { from: 'motor', to: 'int' },
-        { from: 'int', to: 'ripple' }, { from: 'int', to: 'shaft' }, { from: 'shaft', to: 'enc' }, { from: 'enc', to: 'deriv' }, { from: 'deriv', to: 'speed_m' }, { from: 'deriv', to: 'ctrl:1' },
-        { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'r', to: 'noload' }, { from: 'noload', to: 'motor:1' },
+        { from: 'motor:2', to: 'speed_m' }, { from: 'motor:2', to: 'ctrl:1' }, { from: 'motor:3', to: 'speed' }, { from: 'ctrl', to: 'V' },
       ],
     },
   },
@@ -449,8 +450,7 @@ export const EXAMPLE_PLANTS = [
         ctrl(130, 90, 2, 0.001, [
           { name: 'PI speed', type: 'pid', params: { Kp: 2, Ki: 40, umin: -12, umax: 12 } },
         ]),
-        motorBlock(330, 96),
-        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        componentUse('servo-motor@1', { id: 'motor', name: 'Motor', params: { ...DC_MOTOR }, x: 330, y: 90 }),
         // The encoder: 1024 counts per turn (q = 2π/1024 rad), with a little
         // noise on its signal (edge jitter) before it is counted.
         { id: 'jitter', type: 'noise', name: 'encoder noise', params: { std: 0.001, seed: 5 }, x: 640, y: 96 },
@@ -473,11 +473,11 @@ export const EXAMPLE_PLANTS = [
         sink('V', 330, 20, 'V'),
       ],
       wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
-        { from: 'int', to: 'jitter' }, { from: 'jitter', to: 'enc' }, { from: 'enc', to: 'encoder' },
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor:1', to: 'angle' },
+        { from: 'motor:1', to: 'jitter' }, { from: 'jitter', to: 'enc' }, { from: 'enc', to: 'encoder' },
         { from: 'ctrl', to: 'obs' }, { from: 'enc', to: 'obs:1' }, { from: 'obs:1', to: 'ctrl:1' }, { from: 'obs:1', to: 'estimate' },
-        { from: 'obs:1', to: 'esum' }, { from: 'motor', to: 'esum:1' }, { from: 'esum', to: 'est_error' },
-        { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
+        { from: 'obs:1', to: 'esum' }, { from: 'motor:3', to: 'esum:1' }, { from: 'esum', to: 'est_error' },
+        { from: 'motor:3', to: 'speed' }, { from: 'ctrl', to: 'V' },
       ],
     },
     views: [{
@@ -546,6 +546,98 @@ export const EXAMPLE_PLANTS = [
       ],
     },
     views: motorViews(),
+  },
+  {
+    // Backlash (design/output/servo.md §7.4, the person's inputs 23 and 24):
+    // a small motor on a current drive turns a load arm through a 20:1
+    // gearhead with 1° of play. The gear is the Servo motor's coupled shaft:
+    // k and c for a two-mass resonance of 50 Hz with ζ 0.1, typed once from
+    //   ωr² = k·(1/(G²·Jm) + 1/JL),  2ζ·ωr = c·(1/(G²·Jm) + 1/JL)
+    // (G²·Jm = 0.008, JL = 0.01 kg·m²), so the hunting is the play's alone.
+    // The load's bearing has a little friction: without it no loop can stop
+    // a load coasting inside the play. The PID's gains are hand gains for
+    // about 30 rad/s (Kp = ω²/b', Kd = 1.4·ω/b', Ki = 6·Kp, b' = K·G/(G²·Jm
+    // + JL) = 55.6 rad/s² per A); the Dual loop takes the PD's.
+    name: 'Gear backlash',
+    summary: 'A motor turning a load arm through a gearhead with play (backlash). Watch the load-encoder loop hunt, the motor encoder hold the load off by the play, and the industrial fix, a dual loop, hold it still.',
+    notes: 'A motor turns a load arm through a 20:1 gearhead with 1° of play (backlash). The Servo motor simulates it: its rotor and the load are two bodies joined by the gear\'s stiffness, and between the teeth there is a gap where no torque passes (select Motor: Backlash and β on its mask; open it to see the dead zone). The controller holds the load\'s angle with the load\'s own encoder; r steps between 0 and 1 rad. Every step ends in hunting: the motor crosses the gap, knocks the load, overshoots, crosses back, and the load rattles by about ±10 mrad, about 31 times a second (the torque τ changes sign about 60 times a second). Pick PD: it still hunts, so it is backlash inside a loop, not the integral winding up.\n\nNow double-click the Switch "feedback from" (or set its position to 2): the controller reads the motor\'s encoder. The hunting stops, but the motor\'s encoder cannot see the play, so the load stays wherever it came to rest in it, up to half the play (8.7 mrad) away from r.\n\nThe industrial fix, Dual loop: position from the load\'s encoder, damping from the motor\'s speed, which the play cannot cut off (dual-loop feedback, as industrial drives run it). Back on the load encoder it holds the load to about 0.1 mrad and nothing rattles.\n\nTry: Motor\'s β at a quarter (0.0044 rad): the hunting shrinks with it. Backlash off: every variant settles. Press XY (δ across, τ up): the flat part is the play, the slopes the gear\'s spring. Make the gear softer, 20 Hz (Motor\'s k to 70, c to 0.11): the load-encoder PID goes unstable even without play, and the dual loop still holds.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
+    },
+    scope: { channels: channels('delta', 'tau', 'e_L', 'i') },
+    // The hunting is about 31 Hz: a 0.5 ms record resolves it.
+    sim: { sampleTime: 0.0005 },
+    ui: ui('Gear and load'),
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad'),
+        ctrl(150, 90, 3, 0.001, [
+          { name: 'PID', type: 'pid', params: { Kp: 16, Ki: 100, Kd: 0.76, Tf: 0.003, umin: -5, umax: 5 } },
+          { name: 'PD', type: 'pid', params: { Kp: 16, Kd: 0.76, Tf: 0.003, umin: -5, umax: 5 } },
+          // The industrial fix: i* = kr·r − Kp·θ_L − Kd·ωm/G, the PD's gains.
+          { name: 'Dual loop', type: 'stateFeedback', params: { K: [16, 0.76], kr: 16, umin: -5, umax: 5 } },
+        ]),
+        componentUse('servo-motor@1', {
+          id: 'motor', name: 'Motor', x: 380, y: 90,
+          params: { drive: 'current', imax: 5, R: 1, L: 0.001, K: 0.05, b: 1e-5, Jm: 2e-5, G: 20, shaft: 'coupled', k: 438.65, c: 0.27925, backlash: 1, beta: 0.0174533 },
+        }),
+        {
+          id: 'load', type: 'subsystem', name: 'Load arm', x: 700, y: 96,
+          mask: [{ key: 'JL', label: 'Load inertia', unit: 'kg·m²', min: 1e-9 }, { key: 'bL', label: 'Bearing viscous friction', unit: 'N·m·s/rad', min: 0 }, { key: 'TcL', label: 'Bearing Coulomb friction', unit: 'N·m', min: 0 }],
+          params: { JL: 0.01, bL: 0.005, TcL: 0.02 },
+          diagram: {
+            blocks: [
+              { id: 'tau', type: 'inport', name: 'τ', params: { port: 1 }, x: 30, y: 112 },
+              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 140, y: 104 },
+              { id: 'w', type: 'integrator', name: 'load 1/JL', params: { K: '1/JL' }, x: 220, y: 96 },
+              { id: 'q', type: 'integrator', name: 'load angle', params: { K: 1 }, x: 400, y: 96 },
+              { id: 'fr', type: 'fcn', name: 'bearing friction', params: { inputs: 'u', eqs: 'y = bL*u + TcL*tanh(u/0.01)', outputs: 'y' }, x: 220, y: 220, flip: true },
+              { id: 'th', type: 'outport', name: 'θ_L', params: { port: 1 }, x: 560, y: 112 },
+              { id: 'om', type: 'outport', name: 'ω_L', params: { port: 2 }, x: 560, y: 30 },
+            ],
+            wires: [
+              { from: 'tau', to: 'sum' }, { from: 'fr', to: 'sum:1' }, { from: 'sum', to: 'w' }, { from: 'w', to: 'q' }, { from: 'w', to: 'fr' },
+              { from: 'q', to: 'th' }, { from: 'w', to: 'om' },
+            ],
+          },
+        },
+        { id: 'fb', type: 'switch', name: 'feedback from', params: { inputs: 2, position: 1 }, x: 240, y: 260, flip: true },
+        { id: 'esum', type: 'sum', params: { signs: '+-' }, x: 150, y: 360 },
+        sink('e_L', 220, 363, 'rad'),
+        sink('theta_L', 900, 106, 'rad'),
+        sink('theta_m', 900, 180, 'rad'),
+        sink('tau', 700, 20, 'N·m'),
+        sink('i_ref', 380, 20, 'A'),
+        sink('omega_m', 700, 260, 'rad/s'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'ctrl', to: 'i_ref' },
+        { from: 'motor', to: 'load' }, { from: 'load', to: 'motor:1' }, { from: 'load:1', to: 'motor:2' },
+        { from: 'load', to: 'fb' }, { from: 'motor:1', to: 'fb:1' }, { from: 'fb', to: 'ctrl:1' }, { from: 'motor:2', to: 'ctrl:2' }, { from: 'motor:2', to: 'omega_m' },
+        { from: 'r', to: 'esum' }, { from: 'load', to: 'esum:1' }, { from: 'esum', to: 'e_L' },
+        { from: 'load', to: 'theta_L' }, { from: 'motor:1', to: 'theta_m' }, { from: 'motor', to: 'tau' },
+      ],
+    },
+    // The motor's gear (its angle at the output, θm/G) and the load arm on
+    // one hub; the yellow mark is r. In the play the two drift apart.
+    views: [{
+      name: 'Gear and load', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+      shapes: [
+        { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+        ...ticks(0.62),
+        { type: 'group', angle: 'r', shapes: [{ type: 'line', x1: 0, y1: 0.66, x2: 0, y2: 0.8, stroke: 'ch1', lineWidth: 5 }] },
+        { type: 'group', angle: 'theta_L', shapes: [
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.58, stroke: 'ch3', lineWidth: 8 },
+          { type: 'circle', cx: 0, cy: 0.5, r: 0.08, fill: 'ch3' },
+        ] },
+        { type: 'group', angle: 'theta_m', shapes: [
+          { type: 'circle', cx: 0, cy: 0, r: 0.22, fill: 'ink' },
+          { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.3, stroke: 'ch2', lineWidth: 5 },
+        ] },
+        { type: 'circle', cx: 0, cy: 0, r: 0.06, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.82, text: 'load {theta_L*1000:6.1} mrad   gear {theta_m*1000:6.1} mrad   e_L {e_L*1000:6.2} mrad   τ {tau:5.2} N·m', size: 13 },
+      ],
+    }],
   },
   {
     name: 'Conical tank, gain scheduling',
@@ -826,20 +918,19 @@ export const EXAMPLE_PLANTS = [
 // full scale is its limits). The page's
 // simulation never reads these.
 const phys = (name, at, unit, same) => ({ name, at, unit, ...(same ? { same } : {}) });
-const MOTOR_PHYSICS = [
-  phys('R', 'motor/arm.den[1]', 'Ω'), phys('L', 'motor/arm.den[0]', 'H'), phys('Kt', 'motor/kt.K', 'N·m/A'), phys('Ke', 'motor/ke.K', 'V·s/rad', 'Kt'),
-  phys('J', 'motor/rotor.den[0]', 'kg·m²'), phys('b', 'motor/rotor.den[1]', 'N·m·s/rad'),
-];
+// A Servo motor's physics are on its mask (one K for torque and back-EMF).
+const MOTOR_PHYSICS = [phys('R', 'motor.R', 'Ω'), phys('L', 'motor.L', 'H'), phys('K', 'motor.K', 'N·m/A'), phys('J', 'motor.Jm', 'kg·m²'), phys('b', 'motor.b', 'N·m·s/rad')];
 const SIMULATOR = {
   'Mass–spring–damper': { physics: [phys('1/m', 'm.K', '1/kg'), phys('c', 'c.K', 'N·s/m'), phys('k', 'k.K', 'N/m')] },
   'DC motor, position control': { physics: MOTOR_PHYSICS },
   'Following a sine (XY)': { physics: MOTOR_PHYSICS },
   'DC motor, sliding mode': { physics: MOTOR_PHYSICS },
   'Encoder errors and torque ripple': {
-    physics: [phys('1/R', 'motor/arm.K', 'A/V'), phys('L/R', 'motor/arm.tau', 's'), phys('Kt', 'motor/kt.K', 'N·m/A'), phys('Ke', 'motor/ke.K', 'V·s/rad', 'Kt'),
-      phys('1/b', 'motor/mech.K', 'rad/(N·m·s)'), phys('J/b', 'motor/mech.tau', 's'), phys('ωn', 'shaft.wn', 'rad/s'), phys('ζ', 'shaft.zeta', '1')],
-    effects: [{ name: 'torque ripple', at: 'ripple', off: 'zero' }, { name: 'torque noise', at: 'rough', off: 'pass' }, { name: 'shaft resonance', at: 'shaft', off: 'pass' }, { name: 'encoder errors', at: 'enc', off: 'pass' }],
+    // Its effects are the Servo motor's switches that are on (hilsim.js).
+    physics: [...MOTOR_PHYSICS, phys('ωc', 'motor.wc', 'rad/s'), phys('ζc', 'motor.zc', '1')],
   },
+  'DC motor, speed from an encoder': { physics: MOTOR_PHYSICS },
+  'Gear backlash': { physics: [...MOTOR_PHYSICS, phys('k', 'motor.k', 'N·m/rad'), phys('c', 'motor.c', 'N·m·s/rad'), phys('JL', 'load.JL', 'kg·m²')] },
   'Conical tank, gain scheduling': {
     physics: [phys('r0', 'tank.r0', 'm'), phys('R', 'tank.R', 'm'), phys('H', 'tank.H', 'm'), phys('a', 'tank.a', 'm²'), phys('Td', 'pipe.L', 's')],
     effects: [{ name: 'pipe dead time', at: 'pipe', off: 'pass' }],

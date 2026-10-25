@@ -105,6 +105,23 @@ function typePhysics(diagram, prefix = '') {
 
 // ---- the draws
 
+// A system's effects: those it lists (a block; off, a Gain of 1 or 0), and
+// the switches that are on in its masks (the Servo motor's: ripple, noise,
+// the encoder's errors, backlash, …), named by their labels; off, the toggle
+// is set to 0, so the effect is not compiled.
+export function effectsOf(entry) {
+  const out = [...(entry.effects ?? [])];
+  const walk = (d, prefix) => {
+    for (const b of d.blocks) {
+      if (b.type !== 'subsystem') continue;
+      for (const f of b.mask ?? []) if (f.kind === 'toggle' && (b.params?.[f.key] === 1 || b.params?.[f.key] === true)) out.push({ name: f.label, at: `${prefix}${b.id}`, toggle: f.key });
+      walk(b.diagram, `${prefix}${b.id}/`);
+    }
+  };
+  walk(entry.diagram, '');
+  return out;
+}
+
 // The system, its effects and its physical parameters, from one seed and in
 // this order, so a seed always gives the same plant:
 //   opts.model    a library system's name, or { name, signals, diagram } (a project's)
@@ -128,7 +145,7 @@ export function drawSystem(opts = {}) {
   }
   const diagram = structuredClone(entry.diagram);
   // Effects: a named block that is the effect; off, a Gain of 1 (pass) or 0 (zero).
-  const known = entry.effects ?? [];
+  const known = effectsOf(entry);
   const detail = opts.detail ?? 'random';
   let wanted = null;
   if (detail !== 'random' && detail !== 'all' && detail !== 'none') {
@@ -137,7 +154,8 @@ export function drawSystem(opts = {}) {
   }
   const effects = known.map((f) => {
     const on = detail === 'random' ? rand() < 0.5 : detail === 'all' ? true : detail === 'none' ? false : wanted.includes(f.name);
-    if (!on) {
+    if (!on && f.toggle) blockAt(diagram, f.at).params[f.toggle] = 0;
+    else if (!on) {
       const b = blockAt(diagram, f.at);
       const keep = { id: b.id, x: b.x, y: b.y, ...(b.name ? { name: `${b.name} (off)` } : {}), ...(b.flip ? { flip: true } : {}) };
       for (const k of Object.keys(b)) delete b[k];
@@ -172,7 +190,7 @@ export function drawSystem(opts = {}) {
 // A diagram varied as the simulator varies it (identification.md §13's
 // "hide a variation"), with its effects as the system has them.
 export function varyDiagram(entry, vary, seed) {
-  return drawSystem({ model: entry, vary, seed, detail: (entry.effects ?? []).map((f) => f.name) }).diagram;
+  return drawSystem({ model: entry, vary, seed, detail: effectsOf(entry).map((f) => f.name) }).diagram;
 }
 
 export const DEFAULT_MODEL = 'DC motor with an unbalanced arm';
@@ -193,6 +211,11 @@ function flatten(diagram) {
       const w = out && wireTo(b.diagram, out.id, 0);
       return w ? srcOf(b.diagram, `${prefix}${b.id}/`, { d, prefix, sub: b, ctx }, w.from) : null;
     }
+    // A Switch a mask set is a wire to its chosen input (diagram.js prune).
+    if (b.type === 'switch' && b.fixed) {
+      const w = wireTo(d, b.id, b.params.position - 1);
+      return w ? srcOf(d, prefix, ctx, w.from) : null;
+    }
     if (b.type === 'inport') {
       if (!ctx) return null;
       const w = wireTo(ctx.d, ctx.sub.id, b.params.port - 1);
@@ -203,7 +226,7 @@ function flatten(diagram) {
   const walk = (d, prefix, ctx) => {
     for (const b of d.blocks) {
       if (b.type === 'subsystem') { walk(b.diagram, `${prefix}${b.id}/`, { d, prefix, sub: b, ctx }); continue; }
-      if (b.type === 'inport' || b.type === 'outport') continue;
+      if (b.type === 'inport' || b.type === 'outport' || (b.type === 'switch' && b.fixed)) continue;
       const key = `${prefix}${b.id}`;
       leaves.set(key, b);
       const slots = [];
@@ -275,12 +298,15 @@ export function simPlant(opts = {}) {
   const { entry } = draw;
   const own = normalizeDiagram(draw.diagram);
   const signals = structuredClone(entry.signals ?? {});
-  const flat = flatten(own);
+  // Read through the masks: a Switch they set is a wire.
+  const flat = flatten(normalizeDiagram(own, 'plant', { resolve: true }));
   const ctrls = own.blocks.filter((b) => b.type === 'controller');
   if (ctrls.length > 1) throw new Error(`${entry.name}: one Controller block, for now`);
   const ctrl = ctrls[0] ?? null;
   if (!ctrl && mode !== 'control') throw new Error(`${entry.name} has no controller of its own: run it in control mode`);
-  const sinks = [...flat.leaves].filter(([, b]) => b.type === 'sink').map(([key, b]) => ({ key, name: b.params.name, unit: b.params.unit ?? '1', src: flat.feeds.get(key)[0] ?? null }))
+  // Sinks a mask switched off read nothing: they are not outputs.
+  const offSinks = compileDiagram(own, 'plant', { standalone: true, laws: false }).off;
+  const sinks = [...flat.leaves].filter(([, b]) => b.type === 'sink' && !offSinks.includes(b.params.name)).map(([key, b]) => ({ key, name: b.params.name, unit: b.params.unit ?? '1', src: flat.feeds.get(key)[0] ?? null }))
     // The top level's Sinks first, then those inside subsystems, each in diagram order.
     .sort((a, b) => a.key.split('/').length - b.key.split('/').length);
   const same = (a, b) => a && b && a.key === b.key && a.port === b.port;
@@ -454,9 +480,18 @@ export function simPlant(opts = {}) {
   }
   sourcePlays.hilu0 = { input: inputOf.hilu0 ?? 0 };
   sourcePlays.hilsafe = { value: 0 };
+  // Outputs an input reaches without a state between (an ideal current
+  // drive's i is its i*): the plant reports them with the input of the cycle
+  // that ended, the page's record after a new one.
+  const trim = (v) => { const i = v.findIndex((x) => x !== 0); return i < 0 ? [] : v.slice(i); };
+  const holds = (b) => ['integrator', 'controller', 'observer'].includes(b.type) || (b.type === 'delay' && b.params.L > 0) || !!diagramBlockDef(b.type).ode
+    || (diagramBlockDef(b.type).model && !(b.type === 'tf' && trim(b.params.num).length >= trim(b.params.den).length));
+  const stateful = new Set([...flat.leaves].filter(([, b]) => holds(b)).map(([k]) => k));
+  const reached = flat.reach([...inputKeys], new Set([...stateful].filter((k) => !inputKeys.has(k))));
+  const direct = outputs.filter((o) => { const s = sinks.find((x) => x.name === o.name) ?? later.find((x) => x.name === o.name); return s?.src && reached.has(s.src.key) && !stateful.has(s.src.key); }).map((o) => o.name);
   return {
     name: `Simulated plant${mode === 'control' ? '' : `, ${mode} mode`}`,
-    mode, rate, inputs, outputs, diagram: final, sources: sourcePlays, signals, loop: ownLoop, gate: !!ctrl && mode !== 'control',
+    mode, rate, inputs, outputs, direct, diagram: final, sources: sourcePlays, signals, loop: ownLoop, gate: !!ctrl && mode !== 'control',
     draws: { system: entry.name, seed: opts.seed ?? 1, vary: Number(opts.vary ?? 0.15), effects: draw.effects, params: draw.params, ranges: from },
   };
 }
