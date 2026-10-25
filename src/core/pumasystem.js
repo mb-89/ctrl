@@ -13,6 +13,7 @@
 // lists (robot.md §3).
 
 import { PUMA560 } from './puma560.js';
+import { componentUse } from './components.js';
 
 const D = PUMA560.drive, N = 6, DEG = Math.PI / 180;
 // The start pose (degrees): the probe's ball on the circle, its stylus 45°
@@ -36,41 +37,32 @@ const w = (from, to) => ({ from, to });
 const R = 'puma560';
 const KX = 10, KO = 10;   // the task law's gains (1/s): the error's time constant 0.1 s
 
-// Motor j: a geared DC motor on an ideal current drive with its limit
-// (robot.md §4): τ_j = G·(kt·i − τ_f(G·q̇)), the current a Sink, the
-// friction's share at the joint a Sink. Its rotor turns with the joint:
-// G²·Jm is on the Arm's mass matrix.
-const MOTOR_MASK = [
-  { key: 'G', label: 'Gear ratio (motor turns per joint turn)', unit: '1' }, { key: 'kt', label: 'Torque constant', unit: 'N·m/A' },
-  { key: 'imax', label: 'Current limit', unit: 'A' }, { key: 'B', label: 'Viscous friction', unit: 'N·m·s/rad' },
-  { key: 'Tcp', label: 'Coulomb friction, forward', unit: 'N·m' }, { key: 'Tcn', label: 'Coulomb friction, reverse', unit: 'N·m' },
-  { key: 'ws', label: 'Friction smoothing ωs', unit: 'rad/s' },
-];
-function motor(j) {
-  const n = j + 1;
-  return {
-    id: `m${n}`, type: 'subsystem', name: `Motor ${n}`, x: 200, y: 40 + 70 * j,
-    mask: MOTOR_MASK,
-    params: { G: D.G[j], kt: D.kt[j], imax: D.imax[j], B: D.B[j], Tcp: D.Tcp[j], Tcn: D.Tcn[j], ws: D.ws },
-    diagram: {
-      blocks: [
-        inp('i', 1, 20, 40, 'i*'), inp('qd', 2, 20, 140, 'q̇'),
-        blk('lim', 'saturation', { min: '-imax', max: 'imax' }, 120, 34, 'current limit'),
-        sink('cur', `i${n}`, 'A', 250, 90),
-        blk('kt', 'gain', { K: 'kt' }, 250, 34, 'kt'),
-        blk('sum', 'sum', { signs: '+-' }, 380, 38),
-        blk('G', 'gain', { K: 'G' }, 470, 34, 'gear G'),
-        outp('tau', 1, 600, 40, 'τ'),
-        blk('wm', 'gain', { K: 'G' }, 120, 134, 'ω_m = G·q̇'),
-        blk('fr', 'friction', { B: 'B', Tcp: 'Tcp', Tcn: 'Tcn', ws: 'ws' }, 250, 134, 'friction'),
-        blk('Gf', 'gain', { K: 'G' }, 380, 190, 'at the joint'),
-        sink('tf', `tauF${n}`, 'N·m', 500, 196),
-      ],
-      wires: [w('i', 'lim'), w('lim', 'kt'), w('lim', 'cur'), w('kt', 'sum'), w('sum', 'G'), w('G', 'tau'),
-        w('qd', 'wm'), w('wm', 'fr'), w('fr', 'sum:1'), w('fr', 'Gf'), w('Gf', 'tf')],
-    },
-  };
-}
+// Motor j: the Servo motor (servo.md §7.3, §15.5) on a current drive with
+// its limit, from the drive table. Its shaft is rigid: the rotor turns with
+// the joint (θm = G·q), its inertia G²·Jm on the Arm's mass matrix, so the
+// arm's states stay the arm's; τ_j = G·(kt·i − τ_f). Coulomb friction is
+// on (the robot's results assume it); every other effect is off, its
+// fields at realistic sizes (research/servo.md §1–2), for the person to
+// switch on: ripple 1 % of kt·imax at 6× per motor turn; encoder errors
+// 20″ (1×) and 10″ (2×) at the motor; the encoder's counts; the current
+// loop at 400 Hz; torque noise 0.002 N·m. The coupled shaft (an elastic
+// gear, backlash 3′ ready) is a choice on the mask: its k and c are typed
+// for 20 Hz with ζ 0.1 at the start pose, ωr² = k·(1/(G²·Jm) + 1/J_L),
+// 2ζ·ωr = c·(1/(G²·Jm) + 1/J_L), J_L the joint's diagonal entry of M(q0)
+// without the armature; with it, the Arm's armature must be 0.
+const SEC = Math.PI / (180 * 3600);
+const COUNTS = [1000, 800, 1000, 1000, 1000, 500];
+// k, c (N·m/rad, N·m·s/rad at the joint) for 20 Hz, ζ 0.1 at the start pose.
+export const PUMA_GEAR = { k: [9400, 15900, 3510, 26.3, 24.4, 2.35], c: [15, 25.3, 5.59, 0.0418, 0.0389, 0.00375] };
+const motorParams = (j) => ({
+  drive: 'current', R: D.Ra[j], K: D.kt[j], b: D.B[j], Jm: D.Jm[j], G: D.G[j], imax: D.imax[j], shaft: 'rigid',
+  k: PUMA_GEAR.k[j], c: PUMA_GEAR.c[j], beta: 3 * 60 * SEC,
+  coulomb: 1, Tcp: D.Tcp[j], Tcn: D.Tcn[j], ws: D.ws,
+  kr1: 6, Ar1: Number((0.01 * D.kt[j] * D.imax[j]).toPrecision(3)), Ar2: 0, Ar3: 0, sigma: 0.002, seed: 7 + j,
+  tauc: Number((1 / (2 * Math.PI * 400)).toPrecision(4)),
+  ke1: 1, Ae1: Number((20 * SEC).toPrecision(4)), pe1: 0.5, ke2: 2, Ae2: Number((10 * SEC).toPrecision(4)), pe2: 1, Ae3: 0, N: COUNTS[j],
+});
+const motor = (j) => componentUse('servo-motor@1', { id: `m${j + 1}`, name: `Motor ${j + 1}`, prefix: `m${j + 1}_`, params: motorParams(j), x: 200, y: 40 + 100 * j });
 
 // The Arm: M(q)·q̈ = τ − h(q, q̇), rotors on M's diagonal; q̈ integrated
 // twice from the start pose; the joint torque and its shares as Sinks.
@@ -110,18 +102,21 @@ const puma = {
         id: 'drives', type: 'subsystem', name: 'Motor drives', x: 160, y: 50,
         diagram: {
           blocks: [
-            inp('i', 1, 20, 200, 'i*'), inp('qd', 2, 20, 320, 'q̇'),
-            blk('di', 'demux', { sizes: '1,1,1,1,1,1' }, 100, 200), blk('dq', 'demux', { sizes: '1,1,1,1,1,1' }, 100, 320),
+            inp('i', 1, 20, 200, 'i*'), inp('qd', 2, 20, 320, 'q̇'), inp('q', 3, 20, 440, 'q'),
+            blk('di', 'demux', { sizes: '1,1,1,1,1,1' }, 100, 200), blk('dq', 'demux', { sizes: '1,1,1,1,1,1' }, 100, 320), blk('dqq', 'demux', { sizes: '1,1,1,1,1,1' }, 100, 440),
             ...J.map(motor),
-            blk('mx', 'mux', { inputs: '6' }, 400, 200), outp('tau', 1, 500, 200, 'τ'),
+            blk('mx', 'mux', { inputs: '6' }, 520, 200), outp('tau', 1, 620, 200, 'τ'),
+            blk('mq', 'mux', { inputs: '6' }, 520, 400, 'the encoders'), outp('qm', 2, 620, 400, 'q measured'),
           ],
-          wires: [w('i', 'di'), w('qd', 'dq'), ...J.flatMap((j) => [w(`di:${j}`, `m${j + 1}`), w(`dq:${j}`, `m${j + 1}:1`), w(`m${j + 1}`, `mx:${j}`)]), w('mx', 'tau')],
+          wires: [w('i', 'di'), w('qd', 'dq'), w('q', 'dqq'), ...J.flatMap((j) => [w(`di:${j}`, `m${j + 1}`), w(`dqq:${j}`, `m${j + 1}:1`), w(`dq:${j}`, `m${j + 1}:2`), w(`m${j + 1}`, `mx:${j}`), w(`m${j + 1}:1`, `mq:${j}`)]), w('mx', 'tau'), w('mq', 'qm')],
         },
       },
       arm,
-      outp('q', 1, 620, 60, 'q'),
+      outp('q', 1, 620, 60, 'q'), outp('qm', 2, 620, 120, 'q measured'),
     ],
-    wires: [w('i', 'drives'), w('drives', 'arm'), w('arm:1', 'drives:1'), w('arm', 'q')],
+    // The tool's pose reads the true q (Out 1); the controller reads the
+    // motors' encoders (Out 2), as on the real arm.
+    wires: [w('i', 'drives'), w('drives', 'arm'), w('arm:1', 'drives:1'), w('arm', 'drives:2'), w('arm', 'q'), w('drives:1', 'qm')],
   },
 };
 
@@ -280,7 +275,7 @@ const ctl = {
 export const PUMA_SYSTEM = {
   name: 'PUMA 560, a circle in space',
   summary: 'A six-axis robot arm takes a touch probe round a round part: the ruby ball traces the part\'s edge while the stylus leans in from outside, so every joint moves. Watch the error and the torques; switch the model off.',
-  notes: 'The PUMA 560, a six-axis arm, carries a touch probe like a measuring machine\'s: a short silver threaded mount, a black collar, a long thin steel shaft and a ruby ball, on an adapter that holds it 40° off the flange. The probe is part of the arm, its mass in the arm\'s model. The ball traces a horizontal circle of 0.08 m radius round a round part, once round and back in each 10 s period, smoothly, so the run repeats exactly (a full turn every period would wind joint 6, which turns the probe, past its stops). Straight down from the top the probe would hit the part, so the stylus comes in at 45° from outside and looks onto the inside of the circle all the way round: the whole tool turns once about the circle\'s axis with the ball, and no joint keeps a constant angle (each moves 31° to 360°, peak to peak; joint 6 turns the probe round and back). The ball touches the part\'s top edge. Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the ball starts by a Frame transform; the tool\'s orientation follows from them (Circle reference, its radius R on the mask). The 3D view draws the arm and the part from the robot description (URDF), the circle dashed and the ball\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the ball\'s position, the tool\'s orientation, its speed and Jacobian; the task law corrects both (time constant 0.1 s), with the reference\'s speed, turn rate and accelerations as feedforward; Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are geared DC motors on current drives, with their friction.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b, mm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and the motors\' friction (tauF1 … tauF6); the motor currents are i1 … i6; eo is the tool\'s orientation error (°).\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) and watch the torques, the wrist\'s currents and the Joint limits report.',
+  notes: 'The PUMA 560, a six-axis arm, carries a touch probe like a measuring machine\'s: a short silver threaded mount, a black collar, a long thin steel shaft and a ruby ball, on an adapter that holds it 40° off the flange. The probe is part of the arm, its mass in the arm\'s model. The ball traces a horizontal circle of 0.08 m radius round a round part, once round and back in each 10 s period, smoothly, so the run repeats exactly (a full turn every period would wind joint 6, which turns the probe, past its stops). Straight down from the top the probe would hit the part, so the stylus comes in at 45° from outside and looks onto the inside of the circle all the way round: the whole tool turns once about the circle\'s axis with the ball, and no joint keeps a constant angle (each moves 31° to 360°, peak to peak; joint 6 turns the probe round and back). The ball touches the part\'s top edge. Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the ball starts by a Frame transform; the tool\'s orientation follows from them (Circle reference, its radius R on the mask). The 3D view draws the arm and the part from the robot description (URDF), the circle dashed and the ball\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the ball\'s position, the tool\'s orientation, its speed and Jacobian; the task law corrects both (time constant 0.1 s), with the reference\'s speed, turn rate and accelerations as feedforward; Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are six Servo motors (the library\'s component) on current drives, with their friction; the controller reads their encoders.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b, mm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and each motor\'s friction at its shaft (m1_tau_f … m6_tau_f; ×G at the joint); the motor currents are m1_i … m6_i; eo is the tool\'s orientation error (°).\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) and watch the torques, the wrist\'s currents and the Joint limits report.\n\nThe motors\' own errors show in the robot. Open PUMA 560 › Motor drives and select Motor 2 (the shoulder): every effect but Coulomb friction is off, at a realistic size. Switch Torque ripple and cogging on (1 % of its peak torque, 6 times per motor turn, about 650 times per joint turn): the path error grows from 0.017 to 0.054 mm rms. Switch Encoder counts on and set N to 100 (counts per motor turn): the speed the loop computes from the counts jumps, and τ2 chatters (34 → 76 N·m rms). The encoder\'s angle errors are small at the joint (divided by the gear\'s 108): raise them on a motor to see them; Current loop adds the drive\'s lag (400 Hz).',
   signals: {
     // Once round the part and back in each period, smoothly: the phase
     // φ = π·(1 − cos(2π·t/10)) goes 0 → 2π → 0, so every joint (joint 6
@@ -314,7 +309,7 @@ export const PUMA_SYSTEM = {
     ],
     wires: [
       w('q0', 'pose0'), w('pose0', 'ref'), w('pose0:1', 'ref:1'),
-      w('puma', 'ctl'), w('ref', 'ctl:1'), w('ref:1', 'ctl:2'), w('ref:2', 'ctl:3'), w('ref:3', 'ctl:4'), w('ref:4', 'ctl:5'), w('ref:5', 'ctl:6'), w('ctl', 'puma'),
+      w('puma:1', 'ctl'), w('ref', 'ctl:1'), w('ref:1', 'ctl:2'), w('ref:2', 'ctl:3'), w('ref:3', 'ctl:4'), w('ref:4', 'ctl:5'), w('ref:5', 'ctl:6'), w('ctl', 'puma'),
       w('puma', 'tool'), w('tool', 'xyz'), w('ref', 'refp'),
       w('ref', 'err'), w('tool', 'err:1'), w('err', 'ec'), w('o0', 'ec:1'), w('ec', 'mm'), w('mm', 'e3'), w('mm', 'en'), w('en', 'e'),
     ],

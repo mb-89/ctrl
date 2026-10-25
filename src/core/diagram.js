@@ -919,8 +919,21 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   // state measurement k is (an Integrator's output), and its rate estimate
   // the state that Integrator integrates with gain 1. null when a
   // measurement is not such a state: the design then holds the estimates.
+  // A measurement read through a sensor (a Servo motor's encoder: θ = (G·q)/G,
+  // its angle errors, counts, noise) stands for the state it measures, as a
+  // design on the nominal plant takes it; a dead time or a resonance does not.
+  const sensed = (i) => {
+    let k = origin(i), f = 1;
+    for (let n = 0; n < 64 && k >= 0; n++) {
+      const nd = nodes[k];
+      if (nd.kind === 'gain') f *= nd.K;
+      else if (!(nd.kind === 'quant' || nd.kind === 'noise' || (nd.kind === 'fcn' && nd.inputs.length === 1 && nd.eq.out.length === 1))) break;
+      k = origin(nd.inputs[0]);
+    }
+    return Math.abs(f - 1) < 1e-9 ? k : -1;
+  };
   const stateOut = (i) => {
-    const nd = nodes[origin(i)];
+    const nd = nodes[sensed(i)];
     if (!nd) return null;
     if (nd.kind === 'tap' && nodes[nd.parent].kind === 'ode' && nodes[nd.parent].nx === 1) return nodes[nd.parent];
     if (nd.kind === 'ss' && nd.nx === 1 && nd.ss.C[0] === 1 && nd.ss.D === 0) return nd;

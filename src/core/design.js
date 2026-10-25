@@ -528,7 +528,26 @@ export function speedPIDesign(p, ctx) {
   if (!mdl.n || out?.state === undefined) throw new DesignError('not-a-rate', `${yName} is no state of the plant this lane sees: speedPI needs a measured speed`, 'wire the joint\'s speed (a finite difference of its angle) to input 2');
   const rateOf = (m, s, u) => { const f = new Float64Array(m.n); m.f(m.x0, u, f); return f[s]; };
   const bOf = (m) => { const s = m.outputs[0].state, c = m.outputs[0].slope; return (c * (rateOf(m, s, 1) - rateOf(m, s, -1))) / 2; };
-  const b = bOf(mdl);
+  // Behind a lag (a current loop's): ẏ does not move with u at the instant;
+  // the gain well below the lag's corner is ẏ's rate through it,
+  // Σ_j A_sj·B_j/(−A_jj) over the states u drives directly.
+  const throughLags = (m) => {
+    const s = m.outputs[0].state, c = m.outputs[0].slope, n = m.n, f = new Float64Array(n), g = new Float64Array(n);
+    const at = (x, u, k) => { m.f(x, u, f); return f[k]; };
+    let sum = 0;
+    for (let j = 0; j < n; j++) {
+      if (j === s) continue;
+      const Bj = (at(m.x0, 1, j) - at(m.x0, -1, j)) / 2;
+      if (!(Math.abs(Bj) > 1e-12)) continue;
+      const x = Float64Array.from(m.x0), h = 1e-6 * Math.max(1, Math.abs(x[j]));
+      x[j] += h; const sp = at(x, 0, s); m.f(x, 0, g); const jp = g[j];
+      x[j] -= 2 * h; const sm = at(x, 0, s); m.f(x, 0, g); const jm = g[j];
+      const Asj = (sp - sm) / (2 * h), Ajj = (jp - jm) / (2 * h);
+      if (Ajj < 0) sum += (Asj * Bj) / -Ajj;
+    }
+    return c * sum;
+  };
+  const b0 = bOf(mdl), b = Math.abs(b0) > 1e-12 ? b0 : throughLags(mdl);
   if (!(Math.abs(b) > 1e-12)) throw new DesignError('not-a-rate', `${yName} does not accelerate with ${mdl.input.label} (∂ẏ/∂u = 0): speedPI needs a measured speed`, 'wire the joint\'s speed to input 2');
   const Kv = (2 * p.zeta * p.omega) / b, Ki = p.integral === 'on' ? (p.omega * p.omega) / b : 0;
   // The trim over all lanes: B·u = −a0 on the measured speeds' rates.

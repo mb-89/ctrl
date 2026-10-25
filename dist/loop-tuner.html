@@ -3812,7 +3812,23 @@ function speedPIDesign(p, ctx) {
   if (!mdl.n || out?.state === undefined) throw new DesignError('not-a-rate', `${yName} is no state of the plant this lane sees: speedPI needs a measured speed`, 'wire the joint\'s speed (a finite difference of its angle) to input 2');
   const rateOf = (m, s, u) => { const f = new Float64Array(m.n); m.f(m.x0, u, f); return f[s]; };
   const bOf = (m) => { const s = m.outputs[0].state, c = m.outputs[0].slope; return (c * (rateOf(m, s, 1) - rateOf(m, s, -1))) / 2; };
-  const b = bOf(mdl);
+  const throughLags = (m) => {
+    const s = m.outputs[0].state, c = m.outputs[0].slope, n = m.n, f = new Float64Array(n), g = new Float64Array(n);
+    const at = (x, u, k) => { m.f(x, u, f); return f[k]; };
+    let sum = 0;
+    for (let j = 0; j < n; j++) {
+      if (j === s) continue;
+      const Bj = (at(m.x0, 1, j) - at(m.x0, -1, j)) / 2;
+      if (!(Math.abs(Bj) > 1e-12)) continue;
+      const x = Float64Array.from(m.x0), h = 1e-6 * Math.max(1, Math.abs(x[j]));
+      x[j] += h; const sp = at(x, 0, s); m.f(x, 0, g); const jp = g[j];
+      x[j] -= 2 * h; const sm = at(x, 0, s); m.f(x, 0, g); const jm = g[j];
+      const Asj = (sp - sm) / (2 * h), Ajj = (jp - jm) / (2 * h);
+      if (Ajj < 0) sum += (Asj * Bj) / -Ajj;
+    }
+    return c * sum;
+  };
+  const b0 = bOf(mdl), b = Math.abs(b0) > 1e-12 ? b0 : throughLags(mdl);
   if (!(Math.abs(b) > 1e-12)) throw new DesignError('not-a-rate', `${yName} does not accelerate with ${mdl.input.label} (∂ẏ/∂u = 0): speedPI needs a measured speed`, 'wire the joint\'s speed to input 2');
   const Kv = (2 * p.zeta * p.omega) / b, Ki = p.integral === 'on' ? (p.omega * p.omega) / b : 0;
   const n = ctx.lanes, lane = ctx.lane || 1;
@@ -5671,8 +5687,13 @@ const SERVO_DIAGRAM = {
     B('sw_bl', 'switch', { inputs: 2, position: '1 + backlash' }, 700, 700, { name: 'backlash' }),
     B('kgear', 'gain', { K: 'k' }, 820, 700, { name: 'gear stiffness k' }),
     B('react', 'gain', { K: '1/G' }, 940, 620, { name: 'gear 1/G (reaction)' }),
-    B('sw_shr', 'switch', { inputs: 2, position: 'shaft' }, 1000, 230, { name: 'shaft' }),
-    B('sw_sht', 'switch', { inputs: 2, position: 'shaft' }, 1380, 700, { name: 'shaft' }),
+    B('sw_shr', 'switch', { inputs: 2, position: 'min(shaft, 2)' }, 1000, 230, { name: 'shaft' }),
+    B('sw_sht', 'switch', { inputs: 3, position: 'shaft' }, 1380, 700, { name: 'shaft' }),
+    B('thr', 'gain', { K: 'G' }, 120, 820, { name: 'θm = G·θ (rigid)' }),
+    B('wr', 'gain', { K: 'G' }, 120, 880, { name: 'ωm = G·ω (rigid)' }),
+    B('sw_th', 'switch', { inputs: 2, position: '1 + (shaft - 1)*(shaft - 2)/2' }, 1300, 260, { name: 'rotor angle' }),
+    B('sw_w', 'switch', { inputs: 2, position: '1 + (shaft - 1)*(shaft - 2)/2' }, 1160, 260, { name: 'rotor speed' }),
+    B('gtau', 'gain', { K: 'G' }, 1240, 780, { name: 'gear G (rigid)' }),
     B('tau', 'outport', { port: 1 }, 1520, 708, { name: 'τ' }),
     B('cpl', 'tf', { num: ['wc*wc'], den: [1, '2*zc*wc', 'wc*wc'], delay: 0 }, 1380, 200, { name: 'encoder coupling resonance' }),
     B('sw_cpl', 'switch', { inputs: 2, position: '1 + coupling' }, 1520, 140, { name: 'coupling' }),
@@ -5691,21 +5712,23 @@ const SERVO_DIAGRAM = {
   ],
   wires: [
     { from: 'u', to: 'vlim' }, { from: 'u', to: 'sw_vlim' }, { from: 'vlim', to: 'sw_vlim:1' },
-    { from: 'sw_vlim', to: 'esum' }, { from: 'ke', to: 'esum:1' }, { from: 'esum', to: 'arm' }, { from: 'wm', to: 'ke' },
+    { from: 'sw_vlim', to: 'esum' }, { from: 'ke', to: 'esum:1' }, { from: 'esum', to: 'arm' }, { from: 'sw_w', to: 'ke' },
     { from: 'u', to: 'ilim' }, { from: 'ilim', to: 'iloop' }, { from: 'ilim', to: 'sw_iloop' }, { from: 'iloop', to: 'sw_iloop:1' },
-    { from: 'sw_iloop', to: 'vr' }, { from: 'wm', to: 'vk' }, { from: 'vr', to: 'vsum' }, { from: 'vk', to: 'vsum:1' }, { from: 'sw_vlim', to: 'sw_v' }, { from: 'vsum', to: 'sw_v:1' }, { from: 'sw_v', to: 'v' },
+    { from: 'sw_iloop', to: 'vr' }, { from: 'sw_w', to: 'vk' }, { from: 'vr', to: 'vsum' }, { from: 'vk', to: 'vsum:1' }, { from: 'sw_vlim', to: 'sw_v' }, { from: 'vsum', to: 'sw_v:1' }, { from: 'sw_v', to: 'v' },
     { from: 'arm', to: 'sw_drive' }, { from: 'sw_iloop', to: 'sw_drive:1' }, { from: 'sw_drive', to: 'i' }, { from: 'sw_drive', to: 'kt' }, { from: 'kt', to: 'tau_e' },
-    { from: 'thm', to: 'zero' }, { from: 'thm', to: 'rip' }, { from: 'zero', to: 'sw_rip' }, { from: 'rip', to: 'sw_rip:1' },
+    { from: 'sw_th', to: 'zero' }, { from: 'sw_th', to: 'rip' }, { from: 'zero', to: 'sw_rip' }, { from: 'rip', to: 'sw_rip:1' },
     { from: 'sw_rip', to: 'tn' }, { from: 'sw_rip', to: 'sw_tn' }, { from: 'tn', to: 'sw_tn:1' }, { from: 'sw_tn', to: 'tau_r' },
-    { from: 'wm', to: 'visc' }, { from: 'wm', to: 'coul' }, { from: 'wm', to: 'zero2' }, { from: 'zero2', to: 'sw_coul' }, { from: 'coul', to: 'sw_coul:1' },
+    { from: 'sw_w', to: 'visc' }, { from: 'sw_w', to: 'coul' }, { from: 'sw_w', to: 'zero2' }, { from: 'zero2', to: 'sw_coul' }, { from: 'coul', to: 'sw_coul:1' },
     { from: 'visc', to: 'fsum' }, { from: 'sw_coul', to: 'fsum:1' }, { from: 'fsum', to: 'tau_f' },
     { from: 'kt', to: 'tsum' }, { from: 'sw_tn', to: 'tsum:1' }, { from: 'fsum', to: 'tsum:2' }, { from: 'tsum', to: 'tau_m' },
-    { from: 'tsum', to: 'rsum' }, { from: 'sw_shr', to: 'rsum:1' }, { from: 'rsum', to: 'wm' }, { from: 'wm', to: 'thm' }, { from: 'wm', to: 'gv' },
-    { from: 'tl', to: 'tlg' }, { from: 'thm', to: 'gd' }, { from: 'gd', to: 'dsum' }, { from: 'tl', to: 'dsum:1' }, { from: 'dsum', to: 'delta' },
+    { from: 'tsum', to: 'rsum' }, { from: 'sw_shr', to: 'rsum:1' }, { from: 'rsum', to: 'wm' }, { from: 'sw_w', to: 'thm' }, { from: 'sw_w', to: 'gv' },
+    { from: 'wm', to: 'sw_w' }, { from: 'wr', to: 'sw_w:1' }, { from: 'thm', to: 'sw_th' }, { from: 'thr', to: 'sw_th:1' },
+    { from: 'w', to: 'wr' }, { from: 'tl', to: 'thr' }, { from: 'tsum', to: 'gtau' },
+    { from: 'tl', to: 'tlg' }, { from: 'sw_th', to: 'gd' }, { from: 'gd', to: 'dsum' }, { from: 'tl', to: 'dsum:1' }, { from: 'dsum', to: 'delta' },
     { from: 'gv', to: 'vsum2' }, { from: 'w', to: 'vsum2:1' }, { from: 'vsum2', to: 'cr' }, { from: 'dsum', to: 'xsum' }, { from: 'cr', to: 'xsum:1' },
     { from: 'xsum', to: 'gap' }, { from: 'xsum', to: 'sw_bl' }, { from: 'gap', to: 'sw_bl:1' }, { from: 'sw_bl', to: 'kgear' }, { from: 'kgear', to: 'react' },
-    { from: 'tlg', to: 'sw_shr' }, { from: 'react', to: 'sw_shr:1' }, { from: 'tl', to: 'sw_sht' }, { from: 'kgear', to: 'sw_sht:1' }, { from: 'sw_sht', to: 'tau' },
-    { from: 'thm', to: 'cpl' }, { from: 'thm', to: 'sw_cpl' }, { from: 'cpl', to: 'sw_cpl:1' },
+    { from: 'tlg', to: 'sw_shr' }, { from: 'react', to: 'sw_shr:1' }, { from: 'tl', to: 'sw_sht' }, { from: 'kgear', to: 'sw_sht:1' }, { from: 'gtau', to: 'sw_sht:2' }, { from: 'sw_sht', to: 'tau' },
+    { from: 'sw_th', to: 'cpl' }, { from: 'sw_th', to: 'sw_cpl' }, { from: 'cpl', to: 'sw_cpl:1' },
     { from: 'sw_cpl', to: 'err' }, { from: 'sw_cpl', to: 'sw_err' }, { from: 'err', to: 'sw_err:1' },
     { from: 'sw_err', to: 'cnt' }, { from: 'sw_err', to: 'sw_cnt' }, { from: 'cnt', to: 'sw_cnt:1' },
     { from: 'sw_cnt', to: 'edel' }, { from: 'sw_cnt', to: 'sw_del' }, { from: 'edel', to: 'sw_del:1' },
@@ -5730,7 +5753,7 @@ const SERVO_MASK = [
   F('Jm', 'Rotor inertia', 'kg·m²', 0.02, { min: 1e-12, physical: true }),
   F('G', 'Gear ratio (motor turns per output turn)', '1', 1),
   F('imax', 'Current limit', 'A', 10, { min: 1e-9, under: 'drive:current' }),
-  { key: 'shaft', label: 'Output shaft', kind: 'choice', options: ['free', 'coupled'], default: 'free' },
+  { key: 'shaft', label: 'Output shaft', kind: 'choice', options: ['free', 'coupled', 'rigid'], default: 'free' },
   F('k', 'Gear stiffness (output)', 'N·m/rad', 1000, { min: 1e-9, under: 'shaft:coupled', physical: true }),
   F('c', 'Gear damping (output)', 'N·m·s/rad', 1, { min: 0, under: 'shaft:coupled', physical: true }),
   T('coulomb', 'Coulomb friction'),
@@ -7882,7 +7905,7 @@ function blockWidths(b, inW, env, force) {
   }
   if (b.type === 'observer') {
     if (grouped(b)) {
-      if (inW[1] === undefined && !force) return null;
+      if (inW[1] === undefined && force !== 2) return null;
       const m = inW[1] ?? 1;
       return { ins: [1, m], outs: [m, m] };
     }
@@ -7986,7 +8009,7 @@ function widthPass(diagram, opts) {
         const order = sub.diagram.blocks.filter((x) => x.type === 'inport').sort((a, c) => a.params.port - c.params.port);
         const w = fed(parent, sub, order.indexOf(b));
         if (w !== undefined) res = { ins: [], outs: [w] };
-        else if (force) res = { ins: [], outs: [1] };
+        else if (force === 2) res = { ins: [], outs: [1] };
       } else if (b.type === 'inport') res = { ins: [], outs: [1] };
       else if (b.type === 'outport') {
         const w = fed(lv, b, 0);
@@ -7998,13 +8021,15 @@ function widthPass(diagram, opts) {
         try { res = blockWidths(b, inW, env, force); } catch (e) { throw new Error(`${e.message.startsWith("'") ? '' : `${where(lv, b)}: `}${e.message}`); }
       }
       if (res) { W.set(u.key, res); done.add(u.key); progress = true; }
+      if (force && progress) return true;
     }
     return progress;
   };
   const done = new Set();
   while (done.size < units.length) {
     if (decide(false)) continue;
-    if (!decide(true)) break;
+    if (decide(1)) continue;
+    if (!decide(2)) break;
   }
   const open = units.filter((u) => !done.has(u.key));
   if (open.length) throw new Error(`the width of ${open.slice(0, 4).map((u) => where(u.lv, u.b)).join(', ')} cannot be told: a loop needs a block with state whose width is declared (an Integrator's x0 or width)`);
@@ -8885,8 +8910,18 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     nd.after = ctrls.filter((c) => c !== nd && mark[c.i]).map((c) => c.i);
   }
 
+  const sensed = (i) => {
+    let k = origin(i), f = 1;
+    for (let n = 0; n < 64 && k >= 0; n++) {
+      const nd = nodes[k];
+      if (nd.kind === 'gain') f *= nd.K;
+      else if (!(nd.kind === 'quant' || nd.kind === 'noise' || (nd.kind === 'fcn' && nd.inputs.length === 1 && nd.eq.out.length === 1))) break;
+      k = origin(nd.inputs[0]);
+    }
+    return Math.abs(f - 1) < 1e-9 ? k : -1;
+  };
   const stateOut = (i) => {
-    const nd = nodes[origin(i)];
+    const nd = nodes[sensed(i)];
     if (!nd) return null;
     if (nd.kind === 'tap' && nodes[nd.parent].kind === 'ode' && nodes[nd.parent].nx === 1) return nodes[nd.parent];
     if (nd.kind === 'ss' && nd.nx === 1 && nd.ss.C[0] === 1 && nd.ss.D === 0) return nd;
@@ -9648,6 +9683,7 @@ return { simulate, stepPlan, substeps, simulateSystem };
 __mods['core/pumasystem.js'] = (() => {
 
 const { PUMA560 } = __mods['core/puma560.js'];
+const { componentUse } = __mods['core/components.js'];
 const D = PUMA560.drive, N = 6, DEG = Math.PI / 180;
 const PUMA_START = [0, 50.1, -204.6, 38.7, -19, 175];
 const Q0 = PUMA_START.map((v) => v * DEG);
@@ -9662,37 +9698,18 @@ const w = (from, to) => ({ from, to });
 const R = 'puma560';
 const KX = 10, KO = 10;   
 
-const MOTOR_MASK = [
-  { key: 'G', label: 'Gear ratio (motor turns per joint turn)', unit: '1' }, { key: 'kt', label: 'Torque constant', unit: 'N·m/A' },
-  { key: 'imax', label: 'Current limit', unit: 'A' }, { key: 'B', label: 'Viscous friction', unit: 'N·m·s/rad' },
-  { key: 'Tcp', label: 'Coulomb friction, forward', unit: 'N·m' }, { key: 'Tcn', label: 'Coulomb friction, reverse', unit: 'N·m' },
-  { key: 'ws', label: 'Friction smoothing ωs', unit: 'rad/s' },
-];
-function motor(j) {
-  const n = j + 1;
-  return {
-    id: `m${n}`, type: 'subsystem', name: `Motor ${n}`, x: 200, y: 40 + 70 * j,
-    mask: MOTOR_MASK,
-    params: { G: D.G[j], kt: D.kt[j], imax: D.imax[j], B: D.B[j], Tcp: D.Tcp[j], Tcn: D.Tcn[j], ws: D.ws },
-    diagram: {
-      blocks: [
-        inp('i', 1, 20, 40, 'i*'), inp('qd', 2, 20, 140, 'q̇'),
-        blk('lim', 'saturation', { min: '-imax', max: 'imax' }, 120, 34, 'current limit'),
-        sink('cur', `i${n}`, 'A', 250, 90),
-        blk('kt', 'gain', { K: 'kt' }, 250, 34, 'kt'),
-        blk('sum', 'sum', { signs: '+-' }, 380, 38),
-        blk('G', 'gain', { K: 'G' }, 470, 34, 'gear G'),
-        outp('tau', 1, 600, 40, 'τ'),
-        blk('wm', 'gain', { K: 'G' }, 120, 134, 'ω_m = G·q̇'),
-        blk('fr', 'friction', { B: 'B', Tcp: 'Tcp', Tcn: 'Tcn', ws: 'ws' }, 250, 134, 'friction'),
-        blk('Gf', 'gain', { K: 'G' }, 380, 190, 'at the joint'),
-        sink('tf', `tauF${n}`, 'N·m', 500, 196),
-      ],
-      wires: [w('i', 'lim'), w('lim', 'kt'), w('lim', 'cur'), w('kt', 'sum'), w('sum', 'G'), w('G', 'tau'),
-        w('qd', 'wm'), w('wm', 'fr'), w('fr', 'sum:1'), w('fr', 'Gf'), w('Gf', 'tf')],
-    },
-  };
-}
+const SEC = Math.PI / (180 * 3600);
+const COUNTS = [1000, 800, 1000, 1000, 1000, 500];
+const PUMA_GEAR = { k: [9400, 15900, 3510, 26.3, 24.4, 2.35], c: [15, 25.3, 5.59, 0.0418, 0.0389, 0.00375] };
+const motorParams = (j) => ({
+  drive: 'current', R: D.Ra[j], K: D.kt[j], b: D.B[j], Jm: D.Jm[j], G: D.G[j], imax: D.imax[j], shaft: 'rigid',
+  k: PUMA_GEAR.k[j], c: PUMA_GEAR.c[j], beta: 3 * 60 * SEC,
+  coulomb: 1, Tcp: D.Tcp[j], Tcn: D.Tcn[j], ws: D.ws,
+  kr1: 6, Ar1: Number((0.01 * D.kt[j] * D.imax[j]).toPrecision(3)), Ar2: 0, Ar3: 0, sigma: 0.002, seed: 7 + j,
+  tauc: Number((1 / (2 * Math.PI * 400)).toPrecision(4)),
+  ke1: 1, Ae1: Number((20 * SEC).toPrecision(4)), pe1: 0.5, ke2: 2, Ae2: Number((10 * SEC).toPrecision(4)), pe2: 1, Ae3: 0, N: COUNTS[j],
+});
+const motor = (j) => componentUse('servo-motor@1', { id: `m${j + 1}`, name: `Motor ${j + 1}`, prefix: `m${j + 1}_`, params: motorParams(j), x: 200, y: 40 + 100 * j });
 
 const arm = {
   id: 'arm', type: 'subsystem', name: 'Arm', x: 420, y: 60,
@@ -9730,18 +9747,19 @@ const puma = {
         id: 'drives', type: 'subsystem', name: 'Motor drives', x: 160, y: 50,
         diagram: {
           blocks: [
-            inp('i', 1, 20, 200, 'i*'), inp('qd', 2, 20, 320, 'q̇'),
-            blk('di', 'demux', { sizes: '1,1,1,1,1,1' }, 100, 200), blk('dq', 'demux', { sizes: '1,1,1,1,1,1' }, 100, 320),
+            inp('i', 1, 20, 200, 'i*'), inp('qd', 2, 20, 320, 'q̇'), inp('q', 3, 20, 440, 'q'),
+            blk('di', 'demux', { sizes: '1,1,1,1,1,1' }, 100, 200), blk('dq', 'demux', { sizes: '1,1,1,1,1,1' }, 100, 320), blk('dqq', 'demux', { sizes: '1,1,1,1,1,1' }, 100, 440),
             ...J.map(motor),
-            blk('mx', 'mux', { inputs: '6' }, 400, 200), outp('tau', 1, 500, 200, 'τ'),
+            blk('mx', 'mux', { inputs: '6' }, 520, 200), outp('tau', 1, 620, 200, 'τ'),
+            blk('mq', 'mux', { inputs: '6' }, 520, 400, 'the encoders'), outp('qm', 2, 620, 400, 'q measured'),
           ],
-          wires: [w('i', 'di'), w('qd', 'dq'), ...J.flatMap((j) => [w(`di:${j}`, `m${j + 1}`), w(`dq:${j}`, `m${j + 1}:1`), w(`m${j + 1}`, `mx:${j}`)]), w('mx', 'tau')],
+          wires: [w('i', 'di'), w('qd', 'dq'), w('q', 'dqq'), ...J.flatMap((j) => [w(`di:${j}`, `m${j + 1}`), w(`dqq:${j}`, `m${j + 1}:1`), w(`dq:${j}`, `m${j + 1}:2`), w(`m${j + 1}`, `mx:${j}`), w(`m${j + 1}:1`, `mq:${j}`)]), w('mx', 'tau'), w('mq', 'qm')],
         },
       },
       arm,
-      outp('q', 1, 620, 60, 'q'),
+      outp('q', 1, 620, 60, 'q'), outp('qm', 2, 620, 120, 'q measured'),
     ],
-    wires: [w('i', 'drives'), w('drives', 'arm'), w('arm:1', 'drives:1'), w('arm', 'q')],
+    wires: [w('i', 'drives'), w('drives', 'arm'), w('arm:1', 'drives:1'), w('arm', 'drives:2'), w('arm', 'q'), w('drives:1', 'qm')],
   },
 };
 
@@ -9889,7 +9907,7 @@ const ctl = {
 const PUMA_SYSTEM = {
   name: 'PUMA 560, a circle in space',
   summary: 'A six-axis robot arm takes a touch probe round a round part: the ruby ball traces the part\'s edge while the stylus leans in from outside, so every joint moves. Watch the error and the torques; switch the model off.',
-  notes: 'The PUMA 560, a six-axis arm, carries a touch probe like a measuring machine\'s: a short silver threaded mount, a black collar, a long thin steel shaft and a ruby ball, on an adapter that holds it 40° off the flange. The probe is part of the arm, its mass in the arm\'s model. The ball traces a horizontal circle of 0.08 m radius round a round part, once round and back in each 10 s period, smoothly, so the run repeats exactly (a full turn every period would wind joint 6, which turns the probe, past its stops). Straight down from the top the probe would hit the part, so the stylus comes in at 45° from outside and looks onto the inside of the circle all the way round: the whole tool turns once about the circle\'s axis with the ball, and no joint keeps a constant angle (each moves 31° to 360°, peak to peak; joint 6 turns the probe round and back). The ball touches the part\'s top edge. Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the ball starts by a Frame transform; the tool\'s orientation follows from them (Circle reference, its radius R on the mask). The 3D view draws the arm and the part from the robot description (URDF), the circle dashed and the ball\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the ball\'s position, the tool\'s orientation, its speed and Jacobian; the task law corrects both (time constant 0.1 s), with the reference\'s speed, turn rate and accelerations as feedforward; Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are geared DC motors on current drives, with their friction.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b, mm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and the motors\' friction (tauF1 … tauF6); the motor currents are i1 … i6; eo is the tool\'s orientation error (°).\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) and watch the torques, the wrist\'s currents and the Joint limits report.',
+  notes: 'The PUMA 560, a six-axis arm, carries a touch probe like a measuring machine\'s: a short silver threaded mount, a black collar, a long thin steel shaft and a ruby ball, on an adapter that holds it 40° off the flange. The probe is part of the arm, its mass in the arm\'s model. The ball traces a horizontal circle of 0.08 m radius round a round part, once round and back in each 10 s period, smoothly, so the run repeats exactly (a full turn every period would wind joint 6, which turns the probe, past its stops). Straight down from the top the probe would hit the part, so the stylus comes in at 45° from outside and looks onto the inside of the circle all the way round: the whole tool turns once about the circle\'s axis with the ball, and no joint keeps a constant angle (each moves 31° to 360°, peak to peak; joint 6 turns the probe round and back). The ball touches the part\'s top edge. Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the ball starts by a Frame transform; the tool\'s orientation follows from them (Circle reference, its radius R on the mask). The 3D view draws the arm and the part from the robot description (URDF), the circle dashed and the ball\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the ball\'s position, the tool\'s orientation, its speed and Jacobian; the task law corrects both (time constant 0.1 s), with the reference\'s speed, turn rate and accelerations as feedforward; Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are six Servo motors (the library\'s component) on current drives, with their friction; the controller reads their encoders.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b, mm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and each motor\'s friction at its shaft (m1_tau_f … m6_tau_f; ×G at the joint); the motor currents are m1_i … m6_i; eo is the tool\'s orientation error (°).\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) and watch the torques, the wrist\'s currents and the Joint limits report.\n\nThe motors\' own errors show in the robot. Open PUMA 560 › Motor drives and select Motor 2 (the shoulder): every effect but Coulomb friction is off, at a realistic size. Switch Torque ripple and cogging on (1 % of its peak torque, 6 times per motor turn, about 650 times per joint turn): the path error grows from 0.017 to 0.054 mm rms. Switch Encoder counts on and set N to 100 (counts per motor turn): the speed the loop computes from the counts jumps, and τ2 chatters (34 → 76 N·m rms). The encoder\'s angle errors are small at the joint (divided by the gear\'s 108): raise them on a motor to see them; Current loop adds the drive\'s lag (400 Hz).',
   signals: {
     a_r: { period: PERIOD_S, components: [{ type: 'fn', params: {}, expr: `${RADIUS}*(cos(pi*(1 - cos(2*pi*t/${PERIOD_S}))) - 1)` }] },
     b_r: { period: PERIOD_S, components: [{ type: 'fn', params: {}, expr: `${RADIUS}*sin(pi*(1 - cos(2*pi*t/${PERIOD_S})))` }] },
@@ -9919,7 +9937,7 @@ const PUMA_SYSTEM = {
     ],
     wires: [
       w('q0', 'pose0'), w('pose0', 'ref'), w('pose0:1', 'ref:1'),
-      w('puma', 'ctl'), w('ref', 'ctl:1'), w('ref:1', 'ctl:2'), w('ref:2', 'ctl:3'), w('ref:3', 'ctl:4'), w('ref:4', 'ctl:5'), w('ref:5', 'ctl:6'), w('ctl', 'puma'),
+      w('puma:1', 'ctl'), w('ref', 'ctl:1'), w('ref:1', 'ctl:2'), w('ref:2', 'ctl:3'), w('ref:3', 'ctl:4'), w('ref:4', 'ctl:5'), w('ref:5', 'ctl:6'), w('ctl', 'puma'),
       w('puma', 'tool'), w('tool', 'xyz'), w('ref', 'refp'),
       w('ref', 'err'), w('tool', 'err:1'), w('err', 'ec'), w('o0', 'ec:1'), w('ec', 'mm'), w('mm', 'e3'), w('mm', 'en'), w('en', 'e'),
     ],
@@ -9928,7 +9946,7 @@ const PUMA_SYSTEM = {
     part: { radius: RADIUS - 0.008 / Math.SQRT2, height: 0.12, drop: 0.008 / Math.SQRT2 } }],
 };
 
-return { PUMA_START, PUMA_SYSTEM };
+return { PUMA_START, PUMA_GEAR, PUMA_SYSTEM };
 })();
 // ---- core/plants.js
 __mods['core/plants.js'] = (() => {

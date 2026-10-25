@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the PUMA's joints are Servo motors ([servo.md](servo.md) §15.6; input 18)
+
+No new words from the person; the orchestrator's go for servo.md §15.5 after the PUMA landed. The person (input 18): "increase the level of the servos of the robot, and then the same errors would show up in the robot too".
+- **Built**: the six joints are Servo motors (prefixes m1_ … m6_, Coulomb on, the rest off at realistic sizes); the controller reads their encoders; with every effect off the run equals the one before to rounding (path error 5.5·10⁻¹³ mm, torques 7·10⁻¹¹ N·m, currents 5·10⁻¹² A); every other system bit for bit. Ripple on the shoulder's motor triples the path error (0.017 → 0.054 mm rms); 100 encoder counts per turn on it double τ2 (34 → 76 N·m rms): a try-this in the notes.
+- **Interpretation: a third shaft, rigid** (the rotor turns with the joint, its inertia on the arm's mass matrix), not §15.5's coupled one: an elastic gear is another plant and could not meet "every effect off equals today's run", and the axis loops cannot yet be designed through it (servo.md §15.6). The coupled shaft stays a choice; on the PUMA it is left for a scaled look-through and speed loops designed on the elastic joint.
+- **Interpretations in the core**: the vector width pass forces one block at a time, those with state first; a finite difference looks through a sensor (Gains of product 1, quantizer, noise, a one-input Equations); speedPI takes its gain through a lag (the current loop) when u does not move ẏ at the instant. The currents are renamed m1_i … m6_i.
+
 ## 2026-10-25 · v2.9: every controller industry ready, bumpless by one wrapper ([input 49](../input/2026-10-25-49-bumpless-wrapper-industry-ready.md))
 
 - A rule for every controller the page proposes: "The control law should be industry ready, and that means it needs a bumpless mode switch." It is given by one wrapper round the law (differentiate its output, integrate once at the end), which does not need to know the law inside; laws without integral action fade the offset the wrapper absorbed. Built after the overhaul, with changes applied mid-run (roadmap.md).
