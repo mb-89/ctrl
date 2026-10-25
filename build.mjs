@@ -271,8 +271,16 @@ const SHELL = `<div id="lt-shell" class="app">
 const jsonScript = (project) => `<script type="application/json" id="loop-tuner-project">\n${JSON.stringify(project, null, 2).replace(/</g, '\\u003c')}\n</script>`;
 
 // fragment: the page body for hosts that supply their own document skeleton.
+// The one style sheet, as the page and the decision report carry it (input 65).
+const styleSheet = () => readFileSync(join(ROOT, 'src/ui/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\n\s*\n+/g, '\n');
+
+// The decision report's look (src/core/pugh.js, renderHtml's style): the
+// page's fonts and its style sheet, read from their files when the report is
+// made, never copied; the fonts' notice as the style's licence.
+export const reportStyle = () => ({ css: `${fontFaces()}\n${styleSheet()}`, license: FONT_LICENSE });
+
 export function buildHtml({ project = null, fragment = false } = {}) {
-  const css = readFileSync(join(ROOT, 'src/ui/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\n\s*\n+/g, '\n');
+  const css = styleSheet();
   const js = bundleScript().replace(/<\/script/gi, '<\\/script');
   const title = project?.title ? `${project.title} · Loop Tuner` : 'Loop Tuner';
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -286,7 +294,7 @@ export function buildHtml({ project = null, fragment = false } = {}) {
   return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(title)}</title>\n<meta name="description" content="${esc(AGENT_NOTE)}">\n${FONTS()}\n<style id="lt-style">${css}</style>\n${limitedCheck()}\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   mkdirSync(join(ROOT, 'dist'), { recursive: true });
   const standalone = buildHtml();
   writeFileSync(join(ROOT, 'dist/loop-tuner.html'), standalone);
