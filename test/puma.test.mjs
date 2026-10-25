@@ -24,7 +24,7 @@ const runs = new Map();
 const run = (v) => {
   if (!runs.has(v)) {
     const t0 = performance.now();
-    const out = simulateSystem(withVariant(v), signals, { duration: 5, sampleTime: 0.001 });
+    const out = simulateSystem(withVariant(v), signals, { duration: 10, sampleTime: 0.001 });
     out.ms = performance.now() - t0;
     runs.set(v, out);
   }
@@ -35,7 +35,7 @@ const centre = (s) => [(Math.max(...s.xr) + Math.min(...s.xr)) / 2, (Math.max(..
 const rms = (a) => Math.sqrt(a.reduce((s, x) => s + x * x, 0) / a.length);
 const peak = (a) => a.reduce((m, x) => Math.max(m, Math.abs(x)), 0);
 
-test('the compiled PUMA equals the loop written plainly, every variant, over 5 s to 1e-12', () => {
+test('the compiled PUMA equals the loop written plainly, every variant, over a 10 s period to 1e-12', () => {
   for (const v of [0, 1, 2]) {
     const out = run(v), ref = pumaReference({ variant: v });
     let dq = 0, dp = 0;
@@ -48,7 +48,7 @@ test('the compiled PUMA equals the loop written plainly, every variant, over 5 s
   }
 });
 
-test('what a model buys: 0.013 mm with the feedforward, 1.3 mm without, 10 mm with P alone', () => {
+test('what a model buys: 0.017 mm with the feedforward, 1.4 mm without, 9.5 mm with P alone', () => {
   const [model, pi, p] = [0, 1, 2].map((v) => run(v).signals);
   assert.ok(rms(model.e) < 0.03, `with the model ${rms(model.e)} mm`);
   assert.ok(rms(pi.e) > 0.5 && rms(pi.e) < 3, `PI ${rms(pi.e)} mm`);
@@ -76,9 +76,10 @@ test('the probe\'s circle moves every joint and stays inside the arm: limits, si
 });
 
 test('a circle too fast runs a joint beyond its speed limit, reported once with the time', () => {
+  // Round and back in 3 s instead of 10.
   const fast = structuredClone(PUMA_SYSTEM.signals);
-  fast.a_r.components[0].params.frequency = 0.6; fast.b_r.components[0].params.frequency = 0.6;
-  const out = simulateSystem(withVariant(0), Object.fromEntries(Object.entries(fast).map(([k, r]) => [k, normalizeReference(r)])), { duration: 5, sampleTime: 0.001 });
+  for (const k of ['a_r', 'b_r']) { fast[k].period = 3; fast[k].components[0].expr = fast[k].components[0].expr.replace('/10', '/3'); }
+  const out = simulateSystem(withVariant(0), Object.fromEntries(Object.entries(fast).map(([k, r]) => [k, normalizeReference(r)])), { duration: 10, sampleTime: 0.001 });
   assert.ok(out.info.validity.some((r) => /(faster than its limit|left its range) .* at \d+\.\d+ s/.test(r)), out.info.validity.join('; '));
 });
 
@@ -95,9 +96,10 @@ test('the probe looks onto the inside of the circle at 45° all the way round; t
     assert.ok((R[2] * toC[0] + R[5] * toC[1]) / (h * Math.hypot(...toC)) > 0.999, `inward at ${k}`);
     az.push(Math.atan2(R[5], R[2]));
   }
-  let turned = 0;
-  for (let k = 1; k < az.length; k++) { let d = az[k] - az[k - 1]; d -= 2 * Math.PI * Math.round(d / (2 * Math.PI)); turned += d; }
-  assert.ok(Math.abs(Math.abs(turned) / (2 * Math.PI) - 0.95) < 0.02, `the stylus turned ${turned / (2 * Math.PI)} turns`);
+  // Round once and back: the stylus's azimuth goes a full turn out and returns.
+  let turned = 0, most = 0;
+  for (let k = 1; k < az.length; k++) { let d = az[k] - az[k - 1]; d -= 2 * Math.PI * Math.round(d / (2 * Math.PI)); turned += d; most = Math.max(most, Math.abs(turned)); }
+  assert.ok(Math.abs(most / (2 * Math.PI) - 1) < 0.01 && Math.abs(turned) < 0.05, `the stylus turned ${most / (2 * Math.PI)} turns out, ${turned / (2 * Math.PI)} at the end`);
   // One description draws and models it: the ball's visual sits at the tool point (tip), the
   // blocks' tool is the last link, and the stylus's mass is in the arm's (and the model's) gravity.
   const tipLink = model.links.find((l) => l.name === 'tip');
@@ -141,8 +143,17 @@ test('the 3D view binds to visible Sinks; the reference path is the circle of 0.
   }
 });
 
-test('a 5 s run takes about 0.6 s in Node (logged; held to 3 s on a busy machine)', () => {
-  const out = simulateSystem(withVariant(0), signals, { duration: 5, sampleTime: 0.001 });
-  console.log(`PUMA 5 s run: ${out.info.ms.toFixed(0)} ms (${out.info.steps} steps)`);
-  assert.ok(out.info.ms < 3000);
+test('the run repeats: three periods alike, no jump at a period\'s end (input 52)', () => {
+  const s = simulateSystem(withVariant(0), signals, { duration: 30, sampleTime: 0.001 }).signals, per = 10000;
+  let d = 0, wrap = 0;
+  for (const n of ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'tau2', 'tau3']) for (let i = 0; i < per; i++) d = Math.max(d, Math.abs(s[n][2 * per + i] - s[n][per + i]));
+  for (const w of [per, 2 * per]) for (let i = w - 50; i < w + 50; i++) wrap = Math.max(wrap, s.e[i]);
+  assert.ok(d < 1e-3, `period 3 against period 2: ${d}`);
+  assert.ok(wrap < 0.01, `the error at a period's end: ${wrap} mm`);
+});
+
+test('a 10 s run takes about 1.2 s in Node (logged; held to 6 s on a busy machine)', () => {
+  const out = simulateSystem(withVariant(0), signals, { duration: 10, sampleTime: 0.001 });
+  console.log(`PUMA 10 s run: ${out.info.ms.toFixed(0)} ms (${out.info.steps} steps)`);
+  assert.ok(out.info.ms < 6000);
 });
