@@ -448,6 +448,17 @@ function lqr(p, o) {
   return below(d, `K, kr: LQR from the plant at its origin, ${weights(p)}`, 'LQR');
 }
 
+// The variable gain: state feedback on the error from where y rests at r,
+// drawn with the gains near r; the schedule in the lines under it.
+function huLin(p, o) {
+  const v = o.values, m = Math.max(1, o.inputs.length - 1);
+  const K = v ? v.K.slice((v.N - 1) * v.m, v.N * v.m).map((g) => g * p.k) : unknown(m);
+  const kr = v ? v.us + K.reduce((s, g, i) => s + g * v.ys[i], 0) : UNKNOWN;
+  const d = stateFeedback({ K, kr, Tr: p.Tr, umin: p.umin, umax: p.umax }, o);
+  const far = v ? `${fmt(p.k * v.K[0])}` : '–';
+  return below(below(d, `K near r; far from r it falls to ${far}… (ε ${fmt(p.low)}), so u stays inside`), `K(ε): LQR from the plant at ${p.levels} levels on nested ellipsoids, ${weights(p)}${p.k > 1 ? `, ×${fmt(p.k)}` : ''}`, 'Variable gain (Hu–Lin)');
+}
+
 function scheduledPI(p, o) {
   const v = o.values, n = p.at.length;
   const common = { Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, u0: v?.u0 ?? 0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
@@ -506,7 +517,7 @@ function kalmanModel(p, o) {
   return estimator(p, o, 'kalman', { lines });
 }
 
-const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, huLin, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 // def: the type's library entry, for the generic picture of a type without its own.
 export function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {

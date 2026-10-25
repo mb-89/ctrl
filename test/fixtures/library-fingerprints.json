@@ -48,5 +48,10 @@
     "samples": 2001,
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,current,load,r,speed",
     "hash": "23d8e117"
+  },
+  "Variable gain against anti-windup": {
+    "samples": 2001,
+    "signals": "angle,ctrl.r,ctrl.u,ctrl.y,d,r,speed,torque,u",
+    "hash": "f3a827e7"
   }
 }

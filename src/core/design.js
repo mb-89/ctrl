@@ -11,6 +11,7 @@
 //   piCancel(fit, Tcl), scheduledPIDesign(p, ctx)  PI by pole cancellation, at levels of the first measurement
 //   trajectoryDesign(p, ctx)                       a swing-up plan with TV-LQR along it (planner.js)
 //   kalmanDesign(lin, { Q, R, Ts, outputs })       the steady-state Kalman filter of an Observer
+//   huLinDesign(p, ctx)                            LQR gains on nested ellipsoids, for the Hu–Lin variable gain
 
 import { c2d, dlqr, dlqe, eig, solve, inv, rank, mul, transpose, equilibrate, tzeros } from './linalg.js';
 import { DesignError, operatingPoint, linearize, firstOrderFit, pathRealisation, refuseKinks } from './linearize.js';
@@ -432,6 +433,69 @@ export function lqrDesign(lin, { Q, R, track = 1, Ts }) {
     { label: 'slowest pole', value: slowest(poles, Ts) },
   ];
   return { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings };
+}
+
+// The Hu–Lin variable-gain controller (design/research/hu-lin.md): the
+// low-gain family of discrete LQR designs, Q·ε and R with ε from p.low up to
+// 1, each with its ellipsoid, the largest level set of V = xᵀP(ε)x on which
+// the linear law cannot reach the limit (Wredenhagen and Bélanger 1994;
+// Megretski 1996; Hu and Lin 2002). V falls under the linear law, so its
+// ellipsoid is invariant, and the ellipsoids are nested: the higher the gain,
+// the smaller. The law (controllers.js) takes, at each sample, the highest
+// level whose ellipsoid holds the error, interpolated between two levels so
+// the gain changes continuously: far from r a low gain, near it the full
+// one, u near the limit and never past it.
+// On one ellipsoid xᵀPx ≤ c the largest |Kx·x| is √(c · Kx P⁻¹ Kxᵀ), so
+// with S = P · (Kx P⁻¹ Kxᵀ) the error e lies inside where eᵀ S e ≤ ū², ū
+// the room the limits leave around the input that holds y at r. S is kept
+// in measurement coordinates (y = C x, every state measured, as lqrDesign
+// checks). The error is e = y − ys·r, ys and us the measurements and the
+// input of the rest where the tracked measurement equals 1.
+// p: { Q, R, low, levels, track, umin, umax }. Returns { values: { m, N, eps,
+// K (N × m), S (N × m × m), ys, us }, rows, warnings }.
+export function huLinDesign(p, ctx) {
+  if (!(Number.isFinite(p.umin) && Number.isFinite(p.umax))) throw new DesignError('no-limits', 'the variable gain keeps u inside its limits, and this variant has none: without a limit its gain would simply be the highest', 'set u min and u max to the actuator\'s limits, or use LQR');
+  const lin = ctx.linearize('origin');
+  const q = Array.isArray(p.Q) ? p.Q : [p.Q], N = p.levels;
+  const eps = Array.from({ length: N }, (_, i) => p.low ** (1 - i / (N - 1)));
+  const designs = eps.map((e) => lqrDesign(lin, { Q: q.map((v) => v * e), R: p.R, track: p.track, Ts: ctx.Ts }));
+  const { n, m, outputs } = lin, labels = outputs.map((o) => o.label);
+  const Ci = inv(lin.C);
+  const S = designs.map((d) => {
+    const Pi = inv(d.P), w = d.Kx.reduce((s, a, i) => s + a * d.Kx.reduce((t, b, j) => t + Pi[i][j] * b, 0), 0);
+    const M = d.P.map((row) => row.map((v) => v * w));
+    return mul(mul(transpose(Ci), M), Ci);
+  });
+  const warnings = [...new Set(designs.flatMap((d) => d.warnings))];
+  // Nested: S grows with the level (S[i+1] − S[i] ≥ 0).
+  for (let i = 0; i + 1 < N; i++) {
+    const Ds = S[i + 1].map((row, a) => row.map((v, b) => (v + S[i + 1][b][a] - S[i][a][b] - S[i][b][a]) / 2));
+    const lo = Math.min(...eig(Ds).map((z) => z.re)), size = Math.max(...S[i + 1].flat().map(Math.abs));
+    if (lo < -1e-6 * size) { warnings.push(`the ellipsoids of ε = ${fmt(eps[i])} and ${fmt(eps[i + 1])} are not nested: there the gain may step back as the error shrinks`); break; }
+  }
+  // The rest where the tracked measurement is 1: A x + B u = 0, C_track x = 1.
+  let ys = new Array(m).fill(0), us = 0;
+  if (p.track) {
+    const M = [...lin.A.map((row, i) => [...row, lin.B[i][0]]), [...lin.C[p.track - 1], 0]];
+    const sol = rank(equilibrate(M).M) === n + 1 ? solve(M, [...new Array(n).fill(0), 1]) : [NaN];
+    if (!sol.every(Number.isFinite)) throw new DesignError('no-rest', `no input holds ${labels[p.track - 1]} at a steady r`, 'set r applies to 0, or track a measurement the plant can hold');
+    ys = mul(lin.C, sol.slice(0, n).map((v) => [v])).map((r) => r[0]);
+    us = sol[n];
+  }
+  // How far the levels reach: the largest step of r whose error lies inside
+  // the lowest level (the low gain never saturates), and inside the highest.
+  const room = Math.min(p.umax, -p.umin);
+  const reach = (Sx) => { const g = ys.reduce((s, a, i) => s + a * ys.reduce((t, b, j) => t + Sx[i][j] * b, 0), 0); return g > 0 && room > 0 ? room / Math.sqrt(g) : Infinity; };
+  const unit = p.track && outputs[p.track - 1].unit ? ` ${outputs[p.track - 1].unit}` : '';
+  const rows = [
+    { label: 'K near r', value: designs[N - 1].K, labels, note: `ε = 1: Q, R as given` },
+    { label: 'K far', value: designs[0].K, labels, note: `ε = ${fmt(p.low)}: Q·ε` },
+    { label: 'levels', value: N, note: `ε = ${fmt(p.low)} … 1, nested ellipsoids` },
+    ...(p.track ? [{ label: 'reach', value: [reach(S[0]), reach(S[N - 1])], labels: ['inside', 'full gain'], note: `steps of ${labels[p.track - 1]}${unit} from rest the levels hold without reaching the limit` }] : []),
+    { label: 'slowest pole', value: designs[N - 1].rows.at(-1).value, note: 'near r' },
+  ];
+  const values = { m, N, eps, K: designs.flatMap((d) => d.K), S: S.flatMap((x) => x.flat()), ys, us };
+  return { values, rows, warnings };
 }
 
 // The pole of a pendulum on a cart, from the plant's linearisation at the
