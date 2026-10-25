@@ -49,11 +49,50 @@ The person: the System library's descriptions "are too long. Look at how long th
 - **The System library**: each system shows its name, its tags and a bottom line that answers the person's four questions, "what is the model? Which features does it present? What can you try out with this model? What can you learn from it?" (short, in plain words, no numbers); a Details control opens the full description (the system's notes). Interpretation: the full description stays with the system (its notes), shown on demand in the library and in the Plant tab, not deleted.
 - Applied by a worker to the library first, then to the other tabs where the same applies (help texts, notes, status lines, Auto-tune and Analysis readouts).
 
+## 2026-10-25 · v2.8: the backlash example's fix; the robot's gear at 20 Hz ([input 24](../input/2026-10-25-24-backlash-fix-gear-stiffness.md))
+
+The person: "The backlash example should also offer the industrial fix ... make it a bit slower, because 50 Hertz running at our [HIL] with 100 Hertz is, I guess, critical. And I feel like you can make it configurable ... the cloud coordinator should coordinate questions."
+- **Decided** ([servo.md](servo.md) §3, §7.3, §7.4):
+  - **Gear backlash gains a variant, Dual loop**: position from the load's encoder, damping from the motor's speed. With 1° of play it holds the load to 0.13 mrad without hunting, where the load-encoder PID hunts at ±10.5 mrad.
+  - Its load gets a little bearing friction (0.005 N·m·s/rad, 0.02 N·m); without it, no loop can stop a load coasting inside the play.
+  - **The robot's gear resonance is 20 Hz** (below a 100 Hz HIL cycle's 50 Hz Nyquist frequency), configurable through k and c on the mask. Axis loops tuned as if rigid then track to 2.82 mrad rms (1.83 at 50 Hz, 8.53 at 10 Hz). The design layer, designing on the plant that runs, should close most of that gap.
+  - The backlash example's own gear stays at 50 Hz, so its hunting is the play's alone. At 20 Hz its load-encoder loop is unstable even without play, kept as a try-this.
+- **Interpretations:**
+  - "Slower" is the resonance frequency, and "configurable" is k and c on the mask (a "set from fr, ζ" helper later).
+  - The industrial fix is dual-loop feedback, built here as state feedback; a cascade with an inner PI speed loop is later.
+- **Process:** questions from this design go to the cloud coordinator, which asks the person; this branch asks the person nothing directly.
+
+## 2026-10-25 · v2.8: the servo motor, answered; the rotor in the motor, backlash ([input 23](../input/2026-10-25-23-servo-answers-backlash.md))
+
+The person: "put the rotor's inertia into the motor. That's where they belong ... set ... the stiffness of the connections and the backlash ... to non-problematic values first. But especially backlash is an interesting thing for us ... we should have one example that exemplifies a backlash simulation." On sizes: "You can exaggerate the error sizes in the example for the spectrogram. You don't have to exaggerate it in the robot." The robot opens with Coulomb friction.
+- **Decided** ([servo.md](servo.md)):
+  - The Servo motor's rotor is inside it.
+  - The motor connects in one of two ways (the mask choice `shaft`):
+    - **free**, with a load torque in, for the lone motors (the DC motor examples and the encoder example; they stay within 1.4·10⁻¹⁴ and 6·10⁻¹² of main);
+    - **coupled**, through an elastic gear (k, c) with backlash as a switch, for anything that drives an inertia (the robot's links, the new Gear backlash example).
+  - The PUMA's armature (G²·Jm) leaves the arm's plant mass matrix for the six motors; the controller's model keeps it.
+  - The robot opens with Coulomb on and every other error off at realistic sizes, and the encoder example keeps its exaggerated ones.
+  - A new example, **Gear backlash**: a load-encoder loop hunts in the play at about 31 Hz, ±10.7 mrad with 1°; on the motor encoder it holds still, β/2 off. Its notes say the Servo motor simulates backlash.
+- **Interpretations:**
+  - "Non-problematic" stiffness is a two-mass resonance about ten times above the loop's bandwidth with ζ 0.1 (50 Hz on the PUMA and in the example).
+  - A lone motor is not coupled to anything: coupling the library's motors measured up to 0.9 % changes, the relay's switching moved, and they ran 4–5 times slower.
+  - Backlash is a spring and damper in contact, nothing in the gap, never pulling, built from one Function block.
+  - The coupled shaft needs the eigenvalue step bound from detail-levels.md §5; the prototype stands in for it.
+- **Open for the person:** the backlash fix and the PUMA's gear stiffness: answered in input 24 (the entry above).
+
 ## 2026-10-25 · v2.8: one servo motor, its errors as detail ([input 18](../input/2026-10-25-18-servo-motor-detail.md))
 
 The person: "make them high detail toggles in our servo motor ... the servo motor can also run speed controlled ... we show them in the spectrogram thing, but we could also just increase the level of the servos of the robot, and then the same errors would show up in the robot too ... it would also be reuse. So think about that."
 - **Direction (being designed):** one reusable servo motor component, openable like every model, used by the DC motor examples (position), the encoder example (speed) and the PUMA's six joints (geared, current drive). Its non-idealities (the encoder's 1× and 2× angle errors, torque ripple, the shaft resonance, noise, and more the research finds) are high-detail switches of that one model; at their neutral values they vanish exactly (as SPICE's added parameters do), so the plain motor is the same model with them off.
-- **Interpretation:** the switches come first, built on the component's mask, and need none of the detail-levels machinery (which stays at the end of the backlog); when levels come, a level is a named set of these switches. Design: [servo.md](servo.md) (in progress).
+- **Interpretation:** the switches come first, built on the component's mask, and need none of the detail-levels machinery (which stays at the end of the backlog); when levels come, a level is a named set of these switches. Design: [servo.md](servo.md).
+- **Designed** ([servo.md](servo.md), research [../research/servo.md](../research/servo.md), prototype on branch feat/servo-design):
+  - **One component, motion in and torque out.** The Servo motor is the drive, torque, friction, ripple, gear and encoder. The output shaft's θ and ω come in, τ goes out. The inertia is the mechanism's: a Shaft (∫ 1/J) beside a lone motor, the arm's mass matrix (G²·Jm) in the robot. Interpretation: this is the only form in which one model serves a lone motor and a robot joint with no physics in two places.
+  - **Switches.** Each effect is a toggle on the mask with its own fields, kept while off. Off is not compiled (required: a compiled off branch changed the step, 2 substeps against 1). On at the neutral value it is bit for bit the plain motor where a neutral value exists.
+  - **Drive and loops.** Voltage or current drive is the one choice. Speed, position or torque control is which output the loop reads and what it commands, not a mode.
+  - **The encoder example.** Its "flexible shaft" is the encoder's coupling (sensor side), which is what main computes. Rebuilt, it differs by 2.2·10⁻¹² relative, because the motor now owns its friction (proven exact with the friction put back); the test tolerance is 10⁻⁹. The DC motor examples: 1.4·10⁻¹⁴.
+  - **Storage.** A use is stored as a reference plus mask values (`component: "servo-motor@1"`, `params`), opens read-only, and Edit a copy makes a My block. Built-in components are versioned.
+  - **Detail levels**, when built, are named sets of these switches.
+  - **Open for the person:** what the robot opens with, error sizes, the two-mass shaft and backlash: answered in input 23 (the entry above).
 
 ## 2026-10-25 · v2.8: a warning in a limited environment ([input 16](../input/2026-10-25-16-limited-environment-banner.md))
 

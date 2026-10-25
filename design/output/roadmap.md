@@ -40,6 +40,16 @@ Reader: whoever picks the next piece of work.
 
    Coordinate with feat/design-system and feat/designs, which touch `src/ui/plant.js`.
 
+5. **One Servo motor** ([servo.md](servo.md), designed, not built; the person's [input 18](../input/2026-10-25-18-servo-motor-detail.md)). In its §11 steps:
+   - the minimal mask (numbers, toggles, a choice) and switches resolved at compile time;
+   - built-in components stored by reference (`component`, `params`), opened read-only, Edit a copy into My blocks;
+   - the DC motor examples, then the encoder example, on the component (free shaft);
+   - the eigenvalue step bound (shared with detail-levels.md §5);
+   - the coupled shaft with backlash, and the new **Gear backlash** example with its Dual loop fix ([input 23](../input/2026-10-25-23-servo-answers-backlash.md));
+   - the PUMA's Motor drives on it (rotor inertia in the motors, Coulomb on), with or after robot.md's motors.
+
+   Shares the mask with [transparent-models.md](transparent-models.md) and [detail-levels.md](detail-levels.md): whichever reaches it first builds it.
+
 ## Later
 
 - Live, more ([hil.md](hil.md#not-yet)), from the person's words of 2026-10-24: signals the plant only logs (outputs that are not ports); an agent tuning a live loop through MCP ("could we also connect an agent to that web page"); identifying the live plant, which varies by up to ±15 % and is not described to the page, so Auto-tune and Analysis work for HIL ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)); then several External blocks, remote plants (wss://, a token), a trigger for live sweeps, binary frames above 200 Hz. Check `runme.cmd`, `runme.ps1` and the plant's timing on Windows (untested here; `--bench 30` before relying on 100 Hz).

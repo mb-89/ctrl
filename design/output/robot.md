@@ -288,6 +288,8 @@ Bias forces (q, q̇) ═6═╝   Mass matrix (q; armature "G^2*Jm") ═36═╝
 
 ## 4. Motors
 
+**Superseded in part by [servo.md](servo.md) (2026-10-25, [input 23](../input/2026-10-25-23-servo-answers-backlash.md)):** each Motor j is the shared Servo motor component (current drive, coupled shaft). The rotor's inertia moves into the motor, so the arm's plant mass matrix loses G²·Jm (the controller's model keeps it), and the joint couples through an elastic gear (50 Hz) with backlash as a switch. Coulomb friction is on by default, and the encoder and ripple errors are switches, off, at realistic sizes. The sketch below is the first design.
+
 **"Motor drives" opens to six subsystems, Motor 1 … Motor 6, one per joint, as the person was told** (judge's graft). Each is the same masked subsystem with its own `j`, and its wires are scalar:
 
 ```
