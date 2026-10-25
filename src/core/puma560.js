@@ -100,6 +100,30 @@ const DRIVE = {
   Vmax: 40,
 };
 
+// A touch probe on the flange (inputs 40, 41, 43, 44): a measuring
+// machine's stylus (a short silver threaded mount, a black collar, a long
+// thin steel shaft, a ruby ball at its tip) held 40° off the flange's axis
+// by an angled adapter, so the stylus can lean 45° in onto a part while the
+// wrist stays clear of its stops. The ball's centre is the tool point (the
+// link "tip", 0.11 m along the stylus). Its mass is the arm's to carry: the
+// adapter and stylus, 0.1 kg with the centre of mass 40 mm along the
+// stylus, a slender rod's inertia (m·L²/12 across, little along it).
+const PROBE = `<material name="metal"><color rgba="0.7 0.74 0.8 1"/></material>
+<material name="ruby"><color rgba="0.78 0.08 0.3 1"/></material>
+<joint name="probe" type="fixed"><parent link="flange"/><child link="probe"/><origin rpy="0 0.6981317007977318 0"/></joint>
+<link name="probe">
+<inertial><origin xyz="0 0 0.04"/><mass value="0.1"/><inertia ixx="0.0001" iyy="0.0001" izz="0.000003" ixy="0" ixz="0" iyz="0"/></inertial>
+<visual><origin xyz="0 0 -0.004"/><geometry><box size="0.04 0.034 0.02"/></geometry><material name="dark"/></visual>
+<visual><origin xyz="0 0 0.012"/><geometry><cylinder radius="0.005" length="0.012"/></geometry><material name="metal"/></visual>
+<visual><origin xyz="0 0 0.024"/><geometry><cylinder radius="0.009" length="0.012"/></geometry><material name="dark"/></visual>
+<visual><origin xyz="0 0 0.067"/><geometry><cylinder radius="0.0025" length="0.074"/></geometry><material name="metal"/></visual>
+</link>
+<joint name="tip" type="fixed"><parent link="probe"/><child link="tip"/><origin xyz="0 0 0.11"/></joint>
+<link name="tip">
+<visual><geometry><sphere radius="0.008"/></geometry><material name="ruby"/></visual>
+</link>
+`;
+
 export const PUMA560 = {
   urdf: U,
   drive: DRIVE,
@@ -108,5 +132,7 @@ export const PUMA560 = {
   // The tool frame, and a start pose with the tool pointing down, well inside
   // every joint's range and away from the singularities (degrees).
   tool: 'flange',
+  // The arm with the probe on its flange: what the library system runs and draws.
+  urdfProbe: U.replace('</robot>', `${PROBE}</robot>`),
   start: [0, 40, -150, 0, -70, 0],
 };

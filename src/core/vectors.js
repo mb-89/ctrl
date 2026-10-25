@@ -296,7 +296,9 @@ function blockWidths(b, inW, env, force) {
     }
     return { ins: all(1, p.inputs), outs: all(1, p.outputs) };
   }
-  if (ELEMWISE.has(b.type) || isModelType(b.type) || b.type === 'sum' || b.type === 'switch') {
+  // Equations with several named inputs or outputs have scalar ports; with one of each it works element by element.
+  const multiFcn = b.type === 'fcn' && env.ports(b).some((k) => k !== 1);
+  if (!multiFcn && (ELEMWISE.has(b.type) || isModelType(b.type) || b.type === 'sum' || b.type === 'switch')) {
     const nIn = b.type === 'sum' ? p.signs.length : b.type === 'switch' ? p.inputs : 1;
     const stateful = STATEFUL.has(b.type) || isModelType(b.type);
     // An input not known yet: wait (a block with state decides when forced).
@@ -525,15 +527,19 @@ function expandLevel(lv, cx) {
     const n = b.type === 'sink' || b.type === 'terminator' ? w.ins[0] : w.outs[0] ?? 1;
     const nIn = w.ins.length;
     const allScalar = w.ins.every((x) => x === 1) && w.outs.every((x) => x === 1);
+    // An Equations block's mask values (b.consts, not enumerable) ride along
+    // as a field of the copy, so a copy of the scalar diagram (the model
+    // compile's structuredClone) keeps them.
+    const own = b.type === 'fcn' && b.consts ? { consts: b.consts } : null;
     if (allScalar && !(b.type === 'integrator' && Array.isArray(b.params.x0)) && !(b.type === 'sink' && String(b.params.name).includes(','))) {
-      blocks.push(b);
+      blocks.push(own ? { ...b, ...own } : b);
       ins[b.id] = Array.from({ length: nIn }, (_, g) => [end(b.id, g)]);
       outs[b.id] = w.outs.map((_, g) => [end(b.id, g)]);
       continue;
     }
     // Element by element: one copy per element.
     const ids = Array.from({ length: n }, (_, k) => copyId(b.id, k, n));
-    ids.forEach((id, k) => blocks.push(elementCopy(b, id, k, n, label)));
+    ids.forEach((id, k) => blocks.push({ ...elementCopy(b, id, k, n, label), ...own }));
     ins[b.id] = Array.from({ length: nIn }, (_, g) => ids.map((id) => end(id, g)));
     outs[b.id] = w.outs.map((_, g) => ids.map((id) => end(id, g)));
   }

@@ -10,6 +10,13 @@ import { createRbd } from '../core/rbd.js';
 import { createView3d } from './view3d.js';
 
 const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+const PART = '(part)';
+// The centre of a path's extent, and its height at the start.
+function centreOf(points) {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < points.length; i += 3) { x0 = Math.min(x0, points[i]); x1 = Math.max(x1, points[i]); y0 = Math.min(y0, points[i + 1]); y1 = Math.max(y1, points[i + 1]); }
+  return [(x0 + x1) / 2, (y0 + y1) / 2, points[2]];
+}
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // A path's samples as [x, y, z, …] with their times, dropping samples that
@@ -29,6 +36,10 @@ function pathSamples(data, p) {
 export function createRobotScene(host, app) {
   let spec = null, view = null, model = null, rbd = null, raf = 0, drawn = 0;
   let jointNames = [], last = { data: null, k: -1 }, samples = [], rec = { data: null, k: null };
+  // The camera as the person left it, per view and robot: it comes back when
+  // the tab is shown again or the view rebuilt.
+  const cameras = new Map();
+  let camKey = '';
 
   // The signal that poses joint i: a Sink's base name numbered (q1 …), or
   // the map by the joint's name (or j1 …).
@@ -50,9 +61,12 @@ export function createRobotScene(host, app) {
     const fresh = data !== last.data;
     last = { data, k };
     const q = jointNames.map((n) => { const v = valueAt(n); return Number.isFinite(v) ? v : 0; });
-    const poses = rbd.linkPoses(q);
-    view.setPoses(poses);
     if (fresh) samples = spec.paths.map((p) => (data ? pathSamples(data, p) : null));
+    const poses = rbd.linkPoses(q);
+    const refPath = samples[spec.paths.findIndex((p) => p.style === 'reference')];
+    // (Before a run has drawn the path, the part waits out of sight, under the floor.)
+    if (spec.part) { const c = refPath?.points.length ? centreOf(refPath.points) : [0, 0, -10]; poses[PART] = { R: IDENTITY, p: [c[0], c[1], c[2] - spec.part.drop] }; }
+    view.setPoses(poses);
     const now = data ? data.t[k] : 0;
     spec.paths.forEach((p, i) => {
       const s = samples[i];
@@ -85,6 +99,7 @@ export function createRobotScene(host, app) {
   function stop() {
     if (raf) cancelAnimationFrame(raf);
     raf = 0;
+    if (view && camKey) cameras.set(camKey, view.camera);
     view?.destroy();
     view = null; spec = null; last = { data: null, k: -1 }; samples = [];
     host.replaceChildren();
@@ -102,7 +117,11 @@ export function createRobotScene(host, app) {
         rbd = createRbd(model);
         spec = v;
         jointNames = model.joints.map((_, i) => jointSignal(i));
-        view = createView3d(host, { links: model.links, joints: model.joints, camera: v.camera, linkInfo });
+        camKey = `${v.name}|${urdf.length}`;
+        // The part to work on is one more link, fixed in the world; it is
+        // placed once the reference path is known.
+        const links = v.part ? [...model.links, { name: PART, visuals: [{ origin: { R: IDENTITY, p: [0, 0, -v.part.height / 2] }, geom: { type: 'cylinder', radius: v.part.radius, length: v.part.height }, material: 'part', rgba: [0.7, 0.74, 0.8, 1] }] }] : model.links;
+        view = createView3d(host, { links, joints: model.joints, camera: cameras.get(camKey) ?? v.camera, linkInfo });
       } catch (err) {
         stop();
         host.innerHTML = `<p class="note text-bad">View error: ${esc(err.message)}</p>`;
