@@ -41,7 +41,8 @@ node tools/view3d-shots.mjs         # the 3D view's own checks in headless Chrom
 | Where | What |
 |---|---|
 | `src/core/signals.js` | The signal generator's primitives; a signal is their sum. |
-| `src/core/diagram.js` | Block diagrams: blocks, subsystems, and the compiler that simulates them. |
+| `src/core/diagram.js` | Block diagrams: blocks, subsystems and their masks, and the compiler that simulates them (its step bound includes the Jacobian's largest eigenvalue). |
+| `src/core/formula.js` | Formulas in parameters and in Equations blocks: parsed, folded and compiled to closures, no eval. |
 | `src/core/plants.js`, `src/core/systems.js` | Example plants and the System library. |
 | `src/core/views.js` | 2D views of a plant. |
 | `src/core/xml.js`, `src/core/urdf.js`, `src/core/rbd.js`, `src/core/puma560.js` | Robots: URDF read into a model; kinematics, Jacobian, inverse and forward dynamics, the torque split; the PUMA 560's description and drives. |

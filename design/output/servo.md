@@ -341,6 +341,8 @@ From [transparent-models.md](transparent-models.md) §1.4 and [detail-levels.md]
 7. **A choice that changes ports** (`shaft`): ports are derived from the resolved mask, as a Controller's from `inputs`.
 8. **The eigenvalue step bound** for the coupled shaft (detail-levels §5: a finite-difference Jacobian at the start state, its largest |λ|). It is not needed for the free shaft, which today's bound handles exactly as main.
 
+**Built** (2026-10-25, branch `feat/model-foundations`, by transparent-models.md's definitions): items 1 (masks, formula parameters, mask fields with `min` and `max`), 3 (formulas in `num` and `den`, entry by entry), 4 (`inf`; `tanh` was already a function) and 8 (the eigenvalue step bound in `el.bound`: a loop of two Integrators through Gains now bounds the step, so the coupled shaft's stand-in lag can go), and the Integrator with `x0`, `min`, `max`, `unit`, `angle`. Not built: item 2 (field kinds `toggle` and `choice`; a mask field is a number today, and an integer field, such as a Switch's `position`, refuses a formula), item 6 (compile-time switches) and item 7 (ports from the resolved mask). Those are this plan's step 1.
+
 **A minimal mask can come first, and should.** Items 1, 2, 3, 6 and 7 are enough for the free shaft, the encoder example and the motor examples. Item 8 comes before the backlash example and the robot's motors.
 
 ## 9. A library component, and how a project stores a use
