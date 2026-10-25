@@ -6,21 +6,26 @@
 //
 // Each cycle the plant sends y (seq, t). The runner sets the External plant
 // block's outputs to y, advances the rest of the diagram to t (Sources play
-// at t, Controller blocks sample on their own Ts), and reads the block's
-// inputs: that is the u sent back, at once, with the same seq.
+// their waveform in loop time after the ramp-in, core/ramp.js; Controller
+// blocks sample on their own Ts), and reads the block's inputs: that is the u
+// sent back, at once, with the same seq (and, in control mode, r and e for
+// the plant's log).
 
-import { compileDiagram, normalizeDiagram } from './diagram.js';
+import { compileDiagram, normalizeDiagram, diagramNames } from './diagram.js';
 import { referenceFn } from './signals.js';
-import { HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, uMessage, parseMessage, checkDescription, pageWatchdog, createLinkStats } from './hil.js';
+import { createRampIn } from './ramp.js';
+import { HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, uMessage, startParams, parseMessage, checkDescription, pageWatchdog, createLinkStats, fullScales, blockMode } from './hil.js';
 
 // What a running loop cannot take over in place: everything but block
-// positions and the names and parameters of controller and observer variants
-// (their laws read the parameters at every sample: controllers.js).
+// positions, the names and parameters of controller and observer variants
+// (their laws read the parameters at every sample: controllers.js), and the
+// External block's ramp-in and full scales (they count from the next Run).
 const SAMPLED = ['controller', 'observer'];
 function structureKey(diagram) {
   return JSON.stringify(diagram, function (k, v) {
     if ((k === 'x' || k === 'y') && typeof v === 'number' && this.id !== undefined) return undefined;
     if (k === 'variants' && SAMPLED.includes(this.type) && Array.isArray(v)) return v.map((x) => x.type);
+    if (k === 'params' && this.type === 'external' && v) { const { ramp, scales, ...rest } = v; void ramp; void scales; return rest; }
     return v;
   });
 }
@@ -40,24 +45,32 @@ function copyParams(own, next) {
 // signals: the project's named signals (the Sources play them).
 export function createLiveRunner(diagram, signals) {
   const fns = {};
-  let own, key, el, ext, keep, X, Xt, k1, k2, k3, k4, tPrev, h;
+  let own, key, el, ext, keep, X, Xt, k1, k2, k3, k4, tPrev, h, links, ramp = null, started = false, log = [], period = Infinity;
+  let sigs = {};
 
-  function setSignals(sigs) {
+  function setSignals(next) {
+    sigs = next ?? {};
     for (const name of Object.keys(fns)) delete fns[name];
-    for (const [name, ref] of Object.entries(sigs ?? {})) fns[name] = referenceFn(ref, { sampleTime: h ?? 0.01 });
+    for (const [name, ref] of Object.entries(sigs)) fns[name] = referenceFn(ref, { sampleTime: h ?? 0.01 });
   }
+  // A Source's waveform in loop time; looked up when called, so an edit of
+  // the signal takes effect at once.
+  const wave = (name) => (tau) => (fns[name] ? fns[name](tau) : 0);
   // The runner's own copy, in normal form (a project restored by Undo has
   // its open limits as null), so the laws hold its parameter objects.
   function build(d) {
     own = normalizeDiagram(structuredClone(d));
     key = structureKey(own);
-    const sources = new Proxy({}, { get: (_, name) => (t) => (fns[name] ? fns[name](t) : 0) });
+    // Before the run's first cycle the Sources read their first value; then
+    // the ramp-in plays them.
+    const sources = new Proxy({}, { get: (_, name) => (t) => (started && ramp ? ramp.value(name, t) : wave(name)(0)) });
     el = compileDiagram(own, 'plant', { standalone: true, sources });
     // The scope's signals: Sources and Sinks. (Auto-tune's "ctrl.u" probes
     // have a dot in their name and stay out, as on the scope.)
     keep = el.probes().flatMap(([n], i) => (n.includes('.') ? [] : [i]));
     if (el.externals.length !== 1) throw new Error(el.externals.length ? 'one External plant per system, for now' : 'this system has no External plant block: add one from the Live group in the Plant tab');
     ext = el.externals[0];
+    links = el.links();
     // Continuous blocks on the page integrate between cycles, in steps no
     // longer than their dynamics allow.
     const dt = 1 / ext.params.rate;
@@ -68,12 +81,50 @@ export function createLiveRunner(diagram, signals) {
     k1 = new Float64Array(el.n); k2 = new Float64Array(el.n); k3 = new Float64Array(el.n); k4 = new Float64Array(el.n);
     el.init(X, 0);
     tPrev = null;
+    started = false;
+    // In control mode each u carries r and e of the Controller blocks, for
+    // the plant's log (in the unit of what they measure).
+    const units = diagramNames(own).units;
+    const ctrls = blockMode(ext.params) === 'control' ? links.ctrls : [];
+    log = ctrls.flatMap((c) => {
+      const unit = c.measured !== undefined ? ext.params.outUnits[c.measured] : units[c.source] ?? '1';
+      const pre = ctrls.length > 1 ? `${c.key.replace(/\//g, '_')}_` : '';
+      return [{ name: `${pre}r`, unit, probe: `${c.key}.r` }, { name: `${pre}e`, unit, probe: [`${c.key}.r`, `${c.key}.y`] }];
+    });
+  }
+  // Every Source the diagram plays gets a ramp-in, with its full scale.
+  function makeRamp() {
+    const played = diagramNames(own).sources.filter((n) => sigs[n]);
+    period = Math.max(...played.map((n) => sigs[n].period), 0) || Infinity;
+    const fs = fullScales(ext.params, links);
+    ramp = createRampIn({ refs: played.map((name) => ({ name, fn: wave(name), fs: fs[name] ? fs[name][1] - fs[name][0] : null })), period, rate: ext.params.ramp / 100 });
+    return played;
   }
   // Sources are looked up when called, so signals change without a rebuild;
   // probes() lists them only for the names the diagram actually plays.
-  build(diagram);
   setSignals(signals);
+  build(diagram);
   const names = () => { const all = el.probes(); return keep.map((i) => all[i][0]); };
+  const probe = (all, name) => { for (const [n, v] of all) if (n === name) return v; return NaN; };
+
+  // The run's first cycle: where each reference is now. A reference on a
+  // Controller's r is where the measurement it is compared with is; one wired
+  // to a plant input is at the input's safe value (a stopped plant applies
+  // it), or, for a reference input that names its measurement, there.
+  function present(y) {
+    const out = {};
+    const all = el.probes();
+    for (const [name, at] of Object.entries(links.sources)) {
+      if (at.ctrl !== undefined) {
+        const v = probe(all, `${at.ctrl}.y`);
+        if (Number.isFinite(v)) out[name] = v;
+      } else if (at.input !== undefined) {
+        const j = ext.params.outputs.indexOf(ext.params.measures?.[at.input] ?? '');
+        out[name] = ext.params.kinds?.[at.input] === 'reference' && j >= 0 && Number.isFinite(y[j]) ? y[j] : ext.params.safe[at.input];
+      }
+    }
+    return out;
+  }
 
   function rk4(t, dt) {
     const N = el.n;
@@ -91,23 +142,39 @@ export function createLiveRunner(diagram, signals) {
     names,
     // The External block's ports, as the diagram has them now.
     get port() { return ext.params; },
+    // What each u carries for the plant's log: [{ name, unit }].
+    get log() { return log.map(({ name, unit }) => ({ name, unit })); },
+    get period() { return period; },
+    // The ramp-in's state after the last cycle (core/ramp.js), or null.
+    ramp: () => (ramp && started ? ramp.state() : null),
     // One cycle: the plant's outputs y at its time t. Returns u, clamped to the
-    // plant's limits (a value that is not a number becomes the safe one), and
-    // the values of every Source and Sink at t, in the order of names().
+    // plant's limits (a value that is not a number becomes the safe one), the
+    // values of every Source and Sink at t, in the order of names(), the
+    // values for the plant's log, and the ramp-in's state.
     // held: an E-stop is latched, so the plant applies its safe inputs: u is
     // the safe values, and so are the Sinks that show the block's inputs.
     step(t, y, held = false) {
-      if (tPrev !== null && t > tPrev) {
-        // Between cycles the plant's outputs hold their last value.
-        const m = Math.max(1, Math.round((t - tPrev) / h));
-        const dt = (t - tPrev) / m;
-        for (let s = 0; s < m; s++) {
-          const ts = tPrev + s * dt;
-          if (el.n) rk4(ts, dt);
-          if (s < m - 1) { el.eval(ts + dt, X, 0, 0, null); el.sample(ts + dt, X, 0, 0); el.record(); }
+      for (let j = 0; j < ext.y.length; j++) ext.y[j] = Number.isFinite(y[j]) ? y[j] : 0;
+      if (!started) {
+        // The first cycle: read where the loop is (Sources at their first
+        // value), then start the ramp-in from there.
+        el.eval(t, X, 0, 0, null);
+        makeRamp();
+        ramp.start(t, present(y));
+        started = true;
+      } else {
+        ramp.advance(t);
+        if (tPrev !== null && t > tPrev) {
+          // Between cycles the plant's outputs hold their last value.
+          const m = Math.max(1, Math.round((t - tPrev) / h));
+          const dt = (t - tPrev) / m;
+          for (let s = 0; s < m; s++) {
+            const ts = tPrev + s * dt;
+            if (el.n) rk4(ts, dt);
+            if (s < m - 1) { el.eval(ts + dt, X, 0, 0, null); el.sample(ts + dt, X, 0, 0); el.record(); }
+          }
         }
       }
-      for (let j = 0; j < ext.y.length; j++) ext.y[j] = Number.isFinite(y[j]) ? y[j] : 0;
       el.eval(t, X, 0, 0, null);
       el.sample(t, X, 0, 0);
       el.record();
@@ -116,22 +183,24 @@ export function createLiveRunner(diagram, signals) {
       const all = el.probes();
       if (held) ext.shows.forEach((js, i) => { for (const j of js) all[j][1] = p.safe[i]; });
       const values = keep.map((i) => all[i][1]);
-      if (held) return { u: [...p.safe], values };
+      const logged = log.map((l) => (Array.isArray(l.probe) ? probe(all, l.probe[0]) - probe(all, l.probe[1]) : probe(all, l.probe)));
+      const state = ramp.state();
+      if (held) return { u: [...p.safe], values, log: logged, ramp: state };
       const u = ext.u().map((v, i) => (Number.isFinite(v) ? Math.min(p.max[i], Math.max(p.min[i], v)) : p.safe[i]));
-      return { u, values };
+      return { u, values, log: logged, ramp: state };
     },
     // A new version of the diagram or the signals while running: parameters
     // of controller variants take effect at the next cycle, keeping the
     // controllers' state; anything else rebuilds (controllers start afresh).
-    update(d, sigs) {
-      if (sigs) setSignals(sigs);
+    update(d, nextSigs) {
+      if (nextSigs) setSignals(nextSigs);
       if (!d) return 'signals';
       const next = normalizeDiagram(structuredClone(d));
       if (structureKey(next) === key) { copyParams(own, next); return 'kept'; }
       build(next);
       return 'rebuilt';
     },
-    // Controllers start afresh, as after an E-stop.
+    // Controllers start afresh, and the ramp-in with them.
     restart() { build(own); },
   };
 }
@@ -139,19 +208,22 @@ export function createLiveRunner(diagram, signals) {
 // The connection: one WebSocket to the plant, the runner, both watchdogs'
 // page side, and statistics. It talks to the page through post(msg):
 //   in:  connect { url }, program { diagram, signals }, start (a fresh run,
-//        restarting the plant if it runs), stop, estop, reset { start },
-//        disconnect
+//        restarting the plant if it runs), stop, estop, reset, disconnect
 //   out: state { state, detail }, described { desc }, estop { by, reason },
-//        run (a new run begins), samples { names, t, values },
-//        stats { link, plant }, error { message }
+//        run { by } (a new run begins), stopped { by, reason } (the plant
+//        stopped by itself), samples { names, t, rt, values, ramp },
+//        stats { link, plant }, error { message }, programmed { how }
 // States: connecting, open (connected, the plant not running), running, closed.
+// Nothing starts by itself: connecting reads the description only, and an
+// E-stop (either side) stops the run until Reset, then Run.
 // The same object runs in a worker (liveWorker) or on the page.
 export function createLiveLoop(post, env = globalThis) {
   const now = () => env.performance.now();
   let ws = null, desc = null, runner = null, program = null;
   let running = false, latched = null, lastY = 0, watchdog = 0;
   let stats = null, plantStatus = null, lastStats = 0;
-  let batch = { t: [], values: [] }, lastFlush = 0, names = [];
+  const empty = () => ({ t: [], rt: [], values: [] });
+  let batch = empty(), lastFlush = 0, names = [], lastRamp = null;
   let id = 0;
   const calls = new Map();
 
@@ -168,13 +240,15 @@ export function createLiveLoop(post, env = globalThis) {
 
   function flush() {
     if (!batch.t.length) return;
-    post({ type: 'samples', names, t: batch.t, values: batch.values });
-    batch = { t: [], values: [] };
+    post({ type: 'samples', names, ...batch, ramp: lastRamp });
+    batch = empty();
   }
+  function halt() { running = false; stopWatchdog(); flush(); }
+  // An E-stop from either side: latched until Reset, and the run is over.
   function latch(by, reason) {
     if (latched) return;
     latched = { by, reason };
-    flush();
+    halt();
     post({ type: 'estop', by, reason });
   }
   function stopWatchdog() { if (watchdog) env.clearInterval(watchdog); watchdog = 0; }
@@ -199,18 +273,30 @@ export function createLiveLoop(post, env = globalThis) {
     runner = createLiveRunner(program.diagram, program.signals);
     names = runner.names();
   }
+  // The page's side of a fresh run: the controllers and the ramp-in afresh.
+  function begin(by) {
+    makeRunner();
+    post({ type: 'run', by });  // what follows is a new run: its time starts again
+    stats = createLinkStats(desc.rate_hz);
+    lastStats = now();
+    running = true;
+    startWatchdog();
+  }
 
   function onY(m) {
     const at = now();
     lastY = at;
-    if (!runner) return;
+    if (!runner || !running) return;
     let res;
-    try { res = runner.step(m.t, m.y, !!latched); } catch (err) { latch('page', `the diagram failed: ${err.message}`); return; }
-    // The answer goes out first; everything else can wait.
-    if (running && !latched && ws?.readyState === 1) ws.send(uMessage(m.seq, res.u));
+    try { res = runner.step(m.t, m.y, !!latched); } catch (err) { latch('page', `the diagram failed: ${err.message}`); call('estop', { reason: 'the page\'s diagram failed' }).catch(() => {}); return; }
+    // The answer goes out first; everything else can wait. A plant without
+    // inputs gets an empty u: its watchdog sees a live page.
+    if (!latched && ws?.readyState === 1) ws.send(uMessage(m.seq, res.u, res.log));
     stats?.add(at, m.seq, now() - at);
     batch.t.push(m.t);
+    batch.rt.push(res.ramp?.runT ?? NaN);
     batch.values.push(res.values);
+    lastRamp = res.ramp && res.ramp.phase === 'ramp' ? { left: res.ramp.left, to: res.ramp.to, first: res.ramp.first } : null;
     if (at - lastFlush >= 33) { lastFlush = at; flush(); }
     if (stats && at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
   }
@@ -223,23 +309,24 @@ export function createLiveLoop(post, env = globalThis) {
       calls.delete(m.id);
       if (m.kind === 'result') c?.resolve(m.result); else c?.reject(new Error(m.error));
     } else if (m.kind === 'estop') latch('plant', m.reason);
-    else if (m.kind === 'status') plantStatus = m.status;
+    else if (m.kind === 'running') {
+      // The plant's own Run/Stop key: the page follows.
+      if (!m.running && running) { halt(); post({ type: 'stopped', by: m.by, reason: m.reason }); say('open', 'stopped at the plant'); }
+      else if (m.running && !running && !latched && desc && program) { try { begin('plant'); say('running', desc.name); } catch (err) { fail(err.message); } }
+    } else if (m.kind === 'status') plantStatus = m.status;
     else fail(`the plant sent something unexpected: ${m.error}`);
   }
 
-  // A fresh run: the plant restarts its clock (stopped first if it runs) and
-  // the controllers start afresh, as a simulated run starts from t = 0.
+  // A fresh run: the plant restarts its clock (stopped first if it runs),
+  // the controllers start afresh and the references ramp in, as a simulated
+  // run starts from t = 0.
   async function start() {
     if (!desc) throw new Error('not connected');
-    if (running) { running = false; stopWatchdog(); flush(); await call('stop'); }
-    makeRunner();
-    post({ type: 'run' });  // what follows is a new run: its time starts again
+    if (latched) throw new Error(`E-STOP is latched (${latched.reason}): Reset first`);
+    if (running) { halt(); await call('stop'); }
+    begin('page');
     // y may come before start's answer: they are answered and counted.
-    stats = createLinkStats(desc.rate_hz);
-    lastStats = now();
-    running = true;
-    startWatchdog();
-    try { await call('start'); } catch (err) { running = false; stopWatchdog(); throw err; }
+    try { await call('start', startParams(runner.log)); } catch (err) { halt(); throw err; }
     say('running', desc.name);
   }
 
@@ -258,13 +345,15 @@ export function createLiveLoop(post, env = globalThis) {
           if (desc.protocol !== HIL_PROTOCOL) fail(`the plant speaks ${desc.protocol || 'an unnamed protocol'}, this page ${HIL_PROTOCOL}: it may not work`);
           post({ type: 'described', desc });
           if (latched) post({ type: 'estop', by: 'plant', reason: desc.estop });
+          // A plant still running from before (a page that went away) is
+          // stopped: nothing runs until Run.
+          if (desc.running && !latched) await call('stop').catch(() => {});
         } catch (err) { fail(`describe: ${err.message}`); ws?.close(); }
       };
       ws.onmessage = (e) => onText(e.data);
       ws.onclose = (e) => {
         const wasRunning = running;
-        running = false; ws = null; desc = null;
-        stopWatchdog(); flush();
+        halt(); ws = null; desc = null;
         for (const c of calls.values()) c.reject(new Error('connection closed'));
         calls.clear();
         if (wasRunning && !latched) latch('page', 'connection lost');
@@ -279,30 +368,30 @@ export function createLiveLoop(post, env = globalThis) {
         const how = runner.update(p.diagram, p.signals);
         if (how === 'rebuilt') names = runner.names();
         post({ type: 'programmed', how });
-      } catch (err) { latch('page', err.message); }
+      } catch (err) { if (running) { latch('page', err.message); call('estop', { reason: 'the page\'s diagram failed' }).catch(() => {}); } }
     },
-    async start() { try { await start(); } catch (err) { fail(err.message); } },
+    async start() { try { await start(); } catch (err) { fail(err.message); post({ type: 'refused', message: err.message }); } },
     async stop() {
-      running = false; stopWatchdog(); flush();
+      const was = running;
+      halt();
       try { await call('stop'); } catch { /* already gone */ }
-      say('open', 'stopped');
+      if (was || !latched) say('open', 'stopped');
     },
     async estop() {
       latch('page', 'pressed on this page');
       try { await call('estop', { reason: 'E-STOP pressed on the page' }); } catch { /* the plant's watchdog trips anyway */ }
     },
-    // Reset clears both latches and goes on, the controllers afresh: a plant
-    // still running keeps its clock; a stopped one starts when asked to.
-    async reset({ start: go = true } = {}) {
+    // Reset clears both latches; the plant stays stopped until Run.
+    async reset() {
       try {
         await call('reset');
         latched = null;
-        if (running) { runner?.restart(); startWatchdog(); say('running', desc.name); } else if (go) await start(); else say('open', 'reset');
+        say('open', 'reset');
       } catch (err) { fail(`reset: ${err.message}`); }
     },
     async disconnect() {
       if (!ws) return;
-      running = false; stopWatchdog(); flush();
+      halt();
       // Stop first, so the plant does not take the closing for a lost page.
       await Promise.race([call('stop').catch(() => {}), new Promise((r) => env.setTimeout(r, 300))]);
       ws?.close(1000, 'disconnected by the page');

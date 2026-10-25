@@ -87,7 +87,9 @@ const LOOP = (variant = { name: 'PID', type: 'pid', params: { Kp: 3, Ki: 2, Kd: 
 });
 const SIGNALS = {
   r: normalizeReference({ period: 10, components: [{ type: 'step', params: { amplitude: 1, time: 0.05 } }] }),
-  d: normalizeReference({ period: 10, components: [{ type: 'dc', params: { level: 0.05 } }] }),
+  // d is 0 (the load's safe value) at its first instant, so these runs start
+  // without a ramp-in; the ramp-in has tests of its own.
+  d: normalizeReference({ period: 10, components: [{ type: 'step', params: { amplitude: 0.05, time: 0.001 } }] }),
 };
 
 test('live stepping: the u sent is what the controller law gives for the y received', () => {
@@ -99,11 +101,12 @@ test('live stepping: the u sent is what the controller law gives for the y recei
     const { u, values } = runner.step(t, [angle, 0.1]);
     const want = law.step([t >= 0.05 ? 1 : 0, angle]);
     assert.ok(Math.abs(u[0] - want) < 1e-12, `cycle ${k}: ${u[0]} vs ${want}`);
-    assert.equal(u[1], 0.05, 'the load input plays d');
+    assert.equal(u[1], k ? 0.05 : 0, 'the load input plays d');
     assert.deepEqual(values.slice(2), [angle, u[0]]);
   }
   // Out of range or not a number: clamped, or the safe value.
   const wild = createLiveRunner(LOOP({ name: 'P', type: 'pid', params: { Kp: 1000 } }), SIGNALS);
+  wild.step(0, [0, 0]);
   assert.equal(wild.step(0.1, [-1, 0]).u[0], 12);
   assert.equal(wild.step(0.11, [NaN, 0]).u[0], 12, 'a y that is not a number reads 0');
 });
@@ -115,7 +118,8 @@ test('live edits: parameters change at the next cycle and keep the state; a new 
   const lawParams = { ...normalizeVariant({ type: 'pid', params: p }).params };
   const ref = makeLaw({ type: 'pid', params: lawParams }, 0.01);
   let k = 0;
-  const cycle = () => { const t = k * 0.01; const y = 0.2; k++; return [runner.step(t, [y, 0]).u[0], ref.step([t >= 0.05 ? 1 : 0, y])]; };
+  // y is 0 at the first cycle, where r starts: no ramp-in.
+  const cycle = () => { const t = k * 0.01; const y = k ? 0.2 : 0; k++; return [runner.step(t, [y, 0]).u[0], ref.step([t >= 0.05 ? 1 : 0, y])]; };
   for (let i = 0; i < 20; i++) cycle();
   const edited = LOOP({ name: 'PI', type: 'pid', params: { ...p, Kp: 5 } });
   edited.blocks.find((b) => b.id === 'c').x = 999;   // moving a block changes nothing
@@ -188,7 +192,11 @@ test('the loop answers each y at once, stops answering on its own watchdog, and 
   f.loop.handle({ type: 'reset' });
   await f.tick();
   f.y(16);
-  assert.equal(f.us().at(-1).params.seq, 16, 'answers again after Reset');
+  assert.equal(f.us().length, 5, 'Reset clears the latch; nothing runs until Run');
+  f.loop.handle({ type: 'start' });
+  await f.tick();
+  f.y(17);
+  assert.equal(f.us().at(-1).params.seq, 17, 'answers again after Run');
 });
 
 test('the loop: y before start\'s answer, Run as a fresh run, Stop, and a plant speaking another protocol', async () => {
@@ -371,6 +379,7 @@ test('live edits of any variant parameter are taken in place; names are cosmetic
   // E-stop latched: the plant applies its safe inputs, and the Sink on the
   // controller's output shows them, not what the controller computes.
   const held = createLiveRunner(LOOP(), SIGNALS);
+  held.step(0, [0, 0]);
   const free = held.step(0.1, [0.1, 0]);
   assert.ok(Math.abs(free.u[0]) > 0.5);
   const stopped = held.step(0.11, [0.1, 0], true);

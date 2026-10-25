@@ -331,7 +331,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (b.type === 'source') {
         const fn = opts.sources?.[b.params.signal];
         if (!fn) warnings.push(`${path}: no signal "${b.params.signal}" for ${name}`);
-        const k = add({ kind: 'src', name, ft: false, fn: fn ?? (() => 0) });
+        const k = add({ kind: 'src', name, ft: false, fn: fn ?? (() => 0), signal: b.params.signal });
         probeList.push([b.params.signal, k]);
         outs[b.id] = [k]; ins[b.id] = [];
         continue;
@@ -470,6 +470,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     return hist[i] + (hist[i + 1] - hist[i]) * (f - i);
   };
   const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
+  // Where a signal comes from, through Sinks, Ins and Outs (pass nodes).
+  const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
 
   const self = {
     n, bound, warnings, minTs,
@@ -542,10 +544,44 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // probes (Sinks) on the same signal as input i, which show what the plant
     // applies during a stop.
     externals: externals.map((k) => {
-      const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
       const shows = nodes[k].inputs.map((s) => (s < 0 ? [] : probeList.flatMap(([, pk], j) => (nodes[pk].kind === 'pass' && origin(pk) === origin(s) ? [j] : []))));
       return { name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])), shows };
     }),
+    // Who feeds what around the (first) External plant, by signal name
+    // (Live mode: full scales, the ramp-in, the plant's log):
+    //   sinks    { name: { output: j } }  a Sink showing the plant's output j
+    //            { name: { input: i } }   … or what the plant gets at input i
+    //   sources  { signal: { input: i } } a Source wired to input i
+    //            { signal: { ctrl, measured } } a Source on a Controller's r;
+    //            measured: the plant output its y comes from (if it does)
+    //   ctrls    [{ key, source, measured }] every Controller block: its id
+    //            path (its probes are key.r, key.y, key.u), the Source on its
+    //            r and the plant output on its y, where they are those
+    links() {
+      const ext = externals[0] ?? -1;
+      const outOf = (i) => { const o = origin(i); return o >= 0 && nodes[o].kind === 'tap' && nodes[o].parent === ext ? nodes[o].j : undefined; };
+      const inputsFrom = (i) => (ext < 0 || i < 0 ? [] : nodes[ext].inputs.flatMap((s, slot) => (s >= 0 && origin(s) === origin(i) ? [slot] : [])));
+      const sinks = {}, sources = {}, ctrls = [];
+      for (const [name, pk] of probeList) {
+        if (name.includes('.')) continue;
+        const nd = nodes[pk];
+        if (nd.kind === 'pass') {
+          const j = outOf(pk), into = inputsFrom(pk);
+          if (j !== undefined) sinks[name] = { output: j }; else if (into.length) sinks[name] = { input: into[0] };
+        } else if (nd.kind === 'src') {
+          const into = inputsFrom(pk);
+          if (into.length) sources[name] = { input: into[0] };
+        }
+      }
+      for (const [key, k] of ctrlNodes) {
+        const [r = -1, y = -1] = nodes[k].inputs;
+        const ro = origin(r), measured = y >= 0 ? outOf(y) : undefined;
+        const source = ro >= 0 && nodes[ro].kind === 'src' ? nodes[ro].signal : undefined;
+        ctrls.push({ key, source, measured });
+        if (source !== undefined && !sources[source]) sources[source] = { ctrl: key, ...(measured !== undefined ? { measured } : {}) };
+      }
+      return { sinks, sources, ctrls };
+    },
   };
   return self;
 }
