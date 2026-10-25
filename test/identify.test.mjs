@@ -22,10 +22,12 @@ import { normalizeVariant, makeLaw, HIDDEN, CONTROLLERS, CONTROLLER_TYPES } from
 import { normalizeProject, IDENTIFY_COMPUTED } from '../src/core/project.js';
 import { normalizeDiagram, ELEMENTS, diagramBlockDef } from '../src/core/diagram.js';
 import { STRUCTURES, discretise, simulateSegment } from '../src/core/fit.js';
-import { piLaw, bumpless } from '../src/core/experiment.js';
+import { piLaw, bumpless, createExperiment, fmtNum } from '../src/core/experiment.js';
 import { csolve } from '../src/core/linalg.js';
 import { drain } from '../src/core/autotune.js';
-import { libraryProject } from './fixtures/plants.mjs';
+import { libraryProject, runExperiment, transferPlant, lag, unstable } from './fixtures/plants.mjs';
+import { createArm, drawArm } from './fixtures/arm.mjs';
+import { armProject } from './fixtures/arm-project.mjs';
 
 const CLI = fileURLToPath(new URL('../cli.mjs', import.meta.url));
 const json = (x) => JSON.parse(JSON.stringify(x));
@@ -47,6 +49,7 @@ test('the hidden controller type "experiment": never in the library, refused in 
   // from 0, or named by a live runner (at) with the applied u.
   const { project, res } = motor();
   const law = makeLaw({ type: 'experiment', params: { plan: res.plan } }, res.plan.Ts);
+  assert.throws(() => makeLaw({ type: 'experiment', params: { plan: res.plan } }, 2 * res.plan.Ts), /the plan runs at Ts 0\.01 s, the block samples at 0\.02 s/);
   assert.equal(typeof law.experiment.reference, 'function');
   assert.equal(law.step([0, 0]), res.plan.u0);
   law.at(5, 0.25);
@@ -244,7 +247,8 @@ test('12. Keep round-trips through the project file with no computed fields; com
   // The record as kept is compact (§9): y on a tenth of its floor, u and r to 6 digits.
   assert.deepEqual(compactRecord(res.record), res.record);
   assert.ok(res.record.u.every((v) => v === null || Number(v.toPrecision(6)) === v));
-  // Computed keys are refused with the sentence, wherever they are put.
+  // Computed keys are refused with the sentence, wherever they are put: beside
+  // the settings, in a kept test, its plan or its record …
   const refuse = (edit) => {
     const f = structuredClone(file);
     edit(f.system.identify.ctrl);
@@ -254,6 +258,16 @@ test('12. Keep round-trips through the project file with no computed fields; com
   refuse((e) => { e.kept[0].params = { kp: 1.43 }; });
   refuse((e) => { e.kept[0].record.fit = 99; });
   refuse((e) => { e.kept[0].plan.gains = { Kp: 1 }; });
+  // … and deeper: in the plan's parts, the record's ports and the log, whose
+  // entries keep the experiment's own decisions, each kind with its fields.
+  refuse((e) => { e.kept[0].plan.test.model = { K: 1 }; });
+  refuse((e) => { e.kept[0].plan.names.K = 1.43; });
+  refuse((e) => { e.kept[0].plan.others.push({ name: 'd', value: 0, fit: 99 }); });
+  refuse((e) => { e.kept[0].record.ports = { u: 'V', y: 'angle', model: 'lag' }; });
+  refuse((e) => { e.kept[0].record.log[0].model = res.model.params; });
+  refuse((e) => { e.kept[0].record.log.push({ kind: 'model', params: { kp: 1.43 } }); });
+  refuse((e) => { e.kept[0].record.log.find((x) => x.kind === 'look').p.fit = 99; });
+  refuse((e) => { e.kept[0].record.log.find((x) => x.kind === 'try').parts = { error: 1, model: { K: 1 } }; });
   assert.equal(IDENTIFY_COMPUTED, 'Identify keeps the measurements; the model is computed from them. To keep numbers, use Copy as blocks.');
   // Design inputs are checked.
   const bad = structuredClone(file);
@@ -265,6 +279,29 @@ test('12. Keep round-trips through the project file with no computed fields; com
 });
 
 // ---- The grade and the words
+
+test('12. every log entry the experiment writes is one the file keeps: soft guards, stops, runaways, drift, a lost sample', () => {
+  const Ts = 0.01;
+  const r = Array.from({ length: 500 }, (_, k) => (k * Ts > 0.5 && k * Ts <= 3.0 ? 1.5 : 0));
+  const known = { block: { path: ['ctrl'], key: 'ctrl', where: 'c' }, live: true, u: { name: 'V', unit: 'V', min: -12, max: 12, u0: 0 }, y: { name: 'angle', unit: 'rad', hard: [-2.5, 2.5] }, r: { lo: 0, hi: 1.5, span: 1.5, source: 'r', period: 5, samples: r, Ts }, Ts, others: [{ name: 'd', value: 0, input: 'load' }] };
+  const step = Array.from({ length: 600 }, (_, k) => (k >= 50 && k < 550 ? 1 : 0));
+  const plain = { block: { path: ['c'], key: 'c', where: 'c' }, live: false, u: { name: 'u', unit: '', min: -2, max: 2, u0: 0 }, y: { name: 'y', unit: '', hard: null }, r: { lo: 0, hi: 1, span: 1, source: 'r', period: 6, samples: step, Ts }, Ts, others: [] };
+  const runs = [];
+  const tight = planExperiment(known, { band: [-0.15, 1.65] });
+  runs.push([tight, runExperiment(tight, createArm(drawArm(6), { Ts, seed: 6 })).record]);
+  const plan = planExperiment(known, {});
+  const exp = createExperiment(plan), arm = createArm(drawArm(1), { Ts, seed: 1 });
+  for (let k = 0; k < 9000 && !exp.state.done; k++) { const u = exp.step(k, k === 400 ? NaN : arm.output()); if (exp.needs) exp.supply('fit', {}); arm.advance(u); if (k === 4000) exp.stop(); }
+  runs.push([plan, exp.record()]);
+  const pp = planExperiment(plain, {});
+  for (const plant of [transferPlant(unstable(1, 0.3), Ts, { noise: 0.001 }), transferPlant(unstable(1, 0.3), Ts, { noise: 0.001, bias: 0.01 }), transferPlant(lag(2, 0.5, 0.05), Ts, { noise: 0.001, drift: 0.02 })]) runs.push([pp, runExperiment(pp, plant).record]);
+  const kinds = new Set(runs.flatMap(([, rec]) => rec.log.map((e) => e.kind)));
+  for (const k of ['stop', 'note', 'try', 'rung', 'look', 'end']) assert.ok(kinds.has(k), k);
+  const file = json(libraryProject('Oven'));
+  file.system.identify = { ctrl: { kept: runs.map(([pl, rec], i) => ({ name: `test ${i + 1}`, plan: pl, record: rec })) } };
+  const back = normalizeProject(json(file));
+  assert.equal(back.system.identify.ctrl.kept.length, runs.length);
+});
 
 test('the grade (§7) and the sentences (§8): thresholds named, numbers rounded to their bars', () => {
   assert.deepEqual(gradeOf({ fit: 91, ceiling: 99 }), { mark: '✓', why: [] });
@@ -289,6 +326,29 @@ test('the grade (§7) and the sentences (§8): thresholds named, numbers rounded
     'Noise on angle: 0.0013 rad, in steps of 0.0015 rad (an encoder).',
     'Explains 91 % of a test it was not fitted to; what is left looks like noise ✓.',
   ]);
+  // A dead time of 0.0028 ms with a bar narrower still is not said (under a
+  // tenth of a sample); the fit reads as the Check line rounds it, never 100.
+  const tiny = modelSentences({ ...m, params: { ...m.params, theta: 2.8e-6 }, sd: { ...m.sd, theta: 1e-7 } }, { u: 'V', uUnit: 'V', y: 'angle', yUnit: 'rad' });
+  assert.ok(!tiny.some((t) => t.startsWith('Responds after')), tiny[0]);
+  assert.match(modelSentences({ ...m, check: { fit: 99.75, white: true } }).at(-1), /^Explains 99\.8 % /);
+  assert.match(modelSentences({ ...m, check: { fit: 99.97, white: true } }).at(-1), /^Explains 99\.9 % /);
+});
+
+test('a test ended early is graded ✕ with its reason and names no controller; the label says the range identified; the reveal is in plain words', () => {
+  // The arm (simulated) given 30 s: it ends after the first look (§5.9).
+  const short = identify(armProject(), null, { budget: 30 });
+  assert.equal(short.end.code, 'budget');
+  assert.equal(short.model.grade, '✕');
+  assert.deepEqual(short.model.why, ['the test ended after the first look']);
+  assert.equal(short.model.eased, null, 'no controller held');
+  // A whole test: Analysis's label is the range the test visited, not the band.
+  const { res } = motor();
+  const w = res.model.where;
+  assert.equal(linearModel(res.model).op.label, `identified over ${fmtNum(w[0].from, 3)} … ${fmtNum(w.at(-1).to, 3)} rad`);
+  assert.ok(w[0].from > res.model.band[0] && w.at(-1).to < res.model.band[1], 'inside the band');
+  // The reveal names a gain by its block and a coefficient by its power of s.
+  const labels = varyDiagram(libraryProject('DC motor, position').system.plant.diagram, 0.15, 7).factors.map((f) => f.label);
+  assert.ok(labels.includes('armature 1/(Ls + R), its s term') && labels.includes('armature 1/(Ls + R), its constant term') && labels.includes('Kt (= Ke)'), labels.join(' | '));
 });
 
 // ---- 17. Teaching: Hide a variation

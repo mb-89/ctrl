@@ -106,6 +106,62 @@ const IDENTIFY_KEYS = ['band', 'budget', 'hard', 'vary', 'seed', 'structure', 'u
 const KEPT_KEYS = ['name', 'plan', 'record'];
 const RECORD_KEYS = ['version', 'Ts', 'u', 'y', 'r', 'applied', 'gaps', 'log', 'end', 'ports'];
 const PLAN_KEYS = ['version', 'kind', 'Ts', 'u0', 'umin', 'umax', 'band', 'hard', 'budget', 'seed', 'names', 'test', 'check', 'others'];
+// The experiment's log keeps its own decisions (interpretation of §9): what
+// it measured and chose as it ran (Listen's noise, each rung, the first look
+// it steered by, each law and try), never a model of the record. Each kind
+// has its fields, and the objects inside them theirs; anything else, at any
+// depth, is refused with the sentence.
+const LOG_KEYS = {
+  stage: ['stage', 'i'],
+  listen: ['y0', 'mean', 'sigma', 'q', 'floor', 'slope', 'drift', 'drifts', 'n', 'i0', 'i1'],
+  rung: ['n', 'shape', 'a', 'T', 'dir', 'i0', 'i1', 'base', 'ic', 'nBase', 'slope', 'bound', 'backoff', 'runaway', 'w', 'up', 'down', 'max', 'size', 'p', 'plateau', 'ramp', 'complete', 'rings', 'visible', 'seen', 'floor', 'mean', 'sign', 'delay', 'within', 'left', 'at'],
+  nudge: ['why', 'rungs', 'i'],
+  look: ['cls', 'integrating', 'sign', 'K', 'kp', 'tau', 'theta', 'structure', 'p', 'swing', 'bic', 'guess', 'i'],
+  references: ['i', 'test', 'check', 'staircase'],
+  law: ['i', 'Kp', 'Ki', 'tauC', 'umin', 'umax', 'I', 'role'],
+  hold: ['Kp', 'Ki', 'Ti', 'tauC', 'theta', 'i', 'again', 'doubled'],
+  try: ['n', 'tauC', 'Kp', 'Ki', 'umin', 'umax', 'push', 'i0', 'iSwitch', 'iEnd', 'settled', 'tail', 'J', 'parts', 'overshoot', 'g', 'gRoom', 'gRing', 'accepted', 'mark', 'left', 'away'],
+  ladder: ['why', 'incumbent', 'tauC', 'i'],
+  supply: ['what', 'i', 'upto'],
+  pause: ['i0', 'i1', 'waited'],
+  check: ['i0', 'iStart', 'iEnd'],
+  end: ['code', 'message', 'i', 't', 'check'],
+  stop: ['i', 'code'],
+  note: ['i', 'text'],
+};
+const LOG_OBJECTS = {
+  'look.p': ['K', 'kp', 'tau', 'theta', 'f', 'zeta'], 'look.swing': ['count', 'f', 'peak'], 'look.bic': ['lag', 'intLag', 'resonance'],
+  'look.guess': ['K', 'kp', 'tau', 'theta'], 'try.parts': ['error', 'effort', 'overshoot', 'saturation'], 'end.check': ['i0', 'iStart'],
+};
+// A value inside a plan, a record's ports or a log entry: a number, a word,
+// true or false, null, or a list of those; objects only where named.
+function plainValue(v, where) {
+  if (v === null || typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return;
+  if (Array.isArray(v)) { for (const [j, x] of v.entries()) if (x !== null && typeof x === 'object') throw new Error(`${where}[${j}]: ${IDENTIFY_COMPUTED}`); return; }
+  throw new Error(`${where}: ${IDENTIFY_COMPUTED}`);
+}
+function checkLog(log, where) {
+  log.forEach((e, j) => {
+    const w = `${where}[${j}]`;
+    const keys = LOG_KEYS[e.kind];
+    if (!keys) throw new Error(`${w}.kind: ${IDENTIFY_COMPUTED}`);
+    for (const [k, v] of Object.entries(e)) {
+      if (k === 'kind') continue;
+      if (!keys.includes(k)) throw new Error(`${w}.${k}: ${IDENTIFY_COMPUTED}`);
+      const inner = LOG_OBJECTS[`${e.kind}.${k}`];
+      if (inner && v !== null && typeof v === 'object' && !Array.isArray(v)) { for (const [k2, v2] of Object.entries(v)) { if (!inner.includes(k2)) throw new Error(`${w}.${k}.${k2}: ${IDENTIFY_COMPUTED}`); plainValue(v2, `${w}.${k}.${k2}`); } } else plainValue(v, `${w}.${k}`);
+    }
+  });
+}
+// The plan's parts: the references, the names, the inputs held.
+function checkPlan(plan, where) {
+  for (const [k, v] of Object.entries(plan)) {
+    if (k === 'test') { onlyKeys(v, Array.isArray(v?.r) ? ['r'] : ['r0'], `${where}.test`); Object.entries(v).forEach(([k2, x]) => plainValue(x, `${where}.test.${k2}`)); } else if (k === 'check') { if (v !== null) { onlyKeys(v, ['r'], `${where}.check`); plainValue(v.r, `${where}.check.r`); } } else if (k === 'names') { onlyKeys(v, ['u', 'uUnit', 'y', 'yUnit'], `${where}.names`); Object.entries(v).forEach(([k2, x]) => plainValue(x, `${where}.names.${k2}`)); } else if (k === 'others') {
+      if (!Array.isArray(v)) throw new Error(`${where}.others: a list of the inputs held`);
+      v.forEach((o, j) => { onlyKeys(o, ['name', 'value', 'input'], `${where}.others[${j}]`); Object.entries(o).forEach(([k2, x]) => plainValue(x, `${where}.others[${j}].${k2}`)); });
+    } else plainValue(v, `${where}.${k}`);
+  }
+}
 function onlyKeys(o, keys, where) {
   if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error(`${where}: an object`);
   for (const k of Object.keys(o)) if (!keys.includes(k)) throw new Error(`${where}.${k}: ${IDENTIFY_COMPUTED}`);
@@ -144,6 +200,7 @@ export function normalizeIdentify(raw) {
       const w = `${where}.kept[${i}]`;
       onlyKeys(k, KEPT_KEYS, w);
       onlyKeys(k.plan, PLAN_KEYS, `${w}.plan`);
+      checkPlan(k.plan, `${w}.plan`);
       onlyKeys(k.record, RECORD_KEYS, `${w}.record`);
       const r = k.record;
       if (!Number.isInteger(r.version) || !(r.Ts > 0)) throw new Error(`${w}.record: needs its version and Ts`);
@@ -152,9 +209,14 @@ export function normalizeIdentify(raw) {
       if (!Array.isArray(r.gaps ?? []) || !(r.gaps ?? []).every((g) => Array.isArray(g) && g.length === 2 && g.every(Number.isInteger))) throw new Error(`${w}.record.gaps: [[sample, cycles lost], …]`);
       rec.gaps = (r.gaps ?? []).map((g) => g.slice());
       if (!Array.isArray(r.log ?? []) || !(r.log ?? []).every((x) => x && typeof x === 'object' && typeof x.kind === 'string')) throw new Error(`${w}.record.log: the experiment's log`);
+      checkLog(r.log ?? [], `${w}.record.log`);
       rec.log = structuredClone(r.log ?? []);
       rec.end = r.end ?? null;
-      if (r.ports) rec.ports = structuredClone(r.ports);
+      if (r.ports) {
+        onlyKeys(r.ports, ['u', 'y', 'units'], `${w}.record.ports`);
+        Object.entries(r.ports).forEach(([k2, x]) => plainValue(x, `${w}.record.ports.${k2}`));
+        rec.ports = structuredClone(r.ports);
+      }
       return { name: String(k.name ?? `test ${i + 1}`), plan: structuredClone(k.plan), record: rec };
     });
     if (e.use != null) { if (!(Number.isInteger(e.use) && e.use >= 0 && e.use < o.kept.length)) throw new Error(`${where}.use: the index of a kept test`); o.use = e.use; }

@@ -46,9 +46,10 @@ It prints the running variant and the result side by side (cost, overshoot, gain
 node cli.mjs identify p.json                          # the sentences, the chain with ±2σ, the candidates, the places
 node cli.mjs identify p.json --vary 0.15 --seed 7     # a hidden ±15 % variation of the plant, revealed at the end
 node cli.mjs identify p.json --band -0.5,2 --budget 300 --keep   # settings, and keep the record in the project
+node cli.mjs identify p.json --structure resonance    # use this candidate instead of the page's choice
 ```
 
-`--json` gives the whole model (the same numbers as the page's core); `--keep` stores the measured record and its plan, never the model, which is always recomputed from them. A grade ! or ✕ says why (it explains under 85 %, it behaves differently at different places, what is left has a pattern). A live plant is identified in the page, not here.
+`--json` gives the whole model (the same numbers as the page's core); `--keep` stores the measured record and its plan, never the model, which is always recomputed from them. A grade ! or ✕ says why (it explains under 85 %, it behaves differently at different places, what is left has a pattern). When the test cannot run or ends early, the sentence says why and what to change (the band, the length, u's range). A live plant will be identified in the page, connected (the Identify tab and Live, not built yet), not here.
 
 ## Rules of thumb
 

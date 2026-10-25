@@ -528,7 +528,10 @@ export const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
 export const HIDDEN = {
   experiment: {
     label: 'Identify',
-    make(p) {
+    make(p, Ts) {
+      // The plan's time is the block's: a plan made at another Ts would run
+      // its samples at the wrong times (its Listen, rungs and references).
+      if (Ts !== undefined && p.plan?.Ts !== Ts) throw new Error(`experiment: the plan runs at Ts ${p.plan?.Ts} s, the block samples at ${Ts} s`);
       const experiment = createExperiment(p.plan);
       let k = 0, seq = null, applied;
       return {

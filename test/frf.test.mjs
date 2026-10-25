@@ -154,7 +154,7 @@ test('9. frequency response with noise in closed loop: Ĝ is the averaged DFTs\'
   assert.ok(err / without < 0.75, `without it: ${(err / without).toFixed(2)}`);
 });
 
-test('9. a period with a seq gap is dropped and repeated: the DFT is never taken across it', () => {
+test('9. a period with a seq gap is dropped (the Shake plays one more, step 8; here the fixture plays it): the DFT is never taken across it', () => {
   const N = 512, T = 6;
   const tf = STRUCTURES.lag.tf({ K: 2, tau: 0.3, theta: 0.0237 });
   const L = multisineLines({ N, kmax: 100, seed: 5 });

@@ -2,6 +2,20 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · Identify, review fixes: the model, the file and the command line (after steps 0–5)
+
+The design review's conformance findings and the experiment review's sentence findings, fixed (no new words from the person):
+
+- **The hard range** (design finding 1, done with the merge of main): `knownFor` reads describe's `hard_min`/`hard_max` or the External block's `ymin`/`ymax`, never the full scale (`outMin`/`outMax`); main's §2, §15 and §16 text kept. Tested with the library's HIL block (full scale ±π, hard range ±2.5): the default band backs off inside ±2.5, a typed band reaching 2.8 is refused.
+- **Computed keys at any depth** (finding 3): the plan's parts, the record's ports and every log kind have their own fields; anything else at any depth is refused with the sentence. Interpretation of §9 "nothing computed in the file": the log keeps the experiment's own decisions (what it measured and chose as it ran, which `identifySteps` replays), never a model of the record. A test runs soft guards, stops, runaways, drift and a lost sample through the file.
+- **Sentences** (experiment review finding 10; design finding 4): the fit rounds as the Check line does (99.75 reads 99.8, never 100); "Responds after …" needs a tenth of a sample as well as its bar (interpretation: the review asked for half a sample, which would drop the design's own "2 ms" at 10 ms); an unsupported candidate is ✕; when every candidate is, there is no model ("No shape on offer fits what this test saw (…)"), not "settles in about 4e20 s"; a test ended before any loop held the plant (too short, does not come back, a loop that pushed the wrong way or did not hold) is ✕ with that reason; "the gentlest controller that held" only when the ladder started; the command line prints an ending once, separates try marks with commas, names a candidate with `--structure` in its help, and reveals a variation in plain words ("armature 1/(Ls + R), its s term +0.48 %", "Kt (= Ke) −4.7 %").
+- **Analysis's label** (finding 6): the range the test visited, the Where places' outer edges, not the band.
+- **The tests that over-claimed** (findings 8, 9): the arm's high place is asserted two-sided around the truth (it is understated today); test 9's gap test says the Shake will repeat a period (step 8); the "experiment plays one more" in §6.7 is marked step 8; AGENTS.md and the live refusal say the page's Identify tab is not built yet.
+- **Duplicated code** (finding 11): `discretiseSS` in fit.js gives the delayed zero-order hold to both `discretise` and the model that changes by place; `LOG_BOUND` is exported for its refit. The core's third seeded generator waits for the overhaul (input 28).
+- **The hidden law checks its Ts** (finding 13): a plan made at another sample time is refused.
+- **Not fixed: equal Gain values share a factor in Hide a variation** (finding 5), recorded in identification.md §13 as a known limit. An explicit link changes the library's data (the motor's Kt and Ke), which belongs to the overhaul's shared configuration, during the feature freeze (input 28).
+- **A place counts toward "behaves differently" from 5 % of the model's time**, not 10 % (interpretation, measured): the tries' tails now add rest at the low place, and the arm's high place held 7–9 %; the 2σ bars must still part the places.
+
 ## 2026-10-25 · Identify, review fixes: the experiment (after steps 0–5)
 
 The experiment review ran it on the arm, the oven, the motor, the tank, 50 tanks and 50 arms within ±15 %, 240 random plants and unstable ones (no new words from the person); its findings and the design review's on the experiment, fixed and measured ([identification.md](identification.md) §5.10, "After review", has the numbers):

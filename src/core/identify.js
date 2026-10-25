@@ -20,10 +20,10 @@ import { CONTROLLERS } from './controllers.js';
 import { referenceFn, gaussAt } from './signals.js';
 import { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText } from './experiment.js';
 import {
-  STRUCTURES, discretise, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
+  STRUCTURES, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
   fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded,
 } from './fit.js';
-import { cholesky, c2d } from './linalg.js';
+import { cholesky } from './linalg.js';
 import { createStepRunner } from './live.js';
 
 export class IdentifyError extends Error {
@@ -574,21 +574,9 @@ function kernelReplay(kernel, fs) {
 function placeModel(structure, p, Ts) {
   const S = STRUCTURES[structure];
   const { A, B, C } = S.ss(p);
-  const n = A.length, gain = p[GAIN(S)];
+  const gain = p[GAIN(S)];
   const Ap = S.integrating ? A : A.map((row, i) => row.map((v, j) => v + (B[i][0] / gain) * C[0][j]));
-  const ds = Math.max(0, (p.theta ?? 0) / Ts);
-  let m = Math.floor(ds + 1e-9), f = ds - m;
-  if (f < 1e-9) f = 0;
-  let Phi, G0, G1;
-  if (f === 0) {
-    const d = c2d(Ap, B, Ts);
-    Phi = d.Ad; G0 = d.Bd.map((r) => r[0]); G1 = new Array(n).fill(0);
-  } else {
-    const a = c2d(Ap, B, (1 - f) * Ts), b = c2d(Ap, B, f * Ts);
-    Phi = a.Ad.map((r) => b.Ad[0].map((_, j) => r.reduce((acc, v, k) => acc + v * b.Ad[k][j], 0)));
-    G0 = a.Bd.map((r) => r[0]);
-    G1 = a.Ad.map((r) => r.reduce((acc, v, k) => acc + v * b.Bd[k][0], 0));
-  }
+  const { n, Phi, G0, G1, m } = discretiseSS(Ap, B, p.theta ?? 0, Ts);
   return { n, Phi: Float64Array.from(Phi.flat()), G0: Float64Array.from(G0), G1: Float64Array.from(G1), C: Float64Array.from(C[0]), m, gain, integrating: S.integrating };
 }
 
@@ -663,7 +651,7 @@ function* placeFit(fsegs, structure, p, cov, levels, Ts, hNoise) {
   };
   const q0 = [0, 1, 2].map(() => Math.log(Math.abs(p[gk]))).concat([0, 1, 2].map(() => Math.log(p[sk])));
   let res;
-  try { res = yield* lmSteps(residual, q0, { maxIter: 40, lower: q0.map(() => -46), upper: q0.map(() => 46) }); } catch { return null; }
+  try { res = yield* lmSteps(residual, q0, { maxIter: 40, lower: q0.map(() => -LOG_BOUND), upper: q0.map(() => LOG_BOUND) }); } catch { return null; }
   const nObs = observations(fsegs);
   const parts = fsegs.map((sg, i) => ({ length: Math.max(0, sg.y.length - 1), h: hNoise[i] }));
   const cq = parameterCov(res.J, res.A, parts, res.cost / Math.max(1, nObs - 6));
@@ -756,8 +744,9 @@ export function withBar(v, sd) {
   return `${show(round(v))} ± ${show(round(b))}`;
 }
 const withU = (text, unit) => (unit ? `${text} ${unit}` : text);
-// A fit in %: whole points, one decimal above 99 (99.8 is not 100).
-const pctText = (x) => (x >= 99 && x < 100 ? (Math.floor(x * 10) / 10).toFixed(1) : String(Math.round(x)));
+// A fit in %: whole points, one decimal from 99 on, rounded as everywhere
+// else (the Check line and the candidates), and never reading 100.
+const pctText = (x) => (x >= 99 && x < 100 ? Math.min(99.9, Math.round(x * 10) / 10).toFixed(1) : String(Math.round(x)));
 function timeText(t) {
   if (!finite(t)) return String(t);
   if (t < 1) return `${fmtNum(t * 1000, 2)} ms`;
@@ -773,9 +762,10 @@ export function modelSentences(model, names = {}) {
   const S = STRUCTURES[model.structure], p = model.params, sd = model.sd ?? {};
   const out = [];
   const one = n.uUnit ? `1 ${n.uUnit}` : `1 of ${n.u}`;
-  // A dead time is said when the data show one: beyond its 2σ bar (or, with
-  // no bar, at least half a sample).
-  if (sd.theta !== null && sd.theta !== undefined ? p.theta > 2 * sd.theta && p.theta > 0 : p.theta >= model.Ts / 2) out.push(`Responds after ${timeText(p.theta)}.`);
+  // A dead time is said when the data show one: at least a tenth of a sample
+  // (the hold splits a delay exactly into fractions of one; a bar alone let
+  // "0.0028 ms" through at 10 ms), and beyond its 2σ bar when it has one.
+  if (p.theta >= model.Ts / 10 && (sd.theta === null || sd.theta === undefined || p.theta > 2 * sd.theta)) out.push(`Responds after ${timeText(p.theta)}.`);
   if (S.integrating) {
     out.push(`Keeps moving as long as it is pushed: ${one} for 1 s moves it ${withU(withBar(p.kp, sd.kp), n.yUnit)}${n.yUnit ? '' : ` of ${n.y}`} (it integrates).`);
   } else {
@@ -833,6 +823,9 @@ const plainCov = (cov) => (cov ? cov.map((row) => Array.from(row, (v) => v + 0))
 
 // The gentlest controller that held, eased in (§4: "Add as variant").
 function easedFrom(g, plan) {
+  // Only a controller that held: the ladder started (the Hold settled and
+  // did not push the wrong way).
+  if (!g.ladder) return null;
   const inc = g.ladder?.incumbent ?? 0;
   const T = inc ? g.tries.find((t) => t.n === inc) : null;
   const holdLaw = [...g.laws].reverse().find((e) => e.role === 'hold') ?? null;
@@ -1008,10 +1001,17 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
     const gr = gradeOf({ fit: check ? check.fit : fitAll, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, kernelGap: check && kernelFit !== null ? kernelFit - check.fit : 0, left: !!seg.check?.left, checked: !!check });
     candidates.push({
       structure: name, label: STRUCTURES[name].label, glyph: STRUCTURES[name].glyph, p: f.p, sd: f.sd, cov: plainCov(f.cov),
-      fit: check ? check.fit : NaN, fitted: fitAll, chi2dof: f.chi2dof, bic: f.bic, unsupported: why, grade: gr.mark, why: why ? [why] : gr.why, check,
+      fit: check ? check.fit : NaN, fitted: fitAll, chi2dof: f.chi2dof, bic: f.bic, unsupported: why, grade: why ? '✕' : gr.mark, why: why ? [why] : gr.why, check,
     });
   }
   if (!candidates.length) return none('no model could be fitted to this test');
+  // Every shape on offer reads as unsupported (a time constant far beyond
+  // the test, ζ above 5, unstable): no model, rather than one whose numbers
+  // say "settles in about 4e20 s" (§6.4).
+  if (candidates.every((c) => c.unsupported)) {
+    const whys = [...new Set(candidates.map((c) => c.unsupported))];
+    return none(`No shape on offer fits what this test saw (${whys.join('; ')}): a larger room or a longer test helps.`);
+  }
 
   // The choice (§6.4): on the Check; without one (or when no candidate's
   // Check fit is a number: y did not move there), by BIC on the fitting data.
@@ -1073,10 +1073,16 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
     }
   }
 
-  // The grade (§7) of the chosen one, with the where-spread.
+  // The grade (§7) of the chosen one, with the where-spread. A test that
+  // ended before any loop held the plant (too short, a plant that does not
+  // come back, a loop that pushed the wrong way or did not hold) is ✕ (§5.9),
+  // whatever its fit: the model saw the pushes only.
   const check = chosen.check;
   const kernelGap = check && kernelFit !== null ? kernelFit - check.fit : 0;
-  const grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
+  let grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
+  const early = { budget: 'the test ended after the first look', slow: 'the test ended after the first look', away: 'the gentle controller pushed the wrong way', hold: 'the gentle controller did not hold' }[g.end?.code];
+  if (early) grade = { mark: '✕', why: [early] };
+  if (chosen.unsupported) grade = { mark: '✕', why: [chosen.unsupported, ...grade.why.filter((w) => w !== chosen.unsupported)] };
   // The Check plot: the prediction with its 2σ band from 50 parameter samples.
   let checkOut = null;
   if (ckSeg) {
@@ -1126,7 +1132,9 @@ export function linearModel(model) {
   const S = STRUCTURES[model.structure];
   const ss = S.ss(model.params);
   const n = model.names ?? {};
-  const lo = model.band?.[0], hi = model.band?.[1];
+  // The range identified: the levels the test visited (§12), else the band.
+  const lo = model.where?.length ? model.where[0].from : model.band?.[0];
+  const hi = model.where?.length ? model.where.at(-1).to : model.band?.[1];
   return {
     A: ss.A.map((r) => r.slice()), B: ss.B.map((r) => r.slice()), C: ss.C.map((r) => r.slice()), D: ss.D.map((r) => r.slice()),
     states: ss.states.map((s) => ({ ...s })),
@@ -1210,7 +1218,11 @@ export function varyDiagram(diagram, share, seed) {
           const f = b.type === 'gain' ? factor(`gain=${x}`) : 1 + share * (2 * rnd() - 1);
           const nv = x * f;
           if (j >= 0) b.params[spec.key][j] = nv; else b.params[spec.key] = nv;
-          factors.push({ path: [...path, b.id].join('/'), block: b.name ?? b.id, param, value: x, factor: f });
+          // In plain words for the reveal: a gain by its block's name; a
+          // transfer function's coefficient by the power of s it goes with.
+          const name = b.name ?? b.id, power = j >= 0 ? v.length - 1 - j : -1;
+          const label = b.type === 'gain' ? name : j >= 0 ? `${name}, its ${power === 0 ? 'constant' : power === 1 ? 's' : `s^${power}`} term` : `${name}, ${spec.label ?? spec.key}`;
+          factors.push({ path: [...path, b.id].join('/'), block: name, param, label, value: x, factor: f });
         }
       }
     }
@@ -1231,7 +1243,7 @@ export function varyDiagram(diagram, share, seed) {
 // record, model, end, time, tries }.
 export function identify(project, path = null, settings = {}) {
   const known = knownFor(project, path);
-  if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: identify it from the page, connected (Identify tab)', 'identify() simulates the plant; a live plant runs in the page');
+  if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: it is identified in the page while connected, which comes with the Identify tab (not built yet)', 'identify() simulates the plant; a live plant runs in the page');
   const stored = project.system.identify?.[known.block.key] ?? {};
   const given = Object.fromEntries(Object.entries(settings ?? {}).filter(([, v]) => v !== undefined));
   const merged = { ...stored, ...given };

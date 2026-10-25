@@ -4512,9 +4512,15 @@ function discretise(structure, p, Ts) {
   const S = structureOf(structure);
   if (!(Ts > 0)) throw new Error('discretise: Ts must be positive');
   const { A, B, C } = S.ss(p);
+  const d = discretiseSS(A, B, p.theta ?? 0, Ts);
+  return { structure: S.name, ...d, C: C[0].slice(), Ts, theta: (d.m + d.f) * Ts };
+}
+
+function discretiseSS(A, B, theta, Ts) {
   const n = A.length;
-  const ds = Math.max(0, (p.theta ?? 0) / Ts);
-  let m = Math.floor(ds + 1e-9), f = ds - m;
+  const ds = Math.max(0, theta / Ts);
+  const m = Math.floor(ds + 1e-9);
+  let f = ds - m;
   if (f < 1e-9) f = 0;
   let Phi, G0, G1;
   if (f === 0) {
@@ -4526,7 +4532,7 @@ function discretise(structure, p, Ts) {
     G0 = a.Bd.map((r) => r[0]);
     G1 = a.Ad.map((r) => r.reduce((s, v, k) => s + v * b.Bd[k][0], 0));
   }
-  return { structure: S.name, n, Phi, G0, G1, C: C[0].slice(), m, f, Ts, theta: (m + f) * Ts };
+  return { n, Phi, G0, G1, m, f };
 }
 
 
@@ -5365,7 +5371,7 @@ function frf(U, Y, { excited, detect = null, Ts } = {}) {
   return out;
 }
 
-return { STRUCTURES, paramInfo, discretise, simulateSegment, residuals, observations, lmSteps, lm, noiseTransfer, convolve, noiseColour, parameterCov, fitStructureSteps, fitStructure, CHOICE, unsupported, chooseStructure, fitPercent, noiseCeiling, Z99, WHITE, whiteness, crossCorrelation, tcInverse, KERNEL, tcKernelSteps, tcKernel, kernelStep, kernelGuess, seeded, multisineLines, crestFactor, MULTISINE, multisine, wholePeriods, frf };
+return { STRUCTURES, paramInfo, discretise, discretiseSS, simulateSegment, residuals, observations, lmSteps, lm, LOG_BOUND, noiseTransfer, convolve, noiseColour, parameterCov, fitStructureSteps, fitStructure, CHOICE, unsupported, chooseStructure, fitPercent, noiseCeiling, Z99, WHITE, whiteness, crossCorrelation, tcInverse, KERNEL, tcKernelSteps, tcKernel, kernelStep, kernelGuess, seeded, multisineLines, crestFactor, MULTISINE, multisine, wholePeriods, frf };
 })();
 // ---- core/experiment.js
 __mods['core/experiment.js'] = (() => {
@@ -5906,6 +5912,9 @@ function createExperiment(plan) {
     const largest = R && R.a >= aMax * (1 - 1e-9) && (why === 'budget' || why === 'longest');
     if (!rungs.some((Q) => Q.seen) && largest) {
       return finish('none', `${names.u} does not move ${names.y}: is ${names.u} wired to the plant?`);
+    }
+    if (!rungs.some((Q) => Q.seen) && why === 'budget') {
+      return finish('none', `${names.u} has not moved ${names.y} at all, at pushes up to ${uU(R.a)} for ${fmtNum(R.T * Ts, 2)} s: is ${names.u} wired to the plant? A longer test would push harder`);
     }
     if (!rungs.some((Q) => Q.visible)) {
       if (why === 'budget') return finish('budget', `${budgetText(P.budget)} is too short to see ${names.y} move clearly: allow longer`);
@@ -6721,7 +6730,8 @@ const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
 const HIDDEN = {
   experiment: {
     label: 'Identify',
-    make(p) {
+    make(p, Ts) {
+      if (Ts !== undefined && p.plan?.Ts !== Ts) throw new Error(`experiment: the plan runs at Ts ${p.plan?.Ts} s, the block samples at ${Ts} s`);
       const experiment = createExperiment(p.plan);
       let k = 0, seq = null, applied;
       return {
@@ -10409,6 +10419,54 @@ const IDENTIFY_KEYS = ['band', 'budget', 'hard', 'vary', 'seed', 'structure', 'u
 const KEPT_KEYS = ['name', 'plan', 'record'];
 const RECORD_KEYS = ['version', 'Ts', 'u', 'y', 'r', 'applied', 'gaps', 'log', 'end', 'ports'];
 const PLAN_KEYS = ['version', 'kind', 'Ts', 'u0', 'umin', 'umax', 'band', 'hard', 'budget', 'seed', 'names', 'test', 'check', 'others'];
+const LOG_KEYS = {
+  stage: ['stage', 'i'],
+  listen: ['y0', 'mean', 'sigma', 'q', 'floor', 'slope', 'drift', 'drifts', 'n', 'i0', 'i1'],
+  rung: ['n', 'shape', 'a', 'T', 'dir', 'i0', 'i1', 'base', 'ic', 'nBase', 'slope', 'bound', 'backoff', 'runaway', 'w', 'up', 'down', 'max', 'size', 'p', 'plateau', 'ramp', 'complete', 'rings', 'visible', 'seen', 'floor', 'mean', 'sign', 'delay', 'within', 'left', 'at'],
+  nudge: ['why', 'rungs', 'i'],
+  look: ['cls', 'integrating', 'sign', 'K', 'kp', 'tau', 'theta', 'structure', 'p', 'swing', 'bic', 'guess', 'i'],
+  references: ['i', 'test', 'check', 'staircase'],
+  law: ['i', 'Kp', 'Ki', 'tauC', 'umin', 'umax', 'I', 'role'],
+  hold: ['Kp', 'Ki', 'Ti', 'tauC', 'theta', 'i', 'again', 'doubled'],
+  try: ['n', 'tauC', 'Kp', 'Ki', 'umin', 'umax', 'push', 'i0', 'iSwitch', 'iEnd', 'settled', 'tail', 'J', 'parts', 'overshoot', 'g', 'gRoom', 'gRing', 'accepted', 'mark', 'left', 'away'],
+  ladder: ['why', 'incumbent', 'tauC', 'i'],
+  supply: ['what', 'i', 'upto'],
+  pause: ['i0', 'i1', 'waited'],
+  check: ['i0', 'iStart', 'iEnd'],
+  end: ['code', 'message', 'i', 't', 'check'],
+  stop: ['i', 'code'],
+  note: ['i', 'text'],
+};
+const LOG_OBJECTS = {
+  'look.p': ['K', 'kp', 'tau', 'theta', 'f', 'zeta'], 'look.swing': ['count', 'f', 'peak'], 'look.bic': ['lag', 'intLag', 'resonance'],
+  'look.guess': ['K', 'kp', 'tau', 'theta'], 'try.parts': ['error', 'effort', 'overshoot', 'saturation'], 'end.check': ['i0', 'iStart'],
+};
+function plainValue(v, where) {
+  if (v === null || typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return;
+  if (Array.isArray(v)) { for (const [j, x] of v.entries()) if (x !== null && typeof x === 'object') throw new Error(`${where}[${j}]: ${IDENTIFY_COMPUTED}`); return; }
+  throw new Error(`${where}: ${IDENTIFY_COMPUTED}`);
+}
+function checkLog(log, where) {
+  log.forEach((e, j) => {
+    const w = `${where}[${j}]`;
+    const keys = LOG_KEYS[e.kind];
+    if (!keys) throw new Error(`${w}.kind: ${IDENTIFY_COMPUTED}`);
+    for (const [k, v] of Object.entries(e)) {
+      if (k === 'kind') continue;
+      if (!keys.includes(k)) throw new Error(`${w}.${k}: ${IDENTIFY_COMPUTED}`);
+      const inner = LOG_OBJECTS[`${e.kind}.${k}`];
+      if (inner && v !== null && typeof v === 'object' && !Array.isArray(v)) { for (const [k2, v2] of Object.entries(v)) { if (!inner.includes(k2)) throw new Error(`${w}.${k}.${k2}: ${IDENTIFY_COMPUTED}`); plainValue(v2, `${w}.${k}.${k2}`); } } else plainValue(v, `${w}.${k}`);
+    }
+  });
+}
+function checkPlan(plan, where) {
+  for (const [k, v] of Object.entries(plan)) {
+    if (k === 'test') { onlyKeys(v, Array.isArray(v?.r) ? ['r'] : ['r0'], `${where}.test`); Object.entries(v).forEach(([k2, x]) => plainValue(x, `${where}.test.${k2}`)); } else if (k === 'check') { if (v !== null) { onlyKeys(v, ['r'], `${where}.check`); plainValue(v.r, `${where}.check.r`); } } else if (k === 'names') { onlyKeys(v, ['u', 'uUnit', 'y', 'yUnit'], `${where}.names`); Object.entries(v).forEach(([k2, x]) => plainValue(x, `${where}.names.${k2}`)); } else if (k === 'others') {
+      if (!Array.isArray(v)) throw new Error(`${where}.others: a list of the inputs held`);
+      v.forEach((o, j) => { onlyKeys(o, ['name', 'value', 'input'], `${where}.others[${j}]`); Object.entries(o).forEach(([k2, x]) => plainValue(x, `${where}.others[${j}].${k2}`)); });
+    } else plainValue(v, `${where}.${k}`);
+  }
+}
 function onlyKeys(o, keys, where) {
   if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error(`${where}: an object`);
   for (const k of Object.keys(o)) if (!keys.includes(k)) throw new Error(`${where}.${k}: ${IDENTIFY_COMPUTED}`);
@@ -10447,6 +10505,7 @@ function normalizeIdentify(raw) {
       const w = `${where}.kept[${i}]`;
       onlyKeys(k, KEPT_KEYS, w);
       onlyKeys(k.plan, PLAN_KEYS, `${w}.plan`);
+      checkPlan(k.plan, `${w}.plan`);
       onlyKeys(k.record, RECORD_KEYS, `${w}.record`);
       const r = k.record;
       if (!Number.isInteger(r.version) || !(r.Ts > 0)) throw new Error(`${w}.record: needs its version and Ts`);
@@ -10455,9 +10514,14 @@ function normalizeIdentify(raw) {
       if (!Array.isArray(r.gaps ?? []) || !(r.gaps ?? []).every((g) => Array.isArray(g) && g.length === 2 && g.every(Number.isInteger))) throw new Error(`${w}.record.gaps: [[sample, cycles lost], …]`);
       rec.gaps = (r.gaps ?? []).map((g) => g.slice());
       if (!Array.isArray(r.log ?? []) || !(r.log ?? []).every((x) => x && typeof x === 'object' && typeof x.kind === 'string')) throw new Error(`${w}.record.log: the experiment's log`);
+      checkLog(r.log ?? [], `${w}.record.log`);
       rec.log = structuredClone(r.log ?? []);
       rec.end = r.end ?? null;
-      if (r.ports) rec.ports = structuredClone(r.ports);
+      if (r.ports) {
+        onlyKeys(r.ports, ['u', 'y', 'units'], `${w}.record.ports`);
+        Object.entries(r.ports).forEach(([k2, x]) => plainValue(x, `${w}.record.ports.${k2}`));
+        rec.ports = structuredClone(r.ports);
+      }
       return { name: String(k.name ?? `test ${i + 1}`), plan: structuredClone(k.plan), record: rec };
     });
     if (e.use != null) { if (!(Number.isInteger(e.use) && e.use >= 0 && e.use < o.kept.length)) throw new Error(`${where}.use: the index of a kept test`); o.use = e.use; }
@@ -13939,10 +14003,10 @@ const { CONTROLLERS } = __mods['core/controllers.js'];
 const { referenceFn, gaussAt } = __mods['core/signals.js'];
 const { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText } = __mods['core/experiment.js'];
 const {
-  STRUCTURES, discretise, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
+  STRUCTURES, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
   fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded,
 } = __mods['core/fit.js'];
-const { cholesky, c2d } = __mods['core/linalg.js'];
+const { cholesky } = __mods['core/linalg.js'];
 const { createStepRunner } = __mods['core/live.js'];
 class IdentifyError extends Error {
   constructor(code, message, hint = '') {
@@ -14365,21 +14429,9 @@ function kernelReplay(kernel, fs) {
 function placeModel(structure, p, Ts) {
   const S = STRUCTURES[structure];
   const { A, B, C } = S.ss(p);
-  const n = A.length, gain = p[GAIN(S)];
+  const gain = p[GAIN(S)];
   const Ap = S.integrating ? A : A.map((row, i) => row.map((v, j) => v + (B[i][0] / gain) * C[0][j]));
-  const ds = Math.max(0, (p.theta ?? 0) / Ts);
-  let m = Math.floor(ds + 1e-9), f = ds - m;
-  if (f < 1e-9) f = 0;
-  let Phi, G0, G1;
-  if (f === 0) {
-    const d = c2d(Ap, B, Ts);
-    Phi = d.Ad; G0 = d.Bd.map((r) => r[0]); G1 = new Array(n).fill(0);
-  } else {
-    const a = c2d(Ap, B, (1 - f) * Ts), b = c2d(Ap, B, f * Ts);
-    Phi = a.Ad.map((r) => b.Ad[0].map((_, j) => r.reduce((acc, v, k) => acc + v * b.Ad[k][j], 0)));
-    G0 = a.Bd.map((r) => r[0]);
-    G1 = a.Ad.map((r) => r.reduce((acc, v, k) => acc + v * b.Bd[k][0], 0));
-  }
+  const { n, Phi, G0, G1, m } = discretiseSS(Ap, B, p.theta ?? 0, Ts);
   return { n, Phi: Float64Array.from(Phi.flat()), G0: Float64Array.from(G0), G1: Float64Array.from(G1), C: Float64Array.from(C[0]), m, gain, integrating: S.integrating };
 }
 
@@ -14444,7 +14496,7 @@ function* placeFit(fsegs, structure, p, cov, levels, Ts, hNoise) {
   };
   const q0 = [0, 1, 2].map(() => Math.log(Math.abs(p[gk]))).concat([0, 1, 2].map(() => Math.log(p[sk])));
   let res;
-  try { res = yield* lmSteps(residual, q0, { maxIter: 40, lower: q0.map(() => -46), upper: q0.map(() => 46) }); } catch { return null; }
+  try { res = yield* lmSteps(residual, q0, { maxIter: 40, lower: q0.map(() => -LOG_BOUND), upper: q0.map(() => LOG_BOUND) }); } catch { return null; }
   const nObs = observations(fsegs);
   const parts = fsegs.map((sg, i) => ({ length: Math.max(0, sg.y.length - 1), h: hNoise[i] }));
   const cq = parameterCov(res.J, res.A, parts, res.cost / Math.max(1, nObs - 6));
@@ -14523,7 +14575,7 @@ function withBar(v, sd) {
   return `${show(round(v))} ± ${show(round(b))}`;
 }
 const withU = (text, unit) => (unit ? `${text} ${unit}` : text);
-const pctText = (x) => (x >= 99 && x < 100 ? (Math.floor(x * 10) / 10).toFixed(1) : String(Math.round(x)));
+const pctText = (x) => (x >= 99 && x < 100 ? Math.min(99.9, Math.round(x * 10) / 10).toFixed(1) : String(Math.round(x)));
 function timeText(t) {
   if (!finite(t)) return String(t);
   if (t < 1) return `${fmtNum(t * 1000, 2)} ms`;
@@ -14536,7 +14588,7 @@ function modelSentences(model, names = {}) {
   const S = STRUCTURES[model.structure], p = model.params, sd = model.sd ?? {};
   const out = [];
   const one = n.uUnit ? `1 ${n.uUnit}` : `1 of ${n.u}`;
-  if (sd.theta !== null && sd.theta !== undefined ? p.theta > 2 * sd.theta && p.theta > 0 : p.theta >= model.Ts / 2) out.push(`Responds after ${timeText(p.theta)}.`);
+  if (p.theta >= model.Ts / 10 && (sd.theta === null || sd.theta === undefined || p.theta > 2 * sd.theta)) out.push(`Responds after ${timeText(p.theta)}.`);
   if (S.integrating) {
     out.push(`Keeps moving as long as it is pushed: ${one} for 1 s moves it ${withU(withBar(p.kp, sd.kp), n.yUnit)}${n.yUnit ? '' : ` of ${n.y}`} (it integrates).`);
   } else {
@@ -14589,6 +14641,7 @@ function signed(start, S, sign) {
 const plainCov = (cov) => (cov ? cov.map((row) => Array.from(row, (v) => v + 0)) : null);
 
 function easedFrom(g, plan) {
+  if (!g.ladder) return null;
   const inc = g.ladder?.incumbent ?? 0;
   const T = inc ? g.tries.find((t) => t.n === inc) : null;
   const holdLaw = [...g.laws].reverse().find((e) => e.role === 'hold') ?? null;
@@ -14730,10 +14783,14 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
     const gr = gradeOf({ fit: check ? check.fit : fitAll, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, kernelGap: check && kernelFit !== null ? kernelFit - check.fit : 0, left: !!seg.check?.left, checked: !!check });
     candidates.push({
       structure: name, label: STRUCTURES[name].label, glyph: STRUCTURES[name].glyph, p: f.p, sd: f.sd, cov: plainCov(f.cov),
-      fit: check ? check.fit : NaN, fitted: fitAll, chi2dof: f.chi2dof, bic: f.bic, unsupported: why, grade: gr.mark, why: why ? [why] : gr.why, check,
+      fit: check ? check.fit : NaN, fitted: fitAll, chi2dof: f.chi2dof, bic: f.bic, unsupported: why, grade: why ? '✕' : gr.mark, why: why ? [why] : gr.why, check,
     });
   }
   if (!candidates.length) return none('no model could be fitted to this test');
+  if (candidates.every((c) => c.unsupported)) {
+    const whys = [...new Set(candidates.map((c) => c.unsupported))];
+    return none(`No shape on offer fits what this test saw (${whys.join('; ')}): a larger room or a longer test helps.`);
+  }
 
   let pick = ckSeg ? chooseStructure(candidates) : { index: -1 };
   if (pick.index < 0) {
@@ -14789,7 +14846,10 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
 
   const check = chosen.check;
   const kernelGap = check && kernelFit !== null ? kernelFit - check.fit : 0;
-  const grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
+  let grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
+  const early = { budget: 'the test ended after the first look', slow: 'the test ended after the first look', away: 'the gentle controller pushed the wrong way', hold: 'the gentle controller did not hold' }[g.end?.code];
+  if (early) grade = { mark: '✕', why: [early] };
+  if (chosen.unsupported) grade = { mark: '✕', why: [chosen.unsupported, ...grade.why.filter((w) => w !== chosen.unsupported)] };
   let checkOut = null;
   if (ckSeg) {
     const yh = simulateSegment(discretise(chosen.structure, chosen.p, Ts), ckSeg).y;
@@ -14833,7 +14893,8 @@ function linearModel(model) {
   const S = STRUCTURES[model.structure];
   const ss = S.ss(model.params);
   const n = model.names ?? {};
-  const lo = model.band?.[0], hi = model.band?.[1];
+  const lo = model.where?.length ? model.where[0].from : model.band?.[0];
+  const hi = model.where?.length ? model.where.at(-1).to : model.band?.[1];
   return {
     A: ss.A.map((r) => r.slice()), B: ss.B.map((r) => r.slice()), C: ss.C.map((r) => r.slice()), D: ss.D.map((r) => r.slice()),
     states: ss.states.map((s) => ({ ...s })),
@@ -14901,7 +14962,9 @@ function varyDiagram(diagram, share, seed) {
           const f = b.type === 'gain' ? factor(`gain=${x}`) : 1 + share * (2 * rnd() - 1);
           const nv = x * f;
           if (j >= 0) b.params[spec.key][j] = nv; else b.params[spec.key] = nv;
-          factors.push({ path: [...path, b.id].join('/'), block: b.name ?? b.id, param, value: x, factor: f });
+          const name = b.name ?? b.id, power = j >= 0 ? v.length - 1 - j : -1;
+          const label = b.type === 'gain' ? name : j >= 0 ? `${name}, its ${power === 0 ? 'constant' : power === 1 ? 's' : `s^${power}`} term` : `${name}, ${spec.label ?? spec.key}`;
+          factors.push({ path: [...path, b.id].join('/'), block: name, param, label, value: x, factor: f });
         }
       }
     }
@@ -14913,7 +14976,7 @@ function varyDiagram(diagram, share, seed) {
 
 function identify(project, path = null, settings = {}) {
   const known = knownFor(project, path);
-  if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: identify it from the page, connected (Identify tab)', 'identify() simulates the plant; a live plant runs in the page');
+  if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: it is identified in the page while connected, which comes with the Identify tab (not built yet)', 'identify() simulates the plant; a live plant runs in the page');
   const stored = project.system.identify?.[known.block.key] ?? {};
   const given = Object.fromEntries(Object.entries(settings ?? {}).filter(([, v]) => v !== undefined));
   const merged = { ...stored, ...given };

@@ -735,6 +735,9 @@ export function createExperiment(plan) {
     if (!rungs.some((Q) => Q.seen) && largest) {
       return finish('none', `${names.u} does not move ${names.y}: is ${names.u} wired to the plant?`);
     }
+    if (!rungs.some((Q) => Q.seen) && why === 'budget') {
+      return finish('none', `${names.u} has not moved ${names.y} at all, at pushes up to ${uU(R.a)} for ${fmtNum(R.T * Ts, 2)} s: is ${names.u} wired to the plant? A longer test would push harder`);
+    }
     // Something moved, but never clearly: a first look would read noise.
     if (!rungs.some((Q) => Q.visible)) {
       if (why === 'budget') return finish('budget', `${budgetText(P.budget)} is too short to see ${names.y} move clearly: allow longer`);

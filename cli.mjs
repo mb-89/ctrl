@@ -15,7 +15,7 @@ import { EXAMPLES } from './src/core/examples-v1.js';
 import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from './src/core/systems.js';
 import { compileDiagram } from './src/core/diagram.js';
 import { autotune, tuneReport, placeVariant, controllerBlocks, tunedValues, METHODS as TUNE_METHODS, RULES, SIMC, COSTS, tauCSource } from './src/core/autotune.js';
-import { identify, withBar, BUDGETS } from './src/core/identify.js';
+import { identify, withBar, BUDGETS, GRADE } from './src/core/identify.js';
 import { STRUCTURES, paramInfo } from './src/core/fit.js';
 
 const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command> [options]
@@ -47,7 +47,9 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
                                         eases in (Listen, Nudge, Hold, Ease in, Check), then the model is fitted
                                         and graded; prints what it found in sentences. --vary hides a seeded
                                         variation of the plant (share of each physical parameter) and reveals it;
-                                        --keep stores the record (not the model) in the project
+                                        --structure picks the candidate to use (lag, lags, resonance, intLag,
+                                        intRes) instead of the page's choice; --keep stores the record (not the
+                                        model) in the project
   trace <project> [--candidate <name>] [--every 10] [--json]
                                         time series t, r, y, u, ym, d as CSV
   design <project> [--block <path>] [--json]
@@ -407,9 +409,9 @@ switch (cmd) {
     console.log(`${project.title}: ${res.block.where} (${res.block.key}), ${n.u} → ${n.y} · Ts ${fmt(res.plan.Ts * 1000)} ms`);
     console.log(`  ${n.y} may move within ${fmt(res.plan.band[0])} … ${fmt(res.plan.band[1])}${unitOf(n.yUnit)}; the test may take ${fmt(res.plan.budget)} s`);
     if (res.vary) console.log(`  a hidden variation of ±${fmt(100 * res.vary.share)} %, seed ${res.vary.seed}`);
-    console.log(`  test: ${fmt(res.time)} s of plant time; tries ${res.tries.join(' · ') || 'none'}`);
+    console.log(`  test: ${fmt(res.time)} s of plant time; tries ${res.tries.join(', ') || 'none'}`);
     console.log(`  ${res.end.message}`);
-    if (!m.ok) { for (const t of m.sentences) console.log(`  ${t}`); process.exitCode = 1; break; }
+    if (!m.ok) { for (const t of m.sentences) if (t !== res.end.message) console.log(`  ${t}`); process.exitCode = 1; break; }
     console.log('');
     for (const t of m.sentences) console.log(`  ${t}`);
     console.log('');
@@ -419,11 +421,11 @@ switch (cmd) {
     console.log('  candidates (fit on the Check, %):');
     for (const c of m.candidates) console.log(`    ${c.structure === m.structure ? '▸' : ' '} ${c.label.padEnd(22)} ${Number.isFinite(c.fit) ? fmt(c.fit) : '–'}  ${c.grade}${c.why.length ? `  ${c.why.join('; ')}` : ''}`);
     if (m.check) console.log(`  Check: ${fmt(m.check.fit)} % (the noise allows ${fmt(m.check.ceiling)} %; the kernel ${m.check.kernel === null ? '–' : fmt(m.check.kernel)} %)`);
-    const seen = m.where.filter((pl) => pl.seen >= 0.1);
+    const seen = m.where.filter((pl) => pl.seen >= GRADE.seen);
     if (seen.length) console.log(`  where: ${seen.map((pl) => `near ${fmt(pl.level)}${unitOf(n.yUnit)}: gain ${withBar(pl.gain, pl.gainSd)}, ${paramInfo(pl.scaleKey).label} ${withBar(pl.scale, pl.scaleSd)}`).join('; ')}${m.whereSpread.flagged ? ' (differs by place)' : ''}`);
     if (m.eased) console.log(`  the gentlest controller that held: PI, Kp ${fmt(m.eased.Kp)}, Ki ${fmt(m.eased.Ki)}${m.eased.try ? ` (try ${m.eased.try})` : ' (the Hold\'s)'}`);
     for (const w of m.warnings) console.log(`  note: ${w}`);
-    if (res.vary) console.log(`  the plant was: ${res.vary.factors.map((f) => `${f.block} ${f.param} ${f.factor >= 1 ? '+' : '−'}${fmt(Math.abs(100 * (f.factor - 1)))} %`).join(', ')}`);
+    if (res.vary) console.log(`  the plant was: ${res.vary.factors.map((f) => `${f.label} ${f.factor >= 1 ? '+' : '−'}${+Math.abs(100 * (f.factor - 1)).toPrecision(2)} %`).join(', ')}`);
     if (opt.keep) console.log(`  kept in ${pos[1]} (the record; the model is computed from it)`);
     break;
   }

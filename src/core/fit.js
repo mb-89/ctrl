@@ -179,9 +179,19 @@ export function discretise(structure, p, Ts) {
   const S = structureOf(structure);
   if (!(Ts > 0)) throw new Error('discretise: Ts must be positive');
   const { A, B, C } = S.ss(p);
+  const d = discretiseSS(A, B, p.theta ?? 0, Ts);
+  return { structure: S.name, ...d, C: C[0].slice(), Ts, theta: (d.m + d.f) * Ts };
+}
+
+// The zero-order hold of ẋ = Ax + Bu with the input delayed by theta = (m + f)
+// samples: x[k+1] = Φ x[k] + G0 u[k−m] + G1 u[k−m−1], the fractional part
+// split exactly between the two held inputs. → { n, Phi (rows), G0, G1, m, f }.
+// Also identify.js's model that changes by place (placeModel).
+export function discretiseSS(A, B, theta, Ts) {
   const n = A.length;
-  const ds = Math.max(0, (p.theta ?? 0) / Ts);
-  let m = Math.floor(ds + 1e-9), f = ds - m;
+  const ds = Math.max(0, theta / Ts);
+  const m = Math.floor(ds + 1e-9);
+  let f = ds - m;
   if (f < 1e-9) f = 0;
   let Phi, G0, G1;
   if (f === 0) {
@@ -193,7 +203,7 @@ export function discretise(structure, p, Ts) {
     G0 = a.Bd.map((r) => r[0]);
     G1 = a.Ad.map((r) => r.reduce((s, v, k) => s + v * b.Bd[k][0], 0));
   }
-  return { structure: S.name, n, Phi, G0, G1, C: C[0].slice(), m, f, Ts, theta: (m + f) * Ts };
+  return { n, Phi, G0, G1, m, f };
 }
 
 // ---- Replaying a segment
@@ -360,7 +370,7 @@ export const lm = (residual, p0, opts) => drain(lmSteps(residual, p0, opts));
 
 // Logs keep positive parameters positive; a gain's sign is fixed by its
 // start; θ is fitted in samples, 0 … the longest segment.
-const LOG_BOUND = 46;   // e^±46 ≈ 1e±20
+export const LOG_BOUND = 46;   // e^±46 ≈ 1e±20
 
 // How a measurement error at the start of a segment reaches the residuals:
 // the impulse response h of the residual y − ŷ to an error added to what the
