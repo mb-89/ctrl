@@ -17,7 +17,12 @@ test('the built page is standalone: nothing is loaded from elsewhere at run time
     assert.equal(/@import\b/i.exec(html), null, `${name}: a style sheet imported`);
     const styles = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join('\n');
     assert.deepEqual([...styles.matchAll(/url\(\s*['"]?(?!data:|#)([^)'"]*)/gi)].map((m) => m[1]), [], `${name}: a style loads a file`);
-    const script = html.slice(html.indexOf('<script id="lt-script">'));
+    // The MCP server's files ride in the page as one string (__MCP_FILES, the
+    // Export menu's download): data handed to the person's computer, never
+    // run here. mcp.mjs imports its modules there; the page's code must not.
+    const carried = /^const __MCP_FILES = (\{.*\});$/m.exec(html);
+    assert.ok(carried && typeof JSON.parse(carried[1])['mcp.mjs'] === 'string', `${name}: the MCP server's files are carried as data`);
+    const script = html.slice(html.indexOf('<script id="lt-script">')).replace(carried[0], '');
     for (const re of [/\bfetch\s*\(/, /\bimport\s*\(/, /\bimportScripts\s*\(/, /\bXMLHttpRequest\b/, /\bnavigator\.sendBeacon\b/]) {
       assert.equal(re.exec(script), null, `${name}: the page's code loads something (${re})`);
     }

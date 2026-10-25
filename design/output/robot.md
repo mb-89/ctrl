@@ -626,7 +626,7 @@ Older files load unchanged.
 
 0. **Prerequisites and record.**
    - `feat/designs` merged into main (its merge with main's input 11–13 work is in progress).
-   - From [transparent-models.md](transparent-models.md) steps 1–3: pass nodes elided, `uv` state nodes, `formula.js` and masks, Equations, the Integrator's fields.
+   - From [transparent-models.md](transparent-models.md) steps 1–3: pass nodes elided, `uv` state nodes, `formula.js` and masks, Equations, the Integrator's fields. **Built** (2026-10-25, branch `feat/model-foundations`), scalar only: formulas, mask values and Integrator fields are numbers; vectors, `X[j]`, a mask on the root diagram and multi-output nodes beyond Equations' `pick` nodes are this plan's. The eigenvalue step bound is built too (detail-levels.md §5).
    - From [detail-levels.md](detail-levels.md): the Valid range block and `info.validity`, with the status line showing reports.
    - Record the decisions in §14 in `decisions.md`.
    - Add this plan's row to the output README (done with this plan).

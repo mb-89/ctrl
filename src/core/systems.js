@@ -42,7 +42,7 @@ const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturatio
 // A type's tags; a function reads the variant (a PI from the plant at one
 // level is a plain PI, at several it is scheduled).
 const VARIANT_TAGS = {
-  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference', speedPI: 'PID',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference', speedPI: 'PID',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -55,9 +55,11 @@ const TONE = {
   PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
   // Seven of the eight tones are taken by controller tags: this one is set.
   'Sliding mode': 'red',
-  'Kalman filter': 'slate', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  // The observers sit together on one card, beside PID (aqua) and
+  // Disturbance (slate): Luenberger took blue, the Kalman filter green.
+  'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
-  'Reference mode': 'aqua', 'Controller in the plant': 'green',
+  'Controller in the plant': 'green', Agent: 'red',
   // The PUMA's: a plant with several inputs and outputs, and a 3D view.
   MIMO: 'slate', '3D': 'blue',
 };

@@ -24,6 +24,11 @@
     "signals": "V,ctrl.r,ctrl.u,ctrl.y,r,speed,speed_m",
     "hash": "bf121d90"
   },
+  "DC motor, speed from an encoder": {
+    "samples": 5001,
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,encoder,est_error,estimate,i,r,speed",
+    "hash": "944cbb0c"
+  },
   "Conical tank, gain scheduling": {
     "samples": 2001,
     "signals": "ctrl.r,ctrl.u,ctrl.y,d,h,q,r",
