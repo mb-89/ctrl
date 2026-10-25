@@ -1,0 +1,3 @@
+# Both downloads one click; the MCP server explains itself (2026-10-25)
+
+> So I want the MCP server and the plant to download as a zip file, and they both have a runme, readme, and a a runme ps1, a runme shell, and a readme md. So no matter what, I just click the runme and it does everything. I don't need to any options I can figure out with the help flag. That's how I want this to be. And then I guess if we start the MCP server, the README and also the server itself should explain a bit how somebody who's not familiar with MCP servers would get an agent to work with that. Right, so what you wrote here in the message, that should, the server should explain it itself.

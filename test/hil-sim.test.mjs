@@ -10,6 +10,7 @@ import { simPlant, createSimPlant, simModels, drawSystem, varyDiagram, simulator
 import { simulateSystem } from '../src/core/sim.js';
 import { checkDescription } from '../src/core/hil.js';
 import { normalizeDiagram } from '../src/core/diagram.js';
+import { SYSTEM_LIBRARY } from '../src/core/systems.js';
 import { plantFiles } from '../src/ui/live.js';
 import { bundleScript } from '../build.mjs';
 import { libraryFingerprints } from '../tools/library-fingerprints.mjs';
@@ -56,7 +57,9 @@ function withSinks(diagram, loop) {
 }
 
 test('the plant is the page\'s simulation of the same model, sample for sample, for every library system', () => {
-  assert.equal(simModels().length, 11, 'every library system but the HIL ones');
+  // Every library system whose plant runs in the page (all but those with an External plant).
+  const inPage = SYSTEM_LIBRARY.filter((e) => !JSON.stringify(e.plant ?? e.system?.plant ?? e).includes('"type":"external"'));
+  assert.equal(simModels().length, inPage.length, 'every library system but the HIL ones');
   for (const e of simModels()) {
     const { diffs, compared } = samePlant(e);
     assert.ok(compared > 50, e.name);

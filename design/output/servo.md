@@ -492,7 +492,7 @@ Built on `feat/servo` (2026-10-25), from main after the model foundations (masks
 - **Compile-time switches**: a Switch whose position is a formula is a wire once the mask is resolved; what reaches only its other inputs is not compiled (no state, no step bound, not evaluated), and Sinks fed only from there are off: not recorded, listed in `el.off` and a run's `info.off`. The canvas draws what is not compiled faint (`el.offNodes`).
 - **Ports from the mask**: an In or Out block may carry `when` (a formula; 0 removes the port). The Servo motor's In 3 has `when: "shaft - 1"`.
 - **Components** (`core/components.js`): `servo-motor@1`, the mask of §3 and §4 (three fixed slots for ripple orders and error orders, for want of mask lists) and the diagram of §1, 72 blocks. A use is `{ type: 'subsystem', component, params }`; `normalizeDiagram` puts the mask and insides in; `JSON.stringify` writes the reference and the values that differ from the defaults (`toJSON`); `prefix` renames a use's Sinks. The Plant tab lists it under **Components**, shows toggles as keys carrying their labels and choices as lists, folds the fields under them, opens the insides read-only (an edit inside says so) and offers **Edit a copy**.
-- **The examples**: the three DC motor systems (`motorDiagram`, `DC_MOTOR`), the encoder example (`ENCODER_MOTOR`) and the new **Gear backlash**, with summary and notes per the progressive-disclosure rule ([system-library.md](system-library.md)).
+- **The examples**: the three DC motor systems (`motorDiagram`, `DC_MOTOR`) and main's observer example *DC motor, speed from an encoder* (merged in after it was built on main's motor), the encoder example (`ENCODER_MOTOR`) and the new **Gear backlash**, with summary and notes per the progressive-disclosure rule ([system-library.md](system-library.md)).
 - **The HIL simulator** (`core/hilsim.js`): a system's effects are the toggles that are on in its masks (`effectsOf`), named by their labels, off by setting the toggle to 0; it reads through a Switch a mask set; Sinks that are off are no outputs; outputs the input reaches without a state between are named (`spec.direct`). The encoder's effects are now *Torque ripple and cogging, Torque noise, Encoder coupling resonance, Encoder angle errors, Speed from the angle* (they were *torque ripple, torque noise, shaft resonance, encoder errors*); its varied physics are R, L, K, b, J, ωc, ζc (they were 1/R, L/R, Kt, Ke, 1/b, J/b, ωn, ζ), so its draws for a seed differ from main's.
 - **Tests**: `test/switches.test.mjs` (§12.1), `test/servo.test.mjs` (§12.2–12.5), the legacy builders in `test/fixtures/legacy-motors.mjs`.
 
@@ -504,6 +504,7 @@ Built on `feat/servo` (2026-10-25), from main after the model foundations (masks
 | Following a sine · all four | 1.0·10⁻¹⁵ … 2.6·10⁻¹⁴ | 1 (1) |
 | DC motor, sliding mode · all three | 2.0·10⁻¹⁶ … 4.9·10⁻¹⁵ | 1 (1) |
 | Encoder errors and torque ripple · PI speed, Off | 8.5·10⁻¹², 2.5·10⁻¹⁴ | 5 (5) |
+| DC motor, speed from an encoder (main's observer example, merged in later) · all three | 2.0·10⁻¹⁶ … 8.0·10⁻¹⁵; its Luenberger and Kalman designs the same | 1 (1) |
 
 - Tests hold the motors to 10⁻¹² and the encoder to 10⁻⁹ (§7.1's reason: the motor owns its friction).
 - **Fingerprints** (`test/fixtures/library-fingerprints.json`): only these four change (the rounding above, and the motor's Sinks i, τe, τm, τf, τr, v join the signals), and Gear backlash is new; every other system is bit for bit.
@@ -545,6 +546,7 @@ Built on `feat/servo` (2026-10-25), from main after the model foundations (masks
 ### 15.4 Left
 
 - Step 7, the PUMA's joints (§15.5), when `feat/puma` and this branch are both merged.
+- *DC motor with an unbalanced arm* (the HIL simulator's default plant, with Coulomb friction and gravity) and *Variable gain against anti-windup* (a torque-driven axis) keep their own motor blocks: neither was in this plan; both could be Servo motors (a voltage drive with Coulomb on and the arm's gravity outside; a current drive with the current loop as the torque drive's lag).
 - Detail levels as named switch sets (§6), when [detail-levels.md](detail-levels.md) is built.
 - The project's `components` map and making components in the page; mask lists; a "set from fr, ζ" helper; the cascade dual loop (§13).
 

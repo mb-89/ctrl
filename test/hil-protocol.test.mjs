@@ -75,7 +75,7 @@ test('describe with output hard ranges parses, and the External block keeps them
 });
 
 test('the library\'s HIL systems carry the plant\'s hard ranges', async () => {
-  for (const name of ['HIL: an external plant', 'HIL: an external plant, reference mode']) {
+  for (const name of ['HIL: an external plant', 'HIL with an agent']) {
     const b = (await system(name)).plant.diagram.blocks.find((x) => x.type === 'external');
     assert.deepEqual([b.params.ymin.slice(0, 3), b.params.ymax.slice(0, 3)], [[-2.5, -60, -10], [2.5, 60, 10]], name);
   }
@@ -177,6 +177,34 @@ test('hil_plant.py echoes the inputs it applied after its clamps, and E-stops wh
     assert.ok(ys.at(-1).params.y[0] <= 2.5, 'the y beyond the range is not sent: the E-stop comes in its place');
     assert.equal((await page.call('describe')).result.estop, estop.params.reason, 'latched');
     assert.deepEqual((await page.call('reset')).result, {}, 'the monitoring\'s E-stop is reset from either side');
+  } finally {
+    page.ws.close();
+    plant.proc.kill('SIGINT');
+    await Promise.race([plant.exited, new Promise((r) => setTimeout(r, 3000))]);
+  }
+});
+
+test('hil_plant.py switches its mode when the page asks, only while stopped, and describes itself anew (when it can run here)', async (t) => {
+  if (typeof WebSocket !== 'function') { t.skip('no WebSocket in this Node'); return; }
+  const plant = await startPlant(['--seed', '4']);
+  if (!plant) { t.skip('neither python3 with websockets nor uv with websockets in its cache'); return; }
+  const page = await connectPlant(plant.port);
+  try {
+    const control = (await page.call('describe')).result;
+    assert.equal(control.mode, 'control');
+    const ref = (await page.call('mode', { mode: 'reference' })).result;
+    assert.equal(ref.mode, 'reference');
+    assert.deepEqual(ref.inputs.map((p) => [p.name, p.kind, p.measures]), [['r', 'reference', 'angle']]);
+    assert.deepEqual(ref.outputs.map((o) => o.name), [...control.outputs.map((o) => o.name), 'V'], 'the same plant, its own effort added');
+    assert.equal((await page.call('describe')).result.mode, 'reference', 'it stays in that mode');
+    await page.call('start');
+    const busy = await page.call('mode', { mode: 'control' });
+    assert.equal(busy.error.code, -32000);
+    assert.match(busy.error.message, /stop the plant first/);
+    await page.call('stop');
+    assert.equal((await page.call('mode', { mode: 'sideways' })).error.code, -32000);
+    const back = (await page.call('mode', { mode: 'control' })).result;
+    assert.deepEqual(back.inputs, control.inputs, 'control mode again: the inputs it had');
   } finally {
     page.ws.close();
     plant.proc.kill('SIGINT');

@@ -19,10 +19,20 @@
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,e,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
     "hash": "27ab4941"
   },
+  "Variable gain against anti-windup": {
+    "samples": 2001,
+    "signals": "angle,ctrl.r,ctrl.u,ctrl.y,d,r,speed,torque,u",
+    "hash": "f3a827e7"
+  },
   "Encoder errors and torque ripple": {
     "samples": 2001,
     "signals": "V,ctrl.r,ctrl.u,ctrl.y,i,r,speed,speed_m,tau_e,tau_f,tau_m,tau_r,v",
     "hash": "a356789d"
+  },
+  "DC motor, speed from an encoder": {
+    "samples": 5001,
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,encoder,est_error,estimate,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
+    "hash": "5bfad072"
   },
   "Gear backlash": {
     "samples": 10001,

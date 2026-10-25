@@ -5,16 +5,16 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { buildHtml } from './build.mjs';
+import { parseProject, extractJson as extractOps, findSystem, systemProject, projectDesigns, autotuneOptions, runProject, analyzeProject, parseAt } from './src/core/ops.js';
 import { SLOTS, BLOCKS, blockDef, normalizeBlock } from './src/core/blocks.js';
 import { METRICS, METRIC } from './src/core/metrics.js';
-import { normalizeProject, evaluateProject, evaluateCandidate, evaluateSystem, findCandidate, uniqueName, nextColor, describeController, fmt, loopReady, referenceTrace, autoTimebase } from './src/core/project.js';
+import { normalizeProject, evaluateProject, evaluateCandidate, findCandidate, uniqueName, nextColor, describeController, fmt, loopReady, referenceTrace } from './src/core/project.js';
 import { SIGNALS, normalizeComponent, describeComponent } from './src/core/signals.js';
 import { runTune, tunableParams } from './src/core/tune.js';
 import { DEFAULT_PROJECT } from './src/core/examples.js';
 import { EXAMPLES } from './src/core/examples-v1.js';
-import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from './src/core/systems.js';
-import { compileDiagram } from './src/core/diagram.js';
-import { autotune, tuneReport, placeVariant, controllerBlocks, tunedValues, METHODS as TUNE_METHODS, RULES, SIMC, COSTS, tauCSource } from './src/core/autotune.js';
+import { SYSTEM_LIBRARY } from './src/core/systems.js';
+import { autotune, tuneReport, placeVariant, tunedValues, RULES, SIMC, tauCSource } from './src/core/autotune.js';
 
 const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command> [options]
 
@@ -39,8 +39,14 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
                                         page's Auto-tune tab does; --save puts the result into the block as a
                                         variant of its own (running if it scores better); --ff also tunes
                                         the feedforward gains (Kff, Kv, Ka) that are 0
-  run <project> [--json]                simulate the system (the diagram) over the screen, as the page does, and
-                                        print what the run reported: validity, warnings, steps, step bound
+  run <project> [--duration <s>] [--signals a,b] [--points 200] [--cost IAE] [--effort 0.05] [--overshoot 10] [--json]
+                                        simulate the system (the diagram) over the screen (or --duration), as
+                                        the page does: what the run reported (validity, warnings, steps, step
+                                        bound) and each Controller block's loop: Auto-tune's cost, overshoot,
+                                        settling, IAE; --signals adds those signals, downsampled to --points
+  analyze <project> [--block <id path>] [--at origin|initial|t=<s>|y=<level>,...] [--json]
+                                        the Analysis tab's numbers for a Controller block's loop at an
+                                        operating point: margins, closed-loop poles, the linear step
   trace <project> [--candidate <name>] [--every 10] [--json]
                                         time series t, r, y, u, ym, d as CSV
   design <project> [--block <path>] [--json]
@@ -49,7 +55,7 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
   html <project> [-o out.html]          a standalone page with the project inside, to share
   extract <page.html>                   print the project inside an exported page
 
-  --json prints machine-readable output for eval, try, tune, autotune, run and design.
+  --json prints machine-readable output for eval, try, tune, autotune, run, analyze and design.
   --set takes controller parameters (Kp=2) or slot.param for a what-if on another
   slot of this candidate only (plant.tau=2, sensor.type=lag). Lists: num=[1,2].
 `;
@@ -74,23 +80,16 @@ function parseArgs(argv) {
 
 function fail(msg) { console.error(`error: ${msg}`); process.exit(1); }
 
+// The shared operations throw; here an error ends the command.
+const must = (f) => { try { return f(); } catch (e) { fail(e.message); } };
 function readProject(path) {
   if (!path) fail('give a project file (.json or .html)');
   let text;
   try { text = readFileSync(path, 'utf8'); } catch { fail(`cannot read ${path}`); }
-  const raw = /\.html?$/i.test(path) ? extractJson(text, path) : text;
-  try { return normalizeProject(JSON.parse(raw)); } catch (e) { fail(`${path}: ${e.message}`); }
+  return must(() => parseProject(text, path));
 }
-
-function extractJson(html, path) {
-  const m = html.match(/<script type="application\/json" id="loop-tuner-project">([\s\S]*?)<\/script>/);
-  if (!m || !m[1].trim()) fail(`${path} has no Loop Tuner project inside`);
-  return m[1];
-}
-
-function writeProject(path, project) {
-  writeFileSync(path, /\.html?$/i.test(path) ? buildHtml({ project }) : JSON.stringify(project, null, 2) + '\n');
-}
+const writeProject = (path, project) => writeFileSync(path, /\.html?$/i.test(path) ? buildHtml({ project }) : JSON.stringify(project, null, 2) + '\n');
+const extractJson = (html, path) => must(() => extractOps(html, path));
 
 const clean = (m) => Object.fromEntries(Object.entries(m).filter(([k]) => k !== 'events').map(([k, v]) => [k, typeof v === 'number' && !Number.isFinite(v) ? null : v]));
 
@@ -203,11 +202,7 @@ switch (cmd) {
   case 'new': {
     let p;
     if (opt.system !== undefined) {
-      const q = String(opt.system).toLowerCase();
-      const entry = SYSTEM_LIBRARY.find((e) => e.name.toLowerCase() === q) ?? SYSTEM_LIBRARY.find((e) => e.name.toLowerCase().startsWith(q));
-      if (!entry) fail(`no system "${opt.system}"; systems: ${SYSTEM_LIBRARY.map((e) => e.name).join(', ')}`);
-      p = normalizeProject(applySystem(DEFAULT_PROJECT, entry, SYSTEM_PARTS.filter((k) => entry[k])));
-      p.scope.timebase = autoTimebase(p);
+      p = must(() => systemProject(findSystem(opt.system)));
     } else {
       const ref = opt.example;
       const ex = ref === undefined ? DEFAULT_PROJECT : EXAMPLES[Number(ref)] ?? EXAMPLES.find((e) => e.title.toLowerCase() === String(ref).toLowerCase());
@@ -312,19 +307,10 @@ switch (cmd) {
   }
   case 'autotune': {
     const project = readProject(pos[1]);
-    const method = opt.method ?? 'iterate';
-    if (!TUNE_METHODS.includes(method)) fail(`--method: one of ${TUNE_METHODS.join(', ')}`);
-    if (opt.rule && !RULES[opt.rule]) fail(`--rule: one of ${Object.keys(RULES).join(', ')}`);
-    if (opt.simc && !SIMC[opt.simc]) fail(`--simc: one of ${Object.keys(SIMC).join(', ')}`);
-    const goal = {};
-    if (opt.cost) { goal.cost = opt.cost.toUpperCase(); if (!COSTS[goal.cost]) fail(`--cost: one of ${Object.keys(COSTS).join(', ')}`); }
-    for (const k of ['effort', 'overshoot']) if (opt[k] !== undefined) { goal[k] = Number(opt[k]); if (!(goal[k] >= 0)) fail(`--${k}: a number, 0 or more`); }
-    const amplitude = opt.amplitude === undefined ? undefined : Number(opt.amplitude) / 100;
-    if (amplitude !== undefined && !(amplitude > 0 && amplitude <= 1)) fail('--amplitude: a percentage of the actuator range above 0, up to 100');
-    const path = opt.block ? opt.block.split('/') : null;
-    if (path && !controllerBlocks(project.system.plant?.diagram).some((c) => c.key === opt.block)) fail(`--block ${opt.block}: no Controller block there; blocks: ${controllerBlocks(project.system.plant?.diagram).map((c) => c.key).join(', ') || 'none'}`);
+    const { path, opts } = must(() => autotuneOptions(project, opt));
+    const method = opts.method;
     let res;
-    try { res = autotune(project, path, { method, goal, rule: opt.rule, simc: opt.simc, amplitude, maxIter: opt.iterations ? Number(opt.iterations) : undefined, feedforward: !!opt.ff }); } catch (e) { fail(e.message); }
+    try { res = autotune(project, path, opts); } catch (e) { fail(e.message); }
     if (res.ok && opt.save) { placeVariant(project, res.path, res.variant, { run: res.better }); writeProject(pos[1], project); }
     const rep = tuneReport(res);
     if (opt.json) { console.log(JSON.stringify(rep, null, 2)); if (!res.ok) process.exitCode = 1; break; }
@@ -355,14 +341,37 @@ switch (cmd) {
   }
   case 'run': {
     const project = readProject(pos[1]);
-    const res = evaluateSystem(project);
-    const { validity = [], warnings, h, substeps, steps, bound, stiffness, ms } = res.info;
-    const info = { validity, warnings, h, substeps, steps, bound, stiffness, ms };
-    if (opt.json) { console.log(JSON.stringify({ title: project.title, samples: res.t.length, signals: Object.keys(res.signals), info }, null, 2)); break; }
-    console.log(`${project.title}: ${res.t.length} samples of ${Object.keys(res.signals).join(', ')}`);
+    const goal = must(() => autotuneOptions(project, { cost: opt.cost, effort: opt.effort, overshoot: opt.overshoot }).opts.goal);
+    const signals = opt.signals ? opt.signals.split(',').map((x) => x.trim()).filter(Boolean) : [];
+    const res = must(() => runProject(project, { duration: opt.duration, goal, signals, points: opt.points ? Number(opt.points) : undefined }));
+    if (opt.json) { console.log(JSON.stringify(res, null, 2)); break; }
+    if (res.kind === 'candidates') { console.log(`${project.title}: an older project with candidates; see "eval"`); break; }
+    console.log(`${project.title}: ${res.samples} samples of ${res.signals.join(', ')}`);
+    const { h, substeps, steps, bound, stiffness, ms, validity = [] } = res.info;
     if (h !== undefined) console.log(`  step ${fmt(h)} s (${substeps} per record step, ${steps} steps), bound ${fmt(bound)} 1/s (largest |λ| ${fmt(stiffness.start.bound)} at the start${stiffness.end ? `, ${fmt(stiffness.end.bound)} at the end` : ''}), ${fmt(ms)} ms`);
     for (const v of validity) console.log(`  ! ${v.says}`);
-    for (const w of warnings) console.log(`  ! ${w}`);
+    console.log(`  ${fmt(res.duration)} s at ${fmt(res.sampleTime)} s${res.unstable ? ', diverged' : ''}; goal ${res.goal.cost}, effort ${fmt(res.goal.effort)}, overshoot ≤ ${fmt(res.goal.overshoot)} %`);
+    for (const l of res.loops) {
+      if (!l.cost) { console.log(`  ${l.block} (${l.variant}): ${l.why}`); continue; }
+      const m = l.metrics;
+      console.log(`  ${l.block} (${l.variant}): cost ${fmt(l.cost.J)}, overshoot ${fmt(m.overshoot ?? NaN)} %, settling ${fmt(m.settlingTime ?? Infinity)} s, IAE ${fmt(m.iae ?? NaN)}, u peak ${fmt(m.uPeak ?? NaN)}, saturated ${fmt(m.saturation)} %`);
+    }
+    for (const d of res.designs.filter((x) => x.error)) console.log(`  ! ${d.block} · ${d.variant}: ${d.error}`);
+    for (const w of res.warnings) console.log(`  ! ${w}`);
+    break;
+  }
+  case 'analyze': {
+    const project = readProject(pos[1]);
+    const res = must(() => analyzeProject(project, { block: opt.block, at: parseAt(opt.at) }));
+    if (opt.json) { console.log(JSON.stringify(res, null, 2)); break; }
+    const g = res.margins;
+    console.log(`${project.title}: ${res.block} (${res.variant}) at ${res.at}, Ts ${fmt(res.Ts)} s`);
+    console.log(`  ${res.stable ? 'stable' : res.marginal ? 'marginally stable' : `unstable: ${res.closedLoopUnstable} closed-loop pole${res.closedLoopUnstable > 1 ? 's' : ''} outside the unit circle`}`);
+    if (res.stable) {
+      console.log(`  gain margin ${g.gainDown > 0 ? `×${fmt(g.gainDown)} … ` : ''}${g.gainUp === null ? '∞' : `×${fmt(g.gainUp)} (${fmt(g.gainUpDb)} dB)`}; phase margin ${g.phase === null ? '∞' : `${fmt(g.phase)}° at ${fmt(g.crossover)} rad/s`}; Ms ${fmt(g.Ms)}`);
+      console.log(`  least damping ζ ${fmt(res.zetaMin)}; linear step: overshoot ${fmt(res.step?.overshoot ?? NaN)} %, settling ${res.step?.settlingTime === null ? 'not within the window' : `${fmt(res.step.settlingTime)} s`}`);
+    }
+    for (const w of res.warnings) console.log(`  ! ${w}`);
     break;
   }
   case 'trace': {
@@ -387,14 +396,7 @@ switch (cmd) {
     // The designs of the running variants, computed now, synchronously (a
     // plan takes a few seconds), as the page computes them.
     const project = readProject(pos[1]);
-    const plant = project.system.plant;
-    if (plant?.type !== 'diagram') fail(`${project.title}: the plant is not a diagram, so nothing is designed from it`);
-    let statuses;
-    try { statuses = compileDiagram(plant.diagram, 'plant', { standalone: true, sources: {} }).designs; } catch (e) { fail(`${project.title}: ${e.message}`); }
-    if (opt.block) {
-      statuses = statuses.filter((s) => s.path === opt.block);
-      if (!statuses.length) fail(`no designed variant runs in "${opt.block}"`);
-    }
+    const statuses = must(() => projectDesigns(project, opt.block));
     if (opt.json) { console.log(JSON.stringify({ title: project.title, designs: statuses }, null, 2)); break; }
     if (!statuses.length) { console.log(`${project.title}: no designed variant runs (a design is computed for the running variant of each Controller and Observer)`); break; }
     console.log(`${project.title}: ${statuses.length} designed variant${statuses.length > 1 ? 's' : ''} running\n`);

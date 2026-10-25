@@ -311,7 +311,7 @@ function off() {
 // n, m: the states and measurements (NaN: not known yet); lines: the notes
 // under it for a Kalman filter.
 function estimator(p, { inputs }, kind, { n = p.B.length, m = p.C.length / p.B.length, lines = [] } = {}) {
-  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, 95 + 11 * (kind === 'kalman' ? lines.length : 1));
+  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, 95 + 11 * (lines.length || 1));
   s.port({ x: 4, y: 36, text: 'u', anchor: 'start', tip: `Plant input: ${inputs[0] ?? 'not connected'}` });
   s.wire([[12, 36], [24, 36]]);
   s.block({ x: 74, y: 36, w: 100, h: 28, lines: [[['predict', 'k']], [['Ad·x̂ + Bd·u', '']]], tip: 'Predict: the model, discretised at Ts, carries the estimate one sample ahead with the input u' });
@@ -326,7 +326,7 @@ function estimator(p, { inputs }, kind, { n = p.B.length, m = p.C.length / p.B.l
   s.port({ x: 4, y: 70, text: 'y', anchor: 'start', tip: `Measurements: ${inputs.slice(1).join(', ') || 'none'}` });
   s.wire([[12, 70], [190, 70], [190, 50]]);
   s.note({ x: 4, y: 87, text: `${Number.isNaN(n) ? 'the states it sees' : `${n} state${n === 1 ? '' : 's'}`}, ${m} measurement${m === 1 ? '' : 's'}`, anchor: 'start' });
-  if (kind === 'kalman') lines.forEach((text, i) => s.note({ x: 4, y: 98 + 11 * i, text, anchor: 'start' }));
+  if (lines.length) lines.forEach((text, i) => s.note({ x: 4, y: 98 + 11 * i, text, anchor: 'start' }));
   else s.note({ x: 4, y: 98, text: `L ${p.L.map(fmt).join(' ')}`, anchor: 'start' });
   return s.done();
 }
@@ -448,6 +448,17 @@ function lqr(p, o) {
   return below(d, `K, kr: LQR from the plant at its origin, ${weights(p)}`, 'LQR');
 }
 
+// The variable gain: state feedback on the error from where y rests at r,
+// drawn with the gains near r; the schedule in the lines under it.
+function huLin(p, o) {
+  const v = o.values, m = Math.max(1, o.inputs.length - 1);
+  const K = v ? v.K.slice((v.N - 1) * v.m, v.N * v.m).map((g) => g * p.k) : unknown(m);
+  const kr = v ? v.us + K.reduce((s, g, i) => s + g * v.ys[i], 0) : UNKNOWN;
+  const d = stateFeedback({ K, kr, Tr: p.Tr, umin: p.umin, umax: p.umax }, o);
+  const far = v ? `${fmt(p.k * v.K[0])}` : '–';
+  return below(below(d, `K near r; far from r it falls to ${far}… (ε ${fmt(p.low)}), so u stays inside`), `K(ε): LQR from the plant at ${p.levels} levels on nested ellipsoids, ${weights(p)}${p.k > 1 ? `, ×${fmt(p.k)}` : ''}`, 'Variable gain (Hu–Lin)');
+}
+
 function scheduledPI(p, o) {
   const v = o.values, n = p.at.length;
   const common = { Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, u0: v?.u0 ?? 0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
@@ -506,7 +517,14 @@ function kalmanModel(p, o) {
   return estimator(p, o, 'kalman', { lines });
 }
 
-const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+// A Luenberger observer on the plant, its L from the poles placed.
+function luenbergerPlaced(p, o) {
+  const v = o.values;
+  const n = v ? v.B.length : UNKNOWN, m = v ? v.C.length / v.B.length : Math.max(1, o.inputs.length - 1);
+  return estimator(p, o, 'luenberger', { n, m, lines: ['model from the plant, at its origin; L from the poles', `error poles at s = −${p.w.map(fmt).join(', −')} 1/s`] });
+}
+
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, huLin, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenbergerPlaced, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 // def: the type's library entry, for the generic picture of a type without its own.
 export function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {

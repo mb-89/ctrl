@@ -49,7 +49,10 @@ ws://127.0.0.1:8765; the README has it in a paragraph):
   page -> plant  requests, each answered with a result or an error:
                  {"jsonrpc": "2.0", "id": 1, "method": "describe"}
                  "start" (params {"log": [{"name", "unit"}]}), "stop",
-                 "reset", "estop" (params {"reason": "..."})
+                 "reset", "estop" (params {"reason": "..."}),
+                 "mode" (params {"mode": "control" | "reference" | "log"}:
+                 while stopped, the model runs in that mode from then on;
+                 the answer is describe's, with the new inputs and outputs)
                  every cycle, the answer to y (a notification, no answer):
                  {"jsonrpc": "2.0", "method": "u", "params": {"seq": 42, "u": [3.1, 0], "log": [1.5, 0.2]}}
   plant -> page  every cycle while running:
@@ -357,7 +360,7 @@ class Plant:
             except Exception as err:  # never let one u end the link
                 say(f"a u from the page could not be used: {err}")
             return
-        handlers = {"describe": self.describe, "start": self.start, "stop": self.stop, "reset": self.reset, "estop": self.manual_estop}
+        handlers = {"describe": self.describe, "start": self.start, "stop": self.stop, "reset": self.reset, "estop": self.manual_estop, "mode": self.set_mode}
         if method not in handlers:
             if rid is not None:
                 self.reply(rid, error=(-32601, f"no method {method}; methods: {', '.join(handlers)}, u"))
@@ -381,6 +384,35 @@ class Plant:
         else:
             msg["result"] = result
         self.send(msg, droppable=False)
+
+    def set_mode(self, params):
+        """The page's mode switch (Live settings): the model runs its own
+        controller (reference), takes the page's effort (control) or only
+        reports (log). Only while stopped and not E-stopped; the same plant
+        (the same seed, so the same draws) in the new mode. Answers with the
+        new description."""
+        mode = params.get("mode")
+        if mode not in ("control", "reference", "log"):
+            raise RuntimeError("mode: control, reference or log")
+        if self.running:
+            raise RuntimeError("stop the plant first: its mode changes only while it is stopped")
+        if self.estop_reason:
+            raise RuntimeError("E-STOP is latched: reset first, then change the mode")
+        if mode != self.mode:
+            args = argparse.Namespace(**{**vars(self.args), "mode": mode})
+            try:
+                model = CorePlant(args)
+            except SystemExit as err:  # the model has no such mode (no controller of its own)
+                raise RuntimeError(f"cannot run in {mode} mode: {err}") from None
+            self.model.close()
+            self.model, self.args, self.mode = model, args, mode
+            self.inputs, self.outputs = model.inputs, model.outputs
+            self.safe = [p["safe"] for p in self.inputs]
+            self.u = list(self.safe)
+            self.pending = []
+            self.event(f"mode {mode} (asked by the page)")
+            say(f"now in {mode} mode, as the page asked")
+        return self.describe()
 
     def describe(self, _params=None):
         d = {

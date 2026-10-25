@@ -2807,6 +2807,47 @@ function lqrDesign(lin, { Q, R, track = 1, Ts }) {
   return { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings };
 }
 
+function huLinDesign(p, ctx) {
+  if (!(Number.isFinite(p.umin) && Number.isFinite(p.umax))) throw new DesignError('no-limits', 'the variable gain keeps u inside its limits, and this variant has none: without a limit its gain would simply be the highest', 'set u min and u max to the actuator\'s limits, or use LQR');
+  const lin = ctx.linearize('origin');
+  const q = Array.isArray(p.Q) ? p.Q : [p.Q], N = p.levels;
+  const eps = Array.from({ length: N }, (_, i) => p.low ** (1 - i / (N - 1)));
+  const designs = eps.map((e) => lqrDesign(lin, { Q: q.map((v) => v * e), R: p.R, track: p.track, Ts: ctx.Ts }));
+  const { n, m, outputs } = lin, labels = outputs.map((o) => o.label);
+  const Ci = inv(lin.C);
+  const S = designs.map((d) => {
+    const Pi = inv(d.P), w = d.Kx.reduce((s, a, i) => s + a * d.Kx.reduce((t, b, j) => t + Pi[i][j] * b, 0), 0);
+    const M = d.P.map((row) => row.map((v) => v * w));
+    return mul(mul(transpose(Ci), M), Ci);
+  });
+  const warnings = [...new Set(designs.flatMap((d) => d.warnings))];
+  for (let i = 0; i + 1 < N; i++) {
+    const Ds = S[i + 1].map((row, a) => row.map((v, b) => (v + S[i + 1][b][a] - S[i][a][b] - S[i][b][a]) / 2));
+    const lo = Math.min(...eig(Ds).map((z) => z.re)), size = Math.max(...S[i + 1].flat().map(Math.abs));
+    if (lo < -1e-6 * size) { warnings.push(`the ellipsoids of ε = ${fmt(eps[i])} and ${fmt(eps[i + 1])} are not nested: there the gain may step back as the error shrinks`); break; }
+  }
+  let ys = new Array(m).fill(0), us = 0;
+  if (p.track) {
+    const M = [...lin.A.map((row, i) => [...row, lin.B[i][0]]), [...lin.C[p.track - 1], 0]];
+    const sol = rank(equilibrate(M).M) === n + 1 ? solve(M, [...new Array(n).fill(0), 1]) : [NaN];
+    if (!sol.every(Number.isFinite)) throw new DesignError('no-rest', `no input holds ${labels[p.track - 1]} at a steady r`, 'set r applies to 0, or track a measurement the plant can hold');
+    ys = mul(lin.C, sol.slice(0, n).map((v) => [v])).map((r) => r[0]);
+    us = sol[n];
+  }
+  const room = Math.min(p.umax, -p.umin);
+  const reach = (Sx) => { const g = ys.reduce((s, a, i) => s + a * ys.reduce((t, b, j) => t + Sx[i][j] * b, 0), 0); return g > 0 && room > 0 ? room / Math.sqrt(g) : Infinity; };
+  const unit = p.track && outputs[p.track - 1].unit ? ` ${outputs[p.track - 1].unit}` : '';
+  const rows = [
+    { label: 'K near r', value: designs[N - 1].K, labels, note: `ε = 1: Q, R as given` },
+    { label: 'K far', value: designs[0].K, labels, note: `ε = ${fmt(p.low)}: Q·ε` },
+    { label: 'levels', value: N, note: `ε = ${fmt(p.low)} … 1, nested ellipsoids` },
+    ...(p.track ? [{ label: 'reach', value: [reach(S[0]), reach(S[N - 1])], labels: ['inside', 'full gain'], note: `steps of ${labels[p.track - 1]}${unit} from rest the levels hold without reaching the limit` }] : []),
+    { label: 'slowest pole', value: designs[N - 1].rows.at(-1).value, note: 'near r' },
+  ];
+  const values = { m, N, eps, K: designs.flatMap((d) => d.K), S: S.flatMap((x) => x.flat()), ys, us };
+  return { values, rows, warnings };
+}
+
 function poleOf(lin) {
   const Ci = inv(lin.C), A = mul(mul(lin.C, lin.A), Ci), B = mul(lin.C, lin.B).map((b) => b[0]);
   const c = -B[3] / B[2], row = A[3].map((v, j) => v + c * A[2][j]), gl = row[1];
@@ -2851,16 +2892,45 @@ function stuck(Ad, B, W) {
   return null;
 }
 
-function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
-  const { n, m, states, outputs: meas } = lin;
-  const labels = meas.map((o) => o.label), names = states.map((s) => s.name);
-  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; the filter here handles up to 40`);
+function observerModel(lin, what, title = what) {
+  const { n, m, outputs: meas } = lin;
+  const labels = meas.map((o) => o.label);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; ${what} here handles up to 40`);
   if (!m) throw new DesignError('no-measurement', 'this observer has no measurement to correct its estimate with', 'wire the measurements to inputs 2, 3, …');
   if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')}), so there is nothing to estimate`, lin.warnings.join('; ') || 'wire input 1 (u) to what drives the plant, and the plant to the measurements');
-  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'the filter is designed at the origin, which must be an equilibrium with u = 0');
-  refuseKinks(lin, 'the Kalman filter');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, `${what} is designed at the origin, which must be an equilibrium with u = 0`);
+  refuseKinks(lin, title);
   const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
-  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; the filter needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; ${what} needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  return labels;
+}
+
+function observerResult(lin, L, labels, outputs, warnings, what) {
+  const { n, states } = lin, names = states.map((s) => s.name);
+  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
+  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: ${what} does not know that offset`); });
+  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in ${what}`); });
+  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const values = {
+    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
+    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
+  };
+  return {
+    values, warnings, quality: { ok: outputs === n },
+    estimates: { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
+    gain: { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+  };
+}
+
+function errorPoles(Ad, C, L) {
+  const ILC = L.map((row, i) => C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * C[k][j], 0)));
+  return eig(mul(ILC, Ad));
+}
+
+function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
+  const { n, m, states } = lin;
+  const names = states.map((s) => s.name);
+  const labels = observerModel(lin, 'the filter', 'the Kalman filter');
   const q = Array.isArray(Q) ? Q : [Q];
   if (q.length !== 1 && q.length !== n) throw new DesignError('q-length', `Q has ${q.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, `give one value (a push on ${lin.input.label}) or one per state`);
   const given = R !== null && R !== undefined;
@@ -2880,8 +2950,7 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
   const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
   const Qw = q.length === 1 ? Bd.map((a) => Bd.map((b) => q[0] * a[0] * b[0])) : diag(q);
   const { L, converged } = dlqe(Ad, lin.C, Qw, diag(r));
-  const ILC = L.map((row, i) => lin.C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * lin.C[k][j], 0)));
-  const poles = eig(mul(ILC, Ad));
+  const poles = errorPoles(Ad, lin.C, L);
   const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
   if (!converged || !(radius < 1)) {
     const Ct = transpose(lin.C), mode = stuck(transpose(Ad), Ct, transpose(Qw));
@@ -2889,22 +2958,47 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
     throw new DesignError('not-detectable', `the estimate's error would not die out: a pole of the filter stays at |z| = ${fmt(radius)}`, `the measurements may not show every state (${names.join(', ')}); measure more, or raise Q`);
   }
 
-  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
-  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: the filter does not know that offset`); });
-  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this filter`); });
-  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const res = observerResult(lin, L, labels, outputs, warnings, 'the filter');
   const rows = [
-    { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
-    { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+    res.estimates, res.gain,
     { label: 'R', value: r, labels, note: given ? '' : parts.length ? `from ${and(parts)}` : 'none: no sensor blocks' },
     q.length === 1 ? { label: 'Q', value: q[0], note: `a push on ${lin.input.label}, per sample` } : { label: 'Q', value: q, labels: names },
     { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
   ];
-  const values = {
-    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
-    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
-  };
-  return { values, rows, warnings, quality: { ok: outputs === n } };
+  return { values: res.values, rows, warnings: res.warnings, quality: res.quality };
+}
+
+function placedDesign(lin, { w, Ts, outputs = lin.n }) {
+  const { n, m, states } = lin;
+  const names = states.map((s) => s.name);
+  const labels = observerModel(lin, 'the observer');
+  if (m !== 1) throw new DesignError('one-measurement', `placing the poles fixes L for one measurement; this observer has ${m} (${labels.join(', ')})`, 'measure one signal, or use the Kalman filter, which weighs several');
+  const ws = Array.isArray(w) ? w : [w];
+  if (ws.length !== 1 && ws.length !== n) throw new DesignError('w-length', `w has ${ws.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, 'give one value (every pole there) or one per state');
+  if (!ws.every((v) => v > 0)) throw new DesignError('bad-poles', 'each w must be above 0: a pole at s = −w with w ≤ 0 lets the error grow or stay');
+  const zs = (ws.length === 1 ? new Array(n).fill(ws[0]) : ws).map((v) => Math.exp(-v * Ts));
+  const { Ad } = c2d(lin.A, lin.B, Ts);
+  const O = [];
+  let row = lin.C[0];
+  for (let k = 0; k < n; k++) { row = row.map((_, j) => row.reduce((s, c, i) => s + c * Ad[i][j], 0)); O.push(row); }
+  const { M: S } = equilibrate(O);
+  const big = Math.max(...S.map((r) => Math.hypot(...r)));
+  if (rank(S, 1e-10 * big) < n) throw new DesignError('not-observable', `${labels[0]} does not show every state of the plant this observer sees (${names.join(', ')}), so no L places all ${n} poles`, 'measure another signal, or use the Kalman filter');
+  let phi = Ad.map((r, i) => r.map((_, j) => (i === j ? 1 : 0)));
+  for (const z of zs) phi = mul(phi, Ad.map((r, i) => r.map((a, j) => a - (i === j ? z : 0))));
+  const en = Array.from({ length: n }, (_, i) => [i === n - 1 ? 1 : 0]);
+  const L = mul(phi, solve(O, en));
+  const poles = errorPoles(Ad, lin.C, L);
+  const want = [...zs].sort((a, b) => a - b), got = poles.map((z) => z.re).sort((a, b) => a - b);
+  const off = Math.max(...poles.map((z) => Math.abs(z.im)), ...want.map((z, i) => Math.abs(z - got[i])));
+  if (!(off < 1e-3)) throw new DesignError('ill-conditioned', `the poles came out up to ${fmt(off)} from where they were placed: ${labels[0]} shows some state too weakly to place its pole there`, 'place the poles closer to the plant\'s own, or use the Kalman filter');
+  const res = observerResult(lin, L, labels, outputs, [], 'the observer');
+  const rows = [
+    res.estimates, res.gain,
+    { label: 'w', value: zs.map((z) => -Math.log(z) / Ts), note: '1/s: each pole of the error at s = −w' },
+    { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
+  ];
+  return { values: res.values, rows, warnings: res.warnings, quality: res.quality };
 }
 
 function inverseSeries(path) {
@@ -3048,12 +3142,12 @@ function trajectoryDesign(p, ctx) {
   return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }
 
-return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, poleOf, kalmanDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, huLinDesign, poleOf, kalmanDesign, placedDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
 
-const { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, poleOf } = __mods['core/design.js'];
+const { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLinDesign, poleOf } = __mods['core/design.js'];
 const { DesignError } = __mods['core/linearize.js'];
 const { planLaw } = __mods['core/planner.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
@@ -3322,6 +3416,25 @@ const CONTROLLERS = {
       return { ...staticLinear(0, Array.from(values.K.subarray(j * m, (j + 1) * m))), note: `the plan's gains at sample ${j} of ${steps} (t = ${((j + Math.round(p.start / Ts)) * Ts).toFixed(2)} s), frozen: along the plan they change every sample` };
     },
   },
+  huLin: {
+    label: 'Variable gain (Hu–Lin)', summary: 'u = us·r − K(ε)·(y − ys·r); ε, the gain, grows as y nears r',
+    designed: true, version: 1, computes: ['K', 'S', 'ys', 'us'],
+    params: [
+      ...WEIGHTS,
+      num('low', 'Lowest level ε', 1e-4, { positive: true, max: 1, tune: false, help: 'far from r the weights are ε·Q: smaller reaches farther and starts more gently' }),
+      num('levels', 'Levels', 30, { int: true, min: 2, max: 200, tune: false, help: 'gains between the lowest level and 1, on nested ellipsoids; the law interpolates between them' }),
+      num('k', 'High gain k', 1, { min: 1, help: 'Hu and Lin\'s saturated high gain, u = sat(k·K(ε)·e); 1 keeps u inside the limits' }),
+      num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }),
+      PREFILTER, ...LIMITS,
+    ],
+    design: (p, ctx) => huLinDesign(p, ctx),
+    make(p, Ts, values) { return values ? huLinLaw(p, Ts, values) : OFF; },
+    linear(p, Ts, at, values) {
+      if (!values) throw noDesign('huLin');
+      const K = huLinGain(values, values.N - 1, 0).map((g) => g * p.k);
+      return { ...staticLinear(values.us + K.reduce((s, g, i) => s + g * values.ys[i], 0), K, p.Tr), note: 'the gain near r, where it is highest; farther from r it is lower' };
+    },
+  },
   relay: {
     label: 'Relay (on/off)', summary: 'u = u0 ± d by the sign of e, hysteresis ε',
     params: [num('d', 'Amplitude d', 1, { unit: 'u', help: 'negative for a plant whose y falls when u rises' }), num('eps', 'Hysteresis ε', 0, { min: 0, help: 'switches when e = r − y passes +ε or −ε' }), num('u0', 'Bias u0', 0, { unit: 'u' }), ...LIMITS],
@@ -3392,6 +3505,43 @@ const CONTROLLERS = {
   },
 };
 
+function huLinGain(v, j, lam) {
+  const K = v.K.slice(j * v.m, (j + 1) * v.m);
+  if (lam) for (let i = 0; i < v.m; i++) K[i] += lam * (v.K[(j + 1) * v.m + i] - K[i]);
+  return K;
+}
+function huLinForm(v, j, e) {
+  const o = j * v.m * v.m;
+  let g = 0;
+  for (let a = 0; a < v.m; a++) for (let b = 0; b < v.m; b++) g += e[a] * v.S[o + a * v.m + b] * e[b];
+  return g;
+}
+function huLinLevel(v, e, room) {
+  const lim = room > 0 ? room * room : 0;
+  let above = huLinForm(v, v.N - 1, e);
+  if (above <= lim) return { j: v.N - 1, lam: 0 };
+  for (let j = v.N - 2; j >= 0; j--) {
+    const g = huLinForm(v, j, e);
+    if (g <= lim) return { j, lam: (lim - g) / (above - g) };
+    above = g;
+  }
+  return { j: 0, lam: 0 };
+}
+function huLinLaw(p, Ts, v) {
+  const pre = prefilter(p, Ts), e = new Array(v.m);
+  return {
+    step(x) {
+      const rf = pre(x[0]);
+      for (let i = 0; i < v.m; i++) e[i] = (x[i + 1] ?? 0) - v.ys[i] * rf;
+      const u0 = v.us * rf, { j, lam } = huLinLevel(v, e, Math.min(p.umax - u0, u0 - p.umin));
+      const K = huLinGain(v, j, lam);
+      let u = u0;
+      for (let i = 0; i < v.m; i++) u -= p.k * K[i] * e[i];
+      return clamp(u, p.umin, p.umax);
+    },
+  };
+}
+
 function surface(p, Ts) {
   const pre = prefilter(p, Ts);
   return (x) => {
@@ -3456,7 +3606,7 @@ function makeLaw(variant, Ts, lib = CONTROLLERS, values = null) {
 }
 
 
-return { ANTI_WINDUP, trackingTime, CONTROLLERS, CONTROLLER_TYPES, normalizeVariant, makeLaw };
+return { ANTI_WINDUP, trackingTime, CONTROLLERS, huLinLevel, CONTROLLER_TYPES, normalizeVariant, makeLaw };
 })();
 // ---- core/structure.js
 __mods['core/structure.js'] = (() => {
@@ -3712,7 +3862,7 @@ function off() {
 }
 
 function estimator(p, { inputs }, kind, { n = p.B.length, m = p.C.length / p.B.length, lines = [] } = {}) {
-  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, 95 + 11 * (kind === 'kalman' ? lines.length : 1));
+  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, 95 + 11 * (lines.length || 1));
   s.port({ x: 4, y: 36, text: 'u', anchor: 'start', tip: `Plant input: ${inputs[0] ?? 'not connected'}` });
   s.wire([[12, 36], [24, 36]]);
   s.block({ x: 74, y: 36, w: 100, h: 28, lines: [[['predict', 'k']], [['Ad·x̂ + Bd·u', '']]], tip: 'Predict: the model, discretised at Ts, carries the estimate one sample ahead with the input u' });
@@ -3727,7 +3877,7 @@ function estimator(p, { inputs }, kind, { n = p.B.length, m = p.C.length / p.B.l
   s.port({ x: 4, y: 70, text: 'y', anchor: 'start', tip: `Measurements: ${inputs.slice(1).join(', ') || 'none'}` });
   s.wire([[12, 70], [190, 70], [190, 50]]);
   s.note({ x: 4, y: 87, text: `${Number.isNaN(n) ? 'the states it sees' : `${n} state${n === 1 ? '' : 's'}`}, ${m} measurement${m === 1 ? '' : 's'}`, anchor: 'start' });
-  if (kind === 'kalman') lines.forEach((text, i) => s.note({ x: 4, y: 98 + 11 * i, text, anchor: 'start' }));
+  if (lines.length) lines.forEach((text, i) => s.note({ x: 4, y: 98 + 11 * i, text, anchor: 'start' }));
   else s.note({ x: 4, y: 98, text: `L ${p.L.map(fmt).join(' ')}`, anchor: 'start' });
   return s.done();
 }
@@ -3840,6 +3990,15 @@ function lqr(p, o) {
   return below(d, `K, kr: LQR from the plant at its origin, ${weights(p)}`, 'LQR');
 }
 
+function huLin(p, o) {
+  const v = o.values, m = Math.max(1, o.inputs.length - 1);
+  const K = v ? v.K.slice((v.N - 1) * v.m, v.N * v.m).map((g) => g * p.k) : unknown(m);
+  const kr = v ? v.us + K.reduce((s, g, i) => s + g * v.ys[i], 0) : UNKNOWN;
+  const d = stateFeedback({ K, kr, Tr: p.Tr, umin: p.umin, umax: p.umax }, o);
+  const far = v ? `${fmt(p.k * v.K[0])}` : '–';
+  return below(below(d, `K near r; far from r it falls to ${far}… (ε ${fmt(p.low)}), so u stays inside`), `K(ε): LQR from the plant at ${p.levels} levels on nested ellipsoids, ${weights(p)}${p.k > 1 ? `, ×${fmt(p.k)}` : ''}`, 'Variable gain (Hu–Lin)');
+}
+
 function scheduledPI(p, o) {
   const v = o.values, n = p.at.length;
   const common = { Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, u0: v?.u0 ?? 0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
@@ -3895,7 +4054,13 @@ function kalmanModel(p, o) {
   return estimator(p, o, 'kalman', { lines });
 }
 
-const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+function luenbergerPlaced(p, o) {
+  const v = o.values;
+  const n = v ? v.B.length : UNKNOWN, m = v ? v.C.length / v.B.length : Math.max(1, o.inputs.length - 1);
+  return estimator(p, o, 'luenberger', { n, m, lines: ['model from the plant, at its origin; L from the poles', `error poles at s = −${p.w.map(fmt).join(', −')} 1/s`] });
+}
+
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, huLin, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenbergerPlaced, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {
   const layout = LAYOUTS[variant.type];
@@ -3910,7 +4075,7 @@ return { DIAGRAM_WIDTH, fmt, limitsText, NOTE_CHAR, describeVariant, DESCRIBED_T
 __mods['core/observers.js'] = (() => {
 
 const { c2d, dlqe } = __mods['core/linalg.js'];
-const { kalmanDesign } = __mods['core/design.js'];
+const { kalmanDesign, placedDesign } = __mods['core/design.js'];
 const { normalizeVariant } = __mods['core/controllers.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
@@ -3981,6 +4146,18 @@ const OBSERVERS = {
     make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.kalman.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
     manual: (p, values) => ({ type: 'luenberger', params: { A: [...values.A], B: [...values.B], C: [...values.C], L: [...values.L] } }),
     migrate: (v) => (['A', 'B', 'C'].some((k) => v.params?.[k] !== undefined) && v.params?.L === undefined ? { ...v, type: 'kalmanModel' } : v),
+  },
+  luenbergerPlaced: {
+    label: 'Luenberger observer, placed poles', summary: 'x̂ = prediction + L (y − C x̂), model from the plant, L from the poles',
+    designed: true, version: 1, computes: ['A', 'B', 'C', 'L'], twin: 'luenberger',
+    params: [vec('w', 'Error poles at s = −w', [100], { unit: '1/s', help: 'how fast the estimate\'s error dies out: one value puts every pole there; or one per state' })],
+    check(p) { return p.w.every((v) => v > 0) ? '' : 'w: each above 0'; },
+    design(p, ctx) {
+      const d = placedDesign(ctx.linearize('origin'), { w: p.w, Ts: ctx.Ts, outputs: ctx.outputs });
+      return { values: d.values, rows: d.rows, warnings: d.warnings, quality: d.quality };
+    },
+    make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.luenbergerPlaced.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
+    manual: (p, values) => OBSERVERS.kalman.manual(p, values),
   },
   kalmanModel: {
     label: 'Kalman filter, own model', summary: 'x̂ = model prediction + L (y − C x̂), L from your model, Q and R',
@@ -6789,8 +6966,9 @@ const motorDiagram = (variants, { inputs = 2, Ts = 0.01 } = {}) => ({
         ...(inputs >= 3 ? [{ from: 'motor:2', to: 'ctrl:2' }, { from: 'r', to: 'esum' }, { from: 'motor:1', to: 'esum:1' }, { from: 'esum', to: 'e' }] : []),
       ],
     });
-const motorViews = () => ([{
-      name: 'Motor shaft', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+const motorViews = () => shaftViews('Motor shaft', 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   i {i:5.1} A   load {d:3.1} N·m');
+const shaftViews = (name, caption) => ([{
+      name, kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
       shapes: [
         { type: 'circle', cx: 0, cy: 0, r: 0.62, fill: 'panel', stroke: 'muted', lineWidth: 2 },
         ...ticks(0.62),
@@ -6801,13 +6979,49 @@ const motorViews = () => ([{
           { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.6, stroke: 'ch2', lineWidth: 6 },
         ] },
         { type: 'circle', cx: 0, cy: 0, r: 0.07, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.82, text: 'angle {angle:5.2} rad   r {r:4.1} rad   V {V:5.1} V   i {i:5.1} A   load {d:3.1} N·m', size: 13 },
+        { type: 'text', x: 0, y: -0.82, text: caption, size: 13 },
       ],
     }]);
 
 const ticks = (r) => Array.from({ length: 12 }, (_, i) => ({
   type: 'group', angle: (i * Math.PI) / 6, shapes: [{ type: 'line', x1: 0, y1: r, x2: 0, y2: r + (i % 3 ? 0.06 : 0.12), stroke: 'muted', lineWidth: i % 3 ? 1.5 : 3 }],
 }));
+
+const servoDiagram = (variants, { Ts = 0.002 } = {}) => ({
+  blocks: [
+    src('r', 30, 112, 'rad'),
+    src('d', 180, 230, 'N·m'),
+    ctrl(130, 90, 4, Ts, variants),
+    {
+      id: 'axis', type: 'subsystem', name: 'Axis', params: {}, x: 330, y: 96,
+      diagram: {
+        blocks: [
+          { id: 'u', type: 'inport', name: 'u', params: { port: 1 }, x: 30, y: 112 },
+          { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 230, y: 220 },
+          { id: 'drive', type: 'tf', name: 'torque drive 1/(τs + 1)', params: { num: [1], den: [0.02, 1], delay: 0 }, x: 130, y: 96 },
+          { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 260, y: 104 },
+          { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 370, y: 96 },
+          { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 540, y: 112 },
+          { id: 'T', type: 'outport', name: 'torque', params: { port: 2 }, x: 540, y: 30 },
+        ],
+        wires: [
+          { from: 'u', to: 'drive' }, { from: 'drive', to: 'tsum' }, { from: 'load', to: 'tsum:1' }, { from: 'tsum', to: 'rotor' },
+          { from: 'rotor', to: 'w' }, { from: 'drive', to: 'T' },
+        ],
+      },
+    },
+    { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+    sink('angle', 690, 106, 'rad'),
+    sink('speed', 690, 30, 'rad/s'),
+    sink('torque', 500, 200, 'N·m'),
+    sink('u', 330, 20, 'N·m'),
+  ],
+  wires: [
+    { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'axis' }, { from: 'ctrl', to: 'u' }, { from: 'd', to: 'axis:1' },
+    { from: 'axis', to: 'int' }, { from: 'axis', to: 'speed' }, { from: 'axis:1', to: 'torque' }, { from: 'int', to: 'angle' },
+    { from: 'int', to: 'ctrl:1' }, { from: 'axis', to: 'ctrl:2' }, { from: 'axis:1', to: 'ctrl:3' },
+  ],
+});
 
 function cartView(name, rods, caption, box) {
   let chain = [];
@@ -6839,6 +7053,43 @@ function cartView(name, rods, caption, box) {
 
 const Q_SINGLE = [10, 50, 1, 1];
 const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
+
+const HIL_SYSTEM = {
+  name: 'HIL: an external plant',
+  summary: 'A plant outside the page, connected live (hardware in the loop); the page knows only its interface. Download and run the plant, connect, then identify and tune it: working with a plant you cannot see.',
+  notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Reference mode is a switch, not another system: Plant tab, Live settings, Mode, "Plant": while it is stopped the plant runs its own controller with its own limits, the page sends r straight to it and records what comes back, its own effort V included (the page\'s controllers and Auto-tune are out of the loop); "Page" puts the Controller back. A plant that cannot switch says so: start it with --mode reference instead, and the page follows what it describes. Help (?), Live and For agents, has all of it.',
+  signals: {
+    r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
+  },
+  scope: { channels: channels('r', 'angle', 'V', 'current') },
+  ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
+  diagram: {
+    blocks: [
+      src('r', 30, 106, 'rad'),
+      ctrl(130, 100, 2, 0.01, [
+        { name: 'P, a first guess', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
+        { name: 'Off', type: 'off', params: {} },
+      ]),
+      {
+        id: 'plant', type: 'external', name: 'plant', x: 340, y: 96,
+        params: {
+          url: 'ws://127.0.0.1:8765', rate: 100,
+          inputs: ['V'], inUnits: ['V'], min: [-12], max: [12], safe: [0], kinds: ['effort'], measures: [''],
+          outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'], outMin: [-Math.PI, -120, -12], outMax: [Math.PI, 120, 12],
+          ymin: [-2.5, -60, -10], ymax: [2.5, 60, 10],
+          ramp: 10,
+        },
+      },
+      sink('angle', 600, 98, 'rad'), sink('speed', 600, 134, 'rad/s'), sink('current', 600, 170, 'A'),
+      sink('V', 330, 20, 'V'),
+    ],
+    wires: [
+      { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'plant' }, { from: 'ctrl', to: 'V' },
+      { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant', to: 'ctrl:1' },
+    ],
+  },
+  views: [],
+};
 
 const ENCODER_MOTOR = {
   drive: 'voltage', R: 1, L: 0.002, K: 0.1, b: 0.005, Jm: 0.001, G: 1, shaft: 'free',
@@ -6955,6 +7206,26 @@ const EXAMPLE_PLANTS = [
     views: motorViews(),
   },
   {
+    name: 'Variable gain against anti-windup',
+    summary: 'A servo axis stepped far and near through a torque drive with a hard limit. Compare the Hu–Lin variable gain, which never saturates, with clipped LQR and anti-windup: what saturation costs, and each remedy.',
+    notes: 'A torque drive (its torque follows the command u with a 20 ms lag, limited to ±6 N·m) turns a rotor (J 0.02 kg·m², b 0.1 N·m·s/rad). The reference steps 5 rad at 0.25 s, far enough that every controller needs the limit, and back 0.5 rad at 2.75 s, a step none of them needs it for. The Controller reads the angle, the speed and the torque, every 2 ms. The scope shows r, the angle and u; switch on channel 4 for the speed.\n\nVariable gain (Hu–Lin): the page computes LQR gains for the weights ε·Q and R at 30 levels of ε from 0.0001 to 1, each with the largest ellipsoid around r on which its u cannot reach the limit; the ellipsoids are nested. At every sample the law takes the highest gain whose ellipsoid holds the error, interpolated between two levels. Far from r the gain is low, and it grows as the angle closes in: on the 5 rad step u rises to 4.9 N·m and never touches 6, the loop never opens, and the angle arrives with 0.5 % overshoot in 0.37 s (2 %). Its Computed box says how far the levels reach: a step of 17 rad from rest stays inside. Variable gain, high gain k 2 is Hu and Lin\'s own improvement, u = sat(2·K(ε)·e): it uses the limit for 0.08 s, arrives with no overshoot in 0.33 s, and takes the small step in 0.14 s.\n\nLQR, clipped: the gain the variable gain ends with, from the start, its u clipped at the limit. It sits there for 0.31 s and overshoots 11 %; on a plant with one more integration a clipped high gain opens the loop for good. PID, clamping (Kp 16, Ki 4, Kd 1.2, the best of a search on small steps): 0.7 % overshoot in 0.36 s, but the integral it gathered makes the small step after it settle in 1.3 s. PID, back-calculation with the rule-of-thumb tracking time Tt = √(Ti·Td) = 0.55 s pulls the integral far below while the P part alone is past the limit: it creeps toward r and has not settled after 2.5 s, and after the small step it passes r by 0.26 rad; set Tt to 4 s (= Ti) and it behaves (1.9 %, 0.34 s). PID, no anti-windup: 3.9 % overshoot and a tail that lasts the whole step.\n\nTry: change J by 20 % (open Axis, rotor den [0.016, 0.1] or [0.024, 0.1]): the variable gain keeps its shape (0.5 %, 0.34 to 0.40 s), designed again for the new rotor. Give d a load torque of 1 N·m: the variable gain is state feedback without an integral and holds the shaft 0.064 rad off r, where the PID\'s integral removes the error. Analysis shows the variable gain near r, where it is the LQR.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 5, time: 0.25 } }, { type: 'step', params: { amplitude: -0.5, time: 2.75 } }] },
+      d: { period: PERIOD, components: [] },
+    },
+    scope: { channels: channels('r', 'angle', 'u', { source: 'speed', on: false }) },
+    ui: ui('Servo shaft'),
+    diagram: servoDiagram([
+      { name: 'Variable gain (Hu–Lin)', type: 'huLin', params: { Q: [1000, 0, 0], R: 1, umin: -6, umax: 6 } },
+      { name: 'Variable gain, high gain k 2', type: 'huLin', params: { Q: [1000, 0, 0], R: 1, k: 2, umin: -6, umax: 6 } },
+      { name: 'LQR, clipped', type: 'lqr', params: { Q: [1000, 0, 0], R: 1, umin: -6, umax: 6 } },
+      { name: 'PID, clamping', type: 'pid', params: { Kp: 16, Ki: 4, Kd: 1.2, Tf: 0.005, aw: 'clamp', umin: -6, umax: 6 } },
+      { name: 'PID, back-calculation', type: 'pid', params: { Kp: 16, Ki: 4, Kd: 1.2, Tf: 0.005, aw: 'back', umin: -6, umax: 6 } },
+      { name: 'PID, no anti-windup', type: 'pid', params: { Kp: 16, Ki: 4, Kd: 1.2, Tf: 0.005, aw: 'off', umin: -6, umax: 6 } },
+    ]),
+    views: shaftViews('Servo shaft', 'angle {angle:5.2} rad   r {r:4.1} rad   u {u:5.2} N·m   torque {torque:5.2} N·m'),
+  },
+  {
     name: 'Encoder errors and torque ripple',
     summary: 'A motor speeding up with encoder errors, torque ripple and a shaft resonance, in the spectrogram. Change the colour scale, try FFT or a notch: tell errors that follow the speed from a resonance, and spot aliasing.',
     notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible coupling that resonates at 70 Hz. The motor is the Servo motor: each of these is a switch on its mask. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing.\n\nUp there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB.\n\nTry FFT mode, and a notch filter on the channel. Or select Motor and switch its torque ripple off on its mask: the 6× line goes.',
@@ -6981,6 +7252,77 @@ const EXAMPLE_PLANTS = [
         { from: 'motor:2', to: 'speed_m' }, { from: 'motor:2', to: 'ctrl:1' }, { from: 'motor:3', to: 'speed' }, { from: 'ctrl', to: 'V' },
       ],
     },
+  },
+  {
+    name: 'DC motor, speed from an encoder',
+    summary: 'A motor whose speed is not measured: only a coarse encoder angle is. Flip the observer from a raw difference to a Luenberger observer and a Kalman filter, and see the noise leave the voltage and the loop hold its speed.',
+    notes: 'A PI holds the speed of the DC motor (the same motor as the position examples) while the reference r steps to 10 rad/s and down to 3 rad/s, and a load of 0.2 N·m brakes it from 3.5 to 4.3 s. The speed is not measured: an encoder counts 1024 steps per turn (6.1 mrad), with a little noise on its signal (σ 1 mrad), and an Observer block makes the speed the PI sees from those counts. Channel 3 is the voltage V, channel 4 the estimate\'s error (estimate − true speed); both carry Measure lines.\n\nIt opens on the raw finite difference: at Ts = 1 ms one count is 6.1 rad/s, so the estimate jumps between whole counts (3.1 rad/s rms of error) and the PI (Kp 2, Ki 40) passes that on: V chatters between its ±12 V limits (σ 6.1 V at 10 rad/s), and since the limits clip it the motor runs at 8.99 rad/s, not 10.\n\nThe Luenberger observer predicts the motor from its model (the page takes the model from the motor\'s blocks) and corrects it with the counts, its error dying out at the poles you place (s = −400 1/s here): 0.47 rad/s of error, V σ 0.96 V, the speed on 10. The Kalman filter takes the same model and computes its gain from the noise: R from the encoder\'s blocks (σ² + q²/12), Q a random push on V of variance 1 V² per sample. Its error is 0.056 rad/s rms and V σ 0.080 V, 55 and 76 times below the difference\'s; its slowest pole is at 101 rad/s. Neither model knows the load: under it the Kalman estimate reads 0.1 rad/s high and the motor runs at 2.90 rad/s, where the faster Luenberger is off by 0.02.\n\nTry: the Luenberger at w = 100 (as calm as the Kalman filter, slower to see the load); the Kalman filter with Q = 100 (it follows the load, with more noise); the difference with Tf = 0.02 s (a filter calms it, with a lag); an encoder of 4096 counts (q = 0.001534). FFT mode on V shows the difference\'s noise spread up to the Nyquist frequency.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 10, time: 0.2 } }, { type: 'step', params: { amplitude: -7, time: 2.5 } }] },
+      d: { period: PERIOD, components: [pulse(0.2, 3.5, 0.8)] },
+    },
+    scope: { channels: channels('r', 'speed', { source: 'V', measure: true }, { source: 'est_error', measure: true }) },
+    ui: ui('Motor speed'),
+    sim: { sampleTime: 0.001 },
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad/s'),
+        src('d', 180, 230, 'N·m'),
+        ctrl(130, 90, 2, 0.001, [
+          { name: 'PI speed', type: 'pid', params: { Kp: 2, Ki: 40, umin: -12, umax: 12 } },
+        ]),
+        componentUse('servo-motor@1', { id: 'motor', name: 'Motor', params: { ...DC_MOTOR }, x: 330, y: 90 }),
+        { id: 'jitter', type: 'noise', name: 'encoder noise', params: { std: 0.001, seed: 5 }, x: 640, y: 96 },
+        { id: 'enc', type: 'quantizer', name: 'encoder 1024 counts/turn', params: { q: (2 * Math.PI) / 1024 }, x: 780, y: 96 },
+        sink('encoder', 920, 106, 'rad'),
+        {
+          id: 'obs', type: 'observer', name: 'speed estimator', params: { inputs: 2, outputs: 3, Ts: 0.001 }, x: 780, y: 260, flip: true,
+          variants: [
+            { name: 'Finite difference', type: 'difference', params: { Tf: 0 } },
+            { name: 'Luenberger, placed poles', type: 'luenbergerPlaced', params: { w: [400] } },
+            { name: 'Kalman filter', type: 'kalman', params: { Q: [1], R: null } },
+          ],
+          variant: 0,
+        },
+        sink('estimate', 600, 340, 'rad/s'),
+        { id: 'esum', type: 'sum', params: { signs: '+-' }, x: 600, y: 420 },
+        sink('est_error', 720, 428, 'rad/s'),
+        sink('speed', 690, 30, 'rad/s'),
+        sink('angle', 640, 20, 'rad'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor:1', to: 'angle' },
+        { from: 'motor:1', to: 'jitter' }, { from: 'jitter', to: 'enc' }, { from: 'enc', to: 'encoder' },
+        { from: 'ctrl', to: 'obs' }, { from: 'enc', to: 'obs:1' }, { from: 'obs:1', to: 'ctrl:1' }, { from: 'obs:1', to: 'estimate' },
+        { from: 'obs:1', to: 'esum' }, { from: 'motor:3', to: 'esum:1' }, { from: 'esum', to: 'est_error' },
+        { from: 'motor:3', to: 'speed' }, { from: 'ctrl', to: 'V' },
+      ],
+    },
+    views: [{
+      name: 'Motor speed', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+      shapes: [
+        { type: 'group', x: -0.5, y: 0.05, shapes: [
+          { type: 'circle', cx: 0, cy: 0, r: 0.45, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+          ...ticks(0.45),
+          { type: 'group', angle: 'angle', shapes: [
+            { type: 'circle', cx: 0, cy: 0, r: 0.36, fill: 'ink' },
+            { type: 'circle', cx: 0, cy: 0.2, r: 0.1, fill: 'ch2' },
+            { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.43, stroke: 'ch2', lineWidth: 5 },
+          ] },
+          { type: 'circle', cx: 0, cy: 0, r: 0.05, fill: 'muted' },
+        ] },
+        { type: 'line', x1: 0.15, y1: -0.3, x2: 0.15, y2: 0.5, stroke: 'muted', lineWidth: 1 },
+        { type: 'line', x1: '0.15 + 0.04*r', y1: -0.3, x2: '0.15 + 0.04*r', y2: 0.5, stroke: 'ch1', lineWidth: 3 },
+        { type: 'rect', x: 0.15, y: 0.18, w: '0.04*speed', h: 0.16, fill: 'ch2' },
+        { type: 'rect', x: 0.15, y: -0.22, w: '0.04*estimate', h: 0.16, fill: 'ch4' },
+        { type: 'text', x: 0.55, y: 0.42, text: 'speed', size: 12, fill: 'muted' },
+        { type: 'text', x: 0.55, y: 0.02, text: 'estimate', size: 12, fill: 'muted' },
+        { type: 'text', x: 0.15, y: -0.38, text: '0', size: 11, fill: 'muted' },
+        { type: 'text', x: 0.95, y: -0.38, text: '20 rad/s', size: 11, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.78, text: 'speed {speed:5.2} rad/s   estimate {estimate:5.2} rad/s   r {r:4.1} rad/s   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
+      ],
+    }],
   },
   {
     name: 'Gear backlash',
@@ -7293,73 +7635,13 @@ const EXAMPLE_PLANTS = [
       ],
     }],
   },
+  HIL_SYSTEM,
   {
-    name: 'HIL: an external plant',
-    summary: 'A plant outside the page, connected live (hardware in the loop); the page knows only its interface. Download and run the plant, connect, then identify and tune it: working with a plant you cannot see.',
-    notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Help (?), Live and For agents, has all of it.',
-    signals: {
-      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
-    },
-    scope: { channels: channels('r', 'angle', 'V', 'current') },
-    ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
-    diagram: {
-      blocks: [
-        src('r', 30, 106, 'rad'),
-        ctrl(130, 100, 2, 0.01, [
-          { name: 'P, a first guess', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
-          { name: 'Off', type: 'off', params: {} },
-        ]),
-        {
-          id: 'plant', type: 'external', name: 'plant', x: 340, y: 96,
-          params: {
-            url: 'ws://127.0.0.1:8765', rate: 100,
-            inputs: ['V'], inUnits: ['V'], min: [-12], max: [12], safe: [0], kinds: ['effort'], measures: [''],
-            outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'], outMin: [-Math.PI, -120, -12], outMax: [Math.PI, 120, 12],
-            ymin: [-2.5, -60, -10], ymax: [2.5, 60, 10],
-            ramp: 10,
-          },
-        },
-        sink('angle', 600, 98, 'rad'), sink('speed', 600, 134, 'rad/s'), sink('current', 600, 170, 'A'),
-        sink('V', 330, 20, 'V'),
-      ],
-      wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'plant' }, { from: 'ctrl', to: 'V' },
-        { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant', to: 'ctrl:1' },
-      ],
-    },
-    views: [],
-  },
-  {
-    name: 'HIL: an external plant, reference mode',
-    summary: 'An external plant that runs its own controller; the page only sends references and records. Start the plant in reference mode, connect and run: logging a plant that controls itself.',
-    notes: 'An external plant in reference mode: it runs its own controller, with its own limits and monitoring; this page only sends the reference r and records what comes back, the plant\'s own control effort included. The page knows only the interface the plant describes (Plant tab, Interface); what is inside is a black box, identified from what it reports. For logging, and for a plant that controls itself; the page\'s controllers and Auto-tune are not in the loop. Start the example plant with sh runme.sh --mode reference (or runme.cmd --mode reference); then Plant tab, Connect, and Run. Everything else as in HIL: an external plant; Help (?), Live.',
-    signals: {
-      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
-    },
-    scope: { channels: channels('r', 'angle', 'V', 'current') },
-    ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
-    tags: [{ label: 'Reference mode', kind: 'feature' }],
-    diagram: {
-      blocks: [
-        src('r', 60, 110, 'rad'),
-        {
-          id: 'plant', type: 'external', name: 'plant', x: 240, y: 96,
-          params: {
-            url: 'ws://127.0.0.1:8765', rate: 100,
-            inputs: ['r'], inUnits: ['rad'], min: [-3], max: [3], safe: [0], kinds: ['reference'], measures: ['angle'],
-            outputs: ['angle', 'speed', 'current', 'V'], outUnits: ['rad', 'rad/s', 'A', 'V'], outMin: [-Math.PI, -120, -12, -12], outMax: [Math.PI, 120, 12, 12],
-            ymin: [-2.5, -60, -10, null], ymax: [2.5, 60, 10, null], outKinds: ['measurement', 'measurement', 'measurement', 'effort'],
-            ramp: 10,
-          },
-        },
-        sink('angle', 500, 98, 'rad'), sink('speed', 500, 134, 'rad/s'), sink('current', 500, 170, 'A'), sink('V', 500, 206, 'V'),
-      ],
-      wires: [
-        { from: 'r', to: 'plant' },
-        { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant:3', to: 'V' },
-      ],
-    },
-    views: [],
+    ...HIL_SYSTEM,
+    name: 'HIL with an agent',
+    summary: 'A plant nobody here knows, drawn at random and run live, and an agent on the same page through the MCP server: identify it together, then tune it together.',
+    notes: 'The agentic mode: an agent (an AI assistant whose client speaks MCP) works on this page with you. It sees what you see, reads the data itself (the screen, the live record, the plant\'s interface, Auto-tune runs, Analysis) and can act, and you talk it over. The plant is drawn at random from the System library\'s models, its physics varied, so it is a black box to you both: identify it together, then tune it together. Step by step: 1. Export ▾, MCP server: unzip loop-tuner-mcp.zip and register it with your agent\'s client as its README.txt says (runme.sh or runme.cmd prints the exact lines), then start the agent. 2. Ask the agent to open the Loop Tuner page (it gives the address, http://127.0.0.1:8766/ unless that port is taken) and load this system there: on that page it says "An agent is connected". 3. Export ▾, HIL plant: unzip hil-plant.zip and run sh runme.sh --random (Linux, macOS) or runme.cmd --random (Windows). 4. Plant tab, Connect; Run. 5. Ask: "What do you see? Let us identify this plant: which experiment would you run?", then "Now let us tune it together". The agent changes the controller only when you agree, and says what it did; Ctrl+Z takes any change back. Everything else as in HIL: an external plant.',
+    tags: [{ label: 'Agent', kind: 'feature' }],
   },
 ];
 
@@ -7374,6 +7656,7 @@ const SIMULATOR = {
   'Encoder errors and torque ripple': {
     physics: [...MOTOR_PHYSICS, phys('ωc', 'motor.wc', 'rad/s'), phys('ζc', 'motor.zc', '1')],
   },
+  'DC motor, speed from an encoder': { physics: MOTOR_PHYSICS },
   'Gear backlash': { physics: [...MOTOR_PHYSICS, phys('k', 'motor.k', 'N·m/rad'), phys('c', 'motor.c', 'N·m·s/rad'), phys('JL', 'load.JL', 'kg·m²')] },
   'Conical tank, gain scheduling': {
     physics: [phys('r0', 'tank.r0', 'm'), phys('R', 'tank.R', 'm'), phys('H', 'tank.H', 'm'), phys('a', 'tank.a', 'm²'), phys('Td', 'pipe.L', 's')],
@@ -8141,7 +8424,7 @@ function fromPlant(e) {
 
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = {
-  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', huLin: 'State feedback', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -8150,9 +8433,9 @@ const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta', 'Black box': 'yellow',
   PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
   'Sliding mode': 'red',
-  'Kalman filter': 'slate', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
-  'Reference mode': 'aqua', 'Controller in the plant': 'green',
+  'Controller in the plant': 'green', Agent: 'red',
 };
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
 function systemTags(e) {
@@ -10054,6 +10337,7 @@ const UNTUNABLE = {
   swingUp: 'A swing-up switches between pumping energy and catching the pole; its gains do not act on r − y. Tune its catching gains as a State feedback variant.',
   relay: 'A relay has no gains to tune; the relay method uses one to find Ku and Pu.',
   trajectory: 'A planned swing-up follows a plan computed from the plant: it has no gains of its own to tune. Change its inputs (T, Q, R) in the Controller tab.',
+  huLin: 'The variable gain computes its gains from the plant, a table of them on nested ellipsoids: it has none of its own to tune. Change its inputs (Q, R, the lowest level, k) in the Controller tab.',
 };
 const undesigned = (v) => `${CONTROLLERS[v.type].label} computes its numbers from the plant, and has none now; see its Computed box in the Controller tab, or tune a hand variant`;
 
@@ -11037,6 +11321,242 @@ function fmtN(v) {
 
 return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, feedforwardStart, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, ripplePeriod, settledLevel, settledSlope, fitFopdt, fitIntegrating, stepExperimentSteps, stepExperiment, SIMC, tauCSource, tauCShort, simcGains, simcIntegrating, stepTuneSteps, stepTune, METHODS, autotuneSteps, unstableAtStart, autotune, measurement, whyWorse, tuneReport, baseName, resultName, placeVariant, derivativeFilter, pidVariant };
 })();
+// ---- core/ops.js
+__mods['core/ops.js'] = (() => {
+
+const { normalizeProject, simOf, autoTimebase, defaultSampleTime, loopModel, loopReady, evaluateProject } = __mods['core/project.js'];
+const { DEFAULT_PROJECT } = __mods['core/examples.js'];
+const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = __mods['core/systems.js'];
+const { compileDiagram } = __mods['core/diagram.js'];
+const { simulateSystem } = __mods['core/sim.js'];
+const { computeMetrics } = __mods['core/metrics.js'];
+const { analyzeLoop, stepInfo } = __mods['core/analysis.js'];
+const { controllerBlocks, upstreamSource, costScales, runCost, GOAL, METHODS, RULES, SIMC, COSTS } = __mods['core/autotune.js'];
+function extractJson(html, path) {
+  const m = html.match(/<script type="application\/json" id="loop-tuner-project">([\s\S]*?)<\/script>/);
+  if (!m || !m[1].trim()) throw new Error(`${path} has no Loop Tuner project inside`);
+  return m[1];
+}
+
+function parseProject(text, path) {
+  const raw = /\.html?$/i.test(path) ? extractJson(text, path) : text;
+  try { return normalizeProject(JSON.parse(raw)); } catch (e) { throw new Error(`${path}: ${e.message}`); }
+}
+
+function embedProject(html, project) {
+  const json = JSON.stringify(project, null, 2).replace(/</g, '\\u003c');
+  const tag = '<script type="application/json" id="loop-tuner-project">';
+  const a = html.indexOf(tag), b = html.indexOf('</script>', a);
+  if (a < 0 || b < 0) throw new Error('the page has no place for a project');
+  const title = String(project.title ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return `${html.slice(0, a)}${tag}\n${json}\n${html.slice(b)}`.replace(/<title>[^<]*<\/title>/, `<title>${title ? `${title} · ` : ''}Loop Tuner</title>`);
+}
+
+
+const listSystems = () => SYSTEM_LIBRARY.map((e) => ({ name: e.name, tags: e.tags.map((t) => t.label), notes: e.notes }));
+
+function findSystem(name) {
+  const q = String(name).toLowerCase();
+  const entry = SYSTEM_LIBRARY.find((e) => e.name.toLowerCase() === q) ?? SYSTEM_LIBRARY.find((e) => e.name.toLowerCase().startsWith(q));
+  if (!entry) throw new Error(`no system "${name}"; systems: ${SYSTEM_LIBRARY.map((e) => e.name).join(', ')}`);
+  return entry;
+}
+
+function systemProject(entry) {
+  const p = normalizeProject(applySystem(DEFAULT_PROJECT, entry, SYSTEM_PARTS.filter((k) => entry[k])));
+  p.scope.timebase = autoTimebase(p);
+  return p;
+}
+
+
+const diagramOf = (project) => {
+  const plant = project.system.plant;
+  if (plant?.type !== 'diagram') throw new Error(`${project.title}: the plant is not a block diagram`);
+  return plant.diagram;
+};
+
+function allBlocks(project) {
+  const out = [];
+  const walk = (d, path) => {
+    for (const b of d.blocks) {
+      out.push({ path: [...path, b.id].join('/'), block: b });
+      if (b.type === 'subsystem') walk(b.diagram, [...path, b.id]);
+    }
+  };
+  walk(diagramOf(project), []);
+  return out;
+}
+
+function findBlock(project, path) {
+  const all = allBlocks(project);
+  const hit = all.find((x) => x.path === String(path));
+  if (!hit) throw new Error(`no block "${path}"; blocks: ${all.map((x) => x.path).join(', ')}`);
+  return hit.block;
+}
+
+function controllerAt(project, path) {
+  const all = controllerBlocks(diagramOf(project));
+  if (!all.length) throw new Error(`${project.title}: there is no Controller block in the plant`);
+  if (path === undefined || path === null || path === '') return all[0];
+  const hit = all.find((c) => c.key === String(path));
+  if (!hit) throw new Error(`no Controller block "${path}"; Controller blocks: ${all.map((c) => c.key).join(', ')}`);
+  return hit;
+}
+
+
+function projectDesigns(project, block) {
+  const plant = project.system.plant;
+  if (plant?.type !== 'diagram') throw new Error(`${project.title}: the plant is not a diagram, so nothing is designed from it`);
+  let statuses;
+  try { statuses = compileDiagram(plant.diagram, 'plant', { standalone: true, sources: {} }).designs; } catch (e) { throw new Error(`${project.title}: ${e.message}`); }
+  if (block) {
+    statuses = statuses.filter((s) => s.path === block);
+    if (!statuses.length) throw new Error(`no designed variant runs in "${block}"`);
+  }
+  return statuses;
+}
+
+
+const finite = (v) => (typeof v === 'number' && !Number.isFinite(v) ? null : v);
+const round = (v) => (Number.isFinite(v) ? Number(v.toPrecision(6)) : null);
+
+function downsample(t, signals, names, points) {
+  const n = t.length, step = Math.max(1, Math.ceil(n / Math.max(2, points)));
+  const idx = [];
+  for (let k = 0; k < n; k += step) idx.push(k);
+  if (idx.at(-1) !== n - 1) idx.push(n - 1);
+  const out = { t: idx.map((k) => round(t[k])) };
+  for (const name of names) out[name] = idx.map((k) => round(signals[name][k]));
+  return out;
+}
+
+function loopReport(project, run, c, goal) {
+  const s = run.signals, key = c.key, r = s[`${key}.r`], y = s[`${key}.y`], u = s[`${key}.u`];
+  const variant = c.block.variants[c.block.variant ?? 0];
+  const head = { block: key, where: c.where, variant: variant.name, type: variant.type };
+  if (!r || !y || !u) return { ...head, why: 'the block has no r on input 1 and y on input 2, so its loop is not measured' };
+  const source = upstreamSource(project.system.plant.diagram, c.path, 0);
+  const others = source ? Object.keys(project.system.signals).filter((k) => k !== source) : [];
+  const cost = runCost(run, key, goal, { scales: costScales(run, key, variant), variant, others });
+  const n = run.t.length, e = new Float64Array(n), d = (others.length && s[others[0]]) || new Float64Array(n);
+  for (let k = 0; k < n; k++) e[k] = r[k] - y[k];
+  const m = computeMetrics({ t: run.t, r, y, u, v: u, e, d, info: { unstable: run.info.unstable } });
+  const pick = ['riseTime', 'overshoot', 'undershoot', 'settlingTime', 'peakTime', 'steadyStateError', 'iae', 'ise', 'itae', 'uPeak', 'uTV', 'distPeak', 'distIAE'];
+  return {
+    ...head,
+    cost: { J: cost.J, diverged: cost.diverged, overshoot: finite(cost.overshoot), saturated: cost.saturated, parts: cost.parts },
+    metrics: { ...Object.fromEntries(pick.map((k) => [k, finite(m[k])])), saturation: 100 * cost.saturated },
+  };
+}
+
+function runProject(project, { duration, goal = {}, signals = [], points = 200 } = {}) {
+  if (loopReady(project)) {
+    const { runs, rank } = evaluateProject(project);
+    return { title: project.title, kind: 'candidates', goal: project.goal, candidates: rank.map((i, r) => ({ rank: r + 1, name: project.candidates[i].name, score: finite(runs[i].evaluation.score), feasible: runs[i].evaluation.feasible, metrics: Object.fromEntries(Object.entries(runs[i].metrics).filter(([k]) => k !== 'events').map(([k, v]) => [k, finite(v)])) })) };
+  }
+  const diagram = diagramOf(project);
+  if (duration !== undefined && !(Number(duration) > 0)) throw new Error('duration: a time in seconds, above 0');
+  const base = simOf(project);
+  const sim = duration === undefined ? base : { duration: Number(duration), sampleTime: project.sim.sampleTime ?? defaultSampleTime(Number(duration)) };
+  const run = simulateSystem(diagram, project.system.signals, sim);
+  const names = Object.keys(run.signals);
+  const missing = signals.filter((x) => !names.includes(x));
+  if (missing.length) throw new Error(`no signal ${missing.map((x) => `"${x}"`).join(', ')}; signals: ${names.join(', ')}`);
+  const g = { ...GOAL, ...goal };
+  const out = {
+    title: project.title, kind: 'system', duration: sim.duration, sampleTime: sim.sampleTime, samples: run.t.length,
+    unstable: run.info.unstable, warnings: run.info.warnings, goal: g,
+    info: (({ validity = [], h, substeps, steps, bound, stiffness, ms }) => ({ validity, h, substeps, steps, bound, stiffness, ms }))(run.info),
+    loops: controllerBlocks(diagram).map((c) => loopReport(project, run, c, g)),
+    designs: (run.info.designs ?? []).map((st) => ({ block: st.path, variant: st.variant, type: st.type, status: st.status, ...(st.error ? { error: st.error.message } : {}) })),
+    signals: names,
+  };
+  if (signals.length) out.traces = downsample(run.t, run.signals, signals, Math.min(2000, Math.max(2, Number(points) || 200)));
+  return out;
+}
+
+
+function parseAt(text) {
+  if (text === undefined || text === null) return 'origin';
+  if (typeof text === 'object') return text;
+  const s = String(text).trim();
+  if (s === 'origin' || s === 'initial') return s;
+  let m = s.match(/^t\s*=\s*(.+)$/);
+  if (m) return { t: Number(m[1]) };
+  m = s.match(/^y\s*=\s*(.+)$/);
+  if (m) return { y: m[1].split(',').map((v) => (v.trim() === 'null' ? null : Number(v))) };
+  throw new Error(`at: origin, initial, t=<seconds> or y=<level>[,<level>…]; not "${text}"`);
+}
+
+const sPole = (p) => ({ re: finite(p.s.re), im: p.s.im, wn: finite(p.s.wn), zeta: p.s.zeta, z: { re: p.z.re, im: p.z.im }, side: p.side });
+
+function analyzeProject(project, { block, at = 'origin' } = {}) {
+  const c = controllerAt(project, block);
+  let m;
+  try { m = loopModel(project, c.path, at); } catch (e) {
+    const err = new Error(`${c.key}: ${e.message}${e.hint ? ` (${e.hint})` : ''}`);
+    err.code = e.code;
+    throw err;
+  }
+  const r = analyzeLoop(m.plant, m.ctrl, m.Ts), g = r.margins;
+  const st = r.stable ? stepInfo(m.plant, m.ctrl, m.Ts, { clPoles: r.clPoles }) : null;
+  const poles = [...r.clPoles].sort((a, b) => (b.s.re ?? -Infinity) - (a.s.re ?? -Infinity));
+  return {
+    block: c.key, where: c.where, variant: m.variantName, type: m.type, at: m.opLabel, Ts: m.Ts,
+    stable: r.stable, marginal: r.marginal, openLoopUnstable: r.P, closedLoopUnstable: r.Z,
+    margins: {
+      gainUp: finite(g.gmUp), gainUpDb: Number.isFinite(g.gmUp) ? 20 * Math.log10(g.gmUp) : null, gainDown: g.gmDown,
+      phase: finite(g.pm), crossover: finite(g.wc), delay: finite(g.dm), delaySamples: finite(g.dm / m.Ts),
+      Ms: g.ms, Mt: g.mt,
+    },
+    zetaMin: r.zetaMin, slowest: r.slowest ? sPole(r.slowest) : null,
+    closedLoopPoles: poles.slice(0, 40).map(sPole), poleCount: poles.length,
+    step: st ? { overshoot: st.overshoot ?? null, settlingTime: st.settled ? st.settle : null, settled: st.settled ?? null, final: finite(st.yf), window: st.T } : null,
+    atLimit: m.atLimit, warnings: m.warnings,
+  };
+}
+
+
+function autotuneOptions(project, o = {}) {
+  const method = o.method ?? 'iterate';
+  if (!METHODS.includes(method)) throw new Error(`method: one of ${METHODS.join(', ')}`);
+  if (o.rule && !RULES[o.rule]) throw new Error(`rule: one of ${Object.keys(RULES).join(', ')}`);
+  if (o.simc && !SIMC[o.simc]) throw new Error(`simc: one of ${Object.keys(SIMC).join(', ')}`);
+  const goal = {};
+  if (o.cost) { goal.cost = String(o.cost).toUpperCase(); if (!COSTS[goal.cost]) throw new Error(`cost: one of ${Object.keys(COSTS).join(', ')}`); }
+  for (const k of ['effort', 'overshoot']) if (o[k] !== undefined) { goal[k] = Number(o[k]); if (!(goal[k] >= 0)) throw new Error(`${k}: a number, 0 or more`); }
+  const amplitude = o.amplitude === undefined ? undefined : Number(o.amplitude) / 100;
+  if (amplitude !== undefined && !(amplitude > 0 && amplitude <= 1)) throw new Error('amplitude: a percentage of the actuator range above 0, up to 100');
+  const path = o.block ? String(o.block).split('/') : null;
+  if (path && !controllerBlocks(project.system.plant?.diagram).some((c) => c.key === o.block)) throw new Error(`block ${o.block}: no Controller block there; blocks: ${controllerBlocks(project.system.plant?.diagram).map((c) => c.key).join(', ') || 'none'}`);
+  return { path, opts: { method, goal, rule: o.rule, simc: o.simc, amplitude, maxIter: o.iterations ? Number(o.iterations) : undefined, feedforward: !!o.ff } };
+}
+
+
+function traceSummary(trace, { from = -Infinity, to = Infinity, signals = [], points = 200 } = {}) {
+  const names = Object.keys(trace.signals);
+  const missing = signals.filter((x) => !names.includes(x));
+  if (missing.length) throw new Error(`no signal ${missing.map((x) => `"${x}"`).join(', ')}; signals: ${names.join(', ')}`);
+  let i0 = 0, i1 = trace.t.length;
+  while (i0 < i1 && trace.t[i0] < from - 1e-9) i0++;
+  while (i1 > i0 && trace.t[i1 - 1] > to + 1e-9) i1--;
+  const t = Array.from(trace.t.slice(i0, i1));
+  const stats = names.map((name) => {
+    const v = trace.signals[name];
+    let n = 0, lo = Infinity, hi = -Infinity, sum = 0, last = null;
+    for (let k = i0; k < i1; k++) if (Number.isFinite(v[k])) { n++; lo = Math.min(lo, v[k]); hi = Math.max(hi, v[k]); sum += v[k]; last = v[k]; }
+    return { name, unit: trace.units?.[name] ?? '1', min: n ? round(lo) : null, max: n ? round(hi) : null, mean: n ? round(sum / n) : null, last: n ? round(last) : null };
+  });
+  const out = { samples: t.length, span: t.length ? [round(t[0]), round(t.at(-1))] : null, signals: stats };
+  if (signals.length && t.length) {
+    const sliced = Object.fromEntries(signals.map((n) => [n, trace.signals[n].slice(i0, i1)]));
+    out.traces = downsample(t, sliced, signals, Math.min(2000, Math.max(2, Number(points) || 200)));
+  }
+  return out;
+}
+
+return { extractJson, parseProject, embedProject, listSystems, findSystem, systemProject, allBlocks, findBlock, projectDesigns, downsample, runProject, parseAt, analyzeProject, autotuneOptions, traceSummary };
+})();
 // ---- core/ramp.js
 __mods['core/ramp.js'] = (() => {
 
@@ -11132,7 +11652,7 @@ function controllerOnReference(params, links) {
   for (const c of links.ctrls) {
     for (const i of c.drives ?? []) {
       if ((params.kinds?.[i] ?? 'effort') !== 'reference') continue;
-      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Wire the Controller's output elsewhere, load a system made for reference mode (such as "HIL: an external plant, reference mode"), or start the plant in control mode (hil_plant.py without --mode reference).`;
+      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Switch the plant to control mode (Live settings, Mode: "Page"), let r go straight to it (Mode: "Plant" rewires it so), or start the plant in control mode (hil_plant.py without --mode reference).`;
     }
   }
   return null;
@@ -11304,6 +11824,28 @@ function keptWires(wires, id, was, now) {
 }
 
 const SIGNAL_NAME = /^[A-Za-z][A-Za-z0-9_]{0,11}$/;
+const endIs = (end, id, port) => { const e = parseEnd(end); return e.id === id && e.port === port; };
+
+function modeWires(level, blocks, wires, id, now) {
+  const byId = (bid) => blocks.find((b) => b.id === bid);
+  const into = (bid, port) => wires.find((w) => endIs(w.to, bid, port));
+  now.inputs.forEach((_, j) => {
+    if (into(id, j)) return;
+    const before = level.wires.find((w) => endIs(w.to, id, j));
+    if (!before) return;
+    const feeder = byId(parseEnd(before.from).id), kind = now.kinds?.[j] || 'effort';
+    const to = j ? `${id}:${j}` : id;
+    if (kind === 'reference' && feeder?.type === 'controller') {
+      const r = level.wires.find((w) => endIs(w.to, feeder.id, 0));
+      if (r) wires.push({ from: r.from, to });
+    } else if (kind === 'effort' && feeder?.type !== 'controller') {
+      const ctl = blocks.find((b) => b.type === 'controller' && wires.some((w) => endIs(w.to, b.id, 0) && w.from === before.from)
+        && !wires.some((w) => parseEnd(w.from).id === b.id && parseEnd(w.to).id === id));
+      if (ctl) wires.push({ from: ctl.id, to });
+    }
+  });
+}
+
 function followPorts(level, id, was, now) {
   const ext = level.blocks.find((b) => b.id === id);
   const fromPort = (w) => { const f = parseEnd(w.from); return f.id === id ? f.port : -1; };
@@ -11312,11 +11854,32 @@ function followPorts(level, id, was, now) {
   const gone = new Set(level.blocks.filter((b) => b.type === 'sink' && fed(b).length && fed(b).every((w) => fromPort(w) >= now.outputs.length && b.params.name === was.outputs[fromPort(w)])).map((b) => b.id));
   for (const b of level.blocks) if (gone.has(b.id)) renamed[b.params.name] = null;
   const blocks = level.blocks.filter((b) => !gone.has(b.id)).map((b) => structuredClone(b));
-  const wires = keptWires(level.wires, id, was, now).filter((w) => !gone.has(parseEnd(w.to).id));
+  const wires = keptWires(level.wires, id, was, now).filter((w) => !gone.has(parseEnd(w.to).id)).map((w) => ({ ...w }));
+  modeWires(level, blocks, wires, id, now);
+  for (const b of level.blocks) {
+    if (!gone.has(b.id) || b.type !== 'sink') continue;
+    const j = now.inputs.indexOf(b.params.name);
+    const drive = j < 0 ? null : wires.find((w) => endIs(w.to, id, j) && blocks.find((x) => x.id === parseEnd(w.from).id)?.type === 'controller');
+    if (!drive) continue;
+    gone.delete(b.id);
+    delete renamed[b.params.name];
+    blocks.push(structuredClone(b));
+    wires.push({ from: drive.from, to: b.id });
+  }
   const taken = new Set(diagramNames({ blocks, wires }).sinks.concat(diagramNames({ blocks, wires }).sources));
   now.outputs.forEach((name, j) => {
     const unit = now.outUnits?.[j] ?? '1';
     const sinks = blocks.filter((b) => b.type === 'sink' && wires.some((w) => parseEnd(w.to).id === b.id && fromPort(w) === j));
+    if (!sinks.length) {
+      const own = blocks.find((b) => b.type === 'sink' && b.params.name === name);
+      const feed = own && wires.find((w) => parseEnd(w.to).id === own.id);
+      const from = feed && blocks.find((x) => x.id === parseEnd(feed.from).id);
+      if (from?.type === 'controller' && !wires.some((w) => parseEnd(w.from).id === from.id && parseEnd(w.to).id === id)) {
+        feed.from = j ? `${id}:${j}` : id;
+        own.params.unit = unit;
+        sinks.push(own);
+      }
+    }
     for (const b of sinks) {
       if (b.params.name !== was.outputs[j]) continue;  
       if (name !== b.params.name && SIGNAL_NAME.test(name) && !taken.has(name)) { taken.delete(b.params.name); renamed[b.params.name] = name; b.params.name = name; taken.add(name); }
@@ -11552,6 +12115,15 @@ function createLiveLoop(post, env = globalThis) {
         say('open', 'reset');
         return {};
       } catch (err) { fail(`reset: ${err.message}`); return { error: err.message }; }
+    },
+    async mode({ mode }) {
+      if (!desc) return { error: 'not connected' };
+      if (running) return { error: 'stop the plant first: its mode changes only while it is stopped' };
+      try {
+        desc = checkDescription(await call('mode', { mode }));
+        post({ type: 'described', desc });
+        return {};
+      } catch (err) { return { error: err.message }; }
     },
     async disconnect() {
       if (!ws) return {};
@@ -11799,6 +12371,7 @@ const GUIDE = {
     'loopTuner.getProject() returns the project (JSON); change it and give it back with setProject(p), or change one controller with setGains(block, params) and pick its variant with setVariant(block, name).',
     'loopTuner.run(), stop(), single() are the scope keys; each returns { ok, why }, why saying why a key was refused. loopTuner.record.screen("csv") reads every signal on the screen.',
     'The last message the page showed stays in #toast[data-last] and loopTuner.live.state().message (a toast is gone after 3 s).',
+    'Without a browser: the same core runs as an MCP server (mcp.mjs; Export ▾, MCP server, saves it with its README). Register the command node /path/to/mcp.mjs with the agent\'s client (over stdio). Its tools load systems and project files, run and measure, autotune, analyze and save; it also serves this page, and a page it served connects back, so the agent works on the page you both see.',
   ],
   api: [
     M('loopTuner.help(format?)', 'format: "text" for plain text', 'This guide: an object, or text.', 'loopTuner.help("text")'),
@@ -11818,7 +12391,7 @@ const GUIDE = {
     M('loopTuner.speed(x?)', 'x: a factor, or -1 for as fast as possible', 'How fast simulated time runs; held at 1 while a plant is connected.', 'loopTuner.speed(10)', '{ speed, effective, achieved, simulation, locked }'),
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
     M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
-    M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
+    M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter, a Luenberger observer\'s placed poles) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
     M('loopTuner.info()', '', 'What the screen\'s last run reported: validity reports (a model used outside where it holds), warnings (a stiff plant and the step it needs, a run made again because the plant grew stiffer, a signal that diverged, an input not connected), the integration step h, steps, the step bound (the blocks\' own and the Jacobian\'s largest eigenvalue at the start), the Jacobian\'s at the start and the end, and the run\'s ms. The status line under the screen shows the first report or warning.', 'loopTuner.info()', '{ validity, warnings, h, substeps, steps, bound, stiffness: { start, end }, ms } or null'),
     M('loopTuner.whenDesigned()', '', 'Resolves once no design is being computed in the background (a plan for the planned swing-up takes seconds; meanwhile the block runs u = 0 or its previous plan) and the display shows the run that uses it. Await it before judging a run.', 'await loopTuner.whenDesigned()', 'a promise of designs()'),
     M('loopTuner.loopModel(path, op)', 'path: a Controller block\'s id path; op: "origin" (at rest), "initial" (the start), { y: [levels] } or { t: seconds }', 'The loop the Controller closes, as the Analysis tab draws it: the plant it sees linearised at op, and the running variant\'s own law, as state space. Refused, with the reason, where there is none (a relay, a kink at op, a plant outside the page).', 'loopTuner.loopModel("ctrl", "initial")', '{ plant: { A, B, C, D, delay, ... }, ctrl: { A, B, C, D }, Ts, opLabel, variantName, warnings }'),
@@ -11829,6 +12402,7 @@ const GUIDE = {
     M('loopTuner.live.reset()', '', 'Clears an E-stop. The plant stays stopped; Run goes on, the controllers afresh. A STOP pressed at the plant is reset at the plant only: the page\'s reset is refused, and state().message says so.', 'await loopTuner.live.reset()', 'a promise of state() once the plant has answered (estop is still set if it refused)'),
     M('loopTuner.live.hold(on?)', 'on: true or false (default: toggle)', 'Freezes the screen while the plant runs on (the live record goes on too). The key H does the same.', 'loopTuner.live.hold(true)'),
     M('loopTuner.live.settings(s?)', 's: { ramp: % of full scale per second, scales: { r: [lo, hi] } }', 'The ramp-in and the full scales of the references (one undo step); returns them.', 'loopTuner.live.settings({ ramp: 20 })'),
+    M('loopTuner.live.setMode(mode)', 'mode: "control" (the page controls) or "reference" (the plant runs its own controller)', 'The Live settings\' Mode switch: asks the connected plant, while it is stopped, to run in that mode; it describes itself anew and the diagram follows (in reference mode r goes straight to the plant and its own effort comes back; control mode puts the Controller back). A plant that cannot switch says so: start it in that mode instead.', 'await loopTuner.live.setMode("reference")', 'a promise of state()'),
     M('loopTuner.live.downloadPlant()', '', 'Saves hil-plant.zip (the plant script, runme.sh, runme.cmd, runme.ps1, README.txt).', 'await loopTuner.live.downloadPlant()', 'a promise: true once the file is on its way'),
     M('loopTuner.live.plantFiles()', '', 'The files of hil-plant.zip as text: { name: text }.', 'loopTuner.live.plantFiles()["README.txt"]'),
     M('loopTuner.record.state()', '', 'The live record (seconds kept, signals) and the references shown.', 'loopTuner.record.state()'),
@@ -11851,9 +12425,9 @@ const GUIDE = {
   live: {
     what: 'A system with an External plant block runs against a plant outside the page, in real time. HIL: an external plant is made for it: the controller against one External plant block, a black box. The page knows only the interface the plant describes when it connects (its inputs and outputs: names, units, full scales, hard ranges, kinds; the Plant tab shows it under Interface, and live.state() has it); the External block takes those ports, and the Sinks and channels follow the outputs. Tuning needs the plant identified first (Identify, to come): Auto-tune and Analysis say so. The downloadable example plant happens to simulate a DC motor swinging an arm, standing in for real hardware; the page is not told. Replace it with your device behind the same protocol, in any language.',
     setup: [
-      'Load the system: loopTuner.loadSystem("HIL: an external plant") (or "HIL: an external plant, reference mode"). It opens stopped and OFFLINE: nothing runs until the plant is connected and Run is pressed.',
+      'Load the system: loopTuner.loadSystem("HIL: an external plant") (or "HIL with an agent", the same with an agent on the page through the MCP server). It opens stopped and OFFLINE: nothing runs until the plant is connected and Run is pressed.',
       'Get the plant: loopTuner.live.downloadPlant() saves hil-plant.zip (Plant tab: Download the plant (zip)). loopTuner.live.plantFiles() has its files as text.',
-      'Start it on the computer the browser runs on: unzip, then sh runme.sh (Linux, macOS) or double-click runme.cmd (Windows; it runs runme.ps1). They install uv if it is missing, which brings its own Python (with the window\'s toolkit) and the websockets package, then start the plant. With uv: uv run hil_plant.py. For the reference mode system: sh runme.sh --mode reference. A window opens with a red STOP, Run/Stop, where it listens and the link\'s state; without a display the console takes s (stop), r (run), e (E-stop), x (reset). An agent with only a browser asks someone at that computer to run it, and for the address it listens on if it is not ws://127.0.0.1:8765.',
+      'Start it on the computer the browser runs on: unzip, then sh runme.sh (Linux, macOS) or double-click runme.cmd (Windows; it runs runme.ps1). They install uv if it is missing, which brings its own Python (with the window\'s toolkit) and the websockets package, then start the plant. With uv: uv run hil_plant.py. Reference mode is a switch once connected (live.setMode, Live settings: Mode); a plant that cannot switch starts in it with sh runme.sh --mode reference. With --random it simulates a model drawn at random (HIL with an agent). A window opens with a red STOP, Run/Stop, where it listens and the link\'s state; without a display the console takes s (stop), r (run), e (E-stop), x (reset). An agent with only a browser asks someone at that computer to run it, and for the address it listens on if it is not ws://127.0.0.1:8765.',
       'Connect: await loopTuner.live.connect(). It resolves once the plant has described itself: state() is then "open", the link is up, the plant is stopped and applies its safe inputs.',
       'Run: loopTuner.run() returns { ok, why }. The references first ramp from where the plant is to their first value at no more than 10 % of full scale per second (state().ramp says how long is left), then the loop runs; state() is "running" and its link figures fill in.',
       'Tune while it runs: loopTuner.setGains("ctrl", { Kp: 8 }) (the controller keeps its state) or loopTuner.setVariant("ctrl", "Off") (another variant, afresh). The first guess is not a tuned controller: the page does not know the plant; read loopTuner.record.screen("csv") or record.live("csv").',
@@ -11876,7 +12450,7 @@ const GUIDE = {
     ['connection lost', 'The link closed while running; the plant has stopped itself.'],
     ['STOP pressed at the plant', 'Someone pressed STOP in the plant\'s window or console. Only the plant resets it: ask whoever is at the plant to press Reset there (x at its console); the page clears with it. live.reset() is refused.'],
     ['reset: STOP was pressed at the plant', 'The page cannot reset a STOP pressed at the plant: ask whoever is at the plant to press Reset there.'],
-    ['is wired to …, which this plant takes as a reference', 'A Controller block\'s output feeds an input the plant takes as a reference (the plant runs in reference mode, the system is made for control mode). Load "HIL: an external plant, reference mode", or start the plant without --mode reference; Run is refused until then.'],
+    ['is wired to …, which this plant takes as a reference', 'A Controller block\'s output feeds an input the plant takes as a reference (the plant runs in reference mode, the system is made for control mode). Switch the mode (live.setMode("control"), or "reference" so that r goes straight to the plant), or start the plant without --mode reference; Run is refused until then.'],
     ['no number for …', 'The plant sent an output that is not a number for 3 cycles: the page latched an E-stop rather than control on a stale value. Check the plant\'s sensor or its code.'],
     ['… is not a number', 'The plant\'s own monitoring: an output it measured is not a number; it latched an E-stop.'],
     ['the plant\'s cycle failed', 'The plant\'s own code failed (its console has the error): it applied its safe inputs and ended. Fix the plant, start it again, Connect.'],

@@ -440,6 +440,8 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .speed-got.held { color: var(--ink-2); }
 .speed-pop { left: 0; right: auto; width: 220px; }
 .speed-pop .item b { min-width: 4ch; font-weight: 600; }
+.popover.export-pop { width: min(380px, calc(100vw - 32px)); }
+.export-pop .item b { flex: none; width: 11ch; font-weight: 600; }
 
 /* Instrument: display, separator, controls */
 .instrument { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 12px var(--controls-w, 286px); }
@@ -618,11 +620,13 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .taglegend .tag { --tone: var(--ink-3); --tone-ink: var(--surface); }
 .tagfilter { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: 0 var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
 .tagcount { margin-left: auto; display: flex; align-items: center; gap: var(--space-3); }
-.sysrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-5); align-items: center; padding: var(--space-3); border-top: 1px solid var(--line); }
+.sysrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-5); align-items: start; padding: var(--space-3); border-top: 1px solid var(--line); }
 .sysrow:first-of-type { border-top: 0; }
 .sysrow .note { margin-top: var(--space-1); line-height: 1.35; }
 .systags { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-1) 0; }
-.sysbtns { display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+/* Load, Input, Plant stacked in one narrow column, so the text keeps the width (the person). */
+.sysbtns { display: flex; flex-direction: column; gap: var(--space-2); }
+.sysbtns > .btn { justify-content: center; }
 
 /* Controller tab: block | variants | parameters | library */
 .ctl { display: grid; grid-template-columns: minmax(200px, 250px) minmax(200px, 320px) minmax(260px, 1fr) minmax(200px, 260px); gap: var(--space-7); align-items: stretch; height: 100%; min-height: 0; }

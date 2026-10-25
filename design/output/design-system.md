@@ -99,7 +99,7 @@ The lamp's colour says what kind of on it is:
 
 ### Popover, Dialog, Toast, Tooltip
 
-`.popover` (System library), `.popover.menu` (Speed's presets, Save ▾; `.popover-up` opens upwards); a popover just opened is kept inside the window (`fitPopover`). `.overlay` and `.dialog` (Help, the plant script, the controller's diagram enlarged, `.dialog-wide`). `.toast` and `.tip` (the levels strip's readout): messages, dark in both themes. `.drop`: where a dropped file goes, dashed in the secondary ink.
+`.popover` (System library), `.popover.menu` (Speed's presets, Save ▾, the header's Export ▾ of `.item` rows, each a name and a hint; `.popover-up` opens upwards); a popover just opened is kept inside the window (`fitPopover`). `.overlay` and `.dialog` (Help, the plant script, the controller's diagram enlarged, `.dialog-wide`). `.toast` and `.tip` (the levels strip's readout): messages, dark in both themes. `.drop`: where a dropped file goes, dashed in the secondary ink.
 
 ### Text: Heading and Label
 
