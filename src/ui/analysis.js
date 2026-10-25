@@ -172,11 +172,12 @@ export function createAnalysisTab(host, app) {
     }
     const { res, m, st } = v, g = res.margins, Ts = m.Ts, ok = res.stable;
     const plural = (k, w) => `${k} ${w}${k > 1 ? 's' : ''}`;
+    // The verdict; why, in its tooltip.
     $('#an-verdict').innerHTML = ok
-      ? `<span class="grade text-ok">✓ stable</span> <span class="muted">every closed-loop pole inside the unit circle</span>`
+      ? `<span class="grade text-ok" title="Every closed-loop pole inside the unit circle">✓ stable</span>`
       : res.marginal
-        ? `<span class="grade text-warn">! marginal</span> <span class="muted">${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows</span>`
-        : `<span class="grade text-bad">✕ unstable</span> <span class="muted">${plural(res.Z, 'closed-loop pole')} outside the unit circle</span>`;
+        ? `<span class="grade text-warn" title="${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows">! marginal</span>`
+        : `<span class="grade text-bad" title="${plural(res.Z, 'closed-loop pole')} outside the unit circle">✕ unstable</span>`;
     const rows = [];
     const row = (k, val, extra = '', title = '') => rows.push(`<tr title="${esc(title)}"><th>${k}</th><td>${val}</td><td>${extra}</td></tr>`);
     const factor = (k) => `×${num(k, 3)}`;
@@ -208,14 +209,20 @@ export function createAnalysisTab(host, app) {
     }
     $('#an-kw').innerHTML = rows.join('');
     const dead = res.L.delaySamples ?? [];
+    // What was analysed and any warning stay in view; how the numbers were
+    // made sits behind Details.
     const notes = [
       `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
+      ...(m.warnings ?? []),
+    ];
+    const details = [
       ...(v.spec?.t !== undefined ? [`Scope time t = ${num(v.spec.t, 4)} s, ${FROM[v.from] ?? 'on the scope'}`] : []),
       ...(dead.some((d) => d > 0) ? [`dead time: ${dead.map((d) => `${num(d, 3)} Ts`).join(', ')}, exact (a part of a sample by the modified z-transform)`] : []),
       `Linear: u is assumed inside its limits${Number.isFinite(st?.uPeak) ? ` (in the step u peaks at ${num(st.uPeak, 3)} per unit of r)` : ''}; the step goes through the prefilter on r, which is outside the loop.`,
-      ...(m.warnings ?? []),
     ];
-    $('#an-notes').innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join('');
+    const wasOpen = $('#an-notes details')?.open ?? false;
+    $('#an-notes').innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join('')
+      + `<details class="more"${wasOpen ? ' open' : ''}><summary class="disclosure label"><span class="chev"></span>Details</summary>${details.map((n) => `<div>${esc(n)}</div>`).join('')}</details>`;
   }
 
   // Root locus in the s-plane (s = ln z / Ts) or the z-plane.

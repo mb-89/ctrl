@@ -141,6 +141,11 @@ p.note { margin: var(--space-3) 0; }
 .disclosure { display: flex; align-items: center; gap: var(--space-2); width: 100%; margin: var(--space-1) 0; padding: var(--space-1) 0; border: 0; background: none; cursor: pointer; text-align: left; }
 .disclosure .chev { width: var(--space-5); }
 .disclosure:hover { color: var(--ink); }
+summary.disclosure { list-style: none; width: max-content; }
+summary.disclosure::-webkit-details-marker { display: none; }
+summary.disclosure .chev::before { content: '▸'; }
+details[open] > summary.disclosure .chev::before { content: '▾'; }
+.more p { margin: 0 0 var(--space-3); }
 .btn {
   --lit: var(--accent);
   position: relative;
@@ -378,12 +383,6 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .plant { height: 100%; min-height: 0; display: grid; grid-template-columns: var(--lib-w, 196px) 10px minmax(0, 1fr) 248px; }
 .plant .pcan { margin-right: var(--space-6); }
 .plsplit { cursor: col-resize; }
-#pl-iface.piface { overflow: auto; background: var(--surface); background-image: none; }
-.ifbox { padding: var(--space-4) var(--space-6); }
-.iftable { border-collapse: collapse; font-family: var(--font-mono); font-size: var(--text-sm); margin: var(--space-3) 0; }
-.iftable th, .iftable td { text-align: left; padding: var(--space-1) var(--space-4) var(--space-1) 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
-.iftable thead th { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--ink-3); font-weight: 600; }
-.iftable td:first-child { color: var(--ink-3); }
 .plib, .pprops { min-height: 0; overflow: auto; }
 .plib > div > .label { margin-bottom: var(--space-2); }
 .lgroup { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-4); }
@@ -393,6 +392,10 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .pview { position: relative; min-height: 0; border-radius: var(--radius-lg); border: 1px solid var(--line-strong); overflow: hidden;
   background-color: var(--surface); background-image: radial-gradient(var(--line-strong) 1px, transparent 1.2px); background-size: 20px 20px; }
 .pscenebox { background-image: none; }
+#pl-iface { overflow: auto; }
+.iface { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
+.iface .lcd { flex: none; }
+.ifrow { display: grid; grid-template-columns: 36px 72px 48px 150px 150px minmax(0, 1fr); column-gap: var(--space-5); font-size: var(--text-sm); }
 .pform { display: flex; flex-direction: column; gap: var(--space-3); margin: var(--space-3) 0; }
 .pf { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: var(--space-1) var(--space-4); }
 .pf > .hint { grid-column: 2; }
@@ -750,7 +753,7 @@ try { markLimited(window); } catch { }
 <p>Nothing runs by itself. Offline the scope stands still and says OFFLINE. Connect opens the link and reads the plant's ports; the plant stays stopped. <b>Run</b> starts the plant and the sweep: first every reference moves to its waveform's first value at no more than 10 % of its full scale per second (the status line counts down), then the loop runs. Every channel spans its signal's full scale, for orientation. <b>Stop</b> stops both; <b>Single</b> runs one sweep and stops the plant (pressed while running, the sweep under way finishes first). <b>Hold</b> (<kbd>H</kbd>) freezes the screen while the plant runs on. Tune the controller meanwhile: a parameter takes effect at the next sample.</p>
 <p><b>E-STOP</b> (the red key in the header, or <kbd>E</kbd>), <b>STOP</b> in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until <b>Reset</b>: a STOP pressed at the plant is reset at the plant, the page's E-STOP on the page. The plant tells the page when it stops or starts at its own keys, and the page follows at once. In <b>reference mode</b> (<b>HIL: an external plant, reference mode</b>, with the plant started as <code>sh runme.sh --mode reference</code>) the plant runs its model's own controller and the page sends the references: the page's controllers and Auto-tune are not in the loop. With <code>--dyno</code> the plant also offers its model's disturbances as inputs. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them. <b>Live settings</b> in the Plant tab set the ramp-in and the references' full scales, saved with the system.</p>
 <h3 class="label">System library</h3>
-<p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
+<p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another. Each card says in a few words what the system is and what to try; <b>Details</b> opens its full description, which the Plant tab keeps under <b>About this system</b> once it is loaded.</p>
 <h3 class="label">Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <p>Shown in a limited environment, such as a file preview that runs the page in a sandbox, a warning below the header stays, says what does not work there, and what to do: download the file and open it in your browser.</p>
@@ -5087,6 +5090,7 @@ const K_TRIPLE_GENTLE = [-2.3, -417, 1050, -686, -4.496, -14.83, 62.84, -67.32];
 const EXAMPLE_PLANTS = [
   {
     name: 'Mass–spring–damper',
+    summary: 'A mass on a spring and a damper, pulled down once; no controller. Change the spring or the damping and watch it swing and settle: how stiffness and damping shape a response.',
     notes: 'A 1 kg mass hangs on a spring (25 N/m) and a damper (0.5 N·s/m). At 0.1 s a force F = 1 N pulls it down: it drops about 40 mm and swings at 0.8 Hz while it settles, its energy moving between motion (Ekin) and spring (Epot). No controller.',
     signals: { F: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 1, time: 0.1 } }] } },
     scope: { channels: channels('F', 'x', 'Ekin', 'Epot') },
@@ -5135,6 +5139,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'DC motor, position control',
+    summary: 'A motor turning its shaft to a commanded angle against a load. Its controller starts too aggressive: switch to PD or PID, or tune it, and see what P, I and D each do.',
     notes: 'A PID controls the shaft angle of a DC motor; the reference r jumps between 0 and 2 rad, and a load torque d brakes the shaft at 3.2 s. The controller it starts with is too aggressive: the shaft overshoots and rings. Flip the Controller tab to PD or PID with prefilter to see it settle, or tune it yourself.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 2, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
@@ -5153,7 +5158,8 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Following a sine (XY)',
-    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line. PID + feedforward adds a velocity feedforward Kv, set by hand, so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
+    summary: 'The motor following a slow sine, drawn as error against reference. Step through P, PD, PID and feedforward: why feedback alone lags a moving target, and what feedforward adds.',
+    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line.\n\nPID + feedforward adds a velocity feedforward Kv, set by hand, so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'sine', params: { amplitude: 1, frequency: 0.2 } }] },
       d: { period: PERIOD, components: [] },
@@ -5170,7 +5176,8 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'DC motor, sliding mode',
-    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs). To read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides. Relay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time. Try: open Motor and triple J (rotor den [0.06, 0.1]): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (den [0.001, 1]): the relay chatters at 250 Hz and makes about five times the heat.',
+    summary: 'The motor under sliding-mode control, on its phase portrait. Compare the ideal relay, a boundary layer and super-twisting: a response the load cannot change, and what chattering costs.',
+    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: open Motor and triple J (rotor den [0.06, 0.1]): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (den [0.001, 1]): the relay chatters at 250 Hz and makes about five times the heat.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
       d: { period: PERIOD, components: [pulse(1, 3.2, 0.5)] },
@@ -5187,7 +5194,8 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Encoder errors and torque ripple',
-    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing. Up there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB. Try FFT mode, and a notch filter on the channel.',
+    summary: 'A motor speeding up with encoder errors, torque ripple and a shaft resonance, in the spectrogram. Change the colour scale, try FFT or a notch: tell errors that follow the speed from a resonance, and spot aliasing.',
+    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing.\n\nUp there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB.\n\nTry FFT mode, and a notch filter on the channel.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'ramp', params: { amplitude: 300, time: 0.5, rise: 4 } }] },
     },
@@ -5239,6 +5247,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Conical tank, gain scheduling',
+    summary: 'A tank that widens upwards: quick when nearly empty, slow when full. Compare a gain-scheduled PI with fixed ones: why one set of gains cannot fit a plant that changes.',
     notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The gain-scheduled PI looks its gains up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
     signals: {
       r: { period: PERIOD, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }] },
@@ -5285,6 +5294,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Pendulum swing-up',
+    summary: 'A pendulum below a cart, swung up and balanced. Compare with state feedback alone, and push it: energy-based control brings it near the top, a linear controller holds it there.',
     notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with state feedback and holds it; at 3.5 s it is pushed (d). Flip to "State feedback only" to see why the swing-up is needed.',
     signals: {
       r: { period: PERIOD, components: [] },
@@ -5316,6 +5326,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Triple pendulum',
+    summary: 'Three rods balanced on a moving cart by state feedback (LQR). Push it, move the cart, try the gentle LQR: how one controller that uses every state balances an unstable chain.',
     notes: 'Three rods balanced on top of each other on a cart, held up by state feedback from all eight states (positions, angles and their rates; gains from LQR). It starts with the lowest rod tilted 3°, is pushed at 1 s (d), and the cart is moved 0.5 m at 2.5 s (r). Flip to the gentle LQR to see a softer, slower controller.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 0.5, time: 2.5 } }] },
@@ -5351,6 +5362,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Oven, badly tuned',
+    summary: 'An oven with a poorly tuned temperature controller and a dead time. It opens on Auto-tune: press Start and watch automatic tuning remove the ringing; without anti-windup, see integrator windup.',
     notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled to fit 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration. The variant without anti-windup has the same gains, but its integral winds up while the heater is full on: the first step overshoots to 67 °C instead of 52 °C.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }] },
@@ -5397,6 +5409,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'DC motor with an unbalanced arm',
+    summary: 'A motor swinging an arm that gravity pulls down, with friction: the plant the example HIL simulator runs. Compare P with PID and see why holding against gravity needs integral action.',
     notes: 'A DC motor swings an arm with an unbalanced mass: gravity pulls it down with mgl·sin(angle), Coulomb and viscous friction brake it, and the motor has 12 V. To hold the arm out sideways the controller needs integral action (gravity leaves a P or PD short of r). It is the plant the example HIL simulator runs by default, there varied by up to 15 % and unknown to the page; here it is open. Flip to "P, a first guess" to see the offset gravity leaves; open Motor and arm to see the physics.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
@@ -5467,6 +5480,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'HIL: an external plant',
+    summary: 'A plant outside the page, connected live (hardware in the loop); the page knows only its interface. Download and run the plant, connect, then identify and tune it: working with a plant you cannot see.',
     notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Help (?), Live and For agents, has all of it.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
@@ -5502,6 +5516,7 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'HIL: an external plant, reference mode',
+    summary: 'An external plant that runs its own controller; the page only sends references and records. Start the plant in reference mode, connect and run: logging a plant that controls itself.',
     notes: 'An external plant in reference mode: it runs its own controller, with its own limits and monitoring; this page only sends the reference r and records what comes back, the plant\'s own control effort included. The page knows only the interface the plant describes (Plant tab, Interface); what is inside is a black box, identified from what it reports. For logging, and for a plant that controls itself; the page\'s controllers and Auto-tune are not in the loop. Start the example plant with sh runme.sh --mode reference (or runme.cmd --mode reference); then Plant tab, Connect, and Run. Everything else as in HIL: an external plant; Help (?), Live.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
@@ -6333,7 +6348,7 @@ const SYSTEM_PARTS = ['input', 'plant', 'controller'];
 
 function fromPlant(e) {
   return {
-    name: e.name, notes: e.notes ?? '',
+    name: e.name, summary: e.summary ?? '', notes: e.notes ?? '',
     input: { signals: structuredClone(e.signals) },
     plant: { type: 'diagram', diagram: structuredClone(e.diagram), ...(e.views ? { views: structuredClone(e.views) } : {}) },
     ...(e.scope ? { scope: structuredClone(e.scope) } : {}),
@@ -6411,6 +6426,7 @@ function applySystem(project, entry, parts) {
   const whole = SYSTEM_PARTS.filter((k) => entry[k]).every((k) => parts.includes(k));
   if (whole) {
     p.title = entry.name;
+    if (entry.notes) p.notes = entry.notes; else delete p.notes;
     if (!entry.controller) { p.candidates = []; delete p.selected; delete p.goal; p.sim = entry.sim ? structuredClone(entry.sim) : {}; }
     if (entry.scope) {
       p.scope = { ...(p.scope ?? {}), channels: structuredClone(entry.scope.channels) };
@@ -9957,7 +9973,7 @@ const GUIDE = {
     '#toast shows a message for 3 s; its data-last keeps the last one.',
     'Run Control: #k-run (Run/Stop), #k-single, #k-auto. The scope\'s status line (#display .status) has data-run, data-live and data-ramp, and says LIVE, CONNECTED, E-STOP and its reason, OFFLINE, HOLD or "ramping to r0: 2.1 s left".',
     'Plant tab, right-hand panel, #live (data-state, data-mode): #live-download (Download the plant (zip)), #live-connect (Connect / Disconnect), #live-reset, #live-hold, #live-url (where the plant listens), #live-status (data-state; while running data-rate, data-rtt, data-missed, data-late; after an E-stop data-reason), #live-mode (what the page sends), #live-ramp and #live-scale-NAME (Live settings).',
-    'Plant tab, a HIL system: Interface (#pl-rep-iface) shows #pl-iface, the plant\'s interface as a table, a row per port (tr with data-side in or out, data-port, data-kind): unit, full scale, hard range (outputs) or safe value (inputs). It is all the page knows of the plant; live.state() has the same.',
+    'Plant tab, a HIL system: Interface (#pl-rep-iface) shows #pl-iface, the plant\'s interface as a readout panel, a row per port (li with data-side in or out, data-port, data-kind): unit, full scale, hard range (outputs) or safe value (inputs). It is all the page knows of the plant; live.state() has the same.',
     'Save ▾ under the screen: #rc-save.',
   ],
   live: {
@@ -11886,10 +11902,10 @@ function createAnalysisTab(host, app) {
     const { res, m, st } = v, g = res.margins, Ts = m.Ts, ok = res.stable;
     const plural = (k, w) => `${k} ${w}${k > 1 ? 's' : ''}`;
     $('#an-verdict').innerHTML = ok
-      ? `<span class="grade text-ok">✓ stable</span> <span class="muted">every closed-loop pole inside the unit circle</span>`
+      ? `<span class="grade text-ok" title="Every closed-loop pole inside the unit circle">✓ stable</span>`
       : res.marginal
-        ? `<span class="grade text-warn">! marginal</span> <span class="muted">${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows</span>`
-        : `<span class="grade text-bad">✕ unstable</span> <span class="muted">${plural(res.Z, 'closed-loop pole')} outside the unit circle</span>`;
+        ? `<span class="grade text-warn" title="${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows">! marginal</span>`
+        : `<span class="grade text-bad" title="${plural(res.Z, 'closed-loop pole')} outside the unit circle">✕ unstable</span>`;
     const rows = [];
     const row = (k, val, extra = '', title = '') => rows.push(`<tr title="${esc(title)}"><th>${k}</th><td>${val}</td><td>${extra}</td></tr>`);
     const factor = (k) => `×${num(k, 3)}`;
@@ -11920,12 +11936,16 @@ function createAnalysisTab(host, app) {
     const dead = res.L.delaySamples ?? [];
     const notes = [
       `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
+      ...(m.warnings ?? []),
+    ];
+    const details = [
       ...(v.spec?.t !== undefined ? [`Scope time t = ${num(v.spec.t, 4)} s, ${FROM[v.from] ?? 'on the scope'}`] : []),
       ...(dead.some((d) => d > 0) ? [`dead time: ${dead.map((d) => `${num(d, 3)} Ts`).join(', ')}, exact (a part of a sample by the modified z-transform)`] : []),
       `Linear: u is assumed inside its limits${Number.isFinite(st?.uPeak) ? ` (in the step u peaks at ${num(st.uPeak, 3)} per unit of r)` : ''}; the step goes through the prefilter on r, which is outside the loop.`,
-      ...(m.warnings ?? []),
     ];
-    $('#an-notes').innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join('');
+    const wasOpen = $('#an-notes details')?.open ?? false;
+    $('#an-notes').innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join('')
+      + `<details class="more"${wasOpen ? ' open' : ''}><summary class="disclosure label"><span class="chev"></span>Details</summary>${details.map((n) => `<div>${esc(n)}</div>`).join('')}</details>`;
   }
 
   function drawLocus(v) {
@@ -13669,7 +13689,7 @@ function createPlantEditor(root, app) {
         </div>
         <div class="pview" id="pl-view" tabindex="0" aria-label="Diagram canvas: drag blocks in from the library; drag from an output to an input to wire; Shift-drag to select; double-click a subsystem to open it"></div>
         <div class="pview pscenebox" id="pl-scene" hidden></div>
-        <div class="pview pscenebox piface" id="pl-iface" hidden></div>
+        <div class="pview pscenebox" id="pl-iface" hidden></div>
       </section>
       <section class="pprops" aria-label="Block parameters"><div id="pl-props"></div></section>
     </div>`;
@@ -13772,7 +13792,7 @@ function createPlantEditor(root, app) {
       html += group(g, types.map((t) => { const def = diagramBlockDef(t); return item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="btn-note">${esc(def.formula)}</span>`); }).join(''));
     }
     html += group('My blocks', lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="hint">Select a subsystem and save it here.</div>');
-    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="btn btn-sm btn-block" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.notes} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="btn-note">plant</span></button>` : '')).join(''));
+    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="btn btn-sm btn-block" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.summary} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="btn-note">plant</span></button>` : '')).join(''));
     $('#pl-lib').innerHTML = html;
     $('#pl-lib').querySelectorAll('[data-fold]').forEach((b) => b.addEventListener('click', () => {
       const n = b.dataset.fold;
@@ -13905,21 +13925,28 @@ function createPlantEditor(root, app) {
     if (!hit) return;
     const f = interfaceOf(EXTERNAL_BLOCK.normalize(hit.block.params));
     const range = (r, unit) => (r ? `${num(r[0], 4)} … ${num(r[1], 4)} ${esc(unit)}` : '–');
-    const row = (side, p) => `<tr data-side="${side}" data-port="${esc(p.name)}" data-kind="${esc(p.kind)}"><td>${side === 'in' ? 'in' : 'out'}</td><th scope="row">${esc(p.name)}</th><td>${esc(p.unit)}</td><td>${range(p.fullScale, p.unit)}</td><td>${side === 'in' ? `safe ${num(p.safe, 4)} ${esc(p.unit)}` : range(p.hard, p.unit)}</td><td>${esc(p.kind)}${p.measures ? ` of ${esc(p.measures)}` : ''}</td></tr>`;
-    $('#pl-iface').innerHTML = `<div class="ifbox"><h3 class="label">Interface of ${esc(hit.block.name ?? hit.block.id)}</h3>
-      <p class="note">All this page knows of the plant: what it described when it last connected (${esc(f.mode)} mode, ${num(f.rate, 4)} Hz). What is inside is a black box, to be identified before tuning.</p>
-      <table class="iftable" data-mode="${esc(f.mode)}"><thead><tr><th></th><th>Port</th><th>Unit</th><th>Full scale</th><th>Hard range / safe</th><th>Kind</th></tr></thead>
-      <tbody>${f.inputs.map((p) => row('in', p)).join('')}${f.outputs.map((p) => row('out', p)).join('')}</tbody></table>
-      <p class="note">Full scale: what the scope spans. Hard range: beyond it the plant stops itself (E-stop). Safe: what an input is set to when the plant stops.</p></div>`;
+    const row = (side, p) => `<li class="item ifrow" data-side="${side}" data-port="${esc(p.name)}" data-kind="${esc(p.kind)}"><span class="chip">${side}</span><span class="mono">${esc(p.name)}</span><span class="hint">${esc(p.unit)}</span><span class="mono">${range(p.fullScale, p.unit)}</span><span class="mono">${side === 'in' ? `safe ${num(p.safe, 4)} ${esc(p.unit)}` : range(p.hard, p.unit)}</span><span class="hint">${esc(p.kind)}${p.measures ? ` of ${esc(p.measures)}` : ''}</span></li>`;
+    $('#pl-iface').innerHTML = `<div class="iface"><h3 class="label">Interface<span class="mono">${esc(hit.block.name ?? hit.block.id)} · ${esc(f.mode)} mode · ${num(f.rate, 4)} Hz</span></h3>
+      <p class="note">All this page knows of the plant: what it described when it last connected. What is inside is a black box, to be identified before tuning.</p>
+      <ul class="list lcd" data-mode="${esc(f.mode)}"><li class="item ifrow hint" aria-hidden="true"><span></span><span>port</span><span>unit</span><span>full scale</span><span>hard range · safe</span><span>kind</span></li>${f.inputs.map((p) => row('in', p)).join('')}${f.outputs.map((p) => row('out', p)).join('')}</ul>
+      <p class="hint">Full scale: what the scope spans. Hard range: beyond it the plant stops itself (E-stop). Safe: what an input is set to when the plant stops.</p></div>`;
   }
 
   function renderViewProps() {
     const v = plantViews()[rep];
     const used = [...new Set((JSON.stringify(v).match(/[A-Za-z_]\w*/g) ?? []).filter((n) => app.signalNames().includes(n)))];
     $('#pl-props').innerHTML = `<h3 class="label">${esc(v.name)}</h3>
-      <p class="note">A ${v.kind === 'svg' ? 'SVG drawing' : '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}. It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>
-      <p class="note">Views are set in the plant's JSON (<code>system.plant.views</code>); the format is in design/output/plant-views.md.</p>`;
+      <p class="note">A ${v.kind === 'svg' ? 'SVG drawing' : '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}.</p>
+      ${about()}${more('view', 'Details', `<p class="note">It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>
+      <p class="note">Views are set in the plant's JSON (<code>system.plant.views</code>); the format is in design/output/plant-views.md.</p>`)}`;
+    keepOpen();
   }
+
+  const opened = new Set();
+  const more = (key, label, html) => `<details class="more" data-more="${key}"><summary class="disclosure label"><span class="chev"></span>${label}</summary>${html}</details>`;
+  const keepOpen = () => $('#pl-props').querySelectorAll('[data-more]').forEach((d) => { d.open = opened.has(d.dataset.more); });
+  $('#pl-props').addEventListener('toggle', (e) => { const k = e.target.dataset?.more; if (k) { if (e.target.open) opened.add(k); else opened.delete(k); } }, true);
+  const about = () => (app.project.notes ? more('about', 'About this system', app.project.notes.split('\n\n').map((p) => `<p class="note">${esc(p)}</p>`).join('')) : '');
 
   let compileMsg = '';
   function render() {
@@ -14003,7 +14030,8 @@ function createPlantEditor(root, app) {
     box.innerHTML = `<h3 class="label">Plant</h3>
       <p class="note"><b>Sources</b> ${names.sources.map(esc).join(', ') || 'none'} · <b>Sinks</b> ${names.sinks.map(esc).join(', ') || 'none'}</p>
       ${compileMsg ? `<p class="note text-bad">${esc(compileMsg).replace(/\n/g, '<br>')}</p>` : '<p class="note">The diagram is valid.</p>'}
-      <p class="note">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p>`;
+      ${about()}${more('edit', 'How to edit', '<p class="note">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p>')}`;
+    keepOpen();
   }
 
   function field(key, label, value, kind, hint) {
@@ -14455,7 +14483,7 @@ function createControllerTab(host, app) {
       <section class="gcol" aria-label="Parameters">
         <div class="ghead"><h3 class="label" id="ct-ptitle">Parameters</h3></div>
         <div id="ct-params" class="pform ctparams"></div>
-        <p class="note" id="ct-about"></p>
+        <details class="more" id="ct-aboutbox"><summary class="disclosure label"><span class="chev"></span>About this type</summary><p class="note" id="ct-about"></p></details>
       </section>
       <section class="gcol" aria-label="Controller library">
         <div class="ghead"><h3 class="label">Library</h3></div>
@@ -14556,6 +14584,7 @@ function createControllerTab(host, app) {
       ? def.params.map((p) => p.kind === 'choice' ? choice(`p:${p.key}`, p, v.params[p.key]) : p.table ? `<div class="pf"><span class="flabel">${esc(p.label)}</span><span class="hint mono">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
       : '<p class="note">No parameters.</p>';
     $('#ct-about').textContent = ABOUT[v.type] ?? '';
+    $('#ct-aboutbox').hidden = !ABOUT[v.type];
     $('#ct-lib').innerHTML = Object.keys(lib).filter((t) => t !== 'trajectory').map((t) => `<button class="btn btn-block btn-col" data-add="${t}" title="${esc(ABOUT[t] ?? '')}">${esc(lib[t].label)}<span class="btn-note">${esc(lib[t].summary)}</span></button>`).join('');
     bind(c);
   }
@@ -15079,7 +15108,7 @@ function createAutotuneTab(host, app, display) {
     $('#tu-plot').hidden = (s ? s.method : st.method) !== 'iterate';
     $('#tu-ptitle').textContent = s ? `Progress · ${METHODS[s.method].label}` : 'Progress';
     if (!s) {
-      $('#tu-status').innerHTML = `<span class="muted">Press Start. ${st.method === 'iterate' ? 'Each run tried sweeps across the display at the header\'s Speed; at ∞ it computes as fast as it can and shows each improvement.' : 'The display shows the experiment at the header\'s Speed, then the tuned loop.'}</span>`;
+      $('#tu-status').innerHTML = `<span class="muted" title="${st.method === 'iterate' ? 'Each run tried sweeps across the display at the header\'s Speed; at ∞ it computes as fast as it can and shows each improvement.' : 'The display shows the experiment at the header\'s Speed, then the tuned loop.'}">Press Start.</span>`;
       $('#tu-result').innerHTML = '';
       drawPlot(null);
       return;
@@ -16837,7 +16866,7 @@ function startApp() {
       + `<div class="taglegend hint">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
       + `<div class="tagfilter" role="group" aria-label="Filter by tag">${libraryTags().map((t) => chip(t)).join('')}`
       + `<span class="tagcount hint">${tagFilter.size ? `${shown.size} of ${SYSTEM_LIBRARY.length} <button type="button" class="btn btn-sm" data-tagclear>Clear</button>` : `${SYSTEM_LIBRARY.length} systems · click a tag to filter`}</span></div>`
-      + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div><div class="heading">${esc(e.name)}</div><div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="note">${esc(e.notes)}</div></div>
+      + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div><div class="heading">${esc(e.name)}</div><div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="note">${esc(e.summary)}</div>${e.notes ? `<details class="more"><summary class="disclosure label"><span class="chev"></span>Details</summary><div class="note">${e.notes.split('\n\n').map((p) => `<p>${esc(p)}</p>`).join('')}</div></details>` : ''}</div>
       <div class="sysbtns"><button class="btn btn-sm" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="btn btn-sm" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>` : '')).join('');
   }
   renderLibrary();
@@ -16881,7 +16910,7 @@ function startApp() {
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
     if (e.key === 'Escape' && display.releaseLine()) return;
-    const onControl = e.target.closest?.('button, [role="slider"], a');
+    const onControl = e.target.closest?.('button, [role="slider"], a, summary');
     if (app.tab === 'input' && !(onControl && ['Enter', ' ', 'Tab'].includes(e.key)) && generator.handleKey(e)) { e.preventDefault(); return; }
     const k = e.key.toLowerCase();
     if (k === 'r') app.toggleRun();
