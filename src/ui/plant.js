@@ -3,7 +3,8 @@
 // from the library, wired output to input, grouped into subsystems that nest,
 // and subsystems can be saved to the library. See design/output/plant-editor.md.
 
-import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames } from '../core/diagram.js';
+import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames, maskValues, formulaIn } from '../core/diagram.js';
+import { isFormula } from '../core/formula.js';
 import { SYSTEM_LIBRARY } from '../core/systems.js';
 import { num, parseSI } from './units.js';
 import { createScene } from './scene.js';
@@ -266,7 +267,7 @@ export function createPlantEditor(root, app) {
     } else if (b.type === 'gain') {
       const pts = b.flip ? `${b.x + g.w},${b.y} ${b.x + g.w},${b.y + g.h} ${b.x},${cy}` : `${b.x},${b.y} ${b.x},${b.y + g.h} ${b.x + g.w},${cy}`;
       shape = `<polygon class="body" points="${pts}"/>`;
-      text = `<text class="bp" x="${b.x + (b.flip ? g.w * 0.62 : g.w * 0.38)}" y="${cy + 4}" text-anchor="middle">${esc(num(b.params.K, 3))}</text>`
+      text = `<text class="bp" x="${b.x + (b.flip ? g.w * 0.62 : g.w * 0.38)}" y="${cy + 4}" text-anchor="middle">${esc(isFormula(b.params.K) ? b.params.K : num(b.params.K, 3))}</text>`
         + (b.name ? `<text class="bn" x="${cx}" y="${b.y - 5}" text-anchor="middle">${esc(b.name)}</text>` : '');
     } else {
       const round = ['source', 'sink', 'inport', 'outport'].includes(b.type) ? 14 : 5;
@@ -413,11 +414,28 @@ export function createPlantEditor(root, app) {
       const def = diagramBlockDef(b.type);
       let html = `<h3 class="label">${esc(def.label)}</h3><div class="pform">`;
       if (!['source', 'sink', 'inport', 'outport'].includes(b.type)) html += field('name', 'Label', b.name ?? '', 'text', 'optional');
+      // A field holding a formula in the mask's names shows it with its value
+      // here ("l1 → 0.25 m").
+      const values = maskValues(rootDiagram(), path);
+      const valueOf = (x, unit) => { const v = formulaIn(x, values); return `→ ${Number.isFinite(v) ? num(v, 4) : v > 0 ? '∞' : v < 0 ? '−∞' : '?'}${unit && unit !== '1' ? ` ${unit}` : ''}`; };
       for (const p of def.params) {
         if (p.kind === 'hidden') continue;  // set elsewhere (the External block's full scales: Live settings)
         const v = b.params[p.key];
-        const hint = p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}${p.nullable ? ` · empty: ${p.nullable}` : ''}`;
-        html += field(`p:${p.key}`, p.label, p.kind === 'vector' || Array.isArray(v) ? v.join(', ') : p.kind ? v : v === null ? '' : num(v, 6), p.kind ?? 'number', hint);
+        const formulas = Array.isArray(v) ? v.filter(isFormula) : isFormula(v) ? [v] : [];
+        const hint = formulas.length ? formulas.map((x) => `${x} ${valueOf(x, Array.isArray(v) ? '' : p.unit)}`).join(' · ') : p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}${p.nullable ? ` · empty: ${p.nullable}` : ''}`;
+        const text = p.kind === 'vector' || Array.isArray(v) ? v.map((x) => (isFormula(x) ? x : num(x, 6))).join(', ') : p.kind || isFormula(v) ? v : v === null ? '' : num(v, 6);
+        html += field(`p:${p.key}`, p.label, text, p.kind ?? 'number', hint);
+      }
+      // A masked subsystem shows its mask: the parameters every block inside
+      // reads by name.
+      if (b.mask?.length) {
+        html += `</div><h3 class="label">Mask</h3><div class="pform">`;
+        const outer = maskValues(rootDiagram(), path);
+        for (const f of b.mask) {
+          const v = b.params[f.key], range = [f.min !== undefined ? `min ${num(f.min, 6)}` : '', f.max !== undefined ? `max ${num(f.max, 6)}` : ''].filter(Boolean).join(' · ');
+          const shown = isFormula(v) ? `${v} ${(() => { const x = formulaIn(v, outer); return `→ ${Number.isFinite(x) ? num(x, 4) : x > 0 ? '∞' : '−∞'}`; })()}` : '';
+          html += field(`m:${f.key}`, `${f.label}${f.label !== f.key ? ` (${f.key})` : ''}`, isFormula(v) ? v : Number.isFinite(v) ? num(v, 6) : v > 0 ? 'inf' : '-inf', 'number', [shown, `unit: ${f.unit}`, range].filter(Boolean).join(' · '));
+        }
       }
       html += '</div><div class="pbtns">';
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="btn btn-sm" data-act="flip">Flip</button>`;
@@ -450,21 +468,42 @@ export function createPlantEditor(root, app) {
     return `<label class="pf"><span class="flabel">${esc(label)}</span><input class="field field-sm mono" data-f="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false"><span class="hint">${esc(hint)}</span></label>`;
   }
 
+  // A number typed with an SI prefix, or else a formula in the mask's names
+  // (normalizeDiagram refuses one that reads a name that is not there).
+  const numberOrFormula = (raw) => { const v = parseSI(raw); return Number.isFinite(v) ? v : /^[^<>"{}]{1,80}$/.test(raw) && isFormula(raw) ? raw : NaN; };
+  const valid = (v) => typeof v === 'string' || Number.isFinite(v);
+
+  // The wheel nudges a number field by 5 % (Shift: 1 %), as in the Controller
+  // tab; the display follows at once and the field keeps the focus.
+  function nudge(inp, e) {
+    if (inp.dataset.kind !== 'number') return;
+    const v = parseSI(inp.value.trim());
+    if (!Number.isFinite(v) || v === 0) return;
+    e.preventDefault();
+    inp.value = num(v * (e.shiftKey ? 1.01 : 1.05) ** (e.deltaY < 0 ? 1 : -1), 4);
+    const f = inp.dataset.f;
+    inp.dispatchEvent(new Event('blur'));
+    $(`#pl-props [data-f="${f}"]`)?.focus();
+  }
+
   function bindFields(b) {
     $('#pl-props').querySelectorAll('[data-f]').forEach((inp) => {
       inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } });
+      inp.addEventListener('wheel', (e) => nudge(inp, e), { passive: false });
       inp.addEventListener('blur', () => {
         if (inp.dataset.cancel) { delete inp.dataset.cancel; renderProps(); return; }
         const f = inp.dataset.f, kind = inp.dataset.kind, raw = inp.value.trim();
         if (f === 'libname') { saveName = raw; return; }
+        if (inp.value === inp.defaultValue) return;   // as rendered: a rounded number is not committed
         let value = raw;
         const nullable = f.startsWith('p:') && diagramBlockDef(b.type).params.find((p) => p.key === f.slice(2))?.nullable;
         if (kind === 'number' && raw === '' && nullable) value = null;
-        else if (kind === 'number') { value = parseSI(raw); if (!Number.isFinite(value)) { app.toast('Enter a number, e.g. 0.5, 20m, 2k.'); renderProps(); return; } }
-        if (kind === 'vector') { value = raw.split(/[\s,;]+/).filter(Boolean).map(Number); if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas, highest power of s first.'); renderProps(); return; } }
+        else if (kind === 'number') { value = numberOrFormula(raw); if (!valid(value)) { app.toast('Enter a number (0.5, 20m, 2k) or a formula in the mask\'s names (2*m).'); renderProps(); return; } }
+        if (kind === 'vector') { value = raw.split(/[\s,;]+/).filter(Boolean).map(numberOrFormula); if (!value.length || !value.every(valid)) { app.toast('Enter numbers (or formulas) separated by commas, highest power of s first.'); renderProps(); return; } }
         edit((d) => {
           const blk = d.blocks.find((x) => x.id === b.id);
           if (f === 'name') { if (raw) blk.name = raw; else delete blk.name; return; }
+          if (f.startsWith('m:')) { blk.params[f.slice(2)] = value; return; }
           const key = f.slice(2);
           if ((blk.type === 'source' && key === 'signal') || (blk.type === 'sink' && key === 'name')) { renameNamed(blk, value); return false; }
           if (blk.type === 'sum' && key === 'signs') d.wires = d.wires.filter((w) => { const t = parseEnd(w.to); return t.id !== blk.id || t.port < value.length; });
