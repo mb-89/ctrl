@@ -2,6 +2,15 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: when the Check cannot tell candidates apart, another check ([input 56](../input/2026-10-25-56-dead-time-vs-resonance-another-check.md))
+
+- What happened on the arm: it is strongly nonlinear (gravity with cos θ, friction; its gain changes 3–4× over its range), so every linear candidate misses the Check by 17–21 % (the noise would allow 99.6 %). Those misses swamp what tells a dead time from a resonance, which lies in the first ~150 ms after each push and in a small ringing; one fit % over the whole Check is blind to it, and §6.4's rule ("fewest parameters within 1 point") took the lag with 0.15 s of dead time for an arm that moves within 2 ms.
+- The person: "They are two different things ... if you run into that situation, there should be another check." Decided, all mechanical:
+  - **Onset test** (data already recorded): after each push, the time y first leaves its noise band; a candidate whose dead time is longer than that is refuted (✕ "moves before its dead time"). On the arm this removes the 0.15 s dead time at once.
+  - **A discriminating test** when two candidates still tie: from the two fitted models, the page picks the test input within the safe band (a pulse, a step, a burst at either model's characteristic frequency) on which their predictions differ most against the noise floor, runs it, and keeps the model that predicts it (model-discrimination design: Box and Hill 1967; Atkinson and Fedorov's T-optimality, 1975).
+  - The Shake's frequency response (step 8) shows the same directly: a resonance has a peak in magnitude and its phase drop near f; a dead time has a flat magnitude and a phase falling in proportion to f.
+- To be built in identification.md's steps by the Identify session, before the Shake.
+
 ## 2026-10-25 · v2.9: the benchmark weighs disturbances, judges feedforward on a smooth move, marks on five points, gates the main job, tests its weights ([input 55](../input/2026-10-25-55-benchmark-scale-disturbance-sensitivity.md))
 
 The person, after the prototype ranked Hu–Lin first on "DC motor, deadbeat" with 7.3× the PID's following error: "it can't only weigh following, it also needs to weigh disturbance reaction … feed forward doesn't gain anything on steps. That's very hard for me to believe … plus minus one is not enough … probably a 5-point scale … how would the weights have to change for a close-up to win? And is that change reasonable? … the benchmark needs to run without an LLM … just mechanical." Design only ([benchmark.md](benchmark.md) §2.5–§2.9, §13; research [../research/benchmark.md](../research/benchmark.md) §3–§5; the prototype re-run on the three systems and the deadbeat motor):
