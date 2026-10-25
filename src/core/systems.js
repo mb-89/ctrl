@@ -40,11 +40,11 @@ function fromPlant(e) {
 // of one kind in the filter row: Disturbance is slate (red is Nonlinear,
 // beside it on three cards), so XY moved to yellow. No tone is violet: in the
 // page violet means selected (design/output/design-system.md).
-const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
+const NONLINEAR = new Set(['hinge', 'saturation', 'quantizer', 'fcn', 'switch']);
 // A type's tags; a function reads the variant (a PI from the plant at one
 // level is a plain PI, at several it is scheduled).
 const VARIANT_TAGS = {
-  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', huLin: 'State feedback', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', deadbeat: 'Deadbeat', huLin: 'Variable structure', relay: 'Variable structure', slidingMode: 'Variable structure', superTwisting: 'Variable structure', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference', speedPI: 'PID',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -54,14 +54,24 @@ const TONE = {
   // LQR sits beside Disturbance (slate) on both pendulums, so it took State
   // feedback's orange, and State feedback, on no card with a disturbance
   // now that the library's gains are computed, took slate.
-  PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
-  // Seven of the eight tones are taken by controller tags: this one is set.
-  'Sliding mode': 'red',
+  PID: 'aqua', 'State feedback': 'blue', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green',
+  // A class of its own (the person, input 38): laws that switch their
+  // structure or gain with the state (a relay, sliding mode, super-twisting,
+  // Hu–Lin's variable gain). Seven of the eight tones are taken by controller
+  // tags: this one is set.
+  'Variable structure': 'red',
+  // Deadbeat takes State feedback's slate, the one controller tone on no
+  // card now that Hu–Lin is Variable structure. State feedback, back on a
+  // card with Gear backlash's Dual loop (beside Nonlinear's red and PID's
+  // aqua), takes blue, the one tone no controller tag has.
+  Deadbeat: 'slate',
   // The observers sit together on one card, beside PID (aqua) and
   // Disturbance (slate): Luenberger took blue, the Kalman filter green.
   'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
   'Controller in the plant': 'green', Agent: 'red',
+  // The PUMA's: a plant with several inputs and outputs, and a 3D view.
+  MIMO: 'slate', '3D': 'blue',
 };
 // A value without its own tone gets one from its label, so it stays put.
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];

@@ -185,15 +185,15 @@ test('a sensor whose slope changes along the swing: the gains are mapped with it
   assert.ok(plan.ok, plan.message);
   const along = alongPlan(model, plan);
   const lin = linearize(model, operatingPoint(model, 'origin'));
-  assert.ok(Math.abs(lin.C[1][2] - 1.2) < 1e-9, 'the angle\'s slope upright');
+  assert.ok(Math.abs(lin.C[1][1] - 1.2) < 1e-9, 'the angle\'s slope upright');
   const Q = [10, 50, 1, 1];
   const up = lqrDesign(lin, { Q, R: 0.1, track: 1, Ts: 0.01 });
   const Kx = tvlqrGains(along, { Q: up.Qx, R: 0.1, Pend: up.P });
   const values = planValues(model, along, Kx, { K: up.K, kr: up.kr });
   const n = 4, m = 4, k = 30;   // early in the swing: the pole still near hanging
-  const theta = along.xs[k * n + 2];
+  const theta = along.xs[k * n + 1];   // the state is x, θ, v, ω
   assert.ok(Math.abs(Math.cos(theta)) > 0.5, `θ ${theta}`);
-  const slope = along.Cy[(k * m + 1) * n + 2];
+  const slope = along.Cy[(k * m + 1) * n + 1];
   assert.ok(Math.abs(slope - (1 + 0.2 * Math.cos(theta))) < 1e-6, `slope ${slope}`);
   // K_k C_k = Kx_k: the feedback in states is the one TV-LQR designed.
   for (let c = 0; c < n; c++) {

@@ -70,7 +70,8 @@ function startApp() {
   app.redo = () => { if (!redoStack.length) return; undoStack.push(JSON.stringify(app.project)); restore(redoStack.pop()); toast('Redone'); };
 
   let saveTimer = null;
-  // A page without a project inside opens the first system of the library.
+  // A page without a project inside opens the first system of the library,
+  // its flagship (the PUMA, input 39).
   // Autosaved work belongs to the project the page opened with: when that
   // changes (a new version of the page), the old work is not restored over it.
   const startText = embeddedText || JSON.stringify(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY[0], SYSTEM_PARTS.filter((k) => SYSTEM_LIBRARY[0][k])));
@@ -363,16 +364,21 @@ function startApp() {
     app.endEdit();
     autosave();
   };
-  // Signal values at the scope's current instant, for 2D views.
-  app.sceneEnv = () => {
+  // The recorded arrays and the index of the scope's current instant, for
+  // views that draw more than one instant (a 3D view's paths); k is null
+  // when nothing is recorded yet.
+  app.sceneRecord = () => {
     const data = live?.data() ?? acquire();  // live: the sweep on the screen
     const t = display.time();
+    if (!(data?.t?.length > 1)) return { data: null, k: null, t };
+    const k = Math.max(0, Math.min(data.t.length - 1, Math.round((t - data.t[0]) / (data.t[1] - data.t[0]))));
+    return { data, k, t: data.t[k] };
+  };
+  // Signal values at the scope's current instant, for 2D views.
+  app.sceneEnv = () => {
+    const { data, k, t } = app.sceneRecord();
     const env = { t };
-    if (data?.t?.length > 1) {
-      const k = Math.max(0, Math.min(data.t.length - 1, Math.round((t - data.t[0]) / (data.t[1] - data.t[0]))));
-      env.t = data.t[k];
-      for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
-    }
+    if (data) for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
     return env;
   };
   // A Sink's new name follows into the channels that showed it.
@@ -493,6 +499,8 @@ function startApp() {
   app.speedChanged = () => autosave();
   const speed = createSpeed(app);
   app.speed = () => speed.effective();
+  app.speedSet = () => speed.set;
+  app.setSpeed = (v) => speed.setSpeed(v);
   app.timeRan = (t, seconds) => speed.ran(t, seconds);
   app.speedRender = () => speed.render();
   const display = createDisplay($('display'), {

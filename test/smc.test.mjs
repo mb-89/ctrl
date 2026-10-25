@@ -197,10 +197,10 @@ function fundamental(run) {
   return peaks(sp.f, sp.amp, { count: 1 })[0] ?? { f: 0, amp: 0 };
 }
 
-test('the sliding-mode system loads whole with its record step, its Measure channels and XY', () => {
+test('the sliding-mode system loads whole with its record step, V and i assigned but off, and XY', () => {
   const p = load(RELAY);
   assert.equal(p.sim.sampleTime, 0.00025, 'four records per controller sample');
-  assert.deepEqual(p.scope.channels.map((c) => [c.source, c.on, !!c.measure]), [['e', true, false], ['speed', true, false], ['V', false, true], ['i', false, true]]);
+  assert.deepEqual(p.scope.channels.map((c) => [c.source, c.on, !!c.measure]), [['e', true, false], ['speed', true, false], ['V', false, false], ['i', false, false]]);
   assert.deepEqual(p.scope.view, { mode: 'xy' }, 'XY without Δ: the phase portrait');
   assert.deepEqual(VARIANTS, ['Relay (theory)', 'Boundary layer', 'Super-twisting'], 'short enough for the variant list');
   const c = p.system.plant.diagram.blocks.find((b) => b.type === 'controller');
@@ -208,11 +208,12 @@ test('the sliding-mode system loads whole with its record step, its Measure chan
   // A whole load of another system takes the record step away again.
   const other = normalizeProject(applySystem(p, SYSTEM_LIBRARY.find((e) => e.name.startsWith('DC motor, position')), ['input', 'plant']));
   assert.deepEqual(other.sim, {});
-  // Measure survives saving and opening.
-  assert.equal(normalizeProject(JSON.parse(JSON.stringify(p))).scope.channels[3].measure, true);
+  // Measure, switched on, survives saving and opening.
+  const on = structuredClone(p); on.scope.channels[3].measure = true;
+  assert.equal(normalizeProject(JSON.parse(JSON.stringify(on))).scope.channels[3].measure, true);
   assert.equal(normalizeProject({ scope: { channels: [{ source: 'r', measure: 'yes' }] } }).scope.channels[0].measure, undefined, 'only true turns it on');
   const tags = ENTRY.tags.map((t) => t.label);
-  for (const want of ['Linear', 'Sliding mode', 'Disturbance', 'XY']) assert.ok(tags.includes(want), `${want} in ${tags}`);
+  for (const want of ['Linear', 'Variable structure', 'Disturbance', 'XY']) assert.ok(tags.includes(want), `${want} in ${tags}`);
   assert.equal(systemTags({ diagram: { blocks: [{ id: 'c', type: 'controller', params: {}, variants: [{ type: 'superTwisting' }] }], wires: [] } }).find((t) => t.kind === 'controller').tone, 'red');
 });
 

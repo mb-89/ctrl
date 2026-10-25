@@ -3,11 +3,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ELEMENTS, normalizeDiagram, compileDiagram, blockInputNames } from '../src/core/diagram.js';
+import { normalizeDiagram, compileDiagram, blockInputNames } from '../src/core/diagram.js';
 import { EXAMPLE_PLANTS } from '../src/core/plants.js';
 import { CONTROLLERS } from '../src/core/controllers.js';
 import { simulateSystem } from '../src/core/sim.js';
 import { normalizeReference } from '../src/core/signals.js';
+import { conicalTank, cartPole, pendulumOnCart } from '../src/core/physics.js';
 
 // Seeded uniform numbers (mulberry32), so a failure can be reproduced.
 function rng(seed) {
@@ -70,39 +71,48 @@ const REFERENCE = {
   },
 };
 
-// A block's parameters as the diagram normalises them.
-const paramsOf = (type, params) => normalizeDiagram({ blocks: [{ id: 'b', type, params }], wires: [] }).blocks[0].params;
+// An open model's rates, compiled as the plant alone (In → model → Out), in
+// the reference's state order (its states mapped by name).
+function openRates(sub, names) {
+  const el = compileDiagram(normalizeDiagram({ blocks: [{ id: 'in', type: 'inport', params: { port: 1 } }, { id: 'm', name: 'model', ...sub }, { id: 'out', type: 'outport', params: { port: 1 } }],
+    wires: [{ from: 'in', to: 'm' }, { from: 'm', to: 'out' }] }));
+  const at = names.map((nm) => el.states.findIndex((s) => s.name === nm));
+  assert.ok(at.every((i) => i >= 0), `states ${el.states.map((s) => s.name)} for ${names}`);
+  const x = new Float64Array(el.n), d = new Float64Array(el.n);
+  return { states: el.states, f: (X, o, u, dX) => { at.forEach((i, j) => { x[i] = X[o + j]; }); el.eval(0, x, 0, u, d); at.forEach((i, j) => { dX[o + j] = d[i]; }); } };
+}
 
-test('physics: ode.make equals the equations on 1000 seeded states; states are labelled', () => {
+test('physics: the open models equal the equations on 1000 seeded states, mapped by state name; states are labelled', () => {
+  const chain = (n) => ['x', ...Array.from({ length: n }, (_, i) => `θ${i + 1}`), 'v', ...Array.from({ length: n }, (_, i) => `ω${i + 1}`)];
+  const cp = (p) => ['cartPole', cartPole(p).params, cartPole(p), ['x', 'v', 'θ', 'ω']];
+  const pc = (n, p) => ['pendulumCart', { links: n, ...pendulumOnCart(n, p).params }, pendulumOnCart(n, p), chain(n)];
   const cases = [
-    ['cartPole', paramsOf('cartPole', { M: 1, m: 0.2, l: 0.5, b: 0.1 })],
-    ['pendulumCart', paramsOf('pendulumCart', { links: 1, M: 1.3, m1: 0.4, l1: 0.6, b: 0.2 })],
-    ['pendulumCart', paramsOf('pendulumCart', { links: 2, M: 0.8, m1: 0.2, l1: 0.3, m2: 0.15, l2: 0.25 })],
-    ['pendulumCart', paramsOf('pendulumCart', { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, b: 0.1 })],
-    ['conicalTank', paramsOf('conicalTank', { r0: 0.05, R: 0.5, H: 1, a: 0.1 })],
+    cp({ M: 1, m: 0.2, l: 0.5, b: 0.1 }), cp({ M: 2.5, m: 0.7, l: 1.1, b: 0.4, g: 3.7 }),
+    pc(1, { M: 1.3, m1: 0.4, l1: 0.6, b: 0.2 }), pc(2, { M: 0.8, m1: 0.2, l1: 0.3, m2: 0.15, l2: 0.25 }),
+    pc(3, { M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, b: 0.1 }), pc(3, { M: 0.6, m1: 0.3, l1: 0.4, m2: 0.05, l2: 0.2, m3: 0.2, l3: 0.35, b: 0.3 }),
+    ['conicalTank', conicalTank({ r0: 0.05, R: 0.5, H: 1, a: 0.1 }).params, conicalTank({ r0: 0.05, R: 0.5, H: 1, a: 0.1 }), ['h']],
   ];
   const rand = rng(42);
-  for (const [type, p] of cases) {
-    const { ode } = ELEMENTS[type];
-    const n = typeof ode.n === 'function' ? ode.n(p) : ode.n;
-    const f = ode.make(p), o = 3;   // an offset, as inside a larger diagram
+  let worst = 0;
+  for (const [type, p, sub, names] of cases) {
+    const open = openRates(sub, names), n = names.length, o = 3;   // an offset, as inside a larger diagram
     const X = new Float64Array(n + o), dX = new Float64Array(n + o), ref = new Float64Array(n);
-    const states = ode.states(p);
-    assert.equal(states.length, n);
+    const states = names.map((nm) => open.states.find((x) => x.name === nm));
     for (let trial = 0; trial < 1000; trial++) {
       for (let i = 0; i < n; i++) X[o + i] = states[i].angle ? rand(-2 * Math.PI, 2 * Math.PI) : states[i].unit === 'm' ? rand(-1.2, 1.2) : rand(-8, 8);
       const u = rand(-40, 40);
-      f(X, o, u, dX);
+      open.f(X, o, u, dX);
       REFERENCE[type](X.subarray(o), u, p, ref);
       const scale = Math.max(1, ...ref.map(Math.abs));
-      for (let i = 0; i < n; i++) assert.ok(Math.abs(dX[o + i] - ref[i]) <= 1e-12 * scale, `${type} (${p.links ?? ''}) state ${states[i].name}: ${dX[o + i]} vs ${ref[i]}`);
+      for (let i = 0; i < n; i++) { worst = Math.max(worst, Math.abs(dX[o + i] - ref[i]) / scale); assert.ok(Math.abs(dX[o + i] - ref[i]) <= 1e-12 * scale, `${type} (${p.links ?? ''}) state ${states[i].name}: ${dX[o + i]} vs ${ref[i]}`); }
     }
   }
-  const label = (type, p) => ELEMENTS[type].ode.states(p).map((s) => `${s.name}${s.angle ? '∠' : ''}`).join(' ');
-  assert.equal(label('cartPole', cases[0][1]), 'x v θ∠ ω');
-  assert.equal(label('pendulumCart', cases[3][1]), 'x θ1∠ θ2∠ θ3∠ v ω1 ω2 ω3');
-  assert.equal(label('conicalTank', cases[4][1]), 'h');
-  assert.deepEqual(ELEMENTS.cartPole.ode.states(cases[0][1]).map((s) => s.unit), ['m', 'm/s', 'rad', 'rad/s']);
+  // Positions, then rates; angles flagged; labels subsystem/coordinate.
+  const label = (c) => openRates(c[2], c[3]).states.map((x) => `${x.name}${x.angle ? '∠' : ''}`).join(' ');
+  assert.equal(label(cases[0]), 'x θ∠ v ω');
+  assert.equal(label(cases[4]), 'x θ1∠ θ2∠ θ3∠ v ω1 ω2 ω3');
+  assert.deepEqual(openRates(cases[0][2], cases[0][3]).states.map((x) => x.unit), ['m', 'rad', 'm/s', 'rad/s']);
+  assert.deepEqual(openRates(cases[6][2], ['h']).states.map((x) => [x.label, x.unit, x.angle]), [['model/h', 'm', false]]);
 });
 
 // A library system's diagram, normalised, to change freely.
@@ -126,23 +136,25 @@ const block = (id, type, params = {}, extra = {}) => ({ id, type, params, ...ext
 const wire = (from, to) => ({ from, to });
 
 test('model mode: the plant a block sees, reduced to what u moves and the measurements show', () => {
-  // Cart–pole: states x, v, θ, ω; measurements x, θ, v, ω; A and B at the
-  // upright origin equal the analytic Jacobian (with friction).
+  // Cart–pole: states x, θ, v, ω (positions, then rates); measurements x,
+  // θ, v, ω; A and B at the upright origin equal the analytic Jacobian (with friction).
   const pend = system('Pendulum swing-up');
-  const { M, m, l, g, b } = pend.blocks.find((x) => x.type === 'cartPole').params;
+  const { M, m, l, g, b } = pend.blocks.find((x) => x.id === 'cart').params;
   const cp = modelOf(pend);
-  assert.deepEqual(cp.states.map((s) => s.name), ['x', 'v', 'θ', 'ω']);
-  assert.deepEqual(cp.states.map((s) => s.label), ['x', 'v', 'θ', 'ω'].map((s) => `cart and pole.${s}`));
+  assert.deepEqual(cp.states.map((s) => s.name), ['x', 'θ', 'v', 'ω']);
+  assert.deepEqual(cp.states.map((s) => s.label), ['x', 'θ', 'v', 'ω'].map((s) => `cart and pole/${s}`));
   assert.deepEqual(cp.outputs.map((o) => o.label), ['x', 'θ', 'v', 'ω']);
   assert.deepEqual(cp.outputs.map((o) => o.angle), [false, true, false, false]);
   assert.equal(cp.input.label, 'F');
-  assert.deepEqual(Array.from(cp.x0), [0, 0, Math.PI, 0], 'it starts hanging');
+  assert.deepEqual(Array.from(cp.x0), [0, Math.PI, 0, 0], 'it starts hanging');
   const { A, B } = jacobian(cp, [0, 0, 0, 0], 0);
   const Aref = [[0, 1, 0, 0], [0, -b / M, -m * g / M, 0], [0, 0, 0, 1], [0, b / (M * l), (g * (M + m)) / (M * l), 0]];
   const Bref = [0, 1 / M, 0, -1 / (M * l)];
+  // The references in the order x, v, θ, ω: where each is in the state.
+  const at = [0, 2, 1, 3];
   for (let i = 0; i < 4; i++) {
-    for (let j = 0; j < 4; j++) assert.ok(Math.abs(A[i][j] - Aref[i][j]) < 1e-6, `A[${i}][${j}] = ${A[i][j]}, not ${Aref[i][j]}`);
-    assert.ok(Math.abs(B[i] - Bref[i]) < 1e-6, `B[${i}] = ${B[i]}, not ${Bref[i]}`);
+    for (let j = 0; j < 4; j++) assert.ok(Math.abs(A[at[i]][at[j]] - Aref[i][j]) < 1e-6, `A[${i}][${j}] = ${A[at[i]][at[j]]}, not ${Aref[i][j]}`);
+    assert.ok(Math.abs(B[at[i]] - Bref[i]) < 1e-6, `B[${i}] = ${B[at[i]]}, not ${Bref[i]}`);
   }
   assert.deepEqual(cp.warnings, []);
   const pel = compileDiagram(pend, 'plant', { mode: 'model' });
@@ -157,7 +169,7 @@ test('model mode: the plant a block sees, reduced to what u moves and the measur
   motor.wires.push(wire('d', 'drift'), wire('drift', 'dsum'), wire('motor:3', 'odo'), wire('odo', 'turns'));
   const mm = modelOf(normalizeDiagram(motor));
   assert.deepEqual(mm.states.map((s) => s.label), ['Motor/armature 1/(L·s + R)', 'Motor/rotor 1/Jm', 'Motor/rotor angle']);
-  assert.deepEqual(mm.outputs.map((o) => o.label), ['θ measured (Motor)']);
+  assert.deepEqual(mm.outputs.map((o) => o.label), ['θ measured']);
   const dx = new Float64Array(3), y = new Float64Array(1);
   mm.f([0, 0, 0], 1, dx);
   assert.deepEqual(Array.from(dx), [100, 0, 0], 'the armature 1/(Ls + R) with L = 10 mH, R = 1 Ω, C = 1');
@@ -175,7 +187,7 @@ test('model mode: the plant a block sees, reduced to what u moves and the measur
 
   // Tank: the pipe's dead time passes straight through and is reported.
   const tank = modelOf(system('Conical tank'));
-  assert.deepEqual(tank.states.map((s) => s.label), ['tank.h']);
+  assert.deepEqual(tank.states.map((s) => s.label), ['tank/h']);
   assert.deepEqual(tank.delay, [0.1]);
   assert.deepEqual(Array.from(tank.x0), [0.15]);
 
@@ -281,7 +293,7 @@ test('model mode: observers, dead times on the way, saturation, input names, Dea
 
   // What feeds each input, as the Controller tab shows it.
   assert.deepEqual(blockInputNames(system('Pendulum swing-up'), 'ctrl'), ['r', 'x', 'θ', 'v', 'ω']);
-  assert.deepEqual(blockInputNames(system('DC motor'), ['ctrl']), ['r', 'θ measured (Motor)']);
+  assert.deepEqual(blockInputNames(system('DC motor'), ['ctrl']), ['r', 'θ measured']);
   assert.deepEqual(blockInputNames(d, 'o'), ['ctl', 'position']);
 
   // Dead time with an empty output before L: its input at t = 0 (a pipe already flowing).

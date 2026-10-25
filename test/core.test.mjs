@@ -376,6 +376,8 @@ test('library: a short bottom line without numbers, the full description one cli
     assert.ok(e.notes.length > e.summary.length, `${e.name}: the notes are the full description`);
     const p = normalizeProject(applySystem(structuredClone(DEFAULT_PROJECT), e, ['input', 'plant', 'controller']));
     assert.equal(p.notes, e.notes, `${e.name}: a whole load keeps its description`);
+    // Measure is off by default, always (the person, input 42): a system never opens with it on.
+    assert.ok(p.scope.channels.every((c) => !c.measure), `${e.name}: opens with Measure off`);
   }
 });
 

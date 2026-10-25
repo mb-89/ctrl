@@ -470,7 +470,7 @@ test('an observer in a live loop takes parameter edits in place and keeps its es
 test('the plant ships in the bundle; the worker part of the bundle runs on its own', () => {
   const bundle = bundleScript();
   assert.ok(bundle.includes('const __HIL_FILES = {"hil_plant.py":"#!/usr/bin/env python3'));
-  for (const f of ['runme.sh', 'runme.cmd', 'runme.ps1', 'README.txt']) assert.ok(bundle.includes(`"${f}":`), f);
+  for (const f of ['runme.sh', 'runme.cmd', 'runme.ps1', 'README.md']) assert.ok(bundle.includes(`"${f}":`), f);
   // The worker gets the core modules only: no DOM is touched.
   const cut = bundle.indexOf('\n// ---- ui/');
   const core = new Function(`return ${bundle.slice(0, cut)}\nreturn __mods;\n})();`)();
@@ -488,7 +488,7 @@ test('the plant ships in the bundle; the worker part of the bundle runs on its o
 
 test('hil-plant.zip: the plant with its runme scripts, read back as a zip (by Python when it is here)', (t) => {
   assert.equal(crc32(new TextEncoder().encode('123456789')), 0xcbf43926, 'the standard CRC-32 check value');
-  const names = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README.txt'];
+  const names = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README.md'];
   const files = names.map((f) => ({ name: `hil-plant/${f}`, data: readFileSync(new URL(`../hil/${f}`, import.meta.url), 'utf8'), mode: f.endsWith('.sh') ? 0o755 : 0o644 }));
   const zip = zipFiles(files, new Date(2026, 9, 24, 12, 0, 0));
   const v = new DataView(zip.buffer);
@@ -508,7 +508,7 @@ test('hil-plant.zip: the plant with its runme scripts, read back as a zip (by Py
     ['hil-plant/runme.sh', '0o100755', '#!/bin/sh\n# '],
     ['hil-plant/runme.cmd', '0o100644', '@echo off\r\nr'],
     ['hil-plant/runme.ps1', '0o100644', "# Loop Tuner"],
-    ['hil-plant/README.txt', '0o100644', 'Loop Tuner: '],
+    ['hil-plant/README.md', '0o100644', '# Loop Tuner'],
   ]);
 });
 

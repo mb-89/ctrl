@@ -44,7 +44,7 @@
 // computation (a plan; the tab folds it away), `tune: false` one auto-tune
 // leaves alone.
 
-import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLinDesign, poleOf } from './design.js';
+import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLinDesign, speedPIDesign, deadbeatDesign, poleOf } from './design.js';
 import { DesignError } from './linearize.js';
 import { planLaw } from './planner.js';
 
@@ -70,6 +70,8 @@ const WINDUP = [
 const SHARED = ['Kff', 'Kv', 'Ka', 'aw', 'Tt', 'umin', 'umax'];
 // The energy pump of the swing-up: hand gains, shared by its two types.
 const SWING = [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 })];
+// A law that updates every k samples and holds u in between: a longer sample time, k·Ts.
+const EVERY = num('every', 'Update every', 1, { int: true, min: 1, tune: false, help: 'u is computed every k samples and held in between: a sample time of k·Ts' });
 // The weights of an LQR design.
 const WEIGHTS = [
   vec('Q', 'Weights Q', [1], { min: 0, per: 'measurement', help: 'what an error in each measurement costs, one per measurement; one value weighs them all' }),
@@ -144,7 +146,8 @@ function pidCore(Ts, u0 = 0) {
     kff = Kff; kv = Kv; ka = Ka;
     r2 = r1; r1 = rf;
     const e = rf - y;
-    const v = g.Kp * (g.b * rf - y) + I + D + ff;
+    let v = g.Kp * (g.b * rf - y) + I + D + ff;
+    if (g.uff) v += g.uff;   // a feedforward input (a Controller's ff group: speedPI)
     const u = clamp(v, g.umin, g.umax);
     if (!g.Ki) return u;
     if (g.aw === 'back') {
@@ -218,18 +221,24 @@ export const CONTROLLERS = {
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
-    params: [vec('K', 'Gains K', [1], { per: 'measurement' }), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
+    params: [vec('K', 'Gains K', [1], { per: 'measurement' }), num('kr', 'Prefilter kr', 1), PREFILTER, EVERY, ...LIMITS],
     make(p, Ts) {
       const pre = prefilter(p, Ts);
+      let k = 0, u = 0;
       return {
         step(x) {
-          let u = p.kr * pre(x[0]);
+          const rf = pre(x[0]);
+          if (k++ % (p.every ?? 1)) return u;
+          u = p.kr * rf;
           for (let i = 0; i < p.K.length; i++) u -= p.K[i] * (x[i + 1] ?? 0);
-          return clamp(u, p.umin, p.umax);
+          u = clamp(u, p.umin, p.umax);
+          return u;
         },
       };
     },
-    linear: (p) => staticLinear(p.kr, p.K, p.Tr),
+    // Updated every k samples, the law is linear at k·Ts (it reads y only
+    // then), so the loop is analysed there.
+    linear: (p, Ts) => (p.every > 1 ? { ...staticLinear(p.kr, p.K, p.Tr), Ts: p.every * Ts, note: `the law updates every ${p.every} samples: the loop is analysed at ${p.every} × Ts` } : staticLinear(p.kr, p.K, p.Tr)),
   },
   lqr: {
     // Discrete LQR at the origin of the plant the block sees, which must be an
@@ -247,6 +256,24 @@ export const CONTROLLERS = {
     },
     manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax } }),
     linear: twinLinear('lqr'),
+  },
+  deadbeat: {
+    // State feedback with every pole of the loop at z = 0, at the sample time
+    // k·Ts (design.js, deadbeatDesign): from rest, a step of r is followed in
+    // n samples exactly, n the plant's states; every state measured.
+    label: 'Deadbeat', summary: 'u = kr r − K · y, every pole at z = 0: settles in n samples',
+    designed: true, version: 1, computes: ['K', 'kr'], twin: 'stateFeedback',
+    params: [{ ...EVERY, help: 'the deadbeat runs at k·Ts and settles in n of those samples (n states); longer asks less of u' }, num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }), PREFILTER, ...LIMITS],
+    design(p, ctx) {
+      const d = deadbeatDesign(ctx.linearize('origin'), { track: p.track, Ts: (p.every ?? 1) * ctx.Ts, umin: p.umin, umax: p.umax });
+      return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
+    },
+    make(p, Ts, values) {
+      if (!values) return OFF;
+      return CONTROLLERS.stateFeedback.make(CONTROLLERS.deadbeat.manual(p, values).params, Ts);
+    },
+    manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, every: p.every, umin: p.umin, umax: p.umax } }),
+    linear: twinLinear('deadbeat'),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -293,6 +320,39 @@ export const CONTROLLERS = {
         : { type: 'gainScheduled', params: { at: [...values.at], Kp: [...values.Kp], Ki: [...values.Ki], ...common } };
     },
     linear: twinLinear('scheduledPI'),
+  },
+  speedPI: {
+    // A PI speed loop per lane of a Controller (robot.md §5): r the speed
+    // target, y the measured speed, ff a feedforward input added to u inside
+    // the limits (as an industrial PIDE's FF input), with gain Kf. Kv and Ki
+    // put a double pole at ω (ζ 1) on the plant each lane sees at the start
+    // state, u0 holds that state (design.js, speedPIDesign). limit: ±u per
+    // lane, 0 none.
+    label: 'Speed PI from the plant', summary: 'u = Kv e + Ki ∫e + Kf·ff, Kv, Ki from the plant',
+    designed: true, version: 1, computes: ['Kv', 'Ki', 'u0'],
+    params: [
+      num('omega', 'Bandwidth ω', 30, { unit: 'rad/s', positive: true, help: 'the double pole the speed loop gets' }),
+      num('zeta', 'Damping ζ', 1, { positive: true }),
+      num('Kf', 'Feedforward Kf', 1, { help: 'the gain on the ff input; 0 leaves it out' }),
+      { key: 'integral', label: 'Integral', default: 'on', kind: 'choice', options: { on: 'on: PI', off: 'off: P only' } },
+      vec('limit', 'Limit ±u', [0], { min: 0, per: 'lane', help: 'per lane, or one for all; 0: none' }),
+      ...WINDUP,
+    ],
+    design: (p, ctx) => speedPIDesign(p, ctx),
+    make(p, Ts, values) {
+      if (!values) return OFF;
+      const core = pidCore(Ts, values.u0);
+      const lim = (p.limit[(values.lane || 1) - 1] ?? p.limit[0]) || Infinity;
+      const g = { Kp: values.Kv, Ki: values.Ki, Kd: 0, Tf: 0, b: 1, umin: -lim, umax: lim, aw: p.aw, Tt: p.Tt, uff: 0 };
+      return { step: (x) => { g.uff = p.Kf * (x[2] ?? 0); return core(x[0], x[1] ?? 0, g); } };
+    },
+    linear(p, Ts, at, values) {
+      if (!values) throw noDesign('speedPI');
+      const m = at?.y?.length || 1;
+      const lin = pidLinear({ Kp: values.Kv, Ki: values.Ki, Kd: 0, Tf: 0, b: 1 }, Ts, m);
+      if (m >= 2) lin.D[0][2] = p.Kf;
+      return lin;
+    },
   },
   pidFF: {
     // A PID whose reference feedforward is computed from the plant this block

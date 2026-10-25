@@ -65,7 +65,7 @@ test('LQR from the plant reproduces the gains the library held, to 0.1 %; it ref
   }
   // What the status says, and that it carries no numbers into JSON.
   const st = statusOf(project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1)]));
-  assert.equal(st.seen, 'F → x, θ, v, ω · 4 states (x, v, θ, ω)');
+  assert.equal(st.seen, 'F → x, θ, v, ω · 4 states (x, θ, v, ω)');
   assert.equal(st.at, 'origin (all states 0, u = 0)');
   assert.deepEqual(st.rows[0].labels, ['x', 'θ', 'v', 'ω']);
   assert.equal(st.rows[1].note, 'x follows r');
@@ -219,7 +219,7 @@ test('designs resolve observers first: a Controller looks through a designed obs
     const el = compileDiagram(normalizeDiagram(d), 'plant', { standalone: true, designs: createDesignStore() });
     assert.deepEqual(el.designs.map((s) => [s.path, s.status]), [['obs', 'ok'], ['ctrl', 'ok']]);
     // u is named by the Sink that records it, for an Observer as for a Controller.
-    assert.equal(el.designs[0].seen, 'F → x, θ · 4 states (x, v, θ, ω)');
+    assert.equal(el.designs[0].seen, 'F → x, θ · 4 states (x, θ, v, ω)');
     const direct = statusOf(project('Pendulum swing-up', [lqr([10, 50, 1, 1], 0.1)]));
     assert.deepEqual(el.designs[1].values.K, direct.values.K);
   } finally { delete OBSERVERS.truth; }
@@ -230,7 +230,7 @@ test('scheduledPI: pole cancellation from the tank at each level reproduces the 
   // PI for a closed loop of time constant Tcl has Kp = A(h) / Tcl and
   // Ki = a √(2g) / (2 √h Tcl); u0 = a √(2g h0) balances the outlet at the start.
   const p = project('Conical tank');
-  const tank = p.system.plant.diagram.blocks.find((b) => b.type === 'conicalTank').params;
+  const tank = p.system.plant.diagram.blocks.find((b) => b.id === 'tank').params;
   const A = (h) => Math.PI * (tank.r0 + ((tank.R - tank.r0) * Math.min(h, tank.H)) / tank.H) ** 2;
   const rel = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol * Math.abs(b), `${what}: ${a}, not ${b}`);
   // The top level is 0.95 m: at the brim, 1 m, the tank overflows (below).
@@ -254,7 +254,7 @@ test('scheduledPI: pole cancellation from the tank at each level reproduces the 
   // comes in beyond it overflows): a kink, so no PI is designed there.
   const brim = statusOf(project('Conical tank', [{ type: 'scheduledPI', params: { at: [0.5, 1], umin: 0, umax: 3 } }]));
   assert.equal(brim.error.code, 'kink');
-  assert.match(brim.error.message, /^pole cancellation needs slopes, and the plant has a kink at h = 1 m, q = 0\.443: the slope of the rate of tank\.h along tank\.h differs left and right/);
+  assert.match(brim.error.message, /^pole cancellation needs slopes, and the plant has a kink at h = 1 m, q = 0\.443: the slope of the rate of tank\/h along tank\/h differs left and right/);
   assert.deepEqual(st.rows[0].head, ['h (m)', 'q', 'K', 'τ (s)', 'Kp', 'Ki']);
   assert.deepEqual(st.rows[0].table.map((row) => row.slice(4)), at.map((_, i) => [Kp[i], Ki[i]]));
   assert.deepEqual(st.rows[1], { label: 'dead time θ', value: 0.1, note: 's, left out' });
@@ -276,7 +276,7 @@ test('scheduledPI: pole cancellation from the tank at each level reproduces the 
   assert.match(high.error.message, /^holding h = 0\.98 m needs q = 0\.438, above u max 0\.4$/);
   const motor = statusOf(project('DC motor', [{ type: 'scheduledPI', params: { at: [1] } }]));
   assert.equal(motor.error.code, 'integrating-plant');
-  assert.match(motor.error.message, /θ measured \(Motor\) integrates V/);
+  assert.match(motor.error.message, /θ measured integrates V/);
   assert.throws(() => normalizeVariant({ type: 'scheduledPI', params: { at: [0.5, 0.2] } }), /the At values must increase/);
   assert.throws(() => normalizeVariant({ type: 'scheduledPI', params: { Tcl: 0 } }), /Tcl: above 0/);
   // A closed loop faster than the pipe's dead time and half a sample allow
@@ -311,7 +311,7 @@ test('swingUpLqr: the catch is LQR from the plant; it needs the cart–pole\'s x
   assert.ok(Math.abs(st.values.l - 0.5) < 1e-6 && Math.abs(st.values.g - 9.81) < 1e-5, `l ${st.values.l}, g ${st.values.g}`);
   assert.deepEqual(st.rows.at(-1).labels, ['l', 'g']);
   const longer = project('Pendulum swing-up');
-  longer.system.plant.diagram.blocks.find((b) => b.type === 'cartPole').params.l = 0.8;
+  longer.system.plant.diagram.blocks.find((b) => b.id === 'cart').params.l = 0.8;
   const lv = statusOf(longer).values;
   assert.ok(Math.abs(lv.l - 0.8) < 1e-6 && Math.abs(lv.g - 9.81) < 1e-5, `l ${lv.l}, g ${lv.g}`);
   assert.deepEqual(CONTROLLERS.swingUpLqr.manual(ctrlOf(longer).variants[0].params, lv).params.l, lv.l);
@@ -359,7 +359,8 @@ test('guard: the library stores inputs only, never numbers computed from a plant
     // person chooses, as a PID's gains are. (The library's super-twisting
     // k2 = 44 is Levant's 1.1·L/β with the motor's β, a guessed L: derived
     // from the plant, an open question for the person; roadmap.) A finite
-    // difference holds only its rate filter's Tf, nothing of the plant.
+    // difference's rate filter (the PUMA's encoders, Tf 0) is a sensor
+    // choice, not a number from the plant.
     // Gear backlash's Dual loop is a PD whose damping reads the motor's
     // speed: state feedback holding the PD's hand gains.
     assert.ok(lib[v.type].designed || ['pid', 'off', 'slidingMode', 'superTwisting', 'difference'].includes(v.type) || v.name === 'Dual loop', `${v.name}: ${v.type} holds numbers; use a designed type`);
@@ -444,7 +445,7 @@ test('trajectory: Q, R and start re-run the gains, never the plan; T and the lim
 test('trajectory: verified as it runs, from t = 0 through start; the force it may use each way', () => {
   // The single cart–pole, planned from θ = 2 rad (not at rest: it falls).
   const p = project('Pendulum swing-up', [{ name: 'plan', type: 'trajectory', params: { T: 2.4, Q: [10, 50, 1, 1], R: 0.1, umin: -25, umax: 25 } }]);
-  p.system.plant.diagram.blocks.find((b) => b.type === 'cartPole').params.theta0 = 2;
+  p.system.plant.diagram.blocks.find((b) => b.id === 'cart').params.theta0 = 2;
   const store = createDesignStore();
   const now = statusOf(p, store);
   assert.equal(now.status, 'ok', now.warnings.join(' | '));

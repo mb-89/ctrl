@@ -13,6 +13,7 @@
 //   kalmanDesign(lin, { Q, R, Ts, outputs })       the steady-state Kalman filter of an Observer
 //   placedDesign(lin, { w, Ts, outputs })          a Luenberger observer with its error poles placed
 //   huLinDesign(p, ctx)                            LQR gains on nested ellipsoids, for the Hu–Lin variable gain
+//   deadbeatDesign(lin, { track, Ts, umin, umax })  state feedback with every pole at z = 0
 
 import { c2d, dlqr, dlqe, eig, solve, inv, rank, mul, transpose, equilibrate, tzeros } from './linalg.js';
 import { DesignError, operatingPoint, linearize, firstOrderFit, pathRealisation, refuseKinks } from './linearize.js';
@@ -127,10 +128,17 @@ export function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 
     const lins = new Map();
     const ctx = {
       Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs, outputs: block.outputs,
+      lane: block.lane ?? 0, lanes: block.lanes ?? 1, ff: !!block.ff,
       // The plant this block sees (a Model), looking through designed observers.
       model() {
         if (!used.model) used.model = compiled().seen(block.idPath, seeThrough.size ? { seeThrough } : {});
         return used.model;
+      },
+      // The plant lane k (1-based) of the same Controller sees, the other
+      // lanes holding 0 (a trim over all lanes at once: speedPIDesign).
+      laneModel(k) {
+        if (!block.lane) throw new Error(`${block.idPath}: not a lane of a Controller`);
+        return compiled().seen(block.idPath.replace(/\[\d+\]$/, `[${k}]`), seeThrough.size ? { seeThrough } : {});
       },
       // The linear model at an operating point ('origin' unless named).
       linearize(op = 'origin', limits = {}) {
@@ -240,6 +248,9 @@ export function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 
       // The heavy jobs this compile asked for (async: the newest wins).
       const asked = new Set();
       return {
+        // A hand observer looked through (a finite difference: diagram.js
+        // differenceSees): its estimates read the states they stand for.
+        see(idPath, stateIndex) { seeThrough.set(idPath, stateIndex); },
         resolve(block, variant, lib) {
           const def = lib[variant.type];
           // The names it labels its rows with (u, the measurements) are in the
@@ -365,6 +376,8 @@ export function defaultDesigns() { return fallback ?? SYNC_DESIGNS; }
 
 // A state for sentences: 'ω (cart and pole)', or its label.
 function stateText(s) {
+  // 'cart.v' (a block's state) or a mechanism's 'cart and pole/ω': 'ω (cart and pole)'.
+  if (s.group) return `${s.name} (${s.group})`;
   return s.label.endsWith(`.${s.name}`) ? `${s.name} (${s.label.slice(0, -s.name.length - 1)})` : s.label;
 }
 
@@ -497,6 +510,54 @@ export function huLinDesign(p, ctx) {
   ];
   const values = { m, N, eps, K: designs.flatMap((d) => d.K), S: S.flatMap((x) => x.flat()), ys, us };
   return { values, rows, warnings };
+}
+
+// The speed PI of one lane of a Controller (robot.md §5, §10), from the
+// plant that lane sees at its start state: b = ∂ẏ/∂u, the acceleration of
+// the measured speed per unit u (for a robot joint the inverse of its
+// effective inertia, rotors included), then Kv = 2ζω/b and Ki = ω²/b (a
+// double pole at ω with ζ 1). u0 is the trim of all lanes at once (the
+// torques that hold the start state: a joint's gravity needs all six
+// together) minus Kf times what the ff input reads there, so the loop
+// starts in balance. Measurement 1 must be one state of the plant (looked
+// through a finite difference), measurement 2 the ff input when the block
+// has one.
+export function speedPIDesign(p, ctx) {
+  const mdl = ctx.model(), out = mdl.outputs[0];
+  const yName = ctx.inputs[1] ?? 'y';
+  if (!mdl.n || out?.state === undefined) throw new DesignError('not-a-rate', `${yName} is no state of the plant this lane sees: speedPI needs a measured speed`, 'wire the joint\'s speed (a finite difference of its angle) to input 2');
+  const rateOf = (m, s, u) => { const f = new Float64Array(m.n); m.f(m.x0, u, f); return f[s]; };
+  const bOf = (m) => { const s = m.outputs[0].state, c = m.outputs[0].slope; return (c * (rateOf(m, s, 1) - rateOf(m, s, -1))) / 2; };
+  const b = bOf(mdl);
+  if (!(Math.abs(b) > 1e-12)) throw new DesignError('not-a-rate', `${yName} does not accelerate with ${mdl.input.label} (∂ẏ/∂u = 0): speedPI needs a measured speed`, 'wire the joint\'s speed to input 2');
+  const Kv = (2 * p.zeta * p.omega) / b, Ki = p.integral === 'on' ? (p.omega * p.omega) / b : 0;
+  // The trim over all lanes: B·u = −a0 on the measured speeds' rates.
+  const n = ctx.lanes, lane = ctx.lane || 1;
+  let u0 = 0;
+  const warnings = [];
+  if (n > 1) {
+    const ms = Array.from({ length: n }, (_, k) => (k + 1 === lane ? mdl : ctx.laneModel(k + 1)));
+    if (ms.some((m) => m.n !== mdl.n || m.outputs[0].state === undefined)) throw new DesignError('not-a-rate', `every lane needs a measured speed of the same plant to trim the start state`, 'wire each lane\'s speed to input 2');
+    const rows = ms.map((m) => m.outputs[0].state);
+    const a0 = rows.map((s) => rateOf(mdl, s, 0));
+    const B = rows.map((s) => ms.map((m) => (rateOf(m, s, 1) - rateOf(m, s, -1)) / 2));
+    try { u0 = solve(B, a0.map((v) => -v))[lane - 1]; } catch { warnings.push('u0 = 0: no torques hold the start state'); }
+  } else {
+    const s = out.state;
+    u0 = -rateOf(mdl, s, 0) / (b / out.slope);
+  }
+  let ff0 = 0;
+  if (ctx.ff && mdl.m > 1) { const y = new Float64Array(mdl.m); mdl.y(mdl.x0, u0, y); ff0 = y[mdl.m - 1]; }
+  u0 -= p.Kf * ff0;
+  if (Math.abs(u0) < 1e-9 * Math.max(1, Math.abs(ff0))) u0 = 0;
+  const unit = mdl.input.label;
+  const rows = [
+    { label: 'b', value: b, note: `∂${yName}/∂t per unit ${unit}, at the start state` },
+    { label: 'Kv', value: Kv, note: '2ζω/b' },
+    { label: 'Ki', value: Ki, note: p.integral === 'on' ? 'ω²/b' : 'integral off' },
+    { label: 'u0', value: u0, note: p.Kf ? 'the trim less what the ff input gives at the start' : 'the trim: what holds the start state' },
+  ];
+  return { values: { Kv, Ki, u0, b, lane }, rows, warnings, at: 'the start state' };
 }
 
 // The pole of a pendulum on a cart, from the plant's linearisation at the
@@ -704,6 +765,88 @@ export function placedDesign(lin, { w, Ts, outputs = lin.n }) {
     { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
   ];
   return { values: res.values, rows, warnings: res.warnings, quality: res.quality };
+}
+
+// Deadbeat state feedback (design/research/deadbeat.md) at the origin of
+// lin, for the law u = kr·r − K·y at the sample time Ts it is computed at:
+// every pole of the loop at z = 0, so (Ad − Bd Kx)ⁿ = 0 and from rest the
+// state reaches its new rest after a step of r in n samples, exactly (on
+// the linear plant), and stays there between samples too (a state at rest,
+// u constant: no intersample ripple). Ackermann's formula with φ(z) = zⁿ:
+// Kx = eₙᵀ Wc⁻¹ Adⁿ, Wc = [Bd, Ad Bd, …, Adⁿ⁻¹ Bd]; checked by Kx itself
+// (Acl ⁿ must vanish against Adⁿ, or the refusal says why not). Needs every
+// state measured, as lqrDesign; K = Kx C⁻¹ in measurement order, kr as
+// there. A dead time is refused: its delayed inputs are states this law
+// does not feed back, so no K places their poles. umin, umax: the limits,
+// for the largest step of r that stays inside them.
+// Returns { K, kr, Kx, Ad, Bd, u, steps, rows, warnings }; u is the input
+// sequence of a unit step of r from rest (n values, then the rest's).
+export function deadbeatDesign(lin, { track = 1, Ts, umin = -Infinity, umax = Infinity }) {
+  const { n, m, states, outputs } = lin;
+  const labels = outputs.map((o) => o.label);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this block sees has ${n} states; deadbeat here handles up to 40`);
+  if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')})`, lin.warnings.join('; ') || 'wire the controller output to the plant, and the plant to the measurements');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'deadbeat is designed at the origin, which must be an equilibrium with u = 0');
+  refuseKinks(lin, 'deadbeat');
+  const dead = (lin.delay ?? []).flatMap((d, k) => (d > 0 ? [`${fmt(d)} s on ${labels[k]}`] : []));
+  if (dead.length) throw new DesignError('dead-time', `deadbeat places every pole of the loop at z = 0, but the dead time (${and(dead)}) holds inputs this law does not see, so it cannot place theirs`, 'remove the dead time, or use LQR or a PID, which tolerate it');
+  const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
+  if (direct.length) throw new DesignError('states-not-measured', `deadbeat needs measurements of states; ${direct.join(', ')} depends on ${lin.input.label} directly`, 'feed back states only (a Sink of u is fine, an input of the controller is not)');
+  if (m !== n || rank(equilibrate(lin.C).M) < n) {
+    const sole = lin.C.map((row) => { const nz = row.flatMap((v, j) => (Math.abs(v) > 1e-9 ? [j] : [])); return nz.length === 1 ? nz[0] : -1; });
+    const seen = [...new Set(sole.filter((j) => j >= 0))].map((j) => states[j]), missing = states.filter((_, j) => !sole.includes(j));
+    if (missing.length && m <= n) throw new DesignError('states-not-measured', `deadbeat state feedback needs every state measured. This block sees ${seen.length ? seen.map((s) => s.name).join(', ') : 'none of them'} but not ${and(missing.map(stateText))}.`, `wire ${and(missing.map((s) => s.name))} to ${missing.length > 1 ? 'inputs' : 'an input'}`);
+    throw new DesignError('states-not-measured', `deadbeat needs exactly one measurement per state: this block has ${m} measurement${m === 1 ? '' : 's'} (${labels.join(', ')}) for ${n} state${n === 1 ? '' : 's'} (${states.map((s) => s.name).join(', ')})`, 'measure each state once');
+  }
+  if (!(Number.isInteger(track) && track >= 0 && track <= m)) throw new DesignError('bad-track', `r applies to measurement ${track}; this block has ${m} (${labels.join(', ')}); 0 for none`);
+
+  const { Ad, Bd } = c2d(lin.A, lin.B, Ts);
+  // Wc's columns Bd, Ad Bd, …, as rows; wᵀ Wc = eₙᵀ.
+  const cols = [Bd.map((b) => b[0])];
+  for (let k = 1; k < n; k++) cols.push(Ad.map((row) => row.reduce((s, a, j) => s + a * cols[k - 1][j], 0)));
+  const { M: S } = equilibrate(transpose(cols));
+  if (rank(S, 1e-10 * Math.max(...S.map((r) => Math.hypot(...r)))) < n) throw new DesignError('not-controllable', `${lin.input.label} cannot steer every state of the plant this block sees (${states.map((s) => s.name).join(', ')}) on its own: some combination of them moves the same whatever ${lin.input.label} does, and deadbeat must bring each one to rest, so no K places all ${n} poles at z = 0`, 'check the wiring: parts that u drives alike cannot be steered apart');
+  let An = Ad;
+  for (let k = 1; k < n; k++) An = mul(An, Ad);
+  const w = solve(cols, Array.from({ length: n }, (_, i) => (i === n - 1 ? 1 : 0)));
+  const Kx = An[0].map((_, j) => w.reduce((s, wi, i) => s + wi * An[i][j], 0));
+  const Acl = Ad.map((row, i) => row.map((v, j) => v - Bd[i][0] * Kx[j]));
+  // The check: Aclⁿ = 0 (its eigenvalues are no test: a nilpotent matrix's
+  // come out near ε^(1/n), not 0).
+  let N = Acl;
+  for (let k = 1; k < n; k++) N = mul(N, Acl);
+  const size = (M) => Math.max(...M.flat().map(Math.abs));
+  const left = size(N) / Math.max(1, size(An));
+  if (!(left < 1e-6)) throw new DesignError('ill-conditioned', `the poles did not all land at z = 0 (${fmt(left)} of the plant's motion is left after ${n} samples): u moves some state too weakly at this sample time`, 'take a longer sample time (Update every), or use LQR');
+  const K = solve(transpose(lin.C), Kx);
+  let kr = 0;
+  const warnings = [];
+  if (track) {
+    const xs = solve(Acl.map((row, i) => row.map((v, j) => (i === j ? 1 : 0) - v)), Bd.map((b) => b[0]));
+    const g = lin.C[track - 1].reduce((s, c, j) => s + c * xs[j], 0);
+    if (Math.abs(g) > 1e-12) kr = 1 / g;
+    else warnings.push(`${labels[track - 1]} has no static gain from r in this loop: kr = 0`);
+  }
+  const sensed = labels.filter((_, k) => lin.sensors?.[k] && (lin.sensors[k].std > 0 || lin.sensors[k].q > 0));
+  if (sensed.length) warnings.push(`quantisers and noise on ${sensed.join(', ')} are not in this design`);
+  // A unit step of r from rest: n inputs, then the one that holds the rest.
+  const u = [];
+  let x = new Array(n).fill(0);
+  for (let k = 0; k <= n; k++) {
+    const uk = kr - Kx.reduce((s, c, j) => s + c * x[j], 0);
+    u.push(Math.abs(uk) < 1e-12 * Math.abs(kr) ? 0 : uk);
+    x = Ad.map((row, i) => row.reduce((s, a, j) => s + a * x[j], 0) + Bd[i][0] * uk);
+  }
+  // The largest positive step of r whose inputs all stay inside the limits.
+  const room = Math.min(...u.map((v) => (v > 0 ? umax / v : v < 0 ? umin / v : Infinity)));
+  const rows = [
+    { label: 'K', value: K, labels },
+    { label: 'kr', value: kr, note: track ? `${labels[track - 1]} follows r` : 'r is not used' },
+    { label: 'settles in', value: Number((n * Ts).toPrecision(12)), note: `s: ${n} samples of ${fmt(Ts)} s, every pole at z = 0` },
+    { label: 'u, unit step', value: u.slice(0, n), labels: u.slice(0, n).map((_, k) => `u${k}`), note: `per unit of r; then ${fmt(u[n])}` },
+    ...(Number.isFinite(room) && room > 0 ? [{ label: 'largest step', value: room, note: `of r inside the limits; a larger one is clipped and takes longer than ${n} samples` }] : []),
+  ];
+  return { K, kr, Kx, Ad, Bd, u, steps: n, rows, warnings };
 }
 
 // The low-frequency inverse of a path (pathRealisation): G(s) = N(s)/P(s)

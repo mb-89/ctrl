@@ -136,8 +136,8 @@ test('kalman: inputs only in a file; the Luenberger twin runs bit for bit; refus
 });
 
 test('kalman look-through: LQR on the estimates designs the same K as on the states, and the loop holds', () => {
-  // The cart–pole: the Observer measures x and θ and estimates x, v, θ, ω;
-  // the Controller runs LQR on the four estimates (state order).
+  // The cart–pole: the Observer measures x and θ and estimates x, θ, v, ω;
+  // the Controller runs LQR on the four estimates (state order: positions, then rates).
   const p = normalizeProject(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY.find((s) => s.name.startsWith('Pendulum')), ['input', 'plant']));
   p.scope.timebase = autoTimebase(p);
   const d = p.system.plant.diagram;
@@ -148,7 +148,7 @@ test('kalman look-through: LQR on the estimates designs the same K as on the sta
     return compileDiagram(p.system.plant.diagram, 'plant', { standalone: true, designs: createDesignStore() }).designs[0];
   };
   const onStates = direct([10, 50, 1, 1]);   // measurements x, θ, v, ω
-  ctrl.variants = [normalizeVariant({ name: 'LQR', type: 'lqr', params: { Q: [10, 1, 50, 1], R: 0.1, umin: -25, umax: 25 } })];
+  ctrl.variants = [normalizeVariant({ name: 'LQR', type: 'lqr', params: { Q: [10, 50, 1, 1], R: 0.1, umin: -25, umax: 25 } })];
   d.blocks.find((b) => b.id === 'cart').params.theta0 = 0.1;
   d.blocks.push({ id: 'obs', type: 'observer', name: 'estimator', params: { inputs: 3, outputs: 4, Ts: 0.01 }, variants: [{ type: 'kalman', params: { Q: [1] } }], x: 200, y: 300 });
   d.wires = d.wires.filter((w) => !w.to.startsWith('ctrl:'));
@@ -158,12 +158,12 @@ test('kalman look-through: LQR on the estimates designs the same K as on the sta
   const res = evaluateSystem(p, { designs: createDesignStore() });
   const [obs, lqr] = res.info.designs;
   assert.deepEqual([obs.path, obs.status, lqr.path, lqr.status], ['obs', 'ok', 'ctrl', 'ok']);
-  assert.deepEqual(obs.rows[0].value, ['x', 'v', 'θ', 'ω']);
-  assert.equal(lqr.seen, 'F → x̂1, x̂2, x̂3, x̂4 · 4 states (x, v, θ, ω)');
+  assert.deepEqual(obs.rows[0].value, ['x', 'θ', 'v', 'ω']);
+  assert.equal(lqr.seen, 'F → x̂1, x̂2, x̂3, x̂4 · 4 states (x, θ, v, ω)');
   assert.ok(obs.warnings.includes('no sensor block on x: R = 1'));
-  // The same gains, in the estimates' order (x, v, θ, ω) instead of x, θ, v, ω.
+  // The same gains: the estimates' order (x, θ, v, ω) is the measurements'.
   const K = onStates.values.K;
-  [K[0], K[2], K[1], K[3]].forEach((k, i) => rel(lqr.values.K[i], k, 1e-9, `K[${i}]`));
+  [K[0], K[1], K[2], K[3]].forEach((k, i) => rel(lqr.values.K[i], k, 1e-9, `K[${i}]`));
   rel(lqr.values.kr, onStates.values.kr, 1e-9, 'kr');
   // From 0.1 rad off upright, the loop on the estimates holds the pole.
   const n = res.t.length - 1;

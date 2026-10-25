@@ -17,6 +17,17 @@ function Stop-WithMessage([string]$text) {
 }
 try {
   Set-Location $PSScriptRoot
+  # --help installs nothing: the plant's options, from whatever Python is here.
+  if ($args -contains '--help' -or $args -contains '-h') {
+    Write-Host 'runme [options]: installs uv if it is missing, then starts the plant (hil_plant.py) with these options;'
+    Write-Host 'with none, the default model with its physics varied by up to 15 %.'
+    Write-Host ''
+    if (Get-Command python -ErrorAction SilentlyContinue) { python hil_plant.py --help }
+    elseif (Get-Command uv -ErrorAction SilentlyContinue) { uv run --python-preference only-managed hil_plant.py --help }
+    else { Write-Host '(Python is not installed yet: run runme once, or read README.md, for the options.)' }
+    if ($env:RUNME_FROM_CMD -ne '1') { Read-Host 'Press Enter to close' | Out-Null }
+    exit 0
+  }
   $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
   if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host 'Installing uv, the Python runner (https://docs.astral.sh/uv/) ...'

@@ -173,7 +173,10 @@ test('the plant script: both modes describe the library systems, any model, and 
   for (const name of ['"R"', '"J"', '"mgl"', '"Tc"', 'seed', 'motor', 'pendulum', 'Oven', 'tank']) assert.ok(!raw.includes(name), `describe does not say ${name}`);
   // --list names every model; the model, the seed and --show-params are for the person at the plant, in --help.
   const list = py(['--list']);
-  for (const e of SYSTEM_LIBRARY.filter((s) => !s.plant.diagram.blocks.some((b) => b.type === 'external'))) assert.ok(list.includes(`${e.name}: in `), e.name);
+  // (but those with vector wires, which the simulator does not offer: robot.md §13)
+  const { EXAMPLE_PLANTS } = await import('../src/core/plants.js');
+  const vectors = new Set(EXAMPLE_PLANTS.filter((e) => e.vectors).map((e) => e.name));
+  for (const e of SYSTEM_LIBRARY.filter((s) => !vectors.has(s.name) && !s.plant.diagram.blocks.some((b) => b.type === 'external'))) assert.ok(list.includes(`${e.name}: in `), e.name);
   const help = py(['--help']);
   for (const opt of ['--model', '--random', '--list', '--detail', '--dyno', '--core', '--mode', '--vary', '--seed', '--show-params', '--log', '--bench', '--no-gui', '--slew']) assert.ok(help.includes(opt), opt);
   assert.match(refusal(['--plant', 'heater']), /--plant is gone: .*--model "Oven, badly tuned"/);

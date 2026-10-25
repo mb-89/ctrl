@@ -38,7 +38,7 @@ const GOAL_ABOUT = 'The cost of one run: the error r − y (IAE, ITAE or ISE), p
 
 export function createAutotuneTab(host, app, display) {
   // Settings of this page session (not saved in the project).
-  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', simc: 'tight', amplitude: 0.1, maxIter: 60, feedforward: false };
+  const st = { target: null, method: 'iterate', goal: { ...GOAL }, rule: 'tl', simc: 'tight', amplitude: 0.1, maxIter: 60, feedforward: false, unlimited: false };
   let job = null;   // the run in progress
   let shown = null; // what the progress column shows: the current or last run
 
@@ -63,6 +63,7 @@ export function createAutotuneTab(host, app, display) {
       </section>
       <section class="gcol tuprogress" aria-label="Progress">
         <div class="ghead"><h3 class="label" id="tu-ptitle">Progress</h3>
+          <button type="button" class="btn btn-sm" id="tu-fast" aria-pressed="false" title="Pressed, the tune runs at unlimited speed (Speed ∞ in the header) and the speed set before comes back when it ends. Not offered with a live plant: it runs in real time.">Unlimited speed</button>
           <button class="btn btn-sm" id="tu-start">Start</button></div>
         <div class="note tustatus" id="tu-status" role="status"></div>
         <canvas class="tuplot" id="tu-plot" aria-label="Cost against iteration"></canvas>
@@ -195,6 +196,11 @@ export function createAutotuneTab(host, app, display) {
     b.textContent = job ? 'Stop' : 'Start';
     b.className = `btn btn-sm${job ? ' btn-danger' : ''}`;
     b.disabled = !job && !!(why ?? whyNot(ctx, st.method));
+    // Unlimited speed only where the speed can be raised (a live plant holds 1×).
+    const fast = $('#tu-fast');
+    fast.hidden = !!app.speedLock?.();
+    fast.setAttribute('aria-pressed', String(st.unlimited));
+    fast.disabled = !!job;
   }
 
   // ---- Running ------------------------------------------------------------
@@ -228,6 +234,9 @@ export function createAutotuneTab(host, app, display) {
       timer: 0, lookTimer: 0, improveTimer: 0, improvedAt: 0, stepMs: 0, queue: [], playing: false,
       edit: false, ran: false, swept: false, showing: false, applied: Infinity, runs: 0, bests: [display.data], seenBest: null, bestRun: null,
     };
+    // Unlimited speed (the person, input 45): the header's Speed goes to ∞ for
+    // the run and back to what it was when the run ends.
+    if (st.unlimited && !app.speedLock?.() && app.speedSet() !== AS_FAST) { job.speedBefore = app.speedSet(); app.setSpeed(AS_FAST); }
     // The display stands still for every method: it shows the tuner's runs,
     // and at ∞ the readout counts the tuner's computing.
     app.setRunMode('stop');
@@ -452,6 +461,8 @@ export function createAutotuneTab(host, app, display) {
     job = null;
     if (status && shown) shown.status = status;
     if (j.edit) app.endEdit();
+    // The speed set before an unlimited run, unless someone set another meanwhile.
+    if (j.speedBefore !== undefined && app.speedSet() === AS_FAST) app.setSpeed(j.speedBefore);
     if (!gone) {
       if (j.swept || j.showing) app.showLoop();
       display.clearRuns();
@@ -585,6 +596,7 @@ export function createAutotuneTab(host, app, display) {
 
   function renderAll() { renderSetup(); renderProgress(); }
 
+  $('#tu-fast').onclick = () => { st.unlimited = !st.unlimited; renderButton(); };
   $('#tu-start').onclick = () => {
     if (!job) start();
     else end(job.kind === 'iterate' ? 'Stopped. The best gains so far are kept.' : 'Stopped before the result was applied.');
