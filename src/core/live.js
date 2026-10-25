@@ -30,7 +30,7 @@ function controllerOnReference(params, links) {
   for (const c of links.ctrls) {
     for (const i of c.drives ?? []) {
       if ((params.kinds?.[i] ?? 'effort') !== 'reference') continue;
-      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Switch the plant to control mode (Live settings, Mode: "The page controls"), let r go straight to it (Mode: "The plant controls" rewires it so), or start the plant in control mode (hil_plant.py without --mode reference).`;
+      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Switch the plant to control mode (Live settings, Mode: "Page"), let r go straight to it (Mode: "Plant" rewires it so), or start the plant in control mode (hil_plant.py without --mode reference).`;
     }
   }
   return null;
