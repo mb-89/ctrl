@@ -35,18 +35,20 @@ function fromPlant(e) {
 // Nonlinear take the warm and cool poles. Tones are the eight slots of a
 // palette validated for colour-vision deficiency; the label is always shown.
 // A tone is not shared with a tag a value appears beside, nor by two values
-// of one kind in the filter row: Disturbance is violet (red is Nonlinear,
-// beside it on three cards), so XY moved to yellow.
+// of one kind in the filter row: Disturbance is slate (red is Nonlinear,
+// beside it on three cards), so XY moved to yellow. No tone is violet: in the
+// page violet means selected (design/output/design-system.md).
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
-export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red'];
+export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'slate', 'red'];
 const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta',
-  PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'violet', 'Trajectory planning': 'green', Relay: 'blue',
+  PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'slate', 'Trajectory planning': 'green', Relay: 'blue',
   // Seven of the eight tones are taken by controller tags: this one is set.
   'Sliding mode': 'red',
-  'Kalman filter': 'violet', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
-  Disturbance: 'violet', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
+  'Kalman filter': 'slate', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
+  'Reference mode': 'aqua', 'Controller in the plant': 'green',
 };
 // A value without its own tone gets one from its label, so it stays put.
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
@@ -72,7 +74,9 @@ export function systemTags(e) {
   if (blocks.some((b) => b.type === 'delay')) add('Dead time', 'plant');
   if (blocks.some((b) => b.type === 'external')) add('HIL', 'feature');
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
-  if (!ctrls.length) add('No controller', 'none');
+  // In reference mode the plant runs its own controller: none in the page.
+  const ownLoop = blocks.some((b) => b.type === 'external' && (b.params?.kinds ?? []).includes('reference'));
+  if (!ctrls.length) add(ownLoop ? 'Controller in the plant' : 'No controller', 'none');
   for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
   for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
   // A disturbance only when d plays something: a Source d whose signal has
