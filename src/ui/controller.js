@@ -30,31 +30,31 @@ export function createControllerTab(host, app) {
   let target = null;   // path of subsystem ids and the Controller block id
 
   host.innerHTML = `
-    <div class="notloop" id="ct-notloop" role="note" hidden></div>
+    <div class="banner notloop" id="ct-notloop" role="note" hidden></div>
     <div class="ctl">
       <section class="gcol" aria-label="Controller block">
-        <div class="ghead"><h3 class="glabel">Controller</h3></div>
+        <div class="ghead"><h3 class="label">Controller</h3></div>
         <div id="ct-blocks" class="ctblocks"></div>
         <div id="ct-block" class="pform"></div>
-        <p class="phelp" id="ct-ports"></p>
+        <p class="note" id="ct-ports"></p>
       </section>
       <section class="gcol" aria-label="Variants">
-        <div class="ghead"><h3 class="glabel">Variants</h3><button class="key small" id="ct-dup" title="Copy the running variant">Duplicate</button><button class="key small" id="ct-del" title="Remove the running variant">Delete</button></div>
-        <ul class="plist vlist" id="ct-vars" role="listbox" aria-label="Variants: click one to run it"></ul>
-        <p class="phelp">Click a variant to run it; the run before stays faded on the display. Double-click to rename.</p>
-        <figure class="ctdiag" id="ct-diag" hidden></figure>
+        <div class="ghead"><h3 class="label">Variants</h3><button class="btn btn-sm" id="ct-dup" title="Copy the running variant">Duplicate</button><button class="btn btn-sm btn-danger" id="ct-del" title="Remove the running variant">Delete</button></div>
+        <ul class="lcd list vlist" id="ct-vars" role="listbox" aria-label="Variants: click one to run it"></ul>
+        <p class="note">Click a variant to run it; the run before stays faded on the display. Double-click to rename.</p>
+        <figure class="card ctdiag" id="ct-diag" hidden></figure>
       </section>
       <section class="gcol" aria-label="Parameters">
-        <div class="ghead"><h3 class="glabel" id="ct-ptitle">Parameters</h3></div>
+        <div class="ghead"><h3 class="label" id="ct-ptitle">Parameters</h3></div>
         <div id="ct-params" class="pform ctparams"></div>
-        <p class="phelp" id="ct-about"></p>
+        <p class="note" id="ct-about"></p>
       </section>
       <section class="gcol" aria-label="Controller library">
-        <div class="ghead"><h3 class="glabel">Library</h3></div>
+        <div class="ghead"><h3 class="label">Library</h3></div>
         <div id="ct-lib" class="ctlib"></div>
       </section>
     </div>
-    <div class="ctempty" id="ct-empty" hidden></div>`;
+    <div id="ct-empty" hidden></div>`;
   const $ = (s) => host.querySelector(s);
 
   const root = () => app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null;
@@ -108,11 +108,11 @@ export function createControllerTab(host, app) {
   }
 
   function field(key, label, value, hint, kind = 'number', title = '') {
-    return `<label class="pf" title="${esc(title)}"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="pfh">${esc(hint)}</span></label>`;
+    return `<label class="pf" title="${esc(title)}"><span class="flabel">${esc(label)}</span><input class="field field-sm mono" data-k="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false" ${kind === 'number' ? 'inputmode="decimal"' : ''}><span class="hint">${esc(hint)}</span></label>`;
   }
   const show = (v) => (Array.isArray(v) ? v.map((x) => num(x, 5)).join(', ') : Number.isFinite(v) ? num(v, 6) : '');
   // A parameter with named options (anti-windup): a select.
-  const choice = (key, p, value) => `<label class="pf" title="${esc(p.help ?? '')}"><span class="pfl">${esc(p.label)}</span><select class="field pfi" data-k="${esc(key)}" data-kind="choice">${Object.entries(p.options).map(([k, l]) => `<option value="${esc(k)}" ${k === value ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><span class="pfh"></span></label>`;
+  const choice = (key, p, value) => `<label class="pf" title="${esc(p.help ?? '')}"><span class="flabel">${esc(p.label)}</span><select class="field field-sm" data-k="${esc(key)}" data-kind="choice">${Object.entries(p.options).map(([k, l]) => `<option value="${esc(k)}" ${k === value ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><span class="hint"></span></label>`;
 
   function render() {
     const all = controllers();
@@ -121,43 +121,43 @@ export function createControllerTab(host, app) {
     // are not in the loop, and the tab says so plainly.
     const notLoop = ['reference', 'log'].includes(app.hilMode?.());
     $('#ct-notloop').hidden = !notLoop || !c;
-    if (notLoop) $('#ct-notloop').innerHTML = '<b>Not in the loop.</b> This system\'s plant runs its own controller (reference mode): the page sends it the references and records what comes back. The Controller blocks here compute, but what they put out does not drive the plant.';
+    if (notLoop) $('#ct-notloop').innerHTML = '<span class="banner-text"><b class="text-bad">Not in the loop.</b> This system\'s plant runs its own controller (reference mode): the page sends it the references and records what comes back. The Controller blocks here compute, but what they put out does not drive the plant.</span>';
     $('.ctl').hidden = !c;
     $('#ct-empty').hidden = !!c;
     if (!c && notLoop) {
-      $('#ct-empty').innerHTML = '<div class="later-box"><h3 class="glabel">The plant runs its own controller</h3><p><b>Not in the loop:</b> in reference mode the External plant takes references, not a control effort, so its own controller closes the loop, with its own limits and monitoring. The page sends the references (Input tab) and records what comes back, the plant\'s own control effort included. Controllers and Auto-tune in this page are not in the loop.</p></div>';
+      $('#ct-empty').innerHTML = '<div class="notice"><h3 class="label">The plant runs its own controller</h3><p class="note"><b>Not in the loop:</b> in reference mode the External plant takes references, not a control effort, so its own controller closes the loop, with its own limits and monitoring. The page sends the references (Input tab) and records what comes back, the plant\'s own control effort included. Controllers and Auto-tune in this page are not in the loop.</p></div>';
       return;
     }
     if (!c) {
-      $('#ct-empty').innerHTML = `<div class="later-box"><h3 class="glabel">No controller in this plant</h3><p>Add a <b>Controller</b> block from the library's Control group in the Plant tab. Wire the reference r to its first input and the measurements to the next ones, and its output u to the plant. Then it shows here, with its variants. Or load a controlled system from the <b>System library</b>.</p></div>`;
+      $('#ct-empty').innerHTML = `<div class="notice"><h3 class="label">No controller in this plant</h3><p class="note">Add a <b>Controller</b> block from the library's Control group in the Plant tab. Wire the reference r to its first input and the measurements to the next ones, and its output u to the plant. Then it shows here, with its variants. Or load a controlled system from the <b>System library</b>.</p></div>`;
       return;
     }
     target = c.path;
     const b = c.block;
-    $('#ct-blocks').innerHTML = all.length > 1 ? all.map((x) => `<button class="sigkey ${x === c ? 'on' : ''}" data-path="${esc(x.path.join('/'))}">${esc(x.where)}</button>`).join('') : `<div class="ctname">${esc(c.where)}</div>`;
+    $('#ct-blocks').innerHTML = all.length > 1 ? all.map((x) => `<button class="btn btn-block" data-path="${esc(x.path.join('/'))}" aria-pressed="${x === c}">${esc(x.where)}</button>`).join('') : `<div class="heading">${esc(c.where)}</div>`;
     $('#ct-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
     const obs = b.type === 'observer', lib = LIBS[b.type];
     $('#ct-block').innerHTML = field('b:inputs', 'Inputs', b.params.inputs, obs ? 'u, then the measurements' : 'r, then the measurements')
       + (obs ? field('b:outputs', 'Estimates', b.params.outputs, 'states it puts out') : '')
       + field('b:Ts', 'Sample time', num(b.params.Ts, 4), 'Ts, s; every variant runs at it');
     const names = inputNames(c);
-    $('#ct-ports').innerHTML = `<b>In</b> ${names.map((n, k) => `<span class="ctport">${k + 1} ${esc(n)}</span>`).join(' ')}`;
+    $('#ct-ports').innerHTML = `<b>In</b> <span class="ports">${names.map((n, k) => `<span class="chip">${k + 1} ${esc(n)}</span>`).join('')}</span>`;
 
-    $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="srow vrow ${i === b.variant ? 'editing' : ''}" data-v="${i}" role="option" aria-selected="${i === b.variant}">
-        <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype">${esc(lib[v.type].label)}</span></li>`).join('');
+    $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="item vrow" data-v="${i}" role="option" aria-selected="${i === b.variant}" tabindex="${i === b.variant ? 0 : -1}" title="${i === b.variant ? 'Running · double-click or F2 to rename' : 'Click or Enter to run it · double-click or F2 to rename'}">
+        <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="name">${esc(v.name)}</span><span class="hint">${esc(lib[v.type].label)}</span></li>`).join('');
     $('#ct-del').disabled = b.variants.length < 2;
     drawStructure($('#ct-diag'), b, lib, names);
 
     const v = b.variants[b.variant];
     const def = lib[v.type];
     // The formula keeps its case (Λ and Φ are other letters than λ and φ).
-    $('#ct-ptitle').innerHTML = `${esc(v.name)} ·<span class="eq">${esc(def.summary)}</span>`;
+    $('#ct-ptitle').innerHTML = `${esc(v.name)} ·<span class="mono">${esc(def.summary)}</span>`;
     $('#ct-params').innerHTML = def.params.length
-      ? def.params.map((p) => p.kind === 'choice' ? choice(`p:${p.key}`, p, v.params[p.key]) : p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
-      : '<p class="phelp">No parameters.</p>';
+      ? def.params.map((p) => p.kind === 'choice' ? choice(`p:${p.key}`, p, v.params[p.key]) : p.table ? `<div class="pf"><span class="flabel">${esc(p.label)}</span><span class="hint mono">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
+      : '<p class="note">No parameters.</p>';
     $('#ct-about').textContent = ABOUT[v.type] ?? '';
     // Planned trajectories are made offline, not added by hand.
-    $('#ct-lib').innerHTML = Object.keys(lib).filter((t) => t !== 'trajectory').map((t) => `<button class="ctlibitem" data-add="${t}" title="${esc(ABOUT[t] ?? '')}"><b>${esc(lib[t].label)}</b><span>${esc(lib[t].summary)}</span></button>`).join('');
+    $('#ct-lib').innerHTML = Object.keys(lib).filter((t) => t !== 'trajectory').map((t) => `<button class="btn btn-block btn-col" data-add="${t}" title="${esc(ABOUT[t] ?? '')}">${esc(lib[t].label)}<span class="btn-note">${esc(lib[t].summary)}</span></button>`).join('');
     bind(c);
   }
 
@@ -214,9 +214,19 @@ export function createControllerTab(host, app) {
       commitField(sel);
       host.querySelector(`select[data-k="${sel.dataset.k}"]`)?.focus();
     }));
+    // The variants are a list box: click, Enter or Space runs one; the arrows
+    // move along the list; F2 or a double-click renames.
+    const run = (i) => { if (i !== c.block.variant) edit((blk) => { blk.variant = i; }); host.querySelector(`[data-v="${i}"]`)?.focus(); };
     host.querySelectorAll('[data-v]').forEach((row) => {
-      row.addEventListener('click', () => { const i = Number(row.dataset.v); if (i !== c.block.variant) edit((blk) => { blk.variant = i; }); });
-      row.addEventListener('dblclick', () => rename(row, Number(row.dataset.v)));
+      const i = Number(row.dataset.v);
+      row.addEventListener('click', () => run(i));
+      row.addEventListener('dblclick', () => rename(row, i));
+      row.addEventListener('keydown', (e) => {
+        const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: c.block.variants.length - 1 }[e.key];
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); run(i); }
+        else if (e.key === 'F2') { e.preventDefault(); e.stopPropagation(); rename(row, i); }
+        else if (to !== undefined) { e.preventDefault(); e.stopPropagation(); host.querySelector(`[data-v="${Math.max(0, Math.min(c.block.variants.length - 1, to))}"]`)?.focus(); }
+      });
     });
     $('#ct-dup').onclick = () => edit((blk) => {
       const v = structuredClone(blk.variants[blk.variant]);
@@ -248,15 +258,23 @@ export function createControllerTab(host, app) {
   }
 
   function rename(row, i) {
-    const name = row.querySelector('.sd');
+    const name = row.querySelector('.name');
     const inp = document.createElement('input');
-    inp.className = 'field pfi';
+    inp.className = 'field field-sm mono';
     inp.value = controllers().length ? current().block.variants[i].name : '';
     name.replaceWith(inp);
     inp.focus(); inp.select();
-    const done = (ok) => { if (ok && inp.value.trim()) edit((blk) => { blk.variants[i].name = inp.value.trim().slice(0, 40); }); else render(); };
-    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); });
-    inp.addEventListener('blur', () => done(true), { once: true });
+    // Once: Enter or Esc redraws the list, which blurs the field. From the
+    // keyboard, focus goes back to the renamed row, so the place is kept.
+    let finished = false;
+    const done = (ok, refocus) => {
+      if (finished) return;
+      finished = true;
+      if (!(ok && inp.value.trim() && edit((blk) => { blk.variants[i].name = inp.value.trim().slice(0, 40); }))) render();
+      if (refocus) $(`#ct-vars [data-v="${i}"]`)?.focus();
+    };
+    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true, true); if (e.key === 'Escape') done(false, true); });
+    inp.addEventListener('blur', () => done(true, false), { once: true });
   }
 
   return {

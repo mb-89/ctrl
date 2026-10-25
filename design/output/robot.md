@@ -1,6 +1,6 @@
 # The PUMA 560: a robot in 3D from its URDF, controlled in end-effector coordinates
 
-Reader: the agent who builds the PUMA example (vector signals, the URDF, the rigid-body blocks, the 3D view, the robot controller), or who adds another robot or a MIMO loop to Loop Tuner. This is the plan, not yet built. The person's words are in [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md), section "a PUMA robot in 3D from URDF". The research, its parameter tables and sources are in [../research/robot.md](../research/robot.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
+Reader: the agent who builds the PUMA example (vector signals, the URDF, the rigid-body blocks, the 3D view, the robot controller), or who adds another robot or a MIMO loop to Loop Tuner. This is the plan; what is built so far is listed under the notes below. The person's words are in [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md), section "a PUMA robot in 3D from URDF". The research, its parameter tables and sources are in [../research/robot.md](../research/robot.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
 
 **The person's notes on this plan (2026-10-25, [input 14](../input/2026-10-25-14-puma-notes-size.md)); they override the plan where they differ:**
 - The renderer may be a vendored library (for example three.js, inlined); our own WebGL renderer is not required. It must be real 3D with CAD-like navigation and a fallback where WebGL is missing. Size is no reason to choose (the page may grow to 20 MB).
@@ -9,6 +9,38 @@ Reader: the agent who builds the PUMA example (vector signals, the URDF, the rig
 - No Off variant until joint end stops are modelled (later).
 - Built as planned for now; diagram variants may come back if the modelling needs them.
 
+
+**Built so far (2026-10-25, branch feat/robot): step 3, the robot core; step 8's renderer; a kinematic demonstration.** Not yet built: vector signals, the robot blocks, the motors (a reusable servo model is designed separately and will drive the arm by joint torques), the design layer, the PUMA system in the library, the view's binding in the Plant tab (`kind: "3d"` in `core/views.js`, `app.sceneEnv`).
+- **Core** (`src/core/xml.js`, `urdf.js`, `rbd.js`, `puma560.js`, in the bundle before `diagram.js`):
+  - `parseUrdf(text, { inertia })` → `{ name, n, root, bodies, frames, links, joints, warnings }`, memoised by text. `joints` are objects (`{ name, child, axis, lower, upper, effort, velocity }`), not names. Every refusal of §3 has its sentence; "moves no mass and has no armature" is checked by `createRbd`, which knows the armature.
+  - `createRbd(model, { armature, gravity, scale })`: `fk`, `linkPose`, `linkPoses` (every link's world pose: what the view takes each frame), `jacobian` (base or frame), `jdotqd`, `rnea`, `massMatrix` (CRBA in world coordinates), `bias`, `gravityTorque`, `forwardDynamics` (Cholesky), `torqueSplit(q, q̇, q̈, drive?)` → inertial, Coriolis/centrifugal, gravity, friction and total per joint, `energy`. Pure helpers: `jointFriction` (the drive's friction referred through the gears), `dampedInverse`, `sigmaMin`, `orientationError` (relative rotation, Shepperd, η ≥ 0), `cholesky`, `symEig`. The interface is torque-based: joint torques in, accelerations and the torque split out, so a motor model drives it later.
+  - `PUMA560`: `urdf` (4.3 KB, no comments, the kinematics, inertias and limits of §3, our primitive shapes), `drive` (the drive table), `armature` (G²·Jm), `tool` ('flange'), `start` (degrees).
+- **Measured** (test/robot.test.mjs, test/robot-circle.test.mjs):
+
+  | Check | Result |
+  |---|---|
+  | Against the toolbox's own PUMA (values computed by running Robotics Toolbox for Python 1.5.0, stored in `test/fixtures/` with the script), 8 states | \|ΔM\| 8.0·10⁻¹⁵, \|Δg\| 7.1·10⁻¹⁵, \|Δτ\| 1.4·10⁻¹⁴, \|Δp\| 2.2·10⁻¹⁶, \|ΔR\| 1.1·10⁻¹⁶, \|ΔJ\| 3.3·10⁻¹⁶; friction (Coulomb as a step) to 10⁻¹³ |
+  | Our URDF against the published set (unregrouped, built from the DH table in the test), 2 000 states | M 7.1·10⁻¹⁵, τ 1.4·10⁻¹⁴, pose 5.6·10⁻¹⁷: the regrouping is exact |
+  | At qn | g = [0, 31.4237, 5.8190, 0, 0.0283, 0]; M11 3.6329, M12 −0.4075, M22 4.3868, M23 0.3240, M33 0.9109 |
+  | At the start pose | flange (0.7296, −0.1500, 0.7264) m, tool down to 10⁻¹⁵; g = 0, 35.71, 7.84, 0, 0, 0 N·m |
+  | CRBA against Σ JᵢᵀMᵢJᵢ and against RNEA column by column; RNEA∘FD; symmetric and positive definite (500 states) | 9.8·10⁻¹⁵, 8.9·10⁻¹⁵, 3.4·10⁻¹⁵ |
+  | Torque split against RNEA + friction (300 states) | 2.8·10⁻¹⁴ |
+  | J against central differences; J̇q̇ against d/dt(J·q̇) | 2.2·10⁻¹⁰; 4.7·10⁻¹⁰ |
+  | Energy, 5 s free swing, RK4 at 1 ms, rotors on | drift 1.7·10⁻¹⁰ J against a peak kinetic energy of 70.8 J; with friction the energy never rises |
+  | FK(IK(T)), closed-form IK in the test, 8 configurations × 200 poses | 5.7·10⁻¹⁵ |
+  | Singularities (q5 = 0, q3 = −87.3°, wrist centre 0.150 m from the waist) | σ_min < 10⁻⁹; 0.175 at the start pose |
+  | Orientation error at tool-down, 20 000 rotations within 2° | 6.9·10⁻¹⁸ (sign always right); θ exact at 10⁻⁹ rad and 179° |
+  | The circle, followed kinematically (CLIK through the damped inverse, k 10, RK4 1 ms) | path error 1.4·10⁻¹² m; q1 −14.5…15.6°, q2 39.5…74.3°, q3 −206.5…−149.0°, q5 −70.5…−47.8°; 18.5° inside every range; σ_min 0.175…0.256; peak speeds 0.88, 0.73, 1.21, 0, 0.50, 0.88 rad/s; peak torques (with the drives' friction) 35, 59, 19, 0, 1.3, 1.4 N·m, inside the fuses |
+  | Cost (Node 22, idle machine) | FK 0.49 µs, FK + J 0.53, J̇q̇ 1.17, RNEA 2.2, CRBA 1.9, forward dynamics 2.8 µs |
+- **The 3D view** (`src/ui/view3d.js`, 943 lines; three.js r185.1 vendored unmodified in `src/vendor/three/` with its licence and sha256s, inlined by the build as its own `<script id="lt-vendor-three">` before the page's script; Export HTML copies it). `createView3d(container, { links, joints, camera, renderer, onPick, linkInfo })` → `setPoses`, `setPath(id, { points, times, now, style, fade, dash, gap })`, `setFrames`, `setView`, `fit`, `mode`, `refreshTheme`, `renderNow`, `screenOf`, `destroy`. WebGL with screen-space ribbons for paths and joint axes (the reference dashed by arc length in ch1's colour, the trail in ch2's fading over `fade`), labelled triads, joint labels, a floor grid; CAD navigation (orbit, pan, zoom to the cursor, WASD/QE, keys 0–6 and F, preset buttons, the axis triad and a clickable view cube with 26 targets, animated); hover names the link plus `linkInfo` (the demo shows its joint angle and torque); a Canvas2D painter on the same scene where WebGL is missing or its context is lost, back to WebGL on restore; tokens `--axis-x/y/z` in both themes. The page grew from 751 KB to 1 550 KB. A frame costs about 2 ms of JavaScript in WebGL, 4–5 ms in canvas mode (headless, software GL).
+- **Demonstration**: `node tools/robot-demo.mjs --shots` writes `.harness/robot-demo.html` (git-ignored: the arm on its circle at t = 3.4 s, `?t=`, `?play`, `?canvas`, `?theme=dark`) and screenshots `.harness/shots/puma-*.png` (WebGL and canvas, both themes, 820 px). `node tools/view3d-shots.mjs` checks the view on a sample arm (context loss and restore, hover, the view cube, flying).
+- **Deviations from this plan, with reasons**:
+  - **G carries the published signs** (−62.6111, 107.815, −53.7063, …), not the unsigned values of the params block above: Coulomb friction is measured per direction of the motor, and joints 1 and 3 turn their motors backwards, so unsigned ratios would apply their forward and reverse values the wrong way round. The armature (G²·Jm) is unaffected; a current's sign follows G.
+  - **No ABA oracle**: CRBA is checked against two other algorithms (Σ JᵀMJ and RNEA column by column) and RNEA against the toolbox; a third algorithm adds no independence.
+  - **The energy test runs on `forwardDynamics` directly**, not through the compiled Arm subsystem, which does not exist yet; repeat it through the compiler at step 4.
+  - **The toolbox's values were computed by running the toolbox** (the script is stored with them), not copied from tables.
+  - **The renderer is three.js**, as the person allowed (input 14); the Canvas2D fallback, ribbons, picking and navigation are ours. §7's line budget no longer applies.
+  - **The damped inverse and the orientation error are core functions now**; the blocks of step 4 wrap them.
 
 **How this plan was made.** Two designs were prototyped on 2026-10-25 and scored by two judges. Design A ("vector signals first": vector wires, explicit transformation blocks, control in end-effector coordinates on the measured pose, the arm opening to M(q)·q̈ = τ − h) won, 8/10 and narrowly 6.9 against 7.0. Design B ("joint space first": a closed-loop inverse kinematics reference, scalar wires drawn as ribbons, a sealed Robot block) scored 6.5/10 and 7.0. This plan takes A and grafts from B:
 - the circle in its own frame, given by two references a_r and b_r, and a Frame transform block;

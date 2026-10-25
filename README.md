@@ -32,6 +32,8 @@ Node 18 or later, no dependencies. (The plant script needs Python 3.9+ and the w
 node build.mjs        # writes dist/loop-tuner.html (and dist/artifact.html, a page fragment)
 npm test
 node cli.mjs help
+node tools/robot-demo.mjs --shots   # the PUMA 560 in the 3D view, following its circle: .harness/robot-demo.html and screenshots (needs Playwright)
+node tools/view3d-shots.mjs         # the 3D view's own checks in headless Chromium: .harness/shots/
 ```
 
 ## How it works
@@ -42,6 +44,8 @@ node cli.mjs help
 | `src/core/diagram.js` | Block diagrams: blocks, subsystems, and the compiler that simulates them. |
 | `src/core/plants.js`, `src/core/systems.js` | Example plants and the System library. |
 | `src/core/views.js` | 2D views of a plant. |
+| `src/core/xml.js`, `src/core/urdf.js`, `src/core/rbd.js`, `src/core/puma560.js` | Robots: URDF read into a model; kinematics, Jacobian, inverse and forward dynamics, the torque split; the PUMA 560's description and drives. |
+| `src/ui/view3d.js`, `src/vendor/three/` | The 3D view (three.js, vendored and inlined, with a Canvas fallback). |
 | `src/core/blocks.js` | The block library (plant, controller, actuator, sensor, disturbance, noise): every type registers its slot, parameters and behaviour. |
 | `src/core/sim.js` | The closed loop: a digital controller (sampled, zero-order hold) driving continuous actuator, plant and sensor models integrated with RK4; dead time, saturation and seeded measurement noise. |
 | `src/core/metrics.js` | Step-response and effort metrics (`node cli.mjs metrics` lists them). |

@@ -5,6 +5,20 @@
 const KEY = 'loop-tuner:layout';
 const MIN_SETUP = 110, MIN_TOP = 240, MIN_CONTROLS = 220, MAX_CONTROLS = 560, MIN_DISPLAY = 320;
 
+// A popover just opened stays inside the window: moved sideways (and made
+// narrower if it must) when its anchor would put it past an edge, as the
+// System library's did on a narrow screen.
+export function fitPopover(el, margin = 8) {
+  el.style.translate = '';
+  el.style.maxWidth = '';
+  if (el.hidden) return;
+  const W = document.documentElement.clientWidth;
+  let r = el.getBoundingClientRect();
+  if (r.width > W - 2 * margin) { el.style.maxWidth = `${W - 2 * margin}px`; r = el.getBoundingClientRect(); }
+  const dx = r.left < margin ? margin - r.left : r.right > W - margin ? W - margin - r.right : 0;
+  if (dx) el.style.translate = `${Math.round(dx)}px 0`;
+}
+
 export function createSplitters(shell) {
   const setup = shell.querySelector('.setup');
   const instrument = shell.querySelector('.instrument');
