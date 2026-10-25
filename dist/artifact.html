@@ -2083,7 +2083,162 @@ function compileExpr(src, opts = {}) {
   return (t) => { env.t = t; const v = f(env); return Number.isFinite(v) ? v : 0; };
 }
 
-return { EXPR_HELP, compileExpr };
+return { FN1, FN2, FN3, EXPR_HELP, compileExpr };
+})();
+// ---- core/formula.js
+__mods['core/formula.js'] = (() => {
+
+const { FN1, FN2, FN3 } = __mods['core/expr.js'];
+const { siUnit } = __mods['core/scale.js'];
+const CONST = { pi: Math.PI, e: Math.E, inf: Infinity };
+const ARITY = (name) => (Object.hasOwn(FN1, name) ? 1 : Object.hasOwn(FN2, name) ? 2 : Object.hasOwn(FN3, name) ? 3 : 0);
+const LETTER = 'A-Za-z_Ͱ-Ͽἀ-῿';
+const NAME_RE = new RegExp(`^[${LETTER}][${LETTER}0-9]*$`);
+
+const isReserved = (key) => { const k = String(key).toLowerCase(); return k === 't' || Object.hasOwn(CONST, k) || ARITY(k) > 0; };
+
+const isFormula = (v) => typeof v === 'string' && v.trim() !== '' && !Number.isFinite(Number(v));
+
+function tokenize(src) {
+  const toks = [];
+  const re = new RegExp(`\\s*(?:(\\d+\\.?\\d*(?:e[-+]?\\d+)?|\\.\\d+(?:e[-+]?\\d+)?)|([${LETTER}][${LETTER}0-9]*)|(\\*\\*|[-+*/^(),]))`, 'gy');
+  re.lastIndex = 0;
+  while (re.lastIndex < src.length) {
+    const at = re.lastIndex;
+    if (/^\s*$/.test(src.slice(at))) break;
+    const m = re.exec(src);
+    if (!m) throw new Error(`unexpected "${src.slice(at).trim()[0]}" at ${at + 1}`);
+    if (m[1] !== undefined) toks.push({ k: 'num', v: Number(m[1]) });
+    else if (m[2] !== undefined) toks.push({ k: 'id', v: m[2] });
+    else toks.push({ k: 'op', v: m[3] === '**' ? '^' : m[3] });
+  }
+  return toks;
+}
+
+function parseFormula(src) {
+  const toks = tokenize(String(src));
+  let i = 0;
+  const peek = () => toks[i];
+  const take = (v) => { const tk = toks[i]; if (!tk || (v && tk.v !== v)) throw new Error(tk ? `expected "${v}" near "${tk.v}"` : `expected "${v}" at the end`); i++; return tk; };
+  function expr() {
+    let a = term();
+    while (peek()?.k === 'op' && (peek().v === '+' || peek().v === '-')) { const op = take().v; a = { k: 'op', op, a, b: term() }; }
+    return a;
+  }
+  function term() {
+    let a = unary();
+    for (;;) {
+      const tk = peek();
+      const explicit = tk?.k === 'op' && (tk.v === '*' || tk.v === '/');
+      const implicit = tk && (tk.k === 'num' || tk.k === 'id' || (tk.k === 'op' && tk.v === '('));
+      if (!explicit && !implicit) return a;
+      const op = explicit ? take().v : '*';
+      a = { k: 'op', op, a, b: unary() };
+    }
+  }
+  function unary() {
+    if (peek()?.k === 'op' && (peek().v === '-' || peek().v === '+')) { const neg = take().v === '-', a = unary(); return neg ? { k: 'neg', a } : a; }
+    return power();
+  }
+  function power() {
+    const a = atom();
+    if (peek()?.k === 'op' && peek().v === '^') { take(); return { k: 'op', op: '^', a, b: unary() }; }
+    return a;
+  }
+  function atom() {
+    const tk = peek();
+    if (!tk) throw new Error('the formula ends too early');
+    if (tk.k === 'num') { take(); return { k: 'num', v: tk.v }; }
+    if (tk.k === 'op' && tk.v === '(') { take(); const a = expr(); take(')'); return a; }
+    if (tk.k === 'id') {
+      take();
+      const f = tk.v.toLowerCase(), arity = ARITY(f);
+      if (!arity || peek()?.v !== '(') return { k: 'name', v: tk.v };
+      take('(');
+      const args = [expr()];
+      while (args.length < arity) { take(','); args.push(expr()); }
+      take(')');
+      return { k: 'call', f, args };
+    }
+    throw new Error(`unexpected "${tk.v}"`);
+  }
+  if (!toks.length) throw new Error('enter a formula');
+  const tree = expr();
+  if (i < toks.length) throw new Error(`unexpected "${toks[i].v}"`);
+  return tree;
+}
+
+function formulaNames(tree, out = []) {
+  if (tree.k === 'name') { if (!out.includes(tree.v)) out.push(tree.v); }
+  else if (tree.k === 'neg') formulaNames(tree.a, out);
+  else if (tree.k === 'op') { formulaNames(tree.a, out); formulaNames(tree.b, out); }
+  else if (tree.k === 'call') for (const a of tree.args) formulaNames(a, out);
+  return out;
+}
+
+const unknown = (name) => Object.assign(new Error(`unknown name "${name}"`), { code: 'unknown-name', name });
+
+function compileFormula(src, resolve = () => null) {
+  const tree = typeof src === 'string' ? parseFormula(src) : src;
+  const C = (v) => ({ c: true, v, f: () => v });
+  const build = (n) => {
+    if (n.k === 'num') return C(n.v);
+    if (n.k === 'name') {
+      let r = resolve(n.v);
+      const low = n.v.toLowerCase();
+      if (!r && low === 't' && n.v !== 't') r = resolve('t');
+      if (!r && Object.hasOwn(CONST, low)) r = { value: CONST[low] };
+      if (!r) throw unknown(n.v);
+      if (r.slot === undefined) return C(r.value);
+      const s = r.slot;
+      return { c: false, f: (v) => v[s] };
+    }
+    if (n.k === 'neg') {
+      const a = build(n.a);
+      if (a.c) return C(-a.v);
+      const fa = a.f;
+      return { c: false, f: (v) => -fa(v) };
+    }
+    if (n.k === 'call') {
+      const args = n.args.map(build), fn = (n.args.length === 1 ? FN1 : n.args.length === 2 ? FN2 : FN3)[n.f];
+      if (args.every((a) => a.c)) return C(fn(...args.map((a) => a.v)));
+      const [a, b, c] = args.map((x) => x.f);
+      if (args.length === 1) return { c: false, f: (v) => fn(a(v)) };
+      if (args.length === 2) return { c: false, f: (v) => fn(a(v), b(v)) };
+      return { c: false, f: (v) => fn(a(v), b(v), c(v)) };
+    }
+    const a = build(n.a), b = build(n.b);
+    const op = { '+': (x, y) => x + y, '-': (x, y) => x - y, '*': (x, y) => x * y, '/': (x, y) => x / y, '^': Math.pow }[n.op];
+    if (a.c && b.c) return C(op(a.v, b.v));
+    const fa = a.f, fb = b.f, ca = a.v, cb = b.v;
+    switch (n.op) {
+      case '+': return { c: false, f: a.c ? (v) => ca + fb(v) : b.c ? (v) => fa(v) + cb : (v) => fa(v) + fb(v) };
+      case '-': return { c: false, f: a.c ? (v) => ca - fb(v) : b.c ? (v) => fa(v) - cb : (v) => fa(v) - fb(v) };
+      case '*': return { c: false, f: a.c ? (v) => ca * fb(v) : b.c ? (v) => fa(v) * cb : (v) => fa(v) * fb(v) };
+      case '/': return { c: false, f: a.c ? (v) => ca / fb(v) : b.c ? (v) => fa(v) / cb : (v) => fa(v) / fb(v) };
+      default: return { c: false, f: (v) => Math.pow(fa(v), fb(v)) };
+    }
+  };
+  const out = build(tree);
+  const f = out.f;
+  f.constant = out.c;
+  return f;
+}
+
+function evalFormula(src, values = {}) {
+  const get = values instanceof Map ? (n) => (values.has(n) ? { value: values.get(n) } : null) : (n) => (Object.hasOwn(values, n) ? { value: values[n] } : null);
+  return compileFormula(src, get)(new Float64Array(0));
+}
+
+function sentence(text, valueOf) {
+  return String(text).replace(/\{([^{}:]+)(?::([^{}]*))?\}/g, (_, src, unit) => {
+    const v = valueOf(src.trim());
+    if (!Number.isFinite(v)) return v > 0 ? '∞' : v < 0 ? '−∞' : '?';
+    return unit !== undefined && unit.trim() !== '1' ? siUnit(v, unit.trim()) : String(Number(v.toPrecision(3)));
+  });
+}
+
+return { NAME_RE, isReserved, isFormula, parseFormula, formulaNames, compileFormula, evalFormula, sentence };
 })();
 // ---- core/signals.js
 __mods['core/signals.js'] = (() => {
@@ -5809,6 +5964,7 @@ const { eig, csolve } = __mods['core/linalg.js'];
 const { siUnit } = __mods['core/scale.js'];
 const { gaussAt } = __mods['core/signals.js'];
 const { compileExpr } = __mods['core/expr.js'];
+const { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME_RE } = __mods['core/formula.js'];
 const { CONTROLLERS, normalizeVariant, makeLaw } = __mods['core/controllers.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
 const { SYNC_DESIGNS, defaultDesigns } = __mods['core/design.js'];
@@ -5831,7 +5987,7 @@ const ELEMENTS = {
   integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
   delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before T_d', 0, { nullable: 'its input at t = 0' })], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
   fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
-  saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
+  saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1, { inf: true }), num('max', 'Max', 1, { inf: true })], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
   noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
   cartPole: {
@@ -5990,8 +6146,102 @@ function parseEnd(end) {
   return { id, port: port === undefined ? 0 : Number(port) };
 }
 
-function normalizeParams(type, params = {}, where) {
-  if (diagramBlockDef(type).model) return normalizeBlock('plant', { type, params }).params;
+const scopeValue = (scope, name) => { for (let s = scope; s; s = s.outer) if (s.values.has(name)) return s.values.get(name); return undefined; };
+const scopeKeys = (scope) => { const out = []; for (let s = scope; s; s = s.outer) for (const k of s.values.keys()) if (!out.includes(k)) out.push(k); return out; };
+const scopeMap = (scope) => new Map(scopeKeys(scope).map((k) => [k, scopeValue(scope, k)]));
+function unknownName(name, scope) {
+  return scope ? `'${name}' is not a parameter of '${scope.label}' (${scopeKeys(scope).join(', ')})` : `'${name}' is not a parameter here: outside a masked subsystem a formula uses numbers, pi, e and inf`;
+}
+function formulaValue(src, scope, where) {
+  let tree;
+  try { tree = parseFormula(src); } catch (e) { throw new Error(`${where}: ${e.message}`); }
+  for (const name of formulaNames(tree)) {
+    if (scopeValue(scope, name) === undefined && !['pi', 'e', 'inf'].includes(name.toLowerCase())) throw new Error(`${where}: ${unknownName(name, scope)}`);
+  }
+  return compileFormula(tree, (n) => { const v = scopeValue(scope, n); return v === undefined ? null : { value: v }; })(new Float64Array(0));
+}
+function fieldNumber(raw, p, scope, where) {
+  if (!isFormula(raw)) return Number(raw);
+  if (p.int) throw new Error(`${where}: a whole number, not a formula`);
+  const v = formulaValue(raw, scope, where);
+  if (Number.isNaN(v) || (!Number.isFinite(v) && !p.inf)) throw new Error(`${where}: ${String(raw).trim()} = ${Number.isNaN(v) ? 'not a number' : v > 0 ? 'inf' : '-inf'}; it must be finite`);
+  return v;
+}
+function normalizeMask(b, where, outer, resolve) {
+  const given = b.params && typeof b.params === 'object' ? Object.keys(b.params) : [];
+  if (b.mask === undefined || b.mask === null) {
+    if (given.length) throw new Error(`${where}: parameters (${given.join(', ')}) need a mask that lists them`);
+    return { scope: outer };
+  }
+  if (!Array.isArray(b.mask)) throw new Error(`${where}.mask: a list of { key, label, unit }`);
+  const keys = new Set();
+  const mask = b.mask.map((f, i) => {
+    const at = `${where}.mask[${i}]`, key = String(f?.key ?? '');
+    if (!NAME_RE.test(key)) throw new Error(`${at}: a key such as m, l1 or θ0 (letters, digits, _)`);
+    if (isReserved(key)) throw new Error(`${at}: "${key}" is the time, a constant or a function; choose another key`);
+    if (keys.has(key)) throw new Error(`${at}: the key "${key}" twice`);
+    keys.add(key);
+    const unit = String(f.unit ?? '1').trim() || '1';
+    if (unit.length > 12 || /[<>"{}]/.test(unit)) throw new Error(`${at}.unit: a short unit such as m, N, rad/s, or 1`);
+    const out = { key, label: String(f.label ?? key), unit };
+    for (const k of ['min', 'max', 'default']) {
+      if (f[k] === undefined || f[k] === null || f[k] === '') continue;
+      const v = Number(f[k]);
+      if (Number.isNaN(v)) throw new Error(`${at}.${k}: a number`);
+      out[k] = v;
+    }
+    if (out.min !== undefined && out.max !== undefined && out.min > out.max) throw new Error(`${at}: min ${out.min} is above max ${out.max}`);
+    return out;
+  });
+  for (const k of given) if (!keys.has(k)) throw new Error(`${where}.params: "${k}" is not on the mask (${[...keys].join(', ')})`);
+  const label = b.name ?? b.id, values = new Map(), params = {};
+  for (const f of mask) {
+    const raw = b.params?.[f.key] ?? f.default;
+    const at = `${where}.params.${f.key}`;
+    if (raw === undefined || raw === null || raw === '') throw new Error(`${at}: needs a value`);
+    const v = isFormula(raw) ? formulaValue(raw, outer, at) : Number(raw);
+    if (Number.isNaN(v)) throw new Error(`${at}: expected a number or a formula`);
+    if (f.min !== undefined && v < f.min) throw new Error(`${at}: ${v} is below its min ${f.min}`);
+    if (f.max !== undefined && v > f.max) throw new Error(`${at}: ${v} is above its max ${f.max}`);
+    values.set(f.key, v);
+    params[f.key] = resolve || !isFormula(raw) ? v : String(raw).trim();
+  }
+  return { mask, params, scope: { label, values, outer } };
+}
+
+function hasFormulas(d) {
+  return d.blocks.some((b) => {
+    if (b.type === 'subsystem') return b.mask?.length > 0 || hasFormulas(b.diagram);
+    const def = ELEMENTS[b.type] ?? (BLOCKS.plant[b.type] ? { params: BLOCKS.plant[b.type].params } : null);
+    return !!def?.params?.some((p) => (!p.kind && isFormula(b.params?.[p.key])) || (p.kind === 'vector' && Array.isArray(b.params?.[p.key]) && b.params[p.key].some(isFormula)));
+  });
+}
+
+function maskValues(diagram, idPath = []) {
+  let scope = null, d = diagram;
+  for (const id of idPath) {
+    const b = d.blocks.find((x) => x.id === id);
+    if (!b?.diagram) break;
+    scope = normalizeMask(b, id, scope, true).scope;
+    d = b.diagram;
+  }
+  return scopeMap(scope);
+}
+function formulaIn(src, values) {
+  try { return compileFormula(src, (n) => (values.has(n) ? { value: values.get(n) } : null))(new Float64Array(0)); } catch { return NaN; }
+}
+
+function normalizeParams(type, params = {}, where, scope = null, resolve = false) {
+  if (diagramBlockDef(type).model) {
+    const def = diagramBlockDef(type), numeric = { ...params }, kept = {};
+    for (const p of def.params) {
+      const v = params[p.key], at = `${where}.${p.key}`;
+      if (p.kind === 'vector' && Array.isArray(v) && v.some(isFormula)) { numeric[p.key] = v.map((x, j) => fieldNumber(x, p, scope, `${at}[${j}]`)); kept[p.key] = v.map((x) => (isFormula(x) ? String(x).trim() : Number(x))); }
+      else if (p.kind !== 'vector' && isFormula(v)) { numeric[p.key] = fieldNumber(v, p, scope, at); kept[p.key] = String(v).trim(); }
+    }
+    const out = normalizeBlock('plant', { type, params: numeric }).params;
+    return resolve ? out : { ...out, ...kept };
+  }
   if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where);  
   const out = {};
   for (const p of ELEMENTS[type].params) {
@@ -6011,11 +6261,13 @@ function normalizeParams(type, params = {}, where) {
     } else if (p.nullable && (params[p.key] === null || params[p.key] === '')) {
       v = null;   
     } else {
-      v = Number(v);
-      if (!Number.isFinite(v)) throw new Error(`${where}.${p.key}: expected a number`);
+      const raw = v;
+      v = fieldNumber(raw, p, scope, `${where}.${p.key}`);
+      if (Number.isNaN(v) || (!Number.isFinite(v) && !isFormula(raw))) throw new Error(`${where}.${p.key}: expected a number`);
       if (p.int) v = Math.round(v);
       if (p.min !== undefined && v < p.min) throw new Error(`${where}.${p.key}: at least ${p.min}`);
       if (p.max !== undefined && v > p.max) throw new Error(`${where}.${p.key}: at most ${p.max}`);
+      if (isFormula(raw) && !resolve) v = String(raw).trim();
     }
     out[p.key] = v;
   }
@@ -6023,7 +6275,8 @@ function normalizeParams(type, params = {}, where) {
   return out;
 }
 
-function normalizeDiagram(d, path = 'plant') {
+function normalizeDiagram(d, path = 'plant', opts = {}) {
+  const { scope = null, resolve = false } = opts;
   if (!d || !Array.isArray(d.blocks)) throw new Error(`${path}: a diagram needs "blocks" and "wires"`);
   const ids = new Set();
   const blocks = d.blocks.map((b, i) => {
@@ -6031,10 +6284,14 @@ function normalizeDiagram(d, path = 'plant') {
     if (!b.id || typeof b.id !== 'string' || /[:/]/.test(b.id)) throw new Error(`${where}: needs an "id" without ":" or "/"`);
     if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
     ids.add(b.id);
-    const out = { id: b.id, type: b.type, params: normalizeParams(b.type, b.params, `${where}(${b.id})`), x: Number(b.x) || 0, y: Number(b.y) || 0 };
+    const at = `${where}(${b.id})`;
+    const m = b.type === 'subsystem' ? normalizeMask(b, at, scope, resolve) : null;
+    const out = { id: b.id, type: b.type, params: m ? m.params ?? {} : normalizeParams(b.type, b.params, at, scope, resolve), x: Number(b.x) || 0, y: Number(b.y) || 0 };
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
-    if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
+    if (m?.mask) out.mask = m.mask;
+    if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`, { scope: m.scope, resolve });
+    if (resolve && b.type === 'fcn' && scope) Object.defineProperty(out, 'consts', { value: scopeMap(scope) });
     if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
       const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
@@ -6115,6 +6372,7 @@ const fmt = (v) => String(Number(Number(v).toPrecision(3)));
 const NONE = [];
 
 function compileDiagram(diagram, path = 'plant', opts = {}) {
+  if (hasFormulas(diagram)) diagram = normalizeDiagram(diagram, path, { resolve: true });
   const model = opts.mode === 'model';
   const standalone = opts.standalone || model;
   const laws = opts.laws !== false && !model;
@@ -6674,7 +6932,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   return self;
 }
 
-return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
+return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, maskValues, formulaIn, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
 })();
 // ---- core/sim.js
 __mods['core/sim.js'] = (() => {

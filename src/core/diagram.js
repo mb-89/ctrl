@@ -17,6 +17,7 @@ import { eig, csolve } from './linalg.js';
 import { siUnit } from './scale.js';
 import { gaussAt } from './signals.js';
 import { compileExpr } from './expr.js';
+import { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME_RE } from './formula.js';
 import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
 import { OBSERVERS } from './observers.js';
 import { SYNC_DESIGNS, defaultDesigns } from './design.js';
@@ -46,7 +47,7 @@ export const ELEMENTS = {
   // plant-specific has to be typed in for that.
   delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before T_d', 0, { nullable: 'its input at t = 0' })], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
   fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
-  saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
+  saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1, { inf: true }), num('max', 'Max', 1, { inf: true })], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
   noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
   cartPole: {
@@ -239,8 +240,120 @@ export function parseEnd(end) {
   return { id, port: port === undefined ? 0 : Number(port) };
 }
 
-function normalizeParams(type, params = {}, where) {
-  if (diagramBlockDef(type).model) return normalizeBlock('plant', { type, params }).params;
+// ---- Masks and formula parameters (transparent-models.md §1.4) ---------
+// A subsystem may carry a mask, [{ key, label, unit, min?, max?, default? }],
+// and its values, params { key: number | formula }. Inside it any number
+// field may be a formula in the names of the masks around it, innermost
+// first; a mask value may be a formula in the masks outside it. A scope is
+// { label, values: Map(key → number), outer }.
+const scopeValue = (scope, name) => { for (let s = scope; s; s = s.outer) if (s.values.has(name)) return s.values.get(name); return undefined; };
+const scopeKeys = (scope) => { const out = []; for (let s = scope; s; s = s.outer) for (const k of s.values.keys()) if (!out.includes(k)) out.push(k); return out; };
+// The names a scope gives, innermost first, as a Map (an Equations block's constants).
+const scopeMap = (scope) => new Map(scopeKeys(scope).map((k) => [k, scopeValue(scope, k)]));
+function unknownName(name, scope) {
+  return scope ? `'${name}' is not a parameter of '${scope.label}' (${scopeKeys(scope).join(', ')})` : `'${name}' is not a parameter here: outside a masked subsystem a formula uses numbers, pi, e and inf`;
+}
+// The value of the formula src in scope; where names the field in a refusal.
+function formulaValue(src, scope, where) {
+  let tree;
+  try { tree = parseFormula(src); } catch (e) { throw new Error(`${where}: ${e.message}`); }
+  for (const name of formulaNames(tree)) {
+    if (scopeValue(scope, name) === undefined && !['pi', 'e', 'inf'].includes(name.toLowerCase())) throw new Error(`${where}: ${unknownName(name, scope)}`);
+  }
+  return compileFormula(tree, (n) => { const v = scopeValue(scope, n); return v === undefined ? null : { value: v }; })(new Float64Array(0));
+}
+// A number field's value: a number, or a formula in scope. Infinite only
+// where the field allows it (inf: a limit, where ±inf means none).
+function fieldNumber(raw, p, scope, where) {
+  if (!isFormula(raw)) return Number(raw);
+  if (p.int) throw new Error(`${where}: a whole number, not a formula`);
+  const v = formulaValue(raw, scope, where);
+  if (Number.isNaN(v) || (!Number.isFinite(v) && !p.inf)) throw new Error(`${where}: ${String(raw).trim()} = ${Number.isNaN(v) ? 'not a number' : v > 0 ? 'inf' : '-inf'}; it must be finite`);
+  return v;
+}
+// The mask of subsystem b and the scope it opens: { mask, params, scope }.
+// resolve: params hold the values (numbers), not the formulas.
+function normalizeMask(b, where, outer, resolve) {
+  const given = b.params && typeof b.params === 'object' ? Object.keys(b.params) : [];
+  if (b.mask === undefined || b.mask === null) {
+    if (given.length) throw new Error(`${where}: parameters (${given.join(', ')}) need a mask that lists them`);
+    return { scope: outer };
+  }
+  if (!Array.isArray(b.mask)) throw new Error(`${where}.mask: a list of { key, label, unit }`);
+  const keys = new Set();
+  const mask = b.mask.map((f, i) => {
+    const at = `${where}.mask[${i}]`, key = String(f?.key ?? '');
+    if (!NAME_RE.test(key)) throw new Error(`${at}: a key such as m, l1 or θ0 (letters, digits, _)`);
+    if (isReserved(key)) throw new Error(`${at}: "${key}" is the time, a constant or a function; choose another key`);
+    if (keys.has(key)) throw new Error(`${at}: the key "${key}" twice`);
+    keys.add(key);
+    const unit = String(f.unit ?? '1').trim() || '1';
+    if (unit.length > 12 || /[<>"{}]/.test(unit)) throw new Error(`${at}.unit: a short unit such as m, N, rad/s, or 1`);
+    const out = { key, label: String(f.label ?? key), unit };
+    for (const k of ['min', 'max', 'default']) {
+      if (f[k] === undefined || f[k] === null || f[k] === '') continue;
+      const v = Number(f[k]);
+      if (Number.isNaN(v)) throw new Error(`${at}.${k}: a number`);
+      out[k] = v;
+    }
+    if (out.min !== undefined && out.max !== undefined && out.min > out.max) throw new Error(`${at}: min ${out.min} is above max ${out.max}`);
+    return out;
+  });
+  for (const k of given) if (!keys.has(k)) throw new Error(`${where}.params: "${k}" is not on the mask (${[...keys].join(', ')})`);
+  const label = b.name ?? b.id, values = new Map(), params = {};
+  for (const f of mask) {
+    const raw = b.params?.[f.key] ?? f.default;
+    const at = `${where}.params.${f.key}`;
+    if (raw === undefined || raw === null || raw === '') throw new Error(`${at}: needs a value`);
+    const v = isFormula(raw) ? formulaValue(raw, outer, at) : Number(raw);
+    if (Number.isNaN(v)) throw new Error(`${at}: expected a number or a formula`);
+    if (f.min !== undefined && v < f.min) throw new Error(`${at}: ${v} is below its min ${f.min}`);
+    if (f.max !== undefined && v > f.max) throw new Error(`${at}: ${v} is above its max ${f.max}`);
+    values.set(f.key, v);
+    params[f.key] = resolve || !isFormula(raw) ? v : String(raw).trim();
+  }
+  return { mask, params, scope: { label, values, outer } };
+}
+
+// Is there anything to resolve: a mask, or a formula in a number field?
+function hasFormulas(d) {
+  return d.blocks.some((b) => {
+    if (b.type === 'subsystem') return b.mask?.length > 0 || hasFormulas(b.diagram);
+    const def = ELEMENTS[b.type] ?? (BLOCKS.plant[b.type] ? { params: BLOCKS.plant[b.type].params } : null);
+    return !!def?.params?.some((p) => (!p.kind && isFormula(b.params?.[p.key])) || (p.kind === 'vector' && Array.isArray(b.params?.[p.key]) && b.params[p.key].some(isFormula)));
+  });
+}
+
+// The values of a level's mask names (innermost first), for the panel: the
+// subsystems along idPath from the root diagram.
+export function maskValues(diagram, idPath = []) {
+  let scope = null, d = diagram;
+  for (const id of idPath) {
+    const b = d.blocks.find((x) => x.id === id);
+    if (!b?.diagram) break;
+    scope = normalizeMask(b, id, scope, true).scope;
+    d = b.diagram;
+  }
+  return scopeMap(scope);
+}
+// The value of a number field's formula in those values (NaN if it cannot be had).
+export function formulaIn(src, values) {
+  try { return compileFormula(src, (n) => (values.has(n) ? { value: values.get(n) } : null))(new Float64Array(0)); } catch { return NaN; }
+}
+
+function normalizeParams(type, params = {}, where, scope = null, resolve = false) {
+  if (diagramBlockDef(type).model) {
+    // Formulas are put in as their values for the block's own checks, and
+    // kept as written (or as values when resolving).
+    const def = diagramBlockDef(type), numeric = { ...params }, kept = {};
+    for (const p of def.params) {
+      const v = params[p.key], at = `${where}.${p.key}`;
+      if (p.kind === 'vector' && Array.isArray(v) && v.some(isFormula)) { numeric[p.key] = v.map((x, j) => fieldNumber(x, p, scope, `${at}[${j}]`)); kept[p.key] = v.map((x) => (isFormula(x) ? String(x).trim() : Number(x))); }
+      else if (p.kind !== 'vector' && isFormula(v)) { numeric[p.key] = fieldNumber(v, p, scope, at); kept[p.key] = String(v).trim(); }
+    }
+    const out = normalizeBlock('plant', { type, params: numeric }).params;
+    return resolve ? out : { ...out, ...kept };
+  }
   if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where);  // blocks that check their own (external)
   const out = {};
   for (const p of ELEMENTS[type].params) {
@@ -260,11 +373,13 @@ function normalizeParams(type, params = {}, where) {
     } else if (p.nullable && (params[p.key] === null || params[p.key] === '')) {
       v = null;   // empty: the meaning p.nullable names
     } else {
-      v = Number(v);
-      if (!Number.isFinite(v)) throw new Error(`${where}.${p.key}: expected a number`);
+      const raw = v;
+      v = fieldNumber(raw, p, scope, `${where}.${p.key}`);
+      if (Number.isNaN(v) || (!Number.isFinite(v) && !isFormula(raw))) throw new Error(`${where}.${p.key}: expected a number`);
       if (p.int) v = Math.round(v);
       if (p.min !== undefined && v < p.min) throw new Error(`${where}.${p.key}: at least ${p.min}`);
       if (p.max !== undefined && v > p.max) throw new Error(`${where}.${p.key}: at most ${p.max}`);
+      if (isFormula(raw) && !resolve) v = String(raw).trim();
     }
     out[p.key] = v;
   }
@@ -272,7 +387,11 @@ function normalizeParams(type, params = {}, where) {
   return out;
 }
 
-export function normalizeDiagram(d, path = 'plant') {
+// opts.scope: the masks around this level; opts.resolve: formulas become
+// their values (compileDiagram's copy; Equations blocks get the mask names
+// as b.consts).
+export function normalizeDiagram(d, path = 'plant', opts = {}) {
+  const { scope = null, resolve = false } = opts;
   if (!d || !Array.isArray(d.blocks)) throw new Error(`${path}: a diagram needs "blocks" and "wires"`);
   const ids = new Set();
   const blocks = d.blocks.map((b, i) => {
@@ -280,10 +399,14 @@ export function normalizeDiagram(d, path = 'plant') {
     if (!b.id || typeof b.id !== 'string' || /[:/]/.test(b.id)) throw new Error(`${where}: needs an "id" without ":" or "/"`);
     if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
     ids.add(b.id);
-    const out = { id: b.id, type: b.type, params: normalizeParams(b.type, b.params, `${where}(${b.id})`), x: Number(b.x) || 0, y: Number(b.y) || 0 };
+    const at = `${where}(${b.id})`;
+    const m = b.type === 'subsystem' ? normalizeMask(b, at, scope, resolve) : null;
+    const out = { id: b.id, type: b.type, params: m ? m.params ?? {} : normalizeParams(b.type, b.params, at, scope, resolve), x: Number(b.x) || 0, y: Number(b.y) || 0 };
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
-    if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
+    if (m?.mask) out.mask = m.mask;
+    if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`, { scope: m.scope, resolve });
+    if (resolve && b.type === 'fcn' && scope) Object.defineProperty(out, 'consts', { value: scopeMap(scope) });
     if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
       const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
@@ -388,6 +511,8 @@ const NONE = [];
 // noise adds 0, and Sources read the operating point's values.
 // el.seen(idPath, at) then gives the Model a Controller or Observer sees.
 export function compileDiagram(diagram, path = 'plant', opts = {}) {
+  // Masks and formulas are resolved to numbers first, outermost first.
+  if (hasFormulas(diagram)) diagram = normalizeDiagram(diagram, path, { resolve: true });
   const model = opts.mode === 'model';
   const standalone = opts.standalone || model;
   const laws = opts.laws !== false && !model;

@@ -5,14 +5,16 @@
 //   min(a, b) max(a, b) pow(a, b) mod(a, b), step(x) (1 for x >= 0), clamp(x, lo, hi)
 // Example: 0.5*sin(2*pi*3*t) + step(t - 0.2)
 
-const FN1 = {
+// The functions, shared with core/formula.js (the same implementations, so a
+// formula computes the same numbers in both).
+export const FN1 = {
   sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan,
   exp: Math.exp, log: Math.log, ln: Math.log, log10: Math.log10, sqrt: Math.sqrt, abs: Math.abs,
   floor: Math.floor, ceil: Math.ceil, round: Math.round, sign: Math.sign, step: (x) => (x >= 0 ? 1 : 0),
   sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh,
 };
-const FN2 = { min: Math.min, max: Math.max, pow: Math.pow, mod: (a, b) => a - b * Math.floor(a / b), atan2: Math.atan2 };
-const FN3 = { clamp: (x, lo, hi) => Math.min(hi, Math.max(lo, x)) };
+export const FN2 = { min: Math.min, max: Math.max, pow: Math.pow, mod: (a, b) => a - b * Math.floor(a / b), atan2: Math.atan2 };
+export const FN3 = { clamp: (x, lo, hi) => Math.min(hi, Math.max(lo, x)) };
 const CONST = { pi: Math.PI, e: Math.E };
 
 export const EXPR_HELP = 'numbers, t, pi, e; + − * / ^; sin cos tan exp log sqrt abs min max pow mod step clamp …';
