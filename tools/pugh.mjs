@@ -8,6 +8,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { decide, renderMarkdown, renderHtml, bottomLine, PughError } from '../src/core/pugh.js';
+import { reportStyle } from '../build.mjs';
 
 const args = process.argv.slice(2), valueOf = (flag) => { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : null; };
 const outFile = valueOf('-o'), ovFile = valueOf('--overrides');
@@ -18,9 +19,9 @@ try {
   if (ovFile) matrix.overrides = [...(matrix.overrides ?? []), ...JSON.parse(readFileSync(ovFile, 'utf8'))];
   const res = decide(matrix);
   if (outFile) {
-    writeFileSync(outFile, renderHtml(res));
+    writeFileSync(outFile, renderHtml(res, { style: reportStyle() }));
     console.log(`${bottomLine(res).replace(/\*\*/g, '')}\nThe report: ${outFile}`);
-  } else process.stdout.write(args.includes('--json') ? `${JSON.stringify(res, null, 1)}\n` : args.includes('--html') ? renderHtml(res) : renderMarkdown(res));
+  } else process.stdout.write(args.includes('--json') ? `${JSON.stringify(res, null, 1)}\n` : args.includes('--html') ? renderHtml(res, { style: reportStyle() }) : renderMarkdown(res));
 } catch (err) {
   console.error(err instanceof PughError ? `${file}: ${err.message}` : err.message);
   process.exit(1);

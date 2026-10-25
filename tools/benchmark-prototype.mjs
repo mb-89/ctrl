@@ -25,6 +25,7 @@ import { diagramBlockDef, parseEnd, compileDiagram, blockPorts } from '../src/co
 import { analyzeLoop } from '../src/core/analysis.js';
 import { simulateSystem } from '../src/core/sim.js';
 import { decide, SYMBOL, renderHtml } from '../src/core/pugh.js';
+import { reportStyle } from '../build.mjs';
 import { tuneContext, withVariant, runVariant, loopSignals, costScales, runCost, iterate, autotune, tuningSpace, drain, GOAL } from '../src/core/autotune.js';
 
 const args = process.argv.slice(2);
@@ -710,7 +711,7 @@ function figuresOf(row, datum, b) {
 // benchmark hands it a matrix of measured numbers and reads the result.
 
 const JOB_MAX = 2, STEP = 1;
-function matrixOf(b, datumIndex = -1, fitting = null) {
+function matrixOf(b, datumIndex = -1) {
   const keyOf = (i) => `c${i}`;
   const pid = b.rows.findIndex((r) => r.type === 'pid' && !r.loaded && !r.plantChange), loadedRow = b.rows.findIndex((r) => r.loaded);
   return {
@@ -721,14 +722,15 @@ function matrixOf(b, datumIndex = -1, fitting = null) {
       values: Object.fromEntries(CRITERIA.filter((cr) => typeof r[cr.key] === 'number').map((cr) => [cr.key, r[cr.key]])),
       fits: r.fits, whyNot: r.whyNot, suggestable: !r.plantChange, keep: !!r.loaded, tieBreak: r.J,
       ...(r.plantChange ? { note: `A plant change: ${r.plantChange}.` } : {}),
-      // Figures only for the options that fit: the others get a line, not a section.
-      ...(datumIndex >= 0 && fitting?.has(`c${i}`) ? { figures: figuresOf(r, b.rows[datumIndex], b) } : {}),
+      // Figures for every option that ran (input 62): the report shows a
+      // vetoed option's only once the person lets it back in.
+      ...(datumIndex >= 0 ? { figures: figuresOf(r, b.rows[datumIndex], b) } : {}),
     })),
     // The main job against the datum (input 55) and the Ms bound.
     gates: [...CRITERIA.filter((cr) => cr.job).map((cr) => ({ criterion: cr.key, maxRatio: JOB_MAX, why: 'fails the main job' })), { criterion: 'ms', max: MS_MAX, why: "fragile, at r's middle" }],
     // The tuned PID (input 48); the running variant when the PID does not fit.
     datum: { prefer: [pid, loadedRow].filter((i) => i >= 0).map(keyOf) },
-    sensitivity: { step: STEP, draws: 4000, seed: 55, robustShare: 0.75, runnersUp: 3 },
+    sensitivity: { step: STEP, draws: 4000, seed: 55, holdShare: 0.75, runnersUp: 3 },
   };
 }
 
@@ -742,10 +744,10 @@ for (const name of SYSTEMS) {
   const total = now() - t0;
   results.push(b);
   // Decide once for the datum, then again with the figures drawn against it.
-  const res0 = decide(matrixOf(b)), matrix = matrixOf(b, Number(res0.datum.key.slice(1)), new Set(res0.ranking));
+  const res0 = decide(matrixOf(b)), matrix = matrixOf(b, Number(res0.datum.key.slice(1)));
   const res = decide(matrix);
   const slug = b.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  if (REPORT_DIR) writeFileSync(`${REPORT_DIR}/${slug}.html`, renderHtml(res));
+  if (REPORT_DIR) writeFileSync(`${REPORT_DIR}/${slug}.html`, renderHtml(res, { style: reportStyle() }));
   if (MATRIX_DIR) writeFileSync(`${MATRIX_DIR}/${slug}.json`, JSON.stringify(matrix));
   const byKey = Object.fromEntries(res.candidates.map((c) => [c.key, c]));
   b.rows.forEach((row, i) => { const c = byKey[`c${i}`]; row.fits = c.fits; row.whyNot = c.whyNot; });
