@@ -29,6 +29,16 @@ The person, after the prototype ranked Hu–Lin first on "DC motor, deadbeat" wi
 - **"Measure it instead" by matching**: the sensor for an observer is the block output whose run matches the measured signal's rate within 5 %, so it works on the Servo motor main now has (the structure trace of the first prototype found no integrator there).
 - **Results**: sliding-mode motor, the boundary-layer sliding mode (+10, robust); oven, the PID, sensitive (the PI from the plant ties it, the feedforward ties if complexity's weight drops to 0.75); tank, keep the loaded schedule (robust); deadbeat motor, state feedback (+16, robust), Hu–Lin, LQR, the planned swing-up and the relay fail the main job.
 
+## 2026-10-25 · v2.9, Identify: the Shake (§18 step 8)
+
+Built on branch `feat/identify-tab` from [identification.md](identification.md) §5.6 and §6.7 (no new words from the person; [§5.12](identification.md#512-built-step-8-the-shake) has the numbers):
+
+- **"Only when the model is unsure"**: the model at the first pause, ! or ✕ for any reason but "no Check ran" (which every pause model has). Interpretation.
+- **The peak is half the largest push proven** (interpretation of "half the largest |u − u_hold| the incumbent used on its accepted try": the push the tries were capped by).
+- **After a band exit the incumbent has the soft guard's grace**; the test goes on to the second pause and the Check (§5.6 says "the Shake ends", not the test).
+- **The model's Bode line is the sampled response G_d** and the measured points are compared with it, as the review of steps 0–5 asked.
+- **On the arm the Shake changes the choice**: with its data at 1.5 rad, two equal lags with θ ≈ 50 ms (inside the onset the pushes showed, so not refuted) tie the resonance, and the test that tells them apart, played at rest in the friction's regime, keeps the lags. Reported as measured; the arm is not linear, and both shapes are compromises there.
+
 ## 2026-10-25 · v2.9, Identify: the onset test and the discriminating test (input 56)
 
 Built on branch `feat/identify-tab` from the entry below ([identification.md](identification.md#610-built-input-56-a-dead-time-and-a-resonance-told-apart) §6.10 has the numbers):

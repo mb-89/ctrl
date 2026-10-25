@@ -4963,7 +4963,7 @@ return { STRUCTURES, paramInfo, discretise, discretiseSS, simulateSegment, resid
 // ---- core/experiment.js
 __mods['core/experiment.js'] = (() => {
 
-const { STRUCTURES, fitStructureSteps } = __mods['core/fit.js'];
+const { STRUCTURES, fitStructureSteps, multisine, multisineLines } = __mods['core/fit.js'];
 const IDENTIFY_VERSION = 1;
 
 const EXPERIMENT = {
@@ -5032,6 +5032,7 @@ const EXPERIMENT = {
     recover: 2,                
   },
   pause: { seconds: 2, wait: 30 },
+  shake: { minN: 256, maxN: 8192, fmax: 0.4, band: 10, lines: 60, push: 0.5, ramp: [0.25, 0.5, 1], measured: 4, room: 0.5, repeat: 1 },
   check: { stair: 0.125 },
   discriminate: { rest: 0.5 },
   goal: { effort: 0.05, overshoot: 10, overshootWeight: 2, saturation: 0.2 },
@@ -5782,6 +5783,64 @@ function createExperiment(plan) {
     return null;
   }
 
+  function shakeDesign() {
+    const Sh = E.shake, tc = inc?.tauC ?? gentle?.tauC ?? 1, th = gentle?.theta ?? look?.theta ?? 0;
+    let N = Sh.minN;
+    while (N * Ts < 2 * 4 * (tc + th) && N < Sh.maxN) N *= 2;
+    const fTop = Math.min(Sh.fmax / Ts, Sh.band / (2 * Math.PI * (tc + th)));
+    const kmax = Math.max(3, Math.floor(fTop * N * Ts));
+    const lines = multisineLines({ N, kmax, count: Sh.lines, seed: P.seed });
+    const base = multisine({ N, lines: lines.excited, peak: 1, seed: P.seed });
+    const peak = Math.max(E.nudge.a0 * U, Sh.push * proven);
+    const periods = Sh.ramp.length + Sh.measured;
+    return { N, kmax, lines, base, peak, periods };
+  }
+  function* shake() {
+    const Sh = E.shake, d = shakeDesign();
+    let a = Infinity, b = -Infinity;
+    for (const v of test) { a = Math.min(a, v); b = Math.max(b, v); }
+    const places = b - a > 1e-12 ? [a, b] : [a];
+    const need = places.length * (E.ease.settleMax + (d.periods + Sh.repeat) * d.N * Ts) + E.pause.seconds + E.ease.settleMax + check.length * Ts;
+    if (need > left()) {
+      const fits = LENGTHS.find((x) => x >= now() + need);
+      log({ kind: 'note', i, text: `a closer look (the Shake) needs about ${Math.round(need)} s more${fits ? `: allow ${budgetText(fits)}` : ''}` });
+      return 'skipped';
+    }
+    enter('shake');
+    for (const place of places) {
+      const status = (p) => `Shake at ${yU(place)}: tones on ${names.u}, period ${p + 1} of ${d.periods}`;
+      const i0 = i;
+      const s0 = yield* settle(place, E.ease.settleMax, status(-1).replace(/, period.*/, ''));
+      if (s0 === 'left') return endBand(`${names.y} left 'may move within' before the Shake: the page stopped the plant`);
+      const room = Math.min(hi - place, place - lo);
+      const iS = i, starts = [], amps = [];
+      let amp = 0, used = 0, out = false, extra = 0;
+      for (let p = 0; p < d.periods + extra; p++) {
+        const want = d.peak * Sh.ramp[Math.min(p, Sh.ramp.length - 1)];
+        if (p === 0 || used <= Sh.room) amp = Math.max(amp, want);
+        used = 0;
+        const pStart = i, gapsBefore = rec.gaps.length;
+        starts.push(pStart); amps.push(amp);
+        for (let j = 0; j < d.N; j++) {
+          if (!inBand(y)) { out = true; recovering = { k, beyond: beyond(y), inside: 0 }; break; }
+          used = Math.max(used, Math.abs(y - place) / Math.max(room, 1e-300));
+          const u = Math.min(P.umax, Math.max(P.umin, law.step(r, y) + amp * d.base[j]));
+          meters(u);
+          st.room = roomUsed(y);
+          st.status = status(p);
+          yield u;
+        }
+        if (out) break;
+        if (rec.gaps.length > gapsBefore && extra < Sh.repeat && p >= Sh.ramp.length) extra++;
+      }
+      log({ kind: 'shake', i0, iStart: iS, iEnd: i, place, N: d.N, kmax: d.kmax, seed: P.seed, starts, amps, left: out });
+      if (out) {
+        return 'left';
+      }
+    }
+    return null;
+  }
+
 
   function* runCheck() {
     enter('check');
@@ -5904,7 +5963,16 @@ function createExperiment(plan) {
     if (st.done || stopping) return null;
     yield* pause();
     if (st.done || stopping) return null;
-    chips.shake = '–';
+    if (supplied?.shake) {
+      const sh = yield* shake();
+      if (st.done || stopping) return null;
+      if (sh === 'skipped') chips.shake = '–';
+      else {
+        if (sh === 'left') log({ kind: 'note', i, text: `${names.y} reached the edge of 'may move within' during the Shake: the tones stopped` });
+        yield* pause();
+        if (st.done || stopping) return null;
+      }
+    } else chips.shake = '–';
     yield* runCheck();
     if (st.done || stopping) return null;
     yield* discriminate();
@@ -6003,6 +6071,16 @@ function createExperiment(plan) {
   };
 }
 
+function excitationOf(e, Ts) {
+  if (e.kind === 'discriminate') return { from: e.iStart, values: discriminationSignal(e, Ts) };
+  if (e.kind !== 'shake') return null;
+  const lines = multisineLines({ N: e.N, kmax: e.kmax, count: EXPERIMENT.shake.lines, seed: e.seed });
+  const base = multisine({ N: e.N, lines: lines.excited, peak: 1, seed: e.seed });
+  const values = new Float64Array(Math.max(0, e.iEnd - e.iStart));
+  e.starts.forEach((s, p) => { for (let j = 0; j < e.N; j++) { const at = s - e.iStart + j; if (at >= 0 && at < values.length) values[at] = e.amps[p] * base[j]; } });
+  return { from: e.iStart, values, lines };
+}
+
 function discriminationSignal({ shape, a, n, f }, Ts) {
   const out = new Float64Array(n);
   for (let j = 0; j < n; j++) {
@@ -6030,7 +6108,7 @@ function checkPlan(p) {
   if (!p.test || !(Array.isArray(p.test.r) ? p.test.r.length >= 2 : Number.isFinite(p.test.r0))) throw new Error('experiment: plan.test needs r (samples) or r0 (a staircase)');
 }
 
-return { IDENTIFY_VERSION, EXPERIMENT, STAGES, STAGE_LABELS, fmtNum, LENGTHS, budgetText, gentleGains, gentleTauC, piLaw, bumpless, tryCost, tryMargin, listenStats, staircase, halved, createExperiment, discriminationSignal };
+return { IDENTIFY_VERSION, EXPERIMENT, STAGES, STAGE_LABELS, fmtNum, LENGTHS, budgetText, gentleGains, gentleTauC, piLaw, bumpless, tryCost, tryMargin, listenStats, staircase, halved, createExperiment, excitationOf, discriminationSignal };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
@@ -12901,6 +12979,7 @@ const LOG_KEYS = {
   pause: ['i0', 'i1', 'waited'],
   check: ['i0', 'iStart', 'iEnd'],
   discriminate: ['i0', 'iStart', 'iEnd', 'shape', 'a', 'n', 'f', 'at', 'left', 'candidates'],
+  shake: ['i0', 'iStart', 'iEnd', 'place', 'N', 'kmax', 'seed', 'starts', 'amps', 'left'],
   end: ['code', 'message', 'i', 't', 'check'],
   stop: ['i', 'code'],
   note: ['i', 'text'],
@@ -16925,10 +17004,10 @@ const { openLoop, openLoopPoles, closedLoopSides, frequencyData, loopMargins } =
 const { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } = __mods['core/diagram.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
 const { referenceFn, gaussAt } = __mods['core/signals.js'];
-const { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText, discriminationSignal } = __mods['core/experiment.js'];
+const { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText, discriminationSignal, excitationOf } = __mods['core/experiment.js'];
 const {
   STRUCTURES, CHOICE, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
-  fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded,
+  fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded, frf,
 } = __mods['core/fit.js'];
 const { cholesky } = __mods['core/linalg.js'];
 const { createStepRunner } = __mods['core/live.js'];
@@ -17198,7 +17277,7 @@ function readLog(record) {
   const all = (kind) => log.filter((e) => e.kind === kind);
   return {
     listen: one('listen'), rungs: all('rung'), look: one('look'), laws: all('law'), tries: all('try'), ladder: one('ladder'),
-    supply: one('supply'), pause: one('pause'), check: one('check'), discriminate: one('discriminate'), end: one('end'), notes: all('note'),
+    supply: all('supply').filter((e) => (e.what ?? 'fit') === 'fit').at(-1) ?? null, pause: one('pause'), check: one('check'), discriminate: one('discriminate'), shakes: all('shake'), end: one('end'), notes: all('note'),
   };
 }
 
@@ -17214,13 +17293,15 @@ function restBefore(record, a, w) {
   return { y: nan(record.y[a]), u: nan(record.u[Math.max(0, a - 1)]), n: 0 };
 }
 
-function closedSegment(record, laws, a, b, w, role) {
+function closedSegment(record, laws, a, b, w, role, { excites = [], limits = null } = {}) {
   const rest = restBefore(record, a, w);
   let before = null;
   for (const e of laws) if (e.i < a) before = e;
+  const ex = excites.filter((e) => e && e.iStart < b && e.iEnd > a);
   return {
     kind: 'closed', role, i0: a, i1: b, yStart: rest.y, uStart: rest.u, rPrev: nan(record.r[Math.max(0, a - 1)]),
     before: before ? lawOf(before) : null, switches: laws.filter((e) => e.i >= a && e.i < b).map(lawOf),
+    ...(ex.length ? { excites: ex, limits } : {}),
   };
 }
 
@@ -17237,13 +17318,14 @@ function segmentsOf(record, plan, { upto = null } = {}) {
   const iL = L.i1 - 1;
   const hold = g.laws.find((e) => e.role === 'hold') ?? null;
   const iHold = hold ? hold.i : F;
+  const exOpts = { excites: [...g.shakes, g.discriminate].filter(Boolean), limits: [plan.umin, plan.umax] };
   const o0 = g.rungs[0].i0, o1 = Math.min(iHold, F);
   if (o1 - o0 > 2) out.open = { kind: 'open', role: 'nudge', i0: o0, i1: o1, yStart: L.y0 + L.slope * (o0 - iL), uStart: plan.u0, slope: L.slope, iL, level: L.y0 };
   if (hold && iHold < F) {
-    const cuts = [iHold, ...g.tries.filter((T) => T.settled && T.iSwitch > iHold && T.iSwitch < F).map((T) => T.iSwitch)];
+    const cuts = [iHold, ...g.tries.filter((T) => T.settled && T.iSwitch > iHold && T.iSwitch < F).map((T) => T.iSwitch), ...g.shakes.filter((e) => e.iStart > iHold && e.iStart < F).map((e) => e.iStart)].sort((x, y) => x - y);
     cuts.forEach((a, j) => {
       const b = j + 1 < cuts.length ? cuts[j + 1] : F;
-      if (b - a > 2) out.closed.push(closedSegment(record, g.laws, a, b, w, j === 0 ? 'hold' : 'try'));
+      if (b - a > 2) out.closed.push(closedSegment(record, g.laws, a, b, w, j === 0 ? 'hold' : g.shakes.some((e) => e.iStart === a) ? 'shake' : 'try', exOpts));
     });
   }
   const band = plan.band, span = band[1] - band[0];
@@ -17258,7 +17340,7 @@ function segmentsOf(record, plan, { upto = null } = {}) {
   if (ck && ck.i1 - ck.i0 > 2) {
     const start = [ck.iStart, ck.i0].find((a) => finite(a) && a < ck.i1 - 2 && settledAt(a)) ?? out.closed.at(-1)?.i0 ?? ck.i0;
     const rest = settledAt(start);
-    const c = closedSegment(record, g.laws, start, ck.i1, w, 'check');
+    const c = closedSegment(record, g.laws, start, ck.i1, w, 'check', exOpts);
     out.check = { ...c, ...(rest ? { yStart: rest.y, uStart: rest.u } : {}), from: start >= ck.i0 ? start : ck.i0, left: ck.left };
   }
   out.holds.push({ y: L.y0, u: plan.u0, at: L.i1, n: L.i1 - L.i0 });
@@ -17310,7 +17392,9 @@ function fitSegment(record, seg, L, Ts) {
   const hold = ys.map((y) => !finite(y));
   const r = Float64Array.from(rs);
   const before = seg.before;
-  const ex = seg.excite ? { sig: discriminationSignal(seg.excite, Ts), from: seg.excite.from, lo: seg.excite.umin, hi: seg.excite.umax } : null;
+  const exs = (seg.excites ?? []).map((e) => excitationOf(e, Ts)).filter(Boolean);
+  const [uLo, uHi] = seg.limits ?? [-Infinity, Infinity];
+  const added = (i) => { let v = 0; for (const x of exs) { const j = i - x.from; if (j >= 0 && j < x.values.length) v += x.values[j]; } return v; };
   out.law = () => {
     let law = before ? piLaw(before, bumpless(before, seg.uStart, seg.rPrev, seg.yStart), before.umin, before.umax, Ts) : null;
     let uLast = seg.uStart;
@@ -17319,7 +17403,7 @@ function fitSegment(record, seg, L, Ts) {
       const e = at.get(k);
       if (e) law = piLaw(e, bumpless(e, uLast, r[k], yh), e.umin, e.umax, Ts);
       let u = law ? law.step(r[k], yh) : uLast;
-      if (ex && law && idx[k] >= ex.from) u = Math.min(ex.hi, Math.max(ex.lo, u + (ex.sig[idx[k] - ex.from] ?? 0)));
+      if (exs.length && law && idx[k] >= 0) u = Math.min(uHi, Math.max(uLo, u + added(idx[k])));
       uLast = u;
       return u;
     };
@@ -17533,7 +17617,8 @@ function modelSentences(model, names = {}) {
     const at = (v) => withU(fmtNum(v, 2), n.yUnit);
     out.push(`Behaves differently at different places: near ${at(a.level)}, ${one}${S.integrating ? ' for 1 s' : ''} moves it ${at(a.gain)}; near ${at(b.level)}, ${at(b.gain)}. The model is a compromise between them.`);
   }
-  if (model.sizeNote) out.push(model.sizeNote);
+  if (finite(model.distortion) && model.distortion >= GRADE.distortion[0]) out.push(`About ${Math.round(model.distortion)} % of the response at this size is not linear.`);
+  else if (model.sizeNote) out.push(model.sizeNote);
   const noise = model.noise;
   const noiseLine = !noise ? null : noise.none ? 'This plant has no noise; real plants do.'
     : noise.steps && !(noise.sigma > 0.5 * noise.q / Math.sqrt(12)) ? `Noise on ${n.y}: only its steps of ${withU(fmtNum(noise.q, 2), n.yUnit)} (an encoder).`
@@ -17581,18 +17666,21 @@ function easedFrom(g, plan) {
 const ONSET = { share: 0.1, floors: 4, hold: 2, peakFloors: 20 };
 function onsetOf(record, rungs, floor, Ts) {
   let best = null;
+  const read = (d, at) => {
+    const peak = Math.max(...d.filter(finite));
+    if (!(peak > ONSET.peakFloors * floor)) return;
+    const bar = Math.max(ONSET.floors * floor, ONSET.share * peak);
+    for (let k = 0; k + ONSET.hold <= d.length; k++) {
+      if (d.slice(k, k + ONSET.hold).every((v) => v > bar)) { const t = k * Ts; if (!best || t < best.t) best = { t, at }; return; }
+    }
+  };
   for (const R of rungs) {
     if (!R.visible || !Number.isInteger(R.i0) || !Number.isInteger(R.T)) continue;
     const dir = (R.dir ?? 1) * (R.sign ?? 1);
     const end = Math.min(record.y.length, R.i0 + 1 + R.T + 1);
     const d = [];
     for (let i = R.i0; i < end; i++) { const y = nan(record.y[i]); d.push(finite(y) ? dir * (y - (R.base + (R.slope ?? 0) * (i - (R.ic ?? R.i0)))) : NaN); }
-    const peak = Math.max(...d.filter(finite));
-    if (!(peak > ONSET.peakFloors * floor)) continue;
-    const bar = Math.max(ONSET.floors * floor, ONSET.share * peak);
-    for (let k = 0; k + ONSET.hold <= d.length; k++) {
-      if (d.slice(k, k + ONSET.hold).every((v) => v > bar)) { const t = k * Ts; if (!best || t < best.t) best = { t, rung: R.n }; break; }
-    }
+    read(d, `rung ${R.n}`);
   }
   return best;
 }
@@ -17815,7 +17903,9 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
 
   const check = chosen.check;
   const kernelGap = check && kernelFit !== null ? kernelFit - check.fit : 0;
-  let grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
+  const shakes = shakeResponses(record, g.shakes, chosen, Ts);
+  const distortion = shakes.length ? Math.max(...shakes.map((x) => x.distortion.share)) : null;
+  let grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, distortion, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
   const early = { budget: 'the test ended after the first look', slow: 'the test ended after the first look', away: 'the gentle controller pushed the wrong way', hold: 'the gentle controller did not hold' }[g.end?.code];
   if (early) grade = { mark: '✕', why: [early] };
   if (chosen.unsupported) grade = { mark: '✕', why: [chosen.unsupported, ...grade.why.filter((w) => w !== chosen.unsupported)] };
@@ -17847,7 +17937,7 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
     fit: chosen.fitted, check: checkOut,
     where, holds: seg.holds.map((h) => ({ y: h.y, u: h.u })), whereSpread: { spread, flagged }, size, sizeNote,
     kernel: kernel ? { g: Array.from(kernel.g), sd: Array.from(kernel.sd), Ts: kernel.Ts, decimate: kernel.decimate, integrating: kernel.integrating, rate: kernel.rate ? { value: kernel.rate.value, sd: kernel.rate.sd } : null, fit: kernelFit } : null,
-    eased: easedFrom(g, plan), discrimination,
+    eased: easedFrom(g, plan), discrimination, frf: shakes, distortion,
     grade: grade.mark, why: grade.why, warnings,
     segments: { open: seg.open ? [seg.open.i0, seg.open.i1] : null, closed: seg.closed.map((c) => [c.i0, c.i1]), check: seg.check ? [seg.check.from, seg.check.i1] : null, fitted: seg.F },
   };
@@ -18003,7 +18093,7 @@ function identifyRun(project, path = null, settings = {}, { plan: ready = null, 
       if (exp.needs?.kind === 'fit') {
         const upto = exp.needs.upto;
         pre = yield* tagged(identifySteps(compactRecord(exp.record()), { plan, upto }), 'pause');
-        exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+        exp.supply('fit', fitSupply(pre, exp));
       } else if (exp.needs?.kind === 'discriminate') {
         exp.supply('discriminate', yield* tagged(discriminateSteps(exp.record(), plan, pre), 'discriminate'));
       }
@@ -18025,6 +18115,14 @@ function identifyRun(project, path = null, settings = {}, { plan: ready = null, 
   return { known, plan, settings: s, vary, factors, runner, exp, names: runner.names(), steps: steps(), stop: () => exp.stop(), get pre() { return pre; } };
 }
 
+function shakeWanted(model) {
+  return !model?.ok || model.why.some((w) => w !== 'no Check ran');
+}
+function fitSupply(model, exp = null) {
+  const first = !exp || !exp.record().log.some((e) => e.kind === 'shake' || (e.kind === 'note' && /the Shake/.test(e.text)));
+  return { ...(model?.ok ? { structure: model.structure, params: model.params } : {}), shake: first && shakeWanted(model) };
+}
+
 function* discriminateSteps(record, plan, pre) {
   const rec = compactRecord(record);
   const so = yield* identifySteps(rec, { plan, reuse: pre });
@@ -18037,6 +18135,32 @@ function* tagged(gen, stage) {
 
 function identify(project, path = null, settings = {}) {
   return drain(identifyRun(project, path, settings).steps);
+}
+
+function shakeResponses(record, shakes, model, Ts) {
+  const out = [];
+  const ramp = EXPERIMENT.shake.ramp.length;
+  let d = null;
+  try { d = discretise(model.structure, model.p ?? model.params, Ts); } catch { d = null; }
+  for (const e of shakes) {
+    if (e.left) continue;
+    const ex = excitationOf(e, Ts);
+    const lost = (a, b) => (record.gaps ?? []).some(([i]) => i >= a && i < b);
+    const keep = e.starts.slice(ramp).filter((a, j) => e.amps[ramp + j] === e.amps.at(-1) && !lost(a, a + e.N) && a + e.N <= record.y.length);
+    if (keep.length < 2) continue;
+    const col = (src, a) => Array.from({ length: e.N }, (_, j) => { const v = nan(src[a + j]); return finite(v) ? v : 0; });
+    const U = keep.map((a) => col(record.applied?.some((v) => v !== null) ? record.applied.map((v, i) => (v === null ? record.u[i] : v)) : record.u, a));
+    const Y = keep.map((a) => col(record.y, a));
+    let F;
+    try { F = frf(U, Y, { excited: ex.lines.excited, detect: ex.lines.detect, Ts }); } catch { continue; }
+    const Gd = d ? F.f.map((f) => discreteAt(d, 2 * Math.PI * f * Ts)) : null;
+    const inside = Gd ? F.G.filter((g, j) => Math.hypot(g.re - Gd[j][0], g.im - Gd[j][1]) <= 2 * F.sd[j]).length / F.G.length : null;
+    out.push({
+      place: e.place, periods: keep.length, f: F.f, G: F.G.map((g) => [g.re, g.im]), sd: F.sd, model: Gd,
+      distortion: { share: F.distortion.share, odd: F.distortion.odd, even: F.distortion.even }, within: inside,
+    });
+  }
+  return out;
 }
 
 
@@ -18101,7 +18225,7 @@ function designDiscrimination(model, record, plan) {
 function tellApart(record, plan, models) {
   const g = readLog(record), D = g.discriminate, Ts = record.Ts;
   if (!D || !g.listen) return {};
-  const seg = { ...closedSegment(record, g.laws, D.iStart, D.iEnd, Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9)), 'discriminate'), excite: { shape: D.shape, a: D.a, n: D.n, f: D.f, from: D.iStart, umin: plan.umin, umax: plan.umax } };
+  const seg = closedSegment(record, g.laws, D.iStart, D.iEnd, Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9)), 'discriminate', { excites: [D], limits: [plan.umin, plan.umax] });
   const fs = fitSegment(record, seg, g.listen, Ts);
   const out = {};
   for (const m of models) {
@@ -18441,7 +18565,7 @@ function measuredPoints(model) {
   return out;
 }
 
-return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode, twinOp, twinDiagram, PUSH, modelPush, twinProject, modelTuneSteps, modelTune, identifiedLoop, loopRanges, keptModel, measuredPoints };
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, shakeWanted, fitSupply, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode, twinOp, twinDiagram, PUSH, modelPush, twinProject, modelTuneSteps, modelTune, identifiedLoop, loopRanges, keptModel, measuredPoints };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {
