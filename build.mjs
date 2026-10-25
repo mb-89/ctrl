@@ -8,14 +8,15 @@
 import { stripComments } from './tools/strip-comments.mjs';
 import { AGENT_NOTE } from './src/core/guide.js';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
-const MODULES = [
-  'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/speed.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/structure.js', 'core/observers.js', 'core/hil.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/spectrum.js', 'core/analysis.js', 'core/autotune.js',
+export const MODULES = [
+  'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/speed.js', 'core/blocks.js', 'core/expr.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/controllers.js', 'core/structure.js', 'core/observers.js', 'core/hil.js', 'core/xml.js', 'core/urdf.js', 'core/rbd.js', 'core/puma560.js', 'core/diagram.js', 'core/sim.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/spectrum.js', 'core/analysis.js', 'core/autotune.js',
   'core/ramp.js', 'core/live.js', 'core/trace.js', 'core/zip.js', 'core/guide.js',
-  'ui/units.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/measure.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/plant.js', 'ui/ctldiagram.js', 'ui/controller.js', 'ui/autotune.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/speed.js', 'ui/limited.js', 'ui/app.js',
+  'ui/units.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/measure.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/view3d.js', 'ui/plant.js', 'ui/ctldiagram.js', 'ui/controller.js', 'ui/autotune.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/speed.js', 'ui/limited.js', 'ui/app.js',
 ];
 
 // Live mode offers the external plant for download: the files of hil/ ride in
@@ -26,9 +27,11 @@ const HIL_FILES = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README
 const hilFiles = () => `// hil/: the external plant, offered under Live\nconst __HIL_FILES = ${JSON.stringify(Object.fromEntries(HIL_FILES.map((f) => [f, readFileSync(join(ROOT, 'hil', f), 'utf8')])))};`;
 
 // Each module runs in its own function scope; its exports go into a registry
-// and its imports are read back from it.
-export function bundleScript() {
-  const parts = MODULES.map((m) => {
+// and its imports are read back from it. A harness may bundle other modules
+// (in dependency order) and run a tail of code inside the bundle, with
+// __mods in scope; the defaults make the page's script.
+export function bundleScript(modules = MODULES, tail = '') {
+  const parts = modules.map((m) => {
     // The page carries code, not the repository's comments (and no trace of
     // where it was made: test/provenance.test.mjs).
     const src = stripComments(readFileSync(join(ROOT, 'src', m), 'utf8'));
@@ -37,20 +40,80 @@ export function bundleScript() {
     const body = src
       .replace(/^import\s*\{([^}]*)\}\s*from\s*'([^']+)';\s*$/gm, (_, list, from) => {
         const key = join(dirname(m), from).replace(/\\/g, '/');
-        if (!MODULES.includes(key)) throw new Error(`${m}: unknown import ${from}`);
+        if (!modules.includes(key)) throw new Error(`${m}: unknown import ${from}`);
         return `const {${list}} = __mods['${key}'];`;
       })
       .replace(/^export\s+(?=(function|const|let|class))/gm, '');
     if (/^import\s/m.test(body)) throw new Error(`${m}: only single-line named imports are supported`);
     return `// ---- ${m}\n__mods['${m}'] = (() => {\n${body}\nreturn { ${names.join(', ')} };\n})();`;
   });
-  return `(() => {\n'use strict';\nconst __mods = {};\n${hilFiles()}\n${parts.join('\n')}\n})();\n`;
+  return `(() => {\n'use strict';\nconst __mods = {};\n${hilFiles()}\n${parts.join('\n')}\n${tail ? `${tail}\n` : ''}})();\n`;
 }
 
 // ui/limited.js runs inline as well, before the first paint: it hides the
 // warning below the header where the environment is full, so it never
 // flashes; where no script runs, the warning stays.
 const limitedCheck = () => `<script id="lt-limited-check">(() => {\n${stripComments(readFileSync(join(ROOT, 'src/ui/limited.js'), 'utf8')).replace(/^export\s+/gm, '')}\ntry { markLimited(window); } catch { }\n})();</script>`;
+
+// three.js, vendored unmodified (src/vendor/three/README.md), runs as its own
+// classic script before the page's: its ES module syntax becomes plain
+// statements and its exports globalThis.THREE. Its text, licence comments
+// included, is kept as it is; the files are checked against their checksums.
+export const THREE_FILES = {
+  'three.core.min.js': '05b2609338c76cd65daf74f3ac515bc9a5045e1b3b33edc07d8c9bd55250fa90',
+  'three.module.min.js': '86bcee248b64f44bcfc23c331ae74619061957d59cab040171dcb6fb5900beb6',
+  LICENSE: '8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc',
+};
+const CORE_URL = '"./three.core.min.js"';
+
+export function readVendorThree(dir = join(ROOT, 'src/vendor/three')) {
+  const out = {};
+  for (const [f, sha] of Object.entries(THREE_FILES)) {
+    const buf = readFileSync(join(dir, f));
+    const got = createHash('sha256').update(buf).digest('hex');
+    if (got !== sha) throw new Error(`src/vendor/three/${f}: sha256 ${got}, expected ${sha} (README.md)`);
+    out[f] = buf.toString('utf8');
+  }
+  return out;
+}
+
+// `a as B, c` -> [['a', 'B'], ['c', 'c']]
+const specifiers = (list) => list.split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
+  const m = /^([\w$]+)(?:\s+as\s+([\w$]+))?$/.exec(x);
+  if (!m) throw new Error(`three.js: unexpected specifier ${x}`);
+  return [m[1], m[2] ?? m[1]];
+});
+// The one statement `re` matches in src (exactly one, or the build stops).
+function only(src, re, what) {
+  const all = [...src.matchAll(new RegExp(re.source, 'g'))];
+  if (all.length !== 1) throw new Error(`three.js: expected one ${what}, found ${all.length}`);
+  return all[0];
+}
+
+export function vendorScript(files = readVendorThree()) {
+  const core = files['three.core.min.js'], mod = files['three.module.min.js'];
+  for (const [name, src] of [['core', core], ['module', mod]]) {
+    if (/\bimport\s*\(|\bimport\.meta\b/.test(src)) throw new Error(`three.js ${name}: dynamic import or import.meta`);
+  }
+  const ce = only(core, /export\{([^}]*)\};?/, 'export in the core');
+  if (/\bimport\s*\{/.test(core)) throw new Error('three.js core: an import');
+  const mi = only(mod, new RegExp(`import\\{([^}]*)\\}from${CORE_URL};`), 'import of the core');
+  const mr = only(mod, new RegExp(`export\\{([^}]*)\\}from${CORE_URL};`), 're-export of the core');
+  const me = only(mod, /export\{([^}]*)\};?(?=\s*$)/, 'export at the end of the module');
+  if ((mod.match(/export\s*\{/g) ?? []).length !== 2 || (mod.match(/\bimport\s*\{/g) ?? []).length !== 1) throw new Error('three.js module: unexpected imports or exports');
+  const obj = (pairs) => `{${pairs.map(([local, name]) => `${name}:${local}`).join(',')}}`;
+  const cut = (src, ...ms) => {
+    let out = src;
+    for (const m of [...ms].sort((a, b) => b.index - a.index)) out = `${out.slice(0, m.index)}${m.repl}${out.slice(m.index + m[0].length)}`;
+    return out;
+  };
+  ce.repl = `;return${obj(specifiers(ce[1]))};`;
+  mi.repl = `const{${specifiers(mi[1]).map(([name, local]) => `${name}:${local}`).join(',')}}=__threeCore;`;
+  mr.repl = `const __threeAgain=${obj(specifiers(mr[1]).map(([local, name]) => [`__threeCore.${local}`, name]))};`;
+  me.repl = `;return Object.assign({},__threeCore,__threeAgain,${obj(specifiers(me[1]))});`;
+  return `/*\n${files.LICENSE.trim()}\n*/\n(()=>{\n'use strict';\nconst __threeCore=(()=>{\n'use strict';\n${cut(core, ce)}\n})();\nglobalThis.THREE=Object.freeze((()=>{\n'use strict';\n${cut(mod, mi, mr, me)}\n})());\n})();\n`;
+}
+export const vendorBlock = (files) => `<script id="lt-vendor-three">${vendorScript(files).replace(/<\/script/gi, '<\\/script')}</script>`;
 
 const FONTS = '<link id="lt-fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@400;600&display=swap">';
 
@@ -180,7 +243,7 @@ export function buildHtml({ project = null, fragment = false } = {}) {
   const js = bundleScript().replace(/<\/script/gi, '<\\/script');
   const title = project?.title ? `${project.title} · Loop Tuner` : 'Loop Tuner';
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const body = `${SHELL}\n${project ? jsonScript(project) : '<script type="application/json" id="loop-tuner-project"></script>'}\n<script id="lt-script">${js}</script>`;
+  const body = `${SHELL}\n${project ? jsonScript(project) : '<script type="application/json" id="loop-tuner-project"></script>'}\n${vendorBlock()}\n<script id="lt-script">${js}</script>`;
   if (fragment) {
     // Only the hosted page gets the host's save adapter; the standalone page
     // (and every page it exports) knows nothing of the host.
