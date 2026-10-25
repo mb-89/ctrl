@@ -25,7 +25,10 @@ export const MODULES = [
 // them too. They are kept as written (no comment stripping), so they must
 // carry no provenance either (test/provenance.test.mjs).
 const HIL_FILES = ['hil_plant.py', 'runme.sh', 'runme.cmd', 'runme.ps1', 'README.txt'];
-const hilFiles = () => `// hil/: the external plant, offered under Live\nconst __HIL_FILES = ${JSON.stringify(Object.fromEntries(HIL_FILES.map((f) => [f, readFileSync(join(ROOT, 'hil', f), 'utf8')])))};`;
+// The MCP server's download (Export ▾) the same way: mcp.mjs and mcp/'s
+// files, as __MCP_FILES (ui/bridge.js zips them with the page and its core).
+const MCP_FILES = { 'mcp.mjs': 'mcp.mjs', 'README.txt': 'mcp/README.txt', 'runme.sh': 'mcp/runme.sh', 'runme.cmd': 'mcp/runme.cmd', 'runme.ps1': 'mcp/runme.ps1' };
+const hilFiles = () => `// hil/: the external plant, offered under Live\nconst __HIL_FILES = ${JSON.stringify(Object.fromEntries(HIL_FILES.map((f) => [f, readFileSync(join(ROOT, 'hil', f), 'utf8')])))};\n// mcp.mjs and mcp/: the MCP server, offered under Export\nconst __MCP_FILES = ${JSON.stringify(Object.fromEntries(Object.entries(MCP_FILES).map(([name, f]) => [name, readFileSync(join(ROOT, f), 'utf8')])))};`;
 
 // Each module runs in its own function scope; its exports go into a registry
 // and its imports are read back from it. A harness may bundle other modules
@@ -217,10 +220,14 @@ const SHELL = `<div id="lt-shell" class="app">
     <button id="redo" class="btn btn-icon" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">${ICON.redo}</button>
     <span class="sep"></span>
     <button id="open" class="btn" title="Open a project (.json, or an exported .html)">Open…</button>
-    <button id="save" class="btn" data-standalone title="Download the project as JSON (Ctrl+S)">Save JSON</button>
-    <button id="export" class="btn" data-standalone title="Download this page with the project inside, to send to someone">Export HTML</button>
-    <button id="copy" class="btn" title="Copy the project JSON">Copy JSON</button>
-    <button id="copy-html" class="btn" data-framed title="Copy a standalone HTML page with the project inside">Copy HTML</button>
+    <div class="popwrap"><button type="button" id="export-menu" class="btn" aria-haspopup="menu" aria-expanded="false" aria-controls="export-pop" title="Save, copy or export the project; download the HIL plant or the MCP server">Export ▾</button><div id="export-pop" class="popover menu export-pop" role="menu" aria-label="Export" hidden>
+      <button type="button" id="save" class="item" role="menuitem" tabindex="-1" data-standalone><b>Save JSON</b><span class="hint">the project as a file (Ctrl+S)</span></button>
+      <button type="button" id="copy" class="item" role="menuitem" tabindex="-1"><b>Copy JSON</b><span class="hint">the project to the clipboard</span></button>
+      <button type="button" id="export" class="item" role="menuitem" tabindex="-1" data-standalone><b>Export HTML</b><span class="hint">this page with the project inside, to send</span></button>
+      <button type="button" id="copy-html" class="item" role="menuitem" tabindex="-1"><b>Copy HTML</b><span class="hint">the same page to the clipboard</span></button>
+      <button type="button" id="dl-plant" class="item" role="menuitem" tabindex="-1" data-standalone><b>HIL plant</b><span class="hint">hil-plant.zip: a plant outside the page, for Live</span></button>
+      <button type="button" id="dl-mcp" class="item" role="menuitem" tabindex="-1" data-standalone><b>MCP server</b><span class="hint">loop-tuner-mcp.zip: an agent works on this page with you</span></button>
+    </div></div>
     <button id="help" class="btn btn-icon" title="Help and keyboard shortcuts (?); for agents: loopTuner.help()" aria-label="Help, and a guide for agents: loopTuner.help()">?</button>
     <input type="file" id="file" accept=".json,.html,application/json,text/html" hidden>
   </div>

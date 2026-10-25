@@ -25,7 +25,7 @@ import { createRecord } from './record.js';
 import { createSpeed } from './speed.js';
 import { speedToJson } from '../core/speed.js';
 import { startLimited } from './limited.js';
-import { startBridge } from './bridge.js';
+import { startBridge, mcpFiles, mcpZip, MCP_ZIP } from './bridge.js';
 
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
@@ -678,6 +678,42 @@ function startApp() {
   $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html', 'use Copy HTML')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
   $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
+  $('dl-plant').addEventListener('click', () => live.api.downloadPlant());
+  const serverFiles = () => mcpFiles($('lt-script').textContent, exportHtml());
+  $('dl-mcp').addEventListener('click', async () => {
+    if (await download(MCP_ZIP, new Blob([mcpZip(serverFiles())], { type: 'application/zip' }), 'application/zip', 'loopTuner.mcpFiles() has its files as text')) toast(`Saved ${MCP_ZIP}: unzip it and run runme.sh (Linux, macOS) or runme.cmd (Windows); its README says how to register it with your agent.`);
+  });
+  // Export ▾: a menu of the file keys above; one menu open at a time.
+  const xBtn = $('export-menu'), xPop = $('export-pop');
+  const xItems = () => [...xPop.querySelectorAll('[role="menuitem"]')].filter((b) => !b.hidden);
+  function closeExport(focusButton = false) {
+    if (xPop.hidden) return;
+    xPop.hidden = true;
+    xBtn.setAttribute('aria-expanded', 'false');
+    if (focusButton) xBtn.focus();
+  }
+  function openExport() {
+    document.dispatchEvent(new MouseEvent('click'));
+    xPop.hidden = false;
+    fitPopover(xPop);
+    xBtn.setAttribute('aria-expanded', 'true');
+    xItems()[0]?.focus();
+  }
+  xBtn.addEventListener('click', (e) => { e.stopPropagation(); if (xPop.hidden) openExport(); else closeExport(); });
+  xBtn.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); openExport(); } });
+  xPop.addEventListener('click', (e) => { e.stopPropagation(); if (e.target.closest('[role="menuitem"]')) closeExport(); });
+  xPop.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    const list = xItems(), i = list.indexOf(document.activeElement);
+    const go = (k) => { e.preventDefault(); list[(k + list.length) % list.length].focus(); };
+    if (e.key === 'ArrowDown') go(i + 1);
+    else if (e.key === 'ArrowUp') go(i - 1);
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(list.length - 1);
+    else if (e.key === 'Escape') { e.preventDefault(); closeExport(true); }
+    else if (e.key === 'Tab') closeExport();
+  });
+  document.addEventListener('click', () => closeExport());
   $('open').addEventListener('click', () => $('file').click());
   $('file').addEventListener('change', async (e) => { const f = e.target.files[0]; if (f) await openFile(f); e.target.value = ''; });
   async function openFile(f) {
@@ -882,6 +918,7 @@ function startApp() {
     // 'initial', { y: [levels] }, { t: seconds }): { plant, ctrl, Ts, … }.
     loopModel: (path, op) => structuredClone(app.loopModel(path, op)),
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
+    mcpFiles: () => serverFiles(),
     live: live.api,  // connect(url), disconnect(), estop(), reset(), hold(on), settings(s), downloadPlant(), plantFiles(), state(): design/output/hil.md
     limited,  // () => { limited, reasons }: ui/limited.js
     record: record.api,  // screen(format), live(format), save(what, format), screenshot(), reference(text, name), clearReferences(), state()

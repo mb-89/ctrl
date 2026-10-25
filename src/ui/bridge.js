@@ -1,4 +1,24 @@
-// The agentic mode (design/output/mcp.md): a page served by the MCP server
+// The agentic mode (design/output/mcp.md), the page's two parts: the MCP
+// server's download, and the link back to a server that served this page.
+
+import { zipFiles } from '../core/zip.js';
+import { simulatorCore, CORE_FILE } from '../core/hilsim.js';
+
+// mcp.mjs and mcp/'s files, put into the bundle by build.mjs.
+const MCP_FILES = typeof __MCP_FILES === 'object' ? __MCP_FILES : {};
+export const MCP_ZIP = 'loop-tuner-mcp.zip';
+
+// The server's files: mcp.mjs, its README and runme scripts, this page's own
+// core cut from its script (the server runs it, so it computes what this page
+// computes), and the page (page: Export HTML's text) that it serves.
+export function mcpFiles(script, page) {
+  const core = simulatorCore(script);
+  return { ...MCP_FILES, ...(core ? { [CORE_FILE]: core } : {}), ...(page ? { 'loop-tuner.html': page } : {}) };
+}
+// As one zip, in a folder of its own; runme.sh stays executable.
+export const mcpZip = (files) => zipFiles(Object.entries(files).map(([name, data]) => ({ name: `loop-tuner-mcp/${name}`, data, mode: name.endsWith('.sh') ? 0o755 : 0o644 })));
+
+// A page served by the MCP server
 // carries <meta name="loop-tuner-bridge" content="ws://…">, and only such a
 // page connects back to that address. The server's page_ tools then call the
 // page's own agent API (window.loopTuner) through it: a request is

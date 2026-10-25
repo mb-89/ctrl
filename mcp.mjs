@@ -14,7 +14,7 @@
 // The agentic mode: it also serves the page at http://127.0.0.1:<port>/ (the
 // port is printed on stderr, and page_status tells it). A page served from
 // here connects back over a WebSocket, and the page_ tools act on that page
-// through its own agent API (window.loopTuner), so the agent and the person
+// through its own agent API (window.loopTuner), so the agent and the user
 // see the same page. The other tools run the core alone, on projects kept in
 // this process's memory under names; the one loaded last is the default.
 //
@@ -36,7 +36,7 @@ const SERVER = { name: 'loop-tuner', title: 'Loop Tuner', version: '0.2.0' };
 const MODERN = ['2026-07-28'];
 const LEGACY = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const CAPABILITIES = { tools: { listChanged: false } };
-const INSTRUCTIONS = 'Loop Tuner simulates and tunes control loops. Two sets of tools: those that run the core alone (list_systems, load_system, run, autotune, analyze, designs, …) on projects kept by name, and the page_ tools, which act on the Loop Tuner page a person has open (the agentic mode: call page_status for its address and give it to the person, or page_open to open it), so you both see the same page; read its data with page_signals, page_live and autotune_history before you change things, and say what you do. Start with list_systems and load_system, then run, autotune, analyze; save_project or export_html hand the result back.';
+const INSTRUCTIONS = 'Loop Tuner simulates and tunes control loops. Two sets of tools: those that run the core alone (list_systems, load_system, run, autotune, analyze, designs, …) on projects kept by name, and the page_ tools, which act on the Loop Tuner page a person has open (the agentic mode: call page_status for its address and give it to the user, or page_open to open it), so you both see the same page; read its data with page_signals, page_live and autotune_history before you change things, and say what you do. Start with list_systems and load_system, then run, autotune, analyze; save_project or export_html hand the result back.';
 const TERMINAL = !!process.stdin.isTTY;
 
 const arg = (name) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
@@ -452,7 +452,7 @@ const TOOLS = [
   // -- the page a person has open (the agentic mode)
   {
     name: 'page_status', title: 'The page: where and what',
-    description: 'The agentic mode: the address where this server serves the Loop Tuner page (give it to the person, or call page_open), whether a page is connected, and if so what it shows: the project\'s title, its Controller blocks, the live plant\'s link. The page_ tools act on that page, so the person sees what you do.',
+    description: 'The agentic mode: the address where this server serves the Loop Tuner page (give it to the user, or call page_open), whether a page is connected, and if so what it shows: the project\'s title, its Controller blocks, the live plant\'s link. The page_ tools act on that page, so the user sees what you do.',
     inputSchema: obj({}),
     run: async () => {
       const out = { url: page.url, connected: !!page.conn };
@@ -464,13 +464,13 @@ const TOOLS = [
   },
   {
     name: 'page_open', title: 'Open the page in a browser',
-    description: 'Opens the page this server serves in the default browser of this computer, where the person can see it; it connects back by itself.',
+    description: 'Opens the page this server serves in the default browser of this computer, where the user can see it; it connects back by itself.',
     inputSchema: obj({}),
     run: () => { if (!page.url) throw new Error('the page is not served (the server was started with --no-page)'); openBrowser(page.url); return { url: page.url, opened: true }; },
   },
   {
     name: 'page_load_system', title: 'Load a system on the page',
-    description: 'Loads a System library entry on the page, as its System library does (one undo step for the person).',
+    description: 'Loads a System library entry on the page, as its System library does (one undo step for the user).',
     inputSchema: obj({ system: { type: 'string', description: 'A System library name (list_systems lists them).' } }, ['system']),
     run: async ({ system }) => { const name = await pageCall('loadSystem', [findSystem(system).name]); return { loaded: name, ...summary('page', await pageCall('getProject')) }; },
   },
@@ -517,7 +517,7 @@ const TOOLS = [
   },
   {
     name: 'page_autotune', title: 'Auto-tune on the page',
-    description: 'Auto-tunes a Controller block of the page\'s project, as its Auto-tune tab does, and by default applies the result (a variant of its own, running if it scores better; one undo step the person can take back). Refused for an External plant: the page knows only its interface (identify it first). Kept in autotune_history.',
+    description: 'Auto-tunes a Controller block of the page\'s project, as its Auto-tune tab does, and by default applies the result (a variant of its own, running if it scores better; one undo step the user can take back). Refused for an External plant: the page knows only its interface (identify it first). Kept in autotune_history.',
     inputSchema: obj({ ...tuneArgs, apply: { type: 'boolean', description: 'Put the result into the page\'s project (default true).' } }),
     run: async (a) => {
       const goal = Object.fromEntries(['cost', 'effort', 'overshoot'].filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
