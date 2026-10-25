@@ -166,5 +166,5 @@ Keep `hil_plant.py`'s server, cycle, watchdog and status, and replace its `Motor
 
 - A plant that runs its own loop and takes the reference r from the page (the protocol allows it; `hil_plant.py` does not do it yet).
 - Signals the plant only logs (outputs it sends that are not ports, for "just to log stuff"); today every output is a port, and the live record logs them all.
-- Identifying the plant from the page (it varies by ±15 % and is not described), so Auto-tune and Analysis work for HIL.
+- Identifying the plant from the page (it varies by ±15 % and is not described), so Auto-tune and Analysis work for HIL: designed in [identification.md](identification.md) (the Identify tab, being built), with the protocol's additions it needs first (output ranges in `describe` and an E-stop beyond them, `applied` in each `y`; its §15).
 - An agent tuning through MCP; remote plants (wss://, a token); several External blocks; the plant recording on its side; a trigger for live sweeps beyond the window alignment.
