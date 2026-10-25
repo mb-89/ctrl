@@ -23,7 +23,7 @@ The person's words:
   8. **tests the suggestion against its own weights** (§2.9): how much a weight would have to change for each runner-up to tie, whether that change is reasonable (within one step of the default), and the share of random weights within one step that the winner wins. The verdict is *robust* or *sensitive*, by rule.
 - **What the person sees while it runs**: the matrix filling column by column; each candidate's run sweeping on the scope at the header's Speed, the best runs fading behind (as Auto-tune shows its runs); a progress line ("4 of 8 · tuning Super-twisting · 12 s left").
 - **What they can change**: the weights (the matrix re-ranks at once, nothing re-runs), which candidates take part (a tick per column), the variation (±15 % by default) and the Ms bound. Each candidate's column opens its numbers, its gains and its runs.
-- **The report**: **Download report** gives one HTML page (or Markdown, `--report x.md`) with the plant, the goal, the refusals, the matrix, the numbers, the runs overlaid, and the reasons.
+- **The report is HTML** (input 59): **Download report** gives one standalone page, printable, its graphs inline SVG, no script and nothing outside it, at most **one printed page per option compared**, the matrix aside: the bottom line first (the suggestion, its robustness, the main reason), the matrix, then a compact section per option that fits (why it ranks where it does, its weak spots, two figures: its run and its first smooth move against the datum's); an option that does not fit gets a line. The deadbeat motor's: [../research/benchmark-report-deadbeat.html](../research/benchmark-report-deadbeat.html), 4 A4 pages for 13 candidates, 6 of them fitting (§2.10).
 - **The same from an agent**: `node cli.mjs benchmark <project>` and the MCP tool `benchmark` return the matrix as JSON and the report.
 - **Cost**: 2–4 s for most library systems, about 30 s for the 1 ms sliding-mode motor (measured, §8), in a Worker so the page stays live.
 - **No judgement anywhere** (input 55): every test, mark, gate and verdict is a rule on measured numbers; the benchmark runs the same without an agent.
@@ -204,26 +204,25 @@ The person (input 55): "assume our weights are wrong. How robust is a solution a
 
 ### 2.10 What comes out
 - **Variants**: the winner is added to the block as "<type> · benchmark", not switched on (flip it in the Controller tab); with **Add all** every fitting candidate without a plant change is added. One undo step. The person (input 48): "The winner is added as a variant but not switched on. In the report just makes a suggestion. It doesn't switch anything on."
-- **The report** (`benchmarkReport(result, { format: 'html' | 'md' })`), one self-contained file:
-  1. the bottom line: the suggestion in two sentences, its sensitivity verdict, and a plant change that would rank higher;
-  2. the plant (system name, diagram or identified model and its fit), the goal, the tests (the standard disturbance if one was added, the smooth move's τ), the variation and the date;
-  3. the five-point matrix with the weights, the ⚙ columns marked with their change, and the weight sensitivity (§2.9);
-  4. the numbers table (every criterion, PM, GM, delay margin), and the feedforward's share of the effort on both tests where a candidate has one;
-  5. the runs: r, y and u of every fitting candidate overlaid, nominal and the worst varied plant (inline SVG in HTML; in Markdown a CSV block per run, or omitted with `--no-runs`);
-  6. per candidate: how it was tuned, its gains, why it does or does not fit;
-  7. the refusals with their sentences, and the plant changes in words (what to add or rewire, and what it would give);
-  8. what was not judged (switching laws' margins, the task of a swing-up).
+- **The report is HTML** (the person, input 59: "The output of the benchmark should be itself HTML … you can bake in pictures and graphs where it makes sense … don't make it too big … not more than one page per option that was in the comparison, not including the table itself"). It is `pugh.js`'s `renderHtml` ([pugh.md](pugh.md), "The report") on the benchmark's matrix, with the benchmark's figures: one standalone page (inline SVG, no script, no file outside it, `@page` A4, prints on Letter too), in the page's design-system colours with print fallbacks. In order:
+  1. **the bottom line**: the suggestion, its robustness (the share of weight draws it wins), the main reason (its largest gains against the datum), and a plant change that would rank higher;
+  2. **the sensitivity at a glance**: the winner's share of the draws, and for each runner-up the weight it hangs on, its reasonable band and its tie point (§2.9);
+  3. **the matrix** with the weights, the ⚙ columns marked; the runners-up table; the options that do not fit, **one line each** with why;
+  4. **one compact section per option that fits**, in ranking order: where it is better and worse than the datum, its weak spots (for the suggestion), its note (a plant change), and **two figures**: the system's run (y over r, u below; the standard load step when there is one) and the first smooth move, each against the datum's dashed.
+  **The page budget**: at most one printed page per option compared, the matrix aside; measured in `test/pugh.test.mjs` by printing to PDF in Chromium (A4) and counting pages with and without the sections. The deadbeat motor (13 candidates, 6 fitting): **4 pages**, A4 and Letter alike: the bottom line, matrix and not-fitting lines on one, the six sections on three; the budget allows 7. Example: [../research/benchmark-report-deadbeat.html](../research/benchmark-report-deadbeat.html).
+  **Not in the report** (they were in the first design, input 59 caps the size): the plant's description, the numbers table of every criterion, the gains of each candidate, the worst varied plant's runs, the refusals of types that cannot run at all. They are in the tab's Details and in `--json`; the report links nothing outside itself. **Interpretation**: what decides the choice stays (the bottom line, the matrix, why each option ranks where it does, its runs); what explains the method moves to the tab.
+  **Markdown** stays as the command line's text and the MCP tool's text result (a terminal or an agent reads it), not as a report.
   It leaves through the page's one download path (Export menu, [decisions.md](decisions.md) v2.9) and carries no provenance (input 10).
 
 ## 3. In the page
 - Auto-tune, mode switch **This variant | Every type**. In Every type: Setup (block; plant source, shared with the tab; goal; variation ±15 %, plants 8; Ms bound 2; Start/Stop) and Matrix.
 - **While running**: columns appear in registry order as candidates finish; the current one's runs sweep the display at the Speed (at ∞ the display stands still and the matrix fills as fast as it computes, as Auto-tune does). Stop keeps what is finished and ranks it.
 - **After**: weights change the matrix at once (pure recomputation from the stored scores, no runs). Clicking a column shows that candidate's nominal run on the scope, its varied runs faded behind; Details lists its numbers.
-- `window.loopTuner.benchmark({ block, plant, weights, sweep, vary, msMax, include, changes, apply })` returns a Promise of the result (the CLI's `--json`); `loopTuner.benchmarkReport(format)` returns the last report's text. Documented in Help (For agents) and AGENTS.md.
+- `window.loopTuner.benchmark({ block, plant, weights, sweep, vary, msMax, include, changes, apply })` returns a Promise of the result (the CLI's `--json`); `loopTuner.benchmarkReport()` returns the last report's text. Documented in Help (For agents) and AGENTS.md.
 
 ## 4. CLI and MCP
-- `node cli.mjs benchmark <project> [--block ctrl] [--plant diagram|identified] [--no-changes] [--weights track=3,dist=3,…] [--include pid,slidingMode] [--vary 0.15] [--sweep 8] [--ms-max 2] [--iterations 60] [--report out.html|out.md] [--save] [--json]`: the same core, the same numbers as the tab; prints the matrix and the suggestion; `--save` adds the winner as a variant.
-- **MCP tool `benchmark`** (on feat/mcp's server, beside `autotune` and `analyze`; snake case like its siblings): arguments `project`, `block`, `plant`, `weights`, `include`, `changes` (score plant changes, default true), `vary`, `sweep`, `msMax`, `report` (`'md' | 'html' | null`), `apply`. It sends progress notifications per candidate (as `autotune` does with its progress token), returns the result JSON (`structuredContent`: candidates, refusals, plant changes, scores, the matrix, ranking, suggestion) and, as text, the matrix in Markdown so an agent can show it as it is. A refusal (no Controller block, an External plant without a model) is a tool error with the core's sentence. When the server hosts the page (agentic mode), the tool runs in the page, so the person watches the matrix fill.
+- `node cli.mjs benchmark <project> [--block ctrl] [--plant diagram|identified] [--no-changes] [--weights track=3,dist=3,…] [--include pid,slidingMode] [--vary 0.15] [--sweep 8] [--ms-max 2] [--iterations 60] [--report out.html] [--save] [--json]`: the same core, the same numbers as the tab; prints the matrix and the suggestion as text (Markdown); `--report` writes the HTML report; `--save` adds the winner as a variant.
+- **MCP tool `benchmark`** (on feat/mcp's server, beside `autotune` and `analyze`; snake case like its siblings): arguments `project`, `block`, `plant`, `weights`, `include`, `changes` (score plant changes, default true), `vary`, `sweep`, `msMax`, `report` (true: the HTML report as a second content item, `text/html`), `apply`. It sends progress notifications per candidate (as `autotune` does with its progress token), returns the result JSON (`structuredContent`: candidates, refusals, plant changes, scores, the matrix, ranking, suggestion) and, as text, the matrix in Markdown so an agent can show it as it is. A refusal (no Controller block, an External plant without a model) is a tool error with the core's sentence. When the server hosts the page (agentic mode), the tool runs in the page, so the person watches the matrix fill.
 
 ## 5. Core API
 
@@ -242,7 +241,7 @@ export function matrixOf(rows, weights)     // → a Pugh matrix (pugh.md): 13 m
                                              //   then the running variant; plant changes suggestable: false; the running variant keep; tieBreak J
 // the decision: pugh.js's decide(matrixOf(rows, weights)) — marks, totals, fits, ranking, suggestion, sensitivity (pure: a weight
 // change re-decides without a run); the report's matrix part: pugh.js's renderMarkdown / renderHtml
-export function benchmarkReport(result, { format })  // → string
+export function benchmarkReport(result)     // → the HTML report: pugh.js's renderHtml(decision) with figuresOf(row, datum) per option
 // BenchResult = { version, plant: { source, label, fit? }, goal, opts, facts, refused, rows: [{ type, name, how,
 //   variant, start, evals, scores: { track, move, dist, … }, ffShare?: { steps, move }, margins: { ms, pm, gm, dm, marginal }, fits, whyNot, plantChange?, runs? }],
 //   tests, decision (pugh.js's result), ms }
@@ -336,7 +335,7 @@ The smooth move adds one run per scored candidate and doubles the knob searches;
 4. **`plantChanges()`**: the rate observer, the Kalman observer for the full state, the sensor for a Finite difference, Kalman or Luenberger estimate. Tests §6 (plant changes).
 5. **`benchmark.js`**: tuning, scoring, `matrixOf`, and the decision by `pugh.js` (built: [pugh.md](pugh.md)), deterministic. Tests §6.
 6. **CLI `benchmark`** and its `--json`; then the **MCP tool** on the server (if merged by then).
-7. **The report**, HTML and Markdown, through the Export path.
+7. **The report**: `figuresOf` (the runs, thinned to 400 points) into `pugh.js`'s HTML report, through the Export path; the page budget test.
 8. **The page**: Auto-tune's mode switch, Setup and Matrix, the Worker (and several), weights live, Add the winner; `loopTuner.benchmark`. Help and AGENTS.md.
 9. **On the identified model**: the plant selector and HIL's refusal without a model; the suggestion into Try on the plant.
 
@@ -386,3 +385,6 @@ Each step keeps the library's fingerprints and the tests green (the overhaul's g
 
 ## 14. Input 57: the decision is generic
 The person: "the PUG matrix decision framework is something that could be relatively generic." The marks, gates, datum, ranking, weight sensitivity and the report's decision part moved into `src/core/pugh.js` ([pugh.md](pugh.md)), which knows nothing of controllers; the benchmark builds a matrix and reads the result. The prototype runs on it, and its rankings, marks, totals, fits and verdicts are unchanged on all eleven systems. What the generic version adds for judged criteria (marks against the datum, several raters by the median, their spread in the draws, weak spots for a hybrid) does not touch the benchmark, whose criteria are all measured.
+
+## 15. Input 59: the report is HTML, a page per option
+The report is one standalone HTML page from `pugh.js` with the benchmark's figures (§2.10): the bottom line first, the matrix, one compact section per option that fits with two figures, a line for each that does not; at most one printed page per option, the matrix aside, tested by printing to PDF. The deadbeat motor's example: [../research/benchmark-report-deadbeat.html](../research/benchmark-report-deadbeat.html), 4 A4 pages. Markdown remains as the command line's and the MCP tool's text.
