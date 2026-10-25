@@ -2,6 +2,10 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the library's buttons stacked ([input 32](../input/2026-10-25-32-library-buttons-stacked.md))
+
+The person: "the load, input, and plant buttons are currently horizontally next to each other. That takes up a lot of space and makes the text span over more lines ... Put them below each other ... you can make the text take more space." Load, Input and Plant now stand in one narrow column at the right of each card, aligned to its top; the name, tags, bottom line and Details take the rest of the width.
+
 ## 2026-10-25 · v2.9: two HIL examples, alone and with the agent ([input 31](../input/2026-10-25-31-agentic-hil-example.md))
 
 The person: "I can then tell the agent, hey, I have a system here. Help me with tuning it. Help me with figuring it out ... how about we talk about this identification? What do you see? And the agent can look into the data too ... we don't need a [HIL] example for a controller in the plant and a [HIL] example with no controller in the plant ... This is just a flip we can switch ... the two examples we could have would be a [HIL] without an agent and a [HIL] in that agentic mode ... a [HIL] system that the agent and we do not see. So we have to ... identify it together and tune it together."
