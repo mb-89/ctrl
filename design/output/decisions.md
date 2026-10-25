@@ -60,6 +60,17 @@ No new words from the person; built against the interfaces agreed in the entry b
   - The Analysis tab closes the other lanes by their own laws when it cuts one lane (robot.md §5 had them hold their trim, which leaves an arm that gravity tips over: every lane read unstable).
   - The error signals are in mm, as planned; the Measure line reads a unit with its own prefix (mm, ms, kN) in its base unit first, so 0.0335 mm reads "33.5 µm" (it read "33.5 mmm").
   - The library's tags: MIMO (a plant tag, slate) and 3D (a feature, blue); the plan's Feedforward tag is left out, since no feature tone is free beside the others on the card.
+## 2026-10-25 · v2.9: the controller benchmark, designed ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md), [input 29](../input/2026-10-25-29-puma-parallel-mcp-order.md), [input 35](../input/2026-10-25-35-deadbeat-and-pugh-matrix.md))
+
+No new words from the person; the design of what inputs 10, 29 and 35 asked for, on branch `feat/benchmark-design`, with a Node prototype (`tools/benchmark-prototype.mjs`) run on the sliding-mode motor, the oven and the conical tank, and timed on the whole library ([benchmark.md](benchmark.md), research [../research/benchmark.md](../research/benchmark.md)). Built after the overhaul (input 29). Interpretations, to confirm with the person (benchmark.md §12):
+- **A mode of Auto-tune** (This variant | Every type), not a seventh tab: the person said "benchmark mode"; it shares the goal, the block, the results and the pacing.
+- **Every registered type is a candidate**; each declares in its own registry entry (`bench`) whether and how it takes part, and a type without the hook takes part from its defaults. A type that needs a measurement the block lacks is refused with what it needs; the plant is not rewired.
+- **Fair**: one goal, one experiment, one budget, one robustness bound (Ms ≤ 2; Iterate gains `goal.msMax`); each candidate from its best start (a rule or its design), then searched; designed types stay designed, only their speed input (Tcl, R, Tr) is searched. Found by the prototype: tuning to J alone took the tank's schedule to Ms 12 and the motor's PID to Ms 2.1.
+- **Gates before marks**: diverging, unstable at r's middle or where the run starts, fragile (Ms above the bound) or diverging on a ±15 % plant means "does not fit", with the reason.
+- **Datum**: the tuned PID; else the running variant; else the best fitting J. Two rounds, the second against the winner. Weighted totals shown beside the marks, the + / − counts and the numbers.
+- **Twelve criteria and default weights**: following r, rejecting d, plant ±15 % (3); overshoot, wear (total variation of u), Ms, noise → u (2); settling, effort, time at a limit, complexity, tuning runs (1). Each with a tolerance within which it is S.
+- **The winner is added as a variant, not run**; the report is one HTML or Markdown file; the CLI command and the MCP tool are both `benchmark`.
+
 ## 2026-10-25 · v2.9: a deadbeat example; the benchmark's Pugh matrix; no holding back on usage ([input 34](../input/2026-10-25-34-hu-lin-scheduling-variable.md), [input 35](../input/2026-10-25-35-deadbeat-and-pugh-matrix.md))
 
 - **Hu–Lin, reproduced**: the person remembers the paper gave everything except how to compute one important scheduling variable, which they once had to work out; the session reproduces the paper's results and derives that variable, with the derivation written down.
