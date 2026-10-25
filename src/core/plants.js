@@ -232,6 +232,10 @@ const HIL_SYSTEM = {
 };
 
 export const EXAMPLE_PLANTS = [
+  // The flagship first (the person, input 39): the page opens on it and the
+  // System library shows it on top. A six-axis arm in 3D, controlled in its
+  // tool's coordinates (design/output/robot.md, pumasystem.js).
+  PUMA_SYSTEM,
   {
     name: 'Mass–spring–damper',
     summary: 'A mass on a spring and a damper, pulled down once; no controller. Change the spring or the damping and watch it swing and settle: how stiffness and damping shape a response.',
@@ -758,9 +762,6 @@ export const EXAMPLE_PLANTS = [
       ],
     }],
   },
-  // The prime example (design/output/robot.md): a six-axis arm in 3D,
-  // controlled in its tool's coordinates (pumasystem.js).
-  PUMA_SYSTEM,
   HIL_SYSTEM,
   // The same plant in the agentic mode (input 31): the person and an agent
   // look at the same page through the MCP server, identify the plant

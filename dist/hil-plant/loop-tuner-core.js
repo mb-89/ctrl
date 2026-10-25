@@ -8796,6 +8796,7 @@ const HIL_SYSTEM = {
 };
 
 const EXAMPLE_PLANTS = [
+  PUMA_SYSTEM,
   {
     name: 'Mass–spring–damper',
     summary: 'A mass on a spring and a damper, pulled down once; no controller. Change the spring or the damping and watch it swing and settle: how stiffness and damping shape a response.',
@@ -9278,7 +9279,6 @@ const EXAMPLE_PLANTS = [
       ],
     }],
   },
-  PUMA_SYSTEM,
   HIL_SYSTEM,
   {
     ...HIL_SYSTEM,

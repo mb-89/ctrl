@@ -2,6 +2,10 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the PUMA is the flagship; the page opens on it ([input 39](../input/2026-10-25-39-puma-flagship-opens.md))
+
+- "This should be the flagship example. So if we open the HTML, that's the thing that should be running." A page with no project inside opens the System library's first system; the PUMA is now first, so the page opens on it, running, and the library shows it on top. This replaces "the page opens the Mass–spring–damper" (v1). **Interpretation:** the flagship also heads the library list; the other systems keep their order, simple to complex.
+
 ## 2026-10-25 · v2.9: Variable structure is a class of its own; changes mid-run go to the backlog ([input 37](../input/2026-10-25-37-changes-apply-while-running-bumpless.md), [input 38](../input/2026-10-25-38-variable-structure-tag.md))
 
 - **Variable structure** is a controller tag of its own: "It's its own class of controller." **Interpretation:** the class holds the laws that switch their structure or gain with the state (a relay, sliding mode, super-twisting, Hu–Lin's variable gain) and replaces the *Sliding mode* and *Relay* tags and, on Hu–Lin, *State feedback*; it takes Sliding mode's red. Today it is on two cards: the sliding-mode motor and Hu–Lin.
