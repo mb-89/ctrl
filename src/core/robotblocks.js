@@ -289,26 +289,6 @@ export const ROBOT_BLOCKS = {
       return (u, y) => { y[3] = orientationInto(u, u, y, Re, 0, 9); };
     },
   },
-  pointingError: {
-    // A tool whose turn about its own axis does not matter (a probe's ball):
-    // the error is that axis's alone, e = z × z_d (sin θ times the axis it
-    // turns about, in the base), θ the angle between them.
-    label: 'Pointing error', group: 'Robot', formula: 'e = z × z_d', params: [],
-    inputs: () => ['z_d', 'R'], outputs: () => ['e', 'θ'],
-    normalize: () => ({}),
-    ports: () => [2, 2],
-    widths(p, inW, env) {
-      [3, 9].forEach((n, k) => { const w = inW[k]; if (w !== undefined && w !== n && !(w === 1 && !env.wired?.(k))) throw new Error(`${env.name}: ${k ? 'R has' : 'z_d has'} ${w} element${w === 1 ? '' : 's'}; ${k ? 'a rotation has 9 (3×3, row by row)' : 'a direction has 3'}`); });
-      return { ins: [3, 9], outs: [3, 1] };
-    },
-    make() {
-      return (u, y) => {
-        const zx = u[5], zy = u[8], zz = u[11];   // R's third column: the tool's z axis
-        y[0] = zy * u[2] - zz * u[1]; y[1] = zz * u[0] - zx * u[2]; y[2] = zx * u[1] - zy * u[0];
-        y[3] = Math.atan2(Math.hypot(y[0], y[1], y[2]), zx * u[0] + zy * u[1] + zz * u[2]);
-      };
-    },
-  },
   frameTransform: {
     label: 'Frame transform', group: 'Robot', formula: 'x_base = o + R·x',
     summary: (p) => (p.inverse ? 'x = Rᵀ(x_base − o)' : 'x_base = o + R·x'),

@@ -24,7 +24,7 @@ Theme colours are `light-dark()` pairs. The colour scheme in effect picks one: t
 | Diagram | `--source`, `--source-line`, `--sink`, `--sink-line` | Blocks that play a signal and blocks that record one |
 | Tags | `--tone-blue`, `-orange`, `-aqua`, `-yellow`, `-magenta`, `-green`, `-slate`, `-red`, each with its `-ink` (white, `--ink-on-tone`, or the lit ink, whichever reads at 4.5:1 or more on it as a fill) | The System library's tag tones (a palette checked for colour-vision deficiency on each theme). Slate took violet's place, which is the selection's |
 | Axes | `--axis-x`, `--axis-y`, `--axis-z` (red, green, blue) | The axes of 3D views: triads, the gizmo |
-| Parts | `--part` (a body), `--part-dark` (bases, motors, flanges), `--part-accent` (a tool, a part that stands out), `--part-ruby` (a probe's ruby ball: a strong red part), `--part-line` (outlines) | The parts of 3D views, cel shaded: each colour is the lit band (below, Canvases) |
+| Parts | `--part` (a body), `--part-dark` (bases, motors, flanges), `--part-accent` (a tool, a part that stands out), `--part-ruby` (a probe's ruby ball: deep pinkish red), `--part-metal` (bright steel: a stylus, a part being measured), `--part-line` (outlines) | The parts of 3D views, cel shaded: each colour is the lit band (below, Canvases) |
 | Knob | `--knob-skirt`, `--knob-knurl`, `--knob-cap`, `--knob-cap-line`, `--knob-dot` | The knurled knobs |
 | Type | `--font-ui` (IBM Plex Sans Condensed), `--font-mono` (IBM Plex Mono); `--text-2xs` 10, `--text-xs` 11, `--text-sm` 12, `--text-md` 13, `--text-base` 14, `--text-lg` 18 px | Six sizes (there were 13) |
 | Space | `--space-1` … `--space-8`: 2, 4, 6, 8, 10, 12, 14, 16 px | Gaps, padding and margins; nothing else is written (a hairline of 1 px aside) |

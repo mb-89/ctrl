@@ -2,34 +2,17 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
-## 2026-10-25 · v2.9: the PUMA's tool a probe touching the circle from outside; its orientation turns ([input 40](../input/2026-10-25-40-puma-probe-at-45-degrees.md), [input 41](../input/2026-10-25-41-tool-orientation-changes.md); [robot.md](robot.md), "The probe")
+## 2026-10-25 · v2.9: the PUMA's tool a touch probe going round a part at 45° ([input 40](../input/2026-10-25-40-puma-probe-at-45-degrees.md), [41](../input/2026-10-25-41-tool-orientation-changes.md), [43](../input/2026-10-25-43-probe-looks-inward.md), [44](../input/2026-10-25-44-this-kind-of-probe.md), [46](../input/2026-10-25-46-probe-rod-in-the-model.md); [robot.md](robot.md), "The probe")
 
-The person: "make the tool a pointer ... the sapphire dot is supposed to touch the circle with an angle, so not from the top, but from like 45 degrees from outside of the circle ... a visible movement onto all the axes", and "the tool coordinate system, it would change over time ... The orientation would then change, right?"
-- **The tool is a touch probe, part of the arm**: a stylus on the flange with a ruby ball at its end, its mass and inertia in the robot description; the tool point is the ball's centre. The ball is drawn red, cel shaded, from a token of its own (`--part-ruby`).
-- **The stylus leans outward and turns once round the circle with the ball**, so the tool's orientation changes all the time and all six joints move (34° to 98° each, peak to peak; joint 4's current, 0.00 A before, peaks at 0.91 A).
+The person: "make the tool a pointer ... touch the circle with an angle ... from like 45 degrees from outside of the circle"; "the tool coordinate system, it would change over time"; "a part that is a circle ... you want a 45 degree angle from the outside onto the part ... the tool will always look onto the inside of the circle ... this is not a constant angle for any of the axes"; a photo of a measuring machine's stylus; "you added the rod to the plant, but you didn't yet add it to the model".
+- **The probe is in the robot description**, so one text draws it and models it: its mass in the arm's dynamics and in the controller's model feedforward, the tool point at the ball's centre in the controller's kinematics. A test holds the drawn and the modelled probe to each other (the ball's visual at the tool point; the probe's gravity torque equal to its mass through its centre's Jacobian).
+- **The stylus looks like the photo's** (a silver threaded mount, a black collar, a long thin steel shaft, a ruby ball), coloured by two new tokens, `--part-ruby` (deep pinkish red) and `--part-metal` (bright steel).
+- **A round part sits in the middle of the circle**, drawn by the 3D view; the stylus comes in at 45° from outside and looks onto the inside all the way round; the whole tool turns once about the circle's axis per lap (R_d = Rz(φ)·R0, with ω_d and α_d as feedforward); every joint moves.
 - **Interpretations:**
-  - **30° from the vertical, not 45°.** At 45° (and down to 35°) no start pose lets the PUMA's wrist follow a full turn: the stylus's cone needs twice its tilt of joint 5's bend (±100°) plus what the forearm moves, or joint 4 has to wind a full turn per turn of the circle. 30° fits, on a circle of 0.08 m (from 0.15) turned once per 5 s screen (from twice: the wrist's speed limits). The person said "like 45"; the notes say why it is 30.
-  - **The turn about the stylus is free**: a ball looks the same however the stylus turns about itself, and holding that turn too would wind joint 6 through 650°. The orientation reference is the stylus's direction (z_d, with ω_d and α_d as its feedforward), its error the new Pointing error block (z × z_d).
-  - The circle's radius sits on the Circle reference's mask, and the sines' amplitude must match it (a Source cannot read a mask yet).
+  - **An angled adapter holds the stylus 40° off the flange.** A stylus straight on the flange cannot lean 45° all round a circle on the PUMA: its wrist's bend (joint 5, ±100°) cannot follow the cone without passing its singularity or its stop (the best straight stylus managed 30°, an earlier version of this entry). On the adapter, joint 6 turns the probe round (328° of its range) and every joint keeps at least 20° from its stops. Angled probe holders are common on measuring robots; the person's photo shows the stylus, not its mount.
+  - **The ball touches the part's top edge**: its centre runs on the circle, the part's radius is R − r_ball/√2 and its top r_ball/√2 below the ball's centre, so a 45° approach meets the edge.
+  - The circle is 0.08 m in radius and turns once per 5 s screen (the wrist's speed limits); its radius sits on the Circle reference's mask and in the sines' amplitude.
   - The camera stays when the Plant tab is shown again; the tool's triad turns with the ball's frame.
-## 2026-10-25 · v2.9: bumpless by the velocity form, no tracking; the benchmark's answers ([input 48](../input/2026-10-25-48-bumpless-velocity-form-and-benchmark-answers.md))
-
-- **Bumpless switching (backlog, after the overhaul)**: every law in velocity form, one integrator at the end of the Controller block holding u, so there is always a state that absorbs a switch or an edit; a law without integral action fades the switch's offset. No tracking of laws that are not running. Recorded in roadmap.md.
-- **Benchmark** ([benchmark.md](benchmark.md)), the person's answers to its five questions:
-  - The weights stand (following r, rejecting d and the ±15 % plant 3, wear 2, complexity 1).
-  - The datum is the tuned PID: "we have to set a good datum and then the others are either plus or minus one ... Don't make it too complicated."
-  - The winner is added as a variant, not switched on; the report only suggests.
-  - Rewiring stays in the report as a candidate with a high complexity: an observer for a missing measurement, and the other way round, a sensor in place of an observer that does not work well.
-  - Swing-ups are judged on following r only, until a system can declare its task.
-  - **Interpretation:** one round against the datum, each criterion +, S or − (+1, 0, −1), weighted and summed; the second round against the winner is dropped.
-
-## 2026-10-25 · v2.9: Auto-tune's Unlimited speed ([input 45](../input/2026-10-25-45-autotune-unlimited-speed.md))
-
-- "Just give it a toggle that says unlimited speed, and then during the autotune it will run with unlimited speed. And then when it's done, it will flip back to the old speed." A key **Unlimited speed** beside Start: pressed, a run sets the header's Speed to ∞ and gives back the speed set before when it ends, done or stopped. The header's Speed stays the one speed control: the key only drives it (the Fast switch of input 10 is not back). **Interpretations:** off by default and kept while the page is open; not offered with a live plant (it holds 1×); if someone changes the Speed during the run, theirs stays.
-
-## 2026-10-25 · v2.9: Measure off by default ([input 42](../input/2026-10-25-42-measure-off-by-default.md))
-
-- "I want it off by default. It creates an irritating noise when looking at the traces ... by default it should always be off." The key stays; a channel starts without it, and the three systems that switched it on (sliding mode on V and i, the encoder example on V and the estimate's error, the PUMA on ea) no longer do; their notes say to switch it on where it reads something. A test holds every library system to opening with Measure off.
 
 ## 2026-10-25 · v2.9: the PUMA is the flagship; the page opens on it ([input 39](../input/2026-10-25-39-puma-flagship-opens.md))
 

@@ -15,13 +15,18 @@
 import { PUMA560 } from './puma560.js';
 
 const D = PUMA560.drive, N = 6, DEG = Math.PI / 180;
-// The start pose (degrees): the probe's ball on the circle, its stylus 30°
-// from the vertical, leaning outward (inputs 40, 41). Chosen by a kinematic
-// sweep of the circle (robot.md, "The probe"): every joint moves, the wrist
-// stays clear of q5 = 0 and every joint inside its range.
-export const PUMA_START = [0, 75, -215, 0, -10, 0];
+// The start pose (degrees): the probe's ball on the circle, its stylus 45°
+// from the vertical, coming in from outside and looking onto the circle's
+// inside (inputs 40, 41, 43). Chosen by a kinematic sweep of the circle
+// (robot.md, "The probe"): every joint moves, the wrist stays clear of
+// q5 = 0, every joint at least 20° inside its range; joint 6, which turns
+// the probe round, starts near one end of its range.
+export const PUMA_START = [0, 50.1, -204.6, 38.7, -19, 175];
 const Q0 = PUMA_START.map((v) => v * DEG);
 const RADIUS = 0.08;
+// The circle's frame: its a axis points from the part's centre out to where
+// the ball starts (the stylus's lean, reversed), 165.3° about z.
+const YAW = 2.8858;
 const J = Array.from({ length: N }, (_, j) => j);
 const blk = (id, type, params, x, y, name) => ({ id, type, params, x, y, ...(name ? { name } : {}) });
 const sink = (id, name, unit, x, y) => blk(id, 'sink', { name, unit }, x, y);
@@ -121,34 +126,31 @@ const puma = {
 };
 
 // The circle in its own frame: a_r, b_r and their derivatives, joined with
-// c = 0, placed in the base by the Frame transform "base ← circle" (its a
-// axis points outward at the start, along −x of the base). The stylus's
-// direction z_d is its start direction z0 turned about the circle's axis by
-// the circle's phase φ (cos φ = (a_r + R)/R, sin φ = b_r/R; R on the mask),
-// with the least angular velocity ω_d and acceleration α_d that turn it: no
-// turn about the stylus itself, which a ball does not show.
+// c = 0, placed in the base by the Frame transform "base ← circle". The
+// tool's orientation R_d is its start orientation R0 turned about the
+// circle's axis by the circle's phase φ (cos φ = (a_r + R)/R, sin φ = b_r/R;
+// R on the mask): R_d = Rz(φ)·R0, so the stylus looks onto the inside all
+// the way round; ω_d = φ̇·ẑ and α_d = φ̈·ẑ are its feedforward.
 const ref = {
   id: 'ref', type: 'subsystem', name: 'Circle reference', x: 140, y: 60,
   mask: [{ key: 'R', label: 'Radius (the sines\' amplitude)', unit: 'm' }], params: { R: RADIUS },
   diagram: {
     blocks: [
-      inp('z0', 2, 160, 420, 'z0'), blk('dz', 'demux', { sizes: '1,1,1' }, 230, 420),
+      inp('R0', 2, 160, 420, 'R0'),
       blk('dir', 'fcn', {
-        inputs: 'a, b, va, vb, aa, ab, zx, zy, zz',
-        eqs: ['c = (a + R)/R', 's = b/R', 'w = (c*vb - s*va)/R', 'dw = (c*ab - s*aa)/R',
-          'dx = c*zx - s*zy', 'dy = s*zx + c*zy', 'dz = zz',
-          'wx = -w*dz*dx', 'wy = -w*dz*dy', 'wz = w*(1 - dz*dz)',
-          'ax = -dz*(dw*dx - w*w*dy)', 'ay = -dz*(dw*dy + w*w*dx)', 'az = dw*(1 - dz*dz)'].join('\n'),
-        outputs: 'dx, dy, dz, wx, wy, wz, ax, ay, az',
-      }, 320, 330, 'stylus direction'),
-      blk('mz', 'mux', { inputs: '3' }, 460, 300, 'z_d'), blk('mw', 'mux', { inputs: '3' }, 460, 360, 'ω_d'), blk('mal', 'mux', { inputs: '3' }, 460, 420, 'α_d'),
-      outp('zd', 4, 560, 300, 'z_d'), outp('wd', 5, 560, 360, 'ω_d'), outp('ald', 6, 560, 420, 'α_d'),
+        inputs: 'a, b, va, vb, aa, ab',
+        eqs: ['c = (a + R)/R', 's = b/R', 'w = (c*vb - s*va)/R', 'dw = (c*ab - s*aa)/R', 'ns = -s', 'o = 0', 'l = 1'].join('\n'),
+        outputs: 'c, ns, o, s, l, w, dw',
+      }, 320, 330, 'the circle\'s phase'),
+      blk('mz', 'mux', { inputs: '9' }, 440, 300, 'Rz(φ)'), blk('rd', 'product', { inner: 3 }, 520, 330, 'R_d = Rz(φ)·R0'),
+      blk('mw', 'mux', { inputs: '3' }, 440, 380, 'ω_d'), blk('mal', 'mux', { inputs: '3' }, 440, 440, 'α_d'),
+      outp('Rd', 4, 620, 330, 'R_d'), outp('wd', 5, 620, 380, 'ω_d'), outp('ald', 6, 620, 440, 'α_d'),
       blk('a', 'source', { signal: 'a_r', unit: 'm', derivatives: 2 }, 20, 40),
       blk('b', 'source', { signal: 'b_r', unit: 'm', derivatives: 2 }, 20, 140),
       blk('zero', 'constant', { value: 0, unit: 'm' }, 20, 240),
       blk('mp', 'mux', { inputs: '3' }, 160, 40, 'p_c'), blk('mv', 'mux', { inputs: '3' }, 160, 140, 'v_c'), blk('ma', 'mux', { inputs: '3' }, 160, 240, 'a_c'),
       inp('o', 1, 160, 330, 'origin'),
-      blk('frame', 'frameTransform', { rpy: [0, 0, Math.PI], groups: 'p,v,a', inverse: 0 }, 300, 130, 'base ← circle'),
+      blk('frame', 'frameTransform', { rpy: [0, 0, YAW], groups: 'p,v,a', inverse: 0 }, 300, 130, 'base ← circle'),
       outp('p', 1, 460, 100, 'p_d'), outp('v', 2, 460, 150, 'v_d'), outp('acc', 3, 460, 200, 'a_d'),
     ],
     wires: [
@@ -156,9 +158,11 @@ const ref = {
       w('mp', 'frame'), w('mv', 'frame:1'), w('ma', 'frame:2'), w('o', 'frame:3'),
       w('frame', 'p'), w('frame:1', 'v'), w('frame:2', 'acc'),
       w('a', 'dir'), w('b', 'dir:1'), w('a:1', 'dir:2'), w('b:1', 'dir:3'), w('a:2', 'dir:4'), w('b:2', 'dir:5'),
-      w('z0', 'dz'), w('dz', 'dir:6'), w('dz:1', 'dir:7'), w('dz:2', 'dir:8'),
-      w('dir', 'mz'), w('dir:1', 'mz:1'), w('dir:2', 'mz:2'), w('dir:3', 'mw'), w('dir:4', 'mw:1'), w('dir:5', 'mw:2'), w('dir:6', 'mal'), w('dir:7', 'mal:1'), w('dir:8', 'mal:2'),
-      w('mz', 'zd'), w('mw', 'wd'), w('mal', 'ald'),
+      // Rz(φ) row by row: c −s 0 / s c 0 / 0 0 1.
+      w('dir', 'mz'), w('dir:1', 'mz:1'), w('dir:2', 'mz:2'), w('dir:3', 'mz:3'), w('dir', 'mz:4'), w('dir:2', 'mz:5'), w('dir:2', 'mz:6'), w('dir:2', 'mz:7'), w('dir:4', 'mz:8'),
+      w('mz', 'rd'), w('R0', 'rd:1'), w('rd', 'Rd'),
+      w('dir:2', 'mw'), w('dir:2', 'mw:1'), w('dir:5', 'mw:2'), w('dir:2', 'mal'), w('dir:2', 'mal:1'), w('dir:6', 'mal:2'),
+      w('mw', 'wd'), w('mal', 'ald'),
     ],
   },
 };
@@ -172,7 +176,7 @@ const ctl = {
   id: 'ctl', type: 'subsystem', name: 'Robot controller', x: 380, y: 140,
   diagram: {
     blocks: [
-      inp('q', 1, 20, 300, 'q'), inp('pd', 2, 20, 40, 'p_d'), inp('vd', 3, 20, 90, 'v_d'), inp('ad', 4, 20, 140, 'a_d'), inp('zd', 5, 20, 190, 'z_d'), inp('wd', 6, 20, 210, 'ω_d'), inp('ald', 7, 20, 230, 'α_d'),
+      inp('q', 1, 20, 300, 'q'), inp('pd', 2, 20, 40, 'p_d'), inp('vd', 3, 20, 90, 'v_d'), inp('ad', 4, 20, 140, 'a_d'), inp('zd', 5, 20, 190, 'R_d'), inp('wd', 6, 20, 210, 'ω_d'), inp('ald', 7, 20, 230, 'α_d'),
       { id: 'enc', type: 'observer', name: 'Encoder speed', params: { inputs: 2, outputs: 2, Ts: 0.001 }, variants: [{ name: 'Finite difference', type: 'difference', params: { Tf: 0 } }], variant: 0, x: 100, y: 290 },
       {
         id: 'axes', type: 'subsystem', name: 'Axes → task', x: 230, y: 280,
@@ -193,11 +197,11 @@ const ctl = {
         id: 'law', type: 'subsystem', name: 'Task law', x: 380, y: 60,
         diagram: {
           blocks: [
-            inp('pd', 1, 20, 20, 'p_d'), inp('vd', 2, 20, 70, 'v_d'), inp('ad', 3, 20, 120, 'a_d'), inp('zd', 4, 20, 170, 'z_d'),
+            inp('pd', 1, 20, 20, 'p_d'), inp('vd', 2, 20, 70, 'v_d'), inp('ad', 3, 20, 120, 'a_d'), inp('zd', 4, 20, 170, 'R_d'),
             inp('wd', 5, 20, 370, 'ω_d'), inp('ald', 6, 20, 420, 'α_d'),
             inp('p', 7, 20, 220, 'p'), inp('R', 8, 20, 270, 'R'), inp('v', 9, 20, 320, 'v'),
             blk('ep', 'sum', { signs: '+-' }, 120, 24, 'e_p = p_d − p'),
-            blk('eo', 'pointingError', {}, 120, 180, 'Pointing error'),
+            blk('eo', 'orientationError', {}, 120, 180, 'Orientation error'),
             blk('vw', 'sum', { signs: '++' }, 320, 190, 'ω_d + k_o·e'),
             blk('ew', 'sum', { signs: '+-' }, 220, 380, 'ω_d − ω'), blk('aw', 'sum', { signs: '++' }, 380, 400, 'α_d + k_o·(ω_d − ω)'),
             blk('dv', 'demux', { sizes: '3,3' }, 120, 320),
@@ -275,8 +279,8 @@ const ctl = {
 
 export const PUMA_SYSTEM = {
   name: 'PUMA 560, a circle in space',
-  summary: 'A six-axis robot arm traces a circle with a touch probe\'s ruby ball, its stylus leaning in from outside, so every joint moves. Watch the error and the joint torques; switch the arm\'s model off: what a model buys.',
-  notes: 'The PUMA 560, a six-axis arm, carries a touch probe: a stylus with a ruby ball at its end, part of the arm with its own mass. The ball traces a horizontal circle of 0.08 m radius, one turn in the 5 s screen after an eased start, and touches it from outside: the stylus leans 30° from the vertical, outward, and turns once round the circle with the ball, so the tool\'s orientation changes all the time and all six joints move (34° to 98° each, peak to peak). Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the ball starts by a Frame transform; the stylus\'s direction follows from them (Circle reference, its radius R on the mask). The 3D view draws the arm from its robot description (URDF), the circle dashed and the ball\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the ball\'s position, the tool\'s orientation, its speed and Jacobian; the task law corrects the position and the stylus\'s direction (time constant 0.1 s; a ball looks the same however it turns about the stylus, so that turn is left free); Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are geared DC motors on current drives, with their friction.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b, mm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and the motors\' friction (tauF1 … tauF6); the motor currents are i1 … i6; eo is the stylus\'s pointing error (°).\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) and watch the torques, the wrist\'s currents and the Joint limits report. Why 30° and not 45°: the wrist\'s bend (joint 5, ±100°) cannot follow a stylus that leans 45° all round a circle without passing its singularity or its stop.',
+  summary: 'A six-axis robot arm takes a touch probe round a round part: the ruby ball traces the part\'s edge while the stylus leans in from outside, so every joint moves. Watch the error and the torques; switch the model off.',
+  notes: 'The PUMA 560, a six-axis arm, carries a touch probe like a measuring machine\'s: a short silver threaded mount, a black collar, a long thin steel shaft and a ruby ball, on an adapter that holds it 40° off the flange. The probe is part of the arm, its mass in the arm\'s model. The ball traces a horizontal circle of 0.08 m radius round a round part, one turn in the 5 s screen after an eased start. Straight down from the top the probe would hit the part, so the stylus comes in at 45° from outside and looks onto the inside of the circle all the way round: the whole tool turns once about the circle\'s axis with the ball, and no joint keeps a constant angle (each moves 28° to 328°, peak to peak; joint 6 turns the probe round). The ball touches the part\'s top edge. Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the ball starts by a Frame transform; the tool\'s orientation follows from them (Circle reference, its radius R on the mask). The 3D view draws the arm and the part from the robot description (URDF), the circle dashed and the ball\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the ball\'s position, the tool\'s orientation, its speed and Jacobian; the task law corrects both (time constant 0.1 s), with the reference\'s speed, turn rate and accelerations as feedforward; Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are geared DC motors on current drives, with their friction.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b, mm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and the motors\' friction (tauF1 … tauF6); the motor currents are i1 … i6; eo is the tool\'s orientation error (°).\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) and watch the torques, the wrist\'s currents and the Joint limits report.',
   signals: {
     a_r: { period: 5, components: [{ type: 'sine', params: { amplitude: RADIUS, frequency: 0.2, phase: 90, ease: 0.5 } }, { type: 'dc', params: { level: -RADIUS } }] },
     b_r: { period: 5, components: [{ type: 'sine', params: { amplitude: RADIUS, frequency: 0.2, phase: 0, ease: 0.5 } }] },
@@ -294,23 +298,24 @@ export const PUMA_SYSTEM = {
     blocks: [
       blk('q0', 'constant', { value: Q0, unit: 'rad' }, 20, 20, 'start pose'),
       blk('pose0', 'forwardKinematics', { robot: R }, 20, 80, 'start pose of the tool'),
-      blk('z0', 'matrixGain', { K: [[0, 0, 1, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]] }, 20, 140, 'its z axis'),
       ref, ctl, puma,
       blk('tool', 'forwardKinematics', { robot: R }, 820, 60, 'Tool pose'),
       sink('xyz', 'x,y,z', 'm', 960, 40), sink('refp', 'xr,yr,zr', 'm', 300, 20),
       blk('err', 'sum', { signs: '+-' }, 960, 120, 'p_d − p'),
-      blk('ec', 'frameTransform', { rpy: [0, 0, Math.PI], groups: 'v', inverse: 1 }, 1060, 120, 'circle ← base'),
+      blk('ec', 'frameTransform', { rpy: [0, 0, YAW], groups: 'v', inverse: 1 }, 1060, 120, 'circle ← base'),
       blk('o0', 'constant', { value: [0, 0, 0], unit: 'm' }, 960, 180),
       blk('mm', 'gain', { K: 1000 }, 1160, 120, 'in mm'),
       sink('e3', 'ea,eb,ec', 'mm', 1260, 120),
       blk('en', 'norm', {}, 1160, 180, '‖e‖'), sink('e', 'e', 'mm', 1260, 180),
     ],
     wires: [
-      w('q0', 'pose0'), w('pose0', 'ref'), w('pose0:1', 'z0'), w('z0', 'ref:1'),
+      w('q0', 'pose0'), w('pose0', 'ref'), w('pose0:1', 'ref:1'),
       w('puma', 'ctl'), w('ref', 'ctl:1'), w('ref:1', 'ctl:2'), w('ref:2', 'ctl:3'), w('ref:3', 'ctl:4'), w('ref:4', 'ctl:5'), w('ref:5', 'ctl:6'), w('ctl', 'puma'),
       w('puma', 'tool'), w('tool', 'xyz'), w('ref', 'refp'),
       w('ref', 'err'), w('tool', 'err:1'), w('err', 'ec'), w('o0', 'ec:1'), w('ec', 'mm'), w('mm', 'e3'), w('mm', 'en'), w('en', 'e'),
     ],
   },
-  views: [{ name: 'Robot', kind: '3d', robot: R, joints: 'q', paths: [{ x: 'xr', y: 'yr', z: 'zr', style: 'reference', span: 'all' }, { x: 'x', y: 'y', z: 'z', style: 'actual', span: 'to-now', fade: 2.5 }], camera: { target: [0.3, -0.1, 0.62], view: 'iso', distance: 2.2 } }],
+  views: [{ name: 'Robot', kind: '3d', robot: R, joints: 'q', paths: [{ x: 'xr', y: 'yr', z: 'zr', style: 'reference', span: 'all' }, { x: 'x', y: 'y', z: 'z', style: 'actual', span: 'to-now', fade: 2.5 }], camera: { target: [0.4, -0.1, 0.55], view: 'iso', distance: 2.0 },
+    // The round part the probe goes round: its top edge just inside the circle, where the ball, coming in at 45°, touches it.
+    part: { radius: RADIUS - 0.008 / Math.SQRT2, height: 0.12, drop: 0.008 / Math.SQRT2 } }],
 };

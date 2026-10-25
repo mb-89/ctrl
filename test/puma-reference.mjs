@@ -12,7 +12,7 @@
 // encoders first), the Sources read there.
 
 import { parseUrdf } from '../src/core/urdf.js';
-import { createRbd, dampedInverse, jointFriction } from '../src/core/rbd.js';
+import { createRbd, dampedInverse, orientationError, jointFriction } from '../src/core/rbd.js';
 import { PUMA560 } from '../src/core/puma560.js';
 import { normalizeReference, referenceFn } from '../src/core/signals.js';
 import { solve } from '../src/core/linalg.js';
@@ -31,7 +31,9 @@ export function pumaReference({ variant = 0, T = 5, signals } = {}) {
   const Rad = PUMA_SYSTEM.diagram.blocks.find((b) => b.id === 'ref').params.R;
   const fa = referenceFn(normalizeReference(sig.a_r), { sampleTime: Ts }), fb = referenceFn(normalizeReference(sig.b_r), { sampleTime: Ts });
   const ra = [fa, fa.derivative(1), fa.derivative(2)], rb = [fb, fb.derivative(1), fb.derivative(2)];
-  const start = kin.linkPose(q0, tool), o = start.p, z0 = [start.R[2], start.R[5], start.R[8]];
+  const start = kin.linkPose(q0, tool), o = start.p, R0 = start.R;
+  const yaw = PUMA_SYSTEM.diagram.blocks.find((b) => b.id === 'ref').diagram.blocks.find((b) => b.id === 'frame').params.rpy[2];
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
   const kx = 10, ko = 10, Kf = variant === 0 ? 1 : 0, integral = variant !== 2;
 
   // The speed PIs' gains, as speedPI computes them: b is the joint's
@@ -78,16 +80,16 @@ export function pumaReference({ variant = 0, T = 5, signals } = {}) {
     for (let i = 0; i < 6; i++) { let s = 0; for (let c = 0; c < N; c++) s += J[i * N + c] * qdm[c]; v[i] = s; }
     // The reference, placed at the tool's start.
     const A = [ra[0](t), ra[1](t), ra[2](t)], B = [rb[0](t), rb[1](t), rb[2](t)];
-    const pd = [o[0] - A[0], o[1] - B[0], o[2]], vd = [-A[1], -B[1], 0], ad = [-A[2], -B[2], 0];
-    // The stylus's direction: z0 turned about the vertical by the circle's
-    // phase φ, with the least angular velocity and acceleration that turn it.
+    const rot = (x, y) => [cy * x - sy * y, sy * x + cy * y];
+    const [px, py] = rot(A[0], B[0]), [vx, vy] = rot(A[1], B[1]), [axx, ayy] = rot(A[2], B[2]);
+    const pd = [o[0] + px, o[1] + py, o[2]], vd = [vx, vy, 0], ad = [axx, ayy, 0];
+    // The tool's orientation: R0 turned about the vertical by the circle's phase φ.
     const c = (A[0] + Rad) / Rad, sn = B[0] / Rad, dph = (c * B[1] - sn * A[1]) / Rad, ddph = (c * B[2] - sn * A[2]) / Rad;
-    const zd = [c * z0[0] - sn * z0[1], sn * z0[0] + c * z0[1], z0[2]];
-    const wd = [-dph * zd[2] * zd[0], -dph * zd[2] * zd[1], dph * (1 - zd[2] * zd[2])];
-    const al = [-zd[2] * (ddph * zd[0] - dph * dph * zd[1]), -zd[2] * (ddph * zd[1] + dph * dph * zd[0]), ddph * (1 - zd[2] * zd[2])];
-    // The task law: the pointing error e = z × z_d.
-    const z = [R[2], R[5], R[8]];
-    eo[0] = z[1] * zd[2] - z[2] * zd[1]; eo[1] = z[2] * zd[0] - z[0] * zd[2]; eo[2] = z[0] * zd[1] - z[1] * zd[0];
+    const Rz = [c, -sn, 0, sn, c, 0, 0, 0, 1], Rd = new Array(9);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) { let s = 0; for (let k = 0; k < 3; k++) s += Rz[3 * i + k] * R0[3 * k + j]; Rd[3 * i + j] = s; }
+    const wd = [0, 0, dph], al = [0, 0, ddph];
+    // The task law.
+    orientationError(Rd, R, eo);
     const vs = [0, 1, 2].map((i) => vd[i] + kx * (pd[i] - p[i])).concat([0, 1, 2].map((i) => wd[i] + ko * eo[i]));
     const as = [0, 1, 2].map((i) => ad[i] + kx * (vd[i] - v[i])).concat([0, 1, 2].map((i) => al[i] + ko * (wd[i] - v[3 + i])));
     // Task → axes.

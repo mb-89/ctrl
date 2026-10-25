@@ -4,7 +4,7 @@
 // bindings, and the run's cost.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PUMA_SYSTEM } from '../src/core/pumasystem.js';
+import { PUMA_SYSTEM, PUMA_START } from '../src/core/pumasystem.js';
 import { PUMA560 } from '../src/core/puma560.js';
 import { parseUrdf } from '../src/core/urdf.js';
 import { normalizeDiagram, diagramNames } from '../src/core/diagram.js';
@@ -30,6 +30,8 @@ const run = (v) => {
   }
   return runs.get(v);
 };
+// The circle's centre: the middle of the reference path's extent.
+const centre = (s) => [(Math.max(...s.xr) + Math.min(...s.xr)) / 2, (Math.max(...s.yr) + Math.min(...s.yr)) / 2];
 const rms = (a) => Math.sqrt(a.reduce((s, x) => s + x * x, 0) / a.length);
 const peak = (a) => a.reduce((m, x) => Math.max(m, Math.abs(x)), 0);
 
@@ -46,7 +48,7 @@ test('the compiled PUMA equals the loop written plainly, every variant, over 5 s
   }
 });
 
-test('what a model buys: 0.01 mm with the feedforward, 1.3 mm without, 10 mm with P alone', () => {
+test('what a model buys: 0.013 mm with the feedforward, 1.3 mm without, 10 mm with P alone', () => {
   const [model, pi, p] = [0, 1, 2].map((v) => run(v).signals);
   assert.ok(rms(model.e) < 0.03, `with the model ${rms(model.e)} mm`);
   assert.ok(rms(pi.e) > 0.5 && rms(pi.e) < 3, `PI ${rms(pi.e)} mm`);
@@ -62,11 +64,11 @@ test('the probe\'s circle moves every joint and stays inside the arm: limits, si
   joints.forEach((j, k) => {
     const q = s[`q${k + 1}`];
     const lo = Math.min(...q), hi = Math.max(...q);
-    assert.ok(lo - j.lower >= 5 * Math.PI / 180 && j.upper - hi >= 5 * Math.PI / 180, `${j.name}: ${lo}…${hi} against ${j.lower}…${j.upper}`);
+    assert.ok(lo - j.lower >= 15 * Math.PI / 180 && j.upper - hi >= 15 * Math.PI / 180, `${j.name}: ${lo}…${hi} against ${j.lower}…${j.upper}`);
     // Every axis moves visibly (inputs 40, 41): at least 30° peak to peak.
     assert.ok(hi - lo >= 30 * Math.PI / 180, `${j.name} moves ${(hi - lo) * 180 / Math.PI}°`);
   });
-  assert.ok(Math.min(...s.sigma) >= 0.05, `σ_min ${Math.min(...s.sigma)}`);
+  assert.ok(Math.min(...s.sigma) >= 0.08, `σ_min ${Math.min(...s.sigma)}`);
   assert.ok(Math.min(...s.q5.map(Math.abs)) >= 9 * Math.PI / 180, 'the wrist stays clear of q5 = 0');
   PUMA560.drive.fuse.forEach((f, k) => assert.ok(peak(s[`i${k + 1}`]) < f, `i${k + 1} ${peak(s[`i${k + 1}`])} A against its fuse ${f} A`));
   // Every torque and its shares are signals; the shares add up to the joint torque less friction, which the arm does not see.
@@ -80,45 +82,61 @@ test('a circle too fast runs a joint beyond its speed limit, reported once with 
   assert.ok(out.info.validity.some((r) => /(faster than its limit|left its range) .* at \d+\.\d+ s/.test(r)), out.info.validity.join('; '));
 });
 
-test('the probe touches the circle tilted 30° from the vertical, its stylus turning once per turn of the circle', () => {
+test('the probe looks onto the inside of the circle at 45° all the way round; the drawn probe is the modelled one', () => {
   const s = run(0).signals;
-  // The pointing error stays small; the stylus's direction (from the tool's pose) turns about the vertical.
-  assert.ok(peak(s.eo) < 0.05, `pointing ${peak(s.eo)}°`);
-  const rbd = createRbd(parseUrdf(PUMA560.urdfProbe));
-  const az = [], tilt = [];
+  assert.ok(peak(s.eo) < 0.05, `orientation error ${peak(s.eo)}°`);
+  const model = parseUrdf(PUMA_SYSTEM.diagram.robots.puma560.urdf), rbd = createRbd(model);
+  const az = [];
   for (let k = 0; k < s.q1.length; k += 50) {
-    const { R } = rbd.linkPose([1, 2, 3, 4, 5, 6].map((j) => s[`q${j}`][k]), 'tip');
-    az.push(Math.atan2(R[5], R[2])); tilt.push(Math.acos(-R[8]) * 180 / Math.PI);
+    const q = [1, 2, 3, 4, 5, 6].map((j) => s[`q${j}`][k]), { R, p } = rbd.linkPose(q, 'tip');
+    assert.ok(Math.abs(Math.acos(-R[8]) * 180 / Math.PI - 45) < 0.1, `tilt at ${k}`);
+    // The stylus leans in towards the circle's centre: its horizontal part points from the ball to the centre.
+    const ctr = centre(s), toC = [ctr[0] - p[0], ctr[1] - p[1]], h = Math.hypot(R[2], R[5]);
+    assert.ok((R[2] * toC[0] + R[5] * toC[1]) / (h * Math.hypot(...toC)) > 0.999, `inward at ${k}`);
+    az.push(Math.atan2(R[5], R[2]));
   }
-  for (const t of tilt) assert.ok(Math.abs(t - 30) < 0.1, `tilt ${t}°`);
   let turned = 0;
   for (let k = 1; k < az.length; k++) { let d = az[k] - az[k - 1]; d -= 2 * Math.PI * Math.round(d / (2 * Math.PI)); turned += d; }
   assert.ok(Math.abs(Math.abs(turned) / (2 * Math.PI) - 0.95) < 0.02, `the stylus turned ${turned / (2 * Math.PI)} turns`);
+  // One description draws and models it: the ball's visual sits at the tool point (tip), the
+  // blocks' tool is the last link, and the stylus's mass is in the arm's (and the model's) gravity.
+  const tipLink = model.links.find((l) => l.name === 'tip');
+  assert.ok(tipLink.visuals.some((v) => v.geom.type === 'sphere' && Math.hypot(...v.origin.p) === 0));
+  assert.equal(model.links.at(-1).name, 'tip');
+  const q0 = PUMA_START.map((v) => v * Math.PI / 180);
+  const bare = createRbd(parseUrdf(PUMA560.urdf)).gravityTorque(q0), probe = rbd.gravityTorque(q0);
+  // What the probe adds is 0.1 kg at its centre of mass (40 mm along the stylus): τ = J_vᵀ·m·g there.
+  const com = (q) => { const { R, p } = rbd.linkPose(q, 'probe'); return [0, 1, 2].map((i) => p[i] + 0.04 * R[3 * i + 2]); };
+  q0.forEach((_, j) => {
+    const a = q0.slice(), b = q0.slice(); a[j] += 1e-6; b[j] -= 1e-6;
+    const dzdq = (com(a)[2] - com(b)[2]) / 2e-6;
+    assert.ok(Math.abs(probe[j] - bare[j] - 0.1 * 9.81 * dzdq) < 1e-6, `joint ${j + 1}: the probe adds ${probe[j] - bare[j]} N·m, its mass ${0.1 * 9.81 * dzdq}`);
+  });
 });
 
 test('the axis gains come from the plant, per lane: b, Kv = 2ζω/b, Ki = ω²/b, u0 holds the start pose', () => {
   const designs = run(1).info.designs;
   assert.equal(designs.length, 6);
-  const plan = { Kv: [155.7, 230.2, 55.7, 11.55, 10.34, 11.65], Ki: [2335, 3453, 836, 173, 155, 175] };
+  const plan = { Kv: [191.2, 240.2, 55.4, 11.5, 10.3, 11.7], Ki: [2869, 3604, 831, 173, 155, 175] };
   designs.forEach((d, k) => {
     assert.equal(d.status, 'ok', d.error?.message);
     const row = (l) => d.rows.find((r) => r.label === l).value;
     assert.ok(Math.abs(row('Kv') / plan.Kv[k] - 1) < 0.01 && Math.abs(row('Ki') / plan.Ki[k] - 1) < 0.01, `lane ${k + 1}: Kv ${row('Kv')}, Ki ${row('Ki')}`);
   });
-  // Without the model, u0 is the gravity that holds the start pose (14.31, 5.55 N·m on joints 2 and 3).
+  // Without the model, u0 is the gravity that holds the start pose (26.98, 3.61 N·m on joints 2 and 3).
   const u0 = designs.map((d) => d.rows.find((r) => r.label === 'u0').value);
-  assert.ok(Math.abs(u0[1] - 14.31) < 0.01 && Math.abs(u0[2] - 5.55) < 0.01 && Math.abs(u0[0]) < 1e-9, u0.join(', '));
+  assert.ok(Math.abs(u0[1] - 26.98) < 0.01 && Math.abs(u0[2] - 3.61) < 0.01 && Math.abs(u0[0]) < 1e-9, u0.join(', '));
   assert.ok(run(0).info.designs.every((d) => d.rows.find((r) => r.label === 'u0').value === 0));
 });
 
-test('the 3D view binds to visible Sinks; the reference path is the circle of 0.08 m to 1e-9', () => {
+test('the 3D view binds to visible Sinks; the reference path is the circle of 0.08 m to 1e-6', () => {
   const view = normalizeView(PUMA_SYSTEM.views[0]);
   const { sinks } = diagramNames(normalizeDiagram(PUMA_SYSTEM.diagram));
   for (let j = 1; j <= 6; j++) assert.ok(sinks.includes(`${view.joints}${j}`));
   for (const pth of view.paths) for (const c of ['x', 'y', 'z']) assert.ok(sinks.includes(pth[c]), pth[c]);
-  const s = run(0).signals, cx = s.xr[0] + 0.08, cy = s.yr[0];
+  const s = run(0).signals, [cx, cy] = centre(s);
   for (let k = 0; k < s.xr.length; k += 7) {
-    assert.ok(Math.abs(Math.hypot(s.xr[k] - cx, s.yr[k] - cy) - 0.08) < 1e-9);
+    assert.ok(Math.abs(Math.hypot(s.xr[k] - cx, s.yr[k] - cy) - 0.08) < 1e-6);
     assert.ok(Math.abs(s.zr[k] - s.zr[0]) < 1e-12);
   }
 });
