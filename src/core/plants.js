@@ -642,9 +642,9 @@ export const EXAMPLE_PLANTS = [
   {
     name: 'Conical tank, gain scheduling',
     summary: 'A tank that widens upwards: quick when nearly empty, slow when full. Compare a gain-scheduled PI with fixed ones: why one set of gains cannot fit a plant that changes.',
-    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other.\n\nThe page computes the PI gains from the tank itself at each level (pole cancellation), and the gain-scheduled PI looks them up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
+    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other.\n\nThe page computes the PI gains from the tank itself at each level (pole cancellation), and the gain-scheduled PI looks them up from the level. The reference climbs 0.15 → 0.45 → 0.8 m and drops back to 0.15 m at 4.5 s, so a longer run repeats; at 2.2 s water is drawn off (d). On the drop the pump can only stop: the outlet drains the tank, and the PI tuned for empty lets it run dry for a moment. The PI tuned for full rests at 0.15 m only at the very start, where it begins in exact balance; in every later period it rings there from the drop until the step.',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }] },
+      r: { period: PERIOD, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }, { type: 'step', params: { amplitude: -0.65, time: 4.5 } }] },
       d: { period: PERIOD, components: [pulse(0.15, 2.2, 0.5)] },
     },
     scope: { channels: channels('r', 'h', 'q', 'd') },

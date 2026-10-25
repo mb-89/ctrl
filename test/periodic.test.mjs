@@ -144,7 +144,7 @@ test("the Input tab's line: a jump or a kink where it repeats, quiet where that 
 });
 
 test("the library's other inputs join up where they repeat", () => {
-  const known = { 'Conical tank, gain scheduling': ['r'], 'Oven, badly tuned': ['r'] };
+  const known = { 'Oven, badly tuned': ['r'] };
   for (const sys of SYSTEM_LIBRARY) for (const [name, sig] of Object.entries(sys.input.signals)) {
     if (known[sys.name]?.includes(name)) continue;
     const j = wrapJump(normalizeReference(sig), ctx);
@@ -221,4 +221,29 @@ test('the encoder example runs up and back down: no jump where it repeats, its l
     for (let k = 1; k <= P; k++) { diff = Math.max(diff, Math.abs(quiet[n][P + k] - quiet[n][2 * P + k]), Math.abs(quiet[n][2 * P + k] - quiet[n][3 * P + k])); span = Math.max(span, Math.abs(quiet[n][P + k])); }
     assert.ok(diff < 1e-9 * span, `${n}: periods 2 to 4 differ by ${diff}`);
   }
+});
+
+test('the conical tank drains back before the period ends: from the second period on every period is the same', () => {
+  const sys = SYSTEM_LIBRARY.find((s) => s.name === 'Conical tank, gain scheduling');
+  const Ts = 0.0025, N = 2000;
+  const run = (variant, periods) => {
+    const d = structuredClone(sys.plant.diagram);
+    d.blocks.find((b) => b.type === 'controller').variant = variant;
+    return simulateSystem(normalizeDiagram(d), sys.input.signals, { duration: 5 * periods, sampleTime: Ts }).signals;
+  };
+  const diff = (x, a, b) => { let m = 0; for (let i = 0; i <= N; i++) m = Math.max(m, Math.abs(x[b * N + i] - x[a * N + i])); return m; };
+  // The gain-scheduled PI and the PI tuned for empty are back at the start
+  // level before the next period's first step, and every period repeats.
+  for (const [variant, tol] of [[0, 1e-5], [2, 1e-3]]) {
+    const s = run(variant, 3);
+    for (const n of ['h', 'q']) assert.ok(diff(s[n], 1, 2) < tol, `variant ${variant}: ${n} differs by ${diff(s[n], 1, 2)} between periods 2 and 3`);
+    close(s.h[N + Math.round(1.5 / Ts) - 1], 0.15, 5e-4, `variant ${variant}: h before the second period's first step`);
+  }
+  // The PI tuned for full cannot hold the start level (it rests there only in
+  // exact balance): it rings there from the drop, and its run settles into a
+  // repeating one period by period, the high level calming it each time.
+  const full = run(1, 6);
+  assert.ok(diff(full.h, 4, 5) < 5e-3 && diff(full.h, 4, 5) < diff(full.h, 1, 2) / 20, `${diff(full.h, 1, 2)} → ${diff(full.h, 4, 5)}`);
+  // Off cannot fill it: the tank runs dry at once, in every period.
+  assert.ok(run(3, 2).h.subarray(N).every((v) => v === 0));
 });

@@ -329,7 +329,7 @@ test('the step method on the library\'s examples: better where the loop is badly
   assert.ok(tank25.after.J < 2.5 * tank25.before.cost.J && tank25.after.overshoot < 20, `${tank25.after.J / tank25.before.cost.J} ${tank25.after.overshoot}`);
   const empty = system('Conical');
   empty.system.plant.diagram.blocks.find((b) => b.type === 'controller').variant = 2;
-  // Its run scores far better than the PI tuned for empty (cost ×0.18), but
+  // Its run scores far better than the PI tuned for empty (cost ×0.25), but
   // the PI it fits is unstable at h = 0.15 m, where the run starts: it rests
   // there only in exact balance (u0 computed from the plant). With u0 0.1 %
   // off it rings at 3 Hz and empties the tank within 5 s. So it is not run.
@@ -479,8 +479,8 @@ test('results: a variant of their own, numbered, never overwriting; a worse one 
   // The conical tank's gain scheduling against a fixed PID from a relay rule:
   // the PID is unstable where the run starts (h = 0.15 m), so it does not
   // run, though its run, resting in exact balance until the first step,
-  // costs a little less (×0.95 since the pipe's dead time is exact; ×1.006
-  // before).
+  // costs a little less (×0.99 since the drop back at 4.5 s, whose drain
+  // no PI can speed up; ×0.95 before it, ×1.006 before the pipe's dead time was exact).
   const tank = autotune(system('Conical'), null, { method: 'relay' });
   assert.ok(tank.ok && !tank.better && tank.unstableAtStart?.Z === 6, `${tank.before.cost.J} → ${tank.after.J}`);
   assert.ok(tank.after.J < tank.before.cost.J, 'its run alone would not tell');
@@ -631,7 +631,7 @@ test('a variant from the plant: Auto-tune tunes the numbers its design computed,
 test('a relay result unstable where the run starts is not run, though its run rests in exact balance', () => {
   // The tank starts in exact balance (u0 computed from the plant), so a loop
   // unstable at h = 0.15 m rests there until the step at 1.5 s and its run
-  // scores like the running variant's (×1.01). One PID from the relay test
+  // scores like the running variant's (×0.99). One PID from the relay test
   // at mid-range is unstable there: the loop linearised at the start says so.
   const tank = system('Conical');
   const res = autotune(tank, null, { method: 'relay' });
