@@ -174,6 +174,9 @@ export function runProject(project, { duration, goal = {}, signals = [], points 
   const out = {
     title: project.title, kind: 'system', duration: sim.duration, sampleTime: sim.sampleTime, samples: run.t.length,
     unstable: run.info.unstable, warnings: run.info.warnings, goal: g,
+    // What the run reported (the integration: step, steps, bound, the
+    // Jacobian's at start and end, time; validity where the diagram has one).
+    info: (({ validity = [], h, substeps, steps, bound, stiffness, ms }) => ({ validity, h, substeps, steps, bound, stiffness, ms }))(run.info),
     loops: controllerBlocks(diagram).map((c) => loopReport(project, run, c, g)),
     designs: (run.info.designs ?? []).map((st) => ({ block: st.path, variant: st.variant, type: st.type, status: st.status, ...(st.error ? { error: st.error.message } : {}) })),
     signals: names,

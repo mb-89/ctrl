@@ -795,7 +795,21 @@ function step125(v, dir) {
   return ladder[Math.max(0, Math.min(ladder.length - 1, i + dir))];
 }
 
-return { ceil125, step125 };
+const PREFIXES = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n'], [1e-12, 'p']];
+
+function si(v, digits = 3) {
+  if (v === 0) return '0 ';
+  if (!Number.isFinite(v)) return '— ';
+  const a = Math.abs(v);
+  const [f, p] = PREFIXES.find(([f]) => a >= f * 0.9995) ?? PREFIXES[PREFIXES.length - 1];
+  return `${Number((v / f).toPrecision(digits))} ${p}`;
+}
+
+function siUnit(v, unit, digits) {
+  return `${si(v, digits)}${unit}`.replace(/ $/, '');
+}
+
+return { ceil125, step125, si, siUnit };
 })();
 // ---- core/speed.js
 __mods['core/speed.js'] = (() => {
@@ -1214,7 +1228,162 @@ function compileExpr(src, opts = {}) {
   return (t) => { env.t = t; const v = f(env); return Number.isFinite(v) ? v : 0; };
 }
 
-return { EXPR_HELP, compileExpr };
+return { FN1, FN2, FN3, EXPR_HELP, compileExpr };
+})();
+// ---- core/formula.js
+__mods['core/formula.js'] = (() => {
+
+const { FN1, FN2, FN3 } = __mods['core/expr.js'];
+const { siUnit } = __mods['core/scale.js'];
+const CONST = { pi: Math.PI, e: Math.E, inf: Infinity };
+const ARITY = (name) => (Object.hasOwn(FN1, name) ? 1 : Object.hasOwn(FN2, name) ? 2 : Object.hasOwn(FN3, name) ? 3 : 0);
+const LETTER = 'A-Za-z_Ͱ-Ͽἀ-῿';
+const NAME_RE = new RegExp(`^[${LETTER}][${LETTER}0-9]*$`);
+
+const isReserved = (key) => { const k = String(key).toLowerCase(); return k === 't' || Object.hasOwn(CONST, k) || ARITY(k) > 0; };
+
+const isFormula = (v) => typeof v === 'string' && v.trim() !== '' && !Number.isFinite(Number(v));
+
+function tokenize(src) {
+  const toks = [];
+  const re = new RegExp(`\\s*(?:(\\d+\\.?\\d*(?:e[-+]?\\d+)?|\\.\\d+(?:e[-+]?\\d+)?)|([${LETTER}][${LETTER}0-9]*)|(\\*\\*|[-+*/^(),]))`, 'gy');
+  re.lastIndex = 0;
+  while (re.lastIndex < src.length) {
+    const at = re.lastIndex;
+    if (/^\s*$/.test(src.slice(at))) break;
+    const m = re.exec(src);
+    if (!m) throw new Error(`unexpected "${src.slice(at).trim()[0]}" at ${at + 1}`);
+    if (m[1] !== undefined) toks.push({ k: 'num', v: Number(m[1]) });
+    else if (m[2] !== undefined) toks.push({ k: 'id', v: m[2] });
+    else toks.push({ k: 'op', v: m[3] === '**' ? '^' : m[3] });
+  }
+  return toks;
+}
+
+function parseFormula(src) {
+  const toks = tokenize(String(src));
+  let i = 0;
+  const peek = () => toks[i];
+  const take = (v) => { const tk = toks[i]; if (!tk || (v && tk.v !== v)) throw new Error(tk ? `expected "${v}" near "${tk.v}"` : `expected "${v}" at the end`); i++; return tk; };
+  function expr() {
+    let a = term();
+    while (peek()?.k === 'op' && (peek().v === '+' || peek().v === '-')) { const op = take().v; a = { k: 'op', op, a, b: term() }; }
+    return a;
+  }
+  function term() {
+    let a = unary();
+    for (;;) {
+      const tk = peek();
+      const explicit = tk?.k === 'op' && (tk.v === '*' || tk.v === '/');
+      const implicit = tk && (tk.k === 'num' || tk.k === 'id' || (tk.k === 'op' && tk.v === '('));
+      if (!explicit && !implicit) return a;
+      const op = explicit ? take().v : '*';
+      a = { k: 'op', op, a, b: unary() };
+    }
+  }
+  function unary() {
+    if (peek()?.k === 'op' && (peek().v === '-' || peek().v === '+')) { const neg = take().v === '-', a = unary(); return neg ? { k: 'neg', a } : a; }
+    return power();
+  }
+  function power() {
+    const a = atom();
+    if (peek()?.k === 'op' && peek().v === '^') { take(); return { k: 'op', op: '^', a, b: unary() }; }
+    return a;
+  }
+  function atom() {
+    const tk = peek();
+    if (!tk) throw new Error('the formula ends too early');
+    if (tk.k === 'num') { take(); return { k: 'num', v: tk.v }; }
+    if (tk.k === 'op' && tk.v === '(') { take(); const a = expr(); take(')'); return a; }
+    if (tk.k === 'id') {
+      take();
+      const f = tk.v.toLowerCase(), arity = ARITY(f);
+      if (!arity || peek()?.v !== '(') return { k: 'name', v: tk.v };
+      take('(');
+      const args = [expr()];
+      while (args.length < arity) { take(','); args.push(expr()); }
+      take(')');
+      return { k: 'call', f, args };
+    }
+    throw new Error(`unexpected "${tk.v}"`);
+  }
+  if (!toks.length) throw new Error('enter a formula');
+  const tree = expr();
+  if (i < toks.length) throw new Error(`unexpected "${toks[i].v}"`);
+  return tree;
+}
+
+function formulaNames(tree, out = []) {
+  if (tree.k === 'name') { if (!out.includes(tree.v)) out.push(tree.v); }
+  else if (tree.k === 'neg') formulaNames(tree.a, out);
+  else if (tree.k === 'op') { formulaNames(tree.a, out); formulaNames(tree.b, out); }
+  else if (tree.k === 'call') for (const a of tree.args) formulaNames(a, out);
+  return out;
+}
+
+const unknown = (name) => Object.assign(new Error(`unknown name "${name}"`), { code: 'unknown-name', name });
+
+function compileFormula(src, resolve = () => null) {
+  const tree = typeof src === 'string' ? parseFormula(src) : src;
+  const C = (v) => ({ c: true, v, f: () => v });
+  const build = (n) => {
+    if (n.k === 'num') return C(n.v);
+    if (n.k === 'name') {
+      let r = resolve(n.v);
+      const low = n.v.toLowerCase();
+      if (!r && low === 't' && n.v !== 't') r = resolve('t');
+      if (!r && Object.hasOwn(CONST, low)) r = { value: CONST[low] };
+      if (!r) throw unknown(n.v);
+      if (r.slot === undefined) return C(r.value);
+      const s = r.slot;
+      return { c: false, f: (v) => v[s] };
+    }
+    if (n.k === 'neg') {
+      const a = build(n.a);
+      if (a.c) return C(-a.v);
+      const fa = a.f;
+      return { c: false, f: (v) => -fa(v) };
+    }
+    if (n.k === 'call') {
+      const args = n.args.map(build), fn = (n.args.length === 1 ? FN1 : n.args.length === 2 ? FN2 : FN3)[n.f];
+      if (args.every((a) => a.c)) return C(fn(...args.map((a) => a.v)));
+      const [a, b, c] = args.map((x) => x.f);
+      if (args.length === 1) return { c: false, f: (v) => fn(a(v)) };
+      if (args.length === 2) return { c: false, f: (v) => fn(a(v), b(v)) };
+      return { c: false, f: (v) => fn(a(v), b(v), c(v)) };
+    }
+    const a = build(n.a), b = build(n.b);
+    const op = { '+': (x, y) => x + y, '-': (x, y) => x - y, '*': (x, y) => x * y, '/': (x, y) => x / y, '^': Math.pow }[n.op];
+    if (a.c && b.c) return C(op(a.v, b.v));
+    const fa = a.f, fb = b.f, ca = a.v, cb = b.v;
+    switch (n.op) {
+      case '+': return { c: false, f: a.c ? (v) => ca + fb(v) : b.c ? (v) => fa(v) + cb : (v) => fa(v) + fb(v) };
+      case '-': return { c: false, f: a.c ? (v) => ca - fb(v) : b.c ? (v) => fa(v) - cb : (v) => fa(v) - fb(v) };
+      case '*': return { c: false, f: a.c ? (v) => ca * fb(v) : b.c ? (v) => fa(v) * cb : (v) => fa(v) * fb(v) };
+      case '/': return { c: false, f: a.c ? (v) => ca / fb(v) : b.c ? (v) => fa(v) / cb : (v) => fa(v) / fb(v) };
+      default: return { c: false, f: (v) => Math.pow(fa(v), fb(v)) };
+    }
+  };
+  const out = build(tree);
+  const f = out.f;
+  f.constant = out.c;
+  return f;
+}
+
+function evalFormula(src, values = {}) {
+  const get = values instanceof Map ? (n) => (values.has(n) ? { value: values.get(n) } : null) : (n) => (Object.hasOwn(values, n) ? { value: values[n] } : null);
+  return compileFormula(src, get)(new Float64Array(0));
+}
+
+function sentence(text, valueOf) {
+  return String(text).replace(/\{([^{}:]+)(?::([^{}]*))?\}/g, (_, src, unit) => {
+    const v = valueOf(src.trim());
+    if (!Number.isFinite(v)) return v > 0 ? '∞' : v < 0 ? '−∞' : '?';
+    return unit !== undefined && unit.trim() !== '1' ? siUnit(v, unit.trim()) : String(Number(v.toPrecision(3)));
+  });
+}
+
+return { NAME_RE, isReserved, isFormula, parseFormula, formulaNames, compileFormula, evalFormula, sentence };
 })();
 // ---- core/signals.js
 __mods['core/signals.js'] = (() => {
@@ -2682,16 +2851,45 @@ function stuck(Ad, B, W) {
   return null;
 }
 
-function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
-  const { n, m, states, outputs: meas } = lin;
-  const labels = meas.map((o) => o.label), names = states.map((s) => s.name);
-  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; the filter here handles up to 40`);
+function observerModel(lin, what, title = what) {
+  const { n, m, outputs: meas } = lin;
+  const labels = meas.map((o) => o.label);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; ${what} here handles up to 40`);
   if (!m) throw new DesignError('no-measurement', 'this observer has no measurement to correct its estimate with', 'wire the measurements to inputs 2, 3, …');
   if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')}), so there is nothing to estimate`, lin.warnings.join('; ') || 'wire input 1 (u) to what drives the plant, and the plant to the measurements');
-  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'the filter is designed at the origin, which must be an equilibrium with u = 0');
-  refuseKinks(lin, 'the Kalman filter');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, `${what} is designed at the origin, which must be an equilibrium with u = 0`);
+  refuseKinks(lin, title);
   const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
-  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; the filter needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; ${what} needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  return labels;
+}
+
+function observerResult(lin, L, labels, outputs, warnings, what) {
+  const { n, states } = lin, names = states.map((s) => s.name);
+  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
+  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: ${what} does not know that offset`); });
+  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in ${what}`); });
+  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const values = {
+    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
+    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
+  };
+  return {
+    values, warnings, quality: { ok: outputs === n },
+    estimates: { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
+    gain: { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+  };
+}
+
+function errorPoles(Ad, C, L) {
+  const ILC = L.map((row, i) => C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * C[k][j], 0)));
+  return eig(mul(ILC, Ad));
+}
+
+function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
+  const { n, m, states } = lin;
+  const names = states.map((s) => s.name);
+  const labels = observerModel(lin, 'the filter', 'the Kalman filter');
   const q = Array.isArray(Q) ? Q : [Q];
   if (q.length !== 1 && q.length !== n) throw new DesignError('q-length', `Q has ${q.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, `give one value (a push on ${lin.input.label}) or one per state`);
   const given = R !== null && R !== undefined;
@@ -2711,8 +2909,7 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
   const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
   const Qw = q.length === 1 ? Bd.map((a) => Bd.map((b) => q[0] * a[0] * b[0])) : diag(q);
   const { L, converged } = dlqe(Ad, lin.C, Qw, diag(r));
-  const ILC = L.map((row, i) => lin.C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * lin.C[k][j], 0)));
-  const poles = eig(mul(ILC, Ad));
+  const poles = errorPoles(Ad, lin.C, L);
   const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
   if (!converged || !(radius < 1)) {
     const Ct = transpose(lin.C), mode = stuck(transpose(Ad), Ct, transpose(Qw));
@@ -2720,22 +2917,47 @@ function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
     throw new DesignError('not-detectable', `the estimate's error would not die out: a pole of the filter stays at |z| = ${fmt(radius)}`, `the measurements may not show every state (${names.join(', ')}); measure more, or raise Q`);
   }
 
-  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
-  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: the filter does not know that offset`); });
-  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this filter`); });
-  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const res = observerResult(lin, L, labels, outputs, warnings, 'the filter');
   const rows = [
-    { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
-    { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+    res.estimates, res.gain,
     { label: 'R', value: r, labels, note: given ? '' : parts.length ? `from ${and(parts)}` : 'none: no sensor blocks' },
     q.length === 1 ? { label: 'Q', value: q[0], note: `a push on ${lin.input.label}, per sample` } : { label: 'Q', value: q, labels: names },
     { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
   ];
-  const values = {
-    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
-    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
-  };
-  return { values, rows, warnings, quality: { ok: outputs === n } };
+  return { values: res.values, rows, warnings: res.warnings, quality: res.quality };
+}
+
+function placedDesign(lin, { w, Ts, outputs = lin.n }) {
+  const { n, m, states } = lin;
+  const names = states.map((s) => s.name);
+  const labels = observerModel(lin, 'the observer');
+  if (m !== 1) throw new DesignError('one-measurement', `placing the poles fixes L for one measurement; this observer has ${m} (${labels.join(', ')})`, 'measure one signal, or use the Kalman filter, which weighs several');
+  const ws = Array.isArray(w) ? w : [w];
+  if (ws.length !== 1 && ws.length !== n) throw new DesignError('w-length', `w has ${ws.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, 'give one value (every pole there) or one per state');
+  if (!ws.every((v) => v > 0)) throw new DesignError('bad-poles', 'each w must be above 0: a pole at s = −w with w ≤ 0 lets the error grow or stay');
+  const zs = (ws.length === 1 ? new Array(n).fill(ws[0]) : ws).map((v) => Math.exp(-v * Ts));
+  const { Ad } = c2d(lin.A, lin.B, Ts);
+  const O = [];
+  let row = lin.C[0];
+  for (let k = 0; k < n; k++) { row = row.map((_, j) => row.reduce((s, c, i) => s + c * Ad[i][j], 0)); O.push(row); }
+  const { M: S } = equilibrate(O);
+  const big = Math.max(...S.map((r) => Math.hypot(...r)));
+  if (rank(S, 1e-10 * big) < n) throw new DesignError('not-observable', `${labels[0]} does not show every state of the plant this observer sees (${names.join(', ')}), so no L places all ${n} poles`, 'measure another signal, or use the Kalman filter');
+  let phi = Ad.map((r, i) => r.map((_, j) => (i === j ? 1 : 0)));
+  for (const z of zs) phi = mul(phi, Ad.map((r, i) => r.map((a, j) => a - (i === j ? z : 0))));
+  const en = Array.from({ length: n }, (_, i) => [i === n - 1 ? 1 : 0]);
+  const L = mul(phi, solve(O, en));
+  const poles = errorPoles(Ad, lin.C, L);
+  const want = [...zs].sort((a, b) => a - b), got = poles.map((z) => z.re).sort((a, b) => a - b);
+  const off = Math.max(...poles.map((z) => Math.abs(z.im)), ...want.map((z, i) => Math.abs(z - got[i])));
+  if (!(off < 1e-3)) throw new DesignError('ill-conditioned', `the poles came out up to ${fmt(off)} from where they were placed: ${labels[0]} shows some state too weakly to place its pole there`, 'place the poles closer to the plant\'s own, or use the Kalman filter');
+  const res = observerResult(lin, L, labels, outputs, [], 'the observer');
+  const rows = [
+    res.estimates, res.gain,
+    { label: 'w', value: zs.map((z) => -Math.log(z) / Ts), note: '1/s: each pole of the error at s = −w' },
+    { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
+  ];
+  return { values: res.values, rows, warnings: res.warnings, quality: res.quality };
 }
 
 function inverseSeries(path) {
@@ -2879,7 +3101,7 @@ function trajectoryDesign(p, ctx) {
   return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
 }
 
-return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, poleOf, kalmanDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, poleOf, kalmanDesign, placedDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
@@ -3543,7 +3765,7 @@ function off() {
 }
 
 function estimator(p, { inputs }, kind, { n = p.B.length, m = p.C.length / p.B.length, lines = [] } = {}) {
-  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, 95 + 11 * (kind === 'kalman' ? lines.length : 1));
+  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, 95 + 11 * (lines.length || 1));
   s.port({ x: 4, y: 36, text: 'u', anchor: 'start', tip: `Plant input: ${inputs[0] ?? 'not connected'}` });
   s.wire([[12, 36], [24, 36]]);
   s.block({ x: 74, y: 36, w: 100, h: 28, lines: [[['predict', 'k']], [['Ad·x̂ + Bd·u', '']]], tip: 'Predict: the model, discretised at Ts, carries the estimate one sample ahead with the input u' });
@@ -3558,7 +3780,7 @@ function estimator(p, { inputs }, kind, { n = p.B.length, m = p.C.length / p.B.l
   s.port({ x: 4, y: 70, text: 'y', anchor: 'start', tip: `Measurements: ${inputs.slice(1).join(', ') || 'none'}` });
   s.wire([[12, 70], [190, 70], [190, 50]]);
   s.note({ x: 4, y: 87, text: `${Number.isNaN(n) ? 'the states it sees' : `${n} state${n === 1 ? '' : 's'}`}, ${m} measurement${m === 1 ? '' : 's'}`, anchor: 'start' });
-  if (kind === 'kalman') lines.forEach((text, i) => s.note({ x: 4, y: 98 + 11 * i, text, anchor: 'start' }));
+  if (lines.length) lines.forEach((text, i) => s.note({ x: 4, y: 98 + 11 * i, text, anchor: 'start' }));
   else s.note({ x: 4, y: 98, text: `L ${p.L.map(fmt).join(' ')}`, anchor: 'start' });
   return s.done();
 }
@@ -3726,7 +3948,13 @@ function kalmanModel(p, o) {
   return estimator(p, o, 'kalman', { lines });
 }
 
-const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+function luenbergerPlaced(p, o) {
+  const v = o.values;
+  const n = v ? v.B.length : UNKNOWN, m = v ? v.C.length / v.B.length : Math.max(1, o.inputs.length - 1);
+  return estimator(p, o, 'luenberger', { n, m, lines: ['model from the plant, at its origin; L from the poles', `error poles at s = −${p.w.map(fmt).join(', −')} 1/s`] });
+}
+
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenbergerPlaced, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {
   const layout = LAYOUTS[variant.type];
@@ -3741,7 +3969,7 @@ return { DIAGRAM_WIDTH, fmt, limitsText, NOTE_CHAR, describeVariant, DESCRIBED_T
 __mods['core/observers.js'] = (() => {
 
 const { c2d, dlqe } = __mods['core/linalg.js'];
-const { kalmanDesign } = __mods['core/design.js'];
+const { kalmanDesign, placedDesign } = __mods['core/design.js'];
 const { normalizeVariant } = __mods['core/controllers.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
@@ -3812,6 +4040,18 @@ const OBSERVERS = {
     make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.kalman.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
     manual: (p, values) => ({ type: 'luenberger', params: { A: [...values.A], B: [...values.B], C: [...values.C], L: [...values.L] } }),
     migrate: (v) => (['A', 'B', 'C'].some((k) => v.params?.[k] !== undefined) && v.params?.L === undefined ? { ...v, type: 'kalmanModel' } : v),
+  },
+  luenbergerPlaced: {
+    label: 'Luenberger observer, placed poles', summary: 'x̂ = prediction + L (y − C x̂), model from the plant, L from the poles',
+    designed: true, version: 1, computes: ['A', 'B', 'C', 'L'], twin: 'luenberger',
+    params: [vec('w', 'Error poles at s = −w', [100], { unit: '1/s', help: 'how fast the estimate\'s error dies out: one value puts every pole there; or one per state' })],
+    check(p) { return p.w.every((v) => v > 0) ? '' : 'w: each above 0'; },
+    design(p, ctx) {
+      const d = placedDesign(ctx.linearize('origin'), { w: p.w, Ts: ctx.Ts, outputs: ctx.outputs });
+      return { values: d.values, rows: d.rows, warnings: d.warnings, quality: d.quality };
+    },
+    make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.luenbergerPlaced.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
+    manual: (p, values) => OBSERVERS.kalman.manual(p, values),
   },
   kalmanModel: {
     label: 'Kalman filter, own model', summary: 'x̂ = model prediction + L (y − C x̂), L from your model, Q and R',
@@ -4936,8 +5176,10 @@ __mods['core/diagram.js'] = (() => {
 
 const { BLOCKS, blockDef, normalizeBlock } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
+const { eig, csolve } = __mods['core/linalg.js'];
+const { siUnit } = __mods['core/scale.js'];
 const { gaussAt } = __mods['core/signals.js'];
-const { compileExpr } = __mods['core/expr.js'];
+const { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME_RE } = __mods['core/formula.js'];
 const { CONTROLLERS, normalizeVariant, makeLaw } = __mods['core/controllers.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
 const { SYNC_DESIGNS, defaultDesigns } = __mods['core/design.js'];
@@ -4957,10 +5199,21 @@ const ELEMENTS = {
   outport: { label: 'Out', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [1, 0], formula: 'y' },
   gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
-  integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
+  integrator: {
+    label: 'Integrator', group: 'Dynamics', formula: 'K / s',
+    params: [num('K', 'K', 1), num('x0', 'Start x₀', 0), num('min', 'Min', null, { nullable: 'none', inf: true }), num('max', 'Max', null, { nullable: 'none', inf: true }),
+      { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }, num('angle', 'Angle (0/1)', 0, { int: true, min: 0, max: 1 })],
+    ports: () => [1, 1], tf: (p) => ({ num: [p.K], den: [1, 0] }),
+  },
   delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before T_d', 0, { nullable: 'its input at t = 0' })], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
-  fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
-  saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
+  fcn: {
+    label: 'Equations', group: 'Math', formula: 'y = f(u, t)',
+    params: [{ key: 'inputs', label: 'Inputs', default: 'u', kind: 'names' }, { key: 'eqs', label: 'Equations', default: 'y = u^2', kind: 'eqs' }, { key: 'outputs', label: 'Outputs', default: 'y', kind: 'names' }],
+    ports: (p) => [nameList(p.inputs).length, nameList(p.outputs).length],
+    outputs: (p) => nameList(p.outputs), inputNames: (p) => nameList(p.inputs),
+    normalize: (params, where, scope) => normalizeEquations(params, where, scope),
+  },
+  saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1, { inf: true }), num('max', 'Max', 1, { inf: true })], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
   noise: { label: 'Noise', group: 'Sensors', params: [num('std', 'σ', 0.01, { min: 0 }), num('seed', 'Seed', 1, { int: true, min: 0 })], ports: () => [1, 1], formula: 'u + n,  n ~ N(0, σ²)' },
   cartPole: {
@@ -5041,6 +5294,51 @@ const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
 const state = (name, unit, angle = false) => ({ name, unit, angle });
 
+const nameList = (text) => String(text ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+const eqLines = (text) => String(text ?? '').split(/\n|;/).map((x) => x.trim()).filter(Boolean).map((line) => {
+  const at = line.indexOf('=');
+  return at < 0 ? { name: '', src: line, line } : { name: line.slice(0, at).trim(), src: line.slice(at + 1).trim(), line };
+});
+function normalizeEquations(params = {}, where, scope) {
+  const p = params.eqs === undefined && params.expr !== undefined ? { inputs: 'u', eqs: `y = ${params.expr}`, outputs: 'y' } : params;
+  const inputs = nameList(p.inputs ?? 'u'), outputs = nameList(p.outputs ?? 'y'), lines = eqLines(p.eqs ?? 'y = u^2');
+  const seen = new Set();
+  const named = (n, what) => {
+    if (!NAME_RE.test(n)) throw new Error(`${where}.${what}: "${n}" is not a name (letters, digits, _; Greek letters too)`);
+    if (isReserved(n)) throw new Error(`${where}.${what}: "${n}" is the time, a constant or a function; choose another name`);
+    if (seen.has(n)) throw new Error(`${where}.${what}: "${n}" is defined twice`);
+    seen.add(n);
+  };
+  for (const n of inputs) named(n, 'inputs');
+  if (!lines.length) throw new Error(`${where}.eqs: at least one line "name = formula"`);
+  for (const [i, l] of lines.entries()) {
+    if (!l.name) throw new Error(`${where}.eqs line ${i + 1}: "name = formula", not "${l.line}"`);
+    named(l.name, `eqs line ${i + 1}`);
+    let tree;
+    try { tree = parseFormula(l.src); } catch (e) { throw new Error(`${where}.eqs line ${i + 1} (${l.name}): ${e.message}`); }
+    const known = [...inputs, ...lines.slice(0, i).map((x) => x.name)];
+    for (const n of formulaNames(tree)) {
+      if (known.includes(n) || scopeValue(scope, n) !== undefined || ['t', 'pi', 'e', 'inf'].includes(n.toLowerCase())) continue;
+      throw new Error(`${where}.eqs line ${i + 1}: '${n}' is not an input, a name defined above, or a parameter${scope ? ` (${scopeKeys(scope).join(', ')})` : ' (no mask around this block)'}`);
+    }
+  }
+  if (!outputs.length) throw new Error(`${where}.outputs: at least one`);
+  for (const n of outputs) if (!lines.some((l) => l.name === n)) throw new Error(`${where}.outputs: "${n}" is not computed by a line`);
+  return { inputs: inputs.join(', '), eqs: lines.map((l) => `${l.name} = ${l.src}`).join('\n'), outputs: outputs.join(', ') };
+}
+function compileEquations(params, consts) {
+  const inputs = nameList(params.inputs), lines = eqLines(params.eqs), outputs = nameList(params.outputs);
+  const slot = new Map(inputs.map((n, i) => [n, i]));
+  slot.set('t', inputs.length);
+  const fs = lines.map((l, k) => {
+    const f = compileFormula(l.src, (n) => (slot.has(n) ? { slot: slot.get(n) } : consts?.has(n) ? { value: consts.get(n) } : null));
+    slot.set(l.name, inputs.length + 1 + k);
+    return f;
+  });
+  const first = inputs.length + 1;
+  return { n: first + lines.length, nIn: inputs.length, fs, first, out: outputs.map((n) => slot.get(n)) };
+}
+
 function chainRates(p) {
   const n = p.links, N = n + 1, { g, b } = p;
   const mu = new Float64Array(n), ml = new Float64Array(n), mgl = new Float64Array(n), mll = new Float64Array(n * n);
@@ -5119,10 +5417,104 @@ function parseEnd(end) {
   return { id, port: port === undefined ? 0 : Number(port) };
 }
 
-function normalizeParams(type, params = {}, where) {
-  if (diagramBlockDef(type).model) return normalizeBlock('plant', { type, params }).params;
-  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where);  
-  const out = {};
+const scopeValue = (scope, name) => { for (let s = scope; s; s = s.outer) if (s.values.has(name)) return s.values.get(name); return undefined; };
+const scopeKeys = (scope) => { const out = []; for (let s = scope; s; s = s.outer) for (const k of s.values.keys()) if (!out.includes(k)) out.push(k); return out; };
+const scopeMap = (scope) => new Map(scopeKeys(scope).map((k) => [k, scopeValue(scope, k)]));
+function unknownName(name, scope) {
+  return scope ? `'${name}' is not a parameter of '${scope.label}' (${scopeKeys(scope).join(', ')})` : `'${name}' is not a parameter here: outside a masked subsystem a formula uses numbers, pi, e and inf`;
+}
+function formulaValue(src, scope, where) {
+  let tree;
+  try { tree = parseFormula(src); } catch (e) { throw new Error(`${where}: ${e.message}`); }
+  for (const name of formulaNames(tree)) {
+    if (scopeValue(scope, name) === undefined && !['pi', 'e', 'inf'].includes(name.toLowerCase())) throw new Error(`${where}: ${unknownName(name, scope)}`);
+  }
+  return compileFormula(tree, (n) => { const v = scopeValue(scope, n); return v === undefined ? null : { value: v }; })(new Float64Array(0));
+}
+function fieldNumber(raw, p, scope, where) {
+  if (!isFormula(raw)) return Number(raw);
+  if (p.int) throw new Error(`${where}: a whole number, not a formula`);
+  const v = formulaValue(raw, scope, where);
+  if (Number.isNaN(v) || (!Number.isFinite(v) && !p.inf)) throw new Error(`${where}: ${String(raw).trim()} = ${Number.isNaN(v) ? 'not a number' : v > 0 ? 'inf' : '-inf'}; it must be finite`);
+  return v;
+}
+function normalizeMask(b, where, outer, resolve) {
+  const given = b.params && typeof b.params === 'object' ? Object.keys(b.params) : [];
+  if (b.mask === undefined || b.mask === null) {
+    if (given.length) throw new Error(`${where}: parameters (${given.join(', ')}) need a mask that lists them`);
+    return { scope: outer };
+  }
+  if (!Array.isArray(b.mask)) throw new Error(`${where}.mask: a list of { key, label, unit }`);
+  const keys = new Set();
+  const mask = b.mask.map((f, i) => {
+    const at = `${where}.mask[${i}]`, key = String(f?.key ?? '');
+    if (!NAME_RE.test(key)) throw new Error(`${at}: a key such as m, l1 or θ0 (letters, digits, _)`);
+    if (isReserved(key)) throw new Error(`${at}: "${key}" is the time, a constant or a function; choose another key`);
+    if (keys.has(key)) throw new Error(`${at}: the key "${key}" twice`);
+    keys.add(key);
+    const unit = String(f.unit ?? '1').trim() || '1';
+    if (unit.length > 12 || /[<>"{}]/.test(unit)) throw new Error(`${at}.unit: a short unit such as m, N, rad/s, or 1`);
+    const out = { key, label: String(f.label ?? key), unit };
+    for (const k of ['min', 'max', 'default']) {
+      if (f[k] === undefined || f[k] === null || f[k] === '') continue;
+      const v = Number(f[k]);
+      if (Number.isNaN(v)) throw new Error(`${at}.${k}: a number`);
+      out[k] = v;
+    }
+    if (out.min !== undefined && out.max !== undefined && out.min > out.max) throw new Error(`${at}: min ${out.min} is above max ${out.max}`);
+    return out;
+  });
+  for (const k of given) if (!keys.has(k)) throw new Error(`${where}.params: "${k}" is not on the mask (${[...keys].join(', ')})`);
+  const label = b.name ?? b.id, values = new Map(), params = {};
+  for (const f of mask) {
+    const raw = b.params?.[f.key] ?? f.default;
+    const at = `${where}.params.${f.key}`;
+    if (raw === undefined || raw === null || raw === '') throw new Error(`${at}: needs a value`);
+    const v = isFormula(raw) ? formulaValue(raw, outer, at) : Number(raw);
+    if (Number.isNaN(v)) throw new Error(`${at}: expected a number or a formula`);
+    if (f.min !== undefined && v < f.min) throw new Error(`${at}: ${v} is below its min ${f.min}`);
+    if (f.max !== undefined && v > f.max) throw new Error(`${at}: ${v} is above its max ${f.max}`);
+    values.set(f.key, v);
+    params[f.key] = resolve || !isFormula(raw) ? v : String(raw).trim();
+  }
+  return { mask, params, scope: { label, values, outer } };
+}
+
+function hasFormulas(d) {
+  return d.blocks.some((b) => {
+    if (b.type === 'subsystem') return b.mask?.length > 0 || hasFormulas(b.diagram);
+    const def = ELEMENTS[b.type] ?? (BLOCKS.plant[b.type] ? { params: BLOCKS.plant[b.type].params } : null);
+    return !!def?.params?.some((p) => (!p.kind && isFormula(b.params?.[p.key])) || (p.kind === 'vector' && Array.isArray(b.params?.[p.key]) && b.params[p.key].some(isFormula)));
+  });
+}
+
+function maskValues(diagram, idPath = []) {
+  let scope = null, d = diagram;
+  for (const id of idPath) {
+    const b = d.blocks.find((x) => x.id === id);
+    if (!b?.diagram) break;
+    scope = normalizeMask(b, id, scope, true).scope;
+    d = b.diagram;
+  }
+  return scopeMap(scope);
+}
+function formulaIn(src, values) {
+  try { return compileFormula(src, (n) => (values.has(n) ? { value: values.get(n) } : null))(new Float64Array(0)); } catch { return NaN; }
+}
+
+function normalizeParams(type, params = {}, where, scope = null, resolve = false) {
+  if (diagramBlockDef(type).model) {
+    const def = diagramBlockDef(type), numeric = { ...params }, kept = {};
+    for (const p of def.params) {
+      const v = params[p.key], at = `${where}.${p.key}`;
+      if (p.kind === 'vector' && Array.isArray(v) && v.some(isFormula)) { numeric[p.key] = v.map((x, j) => fieldNumber(x, p, scope, `${at}[${j}]`)); kept[p.key] = v.map((x) => (isFormula(x) ? String(x).trim() : Number(x))); }
+      else if (p.kind !== 'vector' && isFormula(v)) { numeric[p.key] = fieldNumber(v, p, scope, at); kept[p.key] = String(v).trim(); }
+    }
+    const out = normalizeBlock('plant', { type, params: numeric }).params;
+    return resolve ? out : { ...out, ...kept };
+  }
+  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where, scope);  
+  const out = {}, values = {};
   for (const p of ELEMENTS[type].params) {
     let v = params[p.key] ?? p.default;
     if (p.kind === 'unit') {
@@ -5131,28 +5523,30 @@ function normalizeParams(type, params = {}, where) {
     } else if (p.kind === 'name') {
       v = String(v);
       if (!/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(v)) throw new Error(`${where}.${p.key}: a name such as r, d or y1 (letters, digits, _)`);
-    } else if (p.kind === 'expr') {
-      v = String(v).trim();
-      try { compileExpr(v, { vars: true }); } catch (e) { throw new Error(`${where}.${p.key}: ${e.message}`); }
     } else if (p.kind === 'signs') {
       v = String(v);
       if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
-    } else if (p.nullable && (params[p.key] === null || params[p.key] === '')) {
+    } else if (p.nullable && (params[p.key] === null || params[p.key] === '' || (params[p.key] === undefined && p.default === null))) {
       v = null;   
     } else {
-      v = Number(v);
-      if (!Number.isFinite(v)) throw new Error(`${where}.${p.key}: expected a number`);
+      const raw = v;
+      v = fieldNumber(raw, p, scope, `${where}.${p.key}`);
+      if (Number.isNaN(v) || (!Number.isFinite(v) && !isFormula(raw))) throw new Error(`${where}.${p.key}: expected a number`);
       if (p.int) v = Math.round(v);
       if (p.min !== undefined && v < p.min) throw new Error(`${where}.${p.key}: at least ${p.min}`);
       if (p.max !== undefined && v > p.max) throw new Error(`${where}.${p.key}: at most ${p.max}`);
+      values[p.key] = v;
+      if (isFormula(raw) && !resolve) v = String(raw).trim();
     }
     out[p.key] = v;
   }
+  if (type === 'integrator' && values.min !== undefined && values.max !== undefined && values.min > values.max) throw new Error(`${where}: min ${values.min} is above max ${values.max}`);
   if (type === 'switch') out.position = Math.min(out.position, out.inputs);
   return out;
 }
 
-function normalizeDiagram(d, path = 'plant') {
+function normalizeDiagram(d, path = 'plant', opts = {}) {
+  const { scope = null, resolve = false } = opts;
   if (!d || !Array.isArray(d.blocks)) throw new Error(`${path}: a diagram needs "blocks" and "wires"`);
   const ids = new Set();
   const blocks = d.blocks.map((b, i) => {
@@ -5160,10 +5554,14 @@ function normalizeDiagram(d, path = 'plant') {
     if (!b.id || typeof b.id !== 'string' || /[:/]/.test(b.id)) throw new Error(`${where}: needs an "id" without ":" or "/"`);
     if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
     ids.add(b.id);
-    const out = { id: b.id, type: b.type, params: normalizeParams(b.type, b.params, `${where}(${b.id})`), x: Number(b.x) || 0, y: Number(b.y) || 0 };
+    const at = `${where}(${b.id})`;
+    const m = b.type === 'subsystem' ? normalizeMask(b, at, scope, resolve) : null;
+    const out = { id: b.id, type: b.type, params: m ? m.params ?? {} : normalizeParams(b.type, b.params, at, scope, resolve), x: Number(b.x) || 0, y: Number(b.y) || 0 };
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
-    if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
+    if (m?.mask) out.mask = m.mask;
+    if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`, { scope: m.scope, resolve });
+    if (resolve && b.type === 'fcn' && scope) Object.defineProperty(out, 'consts', { value: scopeMap(scope) });
     if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
       const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
@@ -5233,7 +5631,9 @@ function blockInputNames(diagram, idPath) {
       const out = src.diagram.blocks.find((b) => b.type === 'outport' && b.params.port === f.port + 1);
       return out?.name ? `${out.name} (${src.name ?? src.id})` : (src.name ?? src.id);
     }
-    return outputNames(diagramBlockDef(src.type), src.params)[f.port] || (src.name ?? src.id);
+    const outNames = outputNames(diagramBlockDef(src.type), src.params);
+    if (src.type === 'fcn') return outNames.length > 1 ? `${outNames[f.port]} (${src.name ?? src.id})` : (src.name ?? src.id);
+    return outNames[f.port] || (src.name ?? src.id);
   });
 }
 
@@ -5244,6 +5644,7 @@ const fmt = (v) => String(Number(Number(v).toPrecision(3)));
 const NONE = [];
 
 function compileDiagram(diagram, path = 'plant', opts = {}) {
+  if (hasFormulas(diagram)) diagram = normalizeDiagram(diagram, path, { resolve: true });
   const model = opts.mode === 'model';
   const standalone = opts.standalone || model;
   const laws = opts.laws !== false && !model;
@@ -5327,13 +5728,17 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         continue;
       }
       if (def.ode) {
-        const k = add({ kind: 'ode', name, short: b.name ?? b.id, ft: false, ode: def.ode, rates: def.ode.make(b.params), p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
+        const k = add({ kind: 'ode', name, short: b.name ?? b.id, ft: false, ode: def.ode, rates: def.ode.make(b.params), p: b.params, inputs: new Array(nIn).fill(-1), uv: nIn > 1 ? new Float64Array(nIn) : null, outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
         outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j, see: -1 }));
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
       const node = { name, short: b.name ?? b.id, inputs: new Array(nIn).fill(-1) };
-      if (def.tf) {
+      if (b.type === 'integrator') Object.assign(node, { unit: b.params.unit, angle: !!b.params.angle });
+      const lo = b.params.min ?? -Infinity, hi = b.params.max ?? Infinity, x0 = b.params.x0 ?? 0;
+      if (b.type === 'integrator' && (x0 !== 0 || lo > -Infinity || hi < Infinity)) {
+        Object.assign(node, { kind: 'int', K: b.params.K, lo, hi, x0: Math.min(hi, Math.max(lo, x0)), ft: false, bound: 0 });
+      } else if (def.tf) {
         const tf = def.tf(b.params);
         const ss = tf2ss(tf.num, tf.den);
         if (ss.n === 1) { ss.B[0] *= ss.C[0]; ss.C[0] = 1; }
@@ -5344,11 +5749,14 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
       else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, y0: b.params.y0, ft: model || b.params.L <= 0 });
       else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
-      else if (b.type === 'fcn') Object.assign(node, { kind: 'fcn', f: compileExpr(b.params.expr, { vars: true }), env: { u: 0, t: 0 }, ft: true });
+      else if (b.type === 'fcn') {
+        const eq = compileEquations(b.params, b.consts);
+        Object.assign(node, { kind: 'fcn', eq, v: new Float64Array(eq.n), outv: new Float64Array(eq.out.length), ft: true });
+      }
       else if (b.type === 'quantizer') Object.assign(node, { kind: 'quant', q: b.params.q, ft: true });
       else if (b.type === 'noise') Object.assign(node, { kind: 'noise', std: b.params.std, seed: b.params.seed, ft: true });
       const k = add(node);
-      outs[b.id] = [k];
+      outs[b.id] = [k, ...Array.from({ length: nOut - 1 }, (_, j) => add({ kind: 'pick', name: `${name}.${outputNames(def, b.params)[j + 1]}`, ft: true, inputs: [k], parent: k, j: j + 1 }))];
       ins[b.id] = node.inputs.map((_, s) => [k, s]);
     }
     for (const w of d.wires) {
@@ -5381,19 +5789,23 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
   }
   if (pending.size) throw new Error(`${path}: algebraic loop through ${[...pending].map((i) => nodes[i].name).join(', ')}; put a block with state (integrator, lag) in the loop${model ? ' (in a model, dead times pass straight through)' : ''}`);
+  const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
+  const through = nodes.map((nd, i) => origin(i));
+  for (const nd of nodes) for (let s = 0; s < nd.inputs.length; s++) if (nd.inputs[s] >= 0) nd.inputs[s] = through[nd.inputs[s]];
+  for (let q = order.length - 1; q >= 0; q--) if (nodes[order[q]].kind === 'pass') order.splice(q, 1);
 
   let n = 0, bound = 0;
   const stateNodes = [];
   for (const nd of nodes) {
-    if (nd.kind !== 'ss' && nd.kind !== 'ode') continue;
-    nd.nx = nd.kind === 'ss' ? nd.ss.n : typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n;
+    if (nd.kind !== 'ss' && nd.kind !== 'ode' && nd.kind !== 'int') continue;
+    nd.nx = nd.kind === 'int' ? 1 : nd.kind === 'ss' ? nd.ss.n : typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n;
     nd.off = n; n += nd.nx; bound = Math.max(bound, nd.bound);
     if (nd.nx > 0) stateNodes.push(nd);
   }
   const states = [];
   for (const nd of stateNodes) {
     if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
-    else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: '', angle: false, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
+    else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: nd.unit && nd.unit !== '1' ? nd.unit : '', angle: !!nd.angle, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
   }
 
   const vals = new Float64Array(nodes.length);
@@ -5419,6 +5831,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
   let h = 0;
   let left = false;
+  let ideal = false;
   const histAt = (nd, tau, y0 = 0) => {
     const hist = nd.hist;
     if (tau < 0 || !hist.length) return y0;
@@ -5427,7 +5840,6 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     return hist[i] + ((nd.histL[i + 1] ?? hist[i + 1]) - hist[i]) * (f - i);
   };
   const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
-  const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
 
   function outputs(list, t, X, o, u) {
     for (let q = 0; q < list.length; q++) {
@@ -5442,9 +5854,19 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
         case 'delay': y = model || nd.L <= 0 ? inOf(nd) : histAt(nd, t - nd.L, nd.y0 ?? (nd.hist.length ? nd.hist[0] : inOf(nd))); break;
         case 'switch': y = inOf(nd, nd.pick); break;
-        case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
-        case 'quant': y = model ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
-        case 'noise': y = model ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
+        case 'fcn': {
+          const { eq, v } = nd;
+          for (let s = 0; s < eq.nIn; s++) v[s] = inOf(nd, s);
+          v[eq.nIn] = t;
+          for (let k = 0; k < eq.fs.length; k++) v[eq.first + k] = eq.fs[k](v);
+          for (let j = 0; j < eq.out.length; j++) nd.outv[j] = v[eq.out[j]];
+          y = nd.outv[0];
+          break;
+        }
+        case 'pick': y = nodes[nd.parent].outv[nd.j]; break;
+        case 'int': y = Math.min(nd.hi, Math.max(nd.lo, X[o + nd.off])); break;
+        case 'quant': y = model || ideal ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
+        case 'noise': y = model || ideal ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
         case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
         case 'tap': y = nd.see >= 0 ? X[o + nd.see] : nodes[nd.parent].outv[nd.j]; break;
         case 'ctrl': y = nd.u; break;
@@ -5462,7 +5884,16 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   function rates(list, t, X, o, dX) {
     for (let q = 0; q < list.length; q++) {
       const nd = list[q];
-      if (nd.kind === 'ode') { nd.rates(X, o + nd.off, inOf(nd), dX); continue; }
+      if (nd.kind === 'int') {
+        const r = nd.K * inOf(nd), x = X[o + nd.off];
+        dX[o + nd.off] = (x <= nd.lo && r < 0) || (x >= nd.hi && r > 0) ? 0 : r;
+        continue;
+      }
+      if (nd.kind === 'ode') {
+        if (nd.uv) for (let s = 0; s < nd.uv.length; s++) nd.uv[s] = inOf(nd, s);
+        nd.rates(X, o + nd.off, inOf(nd), dX, nd.uv);
+        continue;
+      }
       const { ss } = nd, base = o + nd.off;
       const inp = nd.delay > 0 && !model ? histAt(nd, t - nd.delay) : inOf(nd);
       for (let r = 0; r < ss.n; r++) {
@@ -5473,6 +5904,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
   }
 
+  const probeSrc = probeList.map(([, k]) => origin(k)), outSrc = outNode >= 0 ? origin(outNode) : -1;
   const self = {
     n, bound, warnings, minTs, sampleTimes, states, designs,
     setStep(step) { h = step; },
@@ -5487,14 +5919,19 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
     },
     nextSample() { let t = Infinity; for (const nd of ctrls) if (nd.next < t) t = nd.next; return t; },
-    init(X, o) { for (const nd of stateNodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
+    init(X, o) {
+      for (const nd of stateNodes) {
+        if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; });
+        if (nd.kind === 'int') X[o + nd.off] = nd.x0;
+      }
+    },
     eval(t, X, o, u, dX, end = false) {
       left = end;
       outputs(order, t, X, o, u);
       if (dX) rates(stateNodes, t, X, o, dX);
-      return outNode >= 0 ? vals[outNode] : 0;
+      return outSrc >= 0 ? vals[outSrc] : 0;
     },
-    probes: () => probeList.map(([name, k]) => [name, vals[k]]),
+    probes: () => probeList.map(([name, k], j) => [name, probeSrc[j] >= 0 ? vals[probeSrc[j]] : 0]),
     record() { for (const nd of delays) { nd.hist.push(inOf(nd)); if (nd.histL.length < nd.hist.length) nd.histL.push(inOf(nd)); } },
     recordLeft() { for (const nd of delays) nd.histL.push(inOf(nd)); },
     snapshot(t, X, o = 0) {
@@ -5530,6 +5967,48 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       return { sinks, sources, ctrls };
     },
   };
+
+  const jacobian = (X0, t) => {
+    const X = Float64Array.from(X0), f0 = new Float64Array(n), f1 = new Float64Array(n);
+    const J = Array.from({ length: n }, () => new Array(n).fill(0));
+    ideal = true;
+    try {
+      self.eval(t, X, 0, 0, f0);
+      for (let j = 0; j < n; j++) {
+        const x = X[j], dx = (x + 1e-6 * Math.max(1, Math.abs(x))) - x;
+        X[j] = x + dx;
+        self.eval(t, X, 0, 0, f1);
+        X[j] = x;
+        for (let i = 0; i < n; i++) J[i][j] = (f1[i] - f0[i]) / dx;
+      }
+    } finally { ideal = false; }
+    self.eval(t, X, 0, 0, null);
+    return J;
+  };
+  self.stiffness = (X0, t = 0) => {
+    if (!n) return { bound: 0, state: null };
+    const J = jacobian(X0, t);
+    if (!J.every((row) => row.every(Number.isFinite))) return { bound: 0, state: null, note: 'the rates are not finite at this state' };
+    let top = { re: 0, im: 0 }, mag = 0;
+    for (const z of eig(J)) { const a = Math.hypot(z.re, z.im); if (a > mag) { mag = a; top = z; } }
+    let state = null;
+    if (mag > 0) {
+      const s = 1 + 1e-7;
+      const v = csolve(J.map((row, i) => row.map((a, j) => a - (i === j ? top.re * s : 0))), J.map((row, i) => row.map((a, j) => (i === j ? -top.im * s : 0))), new Array(n).fill(1), new Array(n).fill(0));
+      if (v) { let k = 0; for (let i = 1; i < n; i++) if (Math.hypot(v.xr[i], v.xi[i]) > Math.hypot(v.xr[k], v.xi[k])) k = i; state = states[k]?.label ?? null; }
+    }
+    return { bound: mag, state };
+  };
+  {
+    const X0 = new Float64Array(n);
+    self.init(X0, 0);
+    const s = self.stiffness(X0, 0);
+    self.blockBound = bound;
+    self.stiff = s;
+    self.bound = s.bound > bound * (1 + 1e-6) ? s.bound : bound;
+  }
+  self.stiffWarning = (hmax, need, ran, T) => `${self.stiff.state ? `'${self.stiff.state}' needs` : 'this plant needs'} steps of ${siUnit(hmax, 's')}; this ${siUnit(T, 's')} screen would take ${siUnit(need, '', 3)} steps; it ran ${siUnit(ran, '', 3)}: inaccurate. Shorten the screen`;
+
   if (!model) return self;
 
   const owner = new Int32Array(n);   
@@ -5560,7 +6039,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (nd.kind === 'switch') return [nd.inputs[nd.pick]];
       return nd.inputs;
     };
-    const reads = (i) => (nodes[i].kind === 'ode' || (nodes[i].kind === 'ss' && nodes[i].ss.D === 0) ? NONE : deps(i));
+    const reads = (i) => (nodes[i].kind === 'ode' || nodes[i].kind === 'int' || (nodes[i].kind === 'ss' && nodes[i].ss.D === 0) ? NONE : deps(i));
     const users = nodes.map(() => []);
     nodes.forEach((nd, i) => { for (const s of deps(i)) if (s >= 0) users[s].push(i); });
     const walk = (starts, next) => {
@@ -5672,7 +6151,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       states: Array.from(keep, (g) => ({ ...states[g] })),
       outputs: labels.map((label) => ({ label, angle: false, unit: '' })),
       delay, sensors, through: [...through],
-      bound: Math.max(0, ...kept.map((nd) => nd.bound)),
+      bound: Math.max(self.bound, ...kept.map((nd) => nd.bound)),
       warnings: notes,
       f(x, u, dx) {
         evaluate(x, u, sliceF);
@@ -5752,7 +6231,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
   return self;
 }
 
-return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
+return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, maskValues, formulaIn, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
 })();
 // ---- core/sim.js
 __mods['core/sim.js'] = (() => {
@@ -5761,6 +6240,7 @@ const { blockDef, SLOTS } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
 const { compileDiagram, plantDiagram, wrapPlant } = __mods['core/diagram.js'];
 const { referenceFn } = __mods['core/signals.js'];
+const { siUnit } = __mods['core/scale.js'];
 const MAX_SAMPLES = 200000;
 const MAX_STEPS = 400000;
 const BLOWUP = 1e8;
@@ -5958,10 +6438,14 @@ function gaussian(seed) {
 
 const ns = (x) => Math.round(x * 1e9);
 const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a; };
-function stepPlan(T, bound, sampleTimes = [], K = 1, warnings = []) {
+function stepPlan(T, bound, sampleTimes = [], K = 1, warnings = [], who = null) {
   const hmax = bound > 0 ? 0.5 / bound : T;
   let need = Math.max(1, Math.ceil(T / hmax - 1e-9));
-  if (K * need > MAX_STEPS) { need = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
+  if (K * need > MAX_STEPS) {
+    const ran = Math.max(1, Math.floor(MAX_STEPS / K));
+    warnings.push(`${who ? `'${who}' needs` : 'this plant needs'} steps of ${siUnit(hmax, 's')}; this ${siUnit(K * T, 's')} screen would take ${siUnit(K * need, '')} steps; it ran ${siUnit(K * ran, '')}: inaccurate. Shorten the screen`);
+    need = ran;
+  }
   if (!sampleTimes.length) return { m: need, split: false };
   let g = ns(T);
   for (const Ts of sampleTimes) g = gcd(g, ns(Ts));
@@ -5974,7 +6458,9 @@ const substeps = (...a) => stepPlan(...a).m;
 
 const onGrid = (t) => Math.round(t * 1e9) / 1e9;
 
-function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
+function simulateSystem(diagram, signals, sim, opts = {}) {
+  const { designs, until } = opts;
+  const t0 = globalThis.performance?.now() ?? Date.now();
   const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
   let K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
   if (until !== undefined) {
@@ -5984,7 +6470,8 @@ function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
   const el = compileDiagram(diagram, 'plant', { sources, standalone: true, designs });
   const warnings = [...el.warnings];
-  const { m, split } = stepPlan(Ts, el.bound, el.sampleTimes, K, warnings);
+  const bound = Math.max(el.bound, Number(opts.bound) || 0);
+  const { m, split } = stepPlan(Ts, bound, el.sampleTimes, K, warnings, el.stiff.state);
   const h = Ts / m, N = el.n;
   el.setStep(h);
   const X = new Float64Array(N), Xt = new Float64Array(N);
@@ -6032,7 +6519,16 @@ function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
       el.record();
     }
   }
-  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs } };
+  const end = unstable ? null : el.stiffness(X, K * Ts);
+  if (end && !(opts.bound > 0) && end.bound > bound * (1 + 1e-6) && stepPlan(Ts, end.bound, el.sampleTimes, K).m > m) {
+    const again = simulateSystem(diagram, signals, sim, { ...opts, bound: end.bound });
+    again.info.warnings.unshift(`stiffer later in the run: ${end.state ? `'${end.state}'` : 'the plant'} needs steps of ${siUnit(0.5 / end.bound, 's')} at ${siUnit(K * Ts, 's')}, against ${siUnit(h, 's')} at the start; run again with them`);
+    again.info.stiffness.start = el.stiff;
+    again.info.ms = (globalThis.performance?.now() ?? Date.now()) - t0;
+    return again;
+  }
+  const ms = (globalThis.performance?.now() ?? Date.now()) - t0;
+  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, bound, stiffness: { start: el.stiff, end }, ms } };
   if (until !== undefined) res.snapshot = unstable ? null : el.snapshot(K * Ts, X);
   return res;
 }
@@ -6053,32 +6549,33 @@ const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: '
 const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
 const PERIOD = 5;
 
+const motorBlock = (x, y) => ({
+  id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x, y,
+  diagram: {
+    blocks: [
+      { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
+      { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 330, y: 220 },
+      { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
+      { id: 'arm', type: 'tf', name: 'armature 1/(Ls + R)', params: { num: [1], den: [0.01, 1], delay: 0 }, x: 190, y: 96 },
+      sink('i', 360, 20, 'A'),
+      { id: 'kt', type: 'gain', name: 'Kt (= Ke)', params: { K: 0.5 }, x: 370, y: 100 },
+      { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 460, y: 104 },
+      { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 530, y: 96 },
+      { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 720, y: 112 },
+      { id: 'ke', type: 'gain', name: 'Ke (= Kt)', params: { K: 0.5 }, x: 370, y: 290, flip: true },
+    ],
+    wires: [
+      { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'i' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
+      { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'ke', to: 'sum:1' },
+    ],
+  },
+});
 const motorDiagram = (variants, { inputs = 2, Ts = 0.01 } = {}) => ({
       blocks: [
         src('r', 30, 112, 'rad'),
         src('d', 180, 230, 'N·m'),
         ctrl(130, 90, inputs, Ts, variants),
-        {
-          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
-          diagram: {
-            blocks: [
-              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
-              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 330, y: 220 },
-              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'tf', name: 'armature 1/(Ls + R)', params: { num: [1], den: [0.01, 1], delay: 0 }, x: 190, y: 96 },
-              sink('i', 360, 20, 'A'),
-              { id: 'kt', type: 'gain', name: 'Kt (= Ke)', params: { K: 0.5 }, x: 370, y: 100 },
-              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 460, y: 104 },
-              { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 530, y: 96 },
-              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 720, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke (= Kt)', params: { K: 0.5 }, x: 370, y: 290, flip: true },
-            ],
-            wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'i' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
-              { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'ke', to: 'sum:1' },
-            ],
-          },
-        },
+        motorBlock(330, 96),
         { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
         sink('angle', 690, 106, 'rad'),
         sink('speed', 690, 30, 'rad/s'),
@@ -6336,6 +6833,78 @@ const EXAMPLE_PLANTS = [
         { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
       ],
     },
+  },
+  {
+    name: 'DC motor, speed from an encoder',
+    summary: 'A motor whose speed is not measured: only a coarse encoder angle is. Flip the observer from a raw difference to a Luenberger observer and a Kalman filter, and see the noise leave the voltage and the loop hold its speed.',
+    notes: 'A PI holds the speed of the DC motor (the same motor as the position examples) while the reference r steps to 10 rad/s and down to 3 rad/s, and a load of 0.2 N·m brakes it from 3.5 to 4.3 s. The speed is not measured: an encoder counts 1024 steps per turn (6.1 mrad), with a little noise on its signal (σ 1 mrad), and an Observer block makes the speed the PI sees from those counts. Channel 3 is the voltage V, channel 4 the estimate\'s error (estimate − true speed); both carry Measure lines.\n\nIt opens on the raw finite difference: at Ts = 1 ms one count is 6.1 rad/s, so the estimate jumps between whole counts (3.1 rad/s rms of error) and the PI (Kp 2, Ki 40) passes that on: V chatters between its ±12 V limits (σ 6.1 V at 10 rad/s), and since the limits clip it the motor runs at 8.99 rad/s, not 10.\n\nThe Luenberger observer predicts the motor from its model (the page takes the model from the motor\'s blocks) and corrects it with the counts, its error dying out at the poles you place (s = −400 1/s here): 0.47 rad/s of error, V σ 0.96 V, the speed on 10. The Kalman filter takes the same model and computes its gain from the noise: R from the encoder\'s blocks (σ² + q²/12), Q a random push on V of variance 1 V² per sample. Its error is 0.056 rad/s rms and V σ 0.080 V, 55 and 76 times below the difference\'s; its slowest pole is at 101 rad/s. Neither model knows the load: under it the Kalman estimate reads 0.1 rad/s high and the motor runs at 2.90 rad/s, where the faster Luenberger is off by 0.02.\n\nTry: the Luenberger at w = 100 (as calm as the Kalman filter, slower to see the load); the Kalman filter with Q = 100 (it follows the load, with more noise); the difference with Tf = 0.02 s (a filter calms it, with a lag); an encoder of 4096 counts (q = 0.001534). FFT mode on V shows the difference\'s noise spread up to the Nyquist frequency.',
+    signals: {
+      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 10, time: 0.2 } }, { type: 'step', params: { amplitude: -7, time: 2.5 } }] },
+      d: { period: PERIOD, components: [pulse(0.2, 3.5, 0.8)] },
+    },
+    scope: { channels: channels('r', 'speed', { source: 'V', measure: true }, { source: 'est_error', measure: true }) },
+    ui: ui('Motor speed'),
+    sim: { sampleTime: 0.001 },
+    diagram: {
+      blocks: [
+        src('r', 30, 112, 'rad/s'),
+        src('d', 180, 230, 'N·m'),
+        ctrl(130, 90, 2, 0.001, [
+          { name: 'PI speed', type: 'pid', params: { Kp: 2, Ki: 40, umin: -12, umax: 12 } },
+        ]),
+        motorBlock(330, 96),
+        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        { id: 'jitter', type: 'noise', name: 'encoder noise', params: { std: 0.001, seed: 5 }, x: 640, y: 96 },
+        { id: 'enc', type: 'quantizer', name: 'encoder 1024 counts/turn', params: { q: (2 * Math.PI) / 1024 }, x: 780, y: 96 },
+        sink('encoder', 920, 106, 'rad'),
+        {
+          id: 'obs', type: 'observer', name: 'speed estimator', params: { inputs: 2, outputs: 3, Ts: 0.001 }, x: 780, y: 260, flip: true,
+          variants: [
+            { name: 'Finite difference', type: 'difference', params: { Tf: 0 } },
+            { name: 'Luenberger, placed poles', type: 'luenbergerPlaced', params: { w: [400] } },
+            { name: 'Kalman filter', type: 'kalman', params: { Q: [1], R: null } },
+          ],
+          variant: 0,
+        },
+        sink('estimate', 600, 340, 'rad/s'),
+        { id: 'esum', type: 'sum', params: { signs: '+-' }, x: 600, y: 420 },
+        sink('est_error', 720, 428, 'rad/s'),
+        sink('speed', 690, 30, 'rad/s'),
+        sink('angle', 640, 20, 'rad'),
+        sink('V', 330, 20, 'V'),
+      ],
+      wires: [
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
+        { from: 'int', to: 'jitter' }, { from: 'jitter', to: 'enc' }, { from: 'enc', to: 'encoder' },
+        { from: 'ctrl', to: 'obs' }, { from: 'enc', to: 'obs:1' }, { from: 'obs:1', to: 'ctrl:1' }, { from: 'obs:1', to: 'estimate' },
+        { from: 'obs:1', to: 'esum' }, { from: 'motor', to: 'esum:1' }, { from: 'esum', to: 'est_error' },
+        { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
+      ],
+    },
+    views: [{
+      name: 'Motor speed', kind: '2d', view: [-1.1, -0.9, 1.1, 0.9],
+      shapes: [
+        { type: 'group', x: -0.5, y: 0.05, shapes: [
+          { type: 'circle', cx: 0, cy: 0, r: 0.45, fill: 'panel', stroke: 'muted', lineWidth: 2 },
+          ...ticks(0.45),
+          { type: 'group', angle: 'angle', shapes: [
+            { type: 'circle', cx: 0, cy: 0, r: 0.36, fill: 'ink' },
+            { type: 'circle', cx: 0, cy: 0.2, r: 0.1, fill: 'ch2' },
+            { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.43, stroke: 'ch2', lineWidth: 5 },
+          ] },
+          { type: 'circle', cx: 0, cy: 0, r: 0.05, fill: 'muted' },
+        ] },
+        { type: 'line', x1: 0.15, y1: -0.3, x2: 0.15, y2: 0.5, stroke: 'muted', lineWidth: 1 },
+        { type: 'line', x1: '0.15 + 0.04*r', y1: -0.3, x2: '0.15 + 0.04*r', y2: 0.5, stroke: 'ch1', lineWidth: 3 },
+        { type: 'rect', x: 0.15, y: 0.18, w: '0.04*speed', h: 0.16, fill: 'ch2' },
+        { type: 'rect', x: 0.15, y: -0.22, w: '0.04*estimate', h: 0.16, fill: 'ch4' },
+        { type: 'text', x: 0.55, y: 0.42, text: 'speed', size: 12, fill: 'muted' },
+        { type: 'text', x: 0.55, y: 0.02, text: 'estimate', size: 12, fill: 'muted' },
+        { type: 'text', x: 0.15, y: -0.38, text: '0', size: 11, fill: 'muted' },
+        { type: 'text', x: 0.95, y: -0.38, text: '20 rad/s', size: 11, fill: 'muted' },
+        { type: 'text', x: 0, y: -0.78, text: 'speed {speed:5.2} rad/s   estimate {estimate:5.2} rad/s   r {r:4.1} rad/s   V {V:5.1} V   load {d:3.1} N·m', size: 13 },
+      ],
+    }],
   },
   {
     name: 'Conical tank, gain scheduling',
@@ -7360,7 +7929,7 @@ function fromPlant(e) {
 
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
 const VARIANT_TAGS = {
-  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -7369,7 +7938,7 @@ const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta', 'Black box': 'yellow',
   PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
   'Sliding mode': 'red',
-  'Kalman filter': 'slate', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
   'Controller in the plant': 'green', Agent: 'red',
 };
@@ -7383,6 +7952,7 @@ function systemTags(e) {
       if (b.diagram) walk(b.diagram);
       const onlyDisplays = d.wires.filter((w) => w.from.split(':')[0] === b.id).every((w) => ['sink', 'terminator'].includes(d.blocks.find((x) => x.id === w.to.split(':')[0])?.type));
       if (NONLINEAR.has(b.type) && !(b.type === 'fcn' && onlyDisplays)) nonlinear = true;
+      if (b.type === 'integrator' && [b.params?.min, b.params?.max].some((v) => v !== null && v !== undefined && !/^\s*[-+]?inf\s*$/i.test(String(v)))) nonlinear = true;
     }
   };
   walk(e.diagram);
@@ -10372,6 +10942,7 @@ function runProject(project, { duration, goal = {}, signals = [], points = 200 }
   const out = {
     title: project.title, kind: 'system', duration: sim.duration, sampleTime: sim.sampleTime, samples: run.t.length,
     unstable: run.info.unstable, warnings: run.info.warnings, goal: g,
+    info: (({ validity = [], h, substeps, steps, bound, stiffness, ms }) => ({ validity, h, substeps, steps, bound, stiffness, ms }))(run.info),
     loops: controllerBlocks(diagram).map((c) => loopReport(project, run, c, g)),
     designs: (run.info.designs ?? []).map((st) => ({ block: st.path, variant: st.variant, type: st.type, status: st.status, ...(st.error ? { error: st.error.message } : {}) })),
     signals: names,
@@ -11296,7 +11867,8 @@ const GUIDE = {
     M('loopTuner.speed(x?)', 'x: a factor, or -1 for as fast as possible', 'How fast simulated time runs; held at 1 while a plant is connected.', 'loopTuner.speed(10)', '{ speed, effective, achieved, simulation, locked }'),
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
     M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
-    M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
+    M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter, a Luenberger observer\'s placed poles) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
+    M('loopTuner.info()', '', 'What the screen\'s last run reported: validity reports (a model used outside where it holds), warnings (a stiff plant and the step it needs, a run made again because the plant grew stiffer, a signal that diverged, an input not connected), the integration step h, steps, the step bound (the blocks\' own and the Jacobian\'s largest eigenvalue at the start), the Jacobian\'s at the start and the end, and the run\'s ms. The status line under the screen shows the first report or warning.', 'loopTuner.info()', '{ validity, warnings, h, substeps, steps, bound, stiffness: { start, end }, ms } or null'),
     M('loopTuner.whenDesigned()', '', 'Resolves once no design is being computed in the background (a plan for the planned swing-up takes seconds; meanwhile the block runs u = 0 or its previous plan) and the display shows the run that uses it. Await it before judging a run.', 'await loopTuner.whenDesigned()', 'a promise of designs()'),
     M('loopTuner.loopModel(path, op)', 'path: a Controller block\'s id path; op: "origin" (at rest), "initial" (the start), { y: [levels] } or { t: seconds }', 'The loop the Controller closes, as the Analysis tab draws it: the plant it sees linearised at op, and the running variant\'s own law, as state space. Refused, with the reason, where there is none (a relay, a kink at op, a plant outside the page).', 'loopTuner.loopModel("ctrl", "initial")', '{ plant: { A, B, C, D, delay, ... }, ctrl: { A, B, C, D }, Ts, opLabel, variantName, warnings }'),
     M('loopTuner.live.state()', '', 'The live link: state ("offline", "connecting", "open", "running"), pending ("run" or "stop" while the plant has not answered a key yet), message (the last message the page showed), estop ({ by, reason } or null), mode ("control", "reference", "log"), the plant\'s ports, ramp ({ left, to } while the references ramp in), link and plant figures, hold.', 'loopTuner.live.state().state'),

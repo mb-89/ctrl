@@ -41,7 +41,8 @@ test('mcp download: away from the source, the server runs on the page\'s own cor
     const tools = (s) => s.request('tools/list').then((r) => r.result.tools.map((t) => t.name));
     assert.deepEqual(await tools(away), await tools(here));
     for (const s of [away, here]) await s.call('load_system', { system: 'Oven, badly tuned' });
-    assert.deepEqual(await away.call('run'), await here.call('run'));
+    const steady = (r) => ({ ...r, info: { ...r.info, ms: null } });   // its wall-clock time set aside
+    assert.deepEqual(steady(await away.call('run')), steady(await here.call('run')));
     assert.deepEqual(await away.call('analyze', { at: 'initial' }), await here.call('analyze', { at: 'initial' }));
     assert.deepEqual(await away.call('autotune', { method: 'relay' }), await here.call('autotune', { method: 'relay' }));
     // Its page is the page it carries, with the project put inside.

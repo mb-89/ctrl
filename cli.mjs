@@ -40,9 +40,10 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
                                         variant of its own (running if it scores better); --ff also tunes
                                         the feedforward gains (Kff, Kv, Ka) that are 0
   run <project> [--duration <s>] [--signals a,b] [--points 200] [--cost IAE] [--effort 0.05] [--overshoot 10] [--json]
-                                        run a system for its timebase (or --duration) and measure each
-                                        Controller block's loop: Auto-tune's cost, overshoot, settling, IAE;
-                                        --signals adds those signals, downsampled to --points (with --json)
+                                        simulate the system (the diagram) over the screen (or --duration), as
+                                        the page does: what the run reported (validity, warnings, steps, step
+                                        bound) and each Controller block's loop: Auto-tune's cost, overshoot,
+                                        settling, IAE; --signals adds those signals, downsampled to --points
   analyze <project> [--block <id path>] [--at origin|initial|t=<s>|y=<level>,...] [--json]
                                         the Analysis tab's numbers for a Controller block's loop at an
                                         operating point: margins, closed-loop poles, the linear step
@@ -345,7 +346,11 @@ switch (cmd) {
     const res = must(() => runProject(project, { duration: opt.duration, goal, signals, points: opt.points ? Number(opt.points) : undefined }));
     if (opt.json) { console.log(JSON.stringify(res, null, 2)); break; }
     if (res.kind === 'candidates') { console.log(`${project.title}: an older project with candidates; see "eval"`); break; }
-    console.log(`${project.title}: ${fmt(res.duration)} s at ${fmt(res.sampleTime)} s${res.unstable ? ', diverged' : ''}; goal ${res.goal.cost}, effort ${fmt(res.goal.effort)}, overshoot ≤ ${fmt(res.goal.overshoot)} %`);
+    console.log(`${project.title}: ${res.samples} samples of ${res.signals.join(', ')}`);
+    const { h, substeps, steps, bound, stiffness, ms, validity = [] } = res.info;
+    if (h !== undefined) console.log(`  step ${fmt(h)} s (${substeps} per record step, ${steps} steps), bound ${fmt(bound)} 1/s (largest |λ| ${fmt(stiffness.start.bound)} at the start${stiffness.end ? `, ${fmt(stiffness.end.bound)} at the end` : ''}), ${fmt(ms)} ms`);
+    for (const v of validity) console.log(`  ! ${v.says}`);
+    console.log(`  ${fmt(res.duration)} s at ${fmt(res.sampleTime)} s${res.unstable ? ', diverged' : ''}; goal ${res.goal.cost}, effort ${fmt(res.goal.effort)}, overshoot ≤ ${fmt(res.goal.overshoot)} %`);
     for (const l of res.loops) {
       if (!l.cost) { console.log(`  ${l.block} (${l.variant}): ${l.why}`); continue; }
       const m = l.metrics;

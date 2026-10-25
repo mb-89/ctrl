@@ -114,6 +114,19 @@ function startApp() {
     pumpDesigns();
     return acq;
   }
+  // What the screen's run reported (simulateSystem's info, or the loop
+  // path's): its validity reports, warnings, steps, step bound and time.
+  // The status line shows the first report, else the first warning.
+  app.runInfo = () => {
+    const info = acquire().info;
+    if (!info) return null;
+    const { h, substeps, steps, bound, stiffness, ms, warnings = [], validity = [] } = info;
+    return structuredClone({ validity, warnings, h, substeps, steps: steps ?? null, bound: bound ?? null, stiffness: stiffness ?? null, ms: ms ?? null });
+  };
+  app.runNote = () => {
+    const info = acq?.info;
+    return info?.validity?.[0]?.says ?? info?.warnings?.[0] ?? null;
+  };
   function simulateScreen(p) {
     loopNote = '';
     app.systemError = '';
@@ -124,31 +137,33 @@ function startApp() {
       // A variant from the plant still says why it is refused (no model of
       // a plant outside the page).
       try { app.designStatuses = designSystem(p, { designs }); } catch (err) { app.systemError = err.message; }
-      return { t: new Float64Array(0), signals: Object.fromEntries(channelNames(p).map((n) => [n, new Float64Array(0)])) };
+      return { t: new Float64Array(0), signals: Object.fromEntries(channelNames(p).map((n) => [n, new Float64Array(0)])), info: null };
     }
     if (loopReady(p)) {
       const { t, r } = referenceTrace(p);
       const signals = { r };
+      let info = null;
       const cand = p.candidates[Math.max(0, p.selected ? p.candidates.findIndex((c) => c.name === p.selected) : 0)] ?? p.candidates[0];
       try {
         const { result } = evaluateCandidate(p, cand);
         Object.assign(signals, { y: result.y, u: result.u, e: result.e, ym: result.ym, d: result.d });
+        info = result.info;
         loopNote = `loop: ${cand.name}`;
       } catch (err) { app.systemError = err.message; }
-      return { t, signals };
+      return { t, signals, info };
     }
     // No controller yet: the diagram is the whole system. If it cannot run,
     // the signals still show and the Plant tab says why.
     try {
       const sys = evaluateSystem(p, { designs });
       app.designStatuses = sys.info.designs ?? [];
-      return { t: sys.t, signals: sys.signals };
+      return { t: sys.t, signals: sys.signals, info: sys.info };
     } catch (err) {
       app.systemError = err.message;
       const signals = {};
       let t = null;
       for (const name of Object.keys(p.system.signals)) { const tr = referenceTrace(p, name); signals[name] = tr.r; t = tr.t; }
-      return { t, signals };
+      return { t, signals, info: null };
     }
   }
   // How fast this page simulates the screen: its simulated seconds over the
@@ -192,7 +207,7 @@ function startApp() {
     if (JSON.stringify(simOf(p)) !== JSON.stringify(ctx.sim) || JSON.stringify(p.system.signals) !== JSON.stringify(ctx.signals)) return;
     if (JSON.stringify(withVariant(p.system.plant.diagram, ctx.path, variant)) !== JSON.stringify(withVariant(ctx.diagram, ctx.path, variant))) return;
     acqKey = acqKeyOf(p);
-    acq = { t: run.t, signals: run.signals };
+    acq = { t: run.t, signals: run.signals, info: run.info ?? null };
     loopNote = '';
     app.systemError = '';
   }
@@ -490,6 +505,7 @@ function startApp() {
     endEdit: () => app.endEdit(),
     onTime: () => app.onScopeTime?.(),
     liveTag: () => live?.tag(),
+    runNote: () => app.runNote(),
     speed: () => speed.effective(),
     simRate: () => app.simRate({ retime: true }),
     onSweep: (t, seconds) => speed.ran(t, seconds),
@@ -905,6 +921,10 @@ function startApp() {
     },
     // What each running designed variant computed from the plant (status, rows, errors).
     designs: () => { acquire(); return structuredClone(app.designStatuses ?? []); },
+    // What the screen's last run reported: { validity, warnings, h, substeps,
+    // steps, bound, stiffness: { start, end }, ms }; null while nothing runs
+    // offline (a plant outside the page).
+    info: () => app.runInfo(),
     // Resolves, with the statuses, once no design is being computed in the
     // background (a plan) and the display shows the run that uses it.
     whenDesigned: async () => {

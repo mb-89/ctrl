@@ -15,8 +15,8 @@
 // Every gesture sets the same scope settings as the knobs.
 // See design/output/instrument.md.
 
-import { siUnit, num } from './units.js';
-import { step125 } from '../core/scale.js';
+import { num } from './units.js';
+import { siUnit, step125 } from '../core/scale.js';
 import { channelSignal, drawFrequency, freqRange, nyquist } from './freqview.js';
 import { withLevels, levelsOf, withAboveNoise } from '../core/project.js';
 import { drawXY, vOfX, valueLabel, valueTargets, xyStatus, xyFrame, xyNearest } from './xyview.js';
@@ -425,6 +425,10 @@ export function createDisplay(root, handlers) {
     const tb = scope.timebase;
     // Live mode's state (Live, E-STOP, Offline) and what goes with it.
     const live = handlers.liveTag?.();
+    // What the last run reported (a validity report, else its first warning):
+    // loopTuner.info() has all of it.
+    const runNote = live ? null : handlers.runNote?.();
+    status.dataset.note = runNote ?? '';
     // The state, readable without JavaScript (an agent's browser tool).
     status.dataset.run = mode;
     status.dataset.live = live?.state ?? 'none';
@@ -440,6 +444,7 @@ export function createDisplay(root, handlers) {
       ${vm === 'xy' ? `<span class="badge">${xyStatus(scope, unitLabel, visible)}</span>` : ''}
       <span>${siUnit(tb.scale, 's')}/div</span>
       <span class="muted">pos ${siUnit(tb.position, 's', 4)}</span>
+      ${runNote ? `<span class="badge badge-outline" data-lamp="warn">Warning</span><span class="run-note" title="${esc(runNote)}">${esc(runNote)}</span>` : ''}
       ${line !== null ? `<span class="selline" style="--cc: var(--ch-${line + 1})">line ${line + 1} selected · Esc to release</span>` : ''}
       <span class="grow"></span>
       ${mode !== 'stop' ? `<span class="muted">t ${siUnit(run ? run.t : tScan, 's', 3)}</span>` : ''}`;

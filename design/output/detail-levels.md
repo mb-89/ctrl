@@ -5,7 +5,7 @@ Reader: whoever builds detail levels (levels of a subsystem, the step bound they
 - the Integrator with limits;
 - the Equations block.
 
-Where the code and this page differ once it is built, the code wins and this page is fixed.
+Where the code and this page differ once it is built, the code wins and this page is fixed. **Built so far** (2026-10-25): step 1 (the eigenvalue step bound and the run's info) and step 2 (the shared prerequisites); see §12.
 
 **Any subsystem can hold several levels of detail: ordered, named diagrams with identical ports, each one openable.** A global level (**Detail**, in the Plant tab) applies to every subsystem with levels. A subsystem may override it on its block (a level chip, `L2/4`), above or below. The level that runs is the override if there is one, else the global level, in both cases at most the highest level the subsystem has: a global 4 runs level 2 on a block with two. **Clear**, beside the global level, removes every override at once; undo restores them. Each chip shows whether its block is overridden or clamped. Each level's name says what it adds ("+ output resistance and cable"); the page shows how many states and parameters it costs and where it is valid. When a run leaves that validity, the page says so. The person's experiment works with what runs: set the global level low, design or tune, keep the numbers, raise it, and watch the loop get worse. Levels are compared with Single runs: earlier runs stay on screen, fading, as after any edit. The first example is a circuit board: an op-amp follower driving a cable. At levels 1 and 2 the follower is perfect. At level 3 the op-amp's output resistance meets the cable's capacitance, and the same steps overshoot 38 % and ring at 541 kHz for 4 µs: the ringing every electrical engineer knows, more as the cable grows. Level 4 adds slewing, which changes the large step.
 
@@ -550,6 +550,15 @@ With this, a subsystem of 4 levels without `level` runs level 2, one with `"leve
    - `info` kept by the page's acquisition in both branches, shown on the status line, and `loopTuner.info()`. Today's warnings reach the person from here on.
 
    Tests 7 (first and last parts) and the `info` part of test 9. Independent of levels; it also unblocks the sliding-mode research's integrator-form motor.
+
+   **Built** (2026-10-25, branch `feat/model-foundations`; `test/stiffness.test.mjs`). Measured at each library system's start state (blocks' bound → largest |λ|; el.bound unchanged for every system): mass–spring–damper 0 → 5.00 (its Integrators had no bound; it still takes one step per 2.5 ms record), the three motor systems 100 → 84.2, encoder 1000 → 1000.0000002, tank 282 → 17.1 (§5's 13.3 was at another start level and inflow), pendulum 9.80 → 4.85, triple 50.2 → 15.8, oven 20 → 20, unbalanced arm 500 → 489. No step plan changed, the end-of-run check reran none, and every fingerprint is unchanged. Compile cost: +0.01 to 0.06 ms per compile (n + 1 evaluations and `eig`). As built:
+   - the difference quotient is good to about 10⁻⁶, so an |λ| within 10⁻⁶ of the blocks' bound is that bound (the encoder's 1000.0000002 would otherwise have cost a substep);
+   - `Model.bound` is the larger of its kept blocks' bounds and the model compile's `el.bound` (the whole model's eigenvalue, held Controllers), an interpretation of "through `el.bound`";
+   - the end-of-run check runs again only when the end's bound changes the step plan, with "stiffer later in the run: 'x' needs steps of 3.3 ms at 2 s, against 10 ms at the start; run again with them"; the HIL simulator (`hilsim.js`) keeps the start's bound as Live does, so a plant stiffer later would differ there from the page (no library plant is);
+   - when the step cap binds: "'int' needs steps of 500 ns; this 10 s screen would take 20 M steps; it ran 400 k: inaccurate. Shorten the screen", naming the state that the fastest mode moves most (one step of inverse iteration); the level's name joins it in step 6;
+   - `info`: `{ h, substeps, split, steps, unstable, warnings, designs, bound, stiffness: { start, end }, ms }` (`validity` comes with the Valid range block, step 3); the acquisition keeps it in both branches (the loop path's own info); the status line shows the first validity report, else the first warning, as a Warning badge and the sentence (`data-note`); `loopTuner.info()`; `node cli.mjs run [--json]` prints it. Checked in Chromium.
+
+   Step 2's shared prerequisites are **built** too (transparent-models.md steps 2 and 3), with this step's additions: `inf`, formulas in transfer-function coefficients, `min` and `max` on mask fields (refused beyond them on load, by the wheel and when typed), `sentence()` with SI prefixes and `p`.
 2. **Shared prerequisites, from [transparent-models.md](transparent-models.md):**
    - its step 2: masks and formula parameters;
    - its step 3: the Integrator's limits and the Equations block.

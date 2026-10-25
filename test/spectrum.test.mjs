@@ -603,7 +603,7 @@ test('the encoder example above the noise: the whole 6× line and its fold-back 
   // alone, and is bridged as a line).
   const quiet = structuredClone(p);
   const blocks = (o, out = []) => { if (o && typeof o === 'object') { if (o.type === 'fcn') out.push(o); for (const v of Object.values(o)) blocks(v, out); } return out; };
-  for (const b of blocks(quiet)) if (b.id === 'ripple') b.params.expr = '0*u'; else if (b.id === 'enc') b.params.expr = 'u';
+  for (const b of blocks(quiet)) if (b.id === 'ripple') b.params.eqs = 'y = 0*u'; else if (b.id === 'enc') b.params.eqs = 'y = u';
   const xq = evaluateSystem(quiet).signals.speed_m, sgQ = spectrogram(xq, dt, opts), alone = rowMedians(sgQ, dbScale(sgQ.amp, DB_FLOOR));
   assert.ok(alone[12] < -36, `the noise alone at 37.5 Hz: ${alone[12]} dB`);
   for (let b = 1; b < sg.bins - 1; b++) if (Math.abs(sg.f[b] - 70) > 8) near(est[b], alone[b], 6, `the noise at ${sg.f[b]} Hz`);

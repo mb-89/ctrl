@@ -18,7 +18,8 @@
 
 import { amplitudeSpectrum, spectrogram, designFilter, applyFilter, filterResponse, peaks, dbScale, DB_FLOOR, AUTO_LEVELS, spectrogramWindow, levelHistogram, autoLevels, levelRange, spectrogramNoise, aboveNoise } from '../core/spectrum.js';
 import { levelsOf } from '../core/project.js';
-import { siUnit, num } from './units.js';
+import { num } from './units.js';
+import { siUnit } from '../core/scale.js';
 import { palette as C, HEAT_STOPS as STOPS } from './palette.js';
 
 const DIVX = 10, DIVY = 8, DB_PER_DIV = 10;

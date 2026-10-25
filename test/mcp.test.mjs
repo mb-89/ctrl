@@ -16,6 +16,8 @@ const TOOLS = [...CORE_TOOLS, ...PAGE_TOOLS];
 const SYSTEMS = ['DC motor, position control', 'Oven, badly tuned'];
 const cli = (...args) => JSON.parse(execFileSync(process.execPath, ['cli.mjs', ...args]).toString());
 const without = (o, ...keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
+// A run as it compares: its wall-clock time (info.ms) set aside.
+const steady = (r) => ({ ...r, info: r.info && { ...r.info, ms: null } });
 const dir = mkdtempSync(join(tmpdir(), 'lt-mcp-'));
 after(stopAll);
 
@@ -85,7 +87,7 @@ for (const system of SYSTEMS) {
     await assert.rejects(s.call('get_block', { block: 'nope' }), /no block "nope"; blocks: .*ctrl/);
 
     const run = await s.call('run', { signals: ['ctrl.r', 'ctrl.y'], points: 50 });
-    assert.deepEqual(without(run, 'project', 'traces'), cli('run', file, '--json'));
+    assert.deepEqual(steady(without(run, 'project', 'traces')), steady(cli('run', file, '--json')));
     assert.equal(run.loops[0].block, 'ctrl');
     assert.ok(run.loops[0].cost.J > 0 && Number.isFinite(run.loops[0].metrics.iae));
     assert.ok(run.traces.t.length <= 51 && run.traces['ctrl.y'].length === run.traces.t.length, 'traces are downsampled');

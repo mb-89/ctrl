@@ -42,7 +42,7 @@ const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturatio
 // A type's tags; a function reads the variant (a PI from the plant at one
 // level is a plain PI, at several it is scheduled).
 const VARIANT_TAGS = {
-  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -55,7 +55,9 @@ const TONE = {
   PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
   // Seven of the eight tones are taken by controller tags: this one is set.
   'Sliding mode': 'red',
-  'Kalman filter': 'slate', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
+  // The observers sit together on one card, beside PID (aqua) and
+  // Disturbance (slate): Luenberger took blue, the Kalman filter green.
+  'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
   'Controller in the plant': 'green', Agent: 'red',
 };
@@ -68,10 +70,12 @@ export function systemTags(e) {
     for (const b of d.blocks) {
       blocks.push(b);
       if (b.diagram) walk(b.diagram);
-      // A Function block that only feeds Sinks (an energy shown on the
+      // An Equations block that only feeds Sinks (an energy shown on the
       // scope, say) leaves the dynamics linear.
       const onlyDisplays = d.wires.filter((w) => w.from.split(':')[0] === b.id).every((w) => ['sink', 'terminator'].includes(d.blocks.find((x) => x.id === w.to.split(':')[0])?.type));
       if (NONLINEAR.has(b.type) && !(b.type === 'fcn' && onlyDisplays)) nonlinear = true;
+      // An Integrator with a limit (a tank's brim and bottom) is nonlinear.
+      if (b.type === 'integrator' && [b.params?.min, b.params?.max].some((v) => v !== null && v !== undefined && !/^\s*[-+]?inf\s*$/i.test(String(v)))) nonlinear = true;
     }
   };
   walk(e.diagram);
