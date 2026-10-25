@@ -416,6 +416,7 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .pf > .hint { grid-column: 2; }
 .pf > .hint:empty { display: none; }
 .pf-under { padding-left: var(--space-4); }
+.pf-toggle > .btn { grid-column: 1 / -1; justify-self: start; }
 .pf > .field { width: 100%; }
 .pf > .btn { justify-self: start; }
 .pbtns { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-3) 0; }
@@ -7852,7 +7853,7 @@ const EXAMPLE_PLANTS = [
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
     },
-    scope: { channels: channels('delta', 'tau', 'e', 'i') },
+    scope: { channels: channels('delta', 'tau', 'e_L', 'i') },
     sim: { sampleTime: 0.0005 },
     ui: ui('Gear and load'),
     diagram: {
@@ -7889,7 +7890,7 @@ const EXAMPLE_PLANTS = [
         },
         { id: 'fb', type: 'switch', name: 'feedback from', params: { inputs: 2, position: 1 }, x: 240, y: 260, flip: true },
         { id: 'esum', type: 'sum', params: { signs: '+-' }, x: 150, y: 360 },
-        sink('e', 220, 363, 'rad'),
+        sink('e_L', 220, 363, 'rad'),
         sink('theta_L', 900, 106, 'rad'),
         sink('theta_m', 900, 180, 'rad'),
         sink('tau', 700, 20, 'N·m'),
@@ -7900,7 +7901,7 @@ const EXAMPLE_PLANTS = [
         { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'ctrl', to: 'i_ref' },
         { from: 'motor', to: 'load' }, { from: 'load', to: 'motor:1' }, { from: 'load:1', to: 'motor:2' },
         { from: 'load', to: 'fb' }, { from: 'motor:1', to: 'fb:1' }, { from: 'fb', to: 'ctrl:1' }, { from: 'motor:2', to: 'ctrl:2' }, { from: 'motor:2', to: 'omega_m' },
-        { from: 'r', to: 'esum' }, { from: 'load', to: 'esum:1' }, { from: 'esum', to: 'e' },
+        { from: 'r', to: 'esum' }, { from: 'load', to: 'esum:1' }, { from: 'esum', to: 'e_L' },
         { from: 'load', to: 'theta_L' }, { from: 'motor:1', to: 'theta_m' }, { from: 'motor', to: 'tau' },
       ],
     },
@@ -7919,7 +7920,7 @@ const EXAMPLE_PLANTS = [
           { type: 'line', x1: 0, y1: 0, x2: 0, y2: 0.3, stroke: 'ch2', lineWidth: 5 },
         ] },
         { type: 'circle', cx: 0, cy: 0, r: 0.06, fill: 'muted' },
-        { type: 'text', x: 0, y: -0.82, text: 'load {theta_L*1000:6.1} mrad   gear {theta_m*1000:6.1} mrad   e {e*1000:6.2} mrad   τ {tau:5.2} N·m', size: 13 },
+        { type: 'text', x: 0, y: -0.82, text: 'load {theta_L*1000:6.1} mrad   gear {theta_m*1000:6.1} mrad   e_L {e_L*1000:6.2} mrad   τ {tau:5.2} N·m', size: 13 },
       ],
     }],
   },
@@ -16774,9 +16775,10 @@ function createPlantEditor(root, app) {
       } else if (b.type === 'inport' || b.type === 'outport') {
         text = `<text class="bt" x="${cx}" y="${cy + 4.5}" text-anchor="middle">${esc(title)}</text>`;
       } else {
-        const sub = b.type === 'subsystem' ? (b.mask?.some((f) => f.kind) ? maskLine(b) || 'open ↵' : `${b.diagram.blocks.length} blocks · open ↵`) : summary(b);
+        const line = b.type === 'subsystem' && b.mask?.some((f) => f.kind) ? maskLine(b) || 'open ↵' : '', room = Math.floor((g.w - 18) / 6.4);
+        const sub = b.type === 'subsystem' ? (line ? (line.length > room ? `${line.slice(0, room - 1)}…` : line) : `${b.diagram.blocks.length} blocks · open ↵`) : summary(b);
         const left = b.x + 9 + (b.type === 'fcn' ? labelRoom(b)[0] : 0);
-        text = `<text class="bt" x="${left}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${left}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
+        text = `${line.length > room ? `<title>${esc(line)}</title>` : ''}<text class="bt" x="${left}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${left}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
     const outNames = b.component ? subPorts(b, 'outport') : outputNames(def, b.params), inNames = b.component ? subPorts(b, 'inport') : def.inputNames?.(b.params) ?? [];
@@ -16935,7 +16937,7 @@ function createPlantEditor(root, app) {
           const deep = f.under ? ' pf-under' : '';
           if (f.kind === 'toggle') {
             const on = v === 1 || v === true, n = b.mask.filter((g) => g.under === f.key).length;
-            html += `<div class="pf${deep}"><span class="flabel">${esc(f.label)}</span><button type="button" class="btn btn-sm" data-mtoggle="${esc(f.key)}" aria-pressed="${on}">${on ? 'on' : 'off'}</button><span class="hint">${on ? '' : n ? `${n} field${n > 1 ? 's' : ''} inside; off, it is not compiled` : 'off, it is not compiled'}</span></div>`;
+            html += `<div class="pf pf-toggle${deep}"><button type="button" class="btn btn-sm" data-mtoggle="${esc(f.key)}" aria-pressed="${on}" title="${esc(f.key)}">${esc(f.label)}: ${on ? 'on' : 'off'}</button><span class="hint">${on ? '' : `not compiled${n ? `; ${n} field${n > 1 ? 's' : ''} inside` : ''}`}</span></div>`;
             continue;
           }
           if (f.kind === 'choice') {
@@ -16945,7 +16947,7 @@ function createPlantEditor(root, app) {
           }
           const range = [f.min !== undefined ? `min ${num(f.min, 6)}` : '', f.max !== undefined ? `max ${num(f.max, 6)}` : ''].filter(Boolean).join(' · ');
           const shown = isFormula(v) ? `${v} ${(() => { const x = formulaIn(v, outer); return `→ ${Number.isFinite(x) ? num(x, 4) : x > 0 ? '∞' : '−∞'}`; })()}` : '';
-          html += field(`m:${f.key}`, `${f.label}${f.label !== f.key ? ` (${f.key})` : ''}`, isFormula(v) ? v : Number.isFinite(v) ? num(v, 6) : v > 0 ? 'inf' : '-inf', 'number', [shown, `unit: ${f.unit}`, range].filter(Boolean).join(' · ')).replace('class="pf"', `class="pf${deep}"`);
+          html += field(`m:${f.key}`, f.key, isFormula(v) ? v : Number.isFinite(v) ? num(v, 6) : v > 0 ? 'inf' : '-inf', 'number', [shown, f.label !== f.key ? f.label : '', f.unit !== '1' ? f.unit : '', range].filter(Boolean).join(' · ')).replace('class="pf"', `class="pf${deep}" title="${esc(f.label)}"`);
         }
       }
       html += '</div><div class="pbtns">';
@@ -16974,6 +16976,7 @@ function createPlantEditor(root, app) {
     const names = diagramNames(rootDiagram());
     box.innerHTML = `<h3 class="label">Plant</h3>
       <p class="note"><b>Sources</b> ${names.sources.map(esc).join(', ') || 'none'} · <b>Sinks</b> ${names.sinks.map(esc).join(', ') || 'none'}</p>
+      ${inUse() ? `<p class="note">Inside ${esc(inUse().name ?? inUse().id)}, a ${esc(COMPONENTS[inUse().component]?.name ?? 'built-in component')} (${esc(inUse().component)}): read-only, drawn as it compiles (faint: switched off on its mask, not compiled). Set it on its mask where it is used; Edit a copy there to change its insides.</p>` : ''}
       ${compileMsg ? `<p class="note text-bad">${esc(compileMsg).replace(/\n/g, '<br>')}</p>` : '<p class="note">The diagram is valid.</p>'}
       ${about()}${more('edit', 'How to edit', '<p class="note">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p>')}`;
     keepOpen();

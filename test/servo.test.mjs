@@ -197,7 +197,7 @@ function backlash({ variant = 0, feedback = 1, motor = {} } = {}) {
   for (const [a, b] of HOLDS) {
     let lo = Infinity, hi = -Infinity, last = 0;
     for (let k = 0; k < r.t.length; k++) if (r.t[k] >= a && r.t[k] < b) {
-      const e = r.signals.e[k]; lo = Math.min(lo, e); hi = Math.max(hi, e); eMax = Math.max(eMax, Math.abs(e)); n++;
+      const e = r.signals.e_L[k]; lo = Math.min(lo, e); hi = Math.max(hi, e); eMax = Math.max(eMax, Math.abs(e)); n++;
       const tq = r.signals.tau[k], sg = Math.abs(tq) > 1e-3 ? Math.sign(tq) : 0;
       if (sg && last && sg !== last) flips++;
       if (sg) last = sg;

@@ -569,6 +569,7 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .pf > .hint { grid-column: 2; }
 .pf > .hint:empty { display: none; }
 .pf-under { padding-left: var(--space-4); }
+.pf-toggle > .btn { grid-column: 1 / -1; justify-self: start; }
 .pf > .field { width: 100%; }
 .pf > .btn { justify-self: start; }
 .pbtns { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-3) 0; }

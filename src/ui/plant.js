@@ -319,9 +319,10 @@ export function createPlantEditor(root, app) {
       } else if (b.type === 'inport' || b.type === 'outport') {
         text = `<text class="bt" x="${cx}" y="${cy + 4.5}" text-anchor="middle">${esc(title)}</text>`;
       } else {
-        const sub = b.type === 'subsystem' ? (b.mask?.some((f) => f.kind) ? maskLine(b) || 'open ↵' : `${b.diagram.blocks.length} blocks · open ↵`) : summary(b);
+        const line = b.type === 'subsystem' && b.mask?.some((f) => f.kind) ? maskLine(b) || 'open ↵' : '', room = Math.floor((g.w - 18) / 6.4);
+        const sub = b.type === 'subsystem' ? (line ? (line.length > room ? `${line.slice(0, room - 1)}…` : line) : `${b.diagram.blocks.length} blocks · open ↵`) : summary(b);
         const left = b.x + 9 + (b.type === 'fcn' ? labelRoom(b)[0] : 0);
-        text = `<text class="bt" x="${left}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${left}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
+        text = `${line.length > room ? `<title>${esc(line)}</title>` : ''}<text class="bt" x="${left}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${left}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
     const outNames = b.component ? subPorts(b, 'outport') : outputNames(def, b.params), inNames = b.component ? subPorts(b, 'inport') : def.inputNames?.(b.params) ?? [];
@@ -501,7 +502,7 @@ export function createPlantEditor(root, app) {
           const deep = f.under ? ' pf-under' : '';
           if (f.kind === 'toggle') {
             const on = v === 1 || v === true, n = b.mask.filter((g) => g.under === f.key).length;
-            html += `<div class="pf${deep}"><span class="flabel">${esc(f.label)}</span><button type="button" class="btn btn-sm" data-mtoggle="${esc(f.key)}" aria-pressed="${on}">${on ? 'on' : 'off'}</button><span class="hint">${on ? '' : n ? `${n} field${n > 1 ? 's' : ''} inside; off, it is not compiled` : 'off, it is not compiled'}</span></div>`;
+            html += `<div class="pf pf-toggle${deep}"><button type="button" class="btn btn-sm" data-mtoggle="${esc(f.key)}" aria-pressed="${on}" title="${esc(f.key)}">${esc(f.label)}: ${on ? 'on' : 'off'}</button><span class="hint">${on ? '' : `not compiled${n ? `; ${n} field${n > 1 ? 's' : ''} inside` : ''}`}</span></div>`;
             continue;
           }
           if (f.kind === 'choice') {
@@ -511,7 +512,8 @@ export function createPlantEditor(root, app) {
           }
           const range = [f.min !== undefined ? `min ${num(f.min, 6)}` : '', f.max !== undefined ? `max ${num(f.max, 6)}` : ''].filter(Boolean).join(' · ');
           const shown = isFormula(v) ? `${v} ${(() => { const x = formulaIn(v, outer); return `→ ${Number.isFinite(x) ? num(x, 4) : x > 0 ? '∞' : '−∞'}`; })()}` : '';
-          html += field(`m:${f.key}`, `${f.label}${f.label !== f.key ? ` (${f.key})` : ''}`, isFormula(v) ? v : Number.isFinite(v) ? num(v, 6) : v > 0 ? 'inf' : '-inf', 'number', [shown, `unit: ${f.unit}`, range].filter(Boolean).join(' · ')).replace('class="pf"', `class="pf${deep}"`);
+          // The key is the field's name (what formulas read); the label, its unit and range below.
+          html += field(`m:${f.key}`, f.key, isFormula(v) ? v : Number.isFinite(v) ? num(v, 6) : v > 0 ? 'inf' : '-inf', 'number', [shown, f.label !== f.key ? f.label : '', f.unit !== '1' ? f.unit : '', range].filter(Boolean).join(' · ')).replace('class="pf"', `class="pf${deep}" title="${esc(f.label)}"`);
         }
       }
       html += '</div><div class="pbtns">';
@@ -540,6 +542,7 @@ export function createPlantEditor(root, app) {
     const names = diagramNames(rootDiagram());
     box.innerHTML = `<h3 class="label">Plant</h3>
       <p class="note"><b>Sources</b> ${names.sources.map(esc).join(', ') || 'none'} · <b>Sinks</b> ${names.sinks.map(esc).join(', ') || 'none'}</p>
+      ${inUse() ? `<p class="note">Inside ${esc(inUse().name ?? inUse().id)}, a ${esc(COMPONENTS[inUse().component]?.name ?? 'built-in component')} (${esc(inUse().component)}): read-only, drawn as it compiles (faint: switched off on its mask, not compiled). Set it on its mask where it is used; Edit a copy there to change its insides.</p>` : ''}
       ${compileMsg ? `<p class="note text-bad">${esc(compileMsg).replace(/\n/g, '<br>')}</p>` : '<p class="note">The diagram is valid.</p>'}
       ${about()}${more('edit', 'How to edit', '<p class="note">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p>')}`;
     keepOpen();
