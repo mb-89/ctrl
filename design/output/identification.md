@@ -1,6 +1,6 @@
 # Identify: finding the plant by experiment
 
-Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; being built on branch `feat/identify` in the steps of §18 (done: 0, the record; 2, the numerics in `src/core/fit.js`; 3, the kernel, the multisine and the frequency response, also in `fit.js`).** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
+Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; being built on branch `feat/identify` in the steps of §18 (done: 0, the record; 2, the numerics in `src/core/fit.js`; 3, the kernel, the multisine and the frequency response, also in `fit.js`; 4, the experiment: `src/core/identify.js` and `src/core/experiment.js`).** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
 
 The person's words ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)):
 
@@ -108,7 +108,7 @@ A model taken at rest is not the plant the loop runs at. The ladder follows the 
 |---|---|
 | u's name and unit | The External port the block's output drives (`inputs[i].name`, `unit`); on a simulated plant, the block's output label and the unit of the Sink that shows it |
 | u's range | The variant's `umin`/`umax`, intersected with the External port's `min`/`max`. With neither, Identify refuses: "set u min and u max in the Controller tab: Identify needs to know how far V may go" |
-| u's start value u₀ | HIL: the port's `safe` value. Simulated: 0, clamped into the range |
+| u's start value u₀ | HIL: the port's `safe` value. Simulated: the running variant's start output `u0` (the integral at t = 0, which a person sets so the loop starts in balance), else 0; clamped into the range (built; the design said 0, and the library's tank drained to empty at 0) |
 | y's name and unit | The block's input 2 (`blockInputNames`), the Sink's or External port's unit |
 | y's hard range | **New, optional**: `outputs[].min/max` in `describe`; the plant E-stops beyond it (§15). Simulated plants have none unless the tester types one |
 | The reference range | Min and max over one period of the Source that feeds r (`upstreamSource`) |
@@ -446,6 +446,28 @@ The Check is never used for fitting. It is graded in §7.
 - The Nudge may use at most 40 %. Time for the Check is always reserved. The Shake runs only if its estimated time fits.
 - If not one try fits, the test ends after the first look, graded ✕: "2 min is too short for this plant: the Nudge alone took 50 s. Allow 5 min."
 
+### 5.10 Built (step 4)
+
+`src/core/experiment.js` holds the state machine, `createExperiment(plan)`, and `src/core/identify.js` what feeds it (`knownFor`, `identifySettings`, `planExperiment`). Tests 1–5 (`test/experiment.test.mjs`, `test/ladder.test.mjs`) run it on hil_plant.py's arm ported with ±15 % draws, an encoder and noise (`test/fixtures/arm.mjs`), on a lag, an integrator, unstable and unwired plants, and on the library's oven, motor and tank through their own diagrams (`test/fixtures/plants.mjs`). Where the build made the sections above more precise ([decisions.md](decisions.md) has the measurements):
+
+- **Listen** reads its last half (a plant still settling from before would read as noise and drift); drift counts only 4 standard errors out of the noise; a noise-free simulation's floor is 1e-5 of the band.
+- **Nudge.**
+  - A rung's **reach** (how far y went from y₀, both ways) feeds the move rule and the next rung's bound; its **response**, read from where the rung started, decides visible, plateau, slope, ringing and p.
+  - **A rung waits for rest** after its planned rest (y still within 5 % of its peak over half a window), at most 8 × its length and never past the Nudge's 40 %. An unstable plant never rests: still growing at the end, beyond 1.5 × the push's reach, it runs away.
+  - **p is clamped to [1, 2] for a doublet and is 1 for a pulse**: a doublet's spectrum at most quadruples when T doubles, a pulse's at most doubles, for any linear plant and dead time. Unreadable (a dead time longer than the push), p takes that largest value.
+  - **Doubling a push that has not visibly moved y predicts × 3, from at least 5 floors** (friction lies at tiny amplitudes: the arm moved 2.9–3.5 × further at 0.48 → 0.96 V). A visible push keeps × 2, T keeps 2^p.
+  - A pulse's two sides are held to their own rooms; a doublet's to the smaller room.
+  - The response's sign is the direction of its first clear move.
+  - Nothing visible within the room: the test ends with "angle moves too little to read within half of 'may move within' (its noise is …): widen it".
+  - Measured over 50 arms (default band): reach +0.21 / −0.16 rad, a Nudge of at most 2.0 s with its waits, last push 0.48–1.92 V, no back-off, every rung within the bound predicted before it ran (worst 0.98 of it). E1's prototype: +0.18 / −0.14 rad, 3.4 s, 0.96–1.92 V.
+- **First look.** The 1 s rest comes first; then, still at u₀, a lag, an integrator with a lag and a resonance are fitted on one segment (the whole Nudge and the rest, drift taken out), LM in slices of 4 iterations a sample; the lowest BIC decides. "Rings": a resonance with ζ < 0.5, or two swings in the rest. A resonance counts for the Hold as a lag of its gain and 1/(ζωn) (it rings) or its slower time constant. Still moving away from y₀ after the rest: it runs away.
+  - On the arm with its friction the first look sees an overdamped second order (Coulomb stops a ±0.2 rad swing within half of it); without the friction it rings, K, f and ζ within 1 %.
+- **Hold.** τc is doubled only for a loop that swings about r(0); one that creeps toward it (an arm held 0.1 rad off by friction) keeps its gains and waits as long again, and if still closing in, inside the band, the ladder starts from there with a note.
+- **Ease in.** Each candidate is 0.7 × the last try's τc (after a try that was no better, the same τc would repeat it). After a soft guard the incumbent has up to 4 s to bring y back before the hard guard applies. J is `runCost`'s with the default goal (`tryCost`, equal to it on the same arrays); g is `tryMargin`.
+- **Fit pause**: at least 2 s and until `supply('fit', data)`, at most 30 s; Node supplies at once.
+- **The record** is plain data: `null` where y was not measured or nothing was echoed, `gaps` as `[i, len]` (len cycles lost before record sample i).
+- **Measured** (2 min budget): oven 7 tries in 83 s, motor 3 in 36 s, tank 5 in 56 s, arms 4–7 in 53–77 s; never out of the band, every ladder stopped by its rules.
+
 ## 6. The fits
 
 ### 6.1 Segments and the closed-loop replay
@@ -763,22 +785,40 @@ The step is then "✕ did not behave as predicted".
 ## 16. Core APIs
 
 ```js
-// src/core/identify.js (no DOM)
+// src/core/identify.js (no DOM; built in step 4 up to planExperiment)
+export class IdentifyError extends Error { constructor(code, message, hint) }  // code, message (the sentence), hint
+export function knownFor(project, path, { describe, link } = {}) // → Known: { block: { path, key, where }, live,
+                                                            //   u: { name, unit, min, max, u0, from, start }, y: { name, unit, hard, from },
+                                                            //   r: { lo, hi, span, source, period, samples, Ts } | null, Ts, others: [{ name, value, input? }] }
+                                                            //   link: { connected, estop } on a live plant; throws IdentifyError
+export function defaultBand(known, hard)                    // → { band, from: 'r' | 'plant' | null } (§2)
+export function identifySettings(project, path, opts)       // → { band, budget, hard: { value, from }, vary, structure, seed }
+export function settingsFor(known, stored)                  //   the same from a Known and system.identify[key]
+export function planExperiment(known, settings)             // → Plan (data): { version, kind, Ts, u0, umin, umax, band, hard,
+                                                            //   budget, seed, names, test: { r } | { r0 }, check: { r } | null, others }
+export const BUDGETS, BUDGET, BAND                          // 30 s … 10 min, 120 s; the band's widen, still, inset
+// src/core/experiment.js (no DOM; built in step 4): the state machine, apart so that controllers.js's hidden
+// 'experiment' type (step 5) can import it without a cycle through autotune.js
 export const IDENTIFY_VERSION = 1
-export class IdentifyError extends Error { constructor(code, message, hint) }
-export function knownFor(project, path, { describe } = {})  // → Known: { u: { name, unit, min, max, u0, from },
-                                                            //   y: { name, unit, hard, from }, r: { lo, hi, source }, Ts, live }
-export function identifySettings(project, path)             // → { band, budget, vary, structure } with defaults and their sources
-export function planExperiment(known, settings)             // → Plan (data): Ts, u0, U, band, hard, budget, test reference
-                                                            //   samples, check reference, seed, version
-export function planTry(known, model, steps, incumbent)     // → Plan of kind 'try' (§11)
+export const EXPERIMENT                                     // every threshold, named (Listen, Nudge, look, Hold, ease, pause, check)
 export function createExperiment(plan)                      // → Experiment, the causal state machine:
-//   step(k, y, applied?) → u              one controller sample
-//   reference(k) → r                      what the r Source plays at sample k
+//   step(k, y, applied?) → u              one controller sample (k: the plant's seq; a jump is a gap)
+//   reference(k) → r                      what the r Source plays at sample k (asked before step(k))
 //   needs → null | { kind: 'fit', upto }  a heavy job the runner must supply
 //   supply(kind, data)                    the fit and the Check's prediction, as data
-//   state → { stage, rung, try, push, room, status, chips, done, end }
-//   record() → Record                     u, y, r, applied, gaps, log
+//   stop(), abort(reason)                 Stop (soft); an E-stop or a lost plant
+//   state → { stage, chips: [{ stage, label, mark }], rung, try, tries, push, pushMax, room, roomMax, marks,
+//             status, t, budget, done, end: { code, message, i, t }, stop }
+//   found → { listen, rungs, look, gentle, incumbent, test, check }   (computed, never stored)
+//   record() → Record                     { version, Ts, u, y, r, applied, gaps, log, end }, plain data
+export function gentleGains(look, tauC, Ts), gentleTauC(look, Ts)   // SIMC's robust branch (§5.3)
+export function piLaw(gains, I0, lo, hi, Ts), bumpless(gains, u, r, y) // the PI = controllers.js's pid (Kd 0, clamping)
+export function tryCost(r, y, u, { R, U, lo, hi })          // runCost with the default goal, on a try's arrays
+export function tryMargin(r, y, band, h)                    // → { g, gRoom, gRing } (§5.4)
+export function listenStats(y, Ts, { span })                // → { y0, sigma, q, floor, slope, drift, drifts } (§5.1)
+export function staircase(r0, band, share, hold), halved(r) // the references (§5.4, §5.7)
+// src/core/identify.js, the later steps
+export function planTry(known, model, steps, incumbent)     // → Plan of kind 'try' (§11)
 export function* identifySteps(record, { structure } = {})  // yields progress; returns IdentifiedModel
 export function replay(record, model, segment)              // → Float64Array, the model's y for a segment
 export function modelSentences(model, known)                // → [string]
@@ -853,7 +893,7 @@ Fixtures live in `test/fixtures/`, are not shipped, and carry no plant numbers i
 1. **Determinism.** The same plan and the same y give the same u, bit for bit. Two runs of `identify()` give identical records and models. The multisine depends only on its seed.
 2. **Nudge safety.** Over 50 arms at ±15 % with the default band, no rung uses more than half the room on its side, there are no back-offs, and the arm never goes over the top. Each rung stays within the bound predicted before it ran.
 3. **Classification.**
-   - a lag settles; an integrator ramps; the arm rings;
+   - a lag settles; an integrator ramps; the arm rings (built: without its Coulomb friction; with it, the Nudge's ±0.2 rad swings stop within half a swing and the first look sees an overdamped second order, §5.10);
    - an unstable plant runs away and the experiment asks for `stop`;
    - an unwired plant gives "does not move";
    - drift is subtracted.

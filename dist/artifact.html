@@ -6790,6 +6790,853 @@ function frf(U, Y, { excited, detect = null, Ts } = {}) {
 
 return { STRUCTURES, paramInfo, discretise, simulateSegment, lmSteps, lm, noiseTransfer, parameterCov, fitStructureSteps, fitStructure, CHOICE, unsupported, chooseStructure, fitPercent, noiseCeiling, Z99, WHITE, whiteness, crossCorrelation, tcInverse, KERNEL, tcKernelSteps, tcKernel, kernelStep, kernelGuess, multisineLines, crestFactor, MULTISINE, multisine, wholePeriods, frf };
 })();
+// ---- core/experiment.js
+__mods['core/experiment.js'] = (() => {
+
+const { STRUCTURES, fitStructureSteps } = __mods['core/fit.js'];
+const IDENTIFY_VERSION = 1;
+
+const EXPERIMENT = {
+  listen: {
+    seconds: 3, samples: 100,  
+    floor: 1e-5,               
+    drift: 4,                  
+  },
+  nudge: {
+    a0: 0.01,                  
+    T0: 2,                     
+    budget: 0.4,               
+    safety: 1.5,               
+    room: 0.5,                 
+    push: 0.5,                 
+    backoff: 0.8,              
+    visible: 20,               
+    response: 5,               
+    dead: 3,                   
+    enough: 0.2,               
+    Tmax: 20,                  
+    plateau: 0.1,              
+    slope: 0.25,               
+    grow: [1, 2],              
+    runaway: 1.5,              
+    start: 5,                  
+    still: 0.05,               
+    restMax: 8, restMin: 1,    
+    drift: 0.25,               
+    read: 1,                   
+  },
+  look: {
+    rest: 1,                   
+    perSample: 4,              
+    maxIter: 60,
+    structures: ['lag', 'intLag', 'resonance'],
+    rings: 0.5,                
+    edge: 40,                  
+  },
+  hold: {
+    settles: 2,                
+    integrates: 3,             
+    Ti: 4,                     
+    settle: 0.5,               
+    slack: 2,                  
+    sigmas: 3, bandShare: 0.01, steps: 2,   
+  },
+  ease: {
+    quicker: 0.7,              
+    gMin: 0.3,                 
+    better: 0.03,              
+    stale: 2,                  
+    tries: 12,
+    thetaShare: 0.5,           
+    settleMax: 4,              
+    ring: 0.2,                 
+    guardG: -0.1,              
+    staircase: 0.1,            
+    stair: 0.25,               
+    hold: 5,                   
+    stepShare: 0.05,           
+  },
+  pause: { seconds: 2, wait: 30 },
+  check: { stair: 0.125 },
+  goal: { effort: 0.05, overshoot: 10, overshootWeight: 2, saturation: 0.2 },
+};
+
+const STAGES = ['listen', 'nudge', 'hold', 'ease', 'shake', 'check'];
+const STAGE_LABELS = { listen: 'Listen', nudge: 'Nudge', hold: 'Hold', ease: 'Ease in', shake: 'Shake', check: 'Check' };
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+function fmtNum(v, digits = 3) {
+  if (!Number.isFinite(v)) return String(v);
+  if (v === 0) return '0';
+  const a = Math.abs(v);
+  const d = Math.max(0, digits - 1 - Math.floor(Math.log10(a)));
+  return String(Number(v.toFixed(Math.min(d, 12))));
+}
+const withUnit = (v, unit) => `${fmtNum(v)}${unit ? ` ${unit}` : ''}`;
+const pct = (x) => `${Math.round(100 * x)} %`;
+
+
+function gentleGains(look, tauC, Ts) {
+  if (look.integrating) {
+    const th = look.theta + look.tau + Ts / 2;
+    const Kp = Math.sign(look.kp) / (Math.abs(look.kp) * (tauC + th));
+    const Ti = EXPERIMENT.hold.Ti * (tauC + th);
+    return { Kp, Ki: Kp / Ti, Ti, tauC, theta: th };
+  }
+  const th = look.theta + Ts / 2;
+  const Kp = (Math.sign(look.K) * look.tau) / (Math.abs(look.K) * (tauC + th));
+  const Ti = EXPERIMENT.hold.Ti * (tauC + th);
+  return { Kp, Ki: Kp / Ti, Ti, tauC, theta: th };
+}
+
+function gentleTauC(look, Ts) {
+  const th = look.theta + Ts / 2;
+  return look.integrating ? EXPERIMENT.hold.integrates * (th + look.tau) : EXPERIMENT.hold.settles * (look.tau + th);
+}
+
+function piLaw({ Kp, Ki }, I0, lo, hi, Ts) {
+  let I = I0;
+  return {
+    get I() { return I; },
+    step(r, y) {
+      const e = r - y;
+      const v = Kp * e + I;
+      const u = clamp(v, lo, hi);
+      if (Ki && (u === v || Math.sign(Ki * e) !== Math.sign(v - u))) I += Ki * Ts * e;
+      return u;
+    },
+  };
+}
+
+const bumpless = (g, u, r, y) => u - g.Kp * (r - y);
+
+
+function tryCost(r, y, u, { R, U, lo, hi }) {
+  const G = EXPERIMENT.goal, n = r.length;
+  let err = 0;
+  for (let k = 0; k < n; k++) err += Math.abs((r[k] - y[k]) / R);
+  err /= n;
+  let um = 0;
+  for (let k = 0; k < n; k++) um += u[k];
+  um /= n;
+  let swing = 0;
+  for (let k = 0; k < n; k++) swing += (u[k] - um) ** 2;
+  const effort = (G.effort * swing) / (n * U * U);
+  const steps = [];
+  for (let k = 1; k < n; k++) if (Math.abs(r[k] - r[k - 1]) > EXPERIMENT.ease.stepShare * R) steps.push(k);
+  let over = 0, worst = 0;
+  steps.forEach((k0, i) => {
+    const k1 = steps[i + 1] ?? n, dr = r[k0] - r[k0 - 1], dir = Math.sign(dr);
+    let peak = 0;
+    for (let k = k0; k < k1; k++) peak = Math.max(peak, dir * (y[k] - r[k]));
+    const p = (100 * peak) / Math.abs(dr);
+    worst = Math.max(worst, p);
+    over += Math.max(0, p - G.overshoot) / 100;
+  });
+  let sat = 0;
+  const tol = 1e-9 * (U + 1);
+  for (let k = 0; k < n; k++) if (u[k] <= lo + tol || u[k] >= hi - tol) sat++;
+  const parts = { error: err, effort, overshoot: G.overshootWeight * over, saturation: (G.saturation * sat) / n };
+  return { J: parts.error + parts.effort + parts.overshoot + parts.saturation, parts, overshoot: worst };
+}
+
+function tryMargin(r, y, band, h = 0) {
+  const [lo, hi] = band, n = r.length;
+  let dy = Infinity, dr = Infinity;
+  for (let k = 0; k < n; k++) {
+    dy = Math.min(dy, y[k] - lo, hi - y[k]);
+    dr = Math.min(dr, r[k] - lo, hi - r[k]);
+  }
+  const gRoom = dy / Math.max(dr, 1e-12 * (hi - lo));
+  let R = 0;
+  { let a = Infinity, b = -Infinity; for (let k = 0; k < n; k++) { a = Math.min(a, r[k]); b = Math.max(b, r[k]); } R = b - a; }
+  const steps = [];
+  for (let k = 1; k < n; k++) if (Math.abs(r[k] - r[k - 1]) > EXPERIMENT.ease.stepShare * R && R > 0) steps.push(k);
+  let gRing = 1;
+  steps.forEach((k0, i) => {
+    const k1 = steps[i + 1] ?? n, step = r[k0] - r[k0 - 1];
+    let s = Math.sign(step), wave = 0, peak3 = 0;
+    for (let k = k0; k < k1; k++) {
+      const e = r[k] - y[k];
+      if (s > 0 && e < -h) { s = -1; wave++; } else if (s < 0 && e > h) { s = 1; wave++; }
+      if (wave === 2) peak3 = Math.max(peak3, Math.abs(e));
+      if (wave > 2) break;
+    }
+    gRing = Math.min(gRing, 1 - peak3 / (EXPERIMENT.ease.ring * Math.abs(step)));
+  });
+  return { g: Math.min(gRoom, gRing), gRoom, gRing };
+}
+
+
+function listenStats(y, Ts, { span = 1, half = true } = {}) {
+  const all = Array.from(y);
+  const n0 = all.length;
+  const ys = half ? all.slice(Math.floor(n0 / 2)) : all;
+  const n = ys.length;
+  let m = 0;
+  for (const v of ys) m += v;
+  m /= n;
+  let d2 = 0, dm = 0;
+  for (let k = 1; k < n; k++) dm += ys[k] - ys[k - 1];
+  dm /= Math.max(1, n - 1);
+  for (let k = 1; k < n; k++) d2 += (ys[k] - ys[k - 1] - dm) ** 2;
+  const sigma = n > 2 ? Math.sqrt(d2 / (n - 2)) / Math.SQRT2 : 0;
+  const q = gridStep(all);
+  const floor = Math.max(sigma, q / Math.sqrt(12), EXPERIMENT.listen.floor * span);
+  const tc = (n - 1) / 2;
+  let stt = 0, sty = 0;
+  for (let k = 0; k < n; k++) { stt += (k - tc) ** 2; sty += (k - tc) * (ys[k] - m); }
+  const b = stt > 0 ? sty / stt : 0;
+  let rr = 0;
+  for (let k = 0; k < n; k++) rr += (ys[k] - m - b * (k - tc)) ** 2;
+  const se = stt > 0 && n > 2 ? Math.sqrt(rr / (n - 2) / stt) : Infinity;
+  const drifts = Math.abs(b) > EXPERIMENT.listen.drift * se && Math.abs(b) * n > floor;
+  const slope = drifts ? b : 0;        
+  const y0 = m + slope * (n - 1 - tc);
+  return { y0, mean: m, sigma, q, floor, slope, drift: slope / Ts, drifts, n: n0 };
+}
+
+function gridStep(y) {
+  let q = Infinity;
+  const diffs = [];
+  for (let k = 1; k < y.length; k++) {
+    const d = Math.abs(y[k] - y[k - 1]);
+    if (d > 0) { diffs.push(d); q = Math.min(q, d); }
+  }
+  if (!diffs.length || !Number.isFinite(q)) return 0;
+  const tol = 1e-6;
+  let on = 0;
+  for (const d of diffs) { const x = d / q; if (Math.abs(x - Math.round(x)) < tol * Math.max(1, x)) on++; }
+  return on >= 0.9 * diffs.length && diffs.length >= 3 && diffs.some((d) => Math.abs(d / q - 1) < tol) ? q : 0;
+}
+
+
+function staircase(r0, band, share, hold) {
+  const [lo, hi] = band, span = hi - lo;
+  const up = hi - r0 >= r0 - lo;
+  const r1 = r0 + (up ? 1 : -1) * share * span;
+  const out = new Array(3 * hold);
+  for (let k = 0; k < out.length; k++) out[k] = k >= hold && k < 2 * hold ? r1 : r0;
+  return out;
+}
+
+function halved(r) {
+  let a = Infinity, b = -Infinity;
+  for (const v of r) { a = Math.min(a, v); b = Math.max(b, v); }
+  const mid = (a + b) / 2;
+  return Array.from(r, (v) => mid + (v - mid) / 2);
+}
+
+
+function restSwings(y, from, level, floor, Ts) {
+  let peak = 0;
+  for (let j = from; j < y.length; j++) peak = Math.max(peak, Math.abs(y[j] - level));
+  const h = Math.max(3 * floor, 0.05 * peak);
+  let s = 0, count = 0, first = -1, lastAt = -1;
+  for (let j = from; j < y.length; j++) {
+    const d = y[j] - level;
+    const now = d > h ? 1 : d < -h ? -1 : 0;
+    if (now && s && now !== s) { count++; if (first < 0) first = j; lastAt = j; }
+    if (now) s = now;
+  }
+  return { count, f: count >= 2 ? (count - 1) / (2 * (lastAt - first) * Ts) : null, peak };
+}
+
+function lookGuess(rung, Ts) {
+  const { d, T, a, floor } = rung, n = d.length;
+  let peak = 0, kp = 0;
+  for (let j = 0; j < n; j++) if (Math.abs(d[j]) > Math.abs(peak)) { peak = d[j]; kp = j; }
+  const sign = rung.sign, big = Math.abs(peak);
+  const thr = Math.max(3 * floor, 0.1 * big);
+  let j0 = 0;
+  while (j0 < kp && Math.abs(d[j0]) <= thr) j0++;
+  const theta = Math.max(0, (j0 - 1) * Ts);
+  let j63 = j0;
+  while (j63 < kp && Math.abs(d[j63]) < 0.63 * big) j63++;
+  const tau = Math.max(Ts, (j63 - j0 + 1) * Ts);
+  return { K: (sign * big) / a, kp: (sign * big) / (a * T * Ts), tau, theta };
+}
+
+
+function createExperiment(plan) {
+  checkPlan(plan);
+  const P = plan, E = EXPERIMENT, Ts = P.Ts, U = P.umax - P.umin;
+  const [lo, hi] = P.band, span = hi - lo;
+  const names = { u: 'u', uUnit: '', y: 'y', yUnit: '', ...(P.names ?? {}) };
+  const yU = (v) => withUnit(v, names.yUnit), uU = (v) => withUnit(v, names.uUnit);
+  const atLimit = P.u0 <= P.umin || P.u0 >= P.umax;
+  const freeSide = atLimit ? (P.u0 <= P.umin ? P.umax - P.u0 : P.u0 - P.umin) : Math.min(P.umax - P.u0, P.u0 - P.umin);
+  const aMax = E.nudge.push * freeSide;
+  const rec = { u: [], y: [], r: [], applied: [], gaps: [], log: [] };
+  const log = (entry) => { rec.log.push(entry); return entry; };
+  let k = null, k0 = null, i = -1, y = NaN, r = NaN, uLast = P.u0;
+  let rFn = () => r0;
+  let needs = null, supplied = null, endInfo = null, stopAsked = false;
+  const testR = P.test.r ? P.test.r.slice() : null;
+  let r0 = testR ? testR[0] : P.test.r0;
+  const chips = Object.fromEntries(STAGES.map((s) => [s, '']));
+  const st = {
+    stage: 'listen', rung: 0, try: 0, push: 0, pushMax: 0, room: 0, roomMax: 0, status: '', tries: [],
+    marks: { push: [null, null], room: [E.nudge.room, E.nudge.backoff] },
+    t: 0, budget: P.budget, done: false, end: null, stop: false,
+  };
+  const now = () => (k - k0) * Ts;
+  const left = () => P.budget - now();
+  let listenInfo = null, look = null, gentle = null, inc = null, test = null, check = null, rungs = [];
+
+  function enter(stage) {
+    for (const s of STAGES) if (chips[s] === 'lit') chips[s] = '✓';
+    chips[stage] = 'lit';
+    st.stage = stage;
+    log({ kind: 'stage', stage, i });
+  }
+  function finish(code, message, extra = {}) {
+    for (const s of STAGES) if (chips[s] === 'lit') chips[s] = code === 'done' ? '✓' : '✕';
+    for (const s of STAGES) if (!chips[s]) chips[s] = '–';
+    endInfo = { code, message, i, t: now(), ...extra };
+    log({ kind: 'end', ...endInfo });
+    st.done = true; st.end = endInfo; st.stop = true; stopAsked = true;
+    st.status = message;
+  }
+  const meters = (u) => {
+    st.push = Math.abs(u - P.u0) / U;
+    st.pushMax = Math.max(st.pushMax, st.push);
+  };
+  const roomUsed = (yy) => {
+    if (!listenInfo) return 0;
+    const y0 = listenInfo.y0, up = hi - y0, down = y0 - lo;
+    return yy >= y0 ? (yy - y0) / Math.max(up, 1e-300) : (y0 - yy) / Math.max(down, 1e-300);
+  };
+  const inBand = (yy) => yy >= lo && yy <= hi;
+  let recovering = null;
+  const holds = () => {
+    if (inBand(y)) { recovering = null; return true; }
+    return recovering !== null && (k - recovering) * Ts < E.ease.settleMax;
+  };
+
+
+  function* listen() {
+    enter('listen');
+    const n = Math.max(E.listen.samples, Math.ceil(E.listen.seconds / Ts - 1e-9));
+    const i0 = i, kEnd = k + n;
+    while (k < kEnd) {
+      st.status = `Listening: ${names.u} held at ${uU(P.u0)} while the page measures the noise on ${names.y} (${fmtNum(now(), 2)} of ${fmtNum(n * Ts, 2)} s)`;
+      yield P.u0;
+    }
+    const ys = rec.y.slice(i0, i).filter(Number.isFinite);
+    listenInfo = { ...listenStats(ys, Ts, { span }), i0, i1: i };
+    log({ kind: 'listen', ...listenInfo });
+  }
+
+
+  function* rung(n, a, T, dir, bound, kLast) {
+    const shape = atLimit ? 'pulse' : 'doublet';
+    const L = listenInfo;
+    let base, ic;
+    if (!rungs.length) { base = L.y0; ic = L.i1 - 1; } else {
+      const from = Math.max(rungs[rungs.length - 1].i0, i - E.nudge.start);
+      base = 0; for (let j = from; j < i; j++) base += rec.y[j];
+      base /= i - from; ic = (from + i - 1) / 2;
+    }
+    const R = { kind: 'rung', n, shape, a, T, dir, i0: i, i1: null, base, ic, slope: L.slope, bound, backoff: false, runaway: false };
+    const level = (j) => R.base + R.slope * (j - R.ic);
+    const kStart = k, len = 4 * T;
+    const most = Math.max(E.nudge.restMax * len, Math.ceil(E.nudge.restMin / Ts));
+    const w = Math.max(8, T);
+    const uOf = (j) => (j < T ? P.u0 + dir * a : shape === 'doublet' && j < 2 * T ? P.u0 - dir * a : P.u0);
+    let peak = 0, peakPlanned = 0, grows = false;
+    st.rung = n;
+    for (;;) {
+      const j = k - kStart;
+      const dy = y - level(i);
+      peak = Math.max(peak, Math.abs(dy));
+      if (j < len) peakPlanned = peak;
+      st.room = roomUsed(y); st.roomMax = Math.max(st.roomMax, st.room);
+      if (!inBand(y)) {
+        R.i1 = i; R.left = true; R.at = y;
+        R.runaway = j >= (shape === 'doublet' ? 2 * T : T);
+        measure(R, level);
+        rungs.push(R); log(R);
+        return R;
+      }
+      if (j >= len && i - R.i0 >= w) {
+        const m1 = meanOf(i - w, i - w / 2), m2 = meanOf(i - w / 2, i);
+        const tol = Math.max((6 * L.floor) / Math.sqrt(w), E.nudge.still * peak);
+        grows = Math.abs(m2 - level(i)) > Math.abs(m1 - level(i)) + tol;
+        if (Math.abs(m2 - m1) <= tol || j >= len + most || k >= kLast) break;
+      }
+      if (!R.backoff && st.room >= E.nudge.backoff) R.backoff = true;
+      const u = R.backoff ? P.u0 : uOf(j);
+      meters(u);
+      st.status = `Nudge ${n}: pushing ${shape === 'doublet' ? '±' : dir > 0 ? '+' : '−'}${uU(a)} (${pct(a / U)} of the range) for ${fmtNum(T * Ts, 2)} s; ${names.y} moved ${yU(Math.abs(dy))} (${pct(st.room)} of its room)`;
+      yield u;
+    }
+    R.i1 = i;
+    R.runaway = grows && Math.abs(y - level(i)) > E.nudge.runaway * peakPlanned && peak > E.nudge.visible * L.floor;
+    measure(R, level);
+    rungs.push(R);
+    log(R);
+    return R;
+  }
+  const meanOf = (a, b) => { let s = 0; for (let j = a; j < b; j++) s += rec.y[j]; return s / (b - a); };
+
+  function measure(R, level) {
+    const { i0, T } = R, n = R.i1 - i0, L = listenInfo, floor = L.floor;
+    const d = new Float64Array(n);
+    let up = 0, down = 0, size = 0;
+    for (let j = 0; j < n; j++) {
+      d[j] = rec.y[i0 + j] - level(i0 + j);
+      size = Math.max(size, Math.abs(d[j]));
+      const e = rec.y[i0 + j] - (L.y0 + L.slope * (i0 + j - (L.i1 - 1)));
+      up = Math.max(up, e); down = Math.max(down, -e);
+    }
+    const at = (j) => d[Math.min(n - 1, Math.max(0, Math.round(j)))];
+    const yT = at(T), yH = at(T / 2), y3 = at((3 * T) / 4), yQ = at(T / 4);
+    const vis = (v) => Math.abs(v) > 3 * floor;
+    const pMax = R.shape === 'doublet' ? E.nudge.grow[1] : E.nudge.grow[0];
+    let p = pMax;
+    if (vis(yT) && vis(yH)) p = Math.abs(yT) <= Math.abs(yH) ? E.nudge.grow[0] : clamp(Math.log2(Math.abs(yT) / Math.abs(yH)), E.nudge.grow[0], pMax);
+    const big = Math.abs(yT) > E.nudge.visible * floor;
+    const plateau = T >= 4 && big && Math.abs(yT - y3) < E.nudge.plateau * Math.abs(yT);
+    const d1 = yH - yQ, d2 = y3 - yH, d3 = yT - y3;
+    const near = (a, b) => Math.abs(a - b) <= E.nudge.slope * Math.max(Math.abs(a), Math.abs(b));
+    const ramp = T >= 8 && big && !plateau && Math.sign(d1) === Math.sign(d2) && Math.sign(d2) === Math.sign(d3) && near(d1, d2) && near(d2, d3);
+    const h = Math.max(3 * floor, 0.05 * size);
+    let s = Math.sign(yT) || 1, cross = 0;
+    for (let j = T; j < n; j++) {
+      if (s > 0 && d[j] < -h) { s = -1; cross++; } else if (s < 0 && d[j] > h) { s = 1; cross++; }
+    }
+    Object.assign(R, {
+      d, up, down, max: Math.max(up, down), size, p, plateau, ramp, complete: plateau || ramp,
+      rings: cross >= (R.shape === 'doublet' ? 2 : 1), visible: size > E.nudge.visible * floor,
+      seen: size > E.nudge.response * floor, floor,
+    });
+    const thr = Math.max(3 * floor, 0.25 * size);
+    let jf = 0;
+    while (jf < n - 1 && Math.abs(d[jf]) <= thr) jf++;
+    R.sign = (Math.sign(d[jf]) || 1) * R.dir;
+    if (R.bound !== null) R.within = up <= R.bound[0] * (1 + 1e-12) && down <= R.bound[1] * (1 + 1e-12);
+  }
+
+  function* nudge() {
+    enter('nudge');
+    const L = listenInfo, floor = L.floor;
+    const y0 = L.y0, roomUp = hi - y0, roomDown = y0 - lo, rMin = Math.min(roomUp, roomDown);
+    st.marks.push = [null, aMax / U];
+    let tDrift = Infinity;
+    if (L.slope !== 0) {
+      const room = L.slope > 0 ? roomUp : roomDown;
+      tDrift = (E.nudge.drift * room) / Math.abs(L.drift);
+      if (tDrift < E.nudge.read) {
+        return finish('drift', `${names.y} drifts too fast to test: it needs a controller first (it moves ${yU(Math.abs(L.drift))}/s with ${names.u} at ${uU(P.u0)})`);
+      }
+    }
+    const tStart = now(), budget = E.nudge.budget * P.budget;
+    let a = E.nudge.a0 * U, T = E.nudge.T0, dir = atLimit ? (P.u0 <= P.umin ? 1 : -1) : 1;
+    let sign = 0, flip = 0, bound = null, why = '';
+    for (let n = 1; ; n++) {
+      if (now() - tStart + 4 * T * Ts > budget) { why = 'budget'; break; }
+      if (now() - tStart + 4 * T * Ts > tDrift) { why = 'drift'; break; }
+      const R = yield* rung(n, a, T, dir, bound, k0 + Math.floor((tStart + Math.min(budget, tDrift)) / Ts));
+      if (R.runaway) {
+        return finish('runaway', `${names.y} runs away when pushed and does not come back: it needs a stabilising controller before it can be identified`);
+      }
+      if (R.left) return finish('band', `${names.y} left 'may move within' during the Nudge (${yU(R.at)}): the page stopped the plant`);
+      if (R.backoff) { why = 'backoff'; break; }
+      if (R.visible && !sign) {
+        sign = R.sign;
+        if (!atLimit) dir = sign * (roomUp >= roomDown ? 1 : -1);
+      }
+      if (R.complete && R.size >= Math.max(E.nudge.visible * floor, E.nudge.enough * rMin)) { why = 'enough'; break; }
+      const predict = (growth, amp) => {
+        const lift = (e) => (amp && !R.visible ? Math.max(e, E.nudge.response * floor) : e);
+        const g = amp && !R.visible ? E.nudge.dead : growth;
+        if (R.shape === 'doublet') { const m = g * E.nudge.safety * lift(R.max); return [m, m]; }
+        return [g * E.nudge.safety * lift(R.up), g * E.nudge.safety * lift(R.down)];
+      };
+      const allowed = ([pu, pd]) => (R.shape === 'doublet' ? Math.max(pu, pd) <= E.nudge.room * rMin : pu <= E.nudge.room * roomUp && pd <= E.nudge.room * roomDown);
+      const nextA = predict(2, true), nextT = predict(2 ** R.p, false);
+      const canA = a < aMax * (1 - 1e-12) && allowed(nextA);
+      const canT = 2 * T * Ts <= E.nudge.Tmax && allowed(nextT);
+      let move = null;
+      if (R.complete) move = canA ? 'a' : null;
+      else if (!R.visible) {
+        const want = flip++ % 2 === 0 ? 'T' : 'a';
+        move = want === 'T' ? (canT ? 'T' : canA ? 'a' : null) : canA ? 'a' : canT ? 'T' : null;
+      } else move = canT ? 'T' : canA ? 'a' : null;
+      if (!move) { why = 2 * T * Ts > E.nudge.Tmax ? 'longest' : 'room'; break; }
+      if (move === 'a') { a = Math.min(2 * a, aMax); bound = nextA; } else { T *= 2; bound = nextT; }
+    }
+    log({ kind: 'nudge', why, rungs: rungs.length, i });
+    if (!rungs.some((R) => R.seen)) {
+      return finish('none', `${names.u} does not move ${names.y}: is ${names.u} wired to the plant?`);
+    }
+    if (!rungs.some((R) => R.visible)) {
+      if (why === 'budget') return finish('budget', `${fmtNum(P.budget / 60, 2)} min is too short to see ${names.y} move clearly: allow longer`);
+      return finish('room', `${names.y} moves too little to read within half of 'may move within' (its noise is ${yU(floor)}): widen it`);
+    }
+    return null;
+  }
+
+
+  function* firstLook() {
+    st.status = `A first look at what the pushes showed (${names.u} at ${uU(P.u0)})`;
+    const L = listenInfo, w = 1 / (L.floor * L.floor);
+    const kRest = k + Math.ceil(E.look.rest / Ts - 1e-9), iRest = i;
+    while (k < kRest) {
+      if (!inBand(y)) return 'runaway';
+      meters(P.u0); st.room = roomUsed(y); yield P.u0;
+    }
+    {
+      const m = Math.max(4, Math.floor((i - iRest) / 4));
+      const away = (a, b) => Math.abs(meanOf(a, b) - (L.y0 + L.slope * ((a + b - 1) / 2 - (L.i1 - 1))));
+      const first = away(iRest, iRest + m), last = away(i - m, i);
+      const reach = Math.max(...rungs.map((R) => R.max));
+      if (last > E.nudge.runaway * reach && last > first + E.nudge.visible * L.floor) return 'runaway';
+    }
+    const i0 = rungs[0].i0, n = i - i0, iL = L.i1 - 1;
+    const yy = new Float64Array(n), uu = new Float64Array(n);
+    for (let j = 0; j < n; j++) {
+      yy[j] = rec.y[i0 + j] - L.slope * (i0 + j - iL);
+      const ap = rec.applied[i0 + j];
+      uu[j] = Number.isFinite(ap) ? ap : rec.u[i0 + j];
+    }
+    const seg = { y: yy, u: uu, yStart: L.y0 + L.slope * (i0 - iL), uStart: P.u0, weight: w };
+    const last = rungs[rungs.length - 1], from = last.i1 - i0;
+    const swing = restSwings(yy, from, seg.yStart, L.floor, Ts);
+    const best = rungs.filter((R) => R.seen).reduce((a, b) => (b.size > a.size ? b : a));
+    const guess = lookGuess(best, Ts);
+    const gr = { ...guess, f: swing.f ?? 1 / (2 * Math.PI * Math.max(guess.tau, Ts)), zeta: swing.f ? 0.3 : 0.8 };
+    const fits = {};
+    const jobs = E.look.structures.map((name) => ({ name, gen: fitStructureSteps([seg], name, [STRUCTURES[name].start(name === 'resonance' ? gr : guess)], { Ts, maxIter: E.look.maxIter }) }));
+    let job = 0;
+    while (job < jobs.length) {
+      for (let s2 = 0; s2 < E.look.perSample && job < jobs.length; s2++) {
+        let s;
+        try { s = jobs[job].gen.next(); } catch (err) { s = { done: true, value: null }; }
+        if (s.done) { fits[jobs[job].name] = s.value; job++; }
+      }
+      meters(P.u0);
+      st.room = roomUsed(y);
+      yield P.u0;
+    }
+    const sane = (f) => f && Number.isFinite(f.bic) && STRUCTURES[f.structure].params.every((key) => key === 'theta' || Math.abs(Math.log(Math.abs(f.p[key]))) < E.look.edge);
+    const ok = Object.values(fits).filter(sane);
+    if (!ok.length) return null;
+    const pick = ok.reduce((a, b) => (b.bic < a.bic ? b : a));
+    const integrating = pick.structure === 'intLag';
+    const rings = !integrating && (swing.count >= 2 || (pick.structure === 'resonance' && pick.p.zeta < E.look.rings));
+    let model;
+    if (integrating) model = { kp: pick.p.kp, tau: pick.p.tau, theta: pick.p.theta };
+    else if (pick.structure === 'resonance') {
+      const wn = 2 * Math.PI * pick.p.f, z = pick.p.zeta;
+      const tau = z < 1 ? 1 / (z * wn) : (z + Math.sqrt(z * z - 1)) / wn;
+      model = { K: pick.p.K, tau, theta: pick.p.theta };
+    } else model = { K: pick.p.K, tau: pick.p.tau, theta: pick.p.theta };
+    look = {
+      cls: integrating ? 'ramps' : rings ? 'rings' : 'settles', integrating,
+      sign: Math.sign(integrating ? model.kp : model.K) || 1,
+      K: model.K ?? null, kp: model.kp ?? null, tau: model.tau, theta: model.theta,
+      structure: pick.structure, p: pick.p, swing,
+      bic: Object.fromEntries(Object.entries(fits).map(([k2, f]) => [k2, f?.bic ?? null])), guess,
+    };
+    log({ kind: 'look', ...look, i });
+    return look;
+  }
+
+
+  let law = null, lawInfo = null;
+  function switchTo(g, role) {
+    const I = bumpless(g, uLast, r, y);
+    law = piLaw(g, I, P.umin, P.umax, Ts);
+    lawInfo = { Kp: g.Kp, Ki: g.Ki, tauC: g.tauC, umin: P.umin, umax: P.umax, I, role };
+    log({ kind: 'law', i, ...lawInfo });
+  }
+  const tolerance = () => Math.max(E.hold.sigmas * listenInfo.sigma, E.hold.bandShare * span, E.hold.steps * listenInfo.q);
+
+  let swing = { swung: false, from: 0, to: 0 };
+  function* settle(sp, most, status) {
+    rFn = () => sp;
+    const tol = tolerance(), need = Math.ceil(E.hold.settle / Ts - 1e-9), kEnd = k + Math.ceil(most / Ts - 1e-9);
+    let inside = 0, side = 0;
+    swing = { swung: false, from: Math.abs(y - sp), to: Math.abs(y - sp) };
+    for (;;) {
+      if (!holds()) return 'left';
+      const e = y - sp;
+      inside = Math.abs(e) < tol ? inside + 1 : 0;
+      if (Math.abs(e) >= tol) {
+        const s2 = Math.sign(e);
+        if (side && s2 !== side) swing.swung = true;
+        side = s2;
+      }
+      swing.to = Math.abs(e);
+      if (inside >= need) return true;
+      if (k >= kEnd) return false;
+      const u = law.step(r, y);
+      meters(u);
+      st.room = roomUsed(y);
+      st.status = status;
+      yield u;
+    }
+  }
+
+  function* hold() {
+    enter('hold');
+    let tauC = gentleTauC(look, Ts);
+    gentle = gentleGains(look, tauC, Ts);
+    switchTo(gentle, 'hold');
+    log({ kind: 'hold', ...gentle, i });
+    const status = `Holding ${names.y} at ${yU(r0)} with a gentle controller`;
+    let ok = yield* settle(r0, 4 * (tauC + gentle.theta) + E.hold.slack, status);
+    if (ok === false) {
+      const first = { ...swing };
+      if (first.swung) {
+        tauC *= 2;
+        gentle = gentleGains(look, tauC, Ts);
+        switchTo(gentle, 'hold');
+        log({ kind: 'hold', ...gentle, doubled: true, i });
+      } else log({ kind: 'hold', ...gentle, again: true, i });
+      ok = yield* settle(r0, 4 * (tauC + gentle.theta) + E.hold.slack, status);
+      if (ok === false && !first.swung && !swing.swung && swing.to < swing.from - 2 * listenInfo.floor) {
+        log({ kind: 'note', i, text: `${names.y} creeps toward ${yU(r0)} under the gentle controller (${yU(swing.to)} away): the tries start from there` });
+        ok = true;
+      }
+    }
+    if (ok === 'left') return finish('band', `${names.y} left 'may move within' under the gentle controller (${yU(y)} at ${fmtNum(now(), 3)} s): the page stopped the plant`);
+    if (!ok) return finish('hold', `the gentle controller does not hold ${names.y} at ${yU(r0)}`);
+    inc = { gains: gentle, tauC, J: Infinity, n: 0 };
+    return null;
+  }
+
+
+  function* tryOnce(n, g) {
+    const status = `Ease in, try ${n}: asking the controller to be ${pct(1 - E.ease.quicker)} quicker than the last try`;
+    const i0 = i;
+    const settled = yield* settle(r0, E.ease.settleMax, status);
+    if (settled === 'left') return { left: true, i0 };
+    switchTo(g, 'try');
+    const iS = i, kS = k, N = test.length;
+    rFn = (kk) => test[Math.min(N - 1, kk - kS)];
+    let left = false;
+    while (k - kS < N) {
+      if (!inBand(y)) { left = true; break; }
+      const u = law.step(r, y);
+      meters(u);
+      st.room = roomUsed(y); st.roomMax = Math.max(st.roomMax, st.room);
+      st.status = status;
+      yield u;
+    }
+    const iE = i;
+    rFn = () => r0;
+    switchTo(inc.gains, 'incumbent');
+    if (left) recovering = k;
+    const T = { kind: 'try', n, tauC: g.tauC, Kp: g.Kp, Ki: g.Ki, i0, iSwitch: iS, iEnd: iE, settled: settled === true };
+    if (left) return { ...T, left: true, g: E.ease.guardG, gRoom: E.ease.guardG, gRing: null, J: null };
+    const rr = rec.r.slice(iS, iE), yy = rec.y.slice(iS, iE), uu = rec.u.slice(iS, iE);
+    const cost = tryCost(rr, yy, uu, { R: test.span, U, lo: P.umin, hi: P.umax });
+    const m = tryMargin(rr, yy, P.band, Math.max(3 * listenInfo.sigma, 2 * listenInfo.q));
+    return { ...T, J: cost.J, parts: cost.parts, overshoot: cost.overshoot, ...m };
+  }
+
+  function* ease() {
+    enter('ease');
+    let tauC = inc.tauC, stale = 0, why = 'tries';
+    const theta = gentle.theta;
+    const reserve = E.pause.seconds + E.ease.settleMax + check.length * Ts;
+    for (let n = 1; n <= E.ease.tries; n++) {
+      tauC *= E.ease.quicker;
+      if (tauC < E.ease.thetaShare * theta) { why = 'quick'; break; }
+      if (left() < E.ease.settleMax + test.length * Ts + reserve) { why = 'budget'; break; }
+      const g = gentleGains(look, tauC, Ts);
+      st.try = n;
+      const T = yield* tryOnce(n, g);
+      if (T.left && T.n === undefined) {
+        return finish('band', `${names.y} left 'may move within' under the controller that held it: the page stopped the plant`);
+      }
+      const before = inc.J;
+      let mark;
+      if (T.left) mark = '✕ left the range, back to the last good one';
+      else if (T.g < E.ease.gMin) mark = T.gRing < T.gRoom ? '! rang' : '! near the edge';
+      else if (T.J < (1 - E.ease.better) * before) mark = '✓ quicker';
+      else mark = '· no better';
+      T.accepted = !T.left && T.g >= E.ease.gMin && T.J < before;
+      if (T.accepted) inc = { gains: g, tauC, J: T.J, n };
+      T.mark = mark;
+      st.tries.push(mark);
+      st.room = T.left ? 1 : Math.max(0, 1 - T.gRoom);
+      log(T);
+      if (T.left) { why = 'guard'; break; }
+      if (T.g < E.ease.gMin) { why = 'margin'; break; }
+      stale = T.J < (1 - E.ease.better) * before ? 0 : stale + 1;
+      if (stale >= E.ease.stale) { why = 'stale'; break; }
+      if (n === E.ease.tries) why = 'tries';
+    }
+    log({ kind: 'ladder', why, incumbent: inc.n, tauC: inc.tauC, i });
+    return null;
+  }
+
+
+  function* pause() {
+    rFn = () => r0;
+    const i0 = i, kMin = k + Math.ceil(E.pause.seconds / Ts - 1e-9), kMax = k + Math.ceil(E.pause.wait / Ts - 1e-9);
+    needs = { kind: 'fit', upto: i };
+    supplied = null;
+    for (;;) {
+      if (!holds()) return finish('band', `${names.y} left 'may move within' while the controller held it: the page stopped the plant`);
+      if (supplied && k >= kMin) break;
+      if (k >= kMax) { needs = null; return finish('fit', 'the page could not fit in time'); }
+      const u = law.step(r, y);
+      meters(u);
+      st.status = `Fitting the model while the controller holds ${names.y} at ${yU(r0)}`;
+      yield u;
+    }
+    log({ kind: 'pause', i0, i1: i, waited: (i - i0) * Ts });
+    return null;
+  }
+
+
+  function* runCheck() {
+    enter('check');
+    const status = 'Check: a test the model has not seen';
+    const i0 = i;
+    const s = yield* settle(check[0], E.ease.settleMax, status);
+    if (s === 'left') return finish('band', `${names.y} left 'may move within' before the Check: the page stopped the plant`);
+    const iS = i, kS = k, N = check.length;
+    rFn = (kk) => check[Math.min(N - 1, kk - kS)];
+    while (k - kS < N) {
+      if (!holds()) return finish('band', `${names.y} left 'may move within' during the Check: the page stopped the plant`, { check: { i0, iStart: iS } });
+      const u = law.step(r, y);
+      meters(u);
+      st.status = status;
+      yield u;
+    }
+    log({ kind: 'check', i0, iStart: iS, iEnd: i });
+    return null;
+  }
+
+
+  function* program() {
+    yield* listen();
+    const L = listenInfo;
+    if (!inBand(L.y0)) {
+      return finish('outside', `${names.y} is at ${yU(L.y0)}, outside 'may move within': widen it, or bring the plant inside first`);
+    }
+    if (L.drifts) log({ kind: 'note', i, text: `${names.y} does not stay put with ${names.u} at ${uU(P.u0)} (it moves ${yU(Math.abs(L.drift))}/s)` });
+    yield* nudge();
+    if (st.done) return null;
+    const seen = yield* firstLook();
+    if (seen === 'runaway') return finish('runaway', `${names.y} runs away when pushed and does not come back: it needs a stabilising controller before it can be identified`);
+    if (!look) return finish('none', `${names.u} does not move ${names.y}: is ${names.u} wired to the plant?`);
+    const tc0 = gentleTauC(look, Ts), th = look.theta + (look.integrating ? look.tau : 0) + Ts / 2;
+    if (testR) {
+      test = testR;
+      check = P.check?.r ? P.check.r.slice() : halved(testR);
+    } else {
+      const hold = Math.max(2, Math.ceil((E.ease.hold * (tc0 + th)) / Ts));
+      test = staircase(r0, P.band, E.ease.stair, hold);
+      check = staircase(r0, P.band, E.check.stair, hold);
+    }
+    {
+      let a = Infinity, b = -Infinity;
+      for (const v of test) { a = Math.min(a, v); b = Math.max(b, v); }
+      test.span = b - a > 1e-12 ? b - a : Math.max(Math.abs(r0), 1) * 1e-3;
+    }
+    log({ kind: 'references', i, test: test.length, check: check.length, staircase: !testR });
+    const holdMost = 4 * (tc0 + th) + E.hold.slack;
+    const need = holdMost + E.ease.settleMax + test.length * Ts + E.pause.seconds + E.ease.settleMax + check.length * Ts;
+    if (need > left()) {
+      const minutes = Math.ceil((now() + need) / 60);
+      return finish('budget', `${fmtNum(P.budget / 60, 2)} min is too short for this plant: the Nudge alone took ${Math.round(now())} s. Allow ${minutes <= 5 ? 5 : 10} min.`);
+    }
+    yield* hold();
+    if (st.done) return null;
+    yield* ease();
+    if (st.done) return null;
+    yield* pause();
+    if (st.done) return null;
+    chips.shake = '–';
+    yield* runCheck();
+    if (st.done) return null;
+    return finish('done', `Done: the plant is stopped${inc?.n ? `; the gentlest controller that held, eased in, is try ${inc.n}` : ''}`);
+  }
+
+  const gen = program();
+
+  function stepOnce(kk, yy, applied) {
+    if (st.done) return P.u0;
+    if (!Number.isInteger(kk)) throw new Error('experiment: k must be a whole sample number');
+    if (k !== null && kk <= k) throw new Error(`experiment: sample ${kk} came after ${k}`);
+    if (k !== null && kk > k + 1) rec.gaps.push([i + 1, kk - k - 1]);
+    if (k0 === null) k0 = kk;
+    k = kk; i++;
+    if (i >= 1 && Number.isFinite(applied)) rec.applied[i - 1] = applied;
+    r = rFn(k);
+    if (!Number.isFinite(yy)) {
+      rec.u.push(uLast); rec.y.push(NaN); rec.r.push(r); rec.applied.push(NaN);
+      return uLast;
+    }
+    y = yy;
+    st.t = now();
+    const res = gen.next();
+    const u = res.done || st.done ? P.u0 : res.value;
+    rec.u.push(u); rec.y.push(y); rec.r.push(r); rec.applied.push(NaN);
+    uLast = u;
+    return u;
+  }
+
+  return {
+    plan: P,
+    step: stepOnce,
+    reference(kk) { return st.done ? r : rFn(kk); },
+    get needs() { return needs; },
+    supply(kind, data = {}) {
+      if (!needs || needs.kind !== kind) throw new Error(`experiment: nothing waits for ${kind}`);
+      supplied = data;
+      log({ kind: 'supply', what: kind, i, upto: needs.upto });
+      needs = null;
+    },
+    stop() {
+      if (st.done) return;
+      finish('stopped', 'Stopped: the record so far is kept');
+    },
+    abort(reason = 'the plant stopped itself') {
+      if (st.done) return;
+      finish('estop', `ended by the plant's stop at ${fmtNum(now(), 3)} s: ${reason}`);
+    },
+    get state() {
+      return { ...st, chips: STAGES.map((s) => ({ stage: s, label: STAGE_LABELS[s], mark: chips[s] })), tries: st.tries.slice() };
+    },
+    get stopAsked() { return stopAsked; },
+    get found() { return { listen: listenInfo, rungs: rungs.map(({ d, ...R }) => R), look, gentle, incumbent: inc, test, check }; },
+    record() {
+      return {
+        version: IDENTIFY_VERSION, Ts,
+        u: rec.u.map(orNull), y: rec.y.map(orNull), r: rec.r.map(orNull), applied: rec.applied.map(orNull),
+        gaps: rec.gaps.map((g) => g.slice()), log: rec.log.map((e) => cleanEntry(e)), end: endInfo ? endInfo.code : null,
+      };
+    },
+  };
+}
+
+const orNull = (v) => (Number.isFinite(v) ? v + 0 : null);
+
+function cleanEntry(e) {
+  const { d, ...rest } = e;
+  return JSON.parse(JSON.stringify(rest));
+}
+
+function checkPlan(p) {
+  if (!p || p.version !== IDENTIFY_VERSION) throw new Error(`experiment: a plan of version ${IDENTIFY_VERSION} (from planExperiment)`);
+  for (const key of ['Ts', 'u0', 'umin', 'umax', 'budget']) if (!Number.isFinite(p[key])) throw new Error(`experiment: plan.${key} must be a number`);
+  if (!(p.Ts > 0)) throw new Error('experiment: plan.Ts must be positive');
+  if (!(p.umax > p.umin)) throw new Error('experiment: plan.umax must be above plan.umin');
+  if (!Array.isArray(p.band) || !(p.band[1] > p.band[0])) throw new Error('experiment: plan.band must be [lo, hi] with lo < hi');
+  if (!p.test || !(Array.isArray(p.test.r) ? p.test.r.length >= 2 : Number.isFinite(p.test.r0))) throw new Error('experiment: plan.test needs r (samples) or r0 (a staircase)');
+}
+
+return { IDENTIFY_VERSION, EXPERIMENT, STAGES, STAGE_LABELS, fmtNum, gentleGains, gentleTauC, piLaw, bumpless, tryCost, tryMargin, listenStats, staircase, halved, createExperiment };
+})();
 // ---- core/analysis.js
 __mods['core/analysis.js'] = (() => {
 
@@ -8485,6 +9332,240 @@ function fmtN(v) {
 }
 
 return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, feedforwardStart, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, ripplePeriod, settledLevel, settledSlope, fitFopdt, fitIntegrating, stepExperimentSteps, stepExperiment, SIMC, tauCSource, tauCShort, simcGains, simcIntegrating, stepTuneSteps, stepTune, METHODS, autotuneSteps, autotune, measurement, whyWorse, tuneReport, baseName, resultName, placeVariant, derivativeFilter, pidVariant };
+})();
+// ---- core/identify.js
+__mods['core/identify.js'] = (() => {
+
+const { controllerBlocks, upstreamSource } = __mods['core/autotune.js'];
+const { parseEnd } = __mods['core/diagram.js'];
+const { referenceFn } = __mods['core/signals.js'];
+const { IDENTIFY_VERSION, EXPERIMENT, halved } = __mods['core/experiment.js'];
+class IdentifyError extends Error {
+  constructor(code, message, hint = '') {
+    super(message);
+    this.name = 'IdentifyError';
+    this.code = code;
+    this.hint = hint;
+  }
+}
+
+const BUDGETS = [30, 60, 120, 300, 600];
+const BUDGET = 120;
+const BAND = { widen: 1 / 3, still: 0.1, inset: 0.05 };
+
+const finite = Number.isFinite;
+
+function locate(diagram, path) {
+  let level = diagram;
+  for (const id of path.slice(0, -1)) level = level.blocks.find((b) => b.id === id)?.diagram;
+  return { level, block: level?.blocks.find((b) => b.id === path.at(-1)) };
+}
+
+const wiresFrom = (level, id, port = 0) => level.wires.filter((w) => { const e = parseEnd(w.from); return e.id === id && e.port === port; });
+const wireTo = (level, id, port) => level.wires.find((w) => { const e = parseEnd(w.to); return e.id === id && e.port === port; });
+const sameEnd = (a, b) => a.id === b.id && a.port === b.port;
+
+function sinkOn(level, end) {
+  for (const w of level.wires) {
+    if (!sameEnd(parseEnd(w.from), end)) continue;
+    const to = level.blocks.find((b) => b.id === parseEnd(w.to).id);
+    if (to?.type === 'sink') return to;
+  }
+  return null;
+}
+
+function uPort(level, block) {
+  const out = { name: 'u', unit: '', ext: null, index: -1 };
+  for (const w of wiresFrom(level, block.id, 0)) {
+    const to = parseEnd(w.to), b = level.blocks.find((x) => x.id === to.id);
+    if (b?.type === 'external') { out.ext = b; out.index = to.port; out.name = b.params.inputs?.[to.port] ?? out.name; out.unit = b.params.inUnits?.[to.port] ?? ''; return out; }
+  }
+  const sink = sinkOn(level, { id: block.id, port: 0 });
+  if (sink) { out.name = sink.params.name; out.unit = sink.params.unit ?? ''; }
+  return out;
+}
+
+function yPort(level, block) {
+  const w = wireTo(level, block.id, 1);
+  if (!w) return null;
+  const from = parseEnd(w.from), b = level.blocks.find((x) => x.id === from.id);
+  const out = { name: 'y', unit: '', ext: null, index: -1 };
+  if (b?.type === 'external') {
+    out.ext = b; out.index = from.port;
+    out.name = b.params.outputs?.[from.port] ?? out.name; out.unit = b.params.outUnits?.[from.port] ?? '';
+    return out;
+  }
+  const sink = sinkOn(level, from);
+  if (sink) { out.name = sink.params.name; out.unit = sink.params.unit ?? ''; } else if (b) out.name = b.name ?? b.id;
+  return out;
+}
+
+const range = (lo, hi) => (finite(lo) && finite(hi) && lo < hi ? [lo, hi] : null);
+
+function knownFor(project, path, { describe = null, link = null } = {}) {
+  const plant = project?.system?.plant;
+  if (plant?.type !== 'diagram') throw new IdentifyError('no-diagram', 'the plant is not a block diagram', 'build the plant in the Plant tab');
+  const all = controllerBlocks(plant.diagram);
+  if (!all.length) throw new IdentifyError('no-controller', 'there is no Controller block in the plant', 'add a Controller block in the Plant tab: Identify drives the plant through it');
+  const key = path ? [].concat(path).join('/') : null;
+  const hit = (key && all.find((c) => c.key === key)) || (key ? null : all[0]);
+  if (!hit) throw new IdentifyError('no-block', `there is no Controller block ${key}`, 'choose one of the Controller blocks');
+  const { level, block } = locate(plant.diagram, hit.path);
+  const inputs = block.params.inputs ?? 2;
+  if (inputs > 2) throw new IdentifyError('measurements', `Identify is for a block with one measurement (r, y): this one has ${inputs - 1}`, 'MIMO and blocks with several measurements come later');
+  if (inputs < 2 || !wireTo(level, block.id, 1)) throw new IdentifyError('unwired', 'wire the measurement to input 2', `${hit.where} reads r on input 1 and the measurement y on input 2`);
+  const up = uPort(level, block), yp = yPort(level, block);
+  const live = !!(up.ext || yp.ext || hasExternal(plant.diagram));
+  if (live) {
+    const ext = up.ext ?? yp.ext;
+    const kinds = ext?.params.kinds ?? describe?.inputs?.map((p) => p.kind);
+    if (up.index >= 0 && kinds?.[up.index] === 'reference') throw new IdentifyError('reference-mode', 'this plant takes references (reference mode): identifying through its own controller comes later', 'Identify needs a plant the page drives with u');
+    if (link && link.connected === false) throw new IdentifyError('connect', 'connect the plant first', 'press Connect under Live');
+    if (link?.estop) throw new IdentifyError('estop', 'the plant is E-stopped: Reset', 'press Reset under Live');
+  }
+  const variant = block.variants?.[block.variant ?? 0];
+  let umin = finite(variant?.params?.umin) ? variant.params.umin : -Infinity;
+  let umax = finite(variant?.params?.umax) ? variant.params.umax : Infinity;
+  const fromVariant = finite(umin) || finite(umax);
+  let fromPlant = false, safe = null;
+  if (up.ext) {
+    const p = up.ext.params, j = up.index;
+    if (finite(p.min?.[j])) { umin = Math.max(umin, p.min[j]); fromPlant = true; }
+    if (finite(p.max?.[j])) { umax = Math.min(umax, p.max[j]); fromPlant = true; }
+    if (finite(p.safe?.[j])) safe = p.safe[j];
+  }
+  if (!finite(umin) || !finite(umax) || !(umax > umin)) {
+    throw new IdentifyError('u-range', `set u min and u max in the Controller tab: Identify needs to know how far ${up.name} may go`, 'the running variant\'s u min and u max');
+  }
+  const start = safe ?? (finite(variant?.params?.u0) ? variant.params.u0 : 0);
+  const u0 = Math.min(umax, Math.max(umin, start));
+  let hard = null;
+  if (yp.ext) {
+    const j = yp.index, p = yp.ext.params, d = describe?.outputs?.[j];
+    hard = range(d?.min, d?.max) ?? range(p.outMin?.[j], p.outMax?.[j]) ?? range(p.ymin?.[j] ?? p.ymin, p.ymax?.[j] ?? p.ymax);
+  }
+  const Ts = block.params.Ts;
+  const source = upstreamSource(plant.diagram, hit.path, 0);
+  const signals = project.system.signals ?? {};
+  let r = null;
+  if (source && signals[source]) {
+    const ref = signals[source], period = ref.period;
+    const fn = referenceFn(ref, { sampleTime: Ts });
+    const N = Math.max(2, Math.round(period / Ts));
+    const samples = new Array(N);
+    let lo = Infinity, hi = -Infinity;
+    for (let k = 0; k < N; k++) { const v = fn(k * Ts); samples[k] = v; lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    r = { lo, hi, span: hi - lo, source, period, samples, Ts };
+  }
+  const others = Object.keys(signals).filter((n) => n !== source).map((name) => {
+    const ext = drivesExternal(plant.diagram, name);
+    return ext ? { name, value: ext.block.params.safe?.[ext.port] ?? 0, input: ext.block.params.inputs?.[ext.port] ?? null } : { name, value: 0 };
+  });
+  return {
+    block: { path: hit.path, key: hit.key, where: hit.where }, live,
+    u: { name: up.name, unit: up.unit, min: umin, max: umax, u0, from: fromPlant && fromVariant ? 'both' : fromPlant ? 'plant' : 'controller', start: safe !== null ? 'plant' : finite(variant?.params?.u0) && variant.params.u0 !== 0 ? 'controller' : null },
+    y: { name: yp.name, unit: yp.unit, hard, from: hard ? 'plant' : null },
+    r, Ts, others,
+  };
+}
+
+function drivesExternal(d, signal) {
+  for (const b of d?.blocks ?? []) {
+    if (b.type === 'source' && b.params.signal === signal) {
+      for (const w of wiresFrom(d, b.id, 0)) {
+        const to = parseEnd(w.to), x = d.blocks.find((y) => y.id === to.id);
+        if (x?.type === 'external') return { block: x, port: to.port };
+      }
+    }
+    if (b.type === 'subsystem') { const hit = drivesExternal(b.diagram, signal); if (hit) return hit; }
+  }
+  return null;
+}
+
+function hasExternal(d) {
+  for (const b of d?.blocks ?? []) {
+    if (b.type === 'external') return true;
+    if (b.type === 'subsystem' && hasExternal(b.diagram)) return true;
+  }
+  return false;
+}
+
+function defaultBand(known, hard = known.y.hard) {
+  const r = known.r;
+  let band = null, from = null;
+  if (r && r.span > 1e-12 * Math.max(1, Math.abs(r.lo), Math.abs(r.hi))) {
+    band = [r.lo - BAND.widen * r.span, r.hi + BAND.widen * r.span];
+    from = 'r';
+  } else if (hard) {
+    const r0 = r ? r.lo : (hard[0] + hard[1]) / 2, w = BAND.still * (hard[1] - hard[0]);
+    band = [r0 - w, r0 + w];
+    from = 'plant';
+  }
+  if (band && hard) {
+    const inset = BAND.inset * (hard[1] - hard[0]);
+    band = [Math.max(band[0], hard[0] + inset), Math.min(band[1], hard[1] - inset)];
+    if (!(band[1] > band[0])) band = null;
+  }
+  return { band, from };
+}
+
+function identifySettings(project, path, opts = {}) {
+  const known = opts.known ?? knownFor(project, path, opts);
+  const stored = opts.stored ?? project?.system?.identify?.[known.block.key] ?? {};
+  return settingsFor(known, stored);
+}
+
+function settingsFor(known, stored = {}) {
+  const hardMine = range(stored.hard?.[0], stored.hard?.[1]);
+  const hard = known.y.hard ? { value: known.y.hard, from: 'plant' } : hardMine ? { value: hardMine, from: 'yours' } : { value: null, from: null };
+  const mine = range(stored.band?.[0], stored.band?.[1]);
+  const def = defaultBand(known, hard.value);
+  const band = mine ? { value: mine, from: 'yours' } : { value: def.band, from: def.from };
+  const budget = finite(stored.budget) && stored.budget > 0 ? { value: stored.budget, from: 'yours' } : { value: BUDGET, from: 'default' };
+  return { band, budget, hard, vary: stored.vary ?? null, structure: stored.structure ?? null, seed: finite(stored.seed) ? stored.seed : 1 };
+}
+
+function planExperiment(known, settings = {}) {
+  const val = (s) => (s && typeof s === 'object' && !Array.isArray(s) && 'value' in s ? s.value : s);
+  const yName = known.y.name, unit = known.y.unit ? ` ${known.y.unit}` : '';
+  const hard = val(settings.hard) ?? known.y.hard ?? null;
+  let band = val(settings.band);
+  if (band === undefined || band === null) band = defaultBand(known, hard).band;
+  if (!band) throw new IdentifyError('no-band', `the page knows no range for ${yName}: say how far it may move`, `fill in "${yName} may move within"`);
+  band = [Number(band[0]), Number(band[1])];
+  if (!(finite(band[0]) && finite(band[1]) && band[1] > band[0])) throw new IdentifyError('band', `"${yName} may move within" needs a low and a high end, low below high`);
+  if (hard && (band[0] < hard[0] || band[1] > hard[1])) {
+    const end = band[1] > hard[1] ? `reaches ${fmt(band[1])}${unit}, beyond ${fmt(hard[1])}` : `reaches ${fmt(band[0])}${unit}, beyond ${fmt(hard[0])}`;
+    throw new IdentifyError('band-hard', `'may move within' ${end}, where the plant stops itself`, 'keep it inside the plant\'s range');
+  }
+  const r = known.r;
+  if (r) {
+    if (r.hi > band[1]) throw new IdentifyError('r-band', `r leaves 'may move within' (r reaches ${fmt(r.hi)}, the band ends at ${fmt(band[1])})`, 'widen the band or change r in the Input tab');
+    if (r.lo < band[0]) throw new IdentifyError('r-band', `r leaves 'may move within' (r reaches ${fmt(r.lo)}, the band starts at ${fmt(band[0])})`, 'widen the band or change r in the Input tab');
+  }
+  const budget = val(settings.budget) ?? BUDGET;
+  if (!(finite(budget) && budget > 0)) throw new IdentifyError('budget', 'the test needs a length: 30 s, 1, 2, 5 or 10 min');
+  const span = band[1] - band[0];
+  const moves = r && r.span >= EXPERIMENT.ease.staircase * span;
+  const r0 = r ? r.samples[0] : (band[0] + band[1]) / 2;
+  if (!r && !(r0 >= band[0] && r0 <= band[1])) throw new IdentifyError('band', 'the band holds no reference');
+  return {
+    version: IDENTIFY_VERSION, kind: 'identify',
+    Ts: known.Ts, u0: known.u.u0, umin: known.u.min, umax: known.u.max,
+    band, hard, budget, seed: val(settings.seed) ?? 1,
+    names: { u: known.u.name, uUnit: known.u.unit, y: known.y.name, yUnit: known.y.unit },
+    test: moves ? { r: r.samples.slice() } : { r0 },
+    check: moves ? { r: halved(r.samples) } : null,
+    others: known.others.map((o) => ({ ...o })),
+  };
+}
+
+function fmt(v) {
+  if (!finite(v)) return String(v);
+  return String(Number(v.toPrecision(3)));
+}
+
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment };
 })();
 // ---- core/live.js
 __mods['core/live.js'] = (() => {
