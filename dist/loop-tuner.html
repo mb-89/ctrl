@@ -444,6 +444,10 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .pdiag .wire .hit { stroke: transparent; stroke-width: 12; fill: none; }
 .pdiag .wire .line { stroke: var(--ink-2); stroke-width: 1.5; fill: none; }
 .pdiag .wire.sel .line { stroke: var(--accent-ink); stroke-width: 2.6; }
+.pdiag .wire.vec .line { stroke-width: 4.6; }
+.pdiag .wire.vec .core { stroke: var(--surface); stroke-width: 1.8; fill: none; }
+.pdiag .wire.vec.sel .line { stroke: var(--accent-ink); stroke-width: 5.4; }
+.pdiag .wn { font-family: var(--font-mono); font-size: var(--text-2xs); fill: var(--ink-2); }
 .pdiag .arrowhead { fill: var(--ink-2); }
 .pdiag .wire-temp { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
 .pdiag .marquee { fill: color-mix(in srgb, var(--accent) 12%, transparent); stroke: var(--accent-ink); stroke-dasharray: 4 3; }
@@ -785,10 +789,11 @@ try { markLimited(window); } catch { }
 </div>
 <h3 class="label">Plant</h3>
 <p>The plant is a block diagram. Drag blocks in from the library (or click to add), drag from an output to an input to wire them, click a block to set its parameters on the right. <b>Source</b> blocks play a signal made in the Input tab; <b>Sink</b> blocks (x, speed, …) can be shown on any channel. Double-click a <b>Controller</b> block to open it in the Controller tab. Shift-drag or Shift-click to select several, <kbd>Ctrl</kbd> <kbd>G</kbd> to group them into a subsystem, double-click a subsystem to open it, <kbd>Esc</kbd> to go back up. A subsystem can be saved to My blocks. Double-click a Switch to move it to its next input. Wheel zooms the canvas; dragging the background pans.</p>
-<p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor.</p>
+<p>A plant can also have <b>2D views</b> (Diagram | views above the canvas), set in the project's JSON: they move with the signals, following the scope's scan line (press <b>Single</b> for one run from t = 0) or your cursor. A robot has a <b>3D view</b> drawn from its description (URDF): the arm posed by its joint angles, the reference path dashed and the tool's trail; drag to orbit, right-drag or <kbd>Shift</kbd>-drag to pan, the wheel zooms, <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> <kbd>Q</kbd> <kbd>E</kbd> fly, the cube in the corner picks a view.</p>
+<p>A wire may carry a <b>vector</b> (drawn double, with its count): <b>Mux</b> joins signals, <b>Demux</b> splits them, a Sink on it records one signal per element (q → q1 … q6). The Math blocks Matrix Gain, Product, Solve and Norm work on vectors and matrices, and the <b>Robot</b> group's blocks (forward kinematics, Jacobian, mass matrix, inverse dynamics, the damped inverse, frame transforms, joint limits) read the robot's URDF. Try <b>PUMA 560, a circle in space</b>.</p>
 <h3 class="label">Controller</h3>
 <p>A Controller block takes the reference r and the measurements, and drives the plant at its sample time Ts. It holds <b>variants</b>, implementations with the same inputs and output: click one to run it. Edit the running variant's parameters (the wheel over a number nudges it by 5 %, Shift 1 %; in a list such as Q, click into a value first), or add a variant from the library.</p>
-<p>Variants <b>from the plant</b> (LQR, PI from the plant, PID + feedforward from the plant, swing-up with an LQR catch, the planned swing-up, and an Observer's Kalman filter) hold only inputs (weights, levels, times, limits and hand gains such as a feedforward or the swing-up's energy gain): their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off), sliding mode, super-twisting; for an Observer, a Kalman filter on a model you give (for a plant the page cannot see), a Luenberger observer and finite differences. The sliding modes read the measured rate on input 3. Try <b>DC motor, sliding mode</b>: its XY view is the phase portrait, and the line's slope λ sets how the error decays.</p>
+<p>Variants <b>from the plant</b> (LQR, PI from the plant, PID + feedforward from the plant, swing-up with an LQR catch, the planned swing-up, and an Observer's Kalman filter) hold only inputs (weights, levels, times, limits and hand gains such as a feedforward or the swing-up's energy gain): their numbers are computed in the page from the plant as it is wired, every time it changes. The <b>Computed</b> box shows what was computed, from which plant, and why a design was refused (the block then puts out u = 0). A plan takes a few seconds and is made in the background: until it is ready the block puts out u = 0, or runs its previous plan, and the box shows the progress, with <b>Cancel</b>; the display then takes the new run from its start. <b>Copy as numbers</b> turns the numbers into a hand variant, which no longer follows the plant. Variants <b>by hand</b>: PID, state feedback, gain-scheduled PI, energy swing-up, relay (on/off), sliding mode, super-twisting; for an Observer, a Kalman filter on a model you give (for a plant the page cannot see), a Luenberger observer and finite differences. The sliding modes read the measured rate on input 3. A Controller with <b>lanes</b> runs one law per element of its vector inputs (the PUMA's six axis loops), each lane's numbers computed for that lane; its <b>ff</b> input adds a feedforward (the torque the arm's model says the motion takes) inside the limits. <b>Speed PI from the plant</b> puts each lane's speed loop at a bandwidth ω you choose. Try <b>DC motor, sliding mode</b>: its XY view is the phase portrait, and the line's slope λ sets how the error decays.</p>
 <h3 class="label">Auto-tune</h3>
 <p>Improves a Controller block's running variant by simulation, into a new variant (the original stays to compare). <b>Iterate</b> runs the loop again and again, keeping gains that lower the cost (IAE, ITAE or ISE of r − y, plus effort and overshoot beyond a bound): watch each improvement on the display and the cost fall in the plot. <b>Relay</b> makes the loop oscillate to find its ultimate gain and period, then applies a rule (Ziegler–Nichols, Tyreus–Luyben, no overshoot). <b>Step response</b> fits a lag and a dead time and tunes a PI by SIMC. Every run the tuner tries sweeps across the display at the header's <b>Speed</b> and lasts its own length, one period of the input, whatever the screen shows (a 5 s run takes 5 s at 1×, half a second at 10×); at ∞ it computes as fast as it can and shows each improvement. The scope's Stop stops the tuning too. One <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes a whole run. Try it on <b>Oven, badly tuned</b>. A relay or step result that scores worse than what runs, or that is unstable where the run starts, is added but does not run. A variant from the plant is tuned as its Copy as numbers twin, from the numbers its design computes now, and the result is a hand variant beside it; a planned swing-up has no gains to tune (change its inputs in the Controller tab).</p>
 <h3 class="label">Analysis</h3>
@@ -798,7 +803,7 @@ try { markLimited(window); } catch { }
 <p>Nothing runs by itself. Offline the scope stands still and says OFFLINE. Connect opens the link and reads the plant's ports; the plant stays stopped. <b>Run</b> starts the plant and the sweep: first every reference moves to its waveform's first value at no more than 10 % of its full scale per second (the status line counts down), then the loop runs. Every channel spans its signal's full scale, for orientation. <b>Stop</b> stops both; <b>Single</b> runs one sweep and stops the plant (pressed while running, the sweep under way finishes first). <b>Hold</b> (<kbd>H</kbd>) freezes the screen while the plant runs on. Tune the controller meanwhile: a parameter takes effect at the next sample. A variant from the plant does not run against an External plant (the page has no model of a plant outside it): it puts out u = 0 and says why; a Kalman filter on a model you give does run.</p>
 <p><b>E-STOP</b> (the red key in the header, or <kbd>E</kbd>), <b>STOP</b> in the plant's window, or 10 silent cycles on either side stop it (safe inputs) until <b>Reset</b>: a STOP pressed at the plant is reset at the plant, the page's E-STOP on the page. The plant tells the page when it stops or starts at its own keys, and the page follows at once. In <b>reference mode</b> (<b>HIL: an external plant, reference mode</b>, with the plant started as <code>sh runme.sh --mode reference</code>) the plant runs its model's own controller and the page sends the references: the page's controllers and Auto-tune are not in the loop. With <code>--dyno</code> the plant also offers its model's disturbances as inputs. <b>Rec</b> keeps the last minutes of every live signal (click the length to change it); Save ▾ › Live record writes them. <b>Live settings</b> in the Plant tab set the ramp-in and the references' full scales, saved with the system.</p>
 <h3 class="label">System library</h3>
-<p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another. Each card says in a few words what the system is and what to try; <b>Details</b> opens its full description, which the Plant tab keeps under <b>About this system</b> once it is loaded.</p>
+<p>Complete example systems, from a mass–spring–damper to a triple pendulum and a six-axis robot arm, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another. Each card says in a few words what the system is and what to try; <b>Details</b> opens its full description, which the Plant tab keeps under <b>About this system</b> once it is loaded.</p>
 <h3 class="label">Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
 <p>Shown in a limited environment, such as a file preview that runs the page in a sandbox, a warning below the header stays, says what does not work there, and what to do: download the file and open it in your browser.</p>
@@ -6862,6 +6867,36 @@ function flattenVectors(diagram, opts) {
   if (diagram.scalar || !needsPass(diagram)) return diagram;
   const hit = flatCache.get(diagram);
   if (hit) return hit;
+  const { W, levels, keyOf, childOf, where } = widthPass(diagram, opts);
+  for (const lv of levels) {
+    for (const [to, from] of lv.into) {
+      const [tid, tp] = to.split(':'), [fid, fp] = from.split(':');
+      const tw = W.get(keyOf(lv, tid)).ins[Number(tp)], fw = W.get(keyOf(lv, fid)).outs[Number(fp)];
+      if (fw !== tw && fw !== 1) throw new Error(`${where(lv, lv.byId[tid])}: input ${Number(tp) + 1} takes ${tw} element${tw === 1 ? '' : 's'} but ${where(lv, lv.byId[fid])} gives ${fw}`);
+    }
+  }
+  const out = expandLevel(levels[0], { W, keyOf, childOf, opts, levels }).diagram;
+  if (diagram.robots) out.robots = diagram.robots;
+  out.scalar = true;   
+  flatCache.set(diagram, out);
+  return out;
+}
+
+const widthCache = new WeakMap();
+function wireWidths(diagram, path = [], opts) {
+  let level = diagram;
+  for (const id of path) level = level.blocks.find((b) => b.id === id)?.diagram ?? level;
+  if (diagram.scalar || !needsPass(diagram)) return level.wires.map(() => 1);
+  let pass = widthCache.get(diagram);
+  if (!pass) { pass = widthPass(diagram, opts); widthCache.set(diagram, pass); }
+  const lv = pass.levels.find((l) => l.d === level);
+  return level.wires.map((w) => {
+    const [fid, fp = 0] = w.from.split(':');
+    return pass.W.get(pass.keyOf(lv, fid))?.outs[Number(fp)] ?? 1;
+  });
+}
+
+function widthPass(diagram, opts) {
   const parsed = robotsOf(diagram.robots);
   const robot = (name) => {
     const r = parsed[name];
@@ -6932,18 +6967,7 @@ function flattenVectors(diagram, opts) {
   }
   const open = units.filter((u) => !done.has(u.key));
   if (open.length) throw new Error(`the width of ${open.slice(0, 4).map((u) => where(u.lv, u.b)).join(', ')} cannot be told: a loop needs a block with state whose width is declared (an Integrator's x0 or width)`);
-  for (const lv of levels) {
-    for (const [to, from] of lv.into) {
-      const [tid, tp] = to.split(':'), [fid, fp] = from.split(':');
-      const tw = W.get(keyOf(lv, tid)).ins[Number(tp)], fw = W.get(keyOf(lv, fid)).outs[Number(fp)];
-      if (fw !== tw && fw !== 1) throw new Error(`${where(lv, lv.byId[tid])}: input ${Number(tp) + 1} takes ${tw} element${tw === 1 ? '' : 's'} but ${where(lv, lv.byId[fid])} gives ${fw}`);
-    }
-  }
-  const out = expandLevel(levels[0], { W, keyOf, childOf, opts, levels }).diagram;
-  if (diagram.robots) out.robots = diagram.robots;
-  out.scalar = true;   
-  flatCache.set(diagram, out);
-  return out;
+  return { W, levels, keyOf, childOf, where };
 }
 
 
@@ -7083,7 +7107,7 @@ function elementCopy(b, id, k, n, label) {
   return copy;
 }
 
-return { parseSizes, parseValue, numOrList, at, widthOf, VECTOR_ELEMENTS, vectorExtras, robotsOf, normalizeRobots, mimoContext, makeMimo, flattenVectors };
+return { parseSizes, parseValue, numOrList, at, widthOf, VECTOR_ELEMENTS, vectorExtras, robotsOf, normalizeRobots, mimoContext, makeMimo, flattenVectors, wireWidths };
 })();
 // ---- core/diagram.js
 __mods['core/diagram.js'] = (() => {
@@ -7197,7 +7221,7 @@ const ELEMENTS = {
     label: 'Observer', group: 'Control', formula: 'x̂ = O(u, y)',
     params: [num('inputs', 'Inputs (u, y…)', 2, { min: 2, int: true }), num('outputs', 'Estimates', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.001, { unit: 's', min: 1e-4 })],
     ports: (p) => [p.inputs, p.outputs],
-    outputs: (p) => Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`),
+    outputs: (p) => (p.groups ? ['ŷ', 'ẏ'].flatMap((c) => Array.from({ length: p.groups[1] }, (_, i) => `${c}${i + 1}`)) : Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`)),
   },
   external: EXTERNAL_BLOCK,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
@@ -7804,6 +7828,8 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
     job.end();
   }
+  const looked = new Map();
+  for (const nd of ctrls) if (nd.observer && nd.variant?.type === 'difference') { const idx = differenceSees(nd); if (idx) looked.set(nd.idPath, idx); }
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
   let h = 0;
   let left = false;
@@ -7883,7 +7909,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
 
   const probeSrc = probeList.map(([, k]) => origin(k)), outSrc = outNode >= 0 ? origin(outNode) : -1;
   const self = {
-    n, bound, warnings, minTs, sampleTimes, states, designs, validity,
+    n, bound, warnings, minTs, sampleTimes, states, designs, validity, looked,
     setStep(step) { h = step; },
     sample(t, X, o, u) {
       const since = [];
@@ -8055,7 +8081,9 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (nd.kind === 'ctrl' && !nd.observer) {
         const v = Number(held[nd.idPath] ?? 0);
         setU.push([i, v]);
-        notes.push(`controller '${nd.name}' holds its output at ${fmt(v)}: the design sees its loop open`);
+        const lanes = blk.lanes > 1 && nd.lanes > 1 && nd.idPath.replace(/\[\d+\]$/, '') === blk.idPath.replace(/\[\d+\]$/, '');
+        if (!lanes) notes.push(`controller '${nd.name}' holds its output at ${fmt(v)}: the design sees its loop open`);
+        else if (!notes.some((x) => x.startsWith('the other lanes'))) notes.push(`the other lanes of '${blk.name.replace(/\[\d+\]$/, '')}' hold their outputs: each lane is designed on its own`);
       }
       if (nd.kind === 'src') setSrc.push([i, nd.signal === null ? 0 : Number(at.sources?.[nd.signal] ?? 0)]);
       if (nd.kind === 'tap' && nodes[nd.parent].kind === 'ctrl') {
@@ -9591,6 +9619,7 @@ const { normalizeDiagram, diagramNames, compileDiagram } = __mods['core/diagram.
 const { normalizeView } = __mods['core/views.js'];
 const { DesignError, parseOp, operatingPoint, linearize } = __mods['core/linearize.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
+const { inv, mul } = __mods['core/linalg.js'];
 const { parseSpeed, speedToJson } = __mods['core/speed.js'];
 const FORMAT = 'loop-tuner/2';
 const PALETTE_SIZE = 8;
@@ -9865,10 +9894,11 @@ function blockModel(project, idPath, at, { designs, limits } = {}) {
   if (plant?.type !== 'diagram') throw new DesignError('no-diagram', 'the plant is not a block diagram, so no block sees a plant in it', 'build the plant in the Plant tab, or load a system from the System library');
   const diagram = plant.diagram, id = Array.isArray(idPath) ? idPath.join('/') : String(idPath);
   const parts = id.split('/');
+  const [, last, lane] = parts.at(-1).match(/^(.*?)(?:\[(\d+)\])?$/);
   const level = parts.slice(0, -1).reduce((d, x) => d?.blocks.find((b) => b.id === x && b.type === 'subsystem')?.diagram, diagram);
-  const block = level?.blocks.find((b) => b.id === parts.at(-1));
-  if (!block || (block.type !== 'controller' && block.type !== 'observer')) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl');
-  const op = parseOp(at);
+  const block = level?.blocks.find((b) => b.id === last);
+  if (!block || (block.type !== 'controller' && block.type !== 'observer') || (lane && !(lane >= 1 && lane <= (block.params.lanes ?? 1) && block.params.lanes > 1))) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl, or a lane as robot/servos[2]');
+  const op = lane && parseOp(at).kind === 'initial' ? parseOp({ t: 0 }) : parseOp(at);
   const store = designs;
   let statuses, snap = null;
   if (op.kind === 't') {
@@ -9878,14 +9908,17 @@ function blockModel(project, idPath, at, { designs, limits } = {}) {
     if (!snap) throw new DesignError('diverged', `the run diverges before t = ${op.t} s: there is no state to linearise at`, 'pick an earlier time, or steady the loop first');
     statuses = run.info.designs;
   } else statuses = compileDiagram(diagram, 'plant', { standalone: true, sources: {}, designs: store }).designs;
-  const seeThrough = new Map();
-  for (const s of statuses) if (s.path !== id && s.values?.stateIndex) seeThrough.set(s.path, s.values.stateIndex);
   const el = compileDiagram(structuredClone(diagram), 'plant', { mode: 'model' });
-  const model = el.seen(id, { ...(seeThrough.size ? { seeThrough } : {}), ...(snap ? { X: snap.X, held: snap.held, sources: snap.sources, t: snap.t } : {}) });
+  const seeThrough = new Map(el.looked ?? []);
+  for (const s of statuses) if (s.path !== id && s.values?.stateIndex) seeThrough.set(s.path, s.values.stateIndex);
+  const seenAt = { ...(seeThrough.size ? { seeThrough } : {}), ...(snap ? { X: snap.X, held: snap.held, sources: snap.sources, t: snap.t } : {}) };
+  const model = el.seen(id, seenAt);
   const v = block.variants?.[block.variant ?? 0]?.params ?? {};
   const lim = limits ?? { umin: v.umin ?? -Infinity, umax: v.umax ?? Infinity };
   const pt = snap ? operatingPoint(model, { kind: 't', t: snap.t, u: block.type === 'observer' ? snap.inputs[id]?.[0] ?? 0 : snap.held[id] ?? 0 }, lim) : operatingPoint(model, op, lim);
-  return { model, pt, statuses, block, id, snap };
+  const laneId = (j) => id.replace(/\[\d+\]$/, `[${j}]`);
+  const laneLin = (j) => { const m = el.seen(laneId(j), seenAt); return linearize(m, operatingPoint(m, { kind: 't', t: snap?.t ?? 0, u: Number(snap?.held[laneId(j)] ?? 0) })); };
+  return { model, pt, statuses, block, id, snap, lane: Number(lane) || 0, laneId, laneLin };
 }
 
 function linearizeBlock(project, idPath, at = 'origin', opts = {}) {
@@ -9894,33 +9927,83 @@ function linearizeBlock(project, idPath, at = 'origin', opts = {}) {
 }
 
 function loopModel(project, idPath, at = 'origin', { designs } = {}) {
-  const { model, pt, statuses, block, id, snap } = blockModel(project, idPath, at, { designs });
+  const { model, pt, statuses, block, id, snap, lane, laneId, laneLin } = blockModel(project, idPath, at, { designs });
   if (block.type !== 'controller') throw new DesignError('not-a-controller', `'${block.name ?? block.id}' is an Observer: a loop is cut at a Controller's output`, 'pick the Controller that drives the plant');
-  const plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
+  let plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
   if (plant.kinks.length) throw new DesignError('kink', `the plant has a kink at ${plant.op.label}: ${plant.kinks[0]}; a linear loop there would show the slope of neither side`, 'pick Start or Scope time (a state of the run), or a level away from the kink');
   const variant = block.variants[block.variant ?? 0], def = CONTROLLERS[variant.type], Ts = block.params.Ts;
-  let values = null;
-  if (def.designed) {
-    const st = statuses.find((s) => s.path === id);
-    values = st?.values ?? null;
-    if (!values) {
-      const why = st?.error ? `: ${st.error.message}` : st?.status === 'pending' || st?.status === 'cancelled' ? ': its plan is not made yet' : '';
-      throw new DesignError('no-design', `${variant.name} has no design to analyse${why}`, st?.error?.hint || 'see its Computed box in the Controller tab');
+  const t = snap ? snap.t : parseOp(at).kind === 'initial' ? 0 : undefined;
+  function lawOf(p, lin) {
+    let values = null;
+    if (def.designed) {
+      const st = statuses.find((s) => s.path === p);
+      values = st?.values ?? null;
+      if (!values) {
+        const why = st?.error ? `: ${st.error.message}` : st?.status === 'pending' || st?.status === 'cancelled' ? ': its plan is not made yet' : '';
+        throw new DesignError('no-design', `${variant.name} has no design to analyse${why}`, st?.error?.hint || 'see its Computed box in the Controller tab');
+      }
+    }
+    if (!def.linear) throw new DesignError('no-linear', `${def.label} has no linear model`, 'analyse another variant');
+    try { return def.linear(variant.params, Ts, { y: Array.from(lin.op.y), ...(t !== undefined ? { t } : {}) }, values); } catch (err) {
+      throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'pick an operating point where the law is linear, such as at rest');
     }
   }
-  if (!def.linear) throw new DesignError('no-linear', `${def.label} has no linear model`, 'analyse another variant');
-  const t = snap ? snap.t : parseOp(at).kind === 'initial' ? 0 : undefined;
-  let ctrl;
-  try { ctrl = def.linear(variant.params, Ts, { y: Array.from(plant.op.y), ...(t !== undefined ? { t } : {}) }, values); } catch (err) {
-    throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'pick an operating point where the law is linear, such as at rest');
-  }
+  const ctrl = lawOf(id, plant);
   const warnings = [...plant.warnings];
   if (ctrl.note) warnings.push(ctrl.note);
-  const { umin = -Infinity, umax = Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
+  if (lane) {
+    const others = [];
+    for (let j = 1; j <= block.params.lanes; j++) if (j !== lane) { const lin = laneLin(j); others.push({ lin, ctrl: lawOf(laneId(j), lin) }); }
+    const closed = closeLanes(plant, others, Ts);
+    if (closed) {
+      plant = closed;
+      warnings.splice(0, warnings.length, ...warnings.filter((w) => !w.startsWith('the other lanes')));
+      warnings.push(`the other lanes of '${block.name ?? block.id}' run their law round the plant (taken to continuous time); r of every lane is held`);
+    }
+  }
+  const laneLim = Array.isArray(variant.params.limit) ? (variant.params.limit[(lane || 1) - 1] ?? variant.params.limit[0]) || Infinity : null;
+  const { umin = laneLim === null ? -Infinity : -laneLim, umax = laneLim ?? Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
   const atLimit = u >= umax - tol || u <= umin + tol;
   if (atLimit) warnings.push(`${plant.input.label} = ${fmt(u)} is at its limit (${fmt(umin)} to ${fmt(umax)}) there: the controller saturates, and the linear loop does not hold`);
   for (const obs of model.through) warnings.push(`the estimates of '${obs}' are read as the states they stand for: the filter's own dynamics are not in this loop`);
   return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
+}
+
+function closeLanes(plant, others, Ts) {
+  const n = plant.A.length, names = plant.states.map((s) => s.label).join('|');
+  if (others.some(({ lin }) => lin.A.length !== n || lin.states.map((s) => s.label).join('|') !== names || lin.D.flat().some((v) => v !== 0) || (lin.delay ?? []).some((d) => d > 0))) return null;
+  const parts = others.map(({ lin, ctrl }) => {
+    const m = lin.C.length, nc = ctrl.A.length;
+    const cols = (row) => Array.from({ length: m }, (_, k) => row[1 + k] ?? 0);
+    if (!nc) return { lin, nc, A: [], B: [], C: [], D: cols(ctrl.D[0]) };
+    const P = ctrl.A.map((r, i) => r.map((v, j) => v + (i === j ? 1 : 0)));
+    const Pi = inv(P);
+    const A = mul(Pi, ctrl.A.map((r, i) => r.map((v, j) => v - (i === j ? 1 : 0)))).map((r) => r.map((v) => (2 / Ts) * v));
+    const B = mul(Pi, ctrl.B.map(cols));
+    const H = ctrl.C[0];
+    const C = A.map((_, j) => (2 / Ts) * H[j] - H.reduce((s, h, i) => s + h * A[i][j], 0));
+    const D = cols(ctrl.D[0]).map((d, k) => d - H.reduce((s, h, i) => s + h * B[i][k], 0));
+    return { lin, nc, A, B, C, D };
+  });
+  const N = n + parts.reduce((s, p) => s + p.nc, 0);
+  const A = Array.from({ length: N }, (_, i) => (i < n ? [...plant.A[i], ...new Array(N - n).fill(0)] : new Array(N).fill(0)));
+  let o = n;
+  for (const p of parts) {
+    const Bu = p.lin.B.map((r) => r[0]), Cy = p.lin.C;
+    const dx = Array.from({ length: n }, (_, c) => p.D.reduce((s, d, k) => s + d * Cy[k][c], 0));
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < n; c++) A[i][c] += Bu[i] * dx[c];
+      for (let c = 0; c < p.nc; c++) A[i][o + c] += Bu[i] * p.C[c];
+    }
+    for (let r = 0; r < p.nc; r++) {
+      for (let c = 0; c < n; c++) A[o + r][c] = p.B[r].reduce((s, b, k) => s + b * Cy[k][c], 0);
+      for (let c = 0; c < p.nc; c++) A[o + r][o + c] = p.A[r][c];
+    }
+    o += p.nc;
+  }
+  const pad = (row) => [...row, ...new Array(N - n).fill(0)];
+  const lawStates = Array.from({ length: N - n }, (_, i) => ({ label: `other lanes' law ${i + 1}`, name: `x${i + 1}`, unit: '', angle: false, index: n + i }));
+  return { ...plant, A, B: plant.B.concat(Array.from({ length: N - n }, () => [0])), C: plant.C.map(pad), n: N, states: [...plant.states, ...lawStates] };
 }
 
 function nextColor(candidates) {
@@ -17589,33 +17672,147 @@ function createView3d(container, opts = {}) {
 
 return { orbitBasis, eyeOf, dirAngles, VIEWS, VIEW_KEYS, viewAngles, orbitBy, pixelSize, panBy, zoomAt, FLY, flyBy, fitDistance, easeAngles, placeCamera, CUBE_FACES, cubeRegions, cubeToScreen, cubeHit, cubeCell, parseColor, niceStep, pathPoints, thinPath, ribbonArrays, onDash, FADE_BANDS, bandAlpha, TOON_RAMP, LIGHT, toonBand, toonRamp, OUTLINE, EDGE_ANGLE, PART_ROLES, partRole, smoothNormals, hardEdgePoints, meshEdges, setMatrix, shapeGeometry, buildRobot, styleRobot, applyPoses, pickLink, robotBounds, projector, createView3d };
 })();
+// ---- ui/robotscene.js
+__mods['ui/robotscene.js'] = (() => {
+
+const { parseUrdf } = __mods['core/urdf.js'];
+const { createRbd } = __mods['core/rbd.js'];
+const { createView3d } = __mods['ui/view3d.js'];
+const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function pathSamples(data, p) {
+  const xs = data.signals[p.x], ys = data.signals[p.y], zs = data.signals[p.z];
+  if (!xs || !ys || !zs) return null;
+  const points = [], times = [];
+  for (let i = 0; i < data.t.length; i++) {
+    if (!Number.isFinite(xs[i]) || !Number.isFinite(ys[i]) || !Number.isFinite(zs[i])) continue;
+    points.push(xs[i], ys[i], zs[i]);
+    times.push(data.t[i]);
+  }
+  return { points, times };
+}
+
+function createRobotScene(host, app) {
+  let spec = null, view = null, model = null, rbd = null, raf = 0, drawn = 0;
+  let jointNames = [], last = { data: null, k: -1 }, samples = [], rec = { data: null, k: null };
+
+  const jointSignal = (i) => (typeof spec.joints === 'string' ? `${spec.joints}${i + 1}` : spec.joints[model.joints[i].name] ?? spec.joints[`j${i + 1}`]);
+  const valueAt = (name) => { const v = rec.data?.signals[name]; return v && rec.k !== null ? v[rec.k] : undefined; };
+
+  function linkInfo(name) {
+    const j = model.joints.findIndex((x) => x.child === name);
+    if (j < 0) return '';
+    const q = valueAt(jointNames[j]), tau = valueAt(`tau${j + 1}`);
+    return [Number.isFinite(q) ? `${jointNames[j]} ${(q * 180 / Math.PI).toFixed(1)}°` : '', Number.isFinite(tau) ? `τ${j + 1} ${tau.toFixed(2)} N·m` : ''].filter(Boolean).join(', ');
+  }
+
+  function update() {
+    rec = app.sceneRecord();
+    const { data, k } = rec;
+    if (data === last.data && k === last.k) return;
+    const fresh = data !== last.data;
+    last = { data, k };
+    const q = jointNames.map((n) => { const v = valueAt(n); return Number.isFinite(v) ? v : 0; });
+    const poses = rbd.linkPoses(q);
+    view.setPoses(poses);
+    if (fresh) samples = spec.paths.map((p) => (data ? pathSamples(data, p) : null));
+    const now = data ? data.t[k] : 0;
+    spec.paths.forEach((p, i) => {
+      const s = samples[i];
+      if (!s?.points.length) { view.setPath(`path${i}`, null); return; }
+      if (p.span === 'all') { if (fresh) view.setPath(`path${i}`, { points: s.points, style: p.style }); return; }
+      if (p.style === 'actual') view.setPath(`path${i}`, { points: s.points, times: s.times, now, style: 'actual', ...(p.fade ? { fade: p.fade } : {}) });
+      else { let n = 0; while (n < s.times.length && s.times[n] <= now) n++; view.setPath(`path${i}`, n > 1 ? { points: s.points.slice(0, 3 * n), style: p.style } : null); }
+    });
+    const tool = poses[model.links[model.links.length - 1].name];
+    const frames = [{ label: 'base', R: IDENTITY, p: [0, 0, 0] }];
+    if (tool) frames.push({ label: 'tool', R: tool.R, p: tool.p });
+    const ref = spec.paths.findIndex((p) => p.style === 'reference');
+    if (samples[ref]?.points.length) frames.push({ label: 'circle', R: IDENTITY, p: samples[ref].points.slice(0, 3) });
+    view.setFrames(frames);
+  }
+
+  function draw(t = 0) {
+    raf = 0;
+    if (!view) return;
+    raf = requestAnimationFrame(draw);
+    if (host.hidden) return;
+    const every = app.frameMs?.() ?? 0;
+    if (every && t - drawn < every) return;
+    drawn = t;
+    update();
+  }
+
+  function stop() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    view?.destroy();
+    view = null; spec = null; last = { data: null, k: -1 }; samples = [];
+    host.replaceChildren();
+  }
+
+  return {
+    show(v, robots) {
+      stop();
+      try {
+        const urdf = v.urdf ?? robots?.[v.robot]?.urdf;
+        if (!urdf) throw new Error(`no robot "${v.robot}" in the diagram's robots`);
+        model = parseUrdf(urdf);
+        rbd = createRbd(model);
+        spec = v;
+        jointNames = model.joints.map((_, i) => jointSignal(i));
+        view = createView3d(host, { links: model.links, joints: model.joints, camera: v.camera, linkInfo });
+      } catch (err) {
+        stop();
+        host.innerHTML = `<p class="note text-bad">View error: ${esc(err.message)}</p>`;
+        return err.message;
+      }
+      update();
+      raf = requestAnimationFrame(draw);
+      return '';
+    },
+    stop,
+    get view() { return view; },
+  };
+}
+
+return { createRobotScene };
+})();
 // ---- ui/plant.js
 __mods['ui/plant.js'] = (() => {
 
+const { wireWidths } = __mods['core/vectors.js'];
 const { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames, maskValues, formulaIn } = __mods['core/diagram.js'];
 const { isFormula } = __mods['core/formula.js'];
 const { SYSTEM_LIBRARY } = __mods['core/systems.js'];
 const { num, parseSI } = __mods['ui/units.js'];
 const { createScene } = __mods['ui/scene.js'];
+const { createRobotScene } = __mods['ui/robotscene.js'];
 const { findExternal, interfaceOf, EXTERNAL_BLOCK } = __mods['core/hil.js'];
 const NS = 'http://www.w3.org/2000/svg';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const GROUPS = [
-  ['Signals', ['source', 'sink', 'terminator']],
+  ['Signals', ['source', 'sink', 'terminator', 'mux', 'demux', 'constant']],
   ['Control', ['controller']],
-  ['Math', ['gain', 'sum', 'switch', 'fcn']],
+  ['Math', ['gain', 'sum', 'switch', 'fcn', 'matrixGain', 'product', 'solve', 'norm']],
   ['Dynamics', ['integrator', 'delay', 'firstOrder', 'secondOrder', 'tf']],
   ['Models', ['fopdt', 'lagChain', 'integratorLag', 'doubleIntegrator', 'inverseResponse']],
   ['Sensors', ['quantizer', 'noise']],
   ['Physics', ['cartPole', 'pendulumCart', 'conicalTank']],
   ['Live', ['external']],  
-  ['Nonlinear', ['saturation']],
+  ['Nonlinear', ['saturation', 'friction']],
+  ['Robot', ['forwardKinematics', 'jacobian', 'jdotqd', 'massMatrix', 'biasForces', 'inverseDynamics', 'torqueSplit', 'dampedInverse', 'orientationError', 'frameTransform', 'jointLimits']],
   ['Structure', ['subsystem', 'inport', 'outport']],
 ];
 const FOLD_KEY = 'loop-tuner:library-folded';
 const LAYOUT_KEY = 'loop-tuner:plant-layout';
 const loadJson = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } };
 const saveJson = (key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch {   } };
+
+const isVector = (def) => typeof def.widths === 'function';
+const inputNamesOf = (def, p) => def.inputNames?.(p) ?? (isVector(def) && typeof def.inputs === 'function' ? def.inputs(p) : []);
+const lawOf = (def, p) => (def.group === 'Robot' ? (def.summary ? def.summary(p) : def.formula) : null);
 
 function size(b) {
   if (b.type === 'sum') return [34, 34];
@@ -17627,12 +17824,17 @@ function size(b) {
   if (b.type === 'external') return [150, 18 * Math.max(...blockPorts(b)) + 32];  
   if (b.type === 'switch') { const n = b.params.inputs; return [56, Math.max(40, 18 * n + 8)]; }
   if (b.type === 'fcn') { const [li, lo] = labelRoom(b); return [130 + li + lo, Math.max(48, 18 * Math.max(...blockPorts(b)) + 12)]; }
+  const def = diagramBlockDef(b.type);
+  if (isVector(def)) {
+    const [li, lo] = labelRoom(b), law = lawOf(def, b.params);
+    return [Math.min(260, Math.max(130, 22 + 6.4 * (law?.length ?? 0))) + li + lo, Math.max(48, 18 * Math.max(...blockPorts(b)) + 12)];
+  }
   const [ni, no] = blockPorts(b);
   return [130, Math.max(48, 18 * Math.max(ni, no) + 12)];
 }
 function labelRoom(b) {
   const w = (names) => (names.length ? 10 + 6.2 * Math.max(...names.map((n) => n.length)) : 0);
-  const def = diagramBlockDef(b.type), ins = w(def.inputNames?.(b.params) ?? []), outs = w(outputNames(def, b.params));
+  const def = diagramBlockDef(b.type), ins = w(inputNamesOf(def, b.params)), outs = w(outputNames(def, b.params));
   return b.flip ? [outs, ins] : [ins, outs];
 }
 function geom(b) {
@@ -17673,6 +17875,7 @@ function createPlantEditor(root, app) {
         </div>
         <div class="pview" id="pl-view" tabindex="0" aria-label="Diagram canvas: drag blocks in from the library; drag from an output to an input to wire; Shift-drag to select; double-click a subsystem to open it"></div>
         <div class="pview pscenebox" id="pl-scene" hidden></div>
+        <div class="pview pscenebox" id="pl-3d" hidden></div>
         <div class="pview pscenebox" id="pl-iface" hidden></div>
       </section>
       <section class="pprops" aria-label="Block parameters"><div id="pl-props"></div></section>
@@ -17693,6 +17896,7 @@ function createPlantEditor(root, app) {
   let rep = -1;                  
   const folded = new Set(loadJson(FOLD_KEY, ['Models', 'Sensors', 'Physics', 'Nonlinear', 'Structure']));
   const scene = createScene($('#pl-scene'), app);
+  const robotScene = createRobotScene($('#pl-3d'), app);
 
   const layout = loadJson(LAYOUT_KEY, {});
   const plantEl = root.querySelector('.plant');
@@ -17862,11 +18066,11 @@ function createPlantEditor(root, app) {
         text = `<text class="bt" x="${cx}" y="${cy + 4.5}" text-anchor="middle">${esc(title)}</text>`;
       } else {
         const sub = b.type === 'subsystem' ? `${b.diagram.blocks.length} blocks · open ↵` : summary(b);
-        const left = b.x + 9 + (b.type === 'fcn' ? labelRoom(b)[0] : 0);
+        const left = b.x + 9 + (b.type === 'fcn' || isVector(def) ? labelRoom(b)[0] : 0);
         text = `<text class="bt" x="${left}" y="${b.y + 18}">${esc(title)}</text><text class="bp" x="${left}" y="${b.y + g.h - 10}">${esc(sub)}</text>`;
       }
     }
-    const outNames = outputNames(def, b.params), inNames = def.inputNames?.(b.params) ?? [];
+    const outNames = outputNames(def, b.params), inNames = inputNamesOf(def, b.params);
     const ports = g.outs.map((p, i) => (outNames[i] ? `<text class="pn" x="${p.x + (b.flip ? 8 : -8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'start' : 'end'}">${esc(outNames[i])}</text>` : '')).join('')
       + g.ins.map((p, i) => (inNames[i] ? `<text class="pn" x="${p.x + (b.flip ? -8 : 8)}" y="${p.y + 3.5}" text-anchor="${b.flip ? 'end' : 'start'}">${esc(inNames[i])}</text>` : '')).join('')
       + g.ins.map((p, i) => `<circle class="port in" data-port="in" data-block="${b.id}" data-k="${i}" cx="${p.x}" cy="${p.y}" r="4.5"/>`).join('')
@@ -17884,8 +18088,8 @@ function createPlantEditor(root, app) {
 
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? b.params.eqs.split('\n')[0] : b.type === 'integrator' ? integratorFace(b.params) : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector' && b.params[p.key] !== null).slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
-    const room = Math.floor((size(b)[0] - 18 - (b.type === 'fcn' ? labelRoom(b).reduce((a, x) => a + x, 0) : def.outputs ? 16 : 0)) / 6.4);
+    const text = lawOf(def, b.params) ?? (def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? b.params.eqs.split('\n')[0] : b.type === 'integrator' ? integratorFace(b.params) : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector' && b.params[p.key] !== null).slice(0, 3).map((p) => { const v = b.params[p.key]; return `${p.label} ${typeof v === 'number' ? num(v, 3) : Array.isArray(v) ? JSON.stringify(v) : v}`; }).join(' · ') || def.formula);
+    const room = Math.floor((size(b)[0] - 18 - (b.type === 'fcn' || isVector(def) ? labelRoom(b).reduce((a, x) => a + x, 0) : def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
 
@@ -17903,12 +18107,14 @@ function createPlantEditor(root, app) {
 
   function showRep(i) {
     rep = i;
-    const inView = rep >= 0;
+    const v = rep >= 0 ? plantViews()[rep] : null, in3d = v?.kind === '3d';
     viewEl.hidden = rep !== -1;
-    $('#pl-scene').hidden = !inView;
+    $('#pl-scene').hidden = !v || in3d;
+    $('#pl-3d').hidden = !in3d;
     $('#pl-iface').hidden = rep !== IFACE;
     for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = rep !== -1;
-    if (inView) scene.show(plantViews()[rep]); else scene.stop();
+    if (v && !in3d) scene.show(v); else scene.stop();
+    if (in3d) robotScene.show(v, rootDiagram().robots); else robotScene.stop();
     render();
   }
 
@@ -17928,8 +18134,8 @@ function createPlantEditor(root, app) {
     const v = plantViews()[rep];
     const used = [...new Set((JSON.stringify(v).match(/[A-Za-z_]\w*/g) ?? []).filter((n) => app.signalNames().includes(n)))];
     $('#pl-props').innerHTML = `<h3 class="label">${esc(v.name)}</h3>
-      <p class="note">A ${v.kind === 'svg' ? 'SVG drawing' : '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}.</p>
-      ${about()}${more('view', 'Details', `<p class="note">It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>
+      <p class="note">A ${{ svg: 'SVG drawing', '3d': '3D view' }[v.kind] ?? '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}.</p>
+      ${about()}${more('view', 'Details', `<p class="note">It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>${v.kind === '3d' ? `<p class="note">Drag to orbit, right-drag or Shift-drag to pan, the wheel zooms; the cube and the keys on the view pick a side. Hover a link for its joint's angle and torque.</p>` : ''}
       <p class="note">Views are set in the plant's JSON (<code>system.plant.views</code>); the format is in design/output/plant-views.md.</p>`)}`;
     keepOpen();
   }
@@ -17961,12 +18167,18 @@ function createPlantEditor(root, app) {
     }
     const v = view();
     const byId = Object.fromEntries(d.blocks.map((b) => [b.id, b]));
+    let widths = [];
+    try { widths = wireWidths(rootDiagram(), path, { ports: blockPorts }); } catch {   }
     const wires = d.wires.map((w, i) => {
       const f = parseEnd(w.from), t = parseEnd(w.to);
       const fb = byId[f.id], tb = byId[t.id];
       const p = geom(fb).outs[f.port], q = geom(tb).ins[t.port];
-      const pts = route(p, q, p.dir, q.dir);
-      return `<g class="wire${i === wireSel ? ' sel' : ''}" data-wire="${i}"><path class="hit" d="${pathOf(pts)}"/><path class="line" d="${pathOf(pts)}" marker-end="url(#pl-arrow)"/></g>`;
+      const pts = route(p, q, p.dir, q.dir), dd = pathOf(pts), n = widths[i] ?? 1;
+      if (n <= 1) return `<g class="wire${i === wireSel ? ' sel' : ''}" data-wire="${i}"><path class="hit" d="${dd}"/><path class="line" d="${dd}" marker-end="url(#pl-arrow)"/></g>`;
+      let at = null;
+      for (let j = 1; j < pts.length; j++) if (pts[j].y === pts[j - 1].y && (!at || Math.abs(pts[j].x - pts[j - 1].x) > at.len)) at = { len: Math.abs(pts[j].x - pts[j - 1].x), x: (pts[j].x + pts[j - 1].x) / 2, y: pts[j].y };
+      at ??= { x: pts[0].x + 10, y: pts[0].y };
+      return `<g class="wire vec${i === wireSel ? ' sel' : ''}" data-wire="${i}"><path class="hit" d="${dd}"/><path class="line" d="${dd}"/><path class="core" d="${dd}" marker-end="url(#pl-arrow)"/><text class="wn" x="${at.x.toFixed(1)}" y="${(at.y - 5).toFixed(1)}" text-anchor="middle">${n}</text></g>`;
     }).join('');
     svg.innerHTML = `<defs><marker id="pl-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="arrowhead"/></marker></defs>
       <g transform="translate(${v.x},${v.y}) scale(${v.k})">${wires}${d.blocks.map((b) => blockSvg(b, errs)).join('')}<g id="pl-temp"></g></g>`;
@@ -17998,10 +18210,11 @@ function createPlantEditor(root, app) {
       for (const p of def.params) {
         if (p.kind === 'hidden') continue;  
         const v = b.params[p.key];
+        const kind = p.kind ?? (isVector(def) && Array.isArray(v) ? 'value' : 'number');
         const formulas = p.kind === 'vector' && Array.isArray(v) ? v.filter(isFormula) : !p.kind && isFormula(v) ? [v] : [];
-        const hint = formulas.length ? formulas.map((x) => `${x} ${valueOf(x, Array.isArray(v) ? '' : p.unit)}`).join(' · ') : p.kind === 'vector' ? 'highest power first' : p.kind === 'names' ? 'names, separated by commas' : p.kind === 'eqs' ? 'one per line: name = formula, in the inputs, the names above, the mask\'s parameters and t' : p.kind ? '' : `unit: ${p.unit ?? '1'}${p.nullable ? ` · empty: ${p.nullable}` : ''}`;
-        const text = p.kind === 'vector' || Array.isArray(v) ? v.map((x) => (isFormula(x) ? x : num(x, 6))).join(', ') : p.kind || isFormula(v) ? v : v === null ? '' : num(v, 6);
-        html += field(`p:${p.key}`, p.label, text, p.kind ?? 'number', hint);
+        const hint = formulas.length ? formulas.map((x) => `${x} ${valueOf(x, Array.isArray(v) ? '' : p.unit)}`).join(' · ') : p.kind === 'vector' ? 'highest power first' : p.kind === 'names' ? 'names, separated by commas' : p.kind === 'eqs' ? 'one per line: name = formula, in the inputs, the names above, the mask\'s parameters and t' : kind !== 'number' ? p.help ?? '' : `unit: ${p.unit ?? '1'}${p.nullable ? ` · empty: ${p.nullable}` : ''}`;
+        const text = kind === 'value' ? (Array.isArray(v) ? JSON.stringify(v).replace(/,/g, ', ') : String(v)) : p.kind === 'vector' || Array.isArray(v) ? v.map((x) => (isFormula(x) ? x : num(x, 6))).join(', ') : p.kind || isFormula(v) ? v : v === null ? '' : num(v, 6);
+        html += field(`p:${p.key}`, p.label, text, kind, hint);
       }
       if (b.mask?.length) {
         html += `</div><h3 class="label">Mask</h3><div class="pform">`;
@@ -18073,6 +18286,7 @@ function createPlantEditor(root, app) {
         const nullable = f.startsWith('p:') && diagramBlockDef(b.type).params.find((p) => p.key === f.slice(2))?.nullable;
         if (kind === 'number' && raw === '' && nullable) value = null;
         else if (kind === 'number') { value = numberOrFormula(raw); if (!valid(value)) { app.toast('Enter a number (0.5, 20m, 2k) or a formula in the mask\'s names (2*m).'); renderProps(); return; } }
+        if (kind === 'value') { const x = raw.startsWith('[') ? (() => { try { return JSON.parse(raw); } catch { return NaN; } })() : parseSI(raw); if (!(Array.isArray(x) || Number.isFinite(x))) { app.toast('Enter a number, a list [1, 2] or rows [[1, 0], [0, 1]].'); renderProps(); return; } value = x; }
         if (kind === 'vector') { value = raw.split(/[\s,;]+/).filter(Boolean).map(numberOrFormula); if (!value.length || !value.every(valid)) { app.toast('Enter numbers (or formulas) separated by commas, highest power of s first.'); renderProps(); return; } }
         edit((d) => {
           const blk = d.blocks.find((x) => x.id === b.id);
@@ -18355,12 +18569,12 @@ function createPlantEditor(root, app) {
   return {
     render() { renderLibrary(); render(); },
     shown() { renderLibrary(); if (rep !== -1) showRep(rep); else render(); if (first) { first = false; fit(); } },
-    hidden() { scene.stop(); },
+    hidden() { scene.stop(); robotScene.stop(); },
     view(name) { rep = name === 'Interface' && externalHit() ? IFACE : plantViews().findIndex((v) => v.name === name); },
     viewName() { return rep >= 0 ? plantViews()[rep]?.name ?? '' : rep === IFACE ? 'Interface' : ''; },
     fit,
     handleKey,
-    reset() { path = []; sel.clear(); wireSel = -1; first = true; if (rep !== -1) { rep = -1; scene.stop(); viewEl.hidden = false; $('#pl-scene').hidden = true; $('#pl-iface').hidden = true; for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = false; } },
+    reset() { path = []; sel.clear(); wireSel = -1; first = true; if (rep !== -1) { rep = -1; scene.stop(); robotScene.stop(); viewEl.hidden = false; $('#pl-scene').hidden = true; $('#pl-3d').hidden = true; $('#pl-iface').hidden = true; for (const id of ['#pl-crumbs', '#pl-group', '#pl-del', '#pl-fit']) $(id).hidden = false; } },
   };
 }
 
@@ -20809,15 +21023,17 @@ function startApp() {
     app.endEdit();
     autosave();
   };
-  app.sceneEnv = () => {
+  app.sceneRecord = () => {
     const data = live?.data() ?? acquire();  
     const t = display.time();
+    if (!(data?.t?.length > 1)) return { data: null, k: null, t };
+    const k = Math.max(0, Math.min(data.t.length - 1, Math.round((t - data.t[0]) / (data.t[1] - data.t[0]))));
+    return { data, k, t: data.t[k] };
+  };
+  app.sceneEnv = () => {
+    const { data, k, t } = app.sceneRecord();
     const env = { t };
-    if (data?.t?.length > 1) {
-      const k = Math.max(0, Math.min(data.t.length - 1, Math.round((t - data.t[0]) / (data.t[1] - data.t[0]))));
-      env.t = data.t[k];
-      for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
-    }
+    if (data) for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
     return env;
   };
   app.renameSink = (from, to) => {

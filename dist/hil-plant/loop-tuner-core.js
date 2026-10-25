@@ -6002,6 +6002,36 @@ function flattenVectors(diagram, opts) {
   if (diagram.scalar || !needsPass(diagram)) return diagram;
   const hit = flatCache.get(diagram);
   if (hit) return hit;
+  const { W, levels, keyOf, childOf, where } = widthPass(diagram, opts);
+  for (const lv of levels) {
+    for (const [to, from] of lv.into) {
+      const [tid, tp] = to.split(':'), [fid, fp] = from.split(':');
+      const tw = W.get(keyOf(lv, tid)).ins[Number(tp)], fw = W.get(keyOf(lv, fid)).outs[Number(fp)];
+      if (fw !== tw && fw !== 1) throw new Error(`${where(lv, lv.byId[tid])}: input ${Number(tp) + 1} takes ${tw} element${tw === 1 ? '' : 's'} but ${where(lv, lv.byId[fid])} gives ${fw}`);
+    }
+  }
+  const out = expandLevel(levels[0], { W, keyOf, childOf, opts, levels }).diagram;
+  if (diagram.robots) out.robots = diagram.robots;
+  out.scalar = true;   
+  flatCache.set(diagram, out);
+  return out;
+}
+
+const widthCache = new WeakMap();
+function wireWidths(diagram, path = [], opts) {
+  let level = diagram;
+  for (const id of path) level = level.blocks.find((b) => b.id === id)?.diagram ?? level;
+  if (diagram.scalar || !needsPass(diagram)) return level.wires.map(() => 1);
+  let pass = widthCache.get(diagram);
+  if (!pass) { pass = widthPass(diagram, opts); widthCache.set(diagram, pass); }
+  const lv = pass.levels.find((l) => l.d === level);
+  return level.wires.map((w) => {
+    const [fid, fp = 0] = w.from.split(':');
+    return pass.W.get(pass.keyOf(lv, fid))?.outs[Number(fp)] ?? 1;
+  });
+}
+
+function widthPass(diagram, opts) {
   const parsed = robotsOf(diagram.robots);
   const robot = (name) => {
     const r = parsed[name];
@@ -6072,18 +6102,7 @@ function flattenVectors(diagram, opts) {
   }
   const open = units.filter((u) => !done.has(u.key));
   if (open.length) throw new Error(`the width of ${open.slice(0, 4).map((u) => where(u.lv, u.b)).join(', ')} cannot be told: a loop needs a block with state whose width is declared (an Integrator's x0 or width)`);
-  for (const lv of levels) {
-    for (const [to, from] of lv.into) {
-      const [tid, tp] = to.split(':'), [fid, fp] = from.split(':');
-      const tw = W.get(keyOf(lv, tid)).ins[Number(tp)], fw = W.get(keyOf(lv, fid)).outs[Number(fp)];
-      if (fw !== tw && fw !== 1) throw new Error(`${where(lv, lv.byId[tid])}: input ${Number(tp) + 1} takes ${tw} element${tw === 1 ? '' : 's'} but ${where(lv, lv.byId[fid])} gives ${fw}`);
-    }
-  }
-  const out = expandLevel(levels[0], { W, keyOf, childOf, opts, levels }).diagram;
-  if (diagram.robots) out.robots = diagram.robots;
-  out.scalar = true;   
-  flatCache.set(diagram, out);
-  return out;
+  return { W, levels, keyOf, childOf, where };
 }
 
 
@@ -6223,7 +6242,7 @@ function elementCopy(b, id, k, n, label) {
   return copy;
 }
 
-return { parseSizes, parseValue, numOrList, at, widthOf, VECTOR_ELEMENTS, vectorExtras, robotsOf, normalizeRobots, mimoContext, makeMimo, flattenVectors };
+return { parseSizes, parseValue, numOrList, at, widthOf, VECTOR_ELEMENTS, vectorExtras, robotsOf, normalizeRobots, mimoContext, makeMimo, flattenVectors, wireWidths };
 })();
 // ---- core/diagram.js
 __mods['core/diagram.js'] = (() => {
@@ -6337,7 +6356,7 @@ const ELEMENTS = {
     label: 'Observer', group: 'Control', formula: 'x̂ = O(u, y)',
     params: [num('inputs', 'Inputs (u, y…)', 2, { min: 2, int: true }), num('outputs', 'Estimates', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.001, { unit: 's', min: 1e-4 })],
     ports: (p) => [p.inputs, p.outputs],
-    outputs: (p) => Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`),
+    outputs: (p) => (p.groups ? ['ŷ', 'ẏ'].flatMap((c) => Array.from({ length: p.groups[1] }, (_, i) => `${c}${i + 1}`)) : Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`)),
   },
   external: EXTERNAL_BLOCK,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
@@ -6944,6 +6963,8 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
     job.end();
   }
+  const looked = new Map();
+  for (const nd of ctrls) if (nd.observer && nd.variant?.type === 'difference') { const idx = differenceSees(nd); if (idx) looked.set(nd.idPath, idx); }
   const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
   let h = 0;
   let left = false;
@@ -7023,7 +7044,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
 
   const probeSrc = probeList.map(([, k]) => origin(k)), outSrc = outNode >= 0 ? origin(outNode) : -1;
   const self = {
-    n, bound, warnings, minTs, sampleTimes, states, designs, validity,
+    n, bound, warnings, minTs, sampleTimes, states, designs, validity, looked,
     setStep(step) { h = step; },
     sample(t, X, o, u) {
       const since = [];
@@ -7195,7 +7216,9 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (nd.kind === 'ctrl' && !nd.observer) {
         const v = Number(held[nd.idPath] ?? 0);
         setU.push([i, v]);
-        notes.push(`controller '${nd.name}' holds its output at ${fmt(v)}: the design sees its loop open`);
+        const lanes = blk.lanes > 1 && nd.lanes > 1 && nd.idPath.replace(/\[\d+\]$/, '') === blk.idPath.replace(/\[\d+\]$/, '');
+        if (!lanes) notes.push(`controller '${nd.name}' holds its output at ${fmt(v)}: the design sees its loop open`);
+        else if (!notes.some((x) => x.startsWith('the other lanes'))) notes.push(`the other lanes of '${blk.name.replace(/\[\d+\]$/, '')}' hold their outputs: each lane is designed on its own`);
       }
       if (nd.kind === 'src') setSrc.push([i, nd.signal === null ? 0 : Number(at.sources?.[nd.signal] ?? 0)]);
       if (nd.kind === 'tap' && nodes[nd.parent].kind === 'ctrl') {
@@ -8731,6 +8754,7 @@ const { normalizeDiagram, diagramNames, compileDiagram } = __mods['core/diagram.
 const { normalizeView } = __mods['core/views.js'];
 const { DesignError, parseOp, operatingPoint, linearize } = __mods['core/linearize.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
+const { inv, mul } = __mods['core/linalg.js'];
 const { parseSpeed, speedToJson } = __mods['core/speed.js'];
 const FORMAT = 'loop-tuner/2';
 const PALETTE_SIZE = 8;
@@ -9005,10 +9029,11 @@ function blockModel(project, idPath, at, { designs, limits } = {}) {
   if (plant?.type !== 'diagram') throw new DesignError('no-diagram', 'the plant is not a block diagram, so no block sees a plant in it', 'build the plant in the Plant tab, or load a system from the System library');
   const diagram = plant.diagram, id = Array.isArray(idPath) ? idPath.join('/') : String(idPath);
   const parts = id.split('/');
+  const [, last, lane] = parts.at(-1).match(/^(.*?)(?:\[(\d+)\])?$/);
   const level = parts.slice(0, -1).reduce((d, x) => d?.blocks.find((b) => b.id === x && b.type === 'subsystem')?.diagram, diagram);
-  const block = level?.blocks.find((b) => b.id === parts.at(-1));
-  if (!block || (block.type !== 'controller' && block.type !== 'observer')) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl');
-  const op = parseOp(at);
+  const block = level?.blocks.find((b) => b.id === last);
+  if (!block || (block.type !== 'controller' && block.type !== 'observer') || (lane && !(lane >= 1 && lane <= (block.params.lanes ?? 1) && block.params.lanes > 1))) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl, or a lane as robot/servos[2]');
+  const op = lane && parseOp(at).kind === 'initial' ? parseOp({ t: 0 }) : parseOp(at);
   const store = designs;
   let statuses, snap = null;
   if (op.kind === 't') {
@@ -9018,14 +9043,17 @@ function blockModel(project, idPath, at, { designs, limits } = {}) {
     if (!snap) throw new DesignError('diverged', `the run diverges before t = ${op.t} s: there is no state to linearise at`, 'pick an earlier time, or steady the loop first');
     statuses = run.info.designs;
   } else statuses = compileDiagram(diagram, 'plant', { standalone: true, sources: {}, designs: store }).designs;
-  const seeThrough = new Map();
-  for (const s of statuses) if (s.path !== id && s.values?.stateIndex) seeThrough.set(s.path, s.values.stateIndex);
   const el = compileDiagram(structuredClone(diagram), 'plant', { mode: 'model' });
-  const model = el.seen(id, { ...(seeThrough.size ? { seeThrough } : {}), ...(snap ? { X: snap.X, held: snap.held, sources: snap.sources, t: snap.t } : {}) });
+  const seeThrough = new Map(el.looked ?? []);
+  for (const s of statuses) if (s.path !== id && s.values?.stateIndex) seeThrough.set(s.path, s.values.stateIndex);
+  const seenAt = { ...(seeThrough.size ? { seeThrough } : {}), ...(snap ? { X: snap.X, held: snap.held, sources: snap.sources, t: snap.t } : {}) };
+  const model = el.seen(id, seenAt);
   const v = block.variants?.[block.variant ?? 0]?.params ?? {};
   const lim = limits ?? { umin: v.umin ?? -Infinity, umax: v.umax ?? Infinity };
   const pt = snap ? operatingPoint(model, { kind: 't', t: snap.t, u: block.type === 'observer' ? snap.inputs[id]?.[0] ?? 0 : snap.held[id] ?? 0 }, lim) : operatingPoint(model, op, lim);
-  return { model, pt, statuses, block, id, snap };
+  const laneId = (j) => id.replace(/\[\d+\]$/, `[${j}]`);
+  const laneLin = (j) => { const m = el.seen(laneId(j), seenAt); return linearize(m, operatingPoint(m, { kind: 't', t: snap?.t ?? 0, u: Number(snap?.held[laneId(j)] ?? 0) })); };
+  return { model, pt, statuses, block, id, snap, lane: Number(lane) || 0, laneId, laneLin };
 }
 
 function linearizeBlock(project, idPath, at = 'origin', opts = {}) {
@@ -9034,33 +9062,83 @@ function linearizeBlock(project, idPath, at = 'origin', opts = {}) {
 }
 
 function loopModel(project, idPath, at = 'origin', { designs } = {}) {
-  const { model, pt, statuses, block, id, snap } = blockModel(project, idPath, at, { designs });
+  const { model, pt, statuses, block, id, snap, lane, laneId, laneLin } = blockModel(project, idPath, at, { designs });
   if (block.type !== 'controller') throw new DesignError('not-a-controller', `'${block.name ?? block.id}' is an Observer: a loop is cut at a Controller's output`, 'pick the Controller that drives the plant');
-  const plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
+  let plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
   if (plant.kinks.length) throw new DesignError('kink', `the plant has a kink at ${plant.op.label}: ${plant.kinks[0]}; a linear loop there would show the slope of neither side`, 'pick Start or Scope time (a state of the run), or a level away from the kink');
   const variant = block.variants[block.variant ?? 0], def = CONTROLLERS[variant.type], Ts = block.params.Ts;
-  let values = null;
-  if (def.designed) {
-    const st = statuses.find((s) => s.path === id);
-    values = st?.values ?? null;
-    if (!values) {
-      const why = st?.error ? `: ${st.error.message}` : st?.status === 'pending' || st?.status === 'cancelled' ? ': its plan is not made yet' : '';
-      throw new DesignError('no-design', `${variant.name} has no design to analyse${why}`, st?.error?.hint || 'see its Computed box in the Controller tab');
+  const t = snap ? snap.t : parseOp(at).kind === 'initial' ? 0 : undefined;
+  function lawOf(p, lin) {
+    let values = null;
+    if (def.designed) {
+      const st = statuses.find((s) => s.path === p);
+      values = st?.values ?? null;
+      if (!values) {
+        const why = st?.error ? `: ${st.error.message}` : st?.status === 'pending' || st?.status === 'cancelled' ? ': its plan is not made yet' : '';
+        throw new DesignError('no-design', `${variant.name} has no design to analyse${why}`, st?.error?.hint || 'see its Computed box in the Controller tab');
+      }
+    }
+    if (!def.linear) throw new DesignError('no-linear', `${def.label} has no linear model`, 'analyse another variant');
+    try { return def.linear(variant.params, Ts, { y: Array.from(lin.op.y), ...(t !== undefined ? { t } : {}) }, values); } catch (err) {
+      throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'pick an operating point where the law is linear, such as at rest');
     }
   }
-  if (!def.linear) throw new DesignError('no-linear', `${def.label} has no linear model`, 'analyse another variant');
-  const t = snap ? snap.t : parseOp(at).kind === 'initial' ? 0 : undefined;
-  let ctrl;
-  try { ctrl = def.linear(variant.params, Ts, { y: Array.from(plant.op.y), ...(t !== undefined ? { t } : {}) }, values); } catch (err) {
-    throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'pick an operating point where the law is linear, such as at rest');
-  }
+  const ctrl = lawOf(id, plant);
   const warnings = [...plant.warnings];
   if (ctrl.note) warnings.push(ctrl.note);
-  const { umin = -Infinity, umax = Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
+  if (lane) {
+    const others = [];
+    for (let j = 1; j <= block.params.lanes; j++) if (j !== lane) { const lin = laneLin(j); others.push({ lin, ctrl: lawOf(laneId(j), lin) }); }
+    const closed = closeLanes(plant, others, Ts);
+    if (closed) {
+      plant = closed;
+      warnings.splice(0, warnings.length, ...warnings.filter((w) => !w.startsWith('the other lanes')));
+      warnings.push(`the other lanes of '${block.name ?? block.id}' run their law round the plant (taken to continuous time); r of every lane is held`);
+    }
+  }
+  const laneLim = Array.isArray(variant.params.limit) ? (variant.params.limit[(lane || 1) - 1] ?? variant.params.limit[0]) || Infinity : null;
+  const { umin = laneLim === null ? -Infinity : -laneLim, umax = laneLim ?? Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
   const atLimit = u >= umax - tol || u <= umin + tol;
   if (atLimit) warnings.push(`${plant.input.label} = ${fmt(u)} is at its limit (${fmt(umin)} to ${fmt(umax)}) there: the controller saturates, and the linear loop does not hold`);
   for (const obs of model.through) warnings.push(`the estimates of '${obs}' are read as the states they stand for: the filter's own dynamics are not in this loop`);
   return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
+}
+
+function closeLanes(plant, others, Ts) {
+  const n = plant.A.length, names = plant.states.map((s) => s.label).join('|');
+  if (others.some(({ lin }) => lin.A.length !== n || lin.states.map((s) => s.label).join('|') !== names || lin.D.flat().some((v) => v !== 0) || (lin.delay ?? []).some((d) => d > 0))) return null;
+  const parts = others.map(({ lin, ctrl }) => {
+    const m = lin.C.length, nc = ctrl.A.length;
+    const cols = (row) => Array.from({ length: m }, (_, k) => row[1 + k] ?? 0);
+    if (!nc) return { lin, nc, A: [], B: [], C: [], D: cols(ctrl.D[0]) };
+    const P = ctrl.A.map((r, i) => r.map((v, j) => v + (i === j ? 1 : 0)));
+    const Pi = inv(P);
+    const A = mul(Pi, ctrl.A.map((r, i) => r.map((v, j) => v - (i === j ? 1 : 0)))).map((r) => r.map((v) => (2 / Ts) * v));
+    const B = mul(Pi, ctrl.B.map(cols));
+    const H = ctrl.C[0];
+    const C = A.map((_, j) => (2 / Ts) * H[j] - H.reduce((s, h, i) => s + h * A[i][j], 0));
+    const D = cols(ctrl.D[0]).map((d, k) => d - H.reduce((s, h, i) => s + h * B[i][k], 0));
+    return { lin, nc, A, B, C, D };
+  });
+  const N = n + parts.reduce((s, p) => s + p.nc, 0);
+  const A = Array.from({ length: N }, (_, i) => (i < n ? [...plant.A[i], ...new Array(N - n).fill(0)] : new Array(N).fill(0)));
+  let o = n;
+  for (const p of parts) {
+    const Bu = p.lin.B.map((r) => r[0]), Cy = p.lin.C;
+    const dx = Array.from({ length: n }, (_, c) => p.D.reduce((s, d, k) => s + d * Cy[k][c], 0));
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < n; c++) A[i][c] += Bu[i] * dx[c];
+      for (let c = 0; c < p.nc; c++) A[i][o + c] += Bu[i] * p.C[c];
+    }
+    for (let r = 0; r < p.nc; r++) {
+      for (let c = 0; c < n; c++) A[o + r][c] = p.B[r].reduce((s, b, k) => s + b * Cy[k][c], 0);
+      for (let c = 0; c < p.nc; c++) A[o + r][o + c] = p.A[r][c];
+    }
+    o += p.nc;
+  }
+  const pad = (row) => [...row, ...new Array(N - n).fill(0)];
+  const lawStates = Array.from({ length: N - n }, (_, i) => ({ label: `other lanes' law ${i + 1}`, name: `x${i + 1}`, unit: '', angle: false, index: n + i }));
+  return { ...plant, A, B: plant.B.concat(Array.from({ length: N - n }, () => [0])), C: plant.C.map(pad), n: N, states: [...plant.states, ...lawStates] };
 }
 
 function nextColor(candidates) {

@@ -323,6 +323,42 @@ export function flattenVectors(diagram, opts) {
   if (diagram.scalar || !needsPass(diagram)) return diagram;
   const hit = flatCache.get(diagram);
   if (hit) return hit;
+  const { W, levels, keyOf, childOf, where } = widthPass(diagram, opts);
+  // Every wire: the source's width is the input's, or 1 (it broadcasts).
+  for (const lv of levels) {
+    for (const [to, from] of lv.into) {
+      const [tid, tp] = to.split(':'), [fid, fp] = from.split(':');
+      const tw = W.get(keyOf(lv, tid)).ins[Number(tp)], fw = W.get(keyOf(lv, fid)).outs[Number(fp)];
+      if (fw !== tw && fw !== 1) throw new Error(`${where(lv, lv.byId[tid])}: input ${Number(tp) + 1} takes ${tw} element${tw === 1 ? '' : 's'} but ${where(lv, lv.byId[fid])} gives ${fw}`);
+    }
+  }
+  const out = expandLevel(levels[0], { W, keyOf, childOf, opts, levels }).diagram;
+  if (diagram.robots) out.robots = diagram.robots;
+  out.scalar = true;   // flattened already (a copy of it is too)
+  flatCache.set(diagram, out);
+  return out;
+}
+
+// The width of every wire of one level (path: the ids of the subsystems
+// it is inside), by the wire's index: what its source gives, from the same
+// pass as flattenVectors. A diagram without vectors has width 1 everywhere;
+// throws what the pass refuses. For the editor, which draws vector wires.
+const widthCache = new WeakMap();
+export function wireWidths(diagram, path = [], opts) {
+  let level = diagram;
+  for (const id of path) level = level.blocks.find((b) => b.id === id)?.diagram ?? level;
+  if (diagram.scalar || !needsPass(diagram)) return level.wires.map(() => 1);
+  let pass = widthCache.get(diagram);
+  if (!pass) { pass = widthPass(diagram, opts); widthCache.set(diagram, pass); }
+  const lv = pass.levels.find((l) => l.d === level);
+  return level.wires.map((w) => {
+    const [fid, fp = 0] = w.from.split(':');
+    return pass.W.get(pass.keyOf(lv, fid))?.outs[Number(fp)] ?? 1;
+  });
+}
+
+// The widths of every block's port groups, level by level.
+function widthPass(diagram, opts) {
   const parsed = robotsOf(diagram.robots);
   const robot = (name) => {
     const r = parsed[name];
@@ -395,19 +431,7 @@ export function flattenVectors(diagram, opts) {
   }
   const open = units.filter((u) => !done.has(u.key));
   if (open.length) throw new Error(`the width of ${open.slice(0, 4).map((u) => where(u.lv, u.b)).join(', ')} cannot be told: a loop needs a block with state whose width is declared (an Integrator's x0 or width)`);
-  // Every wire: the source's width is the input's, or 1 (it broadcasts).
-  for (const lv of levels) {
-    for (const [to, from] of lv.into) {
-      const [tid, tp] = to.split(':'), [fid, fp] = from.split(':');
-      const tw = W.get(keyOf(lv, tid)).ins[Number(tp)], fw = W.get(keyOf(lv, fid)).outs[Number(fp)];
-      if (fw !== tw && fw !== 1) throw new Error(`${where(lv, lv.byId[tid])}: input ${Number(tp) + 1} takes ${tw} element${tw === 1 ? '' : 's'} but ${where(lv, lv.byId[fid])} gives ${fw}`);
-    }
-  }
-  const out = expandLevel(levels[0], { W, keyOf, childOf, opts, levels }).diagram;
-  if (diagram.robots) out.robots = diagram.robots;
-  out.scalar = true;   // flattened already (a copy of it is too)
-  flatCache.set(diagram, out);
-  return out;
+  return { W, levels, keyOf, childOf, where };
 }
 
 // ---- Expansion
