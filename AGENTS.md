@@ -25,7 +25,7 @@ You work on a project file (`.json`, or an exported `.html` page with the projec
 
 ## A v2 project: auto-tune a Controller block
 
-Projects whose plant is a block diagram with a **Controller block** (every controlled system in the page's System library) are tuned with `autotune`, the same core as the page's Auto-tune tab ([design/output/autotune.md](design/output/autotune.md)):
+Projects whose plant is a block diagram with a **Controller block** (every controlled system in the page's System library) are tuned with `autotune`, the same core as the page's Auto-tune tab ([design/output/autotune.md](design/output/autotune.md)). A variant computed from the plant (LQR, PI from the plant, swing-up with an LQR catch) is tuned as its Copy as numbers twin, from the numbers its design computes, and the result is a hand variant; a planned swing-up has no gains to tune (change its inputs instead):
 
 ```
 node cli.mjs autotune p.json                                   # Nelder–Mead on IAE + effort + overshoot beyond 10 %
