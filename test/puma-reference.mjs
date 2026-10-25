@@ -4,7 +4,7 @@
 // on the robot core (rbd.js), with no blocks and no compiler. test/puma.test.mjs
 // holds the library system's compiled run to it.
 //
-//   pumaReference({ variant: 0 | 1 | 2, T: 5 }) → { t, q (per sample, 6), p, pd, e (m) }
+//   pumaReference({ variant: 0 | 1 | 2, T: 5 }) → { t, q (per sample, 6), p, pd, e }
 //
 // variant 0: PI + model feedforward; 1: PI, no model; 2: P only, no model.
 // The same steps as simulateSystem: RK4 at the 1 ms record step with the
@@ -110,7 +110,7 @@ export function pumaReference({ variant = 0, T = 5, signals } = {}) {
     out.t[k] = k * Ts;
     out.q.push(Array.from(X.subarray(0, N)));
     out.p.push(p); out.pd.push(pd);
-    out.e[k] = Math.hypot(pd[0] - p[0], pd[1] - p[1], pd[2] - p[2]);
+    out.e[k] = 1000 * Math.hypot(pd[0] - p[0], pd[1] - p[1], pd[2] - p[2]);
     if (k === K) break;
     rates(X, k1);
     for (let i = 0; i < 2 * N; i++) Xt[i] = X[i] + 0.5 * h * k1[i];

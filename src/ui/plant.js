@@ -171,7 +171,9 @@ export function createPlantEditor(root, app) {
     const next = structuredClone(rootDiagram());
     const lv = levelOf(next);
     if (fn(lv, next) === false) return false;
-    try { app.setPlant(normalizeDiagram(next)); } catch (err) { app.toast(err.message); return false; }
+    // The vector pass runs here too (diagramNames), so an edit it refuses,
+    // such as a block whose open input cannot take one element, is not committed.
+    try { const d = normalizeDiagram(next); diagramNames(d); app.setPlant(d); } catch (err) { app.toast(err.message); return false; }
     if (!quiet) render();
     return true;
   }
@@ -383,7 +385,9 @@ export function createPlantEditor(root, app) {
   // Views come from the project's JSON; the panel only says what is shown.
   function renderViewProps() {
     const v = plantViews()[rep];
-    const used = [...new Set((JSON.stringify(v).match(/[A-Za-z_]\w*/g) ?? []).filter((n) => app.signalNames().includes(n)))];
+    // A 3D view's joints are a Sink's base name (q: q1 …) or a map.
+    const joints = v.kind === '3d' ? app.signalNames().filter((n) => (typeof v.joints === 'string' ? new RegExp(`^${v.joints}\\d+$`).test(n) : Object.values(v.joints).includes(n))) : [];
+    const used = [...new Set([...joints, ...(JSON.stringify(v.kind === '3d' ? v.paths : v).match(/[A-Za-z_]\w*/g) ?? []).filter((n) => app.signalNames().includes(n))])];
     $('#pl-props').innerHTML = `<h3 class="label">${esc(v.name)}</h3>
       <p class="note">A ${{ svg: 'SVG drawing', '3d': '3D view' }[v.kind] ?? '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}.</p>
       ${about()}${more('view', 'Details', `<p class="note">It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>${v.kind === '3d' ? `<p class="note">Drag to orbit, right-drag or Shift-drag to pan, the wheel zooms; the cube and the keys on the view pick a side. Hover a link for its joint's angle and torque.</p>` : ''}

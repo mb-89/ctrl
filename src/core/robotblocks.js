@@ -250,6 +250,7 @@ export const ROBOT_BLOCKS = {
     widths(p, inW, env) {
       const w = inW[0], m = p.rows;
       if (w === undefined) return null;
+      if (w === 1 && !env.wired?.(0)) return { ins: [m * m], outs: [m * m, 1] };   // open: a 0 of each width
       if (w % m) throw new Error(`${env.name}: J has ${w} elements, not a whole number of rows of ${m} (rows ${m})`);
       return { ins: [w], outs: [w, 1] };
     },
@@ -280,7 +281,7 @@ export const ROBOT_BLOCKS = {
     normalize: () => ({}),
     ports: () => [2, 2],
     widths(p, inW, env) {
-      inW.forEach((w, k) => { if (w !== undefined && w !== 9) throw new Error(`${env.name}: ${k ? 'R' : 'R_d'} has ${w} element${w === 1 ? '' : 's'}; a rotation has 9 (3×3, row by row)`); });
+      inW.forEach((w, k) => { if (w !== undefined && w !== 9 && !(w === 1 && !env.wired?.(k))) throw new Error(`${env.name}: ${k ? 'R' : 'R_d'} has ${w} element${w === 1 ? '' : 's'}; a rotation has 9 (3×3, row by row)`); });
       return { ins: [9, 9], outs: [3, 1] };
     },
     make() {
