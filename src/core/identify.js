@@ -20,7 +20,7 @@ import { CONTROLLERS } from './controllers.js';
 import { referenceFn, gaussAt } from './signals.js';
 import { IDENTIFY_VERSION, EXPERIMENT, halved, piLaw, bumpless, fmtNum } from './experiment.js';
 import {
-  STRUCTURES, discretise, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported,
+  STRUCTURES, discretise, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
   fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded,
 } from './fit.js';
 import { cholesky, c2d } from './linalg.js';
@@ -684,7 +684,9 @@ function* placeFit(fsegs, structure, p, cov, levels, Ts, hNoise) {
 export const GRADE = { good: 85, ceiling: 3, fair: 60, distortion: [10, 30], where: 0.25, kernel: 5 };
 
 // The grade and its reasons (§7): ✓, ! or ✕; grades inform and never block.
-export function gradeOf({ fit, ceiling = -Infinity, white = true, distortion = null, spread = 0, kernelGap = 0, left = false, checked = true }) {
+// coloured: the noise at rest is itself not white (Listen), so a pattern in
+// what is left may be the noise's own.
+export function gradeOf({ fit, ceiling = -Infinity, white = true, coloured = false, distortion = null, spread = 0, kernelGap = 0, left = false, checked = true }) {
   const why = [];
   if (left) return { mark: '✕', why: ['the Check left the band'] };
   if (!finite(fit) || fit < GRADE.fair) why.push(`it explains under ${GRADE.fair} %`);
@@ -693,7 +695,7 @@ export function gradeOf({ fit, ceiling = -Infinity, white = true, distortion = n
   if (!(fit >= GRADE.good || fit >= ceiling - GRADE.ceiling)) why.push(`it explains under ${GRADE.good} %`);
   if (distortion !== null && distortion >= GRADE.distortion[0]) why.push(`${Math.round(distortion)} % of the response is not linear`);
   if (spread >= GRADE.where) why.push('it behaves differently at different places');
-  if (!white) why.push('what is left has a pattern');
+  if (!white) why.push(coloured ? 'what is left has a pattern, as the noise at rest has' : 'what is left has a pattern');
   if (kernelGap >= GRADE.kernel) why.push('the shapes on offer miss something here');
   if (!checked) why.push('no Check ran');
   return { mark: why.length ? '!' : '✓', why };
@@ -796,7 +798,7 @@ export function modelSentences(model, names = {}) {
   const c = model.check;
   let grade;
   if (c && !finite(c.fit)) grade = `The Check did not move ${n.y}, so the model could not be checked ${model.grade}.`;
-  else if (c) grade = `Explains ${pctText(c.fit)} % of a test it was not fitted to; what is left ${c.white ? 'looks like noise' : 'has a pattern'} ${model.grade}.`;
+  else if (c) grade = `Explains ${pctText(c.fit)} % of a test it was not fitted to; what is left ${c.white ? 'looks like noise' : noise?.coloured ? 'has a pattern, as the noise at rest has' : 'has a pattern'} ${model.grade}.`;
   else grade = `${model.end === 'stopped' ? 'From a stopped test: ' : ''}explains ${pctText(model.fit)} % of what it was fitted to; no Check ran ${model.grade}.`.replace(/^e/, 'E');
   const tail = [grade];
   if (model.grade === '✕') tail.push('Auto-tune can tune on it, but Try on the plant will tell; a larger room or a longer test helps.');
@@ -880,6 +882,23 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
       break;
     }
   }
+  // A controller at its limit in the closed-loop data: the loop there
+  // passes the noise in a way the bars do not follow (they take the loop as
+  // linear; measured: K's spread 1.6× its bar with u clamped at a
+  // segment's start), so the model says so.
+  {
+    const tolU = 1e-9 * (plan.umax - plan.umin);
+    let at = 0, all = 0;
+    for (const sg of seg.closed) {
+      for (let j = sg.i0; j < sg.i1; j++) {
+        const u = nan(record.u[j]);
+        if (!finite(u)) continue;
+        all++;
+        if (u <= plan.umin + tolU || u >= plan.umax - tolU) at++;
+      }
+    }
+    if (at) warnings.push(`${names.u} was at its limit in ${Math.max(1, Math.round((100 * at) / all))} % of the loop's test: the ± bars may be too narrow`);
+  }
   // No noise: Listen's floor is the smallest the experiment allows (a
   // simulation). An encoder's steps: Listen's, or, when y stood still in
   // Listen, the grid y moved on over the whole test (finer than the grid
@@ -913,6 +932,27 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
   const integrating = look.integrating || (kernel && !kernel.integrating && kernelRises(kernel));
   const tried = ['lag', 'lags', 'resonance', ...(integrating ? ['intLag', 'intRes'] : [])];
 
+  // The noise's own colour, from Listen's last half less its drift (noise
+  // only, no model involved): an AR model whose impulse response joins each
+  // segment's noise transfer, so the bars hold when the noise is not white
+  // (measured: AR(1) at ρ 0.95 put them 3–7× too narrow). An encoder's steps
+  // or no noise at all: white. Coloured, the noise's level is its spread
+  // about the drift, not Listen's σ from differences (σ√(1 − ρ) for AR(1)),
+  // for the ceiling and the noise sentence.
+  const { colour, level } = (() => {
+    if (quiet || steps) return { colour: null, level: 0 };
+    const a = L.i0 + Math.floor((L.i1 - L.i0) / 2), v = [];
+    for (let j = a; j < L.i1; j++) { const yy = nan(record.y[j]); if (finite(yy)) v.push(yy - L.slope * (j - (L.i1 - 1))); }
+    const c = noiseColour(v);
+    if (c.length <= 1) return { colour: null, level: 0 };
+    let m = 0, s = 0;
+    for (const x of v) m += x;
+    m /= v.length;
+    for (const x of v) s += (x - m) ** 2;
+    return { colour: c, level: Math.sqrt(s / Math.max(1, v.length - 1)) };
+  })();
+  const sigmaY = Math.max(L.sigma, level), floorY = Math.max(L.floor, level);
+
   // The fits (§6.3): two starts each, the first look's and the kernel's.
   const fits = reused ? reused.fits : {};
   if (!reused) {
@@ -920,7 +960,7 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
       const S = STRUCTURES[name];
       const starts = [signed(S.start(lookGuess(look)), S, sign)];
       if (guessK) starts.push(signed(S.start(guessK), S, sign));
-      try { fits[name] = yield* fitStructureSteps(fitSegs, name, starts, { Ts, maxIter: 60 }); } catch { fits[name] = null; }
+      try { fits[name] = yield* fitStructureSteps(fitSegs, name, starts, { Ts, maxIter: 60, noise: colour }); } catch { fits[name] = null; }
     }
   }
 
@@ -935,11 +975,11 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
     for (let k = 0; k < ckY.length; k++) if (graded[k] && finite(ckY[k])) { y.push(ckY[k]); h.push(yh[k]); u.push(ckU[k]); }
     return { y, h, u };
   };
-  const ceiling = ckSeg ? noiseCeiling(measured(ckY).y, L.floor) : null;
-  const scoreCheck = (yh) => {
+  const ceiling = ckSeg ? noiseCeiling(measured(ckY).y, floorY) : null;
+  const scoreCheck = (yh, h = null) => {
     const m = measured(yh);
     const res = m.y.map((v, k) => v - m.h[k]);
-    const w = whiteness(res), x = crossCorrelation(res, m.u.map((v) => (finite(v) ? v : 0)));
+    const w = whiteness(res, 25, h), x = crossCorrelation(res, m.u.map((v) => (finite(v) ? v : 0)));
     return { fit: fitPercent(m.y, m.h), white: w.white, independent: x.independent, whiteness: w, cross: x };
   };
   let kernelFit = null;
@@ -950,14 +990,20 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
     if (!f) continue;
     const why = unsupported(name, f.p, { length });
     let check = null;
-    if (ckSeg) check = scoreCheck(simulateSegment(discretise(name, f.p, Ts), ckSeg).y);
+    // The Check's residual is the noise as the loop shapes it (S·v), coloured
+    // even for the true model: the pattern test reads each lag against what
+    // the loop gives white noise (measured: the true model read "a pattern"
+    // in 61 % of seeds under a PI at τc = θ; 4 % so). The noise's own colour
+    // is not taken out: from Listen's 150 samples it is too unsure for the
+    // Check's narrow band (white noise then read "a pattern" in a third).
+    if (ckSeg) { const dd = discretise(name, f.p, Ts); check = scoreCheck(simulateSegment(dd, ckSeg).y, noiseTransfer(dd, ckSeg)); }
     const fitAll = (() => {
       const yh = fitSegs.map((fs) => simulateSegment(discretise(name, f.p, Ts), fs).y);
       const y = [], h = [];
       fitSegs.forEach((fs, s) => { for (let k = 0; k < fs.y.length; k++) if (finite(fs.y[k])) { y.push(fs.y[k]); h.push(yh[s][k]); } });
       return fitPercent(y, h);
     })();
-    const gr = gradeOf({ fit: check ? check.fit : fitAll, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, kernelGap: check && kernelFit !== null ? kernelFit - check.fit : 0, left: !!seg.check?.left, checked: !!check });
+    const gr = gradeOf({ fit: check ? check.fit : fitAll, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, kernelGap: check && kernelFit !== null ? kernelFit - check.fit : 0, left: !!seg.check?.left, checked: !!check });
     candidates.push({
       structure: name, label: STRUCTURES[name].label, glyph: STRUCTURES[name].glyph, p: f.p, sd: f.sd, cov: plainCov(f.cov),
       fit: check ? check.fit : NaN, fitted: fitAll, chi2dof: f.chi2dof, bic: f.bic, unsupported: why, grade: gr.mark, why: why ? [why] : gr.why, check,
@@ -988,7 +1034,7 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
   // or time scales differ by more than 25 % and beyond their 2σ bars, among
   // the places the model spent at least a tenth of its time in.
   let where = [];
-  const hN = fitSegs.map((fs) => noiseTransfer(discretise(chosen.structure, chosen.p, Ts), fs));
+  const hN = fitSegs.map((fs) => convolve(noiseTransfer(discretise(chosen.structure, chosen.p, Ts), fs), colour));
   const placed = yield* placeFit(fitSegs, chosen.structure, chosen.p, chosen.cov, seg.levels, Ts, hN);
   if (placed) {
     const total = placed.reduce((a, pl) => a + pl.samples, 0);
@@ -1028,7 +1074,7 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
   // The grade (§7) of the chosen one, with the where-spread.
   const check = chosen.check;
   const kernelGap = check && kernelFit !== null ? kernelFit - check.fit : 0;
-  const grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
+  const grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
   // The Check plot: the prediction with its 2σ band from 50 parameter samples.
   let checkOut = null;
   if (ckSeg) {
@@ -1054,7 +1100,7 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
     structure: chosen.structure, label: S.label, glyph: S.glyph, params: chosen.p, sd: chosen.sd, cov: chosen.cov, chosen: chosenWhy,
     chain: S.chain(chosen.p, { sd: chosen.sd, units: { u: names.uUnit, y: names.yUnit } }),
     candidates: candidates.map(({ check: c, p, sd, cov, ...rest }) => ({ ...rest, params: p, sd })),
-    noise: { sigma: quiet ? 0 : L.sigma, q: steps ? q : 0, floor: L.floor, drift: L.drifts ? L.drift : 0, none: quiet, steps },
+    noise: { sigma: quiet ? 0 : sigmaY, q: steps ? q : 0, floor: floorY, drift: L.drifts ? L.drift : 0, none: quiet, steps, coloured: !!colour },
     fit: chosen.fitted, check: checkOut,
     where, holds: seg.holds.map((h) => ({ y: h.y, u: h.u })), whereSpread: { spread, flagged }, size, sizeNote,
     kernel: kernel ? { g: Array.from(kernel.g), sd: Array.from(kernel.sd), Ts: kernel.Ts, decimate: kernel.decimate, integrating: kernel.integrating, rate: kernel.rate ? { value: kernel.rate.value, sd: kernel.rate.sd } : null, fit: kernelFit } : null,

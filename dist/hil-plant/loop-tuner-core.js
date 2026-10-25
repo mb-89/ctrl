@@ -3766,7 +3766,7 @@ function* lmSteps(residual, p0, { maxIter = 60, lower = null, upper = null, step
 
   let J = jacobian(p, r);
   let { A, g } = normal(J, r);
-  let mu = 1e-3 * Math.max(1e-300, ...A.map((row, i) => row[i])), nu = 2;
+  let mu = 1e-3, nu = 2;   
   let it = 0, why = 'iterations';
   for (;;) {
     const free = [];
@@ -3832,6 +3832,47 @@ function noiseTransfer(d, seg) {
   return h.slice(0, len);
 }
 
+function convolve(a, b) {
+  if (!b || b.length <= 1) return a;
+  const o = new Float64Array(a.length + b.length - 1);
+  for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) o[i + j] += a[i] * b[j];
+  return o;
+}
+
+function noiseColour(v, pmax = 10) {
+  const n = v.length;
+  if (n < 4 * pmax) return Float64Array.of(1);
+  let m = 0;
+  for (const x of v) m += x;
+  m /= n;
+  const f = Float64Array.from(v, (x) => x - m), b = Float64Array.from(f);
+  let E = 0;
+  for (const x of f) E += x * x;
+  E /= n;
+  if (!(E > 0)) return Float64Array.of(1);
+  let a = [], best = { aic: n * Math.log(E), a: [] };
+  for (let p = 1; p <= pmax; p++) {
+    let num = 0, den = 0;
+    for (let t = p; t < n; t++) { num += f[t] * b[t - 1]; den += f[t] * f[t] + b[t - 1] * b[t - 1]; }
+    const k = den > 0 ? (2 * num) / den : 0;
+    a = [...a.map((x, j) => x - k * a[a.length - 1 - j]), k];
+    for (let t = n - 1; t >= p; t--) { const ft = f[t], bt = b[t - 1]; f[t] = ft - k * bt; b[t] = bt - k * ft; }
+    E *= 1 - k * k;
+    const aic = n * Math.log(E) + 2 * p;
+    if (aic < best.aic) best = { aic, a: a.slice() };
+  }
+  if (!best.a.length) return Float64Array.of(1);
+  const h = [1];
+  let tot = 1;
+  for (let t = 1; t < 4096; t++) {
+    let s = 0;
+    for (let j = 0; j < best.a.length && j < t; j++) s += best.a[j] * h[t - 1 - j];
+    h.push(s); tot += s * s;
+    if (t > best.a.length && s * s < 1e-12 * tot) break;
+  }
+  return Float64Array.from(h);
+}
+
 function correlate(x, h) {
   const n = x.length, L = Math.min(h.length, n);
   const out = new Float64Array(n);
@@ -3888,7 +3929,7 @@ function parameterCov(J, A, parts, s2) {
   return cov.map((row, i) => row.map((v, j) => (v + cov[j][i]) / 2));
 }
 
-function* fitStructureSteps(segments, structure, starts, { Ts = segments[0]?.Ts, maxIter = 60 } = {}) {
+function* fitStructureSteps(segments, structure, starts, { Ts = segments[0]?.Ts, maxIter = 60, noise = null } = {}) {
   const S = structureOf(structure);
   if (!(Ts > 0)) throw new Error('fitStructure: Ts must be positive (pass { Ts } or put it on the segments)');
   if (!segments.length) throw new Error('fitStructure: no segments');
@@ -3922,7 +3963,7 @@ function* fitStructureSteps(segments, structure, starts, { Ts = segments[0]?.Ts,
   const sigma2 = res.cost / dof;
   const dpdq = S.params.map((k, j) => (kinds[j] === 'delay' ? Ts : p[k]));
   const d = discretise(S, p, Ts);
-  const parts = segments.map((seg) => ({ length: Math.max(0, seg.y.length - 1), h: noiseTransfer(d, seg) }));
+  const parts = segments.map((seg) => ({ length: Math.max(0, seg.y.length - 1), h: convolve(noiseTransfer(d, seg), noise) }));
   const cq = parameterCov(res.J, res.A, parts, sigma2);
   const cov = cq && cq.map((row, i) => row.map((v, j) => v * dpdq[i] * dpdq[j]));
   const out = { structure: S.name, p, cov, cost: res.cost, chi2dof: sigma2, bic: nObs * Math.log(Math.max(res.cost, 1e-300) / nObs) + np * Math.log(nObs), n: nObs, np, start, iterations: res.iterations, evaluations: res.evaluations, converged: res.converged, why: res.why };
@@ -4005,20 +4046,25 @@ const Z99 = 2.58;
 const WHITE = { outside: 1, far: 1.5 };
 const looksWhite = (outside, worst) => outside <= WHITE.outside && worst <= WHITE.far;
 
-function whiteness(res, lags = 25) {
+function whiteness(res, lags = 25, h = null) {
   const N = res.length;
   let r0 = 0;
   for (let k = 0; k < N; k++) r0 += res[k] * res[k];
-  const r = new Float64Array(lags);
+  const r = new Float64Array(lags), expected = new Float64Array(lags);
   for (let t = 1; t <= lags; t++) {
     let s = 0;
     for (let k = t; k < N; k++) s += res[k] * res[k - t];
     r[t - 1] = r0 > 0 ? s / r0 : 0;
   }
+  if (h && h.length > 1) {
+    let H = 0;
+    for (let q = 0; q < h.length; q++) H += h[q] * h[q];
+    for (let t = 1; t <= lags; t++) { let s = 0; for (let q = 0; q + t < h.length; q++) s += h[q] * h[q + t]; expected[t - 1] = s / H; }
+  }
   const band = Z99 / Math.sqrt(N);
   let outside = 0, worst = 0;
-  for (let i = 0; i < lags; i++) { if (Math.abs(r[i]) > band) outside++; worst = Math.max(worst, Math.abs(r[i]) / band); }
-  return { r, band, outside, worst, white: looksWhite(outside, worst) };
+  for (let i = 0; i < lags; i++) { const d = Math.abs(r[i] - expected[i]); if (d > band) outside++; worst = Math.max(worst, d / band); }
+  return { r, expected, band, outside, worst, white: looksWhite(outside, worst) };
 }
 
 function crossCorrelation(res, u, lags = 25) {
@@ -4286,7 +4332,7 @@ const oddNear = (x) => 2 * Math.round((x - 1) / 2) + 1;
 function multisineLines({ N, kmax, kmin = 1, count = 60, seed = 1 } = {}) {
   if (!(N >= 4) || N & (N - 1)) throw new Error('multisineLines: N must be a power of two ≥ 4');
   const top = Math.min(Math.floor(kmax), N / 2 - 1);
-  const first = Math.max(1, kmin % 2 ? Math.ceil(kmin) : Math.ceil(kmin) + 1);
+  const first = Math.max(1, Math.ceil(kmin) % 2 ? Math.ceil(kmin) : Math.ceil(kmin) + 1);   
   if (!(top >= first)) throw new Error('multisineLines: no odd harmonic between kmin and kmax');
   const target = Math.ceil(1.5 * count);
   const quasiLog = (r) => {
@@ -4460,7 +4506,7 @@ function frf(U, Y, { excited, detect = null, Ts } = {}) {
   return out;
 }
 
-return { STRUCTURES, paramInfo, discretise, simulateSegment, residuals, observations, lmSteps, lm, noiseTransfer, parameterCov, fitStructureSteps, fitStructure, CHOICE, unsupported, chooseStructure, fitPercent, noiseCeiling, Z99, WHITE, whiteness, crossCorrelation, tcInverse, KERNEL, tcKernelSteps, tcKernel, kernelStep, kernelGuess, seeded, multisineLines, crestFactor, MULTISINE, multisine, wholePeriods, frf };
+return { STRUCTURES, paramInfo, discretise, simulateSegment, residuals, observations, lmSteps, lm, noiseTransfer, convolve, noiseColour, parameterCov, fitStructureSteps, fitStructure, CHOICE, unsupported, chooseStructure, fitPercent, noiseCeiling, Z99, WHITE, whiteness, crossCorrelation, tcInverse, KERNEL, tcKernelSteps, tcKernel, kernelStep, kernelGuess, seeded, multisineLines, crestFactor, MULTISINE, multisine, wholePeriods, frf };
 })();
 // ---- core/experiment.js
 __mods['core/experiment.js'] = (() => {
@@ -12887,7 +12933,7 @@ const { CONTROLLERS } = __mods['core/controllers.js'];
 const { referenceFn, gaussAt } = __mods['core/signals.js'];
 const { IDENTIFY_VERSION, EXPERIMENT, halved, piLaw, bumpless, fmtNum } = __mods['core/experiment.js'];
 const {
-  STRUCTURES, discretise, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported,
+  STRUCTURES, discretise, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
   fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded,
 } = __mods['core/fit.js'];
 const { cholesky, c2d } = __mods['core/linalg.js'];
@@ -13410,7 +13456,7 @@ function* placeFit(fsegs, structure, p, cov, levels, Ts, hNoise) {
 
 const GRADE = { good: 85, ceiling: 3, fair: 60, distortion: [10, 30], where: 0.25, kernel: 5 };
 
-function gradeOf({ fit, ceiling = -Infinity, white = true, distortion = null, spread = 0, kernelGap = 0, left = false, checked = true }) {
+function gradeOf({ fit, ceiling = -Infinity, white = true, coloured = false, distortion = null, spread = 0, kernelGap = 0, left = false, checked = true }) {
   const why = [];
   if (left) return { mark: '✕', why: ['the Check left the band'] };
   if (!finite(fit) || fit < GRADE.fair) why.push(`it explains under ${GRADE.fair} %`);
@@ -13419,7 +13465,7 @@ function gradeOf({ fit, ceiling = -Infinity, white = true, distortion = null, sp
   if (!(fit >= GRADE.good || fit >= ceiling - GRADE.ceiling)) why.push(`it explains under ${GRADE.good} %`);
   if (distortion !== null && distortion >= GRADE.distortion[0]) why.push(`${Math.round(distortion)} % of the response is not linear`);
   if (spread >= GRADE.where) why.push('it behaves differently at different places');
-  if (!white) why.push('what is left has a pattern');
+  if (!white) why.push(coloured ? 'what is left has a pattern, as the noise at rest has' : 'what is left has a pattern');
   if (kernelGap >= GRADE.kernel) why.push('the shapes on offer miss something here');
   if (!checked) why.push('no Check ran');
   return { mark: why.length ? '!' : '✓', why };
@@ -13509,7 +13555,7 @@ function modelSentences(model, names = {}) {
   const c = model.check;
   let grade;
   if (c && !finite(c.fit)) grade = `The Check did not move ${n.y}, so the model could not be checked ${model.grade}.`;
-  else if (c) grade = `Explains ${pctText(c.fit)} % of a test it was not fitted to; what is left ${c.white ? 'looks like noise' : 'has a pattern'} ${model.grade}.`;
+  else if (c) grade = `Explains ${pctText(c.fit)} % of a test it was not fitted to; what is left ${c.white ? 'looks like noise' : noise?.coloured ? 'has a pattern, as the noise at rest has' : 'has a pattern'} ${model.grade}.`;
   else grade = `${model.end === 'stopped' ? 'From a stopped test: ' : ''}explains ${pctText(model.fit)} % of what it was fitted to; no Check ran ${model.grade}.`.replace(/^e/, 'E');
   const tail = [grade];
   if (model.grade === '✕') tail.push('Auto-tune can tune on it, but Try on the plant will tell; a larger room or a longer test helps.');
@@ -13579,6 +13625,19 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
       break;
     }
   }
+  {
+    const tolU = 1e-9 * (plan.umax - plan.umin);
+    let at = 0, all = 0;
+    for (const sg of seg.closed) {
+      for (let j = sg.i0; j < sg.i1; j++) {
+        const u = nan(record.u[j]);
+        if (!finite(u)) continue;
+        all++;
+        if (u <= plan.umin + tolU || u >= plan.umax - tolU) at++;
+      }
+    }
+    if (at) warnings.push(`${names.u} was at its limit in ${Math.max(1, Math.round((100 * at) / all))} % of the loop's test: the ± bars may be too narrow`);
+  }
   const q = L.q > 0 ? L.q : encoderStep(record, seg.F, L);
   const quiet = !(L.sigma > 0.5 * L.floor) && !(q / Math.sqrt(12) > 0.5 * L.floor);
   const steps = q / Math.sqrt(12) > 0.2 * L.floor;
@@ -13607,13 +13666,27 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
   const integrating = look.integrating || (kernel && !kernel.integrating && kernelRises(kernel));
   const tried = ['lag', 'lags', 'resonance', ...(integrating ? ['intLag', 'intRes'] : [])];
 
+  const { colour, level } = (() => {
+    if (quiet || steps) return { colour: null, level: 0 };
+    const a = L.i0 + Math.floor((L.i1 - L.i0) / 2), v = [];
+    for (let j = a; j < L.i1; j++) { const yy = nan(record.y[j]); if (finite(yy)) v.push(yy - L.slope * (j - (L.i1 - 1))); }
+    const c = noiseColour(v);
+    if (c.length <= 1) return { colour: null, level: 0 };
+    let m = 0, s = 0;
+    for (const x of v) m += x;
+    m /= v.length;
+    for (const x of v) s += (x - m) ** 2;
+    return { colour: c, level: Math.sqrt(s / Math.max(1, v.length - 1)) };
+  })();
+  const sigmaY = Math.max(L.sigma, level), floorY = Math.max(L.floor, level);
+
   const fits = reused ? reused.fits : {};
   if (!reused) {
     for (const name of tried) {
       const S = STRUCTURES[name];
       const starts = [signed(S.start(lookGuess(look)), S, sign)];
       if (guessK) starts.push(signed(S.start(guessK), S, sign));
-      try { fits[name] = yield* fitStructureSteps(fitSegs, name, starts, { Ts, maxIter: 60 }); } catch { fits[name] = null; }
+      try { fits[name] = yield* fitStructureSteps(fitSegs, name, starts, { Ts, maxIter: 60, noise: colour }); } catch { fits[name] = null; }
     }
   }
 
@@ -13626,11 +13699,11 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
     for (let k = 0; k < ckY.length; k++) if (graded[k] && finite(ckY[k])) { y.push(ckY[k]); h.push(yh[k]); u.push(ckU[k]); }
     return { y, h, u };
   };
-  const ceiling = ckSeg ? noiseCeiling(measured(ckY).y, L.floor) : null;
-  const scoreCheck = (yh) => {
+  const ceiling = ckSeg ? noiseCeiling(measured(ckY).y, floorY) : null;
+  const scoreCheck = (yh, h = null) => {
     const m = measured(yh);
     const res = m.y.map((v, k) => v - m.h[k]);
-    const w = whiteness(res), x = crossCorrelation(res, m.u.map((v) => (finite(v) ? v : 0)));
+    const w = whiteness(res, 25, h), x = crossCorrelation(res, m.u.map((v) => (finite(v) ? v : 0)));
     return { fit: fitPercent(m.y, m.h), white: w.white, independent: x.independent, whiteness: w, cross: x };
   };
   let kernelFit = null;
@@ -13641,14 +13714,14 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
     if (!f) continue;
     const why = unsupported(name, f.p, { length });
     let check = null;
-    if (ckSeg) check = scoreCheck(simulateSegment(discretise(name, f.p, Ts), ckSeg).y);
+    if (ckSeg) { const dd = discretise(name, f.p, Ts); check = scoreCheck(simulateSegment(dd, ckSeg).y, noiseTransfer(dd, ckSeg)); }
     const fitAll = (() => {
       const yh = fitSegs.map((fs) => simulateSegment(discretise(name, f.p, Ts), fs).y);
       const y = [], h = [];
       fitSegs.forEach((fs, s) => { for (let k = 0; k < fs.y.length; k++) if (finite(fs.y[k])) { y.push(fs.y[k]); h.push(yh[s][k]); } });
       return fitPercent(y, h);
     })();
-    const gr = gradeOf({ fit: check ? check.fit : fitAll, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, kernelGap: check && kernelFit !== null ? kernelFit - check.fit : 0, left: !!seg.check?.left, checked: !!check });
+    const gr = gradeOf({ fit: check ? check.fit : fitAll, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, kernelGap: check && kernelFit !== null ? kernelFit - check.fit : 0, left: !!seg.check?.left, checked: !!check });
     candidates.push({
       structure: name, label: STRUCTURES[name].label, glyph: STRUCTURES[name].glyph, p: f.p, sd: f.sd, cov: plainCov(f.cov),
       fit: check ? check.fit : NaN, fitted: fitAll, chi2dof: f.chi2dof, bic: f.bic, unsupported: why, grade: gr.mark, why: why ? [why] : gr.why, check,
@@ -13672,7 +13745,7 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
   const S = STRUCTURES[chosen.structure];
 
   let where = [];
-  const hN = fitSegs.map((fs) => noiseTransfer(discretise(chosen.structure, chosen.p, Ts), fs));
+  const hN = fitSegs.map((fs) => convolve(noiseTransfer(discretise(chosen.structure, chosen.p, Ts), fs), colour));
   const placed = yield* placeFit(fitSegs, chosen.structure, chosen.p, chosen.cov, seg.levels, Ts, hN);
   if (placed) {
     const total = placed.reduce((a, pl) => a + pl.samples, 0);
@@ -13710,7 +13783,7 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
 
   const check = chosen.check;
   const kernelGap = check && kernelFit !== null ? kernelFit - check.fit : 0;
-  const grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
+  const grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
   let checkOut = null;
   if (ckSeg) {
     const yh = simulateSegment(discretise(chosen.structure, chosen.p, Ts), ckSeg).y;
@@ -13735,7 +13808,7 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
     structure: chosen.structure, label: S.label, glyph: S.glyph, params: chosen.p, sd: chosen.sd, cov: chosen.cov, chosen: chosenWhy,
     chain: S.chain(chosen.p, { sd: chosen.sd, units: { u: names.uUnit, y: names.yUnit } }),
     candidates: candidates.map(({ check: c, p, sd, cov, ...rest }) => ({ ...rest, params: p, sd })),
-    noise: { sigma: quiet ? 0 : L.sigma, q: steps ? q : 0, floor: L.floor, drift: L.drifts ? L.drift : 0, none: quiet, steps },
+    noise: { sigma: quiet ? 0 : sigmaY, q: steps ? q : 0, floor: floorY, drift: L.drifts ? L.drift : 0, none: quiet, steps, coloured: !!colour },
     fit: chosen.fitted, check: checkOut,
     where, holds: seg.holds.map((h) => ({ y: h.y, u: h.u })), whereSpread: { spread, flagged }, size, sizeNote,
     kernel: kernel ? { g: Array.from(kernel.g), sd: Array.from(kernel.sd), Ts: kernel.Ts, decimate: kernel.decimate, integrating: kernel.integrating, rate: kernel.rate ? { value: kernel.rate.value, sd: kernel.rate.sd } : null, fit: kernelFit } : null,

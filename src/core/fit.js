@@ -309,7 +309,7 @@ export function* lmSteps(residual, p0, { maxIter = 60, lower = null, upper = nul
 
   let J = jacobian(p, r);
   let { A, g } = normal(J, r);
-  let mu = 1e-3 * Math.max(1e-300, ...A.map((row, i) => row[i])), nu = 2;
+  let mu = 1e-3, nu = 2;   // dimensionless: the damping is mu·diag(JᵀJ) (Marquardt), so a uniform weight leaves the path unchanged
   let it = 0, why = 'iterations';
   for (;;) {
     // Held: at a bound with the gradient pushing out of it.
@@ -389,6 +389,54 @@ export function noiseTransfer(d, seg) {
   return h.slice(0, len);
 }
 
+// a * b (b null: a). The loop's noise transfer with the noise's own colour.
+export function convolve(a, b) {
+  if (!b || b.length <= 1) return a;
+  const o = new Float64Array(a.length + b.length - 1);
+  for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) o[i + j] += a[i] * b[j];
+  return o;
+}
+
+// The colour of a stretch of pure noise (Listen's, y less its drift): an
+// AR(p), p ≤ pmax by AIC, by Burg's method (on a short record near the unit
+// circle Yule–Walker's lags shrink the pole: Listen's 150 samples of an
+// AR(1) at 0.95), as the impulse response of 1/A(z), cut where less than
+// 1e-12 of its energy remains. White, or too short a stretch: [1].
+export function noiseColour(v, pmax = 10) {
+  const n = v.length;
+  if (n < 4 * pmax) return Float64Array.of(1);
+  let m = 0;
+  for (const x of v) m += x;
+  m /= n;
+  const f = Float64Array.from(v, (x) => x - m), b = Float64Array.from(f);
+  let E = 0;
+  for (const x of f) E += x * x;
+  E /= n;
+  if (!(E > 0)) return Float64Array.of(1);
+  let a = [], best = { aic: n * Math.log(E), a: [] };
+  for (let p = 1; p <= pmax; p++) {
+    // The reflection that minimises the forward and backward errors together.
+    let num = 0, den = 0;
+    for (let t = p; t < n; t++) { num += f[t] * b[t - 1]; den += f[t] * f[t] + b[t - 1] * b[t - 1]; }
+    const k = den > 0 ? (2 * num) / den : 0;
+    a = [...a.map((x, j) => x - k * a[a.length - 1 - j]), k];
+    for (let t = n - 1; t >= p; t--) { const ft = f[t], bt = b[t - 1]; f[t] = ft - k * bt; b[t] = bt - k * ft; }
+    E *= 1 - k * k;
+    const aic = n * Math.log(E) + 2 * p;
+    if (aic < best.aic) best = { aic, a: a.slice() };
+  }
+  if (!best.a.length) return Float64Array.of(1);
+  const h = [1];
+  let tot = 1;
+  for (let t = 1; t < 4096; t++) {
+    let s = 0;
+    for (let j = 0; j < best.a.length && j < t; j++) s += best.a[j] * h[t - 1 - j];
+    h.push(s); tot += s * s;
+    if (t > best.a.length && s * s < 1e-12 * tot) break;
+  }
+  return Float64Array.from(h);
+}
+
 // c(t) = Σ_q h(q) x(t + q) for t = 0 … x.length − 1 (x read as 0 beyond its
 // end): directly for a short h, else by a zero-padded FFT.
 function correlate(x, h) {
@@ -463,8 +511,10 @@ export function parameterCov(J, A, parts, s2) {
 // cov = σ̂²(JᵀJ)⁻¹ in the parameters' own units, σ̂² the weighted residual
 // variance (so the bars grow when the model misses), on open-loop segments;
 // closed-loop segments leave the noise filtered by the loop in the
-// residuals, and cov follows it there (parameterCov).
-export function* fitStructureSteps(segments, structure, starts, { Ts = segments[0]?.Ts, maxIter = 60 } = {}) {
+// residuals, and cov follows it there (parameterCov). noise: the noise's own
+// colour (noiseColour of a stretch of pure noise), convolved into each
+// segment's noise transfer, so the bars hold when it is not white.
+export function* fitStructureSteps(segments, structure, starts, { Ts = segments[0]?.Ts, maxIter = 60, noise = null } = {}) {
   const S = structureOf(structure);
   if (!(Ts > 0)) throw new Error('fitStructure: Ts must be positive (pass { Ts } or put it on the segments)');
   if (!segments.length) throw new Error('fitStructure: no segments');
@@ -499,7 +549,7 @@ export function* fitStructureSteps(segments, structure, starts, { Ts = segments[
   // In the fitted coordinates, then by dp/dq to the parameters.
   const dpdq = S.params.map((k, j) => (kinds[j] === 'delay' ? Ts : p[k]));
   const d = discretise(S, p, Ts);
-  const parts = segments.map((seg) => ({ length: Math.max(0, seg.y.length - 1), h: noiseTransfer(d, seg) }));
+  const parts = segments.map((seg) => ({ length: Math.max(0, seg.y.length - 1), h: convolve(noiseTransfer(d, seg), noise) }));
   const cq = parameterCov(res.J, res.A, parts, sigma2);
   const cov = cq && cq.map((row, i) => row.map((v, j) => v * dpdq[i] * dpdq[j]));
   const out = { structure: S.name, p, cov, cost: res.cost, chi2dof: sigma2, bic: nObs * Math.log(Math.max(res.cost, 1e-300) / nObs) + np * Math.log(nObs), n: nObs, np, start, iterations: res.iterations, evaluations: res.evaluations, converged: res.converged, why: res.why };
@@ -603,20 +653,28 @@ const looksWhite = (outside, worst) => outside <= WHITE.outside && worst <= WHIT
 // The residuals' autocorrelation over lags 1 … lags, normalised by lag 0,
 // R(τ) = Σ e[k] e[k−τ] / Σ e[k]² (Ljung: no mean removed, so an offset is a
 // pattern), against ±2.58/√N. white: no pattern by WHITE's rule.
-export function whiteness(res, lags = 25) {
+// h: a closed-loop replay's noise transfer (noiseTransfer): its residual is
+// S·v, which the loop colours even for the true model, so r is read about the
+// autocorrelation S gives white noise, Σ h_q h_{q+τ} / Σ h² (expected).
+export function whiteness(res, lags = 25, h = null) {
   const N = res.length;
   let r0 = 0;
   for (let k = 0; k < N; k++) r0 += res[k] * res[k];
-  const r = new Float64Array(lags);
+  const r = new Float64Array(lags), expected = new Float64Array(lags);
   for (let t = 1; t <= lags; t++) {
     let s = 0;
     for (let k = t; k < N; k++) s += res[k] * res[k - t];
     r[t - 1] = r0 > 0 ? s / r0 : 0;
   }
+  if (h && h.length > 1) {
+    let H = 0;
+    for (let q = 0; q < h.length; q++) H += h[q] * h[q];
+    for (let t = 1; t <= lags; t++) { let s = 0; for (let q = 0; q + t < h.length; q++) s += h[q] * h[q + t]; expected[t - 1] = s / H; }
+  }
   const band = Z99 / Math.sqrt(N);
   let outside = 0, worst = 0;
-  for (let i = 0; i < lags; i++) { if (Math.abs(r[i]) > band) outside++; worst = Math.max(worst, Math.abs(r[i]) / band); }
-  return { r, band, outside, worst, white: looksWhite(outside, worst) };
+  for (let i = 0; i < lags; i++) { const d = Math.abs(r[i] - expected[i]); if (d > band) outside++; worst = Math.max(worst, d / band); }
+  return { r, expected, band, outside, worst, white: looksWhite(outside, worst) };
 }
 
 // The residuals' cross-correlation with past u over lags 0 … lags,
@@ -981,7 +1039,7 @@ const oddNear = (x) => 2 * Math.round((x - 1) / 2) + 1;
 export function multisineLines({ N, kmax, kmin = 1, count = 60, seed = 1 } = {}) {
   if (!(N >= 4) || N & (N - 1)) throw new Error('multisineLines: N must be a power of two ≥ 4');
   const top = Math.min(Math.floor(kmax), N / 2 - 1);
-  const first = Math.max(1, kmin % 2 ? Math.ceil(kmin) : Math.ceil(kmin) + 1);
+  const first = Math.max(1, Math.ceil(kmin) % 2 ? Math.ceil(kmin) : Math.ceil(kmin) + 1);   // the smallest odd harmonic ≥ kmin
   if (!(top >= first)) throw new Error('multisineLines: no odd harmonic between kmin and kmax');
   const target = Math.ceil(1.5 * count);
   const quasiLog = (r) => {

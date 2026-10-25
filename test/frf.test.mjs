@@ -77,6 +77,19 @@ test('9. multisine: random-odd lines (one in three odd left out, even lines out,
   assert.throws(() => multisine({ N: 256, lines: [128] }), /harmonics/);
 });
 
+test('9. multisine lines: the first excited line is the smallest odd harmonic at or above kmin, also for a kmin between whole numbers', () => {
+  for (const kmin of [1, 1.5, 2, 3, 3.5, 7.5, 8]) {
+    // (As first built, kmin 1.5 excited 2, 6, 10, …: even lines, which the
+    // even distortion is read at.)
+    const L = multisineLines({ N: 1024, kmax: 200, kmin, count: 30, seed: 2 });
+    assert.ok(L.excited.every((k) => k % 2 === 1 && k >= kmin), `kmin ${kmin}: ${L.excited.filter((k) => k % 2 === 0 || k < kmin)}`);
+    assert.ok(L.detect.even.every((k) => k % 2 === 0) && L.detect.odd.every((k) => k % 2 === 1));
+    const first = Math.ceil(kmin) % 2 ? Math.ceil(kmin) : Math.ceil(kmin) + 1;
+    assert.ok(L.excited[0] === first || L.excited[0] === first + 2, `kmin ${kmin}: starts at ${L.excited[0]}`);
+    assert.ok([...L.excited, ...L.detect.odd].includes(first), `kmin ${kmin}: ${first} is a line`);
+  }
+});
+
 test('9. frequency response: exact at the excited lines on a linear plant in closed loop, against the exact discrete transfer function; the detection lines stay empty', () => {
   // 10 periods (51 s) settle the slowest loop (the integrator's) to rounding.
   const N = 512, T = 10, P = 4;

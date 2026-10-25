@@ -28,17 +28,24 @@ import { DEFAULT_PROJECT } from '../../src/core/examples.js';
 const quant = (v, q) => (q > 0 ? q * Math.round(v / q) : v);
 
 // num/den in s (highest power first) with dead time theta, at Ts. opts: noise
-// (std), q (encoder step), drift (y units per second, added to the output),
-// bias (added to u at the plant's input: an integrator drifts with it), y0
-// (the output's level at rest), seed.
-export function transferPlant({ num, den, theta = 0 }, Ts, { noise = 0, q = 0, drift = 0, bias = 0, y0 = 0, seed = 3 } = {}) {
+// (std), ar (the noise coloured as an AR(1) with this coefficient, noise its
+// standard deviation), q (encoder step), drift (y units per second, added to
+// the output), bias (added to u at the plant's input: an integrator drifts
+// with it), y0 (the output's level at rest), seed.
+export function transferPlant({ num, den, theta = 0 }, Ts, { noise = 0, ar = 0, q = 0, drift = 0, bias = 0, y0 = 0, seed = 3 } = {}) {
   const cs = contSim(num, den, theta, Ts);
-  let k = 0, last = 0;
+  let k = 0, last = 0, v = 0, vAt = -1;
   const truth = () => y0 + cs.output() + drift * k * Ts;
+  // AR(1) noise, stationary from the first sample, read once per sample.
+  const coloured = () => {
+    if (vAt < 0) v = noise * gaussAt(seed + 1, 0);
+    while (vAt < k) { vAt++; if (vAt > 0) v = ar * v + noise * Math.sqrt(1 - ar * ar) * gaussAt(seed, vAt); }
+    return v;
+  };
   return {
     Ts,
     truth,
-    output() { return quant(truth() + (noise > 0 ? noise * gaussAt(seed, k) : 0), q); },
+    output() { return quant(truth() + (noise > 0 ? (ar ? coloured() : noise * gaussAt(seed, k)) : 0), q); },
     advance(u) { last = u; cs.advance(u + bias); k++; return u; },
     get applied() { return last; },
   };

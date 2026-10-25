@@ -116,6 +116,25 @@ function startsFor(name, p) {
   ];
 }
 
+test('6. lm: the damping has no units, so a uniform weight (1/floor²) leaves the path unchanged', () => {
+  // The same lag fitted with the weights a noisy plant (1), a quiet one and
+  // a noise-free simulation (floor 1e-5 of the band) give; powers of two, so
+  // the scaling itself is exact and the paths must be the same bit for bit.
+  // (With the damping scaled by max diag(JᵀJ), as first built, the second
+  // start took 11, 29 and 1 iterations, the last stuck where it started.)
+  const p = { K: 2, tau: 0.3, theta: 0.0237 }, N = 600;
+  const run = runPlant(STRUCTURES.lag.tf(p), Ts, N, { u: doublets(N) });
+  const noisy = Float64Array.from(run.y, (v, k) => v + 0.01 * gaussAt(4, k));
+  for (const start of [{ K: 1, tau: 0.8, theta: 0.01 }, { K: 4, tau: 0.05, theta: 0.1 }]) {
+    const fits = [1, 2 ** 20, 2 ** 40].map((weight) => fitStructure([{ y: noisy, u: run.u, yStart: 0, uStart: 0, weight }], 'lag', [start], { Ts }));
+    for (const f of fits.slice(1)) {
+      assert.equal(f.iterations, fits[0].iterations, `iterations ${fits.map((x) => x.iterations)}`);
+      for (const k of ['K', 'tau', 'theta']) assert.ok(Object.is(f.p[k], fits[0].p[k]), `${k}: ${f.p[k]} against ${fits[0].p[k]}`);
+    }
+    assert.ok(Math.abs(fits[0].p.K - p.K) < 0.01 && Math.abs(fits[0].p.tau - p.tau) < 0.01, JSON.stringify(fits[0].p));
+  }
+});
+
 test('6. fits: each structure recovers known parameters from noise-free data, open loop and closed loop (the replay)', () => {
   const N = 1500;
   for (const [name, p] of Object.entries(TRUTH)) {

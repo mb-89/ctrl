@@ -14,7 +14,7 @@ import { discretise, simulateSegment } from '../src/core/fit.js';
 import { createStepRunner } from '../src/core/live.js';
 import { normalizeProject } from '../src/core/project.js';
 import { drain } from '../src/core/autotune.js';
-import { diagramPlant, libraryProject, runExperiment } from './fixtures/plants.mjs';
+import { diagramPlant, libraryProject, runExperiment, transferPlant, lag } from './fixtures/plants.mjs';
 import { createArm, drawArm, armAt, NOMINAL } from './fixtures/arm.mjs';
 import { armProject } from './fixtures/arm-project.mjs';
 import { contSim } from './fixtures/continuous.mjs';
@@ -48,7 +48,7 @@ function libraryRun(name, sensor) {
   return { plan, res, record, model: drain(identifySteps(record, { plan })) };
 }
 
-test('13 (identify). The oven: two lags and a dead time, its step within 2 % of the three lags it is, ✓', (t) => {
+test('13 (identify). The oven: two lags and a dead time, its step within 2 % of the three lags it is, as good as its noise allows', (t) => {
   const { res, model: m } = libraryRun('Oven', { noise: 0.1 });
   assert.equal(res.exp.state.end.code, 'done');
   assert.ok(m.ok && m.check.fit >= 95, `fit ${m.check.fit}`);
@@ -59,7 +59,16 @@ test('13 (identify). The oven: two lags and a dead time, its step within 2 % of 
   assert.ok(worst < 0.02, `step ${worst}`);
   assert.ok(Math.abs((m.params.K ?? 0) - 1) < 0.01, `K ${m.params.K}`);
   assert.ok(!m.whereSpread.flagged, 'a linear plant is the same everywhere');
-  assert.equal(m.grade, '✓', m.why.join('; '));
+  // ✓, or ! for a pattern alone: two lags for three lags and a dead time
+  // leave a slow error of about 0.1 °C in the cooling tail, which σ 0.1 °C
+  // over a 9 s Check sometimes shows and sometimes hides (✓ on 3 to 6 of 10
+  // noise seeds, before and after the review's fixes). Either way the Check
+  // fit is within its noise ceiling's reach.
+  assert.ok(m.grade === '✓' || (m.grade === '!' && m.why.every((w) => w.startsWith('what is left has a pattern'))), m.why.join('; '));
+  assert.ok(m.check.fit >= m.check.ceiling - 0.3, `fit ${m.check.fit}, ceiling ${m.check.ceiling}`);
+  // The heater cannot cool: its PI sat at 0 % while the oven cooled, and the
+  // model says its bars may be too narrow there (they take the loop as linear).
+  assert.ok(m.warnings.some((w) => /^P was at its limit in \d+ % of the loop's test: the ± bars may be too narrow$/.test(w)), m.warnings.join('; '));
   t.diagnostic(`oven: ${m.structure}, fit ${fmt(m.check.fit)} % (ceiling ${fmt(m.check.ceiling)}, kernel ${fmt(m.check.kernel)}), ${m.grade}; ${params(m)}; step within ${fmt(100 * worst, 2)} % of the truth`);
 });
 
@@ -148,4 +157,33 @@ test('the simulated arm (a test fixture for the command line) is hil_plant.py\'s
     }
     assert.ok(worst < 5e-3, `${worst}`);
   }
+});
+
+test('6 (in the model). Coloured noise: its colour and level read from Listen, the bars widened by it, and a pattern said to be the noise\'s own', () => {
+  // A lag (K 2, τ 0.5 s, θ 0.05 s) under the whole test, its sensor noise an
+  // AR(1) at 0.9 with σ 0.005: Listen's σ from differences reads σ√(1 − ρ).
+  const Ts = 0.01, r = Array.from({ length: 600 }, (_, k) => (k >= 50 && k < 550 ? 1 : 0));
+  const known = {
+    block: { path: ['c'], key: 'c', where: 'c' }, live: false,
+    u: { name: 'u', unit: '', min: -2, max: 2, u0: 0, from: 'controller' },
+    y: { name: 'y', unit: '', hard: null, from: null },
+    r: { lo: 0, hi: 1, span: 1, source: 'r', period: 6, samples: r, Ts }, Ts, others: [],
+  };
+  const plan = planExperiment(known);
+  const run = (opts) => {
+    const res = runExperiment(plan, transferPlant(lag(2, 0.5, 0.05), Ts, opts));
+    return drain(identifySteps(compactRecord(res.record), { plan }));
+  };
+  const m = run({ noise: 0.005, ar: 0.9, seed: 5 });
+  assert.ok(m.ok, m.message);
+  assert.equal(m.noise.coloured, true);
+  assert.ok(Math.abs(m.noise.sigma - 0.005) < 0.0015, `σ ${m.noise.sigma}`);
+  const ys = m.check.y, mean = ys.reduce((a, b) => a + b, 0) / ys.length;
+  const ceilingAt = (s) => 100 * (1 - (s * Math.sqrt(ys.length)) / Math.hypot(...ys.map((v) => v - mean)));
+  assert.ok(Math.abs(m.check.ceiling - ceilingAt(m.noise.sigma)) < 1e-9, 'the ceiling from the noise\'s level, not from its differences');
+  if (!m.check.white) assert.ok(m.why.includes('what is left has a pattern, as the noise at rest has'), m.why.join('; '));
+  // White noise reads white: the plain reasons, the plain level.
+  const w = run({ noise: 0.005, seed: 5 });
+  assert.equal(w.noise.coloured, false);
+  assert.ok(Math.abs(w.noise.sigma - 0.005) < 0.001, `σ ${w.noise.sigma}`);
 });

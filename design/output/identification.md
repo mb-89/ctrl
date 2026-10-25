@@ -511,6 +511,7 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
   - from the first look;
   - from the kernel estimate (§6.8): its sum gives the gain, its first significant tap θ, its decay the time scale, and its oscillation f and ζ.
 - **Caps.** At most 60 iterations per start. Deterministic.
+- **Damping** (after review): Marquardt's μ·diag(JᵀJ) with μ₀ = 10⁻³, a number without units, so the uniform weight 1/floor² leaves the path unchanged (bit for bit at weights that are powers of two). First built, μ₀ was 10⁻³ · max diag(JᵀJ): at a noise-free simulation's floor the same lag took 29–36 iterations instead of 8–10, and the resonance ended in a local minimum from 8 of 25 random starts instead of 2.
 - **Cost.**
   - About 5 structures × 2 starts × 60 iterations × (p + 1) replays of up to 12 000 samples.
   - The research measured a two-lag-plus-delay fit at 1 934 simulations in 0.9 s.
@@ -530,6 +531,8 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
 - **In the sentences:** ±2σ, rounded to the digits that matter.
 - **The bands** come from 50 seeded parameter samples.
 - These bars understate the truth when the structure is wrong (Schoukens & Ljung 2019). So the where-spread and the distortion are shown beside them, never folded into them.
+- **Coloured noise** (after review). S·v assumes v white. The noise's own colour is read from Listen's last half less its drift, pure noise with no model involved: an AR(p), p ≤ 10 by AIC, by Burg's method (Yule–Walker shrinks a pole near the unit circle on 150 samples), and its impulse response is convolved into each segment's S. Skipped when Listen is quiet or shows an encoder's steps. Measured (a lag under a brisk PI, AR(1) at 0.95, σ 0.02, 80 seeds, the colour from 150 samples): K, τ, θ covered in 67, 75, 78 of 80, against 26, 32, 34 read as white; two lags, the resonance and an integrator with a lag 70–79 of 80 (20–46 as white); open loop 72–76 (22–34); white noise unchanged. The estimates are unbiased either way; only the bars were 3–7× too narrow. Coloured, the noise's level is its spread about the drift, not Listen's σ from differences (σ√(1 − ρ) for an AR(1)): it sets the noise ceiling and the noise sentence.
+- **A controller at its limit** (after review). The bars take the loop as linear; a law at its clamp passes no noise back, and when it leaves the clamp is set by the noise. When u sat at a limit anywhere in the closed-loop data, the model says so: "P was at its limit in 3 % of the loop's test: the ± bars may be too narrow". Measured: u clamped at a segment's start, K's spread 1.6× its bar; reading S at the first unclamped sample instead made it 3.3×.
 
 ### 6.6 Where and Size
 
@@ -555,7 +558,7 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
 
 **Used for:**
 - the Bode dots with ±2σ bars;
-- the share of excited lines where the model lies within 2σ;
+- the share of excited lines where the model lies within 2σ, against the model's discretised response G_d(e^{jωTs}) (the zero-order hold and the fractional dead time), not G(jω): at ωTs = 1.36 (line 111 of 512 at 10 ms) the two differ by 72–76 % (review, for step 8);
 - the distortion sentence;
 - the grade.
 
@@ -610,7 +613,9 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
   - the residuals' autocorrelation over lags 1–25 within ±2.58/√N;
   - their cross-correlation with past u over lags 0–25.
   - "A pattern" is two or more lags outside the band, or one beyond 1.5 × it (white residuals show one in about 3 % of records). The autocorrelation removes no mean (Ljung), so an offset is a pattern; the cross-correlation uses u less its mean.
-  - In words: "what is left looks like noise", or "what is left has a pattern".
+  - **On the Check** (after review) each lag is read against what the replayed loop gives white noise, Σh_q h_{q+τ} / Σh² with h the loop's noise transfer: its residual is S·v, coloured even for the true model. Measured (a lag under its SIMC PI at τc = θ, 100 seeds): the true model read "a pattern" in 68 as built, 6 so; τ 20 % off in all 100. The noise's own colour is not taken out: from Listen's 150 samples it is too unsure for the Check's band (white noise then read "a pattern" in a third of seeds). When Listen heard coloured noise, the reason says so.
+  - The cross-correlation in closed loop is shown, never graded: under feedback lag 0 is always correlated (it flagged 13 % of true models at τc = θ).
+  - In words: "what is left looks like noise", "what is left has a pattern", or "what is left has a pattern, as the noise at rest has".
 
 **Grades** (thresholds are named constants in the code; they inform and never block):
 
@@ -911,7 +916,7 @@ export function twinDiagram(diagram, path, model, opts)     // → a diagram wit
 // IdentifiedModel (built) = { version, ok, Ts, names, band, end, structure, label, glyph, params, sd, cov, chosen
 //   (why), chain: [{ kind, key, label, value, sd, unit, tip }], candidates: [{ structure, label, glyph, params, sd,
 //   fit (on the Check), fitted (on the fitting data), chi2dof, bic, unsupported, grade, why }], noise: { sigma, q,
-//   floor, drift, none, steps }, fit, check: { fit, ceiling, white, independent, grade, why, kernel, i0, i1, left,
+//   floor, drift, none, steps, coloured }, fit, check: { fit, ceiling, white, independent, grade, why, kernel, i0, i1, left,
 //   y, yhat, band, autocorrelation, crossCorrelation, limit } | null, where: [{ level, from, to, gain, gainSd,
 //   scale, scaleSd, scaleKey, samples, seen, hold, holdAt }], holds: [{ y, u }], whereSpread: { spread, flagged },
 //   size: [{ a, gain, complete }], sizeNote, kernel: { g, sd, Ts, decimate, integrating, rate, fit } | null,
@@ -931,7 +936,7 @@ export function discretise(structure, p, Ts)              // exact ZOH with a fr
 export function simulateSegment(d, segment)               // → { y, u }: the replay at rest about the segment's start
 export function* lmSteps(residual, p0, { maxIter = 60, lower, upper }) // Levenberg–Marquardt, deterministic, yields
 export const lm                                            //   per iteration; lm drains it
-export function* fitStructureSteps(segments, structure, starts, { Ts, maxIter }) // → { p, cov, sd, cost,
+export function* fitStructureSteps(segments, structure, starts, { Ts, maxIter, noise }) // → { p, cov, sd, cost,
 export const fitStructure                                  //   chi2dof, bic, n, np, start, iterations, converged }
 export function noiseTransfer(d, segment)                 // the replayed loop's noise transfer S (impulse response)
 export function parameterCov(J, A, parts, s2)             // σ̂²A⁻¹, or with S on closed-loop segments (§6.5)
@@ -952,7 +957,11 @@ export function frf(U, Y, { excited, detect, Ts })         // U, Y: whole period
                                                            //   distortion: { share, odd, even, level, near }, periods }
 export function fitPercent(y, yhat)
 export function noiseCeiling(y, floor)
-export function whiteness(res, lags = 25)                   // → { r, band, outside, worst, white }
+export function whiteness(res, lags = 25, h = null)         // → { r, expected, band, outside, worst, white }; h: a closed
+                                                           //   loop's noise transfer, each lag read against Σh_q h_{q+τ}/Σh²
+export function noiseColour(v, pmax = 10)                   // a stretch of pure noise's AR colour (Burg, AIC) as 1/A(z)'s
+                                                           //   impulse response; [1] when white
+export function convolve(a, b)                              // a * b (b null: a): a loop's noise transfer with the noise's colour
 export function crossCorrelation(res, u, lags = 25)         // → { r, band, outside, worst, independent }
 
 // src/core/linalg.js gains cholesky(A) and cholSolve(L, b) (the kernel, LM), and eigSym(A, { vectors, project })
