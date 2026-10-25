@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the equations of motion and the mechanics canvas ([transparent-models.md](transparent-models.md) steps 6, 8; [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md))
+
+- **The equations are shown in the parameters' names** ("I want to be able to click into that and see what it's about"): a fold *Equations of motion* on every part of a mechanism and on a masked subsystem that holds one, open on the World, derived from the same walk as the simulation and checked against its matrices; hovering a coefficient gives its value. Interpretation: a parameter typed as a number shows as that number, and a uniform rod's own inertia is shown summed with its mass at l/2 (m·l²/3 about the hinge).
+- **Parts are joined on the canvas** at frame ports on their bottom edge, by dragging from port to port; a join is a thick grey line, a dot where three ports meet; Del removes a selected join. Interpretation: Group refuses a selection that splits a mechanism (rather than moving the joins across a boundary, which §10 leaves unbuilt).
+- The canvas work was built on main's canvas, in one module (`ui/joins.js`): `feat/autolayout` did not exist yet.
+- Feature freeze ([input 28](../input/2026-10-25-28-feature-freeze-then-overhaul.md)): nothing beyond the plan was added; the planning time's +10 % and the cart–pole's slower 5 s run are recorded, not optimised further.
+
 ## 2026-10-25 · v2.9: the carts open ([transparent-models.md](transparent-models.md) steps 5–7; [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md))
 
 - **The cart–pole and the pendulum chains are masked subsystems of Mechanics parts** (World, Rail, Hinge, Mass, Rod joined at frame ports; `core/mech.js`), compiled to one state node per mechanism. The `cartPole` and `pendulumCart` types and `chainRates` are gone; old files open them on load (the chain's `links` gives the number of rods).
