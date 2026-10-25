@@ -103,7 +103,7 @@ export function normalizeProject(p) {
 // is recomputed from the record, so a key that is not a measurement or a
 // design input is refused with the sentence below.
 export const IDENTIFY_COMPUTED = 'Identify keeps the measurements; the model is computed from them. To keep numbers, use Copy as blocks.';
-const IDENTIFY_KEYS = ['band', 'budget', 'hard', 'vary', 'seed', 'structure', 'use', 'kept'];
+const IDENTIFY_KEYS = ['band', 'budget', 'hard', 'vary', 'seed', 'structure', 'use', 'kept', 'source'];
 const KEPT_KEYS = ['name', 'plan', 'record'];
 const RECORD_KEYS = ['version', 'Ts', 'u', 'y', 'r', 'applied', 'gaps', 'log', 'end', 'ports'];
 const PLAN_KEYS = ['version', 'kind', 'Ts', 'u0', 'umin', 'umax', 'band', 'hard', 'budget', 'seed', 'names', 'test', 'check', 'others'];
@@ -196,6 +196,8 @@ export function normalizeIdentify(raw) {
       o.vary = { share: e.vary.share, seed: e.vary.seed };
     } else if ('vary' in e) o.vary = null;
     if (e.seed != null) { if (!Number.isInteger(e.seed)) throw new Error(`${where}.seed: a whole number`); o.seed = e.seed; }
+    // Which plant Auto-tune and Analysis use (§10): the diagram or the identified model.
+    if (e.source != null) { if (!['diagram', 'identified'].includes(e.source)) throw new Error(`${where}.source: "diagram" or "identified"`); o.source = e.source; }
     if (e.structure != null) { if (!Object.hasOwn(STRUCTURES, e.structure)) throw new Error(`${where}.structure: one of ${Object.keys(STRUCTURES).join(', ')}`); o.structure = e.structure; }
     const kept = e.kept ?? [];
     if (!Array.isArray(kept)) throw new Error(`${where}.kept: a list of kept tests`);

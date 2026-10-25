@@ -11113,7 +11113,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     const toMeas = walk(meas, deps);
     const kept = stateNodes.filter((nd) => nd.i !== cut && fromCut[nd.i] && toMeas[nd.i]);
     const outside = nodes.find((nd, i) => nd.kind === 'xplant' && (fromCut[i] || nd.i === cut || nodes.some((tp, j) => tp.kind === 'tap' && tp.parent === i && toMeas[j])));
-    if (outside) throw modelError('external-plant', `the plant runs outside the page (External plant '${outside.name}'): the page has no model of it to design with or analyse`, 'identify it first (the Identify tab is designed, not built yet), or set the gains by hand and tune it live');
+    if (outside) throw modelError('external-plant', `the plant runs outside the page (External plant '${outside.name}'): the page has no model of it to design with or analyse`, 'set the gains by hand and tune it live, or identify it (Identify tab) and tune it on the model in Auto-tune; designs from an identified model come later');
     const sliceOf = (starts) => { const used = walk(starts, reads); return Int32Array.from(order.filter((i) => used[i] && i !== cut)); };
     const sliceF = sliceOf(kept.flatMap((nd) => nd.inputs));
     const slice = sliceOf([...meas, ...kept.flatMap((nd) => nd.inputs)]);
@@ -12015,7 +12015,7 @@ const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 const HIL_SYSTEM = {
   name: 'HIL: an external plant',
   summary: 'A plant outside the page, connected live (hardware in the loop); the page knows only its interface. Download and run the plant, connect, then identify and tune it: working with a plant you cannot see.',
-  notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Reference mode is a switch, not another system: Plant tab, Live settings, Mode, "Plant": while it is stopped the plant runs its own controller with its own limits, the page sends r straight to it and records what comes back, its own effort V included (the page\'s controllers and Auto-tune are out of the loop); "Page" puts the Controller back. A plant that cannot switch says so: start it with --mode reference instead, and the page follows what it describes. Help (?), Live and For agents, has all of it.',
+  notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning: the Identify tab runs an experiment on it that eases in, and Auto-tune and Analysis then work on the model it finds. The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. 4. Identify tab, Start: the test eases in and the plant stops at its end; Keep stores it; then Auto-tune tunes on the model. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Reference mode is a switch, not another system: Plant tab, Live settings, Mode, "Plant": while it is stopped the plant runs its own controller with its own limits, the page sends r straight to it and records what comes back, its own effort V included (the page\'s controllers and Auto-tune are out of the loop); "Page" puts the Controller back. A plant that cannot switch says so: start it with --mode reference instead, and the page follows what it describes. Help (?), Live and For agents, has all of it.',
   signals: {
     r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
   },
@@ -12960,7 +12960,7 @@ function normalizeProject(p) {
 }
 
 const IDENTIFY_COMPUTED = 'Identify keeps the measurements; the model is computed from them. To keep numbers, use Copy as blocks.';
-const IDENTIFY_KEYS = ['band', 'budget', 'hard', 'vary', 'seed', 'structure', 'use', 'kept'];
+const IDENTIFY_KEYS = ['band', 'budget', 'hard', 'vary', 'seed', 'structure', 'use', 'kept', 'source'];
 const KEPT_KEYS = ['name', 'plan', 'record'];
 const RECORD_KEYS = ['version', 'Ts', 'u', 'y', 'r', 'applied', 'gaps', 'log', 'end', 'ports'];
 const PLAN_KEYS = ['version', 'kind', 'Ts', 'u0', 'umin', 'umax', 'band', 'hard', 'budget', 'seed', 'names', 'test', 'check', 'others'];
@@ -13045,6 +13045,7 @@ function normalizeIdentify(raw) {
       o.vary = { share: e.vary.share, seed: e.vary.seed };
     } else if ('vary' in e) o.vary = null;
     if (e.seed != null) { if (!Number.isInteger(e.seed)) throw new Error(`${where}.seed: a whole number`); o.seed = e.seed; }
+    if (e.source != null) { if (!['diagram', 'identified'].includes(e.source)) throw new Error(`${where}.source: "diagram" or "identified"`); o.source = e.source; }
     if (e.structure != null) { if (!Object.hasOwn(STRUCTURES, e.structure)) throw new Error(`${where}.structure: one of ${Object.keys(STRUCTURES).join(', ')}`); o.structure = e.structure; }
     const kept = e.kept ?? [];
     if (!Array.isArray(kept)) throw new Error(`${where}.kept: a list of kept tests`);
@@ -14910,7 +14911,7 @@ function tuneContext(project, path) {
   if (plant?.type !== 'diagram') throw new Error('the plant is not a block diagram yet');
   const ext = externalBlock(plant.diagram);
   if (ext && blockMode(EXTERNAL_BLOCK.normalize(ext.params)) !== 'control') throw new Error(`the plant runs its own controller (External plant ${ext.name ?? ext.id}, reference mode): the page's controllers and Auto-tune are not in the loop`);
-  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, and Auto-tune needs an identified model of it (Identify, not built yet). Until then, tune it live in the Controller tab`);
+  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, so Auto-tune tunes on its identified model: identify the plant first (Identify tab)`);
   const all = controllerBlocks(plant.diagram);
   const key = path ? [].concat(path).join('/') : null;
   const hit = (key && all.find((c) => c.key === key)) || all[0];
@@ -15041,6 +15042,12 @@ function runCost(run, key, goal = {}, how = {}) {
   const parts = { error: err, effort, overshoot: OVERSHOOT_WEIGHT * over, saturation: g.saturation * sat / n };
   const J = parts.error + parts.effort + parts.overshoot + parts.saturation;
   return { J: Number.isFinite(J) ? Math.min(J, DIVERGED) : 2 * DIVERGED, diverged: false, parts, overshoot: worst, saturated: sat / n };
+}
+
+function diagramCost(project, path, variant, goal = {}) {
+  const ctx = tuneContext(project, path), g = { ...GOAL, ...goal };
+  const scales = costScales(runVariant(ctx, ctx.variant), ctx.key, ctx.variant);
+  return variantCost(ctx, normalizeVariant(variant), g, scales);
 }
 
 function variantCost(ctx, variant, goal, scales) {
@@ -15990,13 +15997,13 @@ function tuneReport(res) {
 
 
 function baseName(name) {
-  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?)( \d+)?)+$/, '');
+  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?|eased in)( \(model\))?( \d+)?)+$/, '');
 }
 
-function resultName(block, method, rule = 'tl', simc = 'tight') {
+function resultName(block, method, rule = 'tl', simc = 'tight', { onModel = false } = {}) {
   const running = block.variants[block.variant ?? 0];
   const base = baseName(running.name);
-  const suffix = method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`;
+  const suffix = (method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`) + (onModel ? ' (model)' : '');
   const named = (s) => `${base.slice(0, Math.max(0, 40 - s.length))}${s}`;
   const plain = named(suffix);
   if (running.name === plain || (running.name.startsWith(plain) && /^ \d+$/.test(running.name.slice(plain.length)))) return running.name;
@@ -16035,7 +16042,7 @@ function fmtN(v) {
   return String(Number(v.toPrecision(3)));
 }
 
-return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, feedforwardStart, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, ripplePeriod, settledLevel, settledSlope, fitFopdt, fitIntegrating, stepExperimentSteps, stepExperiment, SIMC, tauCSource, tauCShort, simcGains, simcIntegrating, stepTuneSteps, stepTune, METHODS, autotuneSteps, unstableAtStart, autotune, measurement, whyWorse, tuneReport, baseName, resultName, placeVariant, derivativeFilter, pidVariant };
+return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, diagramCost, variantCost, tuningSpace, feedforwardStart, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, ripplePeriod, settledLevel, settledSlope, fitFopdt, fitIntegrating, stepExperimentSteps, stepExperiment, SIMC, tauCSource, tauCShort, simcGains, simcIntegrating, stepTuneSteps, stepTune, METHODS, autotuneSteps, unstableAtStart, autotune, measurement, whyWorse, tuneReport, baseName, resultName, placeVariant, derivativeFilter, pidVariant };
 })();
 // ---- core/ops.js
 __mods['core/ops.js'] = (() => {
@@ -17010,6 +17017,8 @@ const {
 } = __mods['core/fit.js'];
 const { cholesky } = __mods['core/linalg.js'];
 const { createStepRunner } = __mods['core/live.js'];
+const { loopModel } = __mods['core/project.js'];
+const { analyzeLoop } = __mods['core/analysis.js'];
 const { physicalMaskKeys } = __mods['core/physics.js'];
 class IdentifyError extends Error {
   constructor(code, message, hint = '') {
@@ -17964,7 +17973,7 @@ function linearModel(model) {
   };
 }
 
-function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = null } = {}) {
+function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = null, at = null } = {}) {
   if (!model?.structure) throw new Error('twinSubsystem: no model was identified');
   const p = model.params, S = STRUCTURES[model.structure];
   const blocks = [], wires = [];
@@ -17977,9 +17986,9 @@ function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = 
     add({ id: 'sum', type: 'sum', params: { signs: '++' } });
     wires.push({ from: 'push', to: 'sum:1' });
   }
+  if (at?.u0) add({ id: 'aboutU', type: 'fcn', name: 'about u₀', params: { inputs: 'u', eqs: `y = u - (${at.u0})`, outputs: 'y' } });
   const gainKey = GAIN(S);
   add({ id: 'gain', type: 'gain', name: S.integrating ? 'rate k′' : 'gain K', params: { K: p[gainKey] } });
-  if (p.theta > 0) add({ id: 'dead', type: 'delay', name: 'dead time θ', params: { L: p.theta, y0: 0 } });
   if (S.integrating) add({ id: 'int', type: 'integrator', name: 'integrator', params: { K: 1 } });
   if (model.structure === 'lag' || model.structure === 'intLag') add({ id: 'lag', type: 'firstOrder', name: 'lag τ', params: { K: 1, tau: p.tau } });
   if (model.structure === 'lags') {
@@ -17987,10 +17996,116 @@ function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = 
     add({ id: 'lag2', type: 'firstOrder', name: 'lag τ₂', params: { K: 1, tau: p.tau2 } });
   }
   if (model.structure === 'resonance' || model.structure === 'intRes') add({ id: 'res', type: 'secondOrder', name: 'resonance f, ζ', params: { K: 1, wn: 2 * Math.PI * p.f, zeta: p.zeta } });
+  if (p.theta > 0) add({ id: 'dead', type: 'delay', name: 'dead time θ', params: { L: p.theta, y0: 0 } });
+  if (at?.y0) add({ id: 'aboutY', type: 'fcn', name: 'about y₀', params: { inputs: 'u', eqs: `y = u + (${at.y0})`, outputs: 'y' } });
   if (noise && model.noise?.sigma > 0) add({ id: 'noise', type: 'noise', name: 'noise σ', params: { std: model.noise.sigma, seed: 1 } });
   if (noise && model.noise?.q > 0) add({ id: 'quant', type: 'quantizer', name: 'steps q', params: { q: model.noise.q } });
   add({ id: 'y', type: 'outport', name: model.names?.y ?? 'y', params: { port: 1 } });
   return { id, type: 'subsystem', name: name ?? `identified ${S.label}`, params: {}, diagram: { blocks, wires } };
+}
+
+function twinDiagram(diagram, path, model, { push = null, noise = true } = {}) {
+  const d = structuredClone(diagram);
+  const { level, block } = locate(d, path);
+  if (block?.type !== 'controller') throw new Error(`twinDiagram: no Controller block ${[].concat(path).join('/')}`);
+  const ids = new Set(level.blocks.map((b) => b.id));
+  const fresh = (base) => { let id = base; for (let k = 2; ids.has(id); k++) id = `${base}${k}`; ids.add(id); return id; };
+  const id = fresh('twin');
+  const rest = model.holds?.[0] ?? null;
+  const tw = twinSubsystem(model, { push: !!push, noise, id, name: 'identified model', at: rest ? { u0: rest.u, y0: rest.y } : null });
+  tw.x = (block.x ?? 0) + 160; tw.y = (block.y ?? 0) + 140;
+  const into = wireTo(level, block.id, 1);
+  const measured = into ? parseEnd(into.from) : null;
+  level.wires = level.wires.filter((w) => w !== into);
+  const ext = level.blocks.filter((b) => b.type === 'external').map((b) => b.id);
+  if (ext.length) {
+    level.wires = level.wires.flatMap((w) => {
+      const f = parseEnd(w.from), t = parseEnd(w.to);
+      if (ext.includes(t.id)) return [];
+      if (!ext.includes(f.id)) return [w];
+      return measured && sameEnd(f, measured) ? [{ ...w, from: id }] : [];
+    });
+    level.blocks = level.blocks.filter((b) => !ext.includes(b.id));
+  }
+  if (measured && !ext.includes(measured.id)) {
+    level.wires = level.wires.map((w) => (sameEnd(parseEnd(w.from), measured) && level.blocks.find((b) => b.id === parseEnd(w.to).id)?.type === 'sink' ? { ...w, from: id } : w));
+  }
+  level.blocks.push(tw);
+  level.wires.push({ from: block.id, to: id }, { from: id, to: `${block.id}:1` });
+  if (push) {
+    const sid = fresh('push');
+    level.blocks.push({ id: sid, type: 'source', name: 'push at the input (model only)', params: { signal: push }, x: tw.x - 120, y: tw.y + 60 });
+    level.wires.push({ from: sid, to: `${id}:1` });
+  }
+  return d;
+}
+
+const PUSH = { share: 0.2, least: 0.01, at: 0.6 };
+function testPush(project, path, model) {
+  const known = knownFor(project, path);
+  const S = STRUCTURES[model.structure], p = model.params;
+  const span = known.r?.span ?? 0;
+  const U = known.u.max - known.u.min;
+  const du = S.integrating ? 0 : Math.abs(span / p.K);
+  const amplitude = Math.max(PUSH.least * U, PUSH.share * du);
+  const period = known.r?.period ?? Math.max(...Object.values(project.system.signals).map((x) => x.period));
+  const d = known.others.map((o) => project.system.signals[o.name]).find((sg) => sg?.components?.some((c) => c.enabled !== false && finite(c.params?.amplitude) && c.params.amplitude !== 0 && finite(c.params?.time)));
+  if (d) {
+    const comps = d.components.filter((c) => c.enabled !== false && finite(c.params?.amplitude) && finite(c.params?.time));
+    const big = Math.max(...comps.map((c) => Math.abs(c.params.amplitude)));
+    return { amplitude, time: Math.min(...comps.map((c) => c.params.time)), components: comps.map((c) => ({ ...structuredClone(c), params: { ...c.params, amplitude: (c.params.amplitude / big) * amplitude } })) };
+  }
+  const time = PUSH.at * period;
+  return { amplitude, time, components: [{ type: 'step', params: { amplitude, time } }] };
+}
+
+function modelProject(project, path, model, { push = true, noise = true } = {}) {
+  const known = knownFor({ ...project, system: { ...project.system } }, path);
+  const signals = structuredClone(project.system.signals);
+  let name = null;
+  if (push) {
+    name = 'push';
+    for (let k = 2; signals[name]; k++) name = `push${k}`;
+    const tp = testPush(project, path, model);
+    const period = known.r?.period ?? 1;
+    signals[name] = { period, components: tp.components };
+  }
+  const diagram = normalizeDiagram(twinDiagram(project.system.plant.diagram, known.block.path, model, { push: name, noise }));
+  return { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram }, signals } };
+}
+
+function identifiedLoop(project, path, model) {
+  const lin = linearModel(model);
+  const m = loopModel(modelProject(project, path, model, { push: false, noise: false }), path, 'initial');
+  const own = m.warnings.filter((w) => !/is at its limit|the origin is not at rest/.test(w));
+  return { ...m, opLabel: lin.op.label, atLimit: false, identified: true, warnings: [...new Set([...lin.warnings, ...own])] };
+}
+
+function loopRanges(project, path, model, { count = 12 } = {}) {
+  const models = modelSamples(model, count).map((p) => ({ ...model, params: p }));
+  const S = STRUCTURES[model.structure], gk = GAIN(S);
+  for (const pl of model.where ?? []) if (pl.seen >= GRADE.seen && finite(pl.gain) && finite(pl.scale)) models.push({ ...model, params: { ...model.params, [gk]: pl.gain, [pl.scaleKey]: pl.scale } });
+  const out = { gm: [Infinity, -Infinity], pm: [Infinity, -Infinity], ms: [Infinity, -Infinity], n: 0, unstable: 0 };
+  const take = (k, v) => { if (finite(v)) { out[k][0] = Math.min(out[k][0], v); out[k][1] = Math.max(out[k][1], v); } };
+  for (const mm of models) {
+    let r;
+    try { const m = identifiedLoop(project, path, mm); r = analyzeLoop(m.plant, m.ctrl, m.Ts, { points: 200 }); } catch { continue; }
+    if (!r.stable) { out.unstable++; continue; }
+    out.n++;
+    take('gm', r.margins.gmUp); take('pm', r.margins.pm); take('ms', r.margins.ms);
+  }
+  return out.n || out.unstable ? out : null;
+}
+
+function keptModel(project, path = null) {
+  const key = path ? [].concat(path).join('/') : controllerBlocks(project.system.plant.diagram)[0]?.key;
+  const e = project.system.identify?.[key];
+  const kept = e?.kept ?? [];
+  if (!kept.length) throw new IdentifyError('not-identified', 'identify the plant first: no test is kept for this block', 'node cli.mjs identify <project> --keep, or the Identify tab\'s Keep');
+  const k = kept[Math.min(kept.length - 1, Math.max(0, e.use ?? kept.length - 1))];
+  const model = drain(identifySteps(k.record, { plan: k.plan, structure: e.structure ?? null }));
+  if (!model.ok) throw new IdentifyError('no-model', `the kept test "${k.name}" gives no model: ${model.sentences[0]}`, 'identify again');
+  return { model, name: k.name, key };
 }
 
 
@@ -18348,7 +18463,7 @@ function discreteAt(d, Om) {
   return [sr * mr - si * mi, sr * mi + si * mr];
 }
 
-return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, shakeWanted, fitSupply, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, twinDiagram, PUSH, testPush, modelProject, identifiedLoop, loopRanges, keptModel, varyDiagram, identifyRun, shakeWanted, fitSupply, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {
@@ -18586,7 +18701,7 @@ const GUIDE = {
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
     M('loopTuner.identify(opts?)', 'opts: { block (id path, default the first), band: [lo, hi], budget: seconds of plant time (30, 60, 120, 300, 600), vary: { share, seed } (a hidden variation of a simulated plant), keep }', 'Identifies the plant a Controller block drives, as the Identify tab\'s Start does: one experiment that eases in (Listen, Nudge, Hold, Ease in, Check) on a copy of the diagram at the header\'s Speed (speed(-1) for as fast as possible), then the model from its record. band, budget and vary are stored as the block\'s settings (one undo step); keep stores the record with the project.', 'await loopTuner.identify({ keep: true })', 'a promise of { ok, sentences, grade, why, structure, params, sd, chain, check: { fit, ceiling, kernel }, eased, candidates, where, warnings, end, time, tries, kept }'),
     M('loopTuner.identified(block?)', 'block: a Controller block\'s id path', 'The model in use for the block: the last test run in the page, else its kept test in use; null while none (or while it is computed from a kept record).', 'loopTuner.identified("ctrl")?.sentences', 'the same report as identify(), or null'),
-    M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
+    M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation: on its diagram, or, when the block\'s plant is the identified model (always for an External plant; Identify tab, Use for Auto-tune and Analysis), on that model in the plant\'s place (results named "· auto-tuned (model)"). Without a model an External plant is refused: identify it first.', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, plant, ... }'),
     M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter, a Luenberger observer\'s placed poles) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
     M('loopTuner.info()', '', 'What the screen\'s last run reported: validity reports (a model used outside where it holds), warnings (a stiff plant and the step it needs, a run made again because the plant grew stiffer, a signal that diverged, an input not connected), the integration step h, steps, the step bound (the blocks\' own and the Jacobian\'s largest eigenvalue at the start), the Jacobian\'s at the start and the end, and the run\'s ms. The status line under the screen shows the first report or warning.', 'loopTuner.info()', '{ validity, warnings, h, substeps, steps, bound, stiffness: { start, end }, ms } or null'),
     M('loopTuner.whenDesigned()', '', 'Resolves once no design is being computed in the background (a plan for the planned swing-up takes seconds; meanwhile the block runs u = 0 or its previous plan) and the display shows the run that uses it. Await it before judging a run.', 'await loopTuner.whenDesigned()', 'a promise of designs()'),
@@ -18619,7 +18734,7 @@ const GUIDE = {
     'Save ▾ under the screen: #rc-save.',
   ],
   live: {
-    what: 'A system with an External plant block runs against a plant outside the page, in real time. HIL: an external plant is made for it: the controller against one External plant block, a black box. The page knows only the interface the plant describes when it connects (its inputs and outputs: names, units, full scales, hard ranges, kinds; the Plant tab shows it under Interface, and live.state() has it); the External block takes those ports, and the Sinks and channels follow the outputs. Tuning needs the plant identified first (Identify, to come): Auto-tune and Analysis say so. The downloadable example plant happens to simulate a DC motor swinging an arm, standing in for real hardware; the page is not told. Replace it with your device behind the same protocol, in any language.',
+    what: 'A system with an External plant block runs against a plant outside the page, in real time. HIL: an external plant is made for it: the controller against one External plant block, a black box. The page knows only the interface the plant describes when it connects (its inputs and outputs: names, units, full scales, hard ranges, kinds; the Plant tab shows it under Interface, and live.state() has it); the External block takes those ports, and the Sinks and channels follow the outputs. Tuning needs the plant identified first (the Identify tab runs its experiment on the live plant): Auto-tune and Analysis then use the identified model. The downloadable example plant happens to simulate a DC motor swinging an arm, standing in for real hardware; the page is not told. Replace it with your device behind the same protocol, in any language.',
     setup: [
       'Load the system: loopTuner.loadSystem("HIL: an external plant") (or "HIL with an agent", the same with an agent on the page through the MCP server). It opens stopped and OFFLINE: nothing runs until the plant is connected and Run is pressed.',
       'Get the plant: loopTuner.live.downloadPlant() saves hil-plant.zip (Plant tab: Download the plant (zip)). loopTuner.live.plantFiles() has its files as text.',

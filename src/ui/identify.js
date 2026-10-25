@@ -139,7 +139,7 @@ export function createIdentifyTab(host, app, display, record) {
     try {
       for (;;) {
         const s = w.gen.next();
-        if (s.done) { remember(w.mk, s.value); computing = null; renderAll(); return; }
+        if (s.done) { remember(w.mk, s.value); computing = null; renderAll(); if (app.tab !== 'identify') app.changedView(); return; }
         if (performance.now() - t0 > SLICE) break;
       }
     } catch (err) { computing = null; app.toast(`Could not compute the model: ${err.message}`); return; }
@@ -287,6 +287,8 @@ export function createIdentifyTab(host, app, display, record) {
       out.push(`<p class="note">The gentlest controller that held: PI, Kp ${esc(num(model.eased.Kp, 3))}, Ki ${esc(num(model.eased.Ki, 3))}${model.eased.try ? ` (try ${model.eased.try})` : ' (the Hold\'s)'} <button class="btn btn-sm" id="id-variant" title="Adds it to the block as a variant of its own, “… · eased in”: hand numbers you choose to keep">Add as variant</button></p>`);
     }
     const keys = [];
+    // Simulated plants: the person chooses; a live plant always uses the model (§10).
+    if (model.ok && !app.live?.owns()) keys.push(`<button class="btn btn-sm" id="id-use" aria-pressed="${s.source === 'identified'}" title="Auto-tune and Analysis use this model instead of the diagram (the plant's place taken by it, its noise and a test push included). Press again for the diagram.">Use for Auto-tune and Analysis</button>`);
     if (src.kind === 'fresh') keys.push('<button class="btn btn-sm" id="id-keep" title="Stores the measured record with the project (one undo step); the model is computed from it whenever it is needed">Keep</button>');
     if (model.ok && model.check) keys.push('<button class="btn btn-sm" id="id-recheck" title="Runs Listen, then the controller that held and the Check alone (about 10–20 s), and compares the plant with the model: still fits, or the plant has changed">Check again</button>');
     if (model.ok) keys.push('<button class="btn btn-sm" id="id-copy" title="Puts the model as a subsystem of the Plant library\'s own blocks into My blocks: these numbers no longer follow the plant">Copy as blocks</button>');
@@ -308,6 +310,7 @@ export function createIdentifyTab(host, app, display, record) {
     $('#id-keep')?.addEventListener('click', () => keep(c, src));
     $('#id-copy')?.addEventListener('click', () => copyBlocks(model, src));
     $('#id-recheck')?.addEventListener('click', () => start('recheck'));
+    $('#id-use')?.addEventListener('click', () => setSetting(c.key, 'source', s.source === 'identified' ? null : 'identified'));
     $('#id-variant')?.addEventListener('click', () => addVariant(c, model));
     return model;
   }
@@ -758,7 +761,20 @@ export function createIdentifyTab(host, app, display, record) {
     return model ? report(model) : null;
   }
 
+  // For Auto-tune and Analysis (§10, §12): the model in use for a block, a
+  // label for their status lines, and the plant source setting.
+  function modelFor(key) { const { model } = modelOf(key); return model?.ok ? model : null; }
+  function labelFor(key) {
+    const src = source(key), m = modelFor(key);
+    if (!src || !m) return '';
+    const conn = src.kind === 'fresh' ? fresh.get(key)?.connection : connections.get(recordHash(src.record));
+    const earlier = app.live?.owns() && (conn === undefined || conn === null || conn !== app.live.identify.connection());
+    return `identified ${src.name.split(' · ').pop()}, ${m.grade} explains ${fitText(m.check?.fit ?? m.fit)} %${earlier ? '; measured on an earlier connection: the plant may have changed' : ''}`;
+  }
+
   return {
+    modelFor, labelFor,
+    setSource: (key, src) => setSetting(key, 'source', src === 'identified' ? 'identified' : null),
     render() { if (!host.hidden) renderAll(); },
     shown: renderAll,
     tag,
