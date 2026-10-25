@@ -14,6 +14,8 @@ No new words from the person; built against the interfaces agreed in the entry b
   - Masks hold numbers, so each Motor carries its drive's numbers on its own mask; the controller's lists (its model of the six drives) and the start pose stay on blocks until masks take lists.
   - P only keeps the trim (u0 holds gravity), as every variant without the model does: 8.6 mm, where the plan, without a trim, measured 14.
   - The HIL simulator does not offer the PUMA yet (its plant rewriting is scalar).
+  - The Analysis tab closes the other lanes by their own laws when it cuts one lane (robot.md §5 had them hold their trim, which leaves an arm that gravity tips over: every lane read unstable).
+  - The error signals are in metres (SI, like every signal); the scope shows them in µm.
   - The library's tags: MIMO (a plant tag, slate) and 3D (a feature, blue); the plan's Feedforward tag is left out, since no feature tone is free beside the others on the card.
 
 ## 2026-10-25 · v2.9: the PUMA in parallel; an MCP server; the order to the end ([input 29](../input/2026-10-25-29-puma-parallel-mcp-order.md))

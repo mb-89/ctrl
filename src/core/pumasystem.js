@@ -245,7 +245,7 @@ const ctl = {
 export const PUMA_SYSTEM = {
   name: 'PUMA 560, a circle in space',
   summary: 'A six-axis robot arm draws a circle with its tool, controlled in the tool\'s coordinates over six joint speed loops. Watch the error and the joint torques; switch the arm\'s model off: what a model buys.',
-  notes: 'The PUMA 560, a six-axis arm, draws a horizontal circle of 0.15 m radius with its tool, one turn every 2.5 s after an eased start. Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the tool starts by a Frame transform. The 3D view draws the arm from its robot description (URDF), the circle dashed and the tool\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the tool\'s pose, speed and Jacobian; the task law corrects the error (time constant 0.1 s); Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are geared DC motors on current drives, with their friction.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b, mm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and the motors\' friction (tauF1 … tauF6); the motor currents are i1 … i6.\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) or larger (their amplitude), and watch the torques and the Joint limits report.',
+  notes: 'The PUMA 560, a six-axis arm, draws a horizontal circle of 0.15 m radius with its tool, one turn every 2.5 s after an eased start. Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the tool starts by a Frame transform. The 3D view draws the arm from its robot description (URDF), the circle dashed and the tool\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the tool\'s pose, speed and Jacobian; the task law corrects the error (time constant 0.1 s); Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are geared DC motors on current drives, with their friction.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b; the scope shows them in µm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and the motors\' friction (tauF1 … tauF6); the motor currents are i1 … i6.\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) or larger (their amplitude), and watch the torques and the Joint limits report.',
   signals: {
     a_r: { period: 5, components: [{ type: 'sine', params: { amplitude: 0.15, frequency: 0.4, phase: 90, ease: 0.5 } }, { type: 'dc', params: { level: -0.15 } }] },
     b_r: { period: 5, components: [{ type: 'sine', params: { amplitude: 0.15, frequency: 0.4, phase: 0, ease: 0.5 } }] },
@@ -269,15 +269,14 @@ export const PUMA_SYSTEM = {
       blk('err', 'sum', { signs: '+-' }, 960, 120, 'p_d − p'),
       blk('ec', 'frameTransform', { rpy: [0, 0, 0], groups: 'v', inverse: 1 }, 1060, 120, 'circle ← base'),
       blk('o0', 'constant', { value: [0, 0, 0], unit: 'm' }, 960, 180),
-      blk('mm', 'gain', { K: 1000 }, 1160, 120, 'in mm'),
-      sink('e3', 'ea,eb,ec', 'mm', 1260, 120),
-      blk('en', 'norm', {}, 1160, 180, '‖e‖'), sink('e', 'e', 'mm', 1260, 180),
+      sink('e3', 'ea,eb,ec', 'm', 1260, 120),
+      blk('en', 'norm', {}, 1160, 180, '‖e‖'), sink('e', 'e', 'm', 1260, 180),
     ],
     wires: [
       w('q0', 'pose0'), w('pose0', 'ref'), w('pose0:1', 'ctl:4'),
       w('puma', 'ctl'), w('ref', 'ctl:1'), w('ref:1', 'ctl:2'), w('ref:2', 'ctl:3'), w('ctl', 'puma'),
       w('puma', 'tool'), w('tool', 'xyz'), w('ref', 'refp'),
-      w('ref', 'err'), w('tool', 'err:1'), w('err', 'ec'), w('o0', 'ec:1'), w('ec', 'mm'), w('mm', 'e3'), w('mm', 'en'), w('en', 'e'),
+      w('ref', 'err'), w('tool', 'err:1'), w('err', 'ec'), w('o0', 'ec:1'), w('ec', 'e3'), w('ec', 'en'), w('en', 'e'),
     ],
   },
   views: [{ name: 'Robot', kind: '3d', robot: R, joints: 'q', paths: [{ x: 'xr', y: 'yr', z: 'zr', style: 'reference', span: 'all' }, { x: 'x', y: 'y', z: 'z', style: 'actual', span: 'to-now', fade: 2.5 }], camera: { target: [0.45, -0.1, 0.55], view: 'iso', distance: 2.3 } }],

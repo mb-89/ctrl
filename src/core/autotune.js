@@ -137,6 +137,8 @@ export function tuneContext(project, path) {
   const hit = (key && all.find((c) => c.key === key)) || all[0];
   if (!hit) throw new Error('there is no Controller block in the plant');
   const { block } = hit;
+  // A Controller with lanes (robot.md §5) runs one law per lane; a lane at a time is not built yet.
+  if (block.params.lanes > 1) throw new Error(`${hit.where} has ${block.params.lanes} lanes, and Auto-tune does not tune a Controller with lanes yet. Set its variant's design inputs in the Controller tab (they hold for every lane), and read each lane's loop in the Analysis tab`);
   if (block.params.inputs < 2) throw new Error(`${hit.where} needs r on input 1 and the measurement y on input 2`);
   // The cost and the experiments read r and y at the block: both must be wired.
   const { level } = locate(plant.diagram, hit.path);

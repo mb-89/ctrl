@@ -29,7 +29,8 @@ const run = (v) => {
   }
   return runs.get(v);
 };
-const rms = (a) => Math.sqrt(a.reduce((s, x) => s + x * x, 0) / a.length);
+const rms = (a) => 1000 * rmsOf(a);   // mm
+const rmsOf = (a) => Math.sqrt(a.reduce((s, x) => s + x * x, 0) / a.length);
 const peak = (a) => a.reduce((m, x) => Math.max(m, Math.abs(x)), 0);
 
 test('the compiled PUMA equals the loop written plainly, every variant, over 5 s to 1e-12', () => {

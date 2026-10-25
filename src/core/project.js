@@ -522,9 +522,30 @@ function closeLanes(plant, others, Ts) {
     }
     o += p.nc;
   }
-  const pad = (row) => [...row, ...new Array(N - n).fill(0)];
-  const lawStates = Array.from({ length: N - n }, (_, i) => ({ label: `other lanes' law ${i + 1}`, name: `x${i + 1}`, unit: '', angle: false, index: n + i }));
-  return { ...plant, A, B: plant.B.concat(Array.from({ length: N - n }, () => [0])), C: plant.C.map(pad), n: N, states: [...plant.states, ...lawStates] };
+  // A law state that integrates what is a plant state's rate (a PI's
+  // integral of a measured speed is the angle, scaled: ẋ_c = β·ẋ_s) stays
+  // β·x_s apart from it, a constant: taken out (x_c = β·x_s, exact for the
+  // deviations), or it would be a pole at s = 0 that neither u nor y moves.
+  const drop = [];
+  for (let r = n; r < N; r++) {
+    if (A[r].some((v, c) => c >= n && v !== 0) || A.some((row, i) => i >= n && i !== r && row[r] !== 0)) continue;
+    const w = A[r].slice(0, n), big = Math.max(...w.map(Math.abs));
+    if (!(big > 0)) continue;
+    for (let sIdx = 0; sIdx < n; sIdx++) {
+      const a = plant.A[sIdx], j = a.findIndex((v) => v !== 0);
+      if (j < 0 || plant.B[sIdx][0] !== 0 || A[sIdx].some((v, c) => c >= n && v !== 0)) continue;
+      const beta = w[j] / a[j];
+      if (!w.every((v, c) => Math.abs(v - beta * a[c]) <= 1e-12 * big)) continue;
+      for (const row of A) row[sIdx] += beta * row[r];
+      drop.push(r);
+      break;
+    }
+  }
+  const keep = A.map((_, i) => i).filter((i) => !drop.includes(i));
+  const Ar = keep.map((i) => keep.map((j) => A[i][j])), M = keep.length;
+  const pad = (row) => [...row, ...new Array(M - n).fill(0)];
+  const lawStates = Array.from({ length: M - n }, (_, i) => ({ label: `other lanes' law ${i + 1}`, name: `x${i + 1}`, unit: '', angle: false, index: n + i }));
+  return { ...plant, A: Ar, B: plant.B.concat(Array.from({ length: M - n }, () => [0])), C: plant.C.map(pad), n: M, states: [...plant.states, ...lawStates] };
 }
 
 // The least-used palette slot, earliest first, so a colour follows its

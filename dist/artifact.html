@@ -8761,7 +8761,7 @@ const ctl = {
 const PUMA_SYSTEM = {
   name: 'PUMA 560, a circle in space',
   summary: 'A six-axis robot arm draws a circle with its tool, controlled in the tool\'s coordinates over six joint speed loops. Watch the error and the joint torques; switch the arm\'s model off: what a model buys.',
-  notes: 'The PUMA 560, a six-axis arm, draws a horizontal circle of 0.15 m radius with its tool, one turn every 2.5 s after an eased start. Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the tool starts by a Frame transform. The 3D view draws the arm from its robot description (URDF), the circle dashed and the tool\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the tool\'s pose, speed and Jacobian; the task law corrects the error (time constant 0.1 s); Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are geared DC motors on current drives, with their friction.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b, mm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and the motors\' friction (tauF1 … tauF6); the motor currents are i1 … i6.\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) or larger (their amplitude), and watch the torques and the Joint limits report.',
+  notes: 'The PUMA 560, a six-axis arm, draws a horizontal circle of 0.15 m radius with its tool, one turn every 2.5 s after an eased start. Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the tool starts by a Frame transform. The 3D view draws the arm from its robot description (URDF), the circle dashed and the tool\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the tool\'s pose, speed and Jacobian; the task law corrects the error (time constant 0.1 s); Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are geared DC motors on current drives, with their friction.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b; the scope shows them in µm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and the motors\' friction (tauF1 … tauF6); the motor currents are i1 … i6.\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) or larger (their amplitude), and watch the torques and the Joint limits report.',
   signals: {
     a_r: { period: 5, components: [{ type: 'sine', params: { amplitude: 0.15, frequency: 0.4, phase: 90, ease: 0.5 } }, { type: 'dc', params: { level: -0.15 } }] },
     b_r: { period: 5, components: [{ type: 'sine', params: { amplitude: 0.15, frequency: 0.4, phase: 0, ease: 0.5 } }] },
@@ -8785,15 +8785,14 @@ const PUMA_SYSTEM = {
       blk('err', 'sum', { signs: '+-' }, 960, 120, 'p_d − p'),
       blk('ec', 'frameTransform', { rpy: [0, 0, 0], groups: 'v', inverse: 1 }, 1060, 120, 'circle ← base'),
       blk('o0', 'constant', { value: [0, 0, 0], unit: 'm' }, 960, 180),
-      blk('mm', 'gain', { K: 1000 }, 1160, 120, 'in mm'),
-      sink('e3', 'ea,eb,ec', 'mm', 1260, 120),
-      blk('en', 'norm', {}, 1160, 180, '‖e‖'), sink('e', 'e', 'mm', 1260, 180),
+      sink('e3', 'ea,eb,ec', 'm', 1260, 120),
+      blk('en', 'norm', {}, 1160, 180, '‖e‖'), sink('e', 'e', 'm', 1260, 180),
     ],
     wires: [
       w('q0', 'pose0'), w('pose0', 'ref'), w('pose0:1', 'ctl:4'),
       w('puma', 'ctl'), w('ref', 'ctl:1'), w('ref:1', 'ctl:2'), w('ref:2', 'ctl:3'), w('ctl', 'puma'),
       w('puma', 'tool'), w('tool', 'xyz'), w('ref', 'refp'),
-      w('ref', 'err'), w('tool', 'err:1'), w('err', 'ec'), w('o0', 'ec:1'), w('ec', 'mm'), w('mm', 'e3'), w('mm', 'en'), w('en', 'e'),
+      w('ref', 'err'), w('tool', 'err:1'), w('err', 'ec'), w('o0', 'ec:1'), w('ec', 'e3'), w('ec', 'en'), w('en', 'e'),
     ],
   },
   views: [{ name: 'Robot', kind: '3d', robot: R, joints: 'q', paths: [{ x: 'xr', y: 'yr', z: 'zr', style: 'reference', span: 'all' }, { x: 'x', y: 'y', z: 'z', style: 'actual', span: 'to-now', fade: 2.5 }], camera: { target: [0.45, -0.1, 0.55], view: 'iso', distance: 2.3 } }],
@@ -9996,9 +9995,26 @@ function closeLanes(plant, others, Ts) {
     }
     o += p.nc;
   }
-  const pad = (row) => [...row, ...new Array(N - n).fill(0)];
-  const lawStates = Array.from({ length: N - n }, (_, i) => ({ label: `other lanes' law ${i + 1}`, name: `x${i + 1}`, unit: '', angle: false, index: n + i }));
-  return { ...plant, A, B: plant.B.concat(Array.from({ length: N - n }, () => [0])), C: plant.C.map(pad), n: N, states: [...plant.states, ...lawStates] };
+  const drop = [];
+  for (let r = n; r < N; r++) {
+    if (A[r].some((v, c) => c >= n && v !== 0) || A.some((row, i) => i >= n && i !== r && row[r] !== 0)) continue;
+    const w = A[r].slice(0, n), big = Math.max(...w.map(Math.abs));
+    if (!(big > 0)) continue;
+    for (let sIdx = 0; sIdx < n; sIdx++) {
+      const a = plant.A[sIdx], j = a.findIndex((v) => v !== 0);
+      if (j < 0 || plant.B[sIdx][0] !== 0 || A[sIdx].some((v, c) => c >= n && v !== 0)) continue;
+      const beta = w[j] / a[j];
+      if (!w.every((v, c) => Math.abs(v - beta * a[c]) <= 1e-12 * big)) continue;
+      for (const row of A) row[sIdx] += beta * row[r];
+      drop.push(r);
+      break;
+    }
+  }
+  const keep = A.map((_, i) => i).filter((i) => !drop.includes(i));
+  const Ar = keep.map((i) => keep.map((j) => A[i][j])), M = keep.length;
+  const pad = (row) => [...row, ...new Array(M - n).fill(0)];
+  const lawStates = Array.from({ length: M - n }, (_, i) => ({ label: `other lanes' law ${i + 1}`, name: `x${i + 1}`, unit: '', angle: false, index: n + i }));
+  return { ...plant, A: Ar, B: plant.B.concat(Array.from({ length: M - n }, () => [0])), C: plant.C.map(pad), n: M, states: [...plant.states, ...lawStates] };
 }
 
 function nextColor(candidates) {
@@ -11974,6 +11990,7 @@ function tuneContext(project, path) {
   const hit = (key && all.find((c) => c.key === key)) || all[0];
   if (!hit) throw new Error('there is no Controller block in the plant');
   const { block } = hit;
+  if (block.params.lanes > 1) throw new Error(`${hit.where} has ${block.params.lanes} lanes, and Auto-tune does not tune a Controller with lanes yet. Set its variant's design inputs in the Controller tab (they hold for every lane), and read each lane's loop in the Analysis tab`);
   if (block.params.inputs < 2) throw new Error(`${hit.where} needs r on input 1 and the measurement y on input 2`);
   const { level } = locate(plant.diagram, hit.path);
   if (!wireTo(level, block.id, 0)) throw new Error(`${hit.where}: wire the reference r to input 1`);
@@ -15712,7 +15729,7 @@ const gradeGm = (gm) => (gm >= 2.5 ? 'good' : gm >= 1.7 ? 'fair' : 'poor');
 const squash = (re, im) => { const r = Math.hypot(re, im); if (!(r > 1)) return [re, im]; const k = (1 + Math.log(r)) / r; return [re * k, im * k]; };
 
 function createAnalysisTab(host, app) {
-  let target = null, op = 'origin', plane = 's', cursorW = null, last = null, lastKey = '';
+  let target = null, lane = 1, op = 'origin', plane = 's', cursorW = null, last = null, lastKey = '';
   const view = { locus: null, nyq: null };
 
   host.innerHTML = `
@@ -15720,6 +15737,7 @@ function createAnalysisTab(host, app) {
       <section class="gcol an-side" aria-label="Key numbers">
         <div class="ghead"><h3 class="label">Analysis</h3></div>
         <div id="an-blocks" class="ctblocks"></div>
+        <div class="seg seg-fill" role="group" aria-label="Lane" id="an-lanes" hidden></div>
         <div class="seg seg-fill" role="group" aria-label="Operating point">${OPS.map((o) => `<button class="btn btn-sm" data-op="${o.key}" title="${esc(o.title)}">${o.label}</button>`).join('')}</div>
         <div id="an-verdict" class="note"></div>
         <table class="kw" id="an-kw"></table>
@@ -15797,20 +15815,23 @@ function createAnalysisTab(host, app) {
     const c = all.find((x) => target && x.path.join('/') === target.join('/')) ?? all[0];
     if (!c) return { empty: 'This system has no Controller block. Add one in the Plant tab, wire the reference to its first input and the measurements to the others.' };
     target = c.path;
+    const n = c.block.params?.lanes > 1 ? c.block.params.lanes : 0;
+    lane = Math.min(Math.max(1, lane), n || 1);
+    const path = n ? [...c.path.slice(0, -1), `${c.path.at(-1)}[${lane}]`] : c.path;
     if (findExternal(app.project.system.plant?.diagram)) return { c, all, error: 'The plant runs outside the page and is a black box: the page knows only its interface (Plant tab, Interface). Analysis needs an identified model of it, which Identify will give (not built yet).' };
     if (!app.loopModel) return { c, all, error: 'The analysis needs the plant a block sees, linearised at an operating point.' };
     const spec = opSpec(), from = op === 't' ? app.scopeTimeFrom?.() : null;
-    const key = JSON.stringify([app.project.system, c.path, spec, app.designs?.generation ?? 0]);
+    const key = JSON.stringify([app.project.system, path, spec, app.designs?.generation ?? 0]);
     if (key === lastKey && last) { if (last.res) last.from = from; return last; }
     lastKey = key;
     try {
-      const m = app.loopModel(c.path, spec);
+      const m = app.loopModel(path, spec);
       const res = analyzeLoop(m.plant, m.ctrl, m.Ts);
       const st = res.stable ? stepInfo(m.plant, m.ctrl, m.Ts, { clPoles: res.clPoles }) : null;
       if (st) st.uPeak = Math.max(...stepResponse(m.plant, m.ctrl, m.Ts, Math.min(4000, Math.ceil(st.T / m.Ts))).u.map(Math.abs));
-      last = { c, all, m, res, st, spec, from };
+      last = { c, all, m, res, st, spec, from, lanes: n };
     } catch (err) {
-      last = { c, all, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
+      last = { c, all, lanes: n, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
     }
     return last;
   }
@@ -15818,8 +15839,11 @@ function createAnalysisTab(host, app) {
   function renderSide(v) {
     $('#an-blocks').innerHTML = v.all?.length > 1
       ? v.all.map((x) => `<button class="btn btn-block" data-path="${esc(x.path.join('/'))}" aria-pressed="${x === v.c}">${esc(x.where)}</button>`).join('')
-      : v.c ? `<div class="heading">${esc(v.c.where)} · ${esc(v.c.block.variants?.[v.c.block.variant ?? 0]?.name ?? '')}</div>` : '';
+      : v.c ? `<div class="heading">${esc(v.c.where)}${v.lanes ? ` · lane ${lane}` : ''} · ${esc(v.c.block.variants?.[v.c.block.variant ?? 0]?.name ?? '')}</div>` : '';
     $('#an-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
+    $('#an-lanes').hidden = !v.lanes;
+    $('#an-lanes').innerHTML = v.lanes ? Array.from({ length: v.lanes }, (_, k) => `<button class="btn btn-sm" data-lane="${k + 1}" aria-pressed="${k + 1 === lane}" title="${esc(`${v.c.block.name ?? v.c.block.id} · lane ${k + 1}: the loop cut at its output`)}">${k + 1}</button>`).join('') : '';
+    $('#an-lanes').querySelectorAll('[data-lane]').forEach((el) => el.addEventListener('click', () => { lane = Number(el.dataset.lane); render(); }));
     host.querySelectorAll('[data-op]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.op === op)));
     if (!v.res) {
       $('#an-verdict').innerHTML = '';
@@ -15866,7 +15890,8 @@ function createAnalysisTab(host, app) {
     $('#an-kw').innerHTML = rows.join('');
     const dead = res.L.delaySamples ?? [];
     const notes = [
-      `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
+      `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${v.lanes ? `${v.c.block.name ?? v.c.block.id} · lane ${lane} · ` : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
+      ...(v.lanes ? [`Lane ${lane}'s loop alone: the other lanes run their law, every r held. Where r depends on the plant through a loop round this block (a robot's task law, k_x: q̇*), that loop is not in this analysis; what it holds (a joint's angle) can leave poles at s ≈ 0 here.`] : []),
       ...(m.warnings ?? []),
     ];
     const details = [
@@ -18719,7 +18744,7 @@ function createControllerTab(host, app) {
     <div class="banner notloop" id="ct-notloop" role="note" hidden></div>
     <div class="ctl">
       <section class="gcol" aria-label="Controller block">
-        <div class="ghead"><h3 class="label">Controller</h3></div>
+        <div class="ghead"><h3 class="label">Controller</h3><span class="badge" id="ct-lanes" title="One block, its variants shared by every lane; each lane runs its own copy of the law, with its own design" hidden></span></div>
         <div id="ct-blocks" class="ctblocks"></div>
         <div id="ct-block" class="pform"></div>
         <p class="note" id="ct-ports"></p>
@@ -18764,7 +18789,13 @@ function createControllerTab(host, app) {
     const hit = target && all.find((c) => c.path.join('/') === target.join('/'));
     return hit ?? all[0] ?? null;
   };
-  const statusOf = (c) => (app.designStatuses ?? []).find((s) => s.path === c.path.join('/')) ?? null;
+  const lanesOf = (c) => (c.block.type === 'controller' && c.block.params.lanes > 1 ? c.block.params.lanes : 0);
+  const statusOf = (c) => {
+    const all = app.designStatuses ?? [], p = c.path.join('/'), n = lanesOf(c);
+    if (!n) return all.find((s) => s.path === p) ?? null;
+    const per = Array.from({ length: n }, (_, k) => all.find((s) => s.path === `${p}[${k + 1}]`) ?? null);
+    return per.every(Boolean) ? lanesStatus(per) : null;
+  };
 
   function edit(fn) {
     const c = current();
@@ -18783,7 +18814,7 @@ function createControllerTab(host, app) {
   const show = (v) => (Array.isArray(v) ? v.map((x) => num(x, 5)).join(', ') : Number.isFinite(v) ? num(v, 6) : '');
   function hintOf(p, names) {
     const meas = names.slice(1);
-    const per = p.per === 'measurement' ? `for ${meas.join(', ')}` : p.per === 'level' ? `levels of ${meas[0] ?? 'y1'}` : '';
+    const per = p.per === 'measurement' ? `for ${meas.join(', ')}` : p.per === 'level' ? `levels of ${meas[0] ?? 'y1'}` : p.per === 'lane' ? 'per lane, or one for all' : '';
     return [p.kind === 'vector' ? 'comma-separated' : '', per, p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : '', p.nullable ? p.empty ?? 'empty: from the plant' : ''].filter(Boolean).join(' · ');
   }
   const choice = (key, p, value) => `<label class="pf" title="${esc(p.help ?? '')}"><span class="flabel">${esc(p.label)}</span><select class="field field-sm" data-k="${esc(key)}" data-kind="choice">${Object.entries(p.options).map(([k, l]) => `<option value="${esc(k)}" ${k === value ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><span class="hint"></span></label>`;
@@ -18808,12 +18839,15 @@ function createControllerTab(host, app) {
     const b = c.block;
     $('#ct-blocks').innerHTML = all.length > 1 ? all.map((x) => `<button class="btn btn-block" data-path="${esc(x.path.join('/'))}" aria-pressed="${x === c}">${esc(x.where)}</button>`).join('') : `<div class="heading">${esc(c.where)}</div>`;
     $('#ct-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
-    const obs = b.type === 'observer', lib = LIBS[b.type];
+    const obs = b.type === 'observer', lib = LIBS[b.type], lanes = lanesOf(c);
+    $('#ct-lanes').hidden = !lanes;
+    $('#ct-lanes').textContent = lanes ? `${lanes} lanes` : '';
     $('#ct-block').innerHTML = field('b:inputs', 'Inputs', b.params.inputs, obs ? 'u, then the measurements' : 'r, then the measurements')
       + (obs ? field('b:outputs', 'Estimates', b.params.outputs, 'states it puts out') : '')
       + field('b:Ts', 'Sample time', num(b.params.Ts, 4), 'Ts, s; every variant runs at it');
     const names = blockInputNames(root(), c.path);
-    $('#ct-ports').innerHTML = `<b>In</b> <span class="ports">${names.map((n, k) => `<span class="chip">${k + 1} ${esc(n)}</span>`).join('')}</span>`;
+    $('#ct-ports').innerHTML = `<b>In</b> <span class="ports">${names.map((n, k) => `<span class="chip">${k + 1} ${esc(n)}${lanes ? ` ×${lanes}` : ''}</span>`).join('')}</span>`
+      + (lanes ? `<br>Each input is a group of ${lanes}, one per lane${b.params.ff ? ', the last the feedforward ff' : ''}; u is ${lanes} wide. The variants are shared by every lane, each lane designed on its own.` : '');
 
     $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="item vrow" data-v="${i}" role="option" aria-selected="${i === b.variant}" tabindex="${i === b.variant ? 0 : -1}" title="${i === b.variant ? 'Running · double-click or F2 to rename' : 'Click or Enter to run it · double-click or F2 to rename'}">
         <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="name">${esc(v.name)}</span><span class="hint vtype">${esc(lib[v.type].label)}</span></li>`).join('');
@@ -18845,7 +18879,7 @@ function createControllerTab(host, app) {
     renderGlyphs(c, st);
     const box = $('#ct-computed');
     const v = b.variants[b.variant], def = lib[v.type];
-    if (def.designed) drawStructure($('#ct-diag'), b, lib, blockInputNames(root(), c.path), st?.values ?? null);
+    if (def.designed) drawStructure($('#ct-diag'), b, lib, blockInputNames(root(), c.path), st?.lanes ? null : st?.values ?? null);
     box.hidden = !def.designed;
     if (!def.designed) { box.innerHTML = ''; return; }
     const off = b.type === 'observer' ? 'zero estimates' : 'u = 0';
@@ -18854,10 +18888,10 @@ function createControllerTab(host, app) {
       return;
     }
     const waiting = WAITING.includes(st.status);
-    const canCopy = st.values && def.manual && !waiting && st.status !== 'cancelled';
+    const canCopy = st.values && def.manual && !waiting && st.status !== 'cancelled' && !st.lanes;
     const time = waiting ? percent(st) : st.status === 'cancelled' ? '' : st.cached ? 'cached' : st.ms >= 1000 ? `${(st.ms / 1000).toFixed(1)} s` : `${st.ms < 10 ? st.ms.toFixed(1) : Math.round(st.ms)} ms`;
     let body = `<p><b>${esc(def.label)}</b>${st.at ? ` at ${esc(st.at)}` : ''}</p>`;
-    if (st.seen) body += `<p><span class="muted">plant seen</span> ${esc(st.seen)}</p>`;
+    if (st.seen) body += `<p><span class="muted">plant seen${st.lanes ? ' by lane 1' : ''}</span> ${esc(st.seen)}</p>`;
     if (st.error) body += `<p class="text-bad">${esc(st.error.message)}</p>${st.error.hint ? `<p class="note">${esc(st.error.hint)}</p>` : ''}<p class="note">Until then the block puts out ${off}.</p>`;
     if (waiting) {
       body += `<div class="cprog" data-key="${esc(st.key)}"><div class="progress" role="progressbar" aria-label="Planning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(100 * (st.progress?.fraction ?? 0))}"><span style="width:${(100 * (st.progress?.fraction ?? 0)).toFixed(1)}%"></span></div>`
@@ -19043,6 +19077,25 @@ function createControllerTab(host, app) {
     renderProgress() { if (!host.hidden) renderProgress(); },
     shown: render,
     open(path) { target = path; },
+  };
+}
+
+const WORST = ['error', 'cancelled', 'pending', 'stale', 'warn', 'ok'];
+function lanesStatus(per) {
+  const n = per.length, worst = WORST.find((w) => per.some((s) => s.status === w)) ?? per[0].status;
+  const bad = per.findIndex((s) => s.error);
+  const nums = per[0].rows.filter((r) => typeof r.value === 'number');
+  const table = per.map((s, k) => [k + 1, ...nums.map((r) => s.rows.find((x) => x.label === r.label)?.value ?? '–')]);
+  const notes = nums.filter((r) => r.note && per.every((s) => s.rows.find((x) => x.label === r.label)?.note === r.note)).map((r) => `${r.label}: ${r.note}`);
+  const said = new Map();
+  per.forEach((s, k) => { for (const w of s.warnings) said.set(w, [...(said.get(w) ?? []), k + 1]); });
+  const warnings = [...said].map(([w, ks]) => (ks.length === n ? w : `lane${ks.length > 1 ? 's' : ''} ${ks.join(', ')}: ${w}`));
+  const rows = nums.length ? [{ table, head: ['lane', ...nums.map((r) => r.label)] }, ...(notes.length ? [{ sentence: true, label: '', value: notes.join(' · ') }] : [])] : [];
+  return {
+    ...per[0], lanes: n, status: worst, values: per.every((s) => s.values) ? per[0].values : null,
+    ms: per.reduce((a, s) => a + (s.ms ?? 0), 0), cached: per.every((s) => s.cached),
+    error: bad < 0 ? null : { ...per[bad].error, message: `lane ${bad + 1}: ${per[bad].error.message}` },
+    progress: per.find((s) => s.progress)?.progress ?? null, rows, warnings,
   };
 }
 

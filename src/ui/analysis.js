@@ -47,7 +47,7 @@ const gradeGm = (gm) => (gm >= 2.5 ? 'good' : gm >= 1.7 ? 'fair' : 'poor');
 const squash = (re, im) => { const r = Math.hypot(re, im); if (!(r > 1)) return [re, im]; const k = (1 + Math.log(r)) / r; return [re * k, im * k]; };
 
 export function createAnalysisTab(host, app) {
-  let target = null, op = 'origin', plane = 's', cursorW = null, last = null, lastKey = '';
+  let target = null, lane = 1, op = 'origin', plane = 's', cursorW = null, last = null, lastKey = '';
   // Axes the wheel set on the locus and the Nyquist plot (null: the automatic view).
   const view = { locus: null, nyq: null };
 
@@ -56,6 +56,7 @@ export function createAnalysisTab(host, app) {
       <section class="gcol an-side" aria-label="Key numbers">
         <div class="ghead"><h3 class="label">Analysis</h3></div>
         <div id="an-blocks" class="ctblocks"></div>
+        <div class="seg seg-fill" role="group" aria-label="Lane" id="an-lanes" hidden></div>
         <div class="seg seg-fill" role="group" aria-label="Operating point">${OPS.map((o) => `<button class="btn btn-sm" data-op="${o.key}" title="${esc(o.title)}">${o.label}</button>`).join('')}</div>
         <div id="an-verdict" class="note"></div>
         <table class="kw" id="an-kw"></table>
@@ -140,25 +141,29 @@ export function createAnalysisTab(host, app) {
     const c = all.find((x) => target && x.path.join('/') === target.join('/')) ?? all[0];
     if (!c) return { empty: 'This system has no Controller block. Add one in the Plant tab, wire the reference to its first input and the measurements to the others.' };
     target = c.path;
+    // A Controller with lanes is cut at one lane ('ctl/servos[2]', robot.md §5).
+    const n = c.block.params?.lanes > 1 ? c.block.params.lanes : 0;
+    lane = Math.min(Math.max(1, lane), n || 1);
+    const path = n ? [...c.path.slice(0, -1), `${c.path.at(-1)}[${lane}]`] : c.path;
     // A plant outside the page is a black box (input 20): no diagram to analyse.
     if (findExternal(app.project.system.plant?.diagram)) return { c, all, error: 'The plant runs outside the page and is a black box: the page knows only its interface (Plant tab, Interface). Analysis needs an identified model of it, which Identify will give (not built yet).' };
     if (!app.loopModel) return { c, all, error: 'The analysis needs the plant a block sees, linearised at an operating point.' };
     const spec = opSpec(), from = op === 't' ? app.scopeTimeFrom?.() : null;
     // A plan that settles (or is cancelled) changes the law: the design generation is in the key.
-    const key = JSON.stringify([app.project.system, c.path, spec, app.designs?.generation ?? 0]);
+    const key = JSON.stringify([app.project.system, path, spec, app.designs?.generation ?? 0]);
     if (key === lastKey && last) { if (last.res) last.from = from; return last; }
     lastKey = key;
     try {
-      const m = app.loopModel(c.path, spec);
+      const m = app.loopModel(path, spec);
       const res = analyzeLoop(m.plant, m.ctrl, m.Ts);
       // The step only for a stable loop; its final value is the DC gain.
       const st = res.stable ? stepInfo(m.plant, m.ctrl, m.Ts, { clPoles: res.clPoles }) : null;
       // The peak of u in the step, from its first samples (kicks come early).
       if (st) st.uPeak = Math.max(...stepResponse(m.plant, m.ctrl, m.Ts, Math.min(4000, Math.ceil(st.T / m.Ts))).u.map(Math.abs));
-      last = { c, all, m, res, st, spec, from };
+      last = { c, all, m, res, st, spec, from, lanes: n };
     } catch (err) {
       // The reason, and what to do instead (a DesignError's hint).
-      last = { c, all, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
+      last = { c, all, lanes: n, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
     }
     return last;
   }
@@ -166,8 +171,12 @@ export function createAnalysisTab(host, app) {
   function renderSide(v) {
     $('#an-blocks').innerHTML = v.all?.length > 1
       ? v.all.map((x) => `<button class="btn btn-block" data-path="${esc(x.path.join('/'))}" aria-pressed="${x === v.c}">${esc(x.where)}</button>`).join('')
-      : v.c ? `<div class="heading">${esc(v.c.where)} · ${esc(v.c.block.variants?.[v.c.block.variant ?? 0]?.name ?? '')}</div>` : '';
+      : v.c ? `<div class="heading">${esc(v.c.where)}${v.lanes ? ` · lane ${lane}` : ''} · ${esc(v.c.block.variants?.[v.c.block.variant ?? 0]?.name ?? '')}</div>` : '';
     $('#an-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
+    // The lane chooser, for a Controller with lanes.
+    $('#an-lanes').hidden = !v.lanes;
+    $('#an-lanes').innerHTML = v.lanes ? Array.from({ length: v.lanes }, (_, k) => `<button class="btn btn-sm" data-lane="${k + 1}" aria-pressed="${k + 1 === lane}" title="${esc(`${v.c.block.name ?? v.c.block.id} · lane ${k + 1}: the loop cut at its output`)}">${k + 1}</button>`).join('') : '';
+    $('#an-lanes').querySelectorAll('[data-lane]').forEach((el) => el.addEventListener('click', () => { lane = Number(el.dataset.lane); render(); }));
     host.querySelectorAll('[data-op]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.op === op)));
     if (!v.res) {
       $('#an-verdict').innerHTML = '';
@@ -226,7 +235,10 @@ export function createAnalysisTab(host, app) {
     // What was analysed and any warning stay in view; how the numbers were
     // made sits behind Details.
     const notes = [
-      `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
+      `${m.opLabel ?? ''}${m.opLabel ? ' · ' : ''}${v.lanes ? `${v.c.block.name ?? v.c.block.id} · lane ${lane} · ` : ''}${m.variantName ?? ''} · Ts ${num(Ts * 1000, 3)} ms`,
+      // A lane's r is computed from the plant by a loop round this block (a
+      // robot's task law, robot.md §5): that loop is not in this analysis.
+      ...(v.lanes ? [`Lane ${lane}'s loop alone: the other lanes run their law, every r held. Where r depends on the plant through a loop round this block (a robot's task law, k_x: q̇*), that loop is not in this analysis; what it holds (a joint's angle) can leave poles at s ≈ 0 here.`] : []),
       ...(m.warnings ?? []),
     ];
     const details = [
