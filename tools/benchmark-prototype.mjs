@@ -8,16 +8,19 @@
 //
 //   node tools/benchmark-prototype.mjs [system name start …] [--iter 60] [--sweep 8] [--ms-max 3] [--no-backoff] [--json out.json]
 //
-// Prints, per system: the candidates and refusals, the scores, the Pugh
-// matrix (one round against the tuned PID), the suggestion, the plant
-// changes it scored (never applied), and the time each phase took.
+// Prints, per system: the tests (a standard load step when the system's d
+// plays nothing; the same moves as a smooth move), the candidates and
+// refusals, the scores, the feedforward's share of the effort, the
+// five-point Pugh matrix (one round against the tuned PID, the main-job gate),
+// the suggestion, the plant changes it scored (never applied), the weight
+// sensitivity, and the time each phase took.
 
 import { writeFileSync } from 'node:fs';
 import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../src/core/systems.js';
 import { DEFAULT_PROJECT } from '../src/core/examples.js';
 import { normalizeProject, loopModel } from '../src/core/project.js';
 import { CONTROLLERS, CONTROLLER_TYPES, normalizeVariant } from '../src/core/controllers.js';
-import { diagramBlockDef, parseEnd, compileDiagram } from '../src/core/diagram.js';
+import { diagramBlockDef, parseEnd, compileDiagram, blockPorts } from '../src/core/diagram.js';
 import { analyzeLoop } from '../src/core/analysis.js';
 import { simulateSystem } from '../src/core/sim.js';
 import { tuneContext, withVariant, runVariant, loopSignals, costScales, runCost, iterate, autotune, tuningSpace, drain, GOAL } from '../src/core/autotune.js';
@@ -183,8 +186,9 @@ const GENERIC = {
 // dir: 'low' (smaller is better) or 'high'. tol: how far from the datum still
 // counts as the same (S), relative; abs: and an absolute floor.
 const CRITERIA = [
-  { key: 'track', label: 'Following r (IAE)', dir: 'low', tol: 0.1, abs: 1e-3, w: 3 },
-  { key: 'dist', label: 'Rejecting d (IAE)', dir: 'low', tol: 0.1, abs: 1e-3, w: 3 },
+  { key: 'track', label: 'Following steps (IAE)', dir: 'low', tol: 0.1, abs: 1e-3, w: 1.5, job: true },
+  { key: 'move', label: 'Following a smooth move (IAE)', dir: 'low', tol: 0.1, abs: 1e-3, w: 1.5, job: true },
+  { key: 'dist', label: 'Rejecting d (IAE)', dir: 'low', tol: 0.1, abs: 1e-3, w: 3, job: true },
   { key: 'over', label: 'Overshoot', dir: 'low', tol: 0.2, abs: 2, w: 2 },
   { key: 'settle', label: 'Settling (2 %, s)', dir: 'low', tol: 0.15, abs: 0.02, w: 1 },
   { key: 'effort', label: 'Effort (u swing)', dir: 'low', tol: 0.15, abs: 1e-3, w: 1 },
@@ -196,6 +200,41 @@ const CRITERIA = [
   { key: 'complex', label: 'Complexity', dir: 'low', tol: 0, abs: 0.5, w: 1 },
   { key: 'effortTune', label: 'Tuning runs', dir: 'low', tol: 0.5, abs: 5, w: 1 },
 ];
+
+// Following a smooth move: the mean |r − y| / R over the same windows as
+// the steps (from each of r's steps in the system's run, until the next or
+// a jump of d), in the run whose r is the smooth move.
+function moveScore(run, key, others, R, steps) {
+  const { r, y } = loopSignals(run, key), n = r.length;
+  const jumps = (a, thr) => { const k = []; for (let i = 1; i < n; i++) if (Math.abs(a[i] - a[i - 1]) > thr) k.push(i); return k; };
+  const ds = others.flatMap((name) => { const a = run.signals[name]; return a ? jumps(a, 0.05 * (span(a) || 1)) : []; }).sort((a, b) => a - b);
+  let iae = 0, m = 0;
+  for (const k0 of steps) {
+    const k1 = Math.min(steps.find((x) => x > k0) ?? n, ds.find((x) => x > k0) ?? n);
+    for (let k = k0; k < k1; k++) { iae += Math.abs(r[k] - y[k]) / R; m++; }
+  }
+  return m ? iae / m : null;
+}
+
+// What share of the effort the reference feedforward supplies: the PID's
+// Kff·rf + Kv·ṙf + Ka·r̈f replayed at the controller's samples from the r the
+// block saw (pidCore's formula and prefilter), clipped to the limits, against
+// the rest of u (the feedback): Σ|ff| / (Σ|ff| + Σ|u − ff|) over the run.
+function ffShare(run, key, params, Ts) {
+  const { t, r, u } = loopSignals(run, key);
+  const a = params.Tr > 0 ? Math.exp(-Ts / params.Tr) : 0;
+  let rf = null, r1 = null, r2 = null, sff = 0, su = 0, k = 0;
+  for (let j = 0; t[0] + j * Ts <= t.at(-1) + 1e-12; j++) {
+    while (k < t.length - 1 && t[k + 1] <= t[0] + j * Ts + 1e-12) k++;
+    rf = rf === null ? r[k] : a * rf + (1 - a) * r[k];
+    if (r1 === null) r1 = r2 = rf;
+    const ff = params.Kff * rf + (params.Kv * (rf - r1)) / Ts + (params.Ka * (rf - 2 * r1 + r2)) / (Ts * Ts);
+    r2 = r1; r1 = rf;
+    const ffc = Math.min(params.umax, Math.max(params.umin, ff));
+    sff += Math.abs(ffc); su += Math.abs(u[k] - ffc);
+  }
+  return sff + su > 0 ? sff / (sff + su) : 0;
+}
 
 // Following and rejection from one run: windows after each reference step
 // (until the next step or a jump of d) and after each jump of d (until the
@@ -293,15 +332,18 @@ function addRateObserver(diagram, path, Tf) {
 }
 
 // Measure it instead: each Controller input fed by an Observer's estimate
-// gets the true signal that estimate stands for. Here for the Finite
-// difference (estimate m + k is the rate of its measurement k): back from
-// that measurement through sensor blocks (noise, quantizer) to the
-// integrator that makes it; the integrator's input is the rate. (A Kalman
-// or placed Luenberger estimate stands for the states its design names,
-// values.stateIndex; a state that is a block's output, such as an
-// integrator or a first-order lag, is wired the same way: the design.)
+// gets the true signal that estimate stands for. For a Finite difference,
+// estimate m + k is the rate of its measurement k. Mechanically, whatever
+// the plant's inside looks like (a bare integrator, a Servo subsystem): back
+// from that measurement through sensor blocks (Noise, Quantizer) to the
+// signal they measure, then, among every block output at that level, the
+// one whose run matches that signal's derivative best (rms difference within
+// 5 % of the derivative's rms) in the loaded run. (A Kalman or placed
+// Luenberger estimate stands for the states its design names,
+// values.stateIndex; the same match finds a block output equal to that
+// state: the design.)
 const SENSOR_BLOCKS = new Set(['noise', 'quantizer']);
-function sensorForObserver(diagram, path) {
+function sensorForObserver(diagram, path, signals, sim, running) {
   const d = structuredClone(diagram), lv = level(d, path), id = path.at(-1), changes = [];
   const into = (bid, port) => lv.wires.find((w) => { const t = parseEnd(w.to); return t.id === bid && t.port === port; });
   for (const w of lv.wires) {
@@ -310,30 +352,90 @@ function sensorForObserver(diagram, path) {
     const obs = lv.blocks.find((x) => x.id === f.id && x.type === 'observer');
     if (!obs) continue;
     const variant = obs.variants[obs.variant ?? 0], mObs = obs.params.inputs - 1;
-    if (variant.type !== 'difference' || f.port < mObs) { changes.push({ skip: `${obs.name ?? obs.id}'s ${variant.name} estimate ${f.port + 1}: what it stands for is not traced in the prototype` }); continue; }
+    if (variant.type !== 'difference' || f.port < mObs) continue;
+    // The measured signal, before the sensor blocks.
     let src = into(obs.id, f.port - mObs + 1), hops = 0;
     while (src && hops++ < 20) {
       const b = lv.blocks.find((x) => x.id === parseEnd(src.from).id);
-      if (b?.type === 'integrator' && (b.params.K ?? 1) === 1) {
-        const rate = into(b.id, 0);
-        if (!rate) break;
-        w.from = rate.from;
-        changes.push({ change: `input ${t.port + 1} measures ${rate.from}'s output directly, the rate of ${b.name ?? b.id} that '${obs.name ?? obs.id}' (${variant.name}) estimated` });
-        break;
-      }
       if (!b || !SENSOR_BLOCKS.has(b.type)) break;
       src = into(b.id, 0);
     }
+    if (!src) continue;
+    // Probe it and every block output at this level, in one loaded run.
+    const probe = structuredClone(diagram), plv = level(probe, path), outs = [];
+    for (const b of lv.blocks) {
+      if (['sink', 'source', 'observer', 'controller', 'terminator'].includes(b.type) || b.id.startsWith('bench_')) continue;
+      const n = blockPorts(b)[1] ?? 0;
+      for (let k = 0; k < n; k++) outs.push(k ? `${b.id}:${k}` : b.id);
+    }
+    const name = (o) => `bp${outs.indexOf(o)}`;   // Sink names are short
+    for (const o of outs) { plv.blocks.push({ id: name(o), type: 'sink', params: { name: name(o), unit: '1' }, x: 0, y: 0 }); plv.wires.push({ from: o, to: name(o) }); }
+    let run;
+    try { run = simulateSystem(withVariant(probe, path, running), signals, sim); } catch { continue; }
+    const from = parseEnd(src.from), base = run.signals[name(from.port ? `${from.id}:${from.port}` : from.id)];
+    if (!base) continue;
+    const tt = run.t, der = base.map((_, k) => (k ? (base[k] - base[k - 1]) / (tt[k] - tt[k - 1]) : 0)), rms = Math.sqrt(der.reduce((s2, x) => s2 + x * x, 0) / der.length);
+    let best = null;
+    for (const o of outs) {
+      const y = run.signals[name(o)];
+      if (!y || y === base) continue;
+      let e = 0; for (let k = 1; k < y.length; k++) e += (y[k] - der[k]) ** 2;
+      const rel = Math.sqrt(e / (y.length - 1)) / (rms || 1);
+      if (!best || rel < best.rel) best = { o, rel };
+    }
+    if (!best || best.rel > 0.05) continue;
+    w.from = best.o;
+    changes.push(`input ${t.port + 1} measures ${best.o} directly (it matches the rate of ${src.from} within ${fmt(100 * best.rel, 2)} %), in place of '${obs.name ?? obs.id}' (${variant.name})`);
   }
-  const done = changes.filter((x) => x.change);
-  return done.length ? { diagram: d, change: done.map((x) => x.change).join('; ') } : null;
+  return changes.length ? { diagram: d, change: changes.join('; ') } : null;
+}
+
+// ---- The standard tests ----------------------------------------------------
+// The disturbance (input 55: "it can't only weigh following, it also needs
+// to weigh disturbance reaction"): when no input other than r plays
+// anything, a load step at the plant's input, u_plant = u + d: −10 % of the
+// actuator range (of u's swing in the loaded run when the range is open),
+// from the middle of the longest stretch between r's steps to the end. The
+// plant input is the one place every plant has; a load there passes through
+// the whole plant, so only integral action (or an equivalent) removes it.
+function withStandardDisturbance(project, ctx, U, steps, n, dt) {
+  const others = ctx.others.filter((k) => { const sig = project.system.signals[k]; return sig?.components?.length; });
+  if (others.length) return null;
+  const d = structuredClone(ctx.diagram), lv = level(d, ctx.path), id = ctx.path.at(-1);
+  const into = lv.wires.filter((w) => parseEnd(w.from).id === id && !['sink', 'observer'].includes(lv.blocks.find((b) => b.id === parseEnd(w.to).id)?.type));
+  if (!into.length) return null;
+  lv.blocks.push({ id: 'bench_load', type: 'source', params: { signal: 'bench_d', unit: 'u' }, x: 0, y: 0 }, { id: 'bench_sum', type: 'sum', params: { signs: '++' }, x: 0, y: 0 });
+  for (const w of into) { lv.wires.push({ from: 'bench_sum', to: w.to }); w.to = 'bench_sum'; }
+  lv.wires.push({ from: 'bench_load', to: 'bench_sum:1' });
+  // The longest stretch between steps (the last one runs to the end).
+  const cuts = [...steps, n];
+  let best = [0, cuts[0]];
+  for (let i = 0; i < cuts.length - 1; i++) if (cuts[i + 1] - cuts[i] > best[1] - best[0]) best = [cuts[i], cuts[i + 1]];
+  const time = (Math.round((best[0] + best[1]) / 2)) * dt, amplitude = -0.1 * U;
+  const period = project.system.signals.r?.period ?? ctx.sim.duration;
+  const signals = { ...project.system.signals, bench_d: { period, components: [{ type: 'step', params: { amplitude, time } }] } };
+  return { project: { ...withDiagram(project, d), system: { ...project.system, plant: { ...project.system.plant, diagram: d }, signals } }, change: `a load step of ${fmt(amplitude)} at the plant's input from ${fmt(time)} s (10 % of u's range)` };
+}
+
+// The smooth move (input 55: feedforward "doesn't gain anything on steps"):
+// the same r, each step turned into a smooth move by 1/(τs + 1)³ on the wire
+// into the Controller (r, ṙ and r̈ continuous), τ so that the move is 99 %
+// done in a fifth of the shortest stretch between steps (8.4 τ).
+function smoothMove(diagram, path, tau) {
+  const d = structuredClone(diagram), lv = level(d, path), id = path.at(-1);
+  const w = lv.wires.find((x) => { const t = parseEnd(x.to); return t.id === id && t.port === 0; });
+  if (!w) return null;
+  lv.blocks.push({ id: 'bench_move', type: 'tf', params: { num: [1], den: [tau ** 3, 3 * tau ** 2, 3 * tau, 1], delay: 0 }, x: 0, y: 0 });
+  lv.wires.push({ from: w.from, to: 'bench_move' });
+  w.from = 'bench_move';
+  return d;
 }
 
 // ---- The benchmark ----------------------------------------------------------
 
 // One plant to tune and score on: the loaded diagram, or a changed copy.
 // scales: the goal's, fixed from the loaded run, the same for every plant.
-function plantOf(project, sc, change = null) {
+function plantOf(project, sc, change = null, tau = null) {
   const ctx = tuneContext(project, null);
   const designStatus = (variant) => { try { return compileDiagram(withVariant(ctx.diagram, ctx.path, variant), 'plant', { standalone: true }).designs.find((x) => x.path === ctx.key); } catch (e) { return { error: e }; } };
   const goalScore = (variant, diagram = null) => {
@@ -349,6 +451,7 @@ function plantOf(project, sc, change = null) {
   return {
     project, ctx, change, designStatus, goalScore, m: ctx.block.params.inputs - 1,
     noisy: withNoise(ctx.diagram, ctx.path, sigmas),
+    move: tau ? smoothMove(ctx.diagram, ctx.path, tau) : null,
     // The same seeds on every plant: blocks a change adds are appended, so
     // the plant's own numbers get the same factors.
     plants: Array.from({ length: SWEEP }, (_, i) => vary(ctx.diagram, 0.15, 101 + i)),
@@ -358,11 +461,18 @@ function plantOf(project, sc, change = null) {
 function benchmark(name) {
   const T = { load: 0, starts: 0, tune: 0, score: 0, sweep: 0 };
   let t0 = now();
-  const project = load(name), ctx = tuneContext(project, null);
-  const running = ctx.variant, rp = running.params;
-  const run0 = runVariant(ctx, running), sc = costScales(run0, ctx.key, running), R = sc.e, U = sc.u;
-  const ls = loopSignals(run0, ctx.key);
-  const P0 = plantOf(project, sc);
+  const loaded = load(name), ctx0 = tuneContext(loaded, null);
+  const running = ctx0.variant, rp = running.params;
+  const run00 = runVariant(ctx0, running), sc = costScales(run00, ctx0.key, running), R = sc.e, U = sc.u;
+  const ls = loopSignals(run00, ctx0.key), nS = ls.t.length, dtS = (ls.t.at(-1) - ls.t[0]) / (nS - 1);
+  const steps = []; for (let k = 1; k < nS; k++) if (Math.abs(ls.r[k] - ls.r[k - 1]) > 0.05 * R) steps.push(k);
+  // The standard disturbance when the system has none (a copy; same for all).
+  const std = withStandardDisturbance(loaded, ctx0, U, steps, nS, dtS);
+  const project = std ? std.project : loaded, ctx = tuneContext(project, null), run0 = runVariant(ctx, running);
+  // The smooth move: 99 % done in a fifth of the shortest stretch between steps.
+  const gaps = steps.slice(1).map((k, i) => k - steps[i]).concat(steps.length ? [nS - steps.at(-1)] : []);
+  const tau = steps.length ? (0.2 * Math.min(...gaps) * dtS) / 8.4 : null;
+  const P0 = plantOf(project, sc, null, tau);
   const c = {
     m: P0.m, umin: rp.umin, umax: rp.umax, Tr0: rp.Tr ?? 0, dir: 1,
     rLo: Math.min(...ls.r), rHi: Math.max(...ls.r), rSpan: R, tuned: {}, refused: {},
@@ -439,11 +549,13 @@ function benchmark(name) {
     } else if (tune === 'knob') {
       // Golden section on log(knob) over ×1/30 … ×30 of the start: the
       // designed type stays designed, only its speed input moves.
-      const k0 = variant.params[h.knob], f = (x) => { const vv = normalizeVariant({ ...variant, params: { ...variant.params, [h.knob]: k0 * Math.exp(x) } }); evals++; try { return P.goalScore(vv).cost.J; } catch { return Infinity; } };
+      // The cost of both following tests: the system's run and the smooth move.
+      const k0 = variant.params[h.knob], f = (x) => { const vv = normalizeVariant({ ...variant, params: { ...variant.params, [h.knob]: k0 * Math.exp(x) } }); evals += 2; try { return P.goalScore(vv).cost.J + (P.move ? P.goalScore(vv, P.move).cost.J : 0); } catch { return Infinity; } };
+      const f0 = f(0);
       let a = -Math.log(30), b = Math.log(30), gr = (Math.sqrt(5) - 1) / 2, x1 = b - gr * (b - a), x2 = a + gr * (b - a), f1 = f(x1), f2 = f(x2);
       for (let i = 0; i < 12; i++) { if (f1 < f2) { b = x2; x2 = x1; f2 = f1; x1 = b - gr * (b - a); f1 = f(x1); } else { a = x1; x1 = x2; f1 = f2; x2 = a + gr * (b - a); f2 = f(x2); } }
       const x = f1 < f2 ? x1 : x2, best = Math.min(f1, f2);
-      if (best < start) variant = normalizeVariant({ ...variant, params: { ...variant.params, [h.knob]: k0 * Math.exp(x) } });
+      if (best < f0) variant = normalizeVariant({ ...variant, params: { ...variant.params, [h.knob]: k0 * Math.exp(x) } });
       how += `; ${h.knob} searched → ${fmt(variant.params[h.knob])}`;
     }
     // A tuned variant that fails a gate backs off along the way it came:
@@ -494,7 +606,7 @@ function benchmark(name) {
   if (needsRate.length && c.m === 1) {
     const ch = addRateObserver(ctx.diagram, ctx.path, Math.max(ctx.Ts, c.tauGuess / 10));
     if (ch) {
-      const P = plantOf(withDiagram(project, ch.diagram), sc, ch.change), c2 = { ...c, m: 2 };
+      const P = plantOf(withDiagram(project, ch.diagram), sc, ch.change, tau), c2 = { ...c, m: 2 };
       for (const type of needsRate) for (const s of BENCH[type].start(c2)) {
         const row = tuneOne(P, type, s, BENCH[type]);
         if (!row.refused) rows.push({ ...row, name: `${row.name} ⚙ rate observer`, plantChange: ch.change });
@@ -502,9 +614,9 @@ function benchmark(name) {
       changed.push(ch.change);
     }
   }
-  const sensor = sensorForObserver(ctx.diagram, ctx.path);
+  const sensor = sensorForObserver(ctx.diagram, ctx.path, ctx.signals, ctx.sim, running);
   if (sensor) {
-    const P = plantOf(withDiagram(project, sensor.diagram), sc, sensor.change);
+    const P = plantOf(withDiagram(project, sensor.diagram), sc, sensor.change, tau);
     // The loaded controller as it is with the sensor (what the sensor alone
     // does), and the PID tuned on the measured signal.
     rows.push({ type: running.type, name: `As loaded ⚙ sensor`, how: 'not tuned', variant: running, start: null, evals: 0, P, plantChange: sensor.change });
@@ -523,6 +635,16 @@ function benchmark(name) {
     Object.assign(row, cost.diverged ? {} : runScores(run, P.ctx.key, P.ctx.others, R, U, row.variant));
     row.margins = margins(P.project, P.ctx, row.variant, c.rMid, P.m);
     row.ms = row.margins.ms ?? null;
+    let moveRun = null;
+    if (P.move && !cost.diverged) {
+      moveRun = P.goalScore(row.variant, P.move);
+      row.move = moveRun.cost.diverged ? Infinity : moveScore(moveRun.run, P.ctx.key, P.ctx.others, R, steps);
+    }
+    // The feedforward's share of u, on the steps and on the smooth move.
+    const twin = CONTROLLERS[row.variant.type].designed && CONTROLLERS[row.variant.type].manual ? CONTROLLERS[row.variant.type].manual(row.variant.params, designValues(row.variant)) : row.variant;
+    if (twin?.type === 'pid' && (twin.params.Kff || twin.params.Kv || twin.params.Ka) && !cost.diverged) {
+      row.ffShare = { steps: ffShare(run, P.ctx.key, twin.params, P.ctx.Ts), move: moveRun ? ffShare(moveRun.run, P.ctx.key, twin.params, P.ctx.Ts) : null, Kff: twin.params.Kff, Kv: twin.params.Kv, Ka: twin.params.Ka, Tr: twin.params.Tr };
+    }
     if (!cost.diverged) {
       const nr = simulateSystem(withVariant(P.noisy, P.ctx.path, row.variant), P.ctx.signals, P.ctx.sim);
       const a = loopSignals(nr, P.ctx.key).u, b = loopSignals(run, P.ctx.key).u;
@@ -555,29 +677,103 @@ function benchmark(name) {
     row.fits = !row.diverged && !row.varyBad && row.margins.stable !== false && !row.margins.startUnstable && !fragile;
     row.whyNot = row.diverged ? 'diverges on the nominal plant' : row.varyBad ? `diverges on ${row.varyBad} of ${SWEEP} plants within ±15 %` : row.margins.stable === false ? `unstable at r's middle (${row.margins.note})` : row.margins.startUnstable ? `unstable where the run starts (${row.margins.startUnstable}); it rests there only because it starts in balance` : fragile ? `fragile: Ms ${fmt(row.ms, 2)} at r's middle (at most ${MS_MAX}), PM ${fmt(row.margins.pm, 2)}°` : '';
   }
-  return { name: project.title, rows, refusals, changed, T, step: st?.ok ? `${st.method === 'relay' ? 'relay' : st.model}` : st?.why, R, U };
+  return { name: project.title, rows, refusals, changed, T, standard: std?.change ?? null, tau, step: st?.ok ? `${st.method === 'relay' ? 'relay' : st.model}` : st?.why, R, U };
 }
 
 // ---- The Pugh matrix ---------------------------------------------------------
-// One round against the datum (input 48: "set a good datum and then the
-// others are either plus or minus one ... Don't make it too complicated"):
-// each criterion +1, 0 or −1, weighted and summed.
+// One round against the datum (input 48), on a five-point scale (input 55:
+// "± is not enough ... probably a 5-point scale"), by rule, from the ratio of
+// the candidate's number to the datum's, q = (a + f) / (b + f), f the
+// criterion's absolute floor (so 0 % against 1 % overshoot is not ×0):
+//   S  0   within the criterion's tolerance:   1/(1 + tol) < q < 1 + tol
+//   +  1   better beyond it, up to twice as good           (q ≥ 1/2)
+//   ++ 2   more than twice as good                          (q < 1/2)
+//   −  −1, −− −2 the same the other way (q ≤ 2, q > 2)
+// for a criterion where lower is better (all of them here).
+const RATIO_STRONG = 2;
+function mark(cr, a, b) {
+  if (a === null || a === undefined || b === null || b === undefined || !finite(a) || !finite(b)) return null;
+  const q = (a + cr.abs) / (b + cr.abs), up = 1 + cr.tol;
+  if (q < 1 / RATIO_STRONG) return 2;
+  if (q <= 1 / up) return 1;
+  if (q > RATIO_STRONG) return -2;
+  if (q >= up) return -1;
+  return 0;
+}
+const SYMBOL = { 2: '++', 1: '+', 0: 'S', [-1]: '−', [-2]: '−−' };
 
-function pugh(rows, datum) {
-  return rows.map((row) => {
-    let total = 0, plus = 0, minus = 0;
-    const m = CRITERIA.map((cr) => {
-      const a = row[cr.key], b = datum[cr.key];
-      if (row === datum) return 'D';
-      // A missing number (Ms of a law with no linear model) counts as S.
-      if (a === null || a === undefined || b === null || b === undefined || !finite(a) || !finite(b)) return '?';
-      const d = cr.dir === 'low' ? b - a : a - b, thr = Math.max(cr.abs, cr.tol * Math.abs(b));
-      const s = d > thr ? 1 : d < -thr ? -1 : 0;
-      total += cr.w * s; if (s > 0) plus++; if (s < 0) minus++;
-      return s > 0 ? '+' : s < 0 ? '−' : 'S';
+// The marks of every row against the datum: [criterion] → −2 … +2 (null: '?').
+function marksOf(rows, datum) {
+  return rows.map((row) => CRITERIA.map((cr) => (row === datum ? 0 : mark(cr, row[cr.key], datum[cr.key]))));
+}
+const totalOf = (m, w) => m.reduce((t, s, i) => t + (s ?? 0) * w[i], 0);
+
+// The main job (input 55): a candidate that follows or rejects much worse
+// than the datum does not fit, whatever it wins elsewhere: its number more
+// than JOB_MAX times the datum's (with the floor, as in mark()).
+const JOB_MAX = 2;
+function jobGate(row, datum) {
+  if (row === datum) return '';
+  for (const cr of CRITERIA.filter((x) => x.job)) {
+    const a = row[cr.key], b = datum[cr.key];
+    if (!finite(b)) continue;
+    if (!finite(a)) return `${cr.label}: no number`;
+    const q = (a + cr.abs) / (b + cr.abs);
+    if (q > JOB_MAX) return `${cr.label} ×${fmt(q, 2)} of the datum's (at most ×${JOB_MAX})`;
+  }
+  return '';
+}
+
+// ---- Reverse sensitivity on the weights (input 55) -------------------------
+// The totals are linear in the weights, T_k = Σ w_i m_ki, so each question
+// has an exact answer. "Reasonable" (interpretation): every weight within one
+// step (±1) of its default and above 0.
+const STEP = 1;
+function sensitivity(cands, marks, w, winner) {
+  const iw = cands.indexOf(winner), out = { flips: [], minChange: [], acceptability: [] };
+  const T = (k, ww) => totalOf(marks[k], ww);
+  for (let j = 0; j < cands.length; j++) {
+    if (j === iw) continue;
+    // One weight at a time: the change Δ of w_i where j catches up.
+    const gap = T(iw, w) - T(j, w);
+    let best = null;
+    CRITERIA.forEach((cr, i) => {
+      const slope = (marks[j][i] ?? 0) - (marks[iw][i] ?? 0);
+      if (!slope) return;
+      const d = gap / slope;
+      if (w[i] + d < 0) return;
+      if (!best || Math.abs(d) < Math.abs(best.d)) best = { i, d };
     });
-    return { row, m, total: row === datum ? 0 : total, plus, minus };
-  });
+    if (best) out.flips.push({ j, criterion: CRITERIA[best.i].label, from: w[best.i], to: w[best.i] + best.d, reasonable: Math.abs(best.d) <= STEP && w[best.i] + best.d > 0 });
+    // The smallest change of all weights together (Euclidean): project w onto
+    // T_j = T_winner, D·w = 0 with D = m_j − m_winner, keeping w ≥ 0.
+    const D = CRITERIA.map((_, i) => (marks[j][i] ?? 0) - (marks[iw][i] ?? 0));
+    let ww = w.slice();
+    for (let it = 0; it < 20; it++) {
+      const dw = D.reduce((t, x, i) => t + x * ww[i], 0);
+      if (dw >= -1e-12) break;
+      const free = D.map((x, i) => (ww[i] > 0 || x > 0 ? x : 0)), nn = free.reduce((t, x) => t + x * x, 0);
+      if (!nn) { ww = null; break; }
+      ww = ww.map((x, i) => Math.max(0, x - (dw / nn) * free[i]));
+    }
+    if (ww) {
+      const dist = Math.hypot(...ww.map((x, i) => x - w[i])), norm = Math.hypot(...w);
+      out.minChange.push({ j, rel: dist / norm, maxStep: Math.max(...ww.map((x, i) => Math.abs(x - w[i]))) });
+    }
+  }
+  // SMAA's rank-1 acceptability: weights drawn uniformly within one step of
+  // the defaults (and above 0), seeded; the share of draws each candidate wins.
+  const r = rng(55), N = 4000, wins = new Array(cands.length).fill(0);
+  for (let n = 0; n < N; n++) {
+    const ww = w.map((x) => Math.max(0.01, x - STEP + 2 * STEP * r()));
+    let bk = 0, bt = -Infinity;
+    cands.forEach((c, k) => { const t = T(k, ww); if (t > bt + 1e-12 || (Math.abs(t - bt) <= 1e-12 && c.J < cands[bk].J)) { bt = t; bk = k; } });
+    wins[bk]++;
+  }
+  out.acceptability = wins.map((x) => x / N);
+  const reasonableFlip = out.flips.some((f) => f.reasonable);
+  out.verdict = !reasonableFlip && out.acceptability[iw] >= 0.75 ? 'robust' : 'sensitive';
+  return out;
 }
 
 // ---- Output ---------------------------------------------------------------
@@ -591,21 +787,26 @@ for (const name of SYSTEMS) {
   results.push(b);
   // The datum: the tuned PID (input 48); if it does not fit, the running
   // variant; if neither fits, the tuned PID all the same.
-  const pid = b.rows.find((r) => r.type === 'pid' && !r.loaded && !r.plantChange), loaded = b.rows.find((r) => r.loaded);
-  const datum = pid?.fits ? pid : loaded?.fits ? loaded : pid ?? b.rows[0];
-  const marks = pugh(b.rows, datum);
-  const ranked = marks.filter((x) => x.row.fits).sort((a, c) => c.total - a.total || a.row.J - c.row.J);
-  // The suggestion: the best fitting candidate that needs no plant change
-  // (it can be added as a variant); a plant change that ranks above it is
-  // named beside it.
-  const best = ranked.find((x) => !x.row.plantChange), above = best ? ranked.slice(0, ranked.indexOf(best)) : [];
+  const pid = b.rows.find((r) => r.type === 'pid' && !r.loaded && !r.plantChange), loadedRow = b.rows.find((r) => r.loaded);
+  const datum = pid?.fits ? pid : loadedRow?.fits ? loadedRow : pid ?? b.rows[0];
+  // The main job, against the datum.
+  for (const row of b.rows) { const why = row.fits ? jobGate(row, datum) : ''; if (why) { row.fits = false; row.whyNot = `fails the main job: ${why}`; } }
+  const w = CRITERIA.map((cr) => cr.w);
+  const marks = marksOf(b.rows, datum);
+  const totals = marks.map((m) => totalOf(m, w));
+  const order = b.rows.map((_, k) => k).filter((k) => b.rows[k].fits).sort((a, c) => totals[c] - totals[a] || b.rows[a].J - b.rows[c].J);
+  const pos = (v) => `${v >= 0 ? '+' : ''}${fmt(v, 3)}`;
+  // The suggestion: the best fitting candidate that needs no plant change.
+  const eligible = order.filter((k) => !b.rows[k].plantChange), best = eligible[0];
+  const above = best === undefined ? [] : order.slice(0, order.indexOf(best));
 
   out.push(`\n## ${b.name}\n`);
   out.push(`Step test for the starts: ${b.step}. Total ${(total / 1000).toFixed(1)} s: load ${fmt(b.T.load / 1000)} s, starts ${fmt(b.T.starts / 1000)} s, tuning ${fmt(b.T.tune / 1000)} s, scoring ${fmt(b.T.score / 1000)} s, sweep (${SWEEP} plants) ${fmt(b.T.sweep / 1000)} s. One run ${fmt(b.T.run, 2)} ms, so about ${Math.round(total / b.T.run)} runs' worth.\n`);
+  out.push(`Tests: the system's own input${b.standard ? `, plus the standard disturbance (it has none of its own): ${b.standard}` : ' (its own disturbance plays)'}; ${b.tau ? `the smooth move: r through 1/(τs + 1)³, τ = ${fmt(b.tau, 3)} s` : 'no smooth move (r has no steps to smooth)'}.\n`);
   out.push('Refused:\n');
   for (const r of b.refusals) out.push(`- ${r.label} (\`${r.type}\`): ${r.why}`);
   if (b.changed.length) { out.push('\nPlant changes scored (⚙, never applied; complexity +5):\n'); for (const ch of b.changed) out.push(`- ${ch}`); }
-  out.push('\nCandidates (J: the goal\'s cost, IAE + effort + overshoot + saturation; start → tuned):\n');
+  out.push('\nCandidates (J: the goal\'s cost on the system\'s run, IAE + effort + overshoot + saturation; start → tuned):\n');
   out.push('| Candidate | Tuned how | J start → tuned | Runs | ms | Fits |');
   out.push('|---|---|---|---|---|---|');
   for (const r of b.rows) out.push(`| ${r.name} | ${r.how} | ${r.start === null ? '' : `${fmt(r.start)} → `}${fmt(r.J)} | ${r.evals} | ${fmt(r.tuneMs ?? 0, 2)} | ${r.fits ? 'yes' : `no: ${r.whyNot}`} |`);
@@ -613,15 +814,32 @@ for (const name of SYSTEMS) {
   out.push(`| Candidate | ${CRITERIA.map((c) => c.label).join(' | ')} | PM ° | Delay margin |`);
   out.push(`|---|${CRITERIA.map(() => '---').join('|')}|---|---|`);
   for (const r of b.rows) out.push(`| ${r.name} | ${CRITERIA.map((c) => (c.key === 'over' ? `${fmt(r[c.key], 2)} %` : c.key === 'ms' && r[c.key] === null ? (r.margins.none ? 'no linear model' : r.margins.stable === false ? 'unstable' : '—') : fmt(r[c.key], 2))).join(' | ')} | ${fmt(r.margins.pm, 2)} | ${r.margins.dm !== undefined ? `${fmt(r.margins.dm * 1000, 2)} ms` : '—'} |`);
-  out.push(`\nPugh matrix: datum **${datum.name}**${datum.fits ? '' : ' (does not fit, but no fitting PID or loaded variant to take its place)'}; weights ${CRITERIA.map((c) => c.w).join(', ')}.\n`);
-  out.push(`| Criterion (weight) | ${marks.map((x) => x.row.name.replace('As loaded', 'Loaded')).join(' | ')} |`);
-  out.push(`|---|${marks.map(() => ':-:').join('|')}|`);
-  CRITERIA.forEach((cr, i) => out.push(`| ${cr.label} (${cr.w}) | ${marks.map((x) => x.m[i]).join(' | ')} |`));
-  out.push(`| **+ / −** | ${marks.map((x) => (x.row === datum ? 'datum' : `${x.plus} / ${x.minus}`)).join(' | ')} |`);
-  out.push(`| **Weighted** | ${marks.map((x) => (x.row === datum ? '0' : String(x.total))).join(' | ')} |`);
-  out.push(`| **Fits** | ${marks.map((x) => (x.row.fits ? 'yes' : 'no')).join(' | ')} |`);
-  out.push(`\nRanking (fitting only): ${ranked.map((x, i) => `${i + 1}. ${x.row.name} (${x.total >= 0 ? '+' : ''}${x.total})`).join('; ')}.`);
-  out.push(`\nSuggestion: ${!best ? 'none fits' : best.row.loaded ? `keep **${best.row.name.replace('As loaded: ', '')}**, the running variant: nothing beats it` : `**${best.row.name}** (${best.total >= 0 ? '+' : ''}${best.total}), added as a variant, not switched on`}${above.length ? `; ranked above it with a plant change: ${above.map((x) => `${x.row.name} (${x.total >= 0 ? '+' : ''}${x.total}; ${x.row.plantChange})`).join('; ')}` : ''}.`);
+  const ffRows = b.rows.filter((r) => r.ffShare);
+  if (ffRows.length) {
+    out.push('\nThe feedforward\'s share of the effort (Σ|ff| / (Σ|ff| + Σ|u − ff|)):\n');
+    for (const r of ffRows) out.push(`- ${r.name} (Kff ${fmt(r.ffShare.Kff)}, Kv ${fmt(r.ffShare.Kv)}, Ka ${fmt(r.ffShare.Ka)}, prefilter Tr ${fmt(r.ffShare.Tr)} s): ${fmt(100 * r.ffShare.steps, 2)} % on the system's steps, ${r.ffShare.move === null ? '—' : `${fmt(100 * r.ffShare.move, 2)} %`} on the smooth move; following IAE ${fmt(r.track, 2)} (steps), ${fmt(r.move, 2)} (move), against the datum's ${fmt(datum.track, 2)} and ${fmt(datum.move, 2)}.`);
+  }
+  out.push(`\nPugh matrix: datum **${datum.name}**${datum.fits ? '' : ' (does not fit, but no fitting PID or loaded variant to take its place)'}; five-point marks (++ +2, + +1, S 0, − −1, −− −2, ? not judged); weights ${w.join(', ')}.\n`);
+  out.push(`| Criterion (weight) | ${b.rows.map((r) => r.name.replace('As loaded', 'Loaded')).join(' | ')} |`);
+  out.push(`|---|${b.rows.map(() => ':-:').join('|')}|`);
+  CRITERIA.forEach((cr, i) => out.push(`| ${cr.label} (${cr.w}) | ${marks.map((m, k) => (b.rows[k] === datum ? 'D' : m[i] === null ? '?' : SYMBOL[m[i]])).join(' | ')} |`));
+  out.push(`| **Weighted** | ${totals.map((t, k) => (b.rows[k] === datum ? '0' : pos(t))).join(' | ')} |`);
+  out.push(`| **Fits** | ${b.rows.map((r) => (r.fits ? 'yes' : 'no')).join(' | ')} |`);
+  out.push(`\nRanking (fitting only): ${order.map((k, i) => `${i + 1}. ${b.rows[k].name} (${pos(totals[k])})`).join('; ')}.`);
+  const noFit = b.rows.filter((r) => !r.fits).map((r) => `${r.name}: ${r.whyNot}`);
+  if (noFit.length) out.push(`\nNot ranked: ${noFit.join('; ')}.`);
+  out.push(`\nSuggestion: ${best === undefined ? 'none fits' : b.rows[best].loaded ? `keep **${b.rows[best].name.replace('As loaded: ', '')}**, the running variant: nothing beats it` : `**${b.rows[best].name}** (${pos(totals[best])}), added as a variant, not switched on`}${above.length ? `; ranked above it with a plant change: ${above.map((k) => `${b.rows[k].name} (${pos(totals[k])}; ${b.rows[k].plantChange})`).join('; ')}` : ''}.`);
+  // Reverse sensitivity among the candidates the suggestion is chosen from.
+  if (eligible.length > 1) {
+    const cands = eligible.map((k) => b.rows[k]), cm = eligible.map((k) => marks[k]);
+    const sv = sensitivity(cands, cm, w, cands[0]);
+    const near = eligible.slice(1, 4).map((_, i) => i + 1);
+    out.push(`\nWeight sensitivity (winner ${cands[0].name}; reasonable: each weight within ±${STEP} of its default): **${sv.verdict}**. It wins ${fmt(100 * sv.acceptability[0], 3)} % of ${4000} weight draws within one step.`);
+    for (const j of near) {
+      const f = sv.flips.find((x) => x.j === j), mc = sv.minChange.find((x) => x.j === j);
+      out.push(`- ${cands[j].name} (${pos(totals[eligible[j]])}, wins ${fmt(100 * sv.acceptability[j], 3)} % of draws): ${f ? (Math.abs(f.to - f.from) < 1e-9 ? 'tied now: the same total, J breaks the tie' : `ties if ${f.criterion} goes ${fmt(f.from, 3)} → ${fmt(f.to, 3)} (${f.reasonable ? 'reasonable' : 'not reasonable'})`) : 'no single weight makes it tie'}; ${mc ? `all weights together: ${fmt(100 * mc.rel, 2)} % of the weights' size, the largest single change ${fmt(mc.maxStep, 2)}` : 'no weights make it tie'}.`);
+    }
+  }
 }
 const text = `# Benchmark prototype: results\n\nGoal: ${JSON.stringify(GOAL_USED)}; Iterate up to ${MAX_ITER} iterations; sweep ${SWEEP} plants within ±15 %. Node ${process.version}.\n${out.join('\n')}\n`;
 console.log(text);
