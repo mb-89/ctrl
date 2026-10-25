@@ -52,3 +52,4 @@ The person's own words, verbatim, one file per conversation, dated, with the ima
 | [2026-10-25-44-this-kind-of-probe.md](2026-10-25-44-this-kind-of-probe.md) | A photo of the tool: a touch-probe stylus (threaded mount, black collar, steel shaft, ruby ball) |
 | [2026-10-25-45-autotune-unlimited-speed.md](2026-10-25-45-autotune-unlimited-speed.md) | A small toggle in Auto-tune, "unlimited speed", where the system's speed can be raised: the tune runs at ∞ and the old speed comes back when it is done |
 | [2026-10-25-46-probe-rod-in-the-model.md](2026-10-25-46-probe-rod-in-the-model.md) | The probe's rod is drawn on the plant but not yet in the model; keep working on it |
+| [2026-10-25-47-hil-speed-is-the-plants.md](2026-10-25-47-hil-speed-is-the-plants.md) | Confirming: the Unlimited speed toggle cannot work in HIL mode, and that is held at a lower level: with a live plant the speed is 1×, set by the incoming signal |
