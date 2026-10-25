@@ -398,9 +398,11 @@ test('the encoder example samples as before: same steps, its speed follows as we
   p.scope.timebase = autoTimebase(p);
   const run = evaluateSystem(p);
   assert.equal(run.info.substeps, 5, '0.5 ms steps: its 1 ms samples were on the grid already');
+  // Over the run-up (0.5 to 4.5 s), which is the run as it was before the
+  // run-down was added, bit for bit.
   let a = 0, n = 0;
-  for (let k = 0; k < run.t.length; k++) if (run.t[k] >= 0.5) { a += (run.signals.r[k] - run.signals.speed[k]) ** 2; n++; }
-  assert.ok(Math.sqrt(a / n) <= 2.18149, `rms speed error ${Math.sqrt(a / n)} rad/s (2.18148 before)`);
+  for (let k = 0; k < run.t.length; k++) if (run.t[k] >= 0.5 && run.t[k] < 4.5) { a += (run.signals.r[k] - run.signals.speed[k]) ** 2; n++; }
+  assert.ok(Math.sqrt(a / n) <= 2.27034, `rms speed error ${Math.sqrt(a / n)} rad/s (2.27034 before)`);
 });
 
 // ---- The Measure readout ----------------------------------------------------

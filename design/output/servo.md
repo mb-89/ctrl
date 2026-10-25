@@ -231,7 +231,7 @@ The switches keep their exaggerated sizes, which the person accepted for this ex
 | speed | 8.0·10⁻¹¹ rad/s | 2.6·10⁻¹³ |
 | V | 2.9·10⁻¹⁰ V | 6.1·10⁻¹² |
 
-- Same steps (5 substeps). The rms speed error is 2.181480780500966 against main's …1016 (the test's bound is 2.18149).
+- Same steps (5 substeps). The rms speed error is 2.181480780500966 against main's …1016 (over t ≥ 0.5 s of the run as it was then; since the run-down of inputs 50–52 the test reads 0.5–4.5 s, the run-up, which is bit for bit that run: 2.2703366197546626, bound 2.27034).
 - **The reason, proven:** the motor owns its friction (−b·ωm into the rotor's sum) where main has it in the rotor's 1/(J·s + b). With b put back into a transfer function, the run is main's bit for bit (`why.mjs`).
 - Test tolerance: 10⁻⁹ relative. The spectrogram and sampling tests are unchanged.
 

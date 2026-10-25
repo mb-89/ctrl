@@ -144,7 +144,7 @@ test("the Input tab's line: a jump or a kink where it repeats, quiet where that 
 });
 
 test("the library's other inputs join up where they repeat", () => {
-  const known = { 'Encoder errors and torque ripple': ['r'], 'DC motor, speed from an encoder': ['r'], 'Conical tank, gain scheduling': ['r'], 'Oven, badly tuned': ['r'] };
+  const known = { 'DC motor, speed from an encoder': ['r'], 'Conical tank, gain scheduling': ['r'], 'Oven, badly tuned': ['r'] };
   for (const sys of SYSTEM_LIBRARY) for (const [name, sig] of Object.entries(sys.input.signals)) {
     if (known[sys.name]?.includes(name)) continue;
     const j = wrapJump(normalizeReference(sig), ctx);
@@ -201,4 +201,24 @@ test('the mass–spring–damper is let go inside its period: no kick where F re
   const d = [diff(0, 1), diff(1, 2), diff(2, 3), diff(3, 4)];
   for (let i = 1; i < d.length; i++) close(d[i] / d[i - 1], Math.exp(-1.25), 0.01, `period ${i + 1} against ${i + 2}`);
   assert.ok(d[1] < 3e-3 && d[3] < 2.5e-4, `periods 2 and 3 within 3 mm, 4 and 5 within 0.25 mm: ${d}`);
+});
+
+test('the encoder example runs up and back down: no jump where it repeats, its loop the same in every later period', () => {
+  const sys = SYSTEM_LIBRARY.find((e) => e.name === 'Encoder errors and torque ripple');
+  const run = (mask) => {
+    const d = structuredClone(sys.plant.diagram);
+    Object.assign(d.blocks.find((b) => b.id === 'motor').params, mask);
+    return simulateSystem(normalizeDiagram(d), sys.input.signals, { duration: 20, sampleTime: 0.0025 }).signals;
+  };
+  const P = 2000, full = run({}), quiet = run({ torqueNoise: 0, ripple: 0, encErrors: 0 });
+  for (const n of ['speed', 'speed_m', 'V', 'i']) {
+    // At each wrap: no step larger than the largest one inside a period (before: V jumped by 87 V, i by 49 A).
+    let inner = 0;
+    for (let k = P + 3; k < 4 * P - 1; k++) if (k % P > 2 && k % P < P - 2) inner = Math.max(inner, Math.abs(full[n][k + 1] - full[n][k]));
+    for (const w of [1, 2, 3]) assert.ok(Math.abs(full[n][w * P + 1] - full[n][w * P]) < 0.2 * inner, `${n} at ${5 * w} s`);
+    // Without what turns with the shaft's angle (ripple, encoder errors) and without noise, periods 2, 3 and 4 are one.
+    let diff = 0, span = 0;
+    for (let k = 1; k <= P; k++) { diff = Math.max(diff, Math.abs(quiet[n][P + k] - quiet[n][2 * P + k]), Math.abs(quiet[n][2 * P + k] - quiet[n][3 * P + k])); span = Math.max(span, Math.abs(quiet[n][P + k])); }
+    assert.ok(diff < 1e-9 * span, `${n}: periods 2 to 4 differ by ${diff}`);
+  }
 });

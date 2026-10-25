@@ -376,7 +376,7 @@ test('the encoder example: automatic levels show the orders and the resonance, n
   assert.ok(share((i) => at(i, 70)) >= 0.95, 'the 70 Hz resonance');
   // Before, the heat map was 80 dB deep below the largest bin: most bins showed.
   const above = (floor) => d.filter((v) => v > floor).length / d.length;
-  assert.ok(above(lv.floor) < 0.4 && above(lv.ceiling - 80) > 0.6, `${above(lv.floor)} of the bins above the floor; ${above(lv.ceiling - 80)} before`);
+  assert.ok(above(lv.floor) < 0.4 && above(lv.ceiling - 80) > 0.55, `${above(lv.floor)} of the bins above the floor; ${above(lv.ceiling - 80)} before`);
 });
 
 test('scope.view.levels: per signal, [floor, ceiling] in dB, normalised; absent means automatic', async () => {
@@ -610,14 +610,17 @@ test('the encoder example above the noise: the whole 6× line and its fold-back 
   // 3× sweeps from 30 to 60 Hz through those rows, and shows.
   const [s3, m3] = shown(rel, lv.floor, 3, 30, 60);
   assert.ok(s3 >= m3 - 2, `3× from 30 to 60 Hz on ${s3} of ${m3} frames`);
-  // At the steady end (the last 0.5 s) the 2× and 3× lines are strong and
-  // steady, and a Hann window spills them over the rows around: the 6× line
-  // at 113.5 Hz lay inside that spill-over. Estimated on the screen's frames.
+  // The last 0.5 s, estimated on the screen's frames: before inputs 50–52
+  // the motor held 300 rad/s there, the 2× and 3× lines strong and steady, and
+  // a Hann window spilled them over the rows around the 6× line at 113.5 Hz
+  // (a Hann-only estimate found it on 0 of 9 frames). Now the motor runs back
+  // down there and the 6× line still shows; the steady lines in white noise
+  // above hold the Blackman pass to the spill-over.
   const t0 = 4.5, t1 = 5, end = spectrogramNoise(data.signals.speed_m, dt, opts, { t0, t1 }), relEnd = aboveNoise(d, end, sg.bins);
   const lvEnd = autoLevels(spectrogramWindow(sg, relEnd, { t0, t1 }), { noise: 0, margin: AUTO_LEVELS.noiseMargin });
   let e6 = 0, me = 0;
   for (let i = 0; i < sg.frames; i++) { if (sg.t[i] < t0 || sg.t[i] > t1) continue; me++; if (at(relEnd, i, (6 * speed(i)) / (2 * Math.PI)) > lvEnd.floor) e6++; }
-  assert.ok(me >= 8 && e6 >= me - 1, `6× at the steady end on ${e6} of ${me} frames`);
+  assert.ok(me >= 8 && e6 >= me - 1, `6× in the last 0.5 s on ${e6} of ${me} frames`);
 });
 
 test('a noise-free signal has no noise to count from: the estimate is null, so the colours stay absolute', async () => {

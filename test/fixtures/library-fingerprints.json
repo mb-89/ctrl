@@ -32,7 +32,7 @@
   "Encoder errors and torque ripple": {
     "samples": 2001,
     "signals": "V,ctrl.r,ctrl.u,ctrl.y,i,r,speed,speed_m,tau_e,tau_f,tau_m,tau_r,v",
-    "hash": "a356789d"
+    "hash": "8ec77f2f"
   },
   "DC motor, speed from an encoder": {
     "samples": 5001,
