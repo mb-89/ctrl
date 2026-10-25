@@ -137,6 +137,52 @@ function cartView(name, rods, caption, box) {
 const Q_SINGLE = [10, 50, 1, 1];
 const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 
+// Live mode (design/output/hil.md): the plant is outside the page and a
+// black box (input 20): the page knows its interface only, the inputs and
+// outputs its describe lists (names, units, full scales, hard ranges,
+// kinds), which the External block keeps (here: what the example plant,
+// hil_plant.py, describes) and takes anew on Connect. No model, no
+// disturbance it does not offer, no picture: the Plant tab shows the
+// interface. The controller is a first guess, not tuned on a model:
+// tuning needs the plant identified first (identification.md). It opens
+// stopped: nothing runs until the plant is connected and Run is pressed.
+const HIL_SYSTEM = {
+  name: 'HIL: an external plant',
+  summary: 'A plant outside the page, connected live (hardware in the loop); the page knows only its interface. Download and run the plant, connect, then identify and tune it: working with a plant you cannot see.',
+  notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Reference mode is a switch, not another system: Plant tab, Live settings, Mode, "Plant": while it is stopped the plant runs its own controller with its own limits, the page sends r straight to it and records what comes back, its own effort V included (the page\'s controllers and Auto-tune are out of the loop); "Page" puts the Controller back. A plant that cannot switch says so: start it with --mode reference instead, and the page follows what it describes. Help (?), Live and For agents, has all of it.',
+  signals: {
+    r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
+  },
+  scope: { channels: channels('r', 'angle', 'V', 'current') },
+  ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
+  diagram: {
+    blocks: [
+      src('r', 30, 106, 'rad'),
+      ctrl(130, 100, 2, 0.01, [
+        { name: 'P, a first guess', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
+        { name: 'Off', type: 'off', params: {} },
+      ]),
+      {
+        id: 'plant', type: 'external', name: 'plant', x: 340, y: 96,
+        params: {
+          url: 'ws://127.0.0.1:8765', rate: 100,
+          inputs: ['V'], inUnits: ['V'], min: [-12], max: [12], safe: [0], kinds: ['effort'], measures: [''],
+          outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'], outMin: [-Math.PI, -120, -12], outMax: [Math.PI, 120, 12],
+          ymin: [-2.5, -60, -10], ymax: [2.5, 60, 10],
+          ramp: 10,
+        },
+      },
+      sink('angle', 600, 98, 'rad'), sink('speed', 600, 134, 'rad/s'), sink('current', 600, 170, 'A'),
+      sink('V', 330, 20, 'V'),
+    ],
+    wires: [
+      { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'plant' }, { from: 'ctrl', to: 'V' },
+      { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant', to: 'ctrl:1' },
+    ],
+  },
+  views: [],
+};
+
 export const EXAMPLE_PLANTS = [
   {
     name: 'Mass–spring–damper',
@@ -641,86 +687,17 @@ export const EXAMPLE_PLANTS = [
       ],
     }],
   },
-  // Live mode (design/output/hil.md): the plant is outside the page and a
-  // black box (input 20): the page knows its interface only, the inputs and
-  // outputs its describe lists (names, units, full scales, hard ranges,
-  // kinds), which the External block keeps (here: what the example plant,
-  // hil_plant.py, describes) and takes anew on Connect. No model, no
-  // disturbance it does not offer, no picture: the Plant tab shows the
-  // interface. The controller is a first guess, not tuned on a model:
-  // tuning needs the plant identified first (identification.md). It opens
-  // stopped: nothing runs until the plant is connected and Run is pressed.
+  HIL_SYSTEM,
+  // The same plant in the agentic mode (input 31): the person and an agent
+  // look at the same page through the MCP server, identify the plant
+  // together and tune it together. The plant is drawn at random, so neither
+  // knows what is inside.
   {
-    name: 'HIL: an external plant',
-    summary: 'A plant outside the page, connected live (hardware in the loop); the page knows only its interface. Download and run the plant, connect, then identify and tune it: working with a plant you cannot see.',
-    notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Help (?), Live and For agents, has all of it.',
-    signals: {
-      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
-    },
-    scope: { channels: channels('r', 'angle', 'V', 'current') },
-    ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
-    diagram: {
-      blocks: [
-        src('r', 30, 106, 'rad'),
-        ctrl(130, 100, 2, 0.01, [
-          { name: 'P, a first guess', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
-          { name: 'Off', type: 'off', params: {} },
-        ]),
-        {
-          id: 'plant', type: 'external', name: 'plant', x: 340, y: 96,
-          params: {
-            url: 'ws://127.0.0.1:8765', rate: 100,
-            inputs: ['V'], inUnits: ['V'], min: [-12], max: [12], safe: [0], kinds: ['effort'], measures: [''],
-            outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'], outMin: [-Math.PI, -120, -12], outMax: [Math.PI, 120, 12],
-            ymin: [-2.5, -60, -10], ymax: [2.5, 60, 10],
-            ramp: 10,
-          },
-        },
-        sink('angle', 600, 98, 'rad'), sink('speed', 600, 134, 'rad/s'), sink('current', 600, 170, 'A'),
-        sink('V', 330, 20, 'V'),
-      ],
-      wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'plant' }, { from: 'ctrl', to: 'V' },
-        { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant', to: 'ctrl:1' },
-      ],
-    },
-    views: [],
-  },
-  // The same in reference mode (the person, settled: both modes): the plant
-  // runs its own controller, with its limits and monitoring; the page sends
-  // the reference and records what comes back, the plant's own u included.
-  // The page's controllers and Auto-tune are not in the loop.
-  {
-    name: 'HIL: an external plant, reference mode',
-    summary: 'An external plant that runs its own controller; the page only sends references and records. Start the plant in reference mode, connect and run: logging a plant that controls itself.',
-    notes: 'An external plant in reference mode: it runs its own controller, with its own limits and monitoring; this page only sends the reference r and records what comes back, the plant\'s own control effort included. The page knows only the interface the plant describes (Plant tab, Interface); what is inside is a black box, identified from what it reports. For logging, and for a plant that controls itself; the page\'s controllers and Auto-tune are not in the loop. Start the example plant with sh runme.sh --mode reference (or runme.cmd --mode reference); then Plant tab, Connect, and Run. Everything else as in HIL: an external plant; Help (?), Live.',
-    signals: {
-      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
-    },
-    scope: { channels: channels('r', 'angle', 'V', 'current') },
-    ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
-    tags: [{ label: 'Reference mode', kind: 'feature' }],
-    diagram: {
-      blocks: [
-        src('r', 60, 110, 'rad'),
-        {
-          id: 'plant', type: 'external', name: 'plant', x: 240, y: 96,
-          params: {
-            url: 'ws://127.0.0.1:8765', rate: 100,
-            inputs: ['r'], inUnits: ['rad'], min: [-3], max: [3], safe: [0], kinds: ['reference'], measures: ['angle'],
-            outputs: ['angle', 'speed', 'current', 'V'], outUnits: ['rad', 'rad/s', 'A', 'V'], outMin: [-Math.PI, -120, -12, -12], outMax: [Math.PI, 120, 12, 12],
-            ymin: [-2.5, -60, -10, null], ymax: [2.5, 60, 10, null], outKinds: ['measurement', 'measurement', 'measurement', 'effort'],
-            ramp: 10,
-          },
-        },
-        sink('angle', 500, 98, 'rad'), sink('speed', 500, 134, 'rad/s'), sink('current', 500, 170, 'A'), sink('V', 500, 206, 'V'),
-      ],
-      wires: [
-        { from: 'r', to: 'plant' },
-        { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant:3', to: 'V' },
-      ],
-    },
-    views: [],
+    ...HIL_SYSTEM,
+    name: 'HIL with an agent',
+    summary: 'A plant nobody here knows, drawn at random and run live, and an agent on the same page through the MCP server: identify it together, then tune it together.',
+    notes: 'The agentic mode: an agent (an AI assistant whose client speaks MCP) works on this page with you. It sees what you see, reads the data itself (the screen, the live record, the plant\'s interface, Auto-tune runs, Analysis) and can act, and you talk it over. The plant is drawn at random from the System library\'s models, its physics varied, so it is a black box to you both: identify it together, then tune it together. Step by step: 1. Export ▾, MCP server: unzip loop-tuner-mcp.zip and register it with your agent\'s client as its README.txt says (runme.sh or runme.cmd prints the exact lines), then start the agent. 2. Ask the agent to open the Loop Tuner page (it gives the address, http://127.0.0.1:8766/ unless that port is taken) and load this system there: on that page it says "An agent is connected". 3. Export ▾, HIL plant: unzip hil-plant.zip and run sh runme.sh --random (Linux, macOS) or runme.cmd --random (Windows). 4. Plant tab, Connect; Run. 5. Ask: "What do you see? Let us identify this plant: which experiment would you run?", then "Now let us tune it together". The agent changes the controller only when you agree, and says what it did; Ctrl+Z takes any change back. Everything else as in HIL: an external plant.',
+    tags: [{ label: 'Agent', kind: 'feature' }],
   },
 ];
 

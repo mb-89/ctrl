@@ -6639,6 +6639,43 @@ function cartView(name, rods, caption, box) {
 const Q_SINGLE = [10, 50, 1, 1];
 const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 
+const HIL_SYSTEM = {
+  name: 'HIL: an external plant',
+  summary: 'A plant outside the page, connected live (hardware in the loop); the page knows only its interface. Download and run the plant, connect, then identify and tune it: working with a plant you cannot see.',
+  notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Reference mode is a switch, not another system: Plant tab, Live settings, Mode, "Plant": while it is stopped the plant runs its own controller with its own limits, the page sends r straight to it and records what comes back, its own effort V included (the page\'s controllers and Auto-tune are out of the loop); "Page" puts the Controller back. A plant that cannot switch says so: start it with --mode reference instead, and the page follows what it describes. Help (?), Live and For agents, has all of it.',
+  signals: {
+    r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
+  },
+  scope: { channels: channels('r', 'angle', 'V', 'current') },
+  ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
+  diagram: {
+    blocks: [
+      src('r', 30, 106, 'rad'),
+      ctrl(130, 100, 2, 0.01, [
+        { name: 'P, a first guess', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
+        { name: 'Off', type: 'off', params: {} },
+      ]),
+      {
+        id: 'plant', type: 'external', name: 'plant', x: 340, y: 96,
+        params: {
+          url: 'ws://127.0.0.1:8765', rate: 100,
+          inputs: ['V'], inUnits: ['V'], min: [-12], max: [12], safe: [0], kinds: ['effort'], measures: [''],
+          outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'], outMin: [-Math.PI, -120, -12], outMax: [Math.PI, 120, 12],
+          ymin: [-2.5, -60, -10], ymax: [2.5, 60, 10],
+          ramp: 10,
+        },
+      },
+      sink('angle', 600, 98, 'rad'), sink('speed', 600, 134, 'rad/s'), sink('current', 600, 170, 'A'),
+      sink('V', 330, 20, 'V'),
+    ],
+    wires: [
+      { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'plant' }, { from: 'ctrl', to: 'V' },
+      { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant', to: 'ctrl:1' },
+    ],
+  },
+  views: [],
+};
+
 const EXAMPLE_PLANTS = [
   {
     name: 'Mass–spring–damper',
@@ -7102,73 +7139,13 @@ const EXAMPLE_PLANTS = [
       ],
     }],
   },
+  HIL_SYSTEM,
   {
-    name: 'HIL: an external plant',
-    summary: 'A plant outside the page, connected live (hardware in the loop); the page knows only its interface. Download and run the plant, connect, then identify and tune it: working with a plant you cannot see.',
-    notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Help (?), Live and For agents, has all of it.',
-    signals: {
-      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
-    },
-    scope: { channels: channels('r', 'angle', 'V', 'current') },
-    ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
-    diagram: {
-      blocks: [
-        src('r', 30, 106, 'rad'),
-        ctrl(130, 100, 2, 0.01, [
-          { name: 'P, a first guess', type: 'pid', params: { Kp: 2, umin: -12, umax: 12 } },
-          { name: 'Off', type: 'off', params: {} },
-        ]),
-        {
-          id: 'plant', type: 'external', name: 'plant', x: 340, y: 96,
-          params: {
-            url: 'ws://127.0.0.1:8765', rate: 100,
-            inputs: ['V'], inUnits: ['V'], min: [-12], max: [12], safe: [0], kinds: ['effort'], measures: [''],
-            outputs: ['angle', 'speed', 'current'], outUnits: ['rad', 'rad/s', 'A'], outMin: [-Math.PI, -120, -12], outMax: [Math.PI, 120, 12],
-            ymin: [-2.5, -60, -10], ymax: [2.5, 60, 10],
-            ramp: 10,
-          },
-        },
-        sink('angle', 600, 98, 'rad'), sink('speed', 600, 134, 'rad/s'), sink('current', 600, 170, 'A'),
-        sink('V', 330, 20, 'V'),
-      ],
-      wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'plant' }, { from: 'ctrl', to: 'V' },
-        { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant', to: 'ctrl:1' },
-      ],
-    },
-    views: [],
-  },
-  {
-    name: 'HIL: an external plant, reference mode',
-    summary: 'An external plant that runs its own controller; the page only sends references and records. Start the plant in reference mode, connect and run: logging a plant that controls itself.',
-    notes: 'An external plant in reference mode: it runs its own controller, with its own limits and monitoring; this page only sends the reference r and records what comes back, the plant\'s own control effort included. The page knows only the interface the plant describes (Plant tab, Interface); what is inside is a black box, identified from what it reports. For logging, and for a plant that controls itself; the page\'s controllers and Auto-tune are not in the loop. Start the example plant with sh runme.sh --mode reference (or runme.cmd --mode reference); then Plant tab, Connect, and Run. Everything else as in HIL: an external plant; Help (?), Live.',
-    signals: {
-      r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
-    },
-    scope: { channels: channels('r', 'angle', 'V', 'current') },
-    ui: { ...ui('Interface'), run: 'stop', setup: 0.42 },
-    tags: [{ label: 'Reference mode', kind: 'feature' }],
-    diagram: {
-      blocks: [
-        src('r', 60, 110, 'rad'),
-        {
-          id: 'plant', type: 'external', name: 'plant', x: 240, y: 96,
-          params: {
-            url: 'ws://127.0.0.1:8765', rate: 100,
-            inputs: ['r'], inUnits: ['rad'], min: [-3], max: [3], safe: [0], kinds: ['reference'], measures: ['angle'],
-            outputs: ['angle', 'speed', 'current', 'V'], outUnits: ['rad', 'rad/s', 'A', 'V'], outMin: [-Math.PI, -120, -12, -12], outMax: [Math.PI, 120, 12, 12],
-            ymin: [-2.5, -60, -10, null], ymax: [2.5, 60, 10, null], outKinds: ['measurement', 'measurement', 'measurement', 'effort'],
-            ramp: 10,
-          },
-        },
-        sink('angle', 500, 98, 'rad'), sink('speed', 500, 134, 'rad/s'), sink('current', 500, 170, 'A'), sink('V', 500, 206, 'V'),
-      ],
-      wires: [
-        { from: 'r', to: 'plant' },
-        { from: 'plant', to: 'angle' }, { from: 'plant:1', to: 'speed' }, { from: 'plant:2', to: 'current' }, { from: 'plant:3', to: 'V' },
-      ],
-    },
-    views: [],
+    ...HIL_SYSTEM,
+    name: 'HIL with an agent',
+    summary: 'A plant nobody here knows, drawn at random and run live, and an agent on the same page through the MCP server: identify it together, then tune it together.',
+    notes: 'The agentic mode: an agent (an AI assistant whose client speaks MCP) works on this page with you. It sees what you see, reads the data itself (the screen, the live record, the plant\'s interface, Auto-tune runs, Analysis) and can act, and you talk it over. The plant is drawn at random from the System library\'s models, its physics varied, so it is a black box to you both: identify it together, then tune it together. Step by step: 1. Export ▾, MCP server: unzip loop-tuner-mcp.zip and register it with your agent\'s client as its README.txt says (runme.sh or runme.cmd prints the exact lines), then start the agent. 2. Ask the agent to open the Loop Tuner page (it gives the address, http://127.0.0.1:8766/ unless that port is taken) and load this system there: on that page it says "An agent is connected". 3. Export ▾, HIL plant: unzip hil-plant.zip and run sh runme.sh --random (Linux, macOS) or runme.cmd --random (Windows). 4. Plant tab, Connect; Run. 5. Ask: "What do you see? Let us identify this plant: which experiment would you run?", then "Now let us tune it together". The agent changes the controller only when you agree, and says what it did; Ctrl+Z takes any change back. Everything else as in HIL: an external plant.',
+    tags: [{ label: 'Agent', kind: 'feature' }],
   },
 ];
 
@@ -7963,7 +7940,7 @@ const TONE = {
   'Sliding mode': 'red',
   'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
-  'Reference mode': 'aqua', 'Controller in the plant': 'green',
+  'Controller in the plant': 'green', Agent: 'red',
 };
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
 function systemTags(e) {
@@ -10820,6 +10797,242 @@ function fmtN(v) {
 
 return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, feedforwardStart, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, ripplePeriod, settledLevel, settledSlope, fitFopdt, fitIntegrating, stepExperimentSteps, stepExperiment, SIMC, tauCSource, tauCShort, simcGains, simcIntegrating, stepTuneSteps, stepTune, METHODS, autotuneSteps, unstableAtStart, autotune, measurement, whyWorse, tuneReport, baseName, resultName, placeVariant, derivativeFilter, pidVariant };
 })();
+// ---- core/ops.js
+__mods['core/ops.js'] = (() => {
+
+const { normalizeProject, simOf, autoTimebase, defaultSampleTime, loopModel, loopReady, evaluateProject } = __mods['core/project.js'];
+const { DEFAULT_PROJECT } = __mods['core/examples.js'];
+const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = __mods['core/systems.js'];
+const { compileDiagram } = __mods['core/diagram.js'];
+const { simulateSystem } = __mods['core/sim.js'];
+const { computeMetrics } = __mods['core/metrics.js'];
+const { analyzeLoop, stepInfo } = __mods['core/analysis.js'];
+const { controllerBlocks, upstreamSource, costScales, runCost, GOAL, METHODS, RULES, SIMC, COSTS } = __mods['core/autotune.js'];
+function extractJson(html, path) {
+  const m = html.match(/<script type="application\/json" id="loop-tuner-project">([\s\S]*?)<\/script>/);
+  if (!m || !m[1].trim()) throw new Error(`${path} has no Loop Tuner project inside`);
+  return m[1];
+}
+
+function parseProject(text, path) {
+  const raw = /\.html?$/i.test(path) ? extractJson(text, path) : text;
+  try { return normalizeProject(JSON.parse(raw)); } catch (e) { throw new Error(`${path}: ${e.message}`); }
+}
+
+function embedProject(html, project) {
+  const json = JSON.stringify(project, null, 2).replace(/</g, '\\u003c');
+  const tag = '<script type="application/json" id="loop-tuner-project">';
+  const a = html.indexOf(tag), b = html.indexOf('</script>', a);
+  if (a < 0 || b < 0) throw new Error('the page has no place for a project');
+  const title = String(project.title ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return `${html.slice(0, a)}${tag}\n${json}\n${html.slice(b)}`.replace(/<title>[^<]*<\/title>/, `<title>${title ? `${title} · ` : ''}Loop Tuner</title>`);
+}
+
+
+const listSystems = () => SYSTEM_LIBRARY.map((e) => ({ name: e.name, tags: e.tags.map((t) => t.label), notes: e.notes }));
+
+function findSystem(name) {
+  const q = String(name).toLowerCase();
+  const entry = SYSTEM_LIBRARY.find((e) => e.name.toLowerCase() === q) ?? SYSTEM_LIBRARY.find((e) => e.name.toLowerCase().startsWith(q));
+  if (!entry) throw new Error(`no system "${name}"; systems: ${SYSTEM_LIBRARY.map((e) => e.name).join(', ')}`);
+  return entry;
+}
+
+function systemProject(entry) {
+  const p = normalizeProject(applySystem(DEFAULT_PROJECT, entry, SYSTEM_PARTS.filter((k) => entry[k])));
+  p.scope.timebase = autoTimebase(p);
+  return p;
+}
+
+
+const diagramOf = (project) => {
+  const plant = project.system.plant;
+  if (plant?.type !== 'diagram') throw new Error(`${project.title}: the plant is not a block diagram`);
+  return plant.diagram;
+};
+
+function allBlocks(project) {
+  const out = [];
+  const walk = (d, path) => {
+    for (const b of d.blocks) {
+      out.push({ path: [...path, b.id].join('/'), block: b });
+      if (b.type === 'subsystem') walk(b.diagram, [...path, b.id]);
+    }
+  };
+  walk(diagramOf(project), []);
+  return out;
+}
+
+function findBlock(project, path) {
+  const all = allBlocks(project);
+  const hit = all.find((x) => x.path === String(path));
+  if (!hit) throw new Error(`no block "${path}"; blocks: ${all.map((x) => x.path).join(', ')}`);
+  return hit.block;
+}
+
+function controllerAt(project, path) {
+  const all = controllerBlocks(diagramOf(project));
+  if (!all.length) throw new Error(`${project.title}: there is no Controller block in the plant`);
+  if (path === undefined || path === null || path === '') return all[0];
+  const hit = all.find((c) => c.key === String(path));
+  if (!hit) throw new Error(`no Controller block "${path}"; Controller blocks: ${all.map((c) => c.key).join(', ')}`);
+  return hit;
+}
+
+
+function projectDesigns(project, block) {
+  const plant = project.system.plant;
+  if (plant?.type !== 'diagram') throw new Error(`${project.title}: the plant is not a diagram, so nothing is designed from it`);
+  let statuses;
+  try { statuses = compileDiagram(plant.diagram, 'plant', { standalone: true, sources: {} }).designs; } catch (e) { throw new Error(`${project.title}: ${e.message}`); }
+  if (block) {
+    statuses = statuses.filter((s) => s.path === block);
+    if (!statuses.length) throw new Error(`no designed variant runs in "${block}"`);
+  }
+  return statuses;
+}
+
+
+const finite = (v) => (typeof v === 'number' && !Number.isFinite(v) ? null : v);
+const round = (v) => (Number.isFinite(v) ? Number(v.toPrecision(6)) : null);
+
+function downsample(t, signals, names, points) {
+  const n = t.length, step = Math.max(1, Math.ceil(n / Math.max(2, points)));
+  const idx = [];
+  for (let k = 0; k < n; k += step) idx.push(k);
+  if (idx.at(-1) !== n - 1) idx.push(n - 1);
+  const out = { t: idx.map((k) => round(t[k])) };
+  for (const name of names) out[name] = idx.map((k) => round(signals[name][k]));
+  return out;
+}
+
+function loopReport(project, run, c, goal) {
+  const s = run.signals, key = c.key, r = s[`${key}.r`], y = s[`${key}.y`], u = s[`${key}.u`];
+  const variant = c.block.variants[c.block.variant ?? 0];
+  const head = { block: key, where: c.where, variant: variant.name, type: variant.type };
+  if (!r || !y || !u) return { ...head, why: 'the block has no r on input 1 and y on input 2, so its loop is not measured' };
+  const source = upstreamSource(project.system.plant.diagram, c.path, 0);
+  const others = source ? Object.keys(project.system.signals).filter((k) => k !== source) : [];
+  const cost = runCost(run, key, goal, { scales: costScales(run, key, variant), variant, others });
+  const n = run.t.length, e = new Float64Array(n), d = (others.length && s[others[0]]) || new Float64Array(n);
+  for (let k = 0; k < n; k++) e[k] = r[k] - y[k];
+  const m = computeMetrics({ t: run.t, r, y, u, v: u, e, d, info: { unstable: run.info.unstable } });
+  const pick = ['riseTime', 'overshoot', 'undershoot', 'settlingTime', 'peakTime', 'steadyStateError', 'iae', 'ise', 'itae', 'uPeak', 'uTV', 'distPeak', 'distIAE'];
+  return {
+    ...head,
+    cost: { J: cost.J, diverged: cost.diverged, overshoot: finite(cost.overshoot), saturated: cost.saturated, parts: cost.parts },
+    metrics: { ...Object.fromEntries(pick.map((k) => [k, finite(m[k])])), saturation: 100 * cost.saturated },
+  };
+}
+
+function runProject(project, { duration, goal = {}, signals = [], points = 200 } = {}) {
+  if (loopReady(project)) {
+    const { runs, rank } = evaluateProject(project);
+    return { title: project.title, kind: 'candidates', goal: project.goal, candidates: rank.map((i, r) => ({ rank: r + 1, name: project.candidates[i].name, score: finite(runs[i].evaluation.score), feasible: runs[i].evaluation.feasible, metrics: Object.fromEntries(Object.entries(runs[i].metrics).filter(([k]) => k !== 'events').map(([k, v]) => [k, finite(v)])) })) };
+  }
+  const diagram = diagramOf(project);
+  if (duration !== undefined && !(Number(duration) > 0)) throw new Error('duration: a time in seconds, above 0');
+  const base = simOf(project);
+  const sim = duration === undefined ? base : { duration: Number(duration), sampleTime: project.sim.sampleTime ?? defaultSampleTime(Number(duration)) };
+  const run = simulateSystem(diagram, project.system.signals, sim);
+  const names = Object.keys(run.signals);
+  const missing = signals.filter((x) => !names.includes(x));
+  if (missing.length) throw new Error(`no signal ${missing.map((x) => `"${x}"`).join(', ')}; signals: ${names.join(', ')}`);
+  const g = { ...GOAL, ...goal };
+  const out = {
+    title: project.title, kind: 'system', duration: sim.duration, sampleTime: sim.sampleTime, samples: run.t.length,
+    unstable: run.info.unstable, warnings: run.info.warnings, goal: g,
+    info: (({ validity = [], h, substeps, steps, bound, stiffness, ms }) => ({ validity, h, substeps, steps, bound, stiffness, ms }))(run.info),
+    loops: controllerBlocks(diagram).map((c) => loopReport(project, run, c, g)),
+    designs: (run.info.designs ?? []).map((st) => ({ block: st.path, variant: st.variant, type: st.type, status: st.status, ...(st.error ? { error: st.error.message } : {}) })),
+    signals: names,
+  };
+  if (signals.length) out.traces = downsample(run.t, run.signals, signals, Math.min(2000, Math.max(2, Number(points) || 200)));
+  return out;
+}
+
+
+function parseAt(text) {
+  if (text === undefined || text === null) return 'origin';
+  if (typeof text === 'object') return text;
+  const s = String(text).trim();
+  if (s === 'origin' || s === 'initial') return s;
+  let m = s.match(/^t\s*=\s*(.+)$/);
+  if (m) return { t: Number(m[1]) };
+  m = s.match(/^y\s*=\s*(.+)$/);
+  if (m) return { y: m[1].split(',').map((v) => (v.trim() === 'null' ? null : Number(v))) };
+  throw new Error(`at: origin, initial, t=<seconds> or y=<level>[,<level>…]; not "${text}"`);
+}
+
+const sPole = (p) => ({ re: finite(p.s.re), im: p.s.im, wn: finite(p.s.wn), zeta: p.s.zeta, z: { re: p.z.re, im: p.z.im }, side: p.side });
+
+function analyzeProject(project, { block, at = 'origin' } = {}) {
+  const c = controllerAt(project, block);
+  let m;
+  try { m = loopModel(project, c.path, at); } catch (e) {
+    const err = new Error(`${c.key}: ${e.message}${e.hint ? ` (${e.hint})` : ''}`);
+    err.code = e.code;
+    throw err;
+  }
+  const r = analyzeLoop(m.plant, m.ctrl, m.Ts), g = r.margins;
+  const st = r.stable ? stepInfo(m.plant, m.ctrl, m.Ts, { clPoles: r.clPoles }) : null;
+  const poles = [...r.clPoles].sort((a, b) => (b.s.re ?? -Infinity) - (a.s.re ?? -Infinity));
+  return {
+    block: c.key, where: c.where, variant: m.variantName, type: m.type, at: m.opLabel, Ts: m.Ts,
+    stable: r.stable, marginal: r.marginal, openLoopUnstable: r.P, closedLoopUnstable: r.Z,
+    margins: {
+      gainUp: finite(g.gmUp), gainUpDb: Number.isFinite(g.gmUp) ? 20 * Math.log10(g.gmUp) : null, gainDown: g.gmDown,
+      phase: finite(g.pm), crossover: finite(g.wc), delay: finite(g.dm), delaySamples: finite(g.dm / m.Ts),
+      Ms: g.ms, Mt: g.mt,
+    },
+    zetaMin: r.zetaMin, slowest: r.slowest ? sPole(r.slowest) : null,
+    closedLoopPoles: poles.slice(0, 40).map(sPole), poleCount: poles.length,
+    step: st ? { overshoot: st.overshoot ?? null, settlingTime: st.settled ? st.settle : null, settled: st.settled ?? null, final: finite(st.yf), window: st.T } : null,
+    atLimit: m.atLimit, warnings: m.warnings,
+  };
+}
+
+
+function autotuneOptions(project, o = {}) {
+  const method = o.method ?? 'iterate';
+  if (!METHODS.includes(method)) throw new Error(`method: one of ${METHODS.join(', ')}`);
+  if (o.rule && !RULES[o.rule]) throw new Error(`rule: one of ${Object.keys(RULES).join(', ')}`);
+  if (o.simc && !SIMC[o.simc]) throw new Error(`simc: one of ${Object.keys(SIMC).join(', ')}`);
+  const goal = {};
+  if (o.cost) { goal.cost = String(o.cost).toUpperCase(); if (!COSTS[goal.cost]) throw new Error(`cost: one of ${Object.keys(COSTS).join(', ')}`); }
+  for (const k of ['effort', 'overshoot']) if (o[k] !== undefined) { goal[k] = Number(o[k]); if (!(goal[k] >= 0)) throw new Error(`${k}: a number, 0 or more`); }
+  const amplitude = o.amplitude === undefined ? undefined : Number(o.amplitude) / 100;
+  if (amplitude !== undefined && !(amplitude > 0 && amplitude <= 1)) throw new Error('amplitude: a percentage of the actuator range above 0, up to 100');
+  const path = o.block ? String(o.block).split('/') : null;
+  if (path && !controllerBlocks(project.system.plant?.diagram).some((c) => c.key === o.block)) throw new Error(`block ${o.block}: no Controller block there; blocks: ${controllerBlocks(project.system.plant?.diagram).map((c) => c.key).join(', ') || 'none'}`);
+  return { path, opts: { method, goal, rule: o.rule, simc: o.simc, amplitude, maxIter: o.iterations ? Number(o.iterations) : undefined, feedforward: !!o.ff } };
+}
+
+
+function traceSummary(trace, { from = -Infinity, to = Infinity, signals = [], points = 200 } = {}) {
+  const names = Object.keys(trace.signals);
+  const missing = signals.filter((x) => !names.includes(x));
+  if (missing.length) throw new Error(`no signal ${missing.map((x) => `"${x}"`).join(', ')}; signals: ${names.join(', ')}`);
+  let i0 = 0, i1 = trace.t.length;
+  while (i0 < i1 && trace.t[i0] < from - 1e-9) i0++;
+  while (i1 > i0 && trace.t[i1 - 1] > to + 1e-9) i1--;
+  const t = Array.from(trace.t.slice(i0, i1));
+  const stats = names.map((name) => {
+    const v = trace.signals[name];
+    let n = 0, lo = Infinity, hi = -Infinity, sum = 0, last = null;
+    for (let k = i0; k < i1; k++) if (Number.isFinite(v[k])) { n++; lo = Math.min(lo, v[k]); hi = Math.max(hi, v[k]); sum += v[k]; last = v[k]; }
+    return { name, unit: trace.units?.[name] ?? '1', min: n ? round(lo) : null, max: n ? round(hi) : null, mean: n ? round(sum / n) : null, last: n ? round(last) : null };
+  });
+  const out = { samples: t.length, span: t.length ? [round(t[0]), round(t.at(-1))] : null, signals: stats };
+  if (signals.length && t.length) {
+    const sliced = Object.fromEntries(signals.map((n) => [n, trace.signals[n].slice(i0, i1)]));
+    out.traces = downsample(t, sliced, signals, Math.min(2000, Math.max(2, Number(points) || 200)));
+  }
+  return out;
+}
+
+return { extractJson, parseProject, embedProject, listSystems, findSystem, systemProject, allBlocks, findBlock, projectDesigns, downsample, runProject, parseAt, analyzeProject, autotuneOptions, traceSummary };
+})();
 // ---- core/ramp.js
 __mods['core/ramp.js'] = (() => {
 
@@ -10915,7 +11128,7 @@ function controllerOnReference(params, links) {
   for (const c of links.ctrls) {
     for (const i of c.drives ?? []) {
       if ((params.kinds?.[i] ?? 'effort') !== 'reference') continue;
-      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Wire the Controller's output elsewhere, load a system made for reference mode (such as "HIL: an external plant, reference mode"), or start the plant in control mode (hil_plant.py without --mode reference).`;
+      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Switch the plant to control mode (Live settings, Mode: "Page"), let r go straight to it (Mode: "Plant" rewires it so), or start the plant in control mode (hil_plant.py without --mode reference).`;
     }
   }
   return null;
@@ -11087,6 +11300,28 @@ function keptWires(wires, id, was, now) {
 }
 
 const SIGNAL_NAME = /^[A-Za-z][A-Za-z0-9_]{0,11}$/;
+const endIs = (end, id, port) => { const e = parseEnd(end); return e.id === id && e.port === port; };
+
+function modeWires(level, blocks, wires, id, now) {
+  const byId = (bid) => blocks.find((b) => b.id === bid);
+  const into = (bid, port) => wires.find((w) => endIs(w.to, bid, port));
+  now.inputs.forEach((_, j) => {
+    if (into(id, j)) return;
+    const before = level.wires.find((w) => endIs(w.to, id, j));
+    if (!before) return;
+    const feeder = byId(parseEnd(before.from).id), kind = now.kinds?.[j] || 'effort';
+    const to = j ? `${id}:${j}` : id;
+    if (kind === 'reference' && feeder?.type === 'controller') {
+      const r = level.wires.find((w) => endIs(w.to, feeder.id, 0));
+      if (r) wires.push({ from: r.from, to });
+    } else if (kind === 'effort' && feeder?.type !== 'controller') {
+      const ctl = blocks.find((b) => b.type === 'controller' && wires.some((w) => endIs(w.to, b.id, 0) && w.from === before.from)
+        && !wires.some((w) => parseEnd(w.from).id === b.id && parseEnd(w.to).id === id));
+      if (ctl) wires.push({ from: ctl.id, to });
+    }
+  });
+}
+
 function followPorts(level, id, was, now) {
   const ext = level.blocks.find((b) => b.id === id);
   const fromPort = (w) => { const f = parseEnd(w.from); return f.id === id ? f.port : -1; };
@@ -11095,11 +11330,32 @@ function followPorts(level, id, was, now) {
   const gone = new Set(level.blocks.filter((b) => b.type === 'sink' && fed(b).length && fed(b).every((w) => fromPort(w) >= now.outputs.length && b.params.name === was.outputs[fromPort(w)])).map((b) => b.id));
   for (const b of level.blocks) if (gone.has(b.id)) renamed[b.params.name] = null;
   const blocks = level.blocks.filter((b) => !gone.has(b.id)).map((b) => structuredClone(b));
-  const wires = keptWires(level.wires, id, was, now).filter((w) => !gone.has(parseEnd(w.to).id));
+  const wires = keptWires(level.wires, id, was, now).filter((w) => !gone.has(parseEnd(w.to).id)).map((w) => ({ ...w }));
+  modeWires(level, blocks, wires, id, now);
+  for (const b of level.blocks) {
+    if (!gone.has(b.id) || b.type !== 'sink') continue;
+    const j = now.inputs.indexOf(b.params.name);
+    const drive = j < 0 ? null : wires.find((w) => endIs(w.to, id, j) && blocks.find((x) => x.id === parseEnd(w.from).id)?.type === 'controller');
+    if (!drive) continue;
+    gone.delete(b.id);
+    delete renamed[b.params.name];
+    blocks.push(structuredClone(b));
+    wires.push({ from: drive.from, to: b.id });
+  }
   const taken = new Set(diagramNames({ blocks, wires }).sinks.concat(diagramNames({ blocks, wires }).sources));
   now.outputs.forEach((name, j) => {
     const unit = now.outUnits?.[j] ?? '1';
     const sinks = blocks.filter((b) => b.type === 'sink' && wires.some((w) => parseEnd(w.to).id === b.id && fromPort(w) === j));
+    if (!sinks.length) {
+      const own = blocks.find((b) => b.type === 'sink' && b.params.name === name);
+      const feed = own && wires.find((w) => parseEnd(w.to).id === own.id);
+      const from = feed && blocks.find((x) => x.id === parseEnd(feed.from).id);
+      if (from?.type === 'controller' && !wires.some((w) => parseEnd(w.from).id === from.id && parseEnd(w.to).id === id)) {
+        feed.from = j ? `${id}:${j}` : id;
+        own.params.unit = unit;
+        sinks.push(own);
+      }
+    }
     for (const b of sinks) {
       if (b.params.name !== was.outputs[j]) continue;  
       if (name !== b.params.name && SIGNAL_NAME.test(name) && !taken.has(name)) { taken.delete(b.params.name); renamed[b.params.name] = name; b.params.name = name; taken.add(name); }
@@ -11335,6 +11591,15 @@ function createLiveLoop(post, env = globalThis) {
         say('open', 'reset');
         return {};
       } catch (err) { fail(`reset: ${err.message}`); return { error: err.message }; }
+    },
+    async mode({ mode }) {
+      if (!desc) return { error: 'not connected' };
+      if (running) return { error: 'stop the plant first: its mode changes only while it is stopped' };
+      try {
+        desc = checkDescription(await call('mode', { mode }));
+        post({ type: 'described', desc });
+        return {};
+      } catch (err) { return { error: err.message }; }
     },
     async disconnect() {
       if (!ws) return {};
@@ -11582,6 +11847,7 @@ const GUIDE = {
     'loopTuner.getProject() returns the project (JSON); change it and give it back with setProject(p), or change one controller with setGains(block, params) and pick its variant with setVariant(block, name).',
     'loopTuner.run(), stop(), single() are the scope keys; each returns { ok, why }, why saying why a key was refused. loopTuner.record.screen("csv") reads every signal on the screen.',
     'The last message the page showed stays in #toast[data-last] and loopTuner.live.state().message (a toast is gone after 3 s).',
+    'Without a browser: the same core runs as an MCP server (mcp.mjs; Export ▾, MCP server, saves it with its README). Register the command node /path/to/mcp.mjs with the agent\'s client (over stdio). Its tools load systems and project files, run and measure, autotune, analyze and save; it also serves this page, and a page it served connects back, so the agent works on the page you both see.',
   ],
   api: [
     M('loopTuner.help(format?)', 'format: "text" for plain text', 'This guide: an object, or text.', 'loopTuner.help("text")'),
@@ -11612,6 +11878,7 @@ const GUIDE = {
     M('loopTuner.live.reset()', '', 'Clears an E-stop. The plant stays stopped; Run goes on, the controllers afresh. A STOP pressed at the plant is reset at the plant only: the page\'s reset is refused, and state().message says so.', 'await loopTuner.live.reset()', 'a promise of state() once the plant has answered (estop is still set if it refused)'),
     M('loopTuner.live.hold(on?)', 'on: true or false (default: toggle)', 'Freezes the screen while the plant runs on (the live record goes on too). The key H does the same.', 'loopTuner.live.hold(true)'),
     M('loopTuner.live.settings(s?)', 's: { ramp: % of full scale per second, scales: { r: [lo, hi] } }', 'The ramp-in and the full scales of the references (one undo step); returns them.', 'loopTuner.live.settings({ ramp: 20 })'),
+    M('loopTuner.live.setMode(mode)', 'mode: "control" (the page controls) or "reference" (the plant runs its own controller)', 'The Live settings\' Mode switch: asks the connected plant, while it is stopped, to run in that mode; it describes itself anew and the diagram follows (in reference mode r goes straight to the plant and its own effort comes back; control mode puts the Controller back). A plant that cannot switch says so: start it in that mode instead.', 'await loopTuner.live.setMode("reference")', 'a promise of state()'),
     M('loopTuner.live.downloadPlant()', '', 'Saves hil-plant.zip (the plant script, runme.sh, runme.cmd, runme.ps1, README.txt).', 'await loopTuner.live.downloadPlant()', 'a promise: true once the file is on its way'),
     M('loopTuner.live.plantFiles()', '', 'The files of hil-plant.zip as text: { name: text }.', 'loopTuner.live.plantFiles()["README.txt"]'),
     M('loopTuner.record.state()', '', 'The live record (seconds kept, signals) and the references shown.', 'loopTuner.record.state()'),
@@ -11634,9 +11901,9 @@ const GUIDE = {
   live: {
     what: 'A system with an External plant block runs against a plant outside the page, in real time. HIL: an external plant is made for it: the controller against one External plant block, a black box. The page knows only the interface the plant describes when it connects (its inputs and outputs: names, units, full scales, hard ranges, kinds; the Plant tab shows it under Interface, and live.state() has it); the External block takes those ports, and the Sinks and channels follow the outputs. Tuning needs the plant identified first (Identify, to come): Auto-tune and Analysis say so. The downloadable example plant happens to simulate a DC motor swinging an arm, standing in for real hardware; the page is not told. Replace it with your device behind the same protocol, in any language.',
     setup: [
-      'Load the system: loopTuner.loadSystem("HIL: an external plant") (or "HIL: an external plant, reference mode"). It opens stopped and OFFLINE: nothing runs until the plant is connected and Run is pressed.',
+      'Load the system: loopTuner.loadSystem("HIL: an external plant") (or "HIL with an agent", the same with an agent on the page through the MCP server). It opens stopped and OFFLINE: nothing runs until the plant is connected and Run is pressed.',
       'Get the plant: loopTuner.live.downloadPlant() saves hil-plant.zip (Plant tab: Download the plant (zip)). loopTuner.live.plantFiles() has its files as text.',
-      'Start it on the computer the browser runs on: unzip, then sh runme.sh (Linux, macOS) or double-click runme.cmd (Windows; it runs runme.ps1). They install uv if it is missing, which brings its own Python (with the window\'s toolkit) and the websockets package, then start the plant. With uv: uv run hil_plant.py. For the reference mode system: sh runme.sh --mode reference. A window opens with a red STOP, Run/Stop, where it listens and the link\'s state; without a display the console takes s (stop), r (run), e (E-stop), x (reset). An agent with only a browser asks someone at that computer to run it, and for the address it listens on if it is not ws://127.0.0.1:8765.',
+      'Start it on the computer the browser runs on: unzip, then sh runme.sh (Linux, macOS) or double-click runme.cmd (Windows; it runs runme.ps1). They install uv if it is missing, which brings its own Python (with the window\'s toolkit) and the websockets package, then start the plant. With uv: uv run hil_plant.py. Reference mode is a switch once connected (live.setMode, Live settings: Mode); a plant that cannot switch starts in it with sh runme.sh --mode reference. With --random it simulates a model drawn at random (HIL with an agent). A window opens with a red STOP, Run/Stop, where it listens and the link\'s state; without a display the console takes s (stop), r (run), e (E-stop), x (reset). An agent with only a browser asks someone at that computer to run it, and for the address it listens on if it is not ws://127.0.0.1:8765.',
       'Connect: await loopTuner.live.connect(). It resolves once the plant has described itself: state() is then "open", the link is up, the plant is stopped and applies its safe inputs.',
       'Run: loopTuner.run() returns { ok, why }. The references first ramp from where the plant is to their first value at no more than 10 % of full scale per second (state().ramp says how long is left), then the loop runs; state() is "running" and its link figures fill in.',
       'Tune while it runs: loopTuner.setGains("ctrl", { Kp: 8 }) (the controller keeps its state) or loopTuner.setVariant("ctrl", "Off") (another variant, afresh). The first guess is not a tuned controller: the page does not know the plant; read loopTuner.record.screen("csv") or record.live("csv").',
@@ -11659,7 +11926,7 @@ const GUIDE = {
     ['connection lost', 'The link closed while running; the plant has stopped itself.'],
     ['STOP pressed at the plant', 'Someone pressed STOP in the plant\'s window or console. Only the plant resets it: ask whoever is at the plant to press Reset there (x at its console); the page clears with it. live.reset() is refused.'],
     ['reset: STOP was pressed at the plant', 'The page cannot reset a STOP pressed at the plant: ask whoever is at the plant to press Reset there.'],
-    ['is wired to …, which this plant takes as a reference', 'A Controller block\'s output feeds an input the plant takes as a reference (the plant runs in reference mode, the system is made for control mode). Load "HIL: an external plant, reference mode", or start the plant without --mode reference; Run is refused until then.'],
+    ['is wired to …, which this plant takes as a reference', 'A Controller block\'s output feeds an input the plant takes as a reference (the plant runs in reference mode, the system is made for control mode). Switch the mode (live.setMode("control"), or "reference" so that r goes straight to the plant), or start the plant without --mode reference; Run is refused until then.'],
     ['no number for …', 'The plant sent an output that is not a number for 3 cycles: the page latched an E-stop rather than control on a stale value. Check the plant\'s sensor or its code.'],
     ['… is not a number', 'The plant\'s own monitoring: an output it measured is not a number; it latched an E-stop.'],
     ['the plant\'s cycle failed', 'The plant\'s own code failed (its console has the error): it applied its safe inputs and ended. Fix the plant, start it again, Connect.'],

@@ -494,7 +494,7 @@ test('System library tags: every tag listed once, grouped; filtering keeps syste
   assert.deepEqual(filterByTags([]), SYSTEM_LIBRARY.map((e, i) => i));
   const lin = filterByTags(['Linear']), non = filterByTags(['Nonlinear']), box = filterByTags(['Black box']);
   assert.ok(lin.length && non.length && lin.length + non.length + box.length === SYSTEM_LIBRARY.length, 'every system is linear, nonlinear, or a black box (HIL)');
-  assert.deepEqual(box.map((i) => SYSTEM_LIBRARY[i].name), ['HIL: an external plant', 'HIL: an external plant, reference mode'], 'the page does not know what is inside a HIL plant');
+  assert.deepEqual(box.map((i) => SYSTEM_LIBRARY[i].name), ['HIL: an external plant', 'HIL with an agent'], 'the page does not know what is inside a HIL plant');
   const both = filterByTags(['Nonlinear', 'Disturbance']);
   assert.ok(both.every((i) => non.includes(i) && SYSTEM_LIBRARY[i].tags.some((t) => t.label === 'Disturbance')));
 });

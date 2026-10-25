@@ -8,8 +8,9 @@ What it is
   (loop-tuner-core.js, which the page put beside it in this zip), at 100 Hz:
   by default a DC motor swinging an unbalanced arm, or any other model
   (--model, --list), or one drawn at random (--random). It is the plant of
-  the systems "HIL: an external plant" and "HIL: an external plant,
-  reference mode", which know only the inputs and outputs it describes: to
+  the systems "HIL: an external plant" and "HIL with an agent" (the same,
+  with an agent on the page), which know only the inputs and outputs it
+  describes: to
   the page it is a black box, identified before tuning. It listens on
   ws://127.0.0.1:8765 (this computer only), sends its outputs every cycle
   and applies the inputs the page sends back.
@@ -87,8 +88,9 @@ Three modes
   Reference (--mode reference): the model's own controller runs in the
   plant, with its limits, while the plant runs (stopped, its effort is
   safe); the page sends the reference and records what comes back, the
-  plant's own effort included. Use it with "HIL: an external plant,
-  reference mode".
+  plant's own effort included. The page's Live settings switch the mode
+  (Mode: "Plant") while the plant is stopped; starting it with
+  --mode reference does the same from the start.
   --mode log: no inputs; the model's own controller plays its own reference
   (or --setpoint X): the page only records.
 

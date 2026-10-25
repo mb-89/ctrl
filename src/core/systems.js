@@ -59,7 +59,7 @@ const TONE = {
   // Disturbance (slate): Luenberger took blue, the Kalman filter green.
   'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
-  'Reference mode': 'aqua', 'Controller in the plant': 'green',
+  'Controller in the plant': 'green', Agent: 'red',
 };
 // A value without its own tone gets one from its label, so it stays put.
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];
