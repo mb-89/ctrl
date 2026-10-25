@@ -9,12 +9,12 @@
 // The math (camera orbit, presets, the cube's regions, ribbons, paths,
 // picking) is plain functions, tested in Node without a page.
 
-import { CHANNEL_COLORS } from './display.js';
+import { palette } from './palette.js';
 
 const T = () => globalThis.THREE;
 const DEG = Math.PI / 180;
 const FOV = 35;
-const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+const MONO = () => palette().mono;
 const CANVAS_DASH = [8, 5];   // pixels
 
 // ---- Vectors (plain arrays)
@@ -416,18 +416,24 @@ export function createView3d(container, opts = {}) {
 
   // ---- Theme
   function readTheme() {
-    const cs = getComputedStyle(root);
-    const tok = (name, fallback) => parseColor(cs.getPropertyValue(name)) ?? parseColor(fallback);
-    const bg = tok('--v3d-bg', '#d6dade'), ink = tok('--ink', '#15191c');
+    // Each token resolved as the view sees it (its theme, light or dark),
+    // through a probe inside it: a token may be light-dark(), which only the
+    // computed colour settles.
+    const probe = document.createElement('i');
+    probe.hidden = true;
+    root.append(probe);
+    const tok = (name) => { probe.style.color = `var(${name})`; return parseColor(getComputedStyle(probe).color); };
+    const bg = tok('--v3d-bg'), ink = tok('--ink');
     const dark = bg[0] + bg[1] + bg[2] < 3 * 128;
     theme = {
-      bg, ink, dark, muted: tok('--muted', '#6f7881'), panel: tok('--panel', '#d6dade'),
-      axis: [tok('--axis-x', '#d43a2f'), tok('--axis-y', '#2c9a3c'), tok('--axis-z', '#2f6bd8')],
+      bg, ink, dark, muted: tok('--ink-3'), panel: tok('--surface'),
+      axis: [tok('--axis-x'), tok('--axis-y'), tok('--axis-z')],
       grid: mix(bg, ink, dark ? 0.12 : 0.08), gridMajor: mix(bg, ink, dark ? 0.24 : 0.18),
-      ch: CHANNEL_COLORS.map(parseColor),
+      ch: palette().ch.map(parseColor),
     };
+    probe.remove();
     // A yellow reference on a light ground reads better a little darker.
-    if (!dark) theme.ch[0] = mix(theme.ch[0], [120, 90, 0, 1], 0.35);
+    if (!dark) theme.ch[0] = mix(theme.ch[0], ink, 0.35);
   }
 
   // ---- Lines: ribbons in WebGL, strokes in the painter
@@ -486,7 +492,7 @@ export function createView3d(container, opts = {}) {
       let m = axisLines[i];
       if (m) setRibbon(m, pts, null);
       else {
-        m = axisLines[i] = ribbonMesh(pts, null, { color: theme.muted, width: 1.4, opacity: 0.95 });
+        m = axisLines[i] = ribbonMesh(pts, null, { color: theme.muted, width: 1.4, opacity: palette().alpha.over });
         m.renderOrder = 3;
         scene.add(m);
       }
@@ -733,7 +739,7 @@ export function createView3d(container, opts = {}) {
           g.save();
           g.transform(ax / 26, ay / 26, -bx / 26, -by / 26, ox, oy);
           g.globalAlpha = Math.min(1, (k - 0.25) * 3);
-          g.fillStyle = cssOf(t.ink); g.font = `600 ${f.label.length > 5 ? 8.5 : 9.5}px ${MONO}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+          g.fillStyle = cssOf(t.ink); g.font = `600 ${f.label.length > 5 ? 8.5 : 9.5}px ${MONO()}`; g.textAlign = 'center'; g.textBaseline = 'middle';
           g.fillText(f.label, 0, 0.5);
           g.restore();
         }
@@ -749,7 +755,7 @@ export function createView3d(container, opts = {}) {
         const col = cssOf(t.axis[a.k]);
         g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 2.2;
         g.beginPath(); g.moveTo(c, c); g.lineTo(c + a.x * len, c + a.y * len); g.stroke();
-        g.font = `600 11px ${MONO}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.font = `600 11px ${MONO()}`; g.textAlign = 'center'; g.textBaseline = 'middle';
         g.fillText('xyz'[a.k], c + a.x * (len + 8), c + a.y * (len + 8));
       }
     }

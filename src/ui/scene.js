@@ -3,14 +3,13 @@
 // otherwise the right edge of the screen.
 
 import { compileScene, compileBindings } from '../core/views.js';
-import { CHANNEL_COLORS } from './display.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 
 function colour(name) {
   const m = /^ch([1-4])$/.exec(name ?? '');
-  if (m) return CHANNEL_COLORS[Number(m[1]) - 1];
-  return { ink: 'var(--ink)', muted: 'var(--muted)', panel: 'var(--panel)', none: 'none' }[name] ?? name;
+  if (m) return `var(--ch-${m[1]})`;
+  return { ink: 'var(--ink)', muted: 'var(--ink-3)', panel: 'var(--surface)', none: 'none' }[name] ?? name;
 }
 
 export function createScene(host, app) {

@@ -29,6 +29,8 @@ const ZIP_NAME = 'hil-plant.zip';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const ms = (v) => (Number.isFinite(v) ? `${v < 10 ? v.toFixed(2) : v.toFixed(1)} ms` : '–');
+// A key's lamp (design-system.md, Lit): data-lamp "ok", "warn", "bad", or off.
+const lamp = (el, v) => { if (v) el.dataset.lamp = v; else delete el.dataset.lamp; };
 
 // The plant's files as one zip; runme.sh stays executable.
 export const plantZip = () => zipFiles(Object.entries(HIL_FILES).map(([name, data]) => ({ name: `hil-plant/${name}`, data, mode: name.endsWith('.sh') ? 0o755 : 0o644 })));
@@ -42,21 +44,21 @@ export function createLive(app, display, record, panelHost) {
   panel.id = 'live';
   panel.setAttribute('aria-label', 'Live: the external plant');
   panel.innerHTML = `
-    <h3 class="glabel">Live · external plant</h3>
-    <button class="key big" id="live-download" aria-label="Download the plant (zip)" title="hil-plant.zip: a simulated plant for your computer, with runme scripts that install what it needs. What it is and how to run it: Help (?), Live.">Download the plant (zip)</button>
-    <div class="row">
-      <button class="key" id="live-connect" aria-label="Connect to the external plant" title="Open the link and read the plant's description; nothing starts until Run">Connect</button>
-      <button class="key" id="live-reset" aria-label="Reset the E-stop" title="Clear the E-stop (either side); the plant stays stopped until Run">Reset</button>
-      <button class="key" id="live-hold" aria-label="Hold the screen" aria-pressed="false" title="Freeze the screen while the plant runs on; the live record goes on (H)">Hold</button>
+    <h3 class="label">Live · external plant</h3>
+    <button class="btn lv-download" id="live-download" aria-label="Download the plant (zip)" title="hil-plant.zip: a simulated plant for your computer, with runme scripts that install what it needs. What it is and how to run it: Help (?), Live.">Download the plant (zip)</button>
+    <div class="keyrow">
+      <button class="btn" id="live-connect" aria-label="Connect to the external plant" title="Open the link and read the plant's description; nothing starts until Run">Connect</button>
+      <button class="btn" id="live-reset" aria-label="Reset the E-stop" title="Clear the E-stop (either side); the plant stays stopped until Run">Reset</button>
+      <button class="btn" id="live-hold" aria-label="Hold the screen" aria-pressed="false" title="Freeze the screen while the plant runs on; the live record goes on (H)">Hold</button>
     </div>
-    <label class="lv-line"><span class="lv-at">Plant at</span><input class="lv-url" id="live-url" spellcheck="false" aria-label="Where the plant listens" title="Where the plant listens: click to type (kept in the External plant block)"></label>
+    <label class="lv-line"><span class="flabel">Plant at</span><input class="field field-sm lv-url" id="live-url" spellcheck="false" aria-label="Where the plant listens" title="Where the plant listens: click to type (kept in the External plant block)"></label>
     <div class="lv-stats" id="live-status" role="status" aria-live="polite"></div>
-    <p class="phelp" id="live-mode"></p>
-    <details class="lv-set" id="live-settings"><summary>Live settings</summary>
-      <label class="pf"><span class="pfl">Ramp-in</span><input class="field pfi" id="live-ramp" aria-label="Ramp-in, % of full scale per second" spellcheck="false" inputmode="decimal"><span class="pfh">% of full scale per second: before every loop each reference moves to its first value no faster</span></label>
+    <p class="note" id="live-mode"></p>
+    <details class="lv-set" id="live-settings"><summary class="flabel">Live settings</summary>
+      <label class="pf"><span class="flabel">Ramp-in</span><input class="field field-sm" id="live-ramp" aria-label="Ramp-in, % of full scale per second" spellcheck="false" inputmode="decimal"><span class="hint">% of full scale per second: before every loop each reference moves to its first value no faster</span></label>
       <div id="live-scales"></div>
     </details>
-    <p class="phelp lv-agents">Agents: <code>loopTuner.help()</code></p>`;
+    <p class="note">Agents: <code>loopTuner.help()</code></p>`;
   panelHost.prepend(panel);
   const estopKey = $('estop');
   // Every message Live shows is a toast for the person; the page keeps the
@@ -427,10 +429,10 @@ export function createLive(app, display, record, panelHost) {
     rampEl.value = num(hit.block.params.ramp ?? RAMP_DEFAULT, 4);
     const { scales, refs } = scalesNow();
     const own = hit.block.params.scales ?? {};
-    box.innerHTML = refs.length ? `<div class="pfl lv-fs">Full scale of the references</div>${refs.map((nm) => {
+    box.innerHTML = refs.length ? `<div class="flabel lv-fs">Full scale of the references</div>${refs.map((nm) => {
       const [lo, hi] = scales[nm] ?? ['', ''];
-      return `<label class="pf lv-fsrow"><span class="pfl">${esc(nm)}</span><span class="lv-fsin"><input class="field" id="live-scale-${esc(nm)}-lo" data-scale="${esc(nm)}" data-end="0" value="${esc(lo === '' ? '' : num(lo, 5))}" aria-label="Full scale of ${esc(nm)}: low end" spellcheck="false"> … <input class="field" id="live-scale-${esc(nm)}-hi" data-scale="${esc(nm)}" data-end="1" value="${esc(hi === '' ? '' : num(hi, 5))}" aria-label="Full scale of ${esc(nm)}: high end" spellcheck="false"></span><span class="pfh">${own[nm] ? 'set here (empty both: the plant\'s)' : 'from the plant'}</span></label>`;
-    }).join('')}` : '<p class="phelp">No reference feeds the plant.</p>';
+      return `<label class="pf"><span class="flabel">${esc(nm)}</span><span class="lv-fsin"><input class="field field-sm" id="live-scale-${esc(nm)}-lo" data-scale="${esc(nm)}" data-end="0" value="${esc(lo === '' ? '' : num(lo, 5))}" aria-label="Full scale of ${esc(nm)}: low end" spellcheck="false"> … <input class="field field-sm" id="live-scale-${esc(nm)}-hi" data-scale="${esc(nm)}" data-end="1" value="${esc(hi === '' ? '' : num(hi, 5))}" aria-label="Full scale of ${esc(nm)}: high end" spellcheck="false"></span><span class="hint">${own[nm] ? 'set here (empty both: the plant\'s)' : 'from the plant'}</span></label>`;
+    }).join('')}` : '<p class="note">No reference feeds the plant.</p>';
     box.querySelectorAll('[data-scale]').forEach((inp) => {
       inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } });
       inp.addEventListener('blur', () => {
@@ -482,19 +484,19 @@ export function createLive(app, display, record, panelHost) {
     const k = $('live-connect');
     k.textContent = on() ? 'Disconnect' : 'Connect';
     k.setAttribute('aria-label', on() ? 'Disconnect from the external plant' : 'Connect to the external plant');
-    k.className = `key ${state === 'running' ? 'lit-green' : on() ? 'lit-amber' : ''}`;
+    // Lamps: Connect green while the plant runs, amber while it is connected
+    // and waits; the header's E-STOP red while latched.
+    lamp(k, state === 'running' ? 'ok' : on() ? 'warn' : null);
     $('live-reset').disabled = !(estop && connected());
     const hk = $('live-hold');
     hk.disabled = state !== 'running';
-    hk.className = `key ${hold ? 'lit-amber' : ''}`;
     hk.setAttribute('aria-pressed', String(!!hold));
     estopKey.disabled = !connected();
-    estopKey.classList.toggle('latched', !!estop);
+    lamp(estopKey, estop ? 'bad' : null);
     estopKey.dataset.state = estop ? 'latched' : connected() ? 'armed' : 'off';
     estopKey.title = estop ? `E-STOP latched: ${estop.reason}. Reset in the Plant tab's Live panel.` : connected() ? 'Emergency stop: the plant applies its safe inputs until Reset (E)' : 'Emergency stop (E): acts once the plant is connected';
     panel.dataset.state = shell.dataset.live;
     panel.dataset.mode = modeOf();
-    $('live-download').className = `key big ${state === 'idle' || state === 'closed' ? 'primary' : ''}`;
     if (document.activeElement !== urlEl) urlEl.value = hit.block.params.url;
     urlEl.disabled = on();
     $('live-mode').innerHTML = modeText();
@@ -512,7 +514,7 @@ export function createLive(app, display, record, panelHost) {
     el.dataset.state = estop ? 'estop' : linkState();
     for (const k of ['rate', 'rtt', 'missed', 'late']) delete el.dataset[k];
     if (estop) {
-      lines(`<span class="bad">E-STOP: ${esc(estop.reason)}</span>`, `${estop.by === 'plant' ? 'by the plant · ' : ''}safe inputs until ${connected() ? 'Reset' : 'Connect, Reset'}`);
+      lines(`<span class="text-bad">E-STOP: ${esc(estop.reason)}</span>`, `${estop.by === 'plant' ? 'by the plant · ' : ''}safe inputs until ${connected() ? 'Reset' : 'Connect, Reset'}`);
       el.title = `E-STOP: ${estop.reason}`;
       el.dataset.reason = estop.reason;
       return;
@@ -531,12 +533,12 @@ export function createLive(app, display, record, panelHost) {
     }
     const p = plantStatus;
     const ramping = ramp ? `ramping to r0: ${ramp.left.toFixed(1)} s left` : null;
-    if (!link) { lines('<span class="ok">●</span> running', ramping ?? 'waiting for the first figures'); return; }
+    if (!link) { lines('<span class="text-ok">●</span> running', ramping ?? 'waiting for the first figures'); return; }
     el.dataset.rate = link.rate.toFixed(1);
     el.dataset.missed = String(link.missed);
     if (p?.rtt_ms?.mean !== undefined && p.rtt_ms.mean !== null) el.dataset.rtt = String(p.rtt_ms.mean);
     if (p?.late !== undefined) el.dataset.late = String(p.late);
-    lines(`<span class="ok">●</span> ${link.rate.toFixed(1)} Hz · jitter ${ms(link.jitter)} · ${host.kind === 'worker' ? 'worker' : 'page'}`, ramping ?? `round trip ${ms(p?.rtt_ms?.mean)} · missed ${link.missed} · late ${p?.late ?? '–'}`);
+    lines(`<span class="text-ok">●</span> ${link.rate.toFixed(1)} Hz · jitter ${ms(link.jitter)} · ${host.kind === 'worker' ? 'worker' : 'page'}`, ramping ?? `round trip ${ms(p?.rtt_ms?.mean)} · missed ${link.missed} · late ${p?.late ?? '–'}`);
     el.title = `Page: arrivals deviate up to ${ms(link.jitter)} from the cycle; ${ms(link.compute)} per cycle (at most ${ms(link.computeMax)}) to answer.\n`
       + (p ? `Plant: ${p.rate_hz} Hz, cycle start late by ${ms(p.jitter_ms?.mean)} on average (at most ${ms(p.jitter_ms?.max)}); round trip ${ms(p.rtt_ms?.mean)} (at most ${ms(p.rtt_ms?.max)}); ${p.late} cycles without a new u, ${p.overruns} skipped, ${p.dropped} y dropped.` : '');
   }
@@ -604,15 +606,15 @@ export function createLive(app, display, record, panelHost) {
     // The scope's status line: the live state, and the ramp-in.
     tag() {
       if (!external()) return null;
-      if (estop) return { cls: 'st-estop', text: 'E-STOP', note: estop.reason, state: 'estop' };
+      if (estop) return { lamp: 'bad', text: 'E-STOP', note: estop.reason, state: 'estop' };
       if (state === 'running') {
-        if (hold) return { cls: 'st-wait', text: 'Hold', note: `screen held · the plant runs on · H releases`, state: 'running' };
-        if (ramp) return { cls: 'st-live', text: 'Live', note: `ramping to r0: ${ramp.left.toFixed(1)} s left`, state: 'running', ramp: true };
-        return { cls: 'st-live', text: 'Live', note: `plant t ${plantT === null ? '–' : plantT.toFixed(2)} s`, state: 'running' };
+        if (hold) return { lamp: 'warn', outline: true, text: 'Hold', note: `screen held · the plant runs on · H releases`, state: 'running' };
+        if (ramp) return { lamp: 'ok', outline: true, text: 'Live', note: `ramping to r0: ${ramp.left.toFixed(1)} s left`, state: 'running', ramp: true };
+        return { lamp: 'ok', outline: true, text: 'Live', note: `plant t ${plantT === null ? '–' : plantT.toFixed(2)} s`, state: 'running' };
       }
-      if (state === 'open') return { cls: 'st-wait', text: 'Connected', note: 'stopped · Run starts the plant', state: 'open' };
-      if (on()) return { cls: 'st-wait', text: 'Connecting', state: 'connecting' };
-      return { cls: 'st-offline', text: 'Offline', note: feeding ? 'the last live sweeps · Plant tab: Connect' : 'external plant not connected · Plant tab: Connect, then Run', state: 'offline' };
+      if (state === 'open') return { lamp: 'warn', outline: true, text: 'Connected', note: 'stopped · Run starts the plant', state: 'open' };
+      if (on()) return { lamp: 'warn', outline: true, text: 'Connecting', state: 'connecting' };
+      return { outline: true, text: 'Offline', note: feeding ? 'the last live sweeps · Plant tab: Connect' : 'external plant not connected · Plant tab: Connect, then Run', state: 'offline' };
     },
   };
 }

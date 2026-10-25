@@ -17,6 +17,7 @@
 import { findExternal } from '../core/hil.js';
 import { createRecorder, traceToCsv, traceToCsvParts, traceToJsonParts, parseTrace, traceWindow, refShift, refSteps } from '../core/trace.js';
 import { num } from './units.js';
+import { fitPopover } from './layout.js';
 
 const RECORD_KEY = 'loop-tuner:record-seconds';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -37,13 +38,13 @@ const listed = (names) => (names.length > 6 ? `${names.slice(0, 6).join(', ')} a
 
 export function createRecord(app, display) {
   const bar = document.createElement('div');
-  bar.className = 'recbar';
+  bar.className = 'recbar on-dark';
   bar.setAttribute('aria-label', 'Save and references');
   bar.innerHTML = `
-    <span class="rc-rec" id="rc-rec" hidden><span class="rc-label" title="Rec: the last minutes of every live signal are kept, to be saved">Rec</span>
-      <span class="rc-state" id="rc-state"></span><input class="rc-len" id="rc-len" spellcheck="false" aria-label="Record length" title="How much live data is kept: 5 min, 30 s, 1 h"></span>
-    <span class="rc-menu"><button class="rkey" id="rc-save" aria-haspopup="true" aria-expanded="false" title="Save the screen (every signal, or a picture) or the live record">Save ▾</button><span class="rc-pop" id="rc-pop" role="menu" hidden></span></span>
-    <button class="rkey" id="rc-open" title="Open a saved trace (CSV or JSON): it is drawn dashed on the channels with the same names">Open…</button>
+    <span class="rc-rec" id="rc-rec" hidden><span class="label" title="Rec: the last minutes of every live signal are kept, to be saved">Rec</span>
+      <span class="muted mono" id="rc-state"></span><input class="field field-sm mono rc-len" id="rc-len" spellcheck="false" aria-label="Record length" title="How much live data is kept: 5 min, 30 s, 1 h"></span>
+    <span class="popwrap"><button class="btn btn-sm" id="rc-save" aria-haspopup="true" aria-expanded="false" title="Save the screen (every signal, or a picture) or the live record">Save ▾</button><span class="popover menu popover-up" id="rc-pop" role="menu" hidden></span></span>
+    <button class="btn btn-sm" id="rc-open" title="Open a saved trace (CSV or JSON): it is drawn dashed on the channels with the same names">Open…</button>
     <span class="rc-refs" id="rc-refs" hidden></span>
     <input type="file" id="rc-file" accept=".csv,.json,text/csv,application/json" hidden>`;
   document.getElementById('display').append(bar);
@@ -139,8 +140,8 @@ export function createRecord(app, display) {
     g.textBaseline = 'middle';
     const clear = (col) => !col || col === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(col);
     const font = (st, weight = st.fontWeight) => `${weight} ${Math.round(parseFloat(st.fontSize) * k)}px ${st.fontFamily}`;
-    // The title, then the status line's pieces as drawn (tags on their
-    // background or outlined, the rest in its colour).
+    // The title, then the status line's pieces as drawn (badges on their
+    // lamp or outlined, the rest in its colour).
     const status = box.querySelector('.status');
     let x = pad, y = pad + line / 2;
     const sst = css(status);
@@ -151,30 +152,26 @@ export function createRecord(app, display) {
       const st = css(el), text = el.textContent.replace(/\s+/g, ' ').trim();
       if (!text || st.display === 'none') continue;
       g.font = font(st);
-      const boxed = !clear(st.backgroundColor) || (st.boxShadow && st.boxShadow !== 'none');
+      const boxed = !clear(st.backgroundColor) || st.borderTopStyle !== 'none' && !clear(st.borderTopColor) && parseFloat(st.borderTopWidth) > 0;
       const w = g.measureText(text).width + (boxed ? 12 * k : 0);
       if (x + w > c.width - pad) break;
       if (!clear(st.backgroundColor)) { g.fillStyle = st.backgroundColor; g.fillRect(x, y - 9 * k, w, 18 * k); }
-      else if (boxed) { g.strokeStyle = st.color; g.lineWidth = k; g.strokeRect(x + k / 2, y - 9 * k, w - k, 18 * k); }
+      else if (boxed) { g.strokeStyle = st.borderTopColor; g.lineWidth = k; g.strokeRect(x + k / 2, y - 9 * k, w - k, 18 * k); }
       g.fillStyle = st.color;
       g.fillText(text, x + (boxed ? 6 * k : 0), y);
       x += w + 12 * k;
     }
-    // The badges of the channels that are on: colour, source, scale.
+    // The channel keys that are on, lit as on the page: their colour, with
+    // the number, the source and the scale in the lit ink.
     x = pad; y = c.height - pad - line / 2;
-    for (const b of box.querySelectorAll('.badges .badge')) {
-      if (b.classList.contains('off')) continue;
-      const st = css(b), cc = st.getPropertyValue('--cc').trim() || st.color;
+    for (const b of box.querySelectorAll('.chbar .btn-ch[aria-pressed="true"]')) {
+      const st = css(b);
       g.font = font(st, 600);
-      const num = b.querySelector('.num')?.textContent.trim() ?? '';
-      const rest = `${b.querySelector('.src')?.textContent.trim() ?? ''}  ${b.querySelector('.val')?.textContent.trim() ?? ''}`;
-      const wn = 22 * k, w = wn + g.measureText(rest).width + 16 * k;
+      const text = [...b.children].map((e) => e.textContent.trim()).filter(Boolean).join('  ');
+      const w = g.measureText(text).width + 16 * k;
       if (x + w > c.width - pad) break;
       g.fillStyle = st.backgroundColor; g.fillRect(x, y - 11 * k, w, 22 * k);
-      g.strokeStyle = cc; g.lineWidth = k; g.strokeRect(x + k / 2, y - 11 * k, w - k, 22 * k);
-      g.fillStyle = cc; g.fillRect(x, y - 11 * k, wn, 22 * k);
-      g.fillStyle = st.backgroundColor; g.fillText(num, x + (wn - g.measureText(num).width) / 2, y);
-      g.fillStyle = cc; g.fillText(rest, x + wn + 8 * k, y);
+      g.fillStyle = st.color; g.fillText(text, x + 8 * k, y);
       x += w + 8 * k;
     }
     return new Promise((resolve) => c.toBlob(resolve, 'image/png'));
@@ -187,12 +184,12 @@ export function createRecord(app, display) {
     // Where the host offers no downloads, only the copy keys (as the
     // header's Save JSON and Export HTML hide there).
     const files = app.canSave();
-    const key = (what, kind, text, title) => `<button class="rkey" role="menuitem" data-save="${what}:${kind}" title="${esc(title)}">${text}</button>`;
+    const key = (what, kind, text, title) => `<button class="btn btn-sm" role="menuitem" data-save="${what}:${kind}" title="${esc(title)}">${text}</button>`;
     const file = (what, kind, text, title) => (files ? key(what, kind, text, title) : '');
-    const pics = (what) => file(what, 'png', 'Screenshot (PNG)', 'a picture of the scope as it is: the status line, the screen and the channel badges') + key(what, 'image', 'Copy image', 'the same picture to the clipboard');
+    const pics = (what) => file(what, 'png', 'Screenshot (PNG)', 'a picture of the scope as it is: the status line, the screen and the channel keys') + key(what, 'image', 'Copy image', 'the same picture to the clipboard');
     const keys = (what, png) => file(what, 'csv', 'CSV', 't and every signal, units in the header: for spreadsheets') + file(what, 'json', 'JSON', 'the same as JSON: for scripts')
       + key(what, 'copy', 'Copy', 'CSV to the clipboard') + (png ? pics(what) : '');
-    const row = (label, note, body) => `<div class="rc-row"><span class="rc-what">${label}<span class="rc-note">${esc(note)}</span></span><span class="rc-keys">${body}</span></div>`;
+    const row = (label, note, body) => `<div class="rc-row"><span class="rc-what">${label}<span class="hint">${esc(note)}</span></span><span class="rc-keys">${body}</span></div>`;
     pop.innerHTML = row('Screen', scr ? `${duration(span(scr.trace))} · ${Object.keys(scr.trace.signals).length} signals` : 'nothing yet', scr ? keys('screen', true) : pics('screen'))
       + (lr ? row('Live record', `${duration(rec.span())} · ${rec.names.length} signals`, keys('record', false)) : '');
     pop.querySelectorAll('[data-save]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); const [what, kind] = b.dataset.save.split(':'); save(what, kind); }));
@@ -202,6 +199,7 @@ export function createRecord(app, display) {
     e.stopPropagation();
     if (pop.hidden) { document.dispatchEvent(new MouseEvent('click')); renderPop(); }  // one menu open at a time: the others close
     pop.hidden = !pop.hidden;
+    fitPopover(pop);
     $('rc-save').setAttribute('aria-expanded', String(!pop.hidden));
   });
   document.addEventListener('click', closePop);
@@ -258,7 +256,7 @@ export function createRecord(app, display) {
     const lo = Math.max(...refs.map((r) => r.range[0])), hi = Math.min(...refs.map((r) => r.range[1]));
     const stepping = refs.some((r) => r.range[0] < r.range[1]);
     const at = refs[0].step;
-    box.innerHTML = `${stepping ? `<button class="rkey rc-step" id="rc-back" title="Show the screen width before" ${at <= lo ? 'disabled' : ''}>◀</button>` : ''}<button class="rkey rc-ref" id="rc-clear" title="References (dashed): ${esc(refs.map((r) => `${r.name}: ${partText(r)}`).join('; '))}. Click to clear them.">ref${refs.length > 1 ? ` ×${refs.length}` : ''} ✕</button>${stepping ? `<button class="rkey rc-step" id="rc-fwd" title="Show the next screen width" ${at >= hi ? 'disabled' : ''}>▶</button>` : ''}`;
+    box.innerHTML = `${stepping ? `<button class="btn btn-sm btn-icon" id="rc-back" title="Show the screen width before" ${at <= lo ? 'disabled' : ''}>◀</button>` : ''}<button class="btn btn-sm" id="rc-clear" title="References (dashed): ${esc(refs.map((r) => `${r.name}: ${partText(r)}`).join('; '))}. Click to clear them.">ref${refs.length > 1 ? ` ×${refs.length}` : ''} ✕</button>${stepping ? `<button class="btn btn-sm btn-icon" id="rc-fwd" title="Show the next screen width" ${at >= hi ? 'disabled' : ''}>▶</button>` : ''}`;
     $('rc-clear').addEventListener('click', () => { refs.length = 0; display.setRefs([]); renderRefs(); app.toast('References cleared'); });
     const step = (d) => { for (const r of refs) r.step += d; placeRefs(); app.toast(`Reference: ${partText(refs[0])}`); };
     $('rc-back')?.addEventListener('click', () => step(-1));

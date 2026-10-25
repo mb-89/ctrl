@@ -14,6 +14,7 @@ import { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resu
 import { CONTROLLERS } from '../core/controllers.js';
 import { num, parseSI } from './units.js';
 import { AS_FAST, formatSpeed } from '../core/speed.js';
+import { palette as C, fade } from './palette.js';
 
 const METHODS = {
   iterate: {
@@ -44,32 +45,32 @@ export function createAutotuneTab(host, app, display) {
   host.innerHTML = `
     <div class="tune">
       <section class="gcol" aria-label="Controller to tune">
-        <div class="ghead"><h3 class="glabel">Controller</h3></div>
+        <div class="ghead"><h3 class="label">Controller</h3></div>
         <div id="tu-blocks" class="ctblocks"></div>
-        <ul class="plist turows" id="tu-now"></ul>
-        <p class="phelp" id="tu-target"></p>
+        <ul class="lcd list turows" id="tu-now"></ul>
+        <p class="note" id="tu-target"></p>
       </section>
       <section class="gcol" aria-label="Method">
-        <div class="ghead"><h3 class="glabel">Method</h3></div>
-        <div class="tumethods" id="tu-methods" role="radiogroup" aria-label="Method"></div>
+        <div class="ghead"><h3 class="label">Method</h3></div>
+        <div class="choices" id="tu-methods" role="radiogroup" aria-label="Method"></div>
         <div id="tu-opts" class="pform"></div>
       </section>
       <section class="gcol" aria-label="Goal">
-        <div class="ghead"><h3 class="glabel">Goal</h3></div>
-        <div class="reps" id="tu-costs" role="radiogroup" aria-label="Cost"></div>
+        <div class="ghead"><h3 class="label">Goal</h3></div>
+        <div class="seg" id="tu-costs" role="radiogroup" aria-label="Cost"></div>
         <div id="tu-goal" class="pform"></div>
-        <p class="phelp" id="tu-goalhelp" title="${esc(GOAL_ABOUT)}"></p>
+        <p class="note" id="tu-goalhelp" title="${esc(GOAL_ABOUT)}"></p>
       </section>
       <section class="gcol tuprogress" aria-label="Progress">
-        <div class="ghead"><h3 class="glabel" id="tu-ptitle">Progress</h3>
-          <button class="key small primary" id="tu-start">Start</button></div>
-        <div class="tustatus" id="tu-status" role="status"></div>
+        <div class="ghead"><h3 class="label" id="tu-ptitle">Progress</h3>
+          <button class="btn btn-sm" id="tu-start">Start</button></div>
+        <div class="note tustatus" id="tu-status" role="status"></div>
         <canvas class="tuplot" id="tu-plot" aria-label="Cost against iteration"></canvas>
-        <ul class="plist turows wide" id="tu-result"></ul>
+        <ul class="lcd list turows wide" id="tu-result"></ul>
       </section>
     </div>
-    <div class="ctempty" id="tu-empty" hidden></div>`;
-  host.insertAdjacentHTML('afterbegin', '<div class="notloop" id="tu-notloop" role="note" hidden></div>');
+    <div id="tu-empty" hidden></div>`;
+  host.insertAdjacentHTML('afterbegin', '<div class="banner notloop" id="tu-notloop" role="note" hidden></div>');
   const $ = (s) => host.querySelector(s);
 
   const root = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
@@ -94,7 +95,7 @@ export function createAutotuneTab(host, app, display) {
   // ---- Setup columns ----------------------------------------------------
 
   function field(key, label, value, hint) {
-    return `<label class="pf"><span class="pfl">${esc(label)}</span><input class="field pfi" data-k="${key}" value="${esc(value)}" spellcheck="false" inputmode="decimal" ${job ? 'disabled' : ''}><span class="pfh">${esc(hint)}</span></label>`;
+    return `<label class="pf"><span class="flabel">${esc(label)}</span><input class="field field-sm mono" data-k="${key}" value="${esc(value)}" spellcheck="false" inputmode="decimal" ${job ? 'disabled' : ''}><span class="hint">${esc(hint)}</span></label>`;
   }
   // A container being typed in is not redrawn.
   const editing = (el) => el.contains(document.activeElement) && document.activeElement.matches('input, select');
@@ -105,50 +106,50 @@ export function createAutotuneTab(host, app, display) {
     // not in the loop and does not start (tuneContext refuses).
     const notLoop = ['reference', 'log'].includes(app.hilMode?.());
     $('#tu-notloop').hidden = !notLoop || !c;
-    if (notLoop) $('#tu-notloop').innerHTML = '<b>Not in the loop.</b> This system\'s plant runs its own controller (reference mode): Auto-tune has nothing here to tune, and Start stays off.';
+    if (notLoop) $('#tu-notloop').innerHTML = '<span class="banner-text"><b class="text-bad">Not in the loop.</b> This system\'s plant runs its own controller (reference mode): Auto-tune has nothing here to tune, and Start stays off.</span>';
     $('.tune').hidden = !c;
     $('#tu-empty').hidden = !!c;
     if (!c && notLoop) {
-      $('#tu-empty').innerHTML = '<div class="later-box"><h3 class="glabel">Auto-tune is not in the loop</h3><p>In reference mode the External plant runs its own controller, with its own limits and monitoring; the page only sends the references and records. There is no controller here for Auto-tune to tune. To tune a controller in this page, use a plant in control mode, such as <b>HIL: external motor</b>.</p></div>';
+      $('#tu-empty').innerHTML = '<div class="notice"><h3 class="label">Auto-tune is not in the loop</h3><p class="note">In reference mode the External plant runs its own controller, with its own limits and monitoring; the page only sends the references and records. There is no controller here for Auto-tune to tune. To tune a controller in this page, use a plant in control mode, such as <b>HIL: external motor</b>.</p></div>';
       return;
     }
     if (!c) {
-      $('#tu-empty').innerHTML = '<div class="later-box"><h3 class="glabel">Nothing to tune</h3><p>Auto-tune improves a <b>Controller</b> block of the plant. Add one in the Plant tab (library, Control group), or load a controlled system from the <b>System library</b>: <b>Oven, badly tuned</b> is made for this tab.</p></div>';
+      $('#tu-empty').innerHTML = '<div class="notice"><h3 class="label">Nothing to tune</h3><p class="note">Auto-tune improves a <b>Controller</b> block of the plant. Add one in the Plant tab (library, Control group), or load a controlled system from the <b>System library</b>: <b>Oven, badly tuned</b> is made for this tab.</p></div>';
       return;
     }
     renderButton();
     const all = blocks();
     const v = c.block.variants[c.block.variant ?? 0];
     $('#tu-blocks').innerHTML = all.length > 1
-      ? all.map((x) => `<button class="sigkey ${x.key === c.key ? 'on' : ''}" data-path="${esc(x.key)}" ${job ? 'disabled' : ''}>${esc(x.where)}</button>`).join('')
-      : `<div class="ctname">${esc(c.where)}</div>`;
-    $('#tu-now').innerHTML = `<li class="tuhead"><b>${esc(v.name)}</b><span>${esc(CONTROLLERS[v.type]?.label ?? v.type)} · running</span></li>`
+      ? all.map((x) => `<button class="btn btn-block" data-path="${esc(x.key)}" aria-pressed="${x.key === c.key}" ${job ? 'disabled' : ''}>${esc(x.where)}</button>`).join('')
+      : `<div class="heading">${esc(c.where)}</div>`;
+    $('#tu-now').innerHTML = `<li class="tuhead"><b>${esc(v.name)}</b><span class="hint">${esc(CONTROLLERS[v.type]?.label ?? v.type)} · running</span></li>`
       + tunedValues(v).map(([k, x]) => `<li class="turow"><span>${esc(k)}</span><span>${show(x)}</span></li>`).join('');
     const { ctx, why: noCtx } = context();
     const why = noCtx ?? whyNot(ctx, st.method);
     const into = job ? job.name : resultName(c.block, st.method, st.rule, st.simc);
     const target = $('#tu-target');
     if (job) { target.innerHTML = `Into <b>${esc(into)}</b>`; target.title = `${shown.before?.variant.name ?? v.name} stays as it was.`; }
-    else if (why) { target.innerHTML = `<span class="tuwhy">${esc(why)}</span>`; target.title = ''; }
+    else if (why) { target.innerHTML = `<span class="text-bad">${esc(why)}</span>`; target.title = ''; }
     else if (into === v.name) { target.innerHTML = `Updates <b>${esc(into)}</b>`; target.title = 'Tuning again from a tuned variant updates it in place.'; }
     else {
       target.innerHTML = `Into <b>${esc(into)}</b>`;
       target.title = `The result goes into a variant of its own; ${v.name} stays, to compare in the Controller tab. An earlier result is never overwritten: a new one is numbered.`;
     }
 
-    $('#tu-methods').innerHTML = Object.entries(METHODS).map(([k, m]) => `<button class="sigkey tumethod ${k === st.method ? 'on' : ''}" data-method="${k}" role="radio" aria-checked="${k === st.method}" title="${esc(m.about)}" ${job ? 'disabled' : ''}><b>${m.label}</b><span>${m.sub}</span></button>`).join('');
+    $('#tu-methods').innerHTML = Object.entries(METHODS).map(([k, m]) => `<button class="btn btn-block btn-col" data-method="${k}" role="radio" aria-checked="${k === st.method}" title="${esc(m.about)}" ${job ? 'disabled' : ''}>${m.label}<span class="btn-note">${m.sub}</span></button>`).join('');
     if (!editing($('#tu-opts'))) {
       const opts = [];
       if (st.method === 'iterate') opts.push(field('maxIter', 'Iterations', st.maxIter, 'at most; stops when the cost stops falling'));
       // Feedforward gains that are not 0 are tuned anyway; this adds those at 0.
-      if (st.method === 'iterate' && CONTROLLERS[v.type]?.params.some((p) => p.key === 'Kff')) opts.push(`<label class="pf" title="Kff, Kv and Ka that are not 0 are always tuned. Ticked, those at 0 are tuned too, from a fit of the starting run's u to the reference (what the feedforward should put out: Kff where the loop rests, Kv and Ka where r moves); a gain the reference does not explain stays 0. The feedforward is tuned first with the feedback held, then the feedback with the feedforward held; a run without a disturbance cannot judge the feedback then, so it is held."><span class="pfl">Feedforward</span><span class="tuchk"><input type="checkbox" id="tu-ff" ${st.feedforward ? 'checked' : ''} ${job ? 'disabled' : ''}> tune those at 0 too</span><span class="pfh">Kff, Kv, Ka</span></label>`);
-      if (st.method === 'relay') opts.push(`<label class="pf"><span class="pfl">Rule</span><select class="field" id="tu-rule" ${job ? 'disabled' : ''}>${Object.entries(RULES).map(([k, r]) => `<option value="${k}" ${k === st.rule ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(RULES[st.rule].about)}</span></label>`);
-      if (st.method === 'step') opts.push(`<label class="pf"><span class="pfl">SIMC τc</span><select class="field" id="tu-simc" ${job ? 'disabled' : ''}>${Object.entries(SIMC).map(([k, r]) => `<option value="${k}" ${k === st.simc ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="pfh">${esc(SIMC[st.simc].about)}</span></label>`);
+      if (st.method === 'iterate' && CONTROLLERS[v.type]?.params.some((p) => p.key === 'Kff')) opts.push(`<div class="pf" title="Kff, Kv and Ka that are not 0 are always tuned. Pressed, those at 0 are tuned too, from a fit of the starting run's u to the reference (what the feedforward should put out: Kff where the loop rests, Kv and Ka where r moves); a gain the reference does not explain stays 0. The feedforward is tuned first with the feedback held, then the feedback with the feedforward held; a run without a disturbance cannot judge the feedback then, so it is held."><span class="flabel">Feedforward</span><button type="button" class="btn btn-sm" id="tu-ff" aria-pressed="${st.feedforward}" ${job ? 'disabled' : ''}>Tune those at 0 too</button><span class="hint">Kff, Kv, Ka</span></div>`);
+      if (st.method === 'relay') opts.push(`<label class="pf"><span class="flabel">Rule</span><select class="field field-sm" id="tu-rule" ${job ? 'disabled' : ''}>${Object.entries(RULES).map(([k, r]) => `<option value="${k}" ${k === st.rule ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="hint">${esc(RULES[st.rule].about)}</span></label>`);
+      if (st.method === 'step') opts.push(`<label class="pf"><span class="flabel">SIMC τc</span><select class="field field-sm" id="tu-simc" ${job ? 'disabled' : ''}>${Object.entries(SIMC).map(([k, r]) => `<option value="${k}" ${k === st.simc ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select><span class="hint">${esc(SIMC[st.simc].about)}</span></label>`);
       if (st.method !== 'iterate') opts.push(field('amplitude', st.method === 'relay' ? 'Relay ±d' : 'Step Δu', num(100 * st.amplitude, 3), '% of the actuator range'));
       $('#tu-opts').innerHTML = opts.join('');
     }
 
-    $('#tu-costs').innerHTML = Object.keys(COSTS).map((k) => `<button class="rep ${k === st.goal.cost ? 'on' : ''}" data-cost="${k}" role="radio" aria-checked="${k === st.goal.cost}" title="${esc(COSTS[k])}" ${job ? 'disabled' : ''}>${k}</button>`).join('');
+    $('#tu-costs').innerHTML = Object.keys(COSTS).map((k) => `<button class="btn btn-sm" data-cost="${k}" role="radio" aria-checked="${k === st.goal.cost}" title="${esc(COSTS[k])}" ${job ? 'disabled' : ''}>${k}</button>`).join('');
     if (!editing($('#tu-goal'))) {
       $('#tu-goal').innerHTML = field('effort', 'Effort weight', num(st.goal.effort, 3), 'on the swing of u; 0 ignores it')
         + field('overshoot', 'Overshoot ≤', num(st.goal.overshoot, 3), '% of a step; beyond costs extra');
@@ -166,7 +167,7 @@ export function createAutotuneTab(host, app, display) {
     const simc = $('#tu-simc');
     if (simc) simc.onchange = () => { if (job) return; st.simc = simc.value; simc.blur(); renderSetup(); };
     const ff = $('#tu-ff');
-    if (ff) ff.onchange = () => { if (job) return; st.feedforward = ff.checked; ff.blur(); renderSetup(); };
+    if (ff) ff.onclick = () => { if (job) return; st.feedforward = !st.feedforward; renderSetup(); };
     host.querySelectorAll('input[data-k]').forEach((inp) => {
       inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.dataset.cancel = '1'; inp.blur(); } };
       inp.onblur = () => {
@@ -186,7 +187,7 @@ export function createAutotuneTab(host, app, display) {
     const { ctx, why } = context();
     const b = $('#tu-start');
     b.textContent = job ? 'Stop' : 'Start';
-    b.className = `key small ${job ? 'lit-red' : 'primary'}`;
+    b.className = `btn btn-sm${job ? ' btn-danger' : ''}`;
     b.disabled = !job && !!(why ?? whyNot(ctx, st.method));
   }
 
@@ -476,7 +477,7 @@ export function createAutotuneTab(host, app, display) {
     $('#tu-plot').hidden = (s ? s.method : st.method) !== 'iterate';
     $('#tu-ptitle').textContent = s ? `Progress · ${METHODS[s.method].label}` : 'Progress';
     if (!s) {
-      $('#tu-status').innerHTML = `<span class="dim">Press Start. ${st.method === 'iterate' ? 'Each run tried sweeps across the display at the header\'s Speed; at ∞ it computes as fast as it can and shows each improvement.' : 'The display shows the experiment at the header\'s Speed, then the tuned loop.'}</span>`;
+      $('#tu-status').innerHTML = `<span class="muted">Press Start. ${st.method === 'iterate' ? 'Each run tried sweeps across the display at the header\'s Speed; at ∞ it computes as fast as it can and shows each improvement.' : 'The display shows the experiment at the header\'s Speed, then the tuned loop.'}</span>`;
       $('#tu-result').innerHTML = '';
       drawPlot(null);
       return;
@@ -514,7 +515,7 @@ export function createAutotuneTab(host, app, display) {
       }
     }
     if (s.before) {
-      rows.push(row('Cost', costAfter ? `${num(s.before.cost.J, 3)} → ${num(costAfter.J, 3)}` : num(s.before.cost.J, 3), costAfter ? `×${num(costAfter.J / s.before.cost.J, 2)}` : 'at the start', costAfter && costAfter.J > s.before.cost.J ? 'tuworse' : 'tucost'));
+      rows.push(row('Cost', costAfter ? `${num(s.before.cost.J, 3)} → ${num(costAfter.J, 3)}` : num(s.before.cost.J, 3), costAfter ? `×${num(costAfter.J / s.before.cost.J, 2)}` : 'at the start', !costAfter ? '' : costAfter.J > s.before.cost.J ? 'text-bad' : 'text-ok'));
       rows.push(row('Overshoot', costAfter ? `${pct(s.before.cost.overshoot)} → ${pct(costAfter.overshoot)}` : pct(s.before.cost.overshoot), 'largest'));
       const b = tunedValues(s.before.variant), a = after ? tunedValues(after) : [];
       if (after && after.type !== s.before.variant.type) rows.push(row('Type', `${CONTROLLERS[s.before.variant.type].label} → ${CONTROLLERS[after.type].label}`, ''));
@@ -530,7 +531,7 @@ export function createAutotuneTab(host, app, display) {
     drawPlot(s.method === 'iterate' ? s.history : null);
   }
 
-  const row = (k, v, hint, cls = '', title = hint) => `<li class="turow ${cls}"${title ? ` title="${esc(title)}"` : ''}><span>${esc(k)}</span><span>${esc(v)}</span><em>${esc(hint)}</em></li>`;
+  const row = (k, v, hint, cls = '', title = hint) => `<li class="turow"${title ? ` title="${esc(title)}"` : ''}><span>${esc(k)}</span><span class="${cls}">${esc(v)}</span><em>${esc(hint)}</em></li>`;
   const pct = (v) => (Number.isFinite(v) ? `${num(v, 3)} %` : '—');
 
   // The cost of every run tried (dots) and the best so far (line) against
@@ -544,13 +545,13 @@ export function createAutotuneTab(host, app, display) {
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
     const g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.fillStyle = '#0a0d10'; g.fillRect(0, 0, W, H);
+    g.fillStyle = C().bg; g.fillRect(0, 0, W, H);
     const P = { l: 44, r: W - 10, t: 8, b: H - 18 };
-    g.fillStyle = 'rgba(160, 175, 190, 0.32)';
+    g.fillStyle = C().grid;
     for (let i = 0; i <= 10; i++) for (let j = 0; j <= 20; j++) g.fillRect(P.l + (i * (P.r - P.l)) / 10, P.t + (j * (P.b - P.t)) / 20, 1, 1);
-    g.strokeStyle = 'rgba(160, 175, 190, 0.5)'; g.strokeRect(P.l + 0.5, P.t + 0.5, P.r - P.l - 1, P.b - P.t - 1);
-    g.font = '10px "IBM Plex Mono", ui-monospace, monospace';
-    g.fillStyle = 'rgba(200, 210, 218, 0.75)';
+    g.strokeStyle = C().axis; g.strokeRect(P.l + 0.5, P.t + 0.5, P.r - P.l - 1, P.b - P.t - 1);
+    g.font = `10px ${C().mono}`;
+    g.fillStyle = C().label;
     g.textAlign = 'center'; g.textBaseline = 'top';
     const n = Math.max(st.maxIter, history?.at(-1)?.iteration ?? 0, 10);
     g.fillText('0', P.l, P.b + 4); g.fillText(String(n), P.r - 6, P.b + 4); g.fillText('iteration', (P.l + P.r) / 2, P.b + 4);
@@ -565,9 +566,9 @@ export function createAutotuneTab(host, app, display) {
     g.textAlign = 'right'; g.textBaseline = 'middle';
     g.fillText(num(10 ** top, 2), P.l - 4, P.t + 4);
     g.fillText(num(10 ** bot, 2), P.l - 4, P.b - 4);
-    g.fillStyle = 'rgba(78, 166, 255, 0.6)';
+    g.fillStyle = fade(C().ch[2], C().alpha.guide);
     for (const h of history) for (const v of h.tried) if (v < 100) g.fillRect(x(h.iteration) - 1, y(v) - 1, 2.5, 2.5);
-    g.strokeStyle = '#33d17a'; g.lineWidth = 1.8; g.shadowColor = '#33d17a'; g.shadowBlur = 5;
+    g.strokeStyle = C().ch[1]; g.lineWidth = 1.8; g.shadowColor = C().ch[1]; g.shadowBlur = 5;
     g.beginPath();
     history.forEach((h, i) => { if (i) g.lineTo(x(h.iteration), y(history[i - 1].cost)); else g.moveTo(x(h.iteration), y(h.cost)); g.lineTo(x(h.iteration), y(h.cost)); });
     g.stroke();
