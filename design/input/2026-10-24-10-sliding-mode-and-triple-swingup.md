@@ -1,0 +1,105 @@
+# Sliding mode control; the triple pendulum swing-up (2026-10-24)
+
+> Okay, there's two more things I want you to do, but you can do this overnight. So it's just to burn tokens, I guess. And that is sliding mode control. My understanding is that sliding mode control works not that well because the control effort is so hard on the actuators. So I want you to do a classic, an example for a classic sliding mode control, figure out what plants they are usually used for, make it as an example, implement the controller. Also, I feel like this would probably have a, I'm not sure if we need a new diagram for that or if we can use the X, Y and delta diagram for it. So yeah, see if you can do that and then do a lot of research on this and figure out, are there improvements on sliding mode controllers that are not as hard on the actuators? Like, how is this used in practical terms? And then you can add that as a variation of the control loop. So maybe one that's theoretical, but hard on the actuator, and then one that is more practical.
+
+> And also, what about the swing up of the triple pendulum? Will you do this? Is there anything preventing us from doing that? Is it hard to compute? What's up with that?
+
+## Added while this was being built: no black-box models
+
+> And in general, what I see a lot is that you put like the cart and the three rods, you just put that as a black box model. Think about if you can, I guess an agent can do that, like make these black box models understandable for the user. I want to be able to click into that and see what it's about. Model it in our diagrams. And if you find that there's something you can't model, then add it as a primitive to our diagrams, right? So they shouldn't be black boxes.
+
+## Added while this was being built: one button, semantic styles in one place
+
+> And then maybe some UX thing for the inputs. If I select the R or the D as an input in the input generator, it's really hard to see which one is selected. It's not clear what, it seems black is selected, but that's not clear from the, yeah, it's not clear. In general, it seems like every button looks different. Like the buttons for the channels look different than the run control, looks different than the time, looks different than the buttons down there. See that you put everything through a single master style sheet. There's no need for 5 different types of buttons. Pick one. And this goes, that goes for all the design elements, right? Don't have 5 different styles for everything in our design. Like the styles are supposed to be semantic. And then we choose a semantic style and we change it in one place.
+
+## Added while this was being built: step-response tuning on the DC motor
+
+> Okay, so the step response tuning on the DC motor doesn't seem to work at all. What's up with that? Also, I feel like yeah, check this out. Like, let's see if this is an issue.
+
+## Added while this was being built: time control in the header
+
+> And then I guess when we are talking about the hill system and timing in general, so we're going to have to add time control, and we can probably add that to the header bar. And then normally it is 1x, but we can also increase it to like 5x or 10x or infinite. Like, I guess make it optional how many x you want, allow infinite, like with a -1 would be infinite. And also show how fast the time is actually running. So we can see when, if I set to infinite, I see, okay, it caps out at 20x. And then the fast toggle of the autotune, that would go away. If I want to autotune fast, then I just set the toggle to higher speeds, right? And then obviously for the hill, in hill we are fixed to 1.0. And when we say we allow arbitrarily fast times, the user could also enter 0.1, right? And then it would go slower if they wanted. If they want to simulate something very, very fast. I don't see a reason, but maybe they want it.
+
+## Added while this was being built: filter the System library by tag
+
+> And then I guess when you show the tags in the system library, show all available tags. And if we click on it, we filter for them. So somebody could filter for linear or for non-linear, for like someone would see what feature, and when we click on it, we filter for that. I guess that would be useful.
+
+## Added while this was being built: a histogram of amplitudes for the spectrogram
+
+> And I guess something that would be useful for the spectrogram, although I'm not sure where to put it, would be a histogram of the amplitudes where you can select the cutoff. I mean, so see how PyQt graph does it, where I can select which amplitudes I want to show, because I feel like the amplitudes we see in the spectrogram are not clear enough because there's too much noise. And if we could like cut off lower amplitudes, then we would reduce that noise. I just wonder where we put that, but yeah, figure it out.
+
+## Added while this was being built: identification before auto-tune and analysis; a HIL plant we do not know
+
+> So about the autotune, I feel like the autotune, it said it had 92 runs. So it doesn't really have anything to do with the simulation running in the plot. How would that work for a hill system? Like, just, I want to be, the autotune, if that worked, like, I feel like in a hill system, it has to be different, right? Because we don't have any information about the plant, we don't have any I guess we're going to have to introduce a identification feature also, right? Maybe between controller and autotune we have an identification, and I guess then the autotune should also work for hill systems. And then the analysis is currently, it doesn't show anything. Needs to plant a block seeds. Okay, it comes with the design layer. Okay. So I feel like the analysis over a hill system would also need, I guess, an identification feature. So after controller, before autotune and analysis would come identification, maybe. And then we can simulate, like put the identification, identify the plant that we have modeled actually. And in the hill, we can start the hill with a, with variations, I guess. There's a, maybe we should actually always do that. So the hill that we, that our hill simulator will always have some variation up to like 15% or so. So we don't really, we don't know, in general, we don't know what plant the hill is running, right? We can set it on the hill side. It's going to have a command line interface, so we can set the plant that is running, but the other side doesn't know it, so we have to identify it. Does that make sense?
+
+> do some research on how you would probably identify this. The methods you named sound reasonable, but I wonder if there's something more modern.
+
+## Added while this was being built: no provenance in the HTML
+
+> Also, one more thing that you can just check and make sure that it's incorporated. I want no provenance information about the where this tool is coming from in the HTML. Right? The idea is I'm building this in my free time just out of interest, but I will use this as an example at work on how quickly you can build something like this with LLMs. And so I don't want this associated, the HTML should not be associated with my private GitHub, or should in any way, it shouldn't be like I'm gonna clone my private GitHub on my work PC. I'm gonna rebuild the HTML, and then I don't want this to have any provenance information. So it's not clear to that it's coming from outside of work. This is not critical here. We're not doing anything work related, but our company is not too keen on that stuff.
+
+## Added while this was being built: identification is experiment first, for a tester who knows no control theory
+
+> About the competing designs, it will be experiment first. Like, you can ask some general questions about the system, but really the expectation is the system saves itself from any, like, you can start with slow control efforts and then increase this over time. Like, you don't have to give it 100% straight from the beginning. So you can ease into it, but the responsibility of saving, of keeping the system safe is with the plant. And so you need to assume that somebody's using the system who has no idea of control theory. He doesn't know if this thing is integrating or not. He doesn't know anything. So you have a, I guess, normalized control effort. Well, I guess we can have limits on the control effort, and we can have limits on the actual values and reference values. That, I guess, that information we do have. That should be like in the, yeah. And then you ease into it and you do it via experiment. Assume that the guy who uses that is a tester who is not really familiar with control theory. So he's not going to give you a model. He's not going to give you a gray box.
+
+## Added while this was being built: a diagram of what the controller does; feedforward in the standard controller
+
+> And then I guess for now it's okay if we don't have configurable controllers, but I would still like to have a small diagram of what the controller does in the corner that's still open. For example, I wonder if our controllers really have a good feed forward. So set point weight, is that the feed forward? Like, I'm not sure. I wonder if autotune currently goes only over the current control architecture, right? It doesn't go over all. I guess that's okay. I just feel like with feed forward, the PID controller would be much better. There's no reason. Yeah, we know, if we know that the reference value changes, we can apply a feed forward to it instantly. So that should be part of a, that's part of a standard controller in general, I feel.
+
+> So yeah, you usually, yeah, I would also assume that you have a set point. You have a set point feed forward, if that makes sense. You have an position and acceleration feed forward, if that makes sense. I feel like in badly tuned controllers, you can still set that to a bad value. But yeah, nobody that does serious control theory does it without feed forward. So our controllers need to support it.
+
+> And yeah, anti-windup is also a feature that we can have in, and then for one example where we want it badly tuned, we can flip it off. But again, that's also something I would consider just state of the art, so it needs to be in.
+
+## Added while this was being built: the page always sends the effort; the reference goes along for the plant's log
+
+> About reference mode, I feel like what is you? Is you the effort? We should never say, like, we are. Normally, we would send the reference value and we would send. Wait. No, I guess maybe I was wrong about the reference mode. We know the reference in our system. We should send it to the other system so they can log it on their side. But yeah, obviously, we are always sending the control effort. Yeah, I was tripping there. Sorry.
+
+## Added while this was being built: both HIL modes, settled
+
+> Okay, maybe I have to revise myself again about the reference mode. If we want to be tuning the controllers, then obviously we are always going to be sending the control effort, but that's not all we want to do. We may just want to use that thing to log data, and then we would send reference values. So we need both modes. It's just like the reference mode, obviously, I feel like we should then display something in the controllers, that the controllers are not in the loop. And also the auto-tuning is not in the loop. And yeah, I guess we can identify to some extent with a reference mode. So yeah, it should be in. The hill mode should support it. Write that down so we find it later, so we don't make that same mistake again of going back and forward on this.
+
+## Added while this was being built: Live controls in the plant panel; a clear plant download
+
+> Okay, I feel like for the hill example, the plant script is not clear enough. I'm not sure if I want the hill stuff in the Ostsee controls. Just put them in the plant controls in the bottom right corner. And make it clear, like, yeah, that's too small, the download button for the script. I guess I'm not gonna test it today. But yeah, you can still fix that.
+
+(Transcription: "Ostsee controls" is "oscilloscope controls", the Run Control panel; "hill" is HIL.)
+
+> It's okay if e-stop stays visible from anywhere, but then put it into the header bar. Make it red, put it into the header bar, right in the middle, next to system library, that's fine.
+
+> And I guess the two sentences on what it is, they can go into the help, right?
+
+> And really, when the hill is offline, I also don't want the traces to run. So even when you have connected, you still need to press the run button so that we actually start.
+
+## Added while this was being built: sliding mode in practice; a controller benchmark (backlog, last); spectrogram levels
+
+> Yeah, okay. That's what I expected. I mean, that the thing that we use it in observers, I didn't think about that. That's actually smart. Yeah, that makes sense. But I really like the idea of the way I understand it. Basically, you can set up the effective inertia of a system by defining the slope of the line, right? I really like that. Inertia control, this can be very useful. Okay, I guess at some point I want to get to a place where we can compare different controller types at the same plant, so we can have a controller benchmark running. But that's another feature. I could imagine we do this, we identify a plant. If we are sure that we have identified it, then we run a controller benchmark against all the controllers we know. And then we produce a report. I guess put that in the backlog at the very end. If we have nothing else, again, you have tokens to burn tonight. So you can try to do that benchmark mode on your own. So you get a plant, and you basically build a benchmark matrix. You know, you have a lot of different types of controllers. You tune all of them. You look up what a PUC matrix is. You would create a PUC matrix with criteria. You judge the different options by, and then you would select the best option. And then I think keep the automatic flow as the default. Yes, we can still slide up and down to see if we miss something, but the delta mode, I like that. Like dB above the local noise, I like that. Maybe you can make that switchable. Make that a switch. Yeah.
+
+(Transcription: "PUC matrix" is a Pugh matrix; "automatic flow" is the automatic floor of the spectrogram levels.)
+
+> And maybe make the tooltip show up on the other side. The tooltip is useful, I think, but it blocks the view on the diagram. So that's annoying.
+
+> What I'm talking about is when you have a spectrogram open and you change the values in the histogram, then the pop-up over the histogram shows up to the left, and that's where the plot is. So you can't really slide and see what changes about which part of the histogram you see, because the hover is in the way. So please put the hover to the right. So I can actually see if I change something in the histogram, if I change the limits, I can see how it affects the plot.
+
+## Added while this was being built: Single finishes the run; full scale and a ramp-in for HIL
+
+> And then I guess if I press the single button while something is already running, then I actually just want the current run to finish, right? I want to avoid this step. Especially in hill mode. So again, in hill mode, we're going to have the full scale for all these values, right? We're going to have the full scale for the, so we have some orientation. And I feel like when we start a new loop, the first thing we're going to do is we're going to go to the first value of the loop with a gradient filter. And the gradient filter will be 10% of full scale per second. And we can set this up in a config somewhere, but that's going to be the limit. So if somebody programs a waveform that doesn't end where it starts, we don't have a hard jump. So again, the first thing in hill mode that the system is going to do is go to the initial value at no more than 10% full scale per second. And then when it reaches the initial value, then it will start the loop.
+
+## Added while this was being built: a PUMA robot in 3D from URDF, controlled in end-effector coordinates
+
+> Okay. And then I guess I'm going to leave you to it now, but then there's something else I want you to do. And that is a bit more effort. I want you to implement controls for a, I guess, Puma robot, right? So a six-stop robot. What you're going to have to introduce a concept for here is that you have different coordinate systems. You're going to have the coordinate systems of the axes, and you're going to have a coordinate system of the end effector. And so in the block diagram, you're going to have a transformation block, right? I feel like we're going to be controlling the system actually in end effector coordinates and then transforming the values into speed and acceleration values for the single axis. Research on how you do this properly. I don't want to give you, I don't want to give ahead too much, and I feel like there's a lot of research on Puma robots. So that's one thing. Like, this is a multi-input, multi-output control system, right? I guess the more interesting part is then I want you to think about how you can integrate the URDF format, and if you can actually create a 3D rendering. So the diagram, the plant diagram, it's not going to be 2D, it's going to be 3D. A 3D rendering from this URDF. And so then that would actually be the thing that opens, if somebody opens, that would be our prime example. Like, if you open that thing, you see this robot, right? You see how we give it a reference value in end effector coordinates. I guess it would be two reference values, right? It would be a, let's say, a circle in space. We would actually, I want you to plot that into the 3D plot of the robot. I want you to plot the reference values into that plot, and then in the spectrogram, we see I guess reference values, actual values, current on one of the motors. Is this enough to implement it? Does that make sense? Or do you need some more input? Again, you can run all night now. I'm going to leave you to it, but that's something you can do.
+
+(Transcription: "six-stop" is six-axis (6-DOF); "hill" is HIL.)
+
+## Added while this was being built: 3D navigation like CAD; detail levels like SPICE
+
+> Okay, so in general, if we're talking about 3D views, what I would like is if you have one 3D view where you can move the camera, an orbit camera, right? That's fine. Maybe you can also use WASD to move in space. We could also have like preset poses where we stand. So if I say I want to look at a, I mean, look at how CAD systems do it. They usually have like a small, like they have three arrows, right? Blue, or blue, red, green for the cardinal axes, and then they have a cube that you can click on. So I guess that's something I want you to do. The other thing I want you to implement, also something you can have an example for, is detail levels. Spice, I think, has that, where you can have a model of something and it has different detail levels. So maybe create one example. This could also be like a circuit board. So maybe we model something like a circuit board and it has a very low level model, and then you can increase the level of detail, and then the interfaces stay more or less the same, but it but the model introduces more calculations and more parameters. And then you can see, okay, if I have a small simulation of an op amp and it is very simple and it works very well with low detail level, and then if I increase detail level, the control works worse because then there are some effects that we didn't model right, and everything we model should support this detail level separation. Does that make sense? Again, I think Spice does this, so you can probably learn from that.
+
+## Added while this was being built: black boxes are fine for identified real systems
+
+> And then you say the click into it rule. The click into it rule applies for models that we build ourselves, right? If we identify an external system, I can accept that it's black box. If we can identify parts of it, then it's okay. But if we build a neural network that maps the behavior well, then that's also fine. So for identified systems, real systems, I think it's acceptable. Obviously preferred is understanding the structure, but if we don't, we don't.
+
+## Added while this was being built: the time control stays in the header; the input repeats
+
+> I didn't know speed control was joining. Ah, you mean the time control? Okay. Keep it in the header for now. And the input repeat with its period as it does now or play once. Should the input repeat with its period? Yeah, it should. That's the point. Okay. Bake that in.
+
+> And just because I see you downloading something from PyPy, do what you want for your work, but don't forget that we want a standalone HTML, right? So if you put this into the Python thing, into the external hill, that's, I guess, fine, but we want this working in HTML, everything.

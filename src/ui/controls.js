@@ -6,6 +6,7 @@ import { createDial } from './dial.js';
 import { CHANNEL_COLORS } from './display.js';
 import { siUnit, num, parseSI } from './units.js';
 import { step125 } from '../core/scale.js';
+import { withAboveNoise } from '../core/project.js';
 
 export function createControls(root, app) {
   root.innerHTML = `
@@ -20,7 +21,18 @@ export function createControls(root, app) {
         <button class="key small" data-view="time" title="Signals over time">Time</button>
         <button class="key small" data-view="fft" title="Amplitude spectrum of every channel (what has run so far)">FFT</button>
         <button class="key small" data-view="spectrogram" title="The selected channel's spectrum over time, its trace on the right axis">Spectrogram</button>
+        <button class="key small" data-view="xy" title="XY: channel 1 across, the other channels against it (a Lissajous figure)">XY</button>
+        <button class="key small" id="k-delta" title="XY: draw channel 1 minus each channel (r on 1 and y on 2: the error e = r − y over r)">Δ</button>
       </div>
+      <div class="srcrow lvrow lvmode" id="lv-mode" role="group" aria-label="Spectrogram colour" hidden><span>Colour</span>
+        <button class="key small" id="lv-abs" title="Absolute: the colour is dB of the signal's unit (0 dB is 1 unit), the same everywhere">Absolute</button>
+        <button class="key small" id="lv-noise" title="Above noise: the colour is dB above the noise at each frequency, so a weak line where the noise is low shows as well as a strong one where it is high">Above noise</button></div>
+      <div class="srcrow lvrow" id="lv-row" hidden><span>Levels</span>
+        <input class="field" data-lv="0" aria-label="Spectrogram floor, dB" title="Floor: below it black. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
+        <span class="dim">…</span>
+        <input class="field" data-lv="1" aria-label="Spectrogram ceiling, dB" title="Ceiling: above it the brightest colour. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
+        <span class="dim">dB</span>
+        <button class="key small axbtn" id="lv-auto" title="Automatic levels: the ceiling at the largest amplitude shown, the floor 10 dB above the median (the noise); above the noise, 6 dB above it">Auto</button></div>
     </section>
     <section class="group">
       <h3 class="glabel">Horizontal</h3>
@@ -29,7 +41,7 @@ export function createControls(root, app) {
     <section class="group">
       <h3 class="glabel">Vertical</h3>
       <div class="row chkeys" id="ch-keys"></div>
-      <div class="srcrow"><span>Source</span><select id="ch-src" class="field"></select><button class="key small axbtn" id="ch-right" title="Show this channel's values on a second axis at the right of the screen">R axis</button></div>
+      <div class="srcrow"><span>Source</span><select id="ch-src" class="field"></select><button class="key small axbtn" id="ch-right" title="Show this channel's values on a second axis at the right of the screen">R axis</button><button class="key small axbtn" id="ch-meas" title="Measure: a line under the screen with this channel's mean, rms, ac rms, peak to peak, total variation per second and reversals per second, over what the screen shows">Measure</button></div>
       <div class="srcrow filtrow"><span>Filter</span><select id="ch-filt" class="field" title="A display filter: changes what the scope shows and analyses, not the system">
           <option value="">none</option><option value="lowpass">Low-pass</option><option value="highpass">High-pass</option><option value="bandpass">Band-pass</option><option value="notch">Notch</option></select>
         <span class="filtparams" id="filt-params"></span></div>
@@ -125,11 +137,20 @@ export function createControls(root, app) {
     keys.append(b);
   });
   // Display mode: time, FFT or spectrogram (the scope's view setting).
+  // A channel that switches between X − Y and itself is fitted again.
   root.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => setScope((sc) => {
-    const view = { ...(sc.view ?? {}) };
+    const before = structuredClone(sc), view = { ...(sc.view ?? {}) };
     if (b.dataset.view === 'time') delete view.mode; else view.mode = b.dataset.view;
     sc.view = view;
+    app.refitSwitched?.(before, sc);
   })));
+  // XY: the channels draw channel 1 minus themselves (the error, for r and y).
+  $('#k-delta').addEventListener('click', () => setScope((sc) => {
+    const before = structuredClone(sc), view = { ...(sc.view ?? {}) };
+    if (view.delta) delete view.delta; else view.delta = true;
+    sc.view = view;
+    app.refitSwitched?.(before, sc);
+  }));
   // The selected channel's display filter.
   const filt = $('#ch-filt');
   filt.addEventListener('change', () => setScope((sc) => {
@@ -155,11 +176,72 @@ export function createControls(root, app) {
     clearTimeout(fparams.wheelTimer);
     fparams.wheelTimer = setTimeout(() => app.endEdit(), 400);
   }, { passive: false });
+  // A Measure line under the screen for the selected channel.
+  $('#ch-meas').addEventListener('click', () => setScope((sc) => {
+    const c = sc.channels[app.channel];
+    if (c.measure) delete c.measure; else c.measure = true;
+  }));
   $('#ch-right').addEventListener('click', () => setScope((sc) => {
     const view = { ...(sc.view ?? {}) };
     if (view.right === app.channel) delete view.right; else view.right = app.channel;
     sc.view = view;
   }));
+  // The spectrogram's levels, typed (the same as the strip at the right of
+  // the screen): for the signal the spectrogram shows.
+  const lvRow = $('#lv-row'), lvIn = [...lvRow.querySelectorAll('[data-lv]')];
+  const shownLevels = () => app.display?.levels;
+  function typeLevel(j, v) {
+    const lv = shownLevels();
+    if (!lv) return;
+    const pair = [lv.floor, lv.ceiling];
+    pair[j] = v;
+    if (!(pair[1] - pair[0] >= 1)) { app.toast('The floor must be at least 1 dB below the ceiling.'); renderLevels(true); return; }
+    if (pair[0] < -300 || pair[1] > 300) { app.toast('Levels between −300 and 300 dB.'); renderLevels(true); return; }
+    app.display.setLevels(lv.source, pair);
+  }
+  lvIn.forEach((el, j) => {
+    el.addEventListener('change', () => {
+      const v = parseSI(el.value, 'dB');
+      if (!Number.isFinite(v)) { app.toast('Type a level in dB, e.g. −60.'); renderLevels(true); return; }
+      typeLevel(j, v);
+    });
+    el.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') el.blur();
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      const lv = shownLevels();
+      if (!lv) return;
+      typeLevel(j, Math.round(((j ? lv.ceiling : lv.floor) + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1)) * 10) / 10);
+      renderLevels(true);
+    });
+  });
+  $('#lv-auto').addEventListener('click', () => { const lv = shownLevels(); if (lv && !lv.auto) app.display.setLevels(lv.source, null); });
+  // What a colour means: dB of the unit (Absolute, the default) or dB above
+  // the noise at each frequency; the levels above follow (each has its own).
+  const lvMode = $('#lv-mode');
+  $('#lv-abs').addEventListener('click', () => setScope((sc) => { sc.view = withAboveNoise(sc.view, false); }));
+  $('#lv-noise').addEventListener('click', () => setScope((sc) => { sc.view = withAboveNoise(sc.view, true); }));
+  function renderLevels(force = false) {
+    const lv = shownLevels(), vm = app.project.scope.view?.mode, above = !!app.project.scope.view?.aboveNoise;
+    lvRow.hidden = lvMode.hidden = vm !== 'spectrogram';
+    for (const [id, on] of [['#lv-abs', !above], ['#lv-noise', above]]) {
+      $(id).classList.toggle('lit-view', on);
+      $(id).setAttribute('aria-pressed', String(on));
+    }
+    // Above the noise with a sign: +6 dB is 6 dB above it.
+    const fmt = (d) => { const r = Math.round(d * 10) / 10; return `${r < 0 ? '−' : lv?.aboveNoise && r > 0 ? '+' : ''}${Math.abs(r)}`; };
+    lvIn.forEach((el, j) => {
+      el.disabled = !lv;
+      if (force || document.activeElement !== el) el.value = lv ? fmt(j ? lv.ceiling : lv.floor) : '';
+    });
+    const auto = $('#lv-auto');
+    auto.disabled = !lv;
+    auto.classList.toggle('lit-view', !!lv?.auto);
+    auto.setAttribute('aria-pressed', String(!!lv?.auto));
+    lvRow.title = !lv ? '' : lv.aboveNoise ? `The spectrogram's levels of ${lv.source} in dB above the noise at each frequency (0 dB: the noise there)${lv.auto ? ', automatic' : ''}`
+      : `The spectrogram's levels of ${lv.source} (dB of ${lv.unit}: 0 dB is 1 ${lv.unit})${lv.auto ? ', automatic' : ''}`;
+  }
   const src = $('#ch-src');
   // Picking a source switches the channel on; "none" switches it off.
   src.addEventListener('change', () => setScope((sc) => { const c = sc.channels[app.channel]; c.source = src.value; c.on = src.value !== ''; }));
@@ -186,6 +268,9 @@ export function createControls(root, app) {
     src.dataset.names = names.join(',') + '|' + names.map(app.unitOf).join(',');
     const vm = sc.view?.mode ?? 'time';
     root.querySelectorAll('[data-view]').forEach((b) => { b.classList.toggle('lit-view', b.dataset.view === vm); b.setAttribute('aria-pressed', String(b.dataset.view === vm)); });
+    $('#k-delta').hidden = vm !== 'xy';
+    $('#k-delta').classList.toggle('lit-view', !!sc.view?.delta);
+    $('#k-delta').setAttribute('aria-pressed', String(!!sc.view?.delta));
     const f = ch().filter;
     filt.value = f?.type ?? '';
     const fsig = f ? `${f.type}|${f.f0}|${f.order}|${f.q}` : '';
@@ -197,9 +282,12 @@ export function createControls(root, app) {
       fparams.dataset.sig = fsig;
     }
     $('#ch-right').classList.toggle('lit-view', sc.view?.right === app.channel);
+    $('#ch-meas').classList.toggle('lit-view', !!ch().measure);
+    $('#ch-meas').setAttribute('aria-pressed', String(!!ch().measure));
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
+    renderLevels();
   }
 
-  return { render };
+  return { render, renderLevels };
 }

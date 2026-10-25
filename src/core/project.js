@@ -2,6 +2,8 @@
 // reference and every slot but the controller), how the display is set, the
 // goal, and the candidates. Each candidate holds its own controller and may
 // override any other slot. design/output/project-format.md describes it.
+// For a diagram, sim.sampleTime is the scope's record step (absent: the
+// window / 2000); Controller blocks sample at their own Ts.
 
 import { SLOTS, normalizeBlock } from './blocks.js';
 import { normalizeReference, migrateReferenceBlock, referenceFn, sampleSignal } from './signals.js';
@@ -13,6 +15,7 @@ import { normalizeDiagram, diagramNames, compileDiagram } from './diagram.js';
 import { normalizeView } from './views.js';
 import { DesignError, parseOp, operatingPoint, linearize } from './linearize.js';
 import { CONTROLLERS } from './controllers.js';
+import { parseSpeed, speedToJson } from './speed.js';
 
 export const FORMAT = 'loop-tuner/2';
 export const PALETTE_SIZE = 8;
@@ -90,10 +93,11 @@ export function normalizeProject(p) {
 }
 
 // How the page opens: the run control, the open tab, in the Plant tab the
-// representation shown, and the setup area's share of the page height.
+// representation shown, the setup area's share of the page height, and the
+// speed of time (a positive factor, or -1: as fast as possible).
 // Unknown values are dropped.
 export const UI_RUN = ['run', 'stop', 'single'];
-export const UI_TABS = ['input', 'plant', 'controller'];
+export const UI_TABS = ['input', 'plant', 'controller', 'tune', 'analysis'];
 export function normalizeUi(ui) {
   if (!ui || typeof ui !== 'object') return null;
   const out = {};
@@ -101,6 +105,8 @@ export function normalizeUi(ui) {
   if (UI_TABS.includes(ui.tab)) out.tab = ui.tab;
   if (typeof ui.view === 'string' && ui.view) out.view = ui.view;
   if (Number.isFinite(ui.setup) && ui.setup > 0 && ui.setup < 1) out.setup = ui.setup;
+  const speed = parseSpeed(ui.speed);
+  if (speed !== null) out.speed = speedToJson(speed);
   return Object.keys(out).length ? out : null;
 }
 
@@ -187,6 +193,8 @@ export function normalizeScope(scope = {}, period, loop = false) {
     ch.on = !!ch.on;
     const f = normalizeFilter(c.filter, `scope.channels[${i}].filter`);
     if (f) ch.filter = f;
+    // A Measure line under the screen (mean, rms, …); absent is off.
+    if (c.measure === true) ch.measure = true;
     return ch;
   });
   const view = normalizeScopeView(scope.view);
@@ -205,9 +213,13 @@ function normalizeFilter(f, where) {
 }
 
 // How the screen shows the channels: in time (the default), as amplitude
-// spectra (FFT) or as one channel's spectrogram; and which channel, if any,
-// has its values on a second axis at the right.
-export const VIEW_MODES = ['time', 'fft', 'spectrogram'];
+// spectra (FFT), as one channel's spectrogram, or XY (channel 1 across, the
+// others against it; delta: they draw channel 1 minus themselves); and which
+// channel, if any, has its values on a second axis at the right; the
+// spectrogram's levels per signal (absent: automatic); aboveNoise: the
+// spectrogram's colour is dB above the local noise instead of dB of the
+// signal's unit, with levels of its own per signal (noiseLevels).
+export const VIEW_MODES = ['time', 'fft', 'spectrogram', 'xy'];
 function normalizeScopeView(v) {
   if (!v || typeof v !== 'object') return null;
   const out = {};
@@ -216,8 +228,62 @@ function normalizeScopeView(v) {
   const fmin = Number(v.fmin), fmax = Number(v.fmax);
   if (fmin >= 0 && fmax > fmin) { out.fmin = fmin; out.fmax = fmax; }
   if (v.db === false) out.db = false;
+  if (v.delta === true) out.delta = true;
   if ([64, 128, 256, 512, 1024].includes(Number(v.size))) out.size = Number(v.size);
+  const levels = normalizeLevels(v.levels);
+  if (levels) out.levels = levels;
+  if (v.aboveNoise === true) out.aboveNoise = true;
+  const noiseLevels = normalizeLevels(v.noiseLevels);
+  if (noiseLevels) out.noiseLevels = noiseLevels;
   return Object.keys(out).length ? out : null;
+}
+
+// The spectrogram's levels, per signal (dB of one unit are not dB of
+// another): { name: [floor, ceiling] } in dB of that signal's unit, each pair
+// rounded to 0.1 dB, floor first (a reversed pair is swapped), at least 1 dB
+// apart and within ±300 dB. A signal without a pair has automatic levels;
+// no pair at all is absent.
+function normalizeLevels(l) {
+  if (!l || typeof l !== 'object' || Array.isArray(l)) return null;
+  const out = {};
+  for (const [name, pair] of Object.entries(l)) {
+    const lv = normalizeLevelPair(pair);
+    if (name && name !== '__proto__' && lv) out[name] = lv;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function normalizeLevelPair(l) {
+  if (!Array.isArray(l) || l.length !== 2 || l.some((x) => typeof x !== 'number')) return null;
+  const [a, b] = l.map((x) => Math.round(x * 10) / 10).sort((x, y) => x - y);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b - a < 1 || a < -300 || b > 300) return null;
+  return [a, b];
+}
+
+// The scope view with one signal's levels set ([floor, ceiling] in dB) or,
+// with null, back to automatic; the other signals' levels are kept. Levels
+// above the noise (dB above the local noise) are kept apart from absolute
+// ones (dB of the unit), in noiseLevels; which ones follows the view's switch
+// unless aboveNoise is given.
+const levelsKey = (aboveNoise) => (aboveNoise ? 'noiseLevels' : 'levels');
+export function withLevels(view, source, pair, aboveNoise = !!view?.aboveNoise) {
+  const key = levelsKey(aboveNoise), levels = { ...(view?.[key] ?? {}) };
+  if (pair) levels[source] = pair; else delete levels[source];
+  const out = { ...(view ?? {}), [key]: levels };
+  if (!Object.keys(levels).length) delete out[key];
+  return out;
+}
+// A signal's levels in the scope view, or null (automatic): absolute or
+// above the noise, as the view's switch is unless aboveNoise is given.
+export function levelsOf(view, source, aboveNoise = !!view?.aboveNoise) {
+  const l = view?.[levelsKey(aboveNoise)];
+  return l && Object.hasOwn(l, source) ? l[source] : null;
+}
+// The scope view with the spectrogram's colour switched: dB above the local
+// noise (true) or absolute (false, the default: absent).
+export function withAboveNoise(view, on) {
+  const out = { ...(view ?? {}) };
+  if (on) out.aboveNoise = true; else delete out.aboveNoise;
+  return out;
 }
 
 // Every name a scope channel can show: the signals (one per Source) and the

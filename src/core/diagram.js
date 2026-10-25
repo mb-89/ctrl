@@ -18,6 +18,7 @@ import { compileExpr } from './expr.js';
 import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
 import { OBSERVERS } from './observers.js';
 import { SYNC_DESIGNS, defaultDesigns } from './design.js';
+import { EXTERNAL_BLOCK } from './hil.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -37,9 +38,11 @@ export const ELEMENTS = {
   gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
   integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
-  // y0 empty (null): before L it puts out its input at t = 0, as a pipe that
-  // was already flowing; nothing plant-specific has to be typed in for that.
-  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'L', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before L', 0, { nullable: 'its input at t = 0' })], ports: () => [1, 1], formula: 'e^(−Ls)' },
+  // The dead time is T_d in labels and formulas (L is the motor's inductance);
+  // the key stays L, so files are unaffected. y0 empty (null): before T_d it
+  // puts out its input at t = 0, as a pipe that was already flowing; nothing
+  // plant-specific has to be typed in for that.
+  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before T_d', 0, { nullable: 'its input at t = 0' })], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
   fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
@@ -90,21 +93,22 @@ export const ELEMENTS = {
   conicalTank: {
     // A tank that widens upwards (radius r0 at the bottom, R at height H),
     // filled at q and draining through an outlet of area a (Torricelli). Its
-    // dynamics are fast when nearly empty and slow when full.
+    // dynamics are fast when nearly empty and slow when full. It cannot run
+    // dry below 0 or hold more than H: what comes in beyond that overflows.
     label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
     params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
     ode: {
       n: 1,
       states: () => [state('h', 'm')],
-      init: (p) => [p.h0],
-      out: (X, o, p, y) => { y[0] = X[o]; },
+      init: (p) => [Math.min(p.H, p.h0)],
+      out: (X, o, p, y) => { y[0] = Math.min(p.H, Math.max(0, X[o])); },
       make(p) {
         const { r0, H } = p, slope = (p.R - r0) / H, out = p.a * Math.sqrt(2 * p.g);
         return (X, o, u, dX) => {
-          const h = Math.max(0, X[o]);
-          const r = r0 + slope * Math.min(h, H);
+          const h = Math.min(H, Math.max(0, X[o]));
+          const r = r0 + slope * h;
           const flow = Math.max(0, u) - out * Math.sqrt(h);
-          dX[o] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+          dX[o] = (h <= 0 && flow < 0) || (h >= H && flow > 0) ? 0 : flow / (Math.PI * r * r);
         };
       },
       bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
@@ -126,6 +130,9 @@ export const ELEMENTS = {
     ports: (p) => [p.inputs, p.outputs],
     outputs: (p) => Array.from({ length: p.outputs }, (_, i) => `x̂${i + 1}`),
   },
+  // A plant outside the page (Live mode, hil.js): its outputs come from the
+  // plant every cycle, its inputs are sent back; offline the outputs hold 0.
+  external: EXTERNAL_BLOCK,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
@@ -205,7 +212,7 @@ export function diagramBlockDef(type) {
   if (ELEMENTS[type]) return ELEMENTS[type];
   const b = BLOCKS.plant[type];
   if (!b) throw new Error(`unknown block type "${type}"; types: ${[...Object.keys(ELEMENTS), ...Object.keys(BLOCKS.plant)].join(', ')}`);
-  return { label: b.label, group: 'Models', params: b.params, ports: () => [1, 1], formula: b.formula, tf: (p) => b.tf(p), model: true };
+  return { label: b.label, group: 'Models', params: b.params, ports: () => [1, 1], formula: b.formula, tf: (p) => b.tf(p), model: true, ...(b.summary ? { summary: b.summary } : {}) };
 }
 
 export function diagramTypes() {
@@ -228,6 +235,7 @@ export function parseEnd(end) {
 
 function normalizeParams(type, params = {}, where) {
   if (diagramBlockDef(type).model) return normalizeBlock('plant', { type, params }).params;
+  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where);  // blocks that check their own (external)
   const out = {};
   for (const p of ELEMENTS[type].params) {
     let v = params[p.key] ?? p.default;
@@ -273,7 +281,7 @@ export function normalizeDiagram(d, path = 'plant') {
     if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
       const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
-      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib));
+      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib, { inputs: out.params.inputs }));
       out.variant = Math.min(Math.max(0, Math.round(Number(b.variant) || 0)), out.variants.length - 1);
     }
     return out;
@@ -343,6 +351,11 @@ export function blockInputNames(diagram, idPath) {
     if (!w) return 'not connected';
     const f = parseEnd(w.from), src = lv.blocks.find((b) => b.id === f.id);
     if (src.type === 'source') return src.params.signal;
+    // A subsystem's output is named by its Out block ("speed" from Motor).
+    if (src.type === 'subsystem') {
+      const out = src.diagram.blocks.find((b) => b.type === 'outport' && b.params.port === f.port + 1);
+      return out?.name ? `${out.name} (${src.name ?? src.id})` : (src.name ?? src.id);
+    }
     return outputNames(diagramBlockDef(src.type), src.params)[f.port] || (src.name ?? src.id);
   });
 }
@@ -376,7 +389,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const warnings = [];
   const probeList = [];
   const add = (node) => { nodes.push({ inputs: [], ...node, i: nodes.length }); return nodes.length - 1; };
+  const externals = [];
   let extNode = -1, outNode = -1;
+  const ctrlNodes = [];  // [block id path, node] of every Controller block
 
   // Creates nodes for one level; returns, per block id, where its output
   // ports come from and where its input ports go. Each node has a name
@@ -439,9 +454,19 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (b.type === 'controller' || b.type === 'observer') {
         const lib = VARIANT_LIBS[b.type];
         const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
-        const k = add({ kind: 'ctrl', name, idPath, ft: false, observer: b.type === 'observer', variant: v, lib, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: null, next: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
+        const k = add({ kind: 'ctrl', name, idPath, ft: false, observer: b.type === 'observer', variant: v, lib, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: null, next: 0, k: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
         nodes[k].taps = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j, see: -1 })) : [];
         outs[b.id] = b.type === 'observer' ? nodes[k].taps : [k];
+        ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+        if (b.type === 'controller') ctrlNodes.push([`${ids}${b.id}`, k]); // auto-tune probes (below)
+        continue;
+      }
+      if (b.type === 'external') {
+        // Live mode sets its outputs (outv) each cycle and reads its inputs;
+        // one tap node per output, as for a physics block.
+        const k = add({ kind: 'xplant', name, ft: false, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut) });
+        externals.push(k);
+        outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
@@ -483,6 +508,15 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     return { outs, ins };
   }
   level(diagram, '', '', true);
+  // Auto-tune reads each Controller block's r (input 1), y (input 2) and u
+  // under its id path: "ctrl.r", "motor/ctrl.u". A signal name never has a
+  // dot, so no scope channel lists these (and no Sink lookup reads them).
+  for (const [key, k] of ctrlNodes) {
+    const [r = -1, y = -1] = nodes[k].inputs;
+    if (r >= 0) probeList.push([`${key}.r`, r]);
+    if (y >= 0) probeList.push([`${key}.y`, y]);
+    probeList.push([`${key}.u`, k]);
+  }
   if (!standalone) {
     if (outNode < 0) throw new Error(`${path}: add an Out block for the plant output y`);
     if (extNode < 0) warnings.push(`${path}: no In block, so the plant ignores u`);
@@ -526,6 +560,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   // instant already sees the new estimate.
   const ctrls = nodes.filter((nd) => nd.kind === 'ctrl').sort((a, b) => b.observer - a.observer);
   const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
+  // Every sampled block's Ts: simulateSystem puts each sample instant k·Ts on
+  // its integration grid.
+  const sampleTimes = [...new Set(ctrls.map((nd) => nd.Ts))];
 
   // Laws, made once every node exists. A hand variant is made from its
   // parameters; a designed one from the values its design computes from the
@@ -545,7 +582,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       // What u is called: the Sink that records a Controller's output (for an
       // Observer, what feeds its u), else what the Controller tab calls it.
       const fed = nd.observer ? nd.inputs[0] : nd.i;
-      const sink = fed >= 0 ? probeList.find(([, k]) => nodes[k].kind === 'pass' && nodes[k].inputs[0] === fed) : null;
+      const sink = fed >= 0 ? probeList.find(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === fed) : null;
       const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: sink?.[0] ?? (nd.observer ? inputs[0] : 'u'), outputs: nd.outv.length };
       const status = job.resolve(block, nd.variant, nd.lib);
       nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
@@ -587,6 +624,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         // An observer's estimate looked through (model mode) reads the state it stands for.
         case 'tap': y = nd.see >= 0 ? X[o + nd.see] : nodes[nd.parent].outv[nd.j]; break;
         case 'ctrl': y = nd.u; break;
+        // An External plant (Live mode): what the plant sent last; 0 offline.
+        case 'xplant': y = nd.outv[0]; break;
         default: {
           const { ss } = nd;
           const inp = nd.delay > 0 && !model ? histAt(nd.hist, t - nd.delay) : inOf(nd);
@@ -613,21 +652,25 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   }
 
   const self = {
-    n, bound, warnings, minTs, states, designs,
+    n, bound, warnings, minTs, sampleTimes, states, designs,
     setStep(step) { h = step; },
     // Called at each completed step with the state there: a controller whose
     // sample is due reads its inputs and sets its held output; the outputs are
-    // then evaluated again so what is recorded at t already sees it.
+    // then evaluated again so what is recorded at t already sees it. Sample k
+    // is due at k·Ts, computed from k (no sum that drifts), so a step that
+    // lands on k·Ts (simulateSystem's grid) samples exactly there.
     sample(t, X, o, u) {
       for (const nd of ctrls) {
         if (!nd.law || t < nd.next - 1e-9) continue;
         for (let s = 0; s < nd.x.length; s++) nd.x[s] = inOf(nd, s);
         const y = nd.law.step(nd.x);
         if (nd.observer) nd.outv.set(y.subarray ? y.subarray(0, nd.outv.length) : y.slice(0, nd.outv.length)); else nd.u = y;
-        while (nd.next <= t + 1e-9) nd.next += nd.Ts;
+        while (nd.next <= t + 1e-9) nd.next = ++nd.k * nd.Ts;
         self.eval(t, X, o, u, null);
       }
     },
+    // The next instant a sampled block is due (Infinity without one).
+    nextSample() { let t = Infinity; for (const nd of ctrls) if (nd.next < t) t = nd.next; return t; },
     // Initial state: zero, except for physics blocks with initial conditions.
     init(X, o) { for (const nd of stateNodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
     eval(t, X, o, u, dX) {
@@ -651,6 +694,15 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       for (const nd of nodes) if (nd.kind === 'src' && nd.signal !== null) sources[nd.signal] = nd.fn(t);
       return { t, X: Float64Array.from(X.subarray(o, o + n)), held, inputs, sources };
     },
+    // External plants (Live mode): y is written by the caller, u() reads what
+    // the diagram feeds the block after the last eval, and shows[i] lists the
+    // probes (Sinks) on the same signal as input i, which show what the plant
+    // applies during a stop.
+    externals: externals.map((k) => {
+      const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
+      const shows = nodes[k].inputs.map((s) => (s < 0 ? [] : probeList.flatMap(([, pk], j) => (nodes[pk].kind === 'pass' && origin(pk) === origin(s) ? [j] : []))));
+      return { name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])), shows };
+    }),
   };
   if (!model) return self;
 
@@ -707,6 +759,10 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     const fromCut = walk([cut], (i) => users[i]);
     const toMeas = walk(meas, deps);
     const kept = stateNodes.filter((nd) => nd.i !== cut && fromCut[nd.i] && toMeas[nd.i]);
+    // A plant outside the page (an External plant, Live mode) has no model
+    // here: what u drives, or what the measurements read, runs elsewhere.
+    const outside = nodes.find((nd, i) => nd.kind === 'xplant' && (fromCut[i] || nd.i === cut || nodes.some((tp, j) => tp.kind === 'tap' && tp.parent === i && toMeas[j])));
+    if (outside) throw modelError('external-plant', `the plant runs outside the page (External plant '${outside.name}'): the page has no model of it to design with or analyse`, 'identify it first (the Identify tab is designed, not built yet), or set the gains by hand and tune it live');
     // The slices: only the nodes the kept rates read (for f), and those the
     // measurements read too (for y).
     const sliceOf = (starts) => { const used = walk(starts, reads); return Int32Array.from(order.filter((i) => used[i] && i !== cut)); };
@@ -789,7 +845,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       return lo[mk] === Infinity ? 0 : lo[mk];
     });
 
-    const sink = probeList.find(([, k]) => nodes[k].kind === 'pass' && nodes[k].inputs[0] === cut);
+    const sink = probeList.find(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === cut);
     const inputLabel = sink?.[0] ?? (blk.observer ? nodes[cut].name : 'u');
     if (!meas.some((mk) => mk >= 0 && fromCut[mk])) {
       const between = nodes.filter((nd) => nd.kind === 'ctrl' && !nd.observer && nd.i !== cut && nd.inputs.some((s) => s >= 0 && fromCut[s])).map((nd) => `'${nd.name}'`);

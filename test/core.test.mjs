@@ -248,6 +248,7 @@ test('2D views compile and move with the signals; library parts combine', async 
   assert.equal(fromLoop.candidates.length, 0, 'a whole load leaves no controller of an older project behind');
   assert.equal(loopReady({ ...fromLoop, candidates: EXAMPLES[0].candidates }), false, 'a diagram with its own Sources is never run as a loop plant');
   assert.ok(SYSTEM_LIBRARY.every((s) => s.ui?.run === 'run' && (!s.ui.view || s.plant.views.some((v) => v.name === s.ui.view))), 'every system opens running, on a view it has');
+  assert.equal(SYSTEM_LIBRARY.find((s) => s.name.includes('badly tuned'))?.ui.tab, 'tune', 'the system made for Auto-tune opens on that tab');
   assert.deepEqual(p.ui, { run: 'run', tab: 'plant', setup: 0.42, view: 'Cart and pole' }, 'a whole load brings how the system opens');
   assert.deepEqual(normalizeProject({ ui: { run: 'fast', tab: 'plant', extra: 1 } }).ui, { tab: 'plant' }, 'unknown ui values are dropped');
   assert.throws(() => normalizeProject({ system: { plant: { type: 'diagram', diagram: { blocks: [], wires: [] }, views: [{ kind: '2d', shapes: [{ type: 'line', x1: 'sin(' }] }] } } }), /views\[0\]/);
@@ -349,4 +350,123 @@ test('controller variants are validated; view captions keep their width', async 
   assert.equal(a[0].text.length, b[0].text.length);
   assert.equal(b[0].text, 'x = -12.25 m');
   assert.deepEqual(a[1].pts[2], [1.5, 1]);
+});
+
+test('library tags: opposite values look different, and a value looks the same on every card', async () => {
+  const { SYSTEM_LIBRARY, TAG_TONES, systemTags } = await import('../src/core/systems.js');
+  const seen = new Map();
+  for (const e of SYSTEM_LIBRARY) {
+    for (const t of e.tags) {
+      assert.ok(TAG_TONES.includes(t.tone), `${e.name}: ${t.label} has no palette tone`);
+      const look = `${t.kind}/${t.tone}`;
+      assert.equal(seen.get(t.label) ?? look, look, `${t.label} looks different on ${e.name}`);
+      seen.set(t.label, look);
+    }
+  }
+  const lin = systemTags({ diagram: { blocks: [{ id: 'g', type: 'gain', params: {} }], wires: [] } });
+  const non = systemTags({ diagram: { blocks: [{ id: 's', type: 'saturation', params: {} }], wires: [] } });
+  assert.equal(lin[0].label, 'Linear'); assert.equal(non[0].label, 'Nonlinear');
+  assert.notEqual(lin[0].tone, non[0].tone);
+  const none = lin.find((t) => t.label === 'No controller'), pid = systemTags({ diagram: { blocks: [{ id: 'c', type: 'controller', params: {}, variants: [{ type: 'pid' }] }], wires: [] } }).find((t) => t.label === 'PID');
+  assert.notEqual(none.kind, pid.kind, 'No controller must not look like a controller');
+  // Values that differ look different at a glance: no tag shares its tone
+  // with a tag beside it on any card (Disturbance was Nonlinear's red on
+  // three, Dead time Auto-tune's green on the oven), and in the filter row no
+  // two values of one kind share a tone.
+  for (const e of SYSTEM_LIBRARY) {
+    const tones = e.tags.map((t) => t.tone);
+    assert.equal(new Set(tones).size, tones.length, `${e.name}: ${e.tags.map((t) => `${t.label} ${t.tone}`).join(', ')}`);
+  }
+  const { libraryTags } = await import('../src/core/systems.js');
+  const looks = libraryTags().map((t) => `${t.kind}/${t.tone}`);
+  assert.equal(new Set(looks).size, looks.length, looks.join(' '));
+});
+
+test('library tags: Disturbance only where d plays something', async () => {
+  const { SYSTEM_LIBRARY } = await import('../src/core/systems.js');
+  const tags = (name) => SYSTEM_LIBRARY.find((e) => e.name.startsWith(name)).tags.map((t) => t.label);
+  // Following a sine keeps a Source d with no components: it stays 0.
+  assert.ok(!tags('Following a sine').includes('Disturbance'), tags('Following a sine').join(', '));
+  assert.ok(tags('DC motor').includes('Disturbance') && tags('Pendulum swing-up').includes('Disturbance'));
+});
+
+test('XY: channel 1 is the X axis, never a target of vertical gestures, selected or not', async () => {
+  const { valueTargets } = await import('../src/ui/xyview.js');
+  const all = () => true;
+  assert.deepEqual(valueTargets('xy', 0, all), [1, 2, 3], 'a line 1 selected in Time does not carry over');
+  assert.deepEqual(valueTargets('xy', 2, all), [2]);
+  assert.deepEqual(valueTargets('xy', null, (i) => i !== 3), [1, 2]);
+  assert.deepEqual(valueTargets('time', 0, all), [0]);
+  assert.deepEqual(valueTargets('time', null, all), [0, 1, 2, 3]);
+});
+
+test('XY: the status names Δ only when it changes a channel; the empty screen says why', async () => {
+  const { xyStatus, xyEmpty, fitLabel } = await import('../src/ui/xyview.js');
+  const unit = (s) => ({ F: 'N', x: 'm', Ekin: 'J', Epot: 'J', r: 'rad', angle: 'rad' })[s] ?? '1';
+  const ch = (source, on = true) => ({ source, on, scale: 1, offset: 0 });
+  // The mass–spring–damper: F in N across, x in m and the energies in J: Δ subtracts nothing.
+  const msd = { channels: [ch('F'), ch('x'), ch('Ekin'), ch('Epot')], view: { mode: 'xy', delta: true } };
+  assert.equal(xyStatus(msd, unit), 'XY · Δ: no channel in N');
+  const sine = { channels: [ch('r'), ch('angle'), ch('', false), ch('', false)], view: { mode: 'xy', delta: true } };
+  assert.equal(xyStatus(sine, unit), 'XY · Δ X − Y');
+  assert.equal(xyStatus({ ...sine, view: { mode: 'xy' } }, unit), 'XY');
+  assert.match(xyEmpty({ channels: [ch('r', false)] }), /channel 1 \(r\) is off\. Turn it on with the channel key 1 under Vertical/);
+  assert.match(xyEmpty({ channels: [ch('')] }), /Give it a source/);
+  // Rounding noise in a fit's intercept reads 0, not 5.46e-17.
+  assert.equal(fitLabel('x', 'F', { a: 0.04, b: 5.46e-17, sigma: 0 }, 0.02, 1, 'm'), 'x  ≈ 0.04·F + 0   σ 0 m');
+});
+
+test('XY: switching Following a sine to Time fits the angle again, so it stays on the screen', async () => {
+  const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = await import('../src/core/systems.js');
+  const { evaluateSystem } = await import('../src/core/project.js');
+  const { drawnValues, refitSwitched } = await import('../src/ui/xyview.js');
+  const entry = SYSTEM_LIBRARY.find((s) => s.name.startsWith('Following a sine'));
+  const p = normalizeProject(applySystem(DEFAULT_PROJECT, entry, SYSTEM_PARTS));
+  p.scope.timebase = autoTimebase(p);
+  const res = evaluateSystem(p), unit = (s) => ({ r: 'rad', angle: 'rad', V: 'V' })[s] ?? '1';
+  // Auto Scale in XY Δ fits the error r − angle.
+  p.scope.channels.forEach((c, i) => { const v = drawnValues(res.signals, p.scope, i, unit), f = v && fitChannel(v); if (f) Object.assign(c, f); });
+  const onScreen = (sc, i) => { const c = sc.channels[i]; return Math.max(...Array.from(res.signals[c.source], (v) => Math.abs((v + c.offset) / c.scale))) <= 4; };
+  // Press Time: the angle (±1 rad) at the error's scale left the ±4 divisions before.
+  const before = structuredClone(p.scope), time = structuredClone(p.scope);
+  delete time.view.mode;
+  assert.equal(onScreen(time, 1), false, 'at the Δ scale the angle leaves the screen');
+  refitSwitched(before, time, res.signals, unit);
+  assert.ok(onScreen(time, 1), JSON.stringify(time.channels[1]));
+  // And back to XY: fitted to the error again.
+  const xy = structuredClone(time);
+  xy.view.mode = 'xy';
+  refitSwitched(time, xy, res.signals, unit);
+  assert.deepEqual([xy.channels[1].scale, xy.channels[1].offset], [p.scope.channels[1].scale, p.scope.channels[1].offset]);
+});
+
+test('XY: following a sine, the error figure closes from a wide ellipse (P) to a thin line (PID)', async () => {
+  const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = await import('../src/core/systems.js');
+  const { evaluateSystem, autoTimebase } = await import('../src/core/project.js');
+  const { lineFit, isDelta, ySignal } = await import('../src/ui/xyview.js');
+  const entry = SYSTEM_LIBRARY.find((s) => s.name.startsWith('Following a sine'));
+  const spread = (name) => {
+    const p = normalizeProject(applySystem(DEFAULT_PROJECT, entry, SYSTEM_PARTS));
+    p.scope.timebase = autoTimebase(p);   // one period of the input, as the page loads it
+    const c = p.system.plant.diagram.blocks.find((b) => b.type === 'controller');
+    c.variant = c.variants.findIndex((v) => v.name === name);
+    const res = evaluateSystem(p), unit = (s) => ({ r: 'rad', angle: 'rad', V: 'V' })[s];
+    assert.ok(isDelta(p.scope, 1, unit) && !isDelta({ ...p.scope, channels: [p.scope.channels[0], { source: 'V' }] }, 1, unit), 'Δ only for channels in X\'s unit');
+    const e = ySignal(res, p.scope, 1, unit), n = res.t.length;
+    return lineFit(res.signals.r, e, Math.round(n * 0.3), n - 1).sigma;
+  };
+  const [p, pd, pid] = ['P', 'PD', 'PID'].map(spread);
+  assert.ok(p > 1.5 * pd && pd > 5 * pid && pid < 0.02 && p > 0.1, `σ: P ${p}, PD ${pd}, PID ${pid}`);
+});
+
+test('System library tags: every tag listed once, grouped; filtering keeps systems that carry all chosen tags', async () => {
+  const { SYSTEM_LIBRARY, libraryTags, filterByTags } = await import('../src/core/systems.js');
+  const tags = libraryTags();
+  assert.equal(new Set(tags.map((t) => t.label)).size, tags.length);
+  assert.ok(tags.findIndex((t) => t.kind === 'plant') < tags.findIndex((t) => t.kind === 'feature'));
+  assert.deepEqual(filterByTags([]), SYSTEM_LIBRARY.map((e, i) => i));
+  const lin = filterByTags(['Linear']), non = filterByTags(['Nonlinear']);
+  assert.ok(lin.length && non.length && lin.length + non.length === SYSTEM_LIBRARY.length, 'every system is linear or nonlinear');
+  const both = filterByTags(['Nonlinear', 'Disturbance']);
+  assert.ok(both.every((i) => non.includes(i) && SYSTEM_LIBRARY[i].tags.some((t) => t.label === 'Disturbance')));
 });

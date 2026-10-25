@@ -83,6 +83,32 @@ button, input, select { font: inherit; color: inherit; }
 .btn.icon { width: 30px; padding: 0; justify-content: center; }
 .btn svg { width: 15px; height: 15px; }
 .sep { width: 1px; height: 20px; background: var(--line-strong); }
+/* Speed (ui/speed.js): a factor in a header button's frame, its presets in a
+   header popover, and the speed achieved beside it in the readout type. */
+.speed { display: inline-flex; align-items: center; gap: 6px; }
+.speed-label { font-size: 13px; color: var(--ink-2); }
+.speed-set { display: inline-flex; align-items: stretch; height: 30px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--panel-2); }
+.speed-set:focus-within { border-color: var(--ink-2); }
+.speed-in { width: calc(9ch + 12px); min-width: 0; border: 0; border-radius: 5px 0 0 5px; background: transparent; padding: 0 4px 0 8px; font-family: var(--mono); font-size: 13px; text-align: right; }
+.speed-in:focus { outline: none; background: var(--panel); }
+.speed-btn { width: 24px; padding: 0; border: 0; border-left: 1px solid var(--line); border-radius: 0 5px 5px 0; background: transparent; color: var(--ink-2); font-size: 11px; cursor: pointer; }
+.speed-btn:hover:not([aria-disabled="true"]) { background: var(--recess); color: var(--ink); }
+/* Held at 1× by a live plant: read-only, in the secondary ink, with a lock
+   over the field's empty left end (nothing moves). */
+.speed-lock { display: none; position: absolute; left: 7px; top: 0; bottom: 0; align-items: center; color: var(--ink-2); pointer-events: none; }
+.speed-lock svg { width: 12px; height: 12px; }
+.speed.locked .speed-lock { display: inline-flex; }
+.speed.locked .speed-in { color: var(--ink-2); }
+.speed.locked .speed-in, .speed.locked .speed-btn { cursor: not-allowed; }
+.speed.locked .speed-btn { color: var(--muted); }
+.speed-got { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 10ch; white-space: nowrap; }
+.speed-got.held { color: var(--ink-2); }
+.popover.speed-pop { left: 0; right: auto; width: 220px; padding: 4px; }
+.speed-item { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; font-size: 13px; }
+.speed-item b { min-width: 4ch; font-family: var(--mono); font-weight: 600; }
+.speed-item span { color: var(--muted); font-size: 12px; }
+.speed-item:hover, .speed-item:focus-visible { background: var(--recess); outline: none; }
+.speed-item[aria-checked="true"] { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .field { height: 26px; border-radius: 5px; border: 1px solid var(--line-strong); background: var(--panel); padding: 0 6px; font-size: 13px; min-width: 0; }
 
 /* Rubber keys */
@@ -364,12 +390,13 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 }
 
 /* Controller tab */
-.ctl { display: grid; grid-template-columns: minmax(200px, 250px) minmax(200px, 260px) minmax(260px, 1fr) minmax(200px, 260px); gap: 14px; align-items: stretch; height: 100%; min-height: 0; }
+.ctl { display: grid; grid-template-columns: minmax(200px, 250px) minmax(200px, 320px) minmax(260px, 1fr) minmax(200px, 260px); gap: 14px; align-items: stretch; height: 100%; min-height: 0; }
 .ctl > .gcol { min-height: 0; overflow: auto; }
 .ctname { font-weight: 600; font-size: 13px; color: var(--ink); }
 .ctblocks { display: flex; flex-direction: column; gap: 4px; }
 .ctport { display: inline-block; font-family: var(--mono); font-size: 11.5px; padding: 0 5px; margin: 2px 2px 0 0; border-radius: 4px; background: var(--panel); border: 1px solid var(--line); white-space: nowrap; }
-.vlist { margin: 0; list-style: none; flex: 0 1 auto; }
+/* The list keeps its rows; the column scrolls when the diagram below needs room. */
+.vlist { margin: 0; list-style: none; flex: 0 0 auto; }
 .vrow { grid-template-columns: 14px minmax(0, 1fr) auto; }
 .vrow .vdot { font-size: 10px; color: #33d17a; }
 .vrow .vtype { font-size: 11px; color: var(--lcd-dim); white-space: nowrap; }
@@ -427,7 +454,8 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 
 /* Display modes and display filters (scope, Run Control and Vertical) */
 .viewkeys { margin-top: 2px; gap: 4px; }
-.viewkeys .key { flex: 1; min-height: 24px; }
+.viewkeys .key { flex: 1 1 auto; min-width: 0; min-height: 24px; padding-left: 5px; padding-right: 5px; }
+.viewkeys #k-delta { flex: 0 0 28px; }
 .key.lit-view { background: var(--lcd); color: #f2c718; border-color: #f2c718; }
 .st-view { background: #2a3540; color: #f2c718; }
 .srcrow .axbtn { flex: none; padding: 1px 6px; }
@@ -435,14 +463,197 @@ kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--line-
 .filtparams { display: flex; gap: 4px; flex: 2 1 auto; min-width: 0; }
 .filtparams .field { width: 0; flex: 1 1 52px; min-width: 44px; font-family: var(--mono); font-size: 12px; padding: 1px 4px; }
 .filtparams select.field { flex: 0 1 46px; }
+.lvrow { margin-top: 2px; gap: 4px; }
+.lvrow .field { width: 0; flex: 1 1 52px; min-width: 40px; font-family: var(--mono); font-size: 12px; padding: 1px 4px; text-align: right; }
+.lvrow .field:disabled { opacity: 0.55; }
+.lvmode .key { flex: 1 1 auto; min-width: 0; padding-left: 5px; padding-right: 5px; }
 
-/* System library tags: one colour per kind */
+/* System library tags. The style says what a tag is about (plant: filled;
+   controller: a bar; observer: an outline; feature: a dot; none: dashed), the
+   tone which value it is. Tones: a categorical palette validated for colour-
+   vision deficiency on each theme's panel; the dark steps are its own. */
+.tone-blue { --tone: #2a78d6; } .tone-orange { --tone: #eb6834; } .tone-aqua { --tone: #1baf7a; } .tone-yellow { --tone: #eda100; }
+.tone-magenta { --tone: #e87ba4; } .tone-green { --tone: #008300; } .tone-violet { --tone: #6250d6; } .tone-red { --tone: #e34948; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tone-blue { --tone: #3987e5; } :root:not([data-theme="light"]) .tone-orange { --tone: #d95926; }
+  :root:not([data-theme="light"]) .tone-aqua { --tone: #199e70; } :root:not([data-theme="light"]) .tone-yellow { --tone: #c98500; }
+  :root:not([data-theme="light"]) .tone-magenta { --tone: #d55181; } :root:not([data-theme="light"]) .tone-violet { --tone: #9085e9; }
+  :root:not([data-theme="light"]) .tone-red { --tone: #e66767; }
+}
+:root[data-theme="dark"] .tone-blue { --tone: #3987e5; } :root[data-theme="dark"] .tone-orange { --tone: #d95926; }
+:root[data-theme="dark"] .tone-aqua { --tone: #199e70; } :root[data-theme="dark"] .tone-yellow { --tone: #c98500; }
+:root[data-theme="dark"] .tone-magenta { --tone: #d55181; } :root[data-theme="dark"] .tone-violet { --tone: #9085e9; }
+:root[data-theme="dark"] .tone-red { --tone: #e66767; }
 .systags { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 2px; }
-.tag { font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; padding: 1px 7px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
-.tag-plant { color: #2ea8a0; border-color: #2ea8a066; background: #2ea8a014; }
-.tag-controller { color: #4e8fe6; border-color: #4e8fe666; background: #4e8fe614; }
-.tag-observer { color: #a77be0; border-color: #a77be066; background: #a77be014; }
-.tag-signal { color: #e0569a; border-color: #e0569a66; background: #e0569a14; }
-.tag-feature { color: #c79a12; border-color: #c79a1266; background: #c79a1214; }
+.tag { font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; line-height: 15px; padding: 0 7px; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; color: var(--ink); }
+.tag-plant { background: var(--tone); color: #fff; }
+.tag-controller { border-radius: 3px; border-color: color-mix(in srgb, var(--tone) 45%, transparent); border-left: 4px solid var(--tone); background: color-mix(in srgb, var(--tone) 16%, transparent); padding-left: 5px; }
+.tag-observer { border: 1.5px solid var(--tone); }
+.tag-feature { background: var(--panel-2); color: var(--ink-2); }
+.tag-feature::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); margin-right: 5px; vertical-align: 0; }
+.tag-none { border: 1px dashed var(--muted); color: var(--muted); background: transparent; font-weight: 500; }
+button.tag { cursor: pointer; font-family: inherit; }
+button.tag[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 1px; }
+.tagfilter { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 0 6px 8px; border-bottom: 1px solid var(--line); }
+.tagcount { margin-left: auto; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.taglegend { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 2px 6px 6px; color: var(--muted); font-size: 11px; }
+.taglegend .tag { --tone: var(--muted); }
 
 .ctable { grid-column: 2; font-family: var(--mono); }
+
+/* Analysis tab: key numbers at the left, four plots in the scope's style. */
+.an { display: grid; grid-template-columns: minmax(230px, 290px) 1fr; gap: 12px; height: 100%; min-height: 0; }
+.an-side { overflow: auto; min-height: 0; }
+.an-op { display: flex; gap: 4px; flex-wrap: wrap; }
+.an-op .key, .an-tg .key { min-height: 22px; padding: 0 7px; }
+.an-tg { display: flex; gap: 3px; }
+.an-verdict { font-size: 12.5px; line-height: 1.4; }
+.kw { border-collapse: collapse; font-size: 12px; width: 100%; }
+.kw th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 2px 8px 2px 0; white-space: nowrap; vertical-align: top; }
+.kw td { font-family: var(--mono); font-size: 11.5px; padding: 2px 6px 2px 0; color: var(--ink); vertical-align: top; }
+.grade { font-weight: 700; font-size: 11px; white-space: nowrap; }
+.grade-good { color: #0b8a0b; } .grade-fair { color: #a66f00; } .grade-poor { color: #c62f2f; }
+:root[data-theme="dark"] .grade-good { color: #2fd36f; } :root[data-theme="dark"] .grade-fair { color: #fab219; } :root[data-theme="dark"] .grade-poor { color: #ff6b6b; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .grade-good { color: #2fd36f; } :root:not([data-theme="light"]) .grade-fair { color: #fab219; } :root:not([data-theme="light"]) .grade-poor { color: #ff6b6b; } }
+.an-grid { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(190px, 1fr); gap: 8px; min-height: 0; overflow: auto; }
+.an-fig { margin: 0; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bezel); border-radius: 6px; padding: 4px; }
+.an-fig figcaption { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; color: var(--lcd-ink); padding: 0 4px 3px; font-family: var(--mono); white-space: nowrap; overflow: hidden; }
+.an-fig figcaption .dim { color: var(--lcd-dim); overflow: hidden; text-overflow: ellipsis; }
+.an-fig canvas { flex: 1 1 0; min-height: 0; width: 100%; display: block; }
+@media (max-width: 900px) { .an { grid-template-columns: 1fr; } .an-grid { grid-template-columns: 1fr; } }
+
+/* Auto-tune tab: controller | method | goal | progress */
+.tune { display: grid; grid-template-columns: minmax(180px, 230px) minmax(220px, 290px) minmax(200px, 260px) minmax(280px, 1fr); gap: 14px; align-items: stretch; height: 100%; min-height: 0; }
+.tune > .gcol { min-height: 0; overflow: auto; }
+.tumethods { display: flex; flex-direction: column; gap: 4px; }
+.tumethod { flex-direction: column; align-items: flex-start; gap: 1px; }
+.tumethod span { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
+.tumethod.on span { color: var(--lcd-dim); }
+.tune .reps { align-self: flex-start; }
+.tune .pf .reps { grid-column: 2; }
+.turows { flex: 0 0 auto; gap: 1px; margin: 0; list-style: none; }
+.turows:empty { display: none; }
+.turow { display: grid; grid-template-columns: minmax(28px, auto) minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 1px 6px; font-family: var(--mono); font-size: 12.5px; }
+.turows.wide .turow { grid-template-columns: 78px minmax(0, 1fr) minmax(0, auto); }
+.turow > span:first-child { color: var(--lcd-dim); white-space: nowrap; }
+.turow > span:nth-child(2) { text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.turow em { font-style: normal; font-size: 11px; color: var(--lcd-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turow em:empty { display: none; }
+.turow.tucost > span:nth-child(2) { color: #33d17a; }
+.turow.tuworse > span:nth-child(2) { color: var(--bad); }
+.tuhead { display: flex; flex-direction: column; padding: 1px 6px 3px; font-size: 12.5px; }
+.tuhead b { font-family: var(--mono); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tuhead span { font-size: 11px; color: var(--lcd-dim); }
+.tustatus { flex: 0 0 auto; font-size: 12.5px; line-height: 1.4; color: var(--ink-2); min-height: 18px; }
+.tustatus .dim { color: var(--muted); }
+.tuwhy { color: var(--bad); }
+.tuplot { display: block; width: 100%; height: 118px; flex: 0 0 auto; border-radius: 8px; background: #0a0d10; }
+.tuplot[hidden] { display: none; }
+.tune .field:disabled, .tune .rep:disabled { opacity: 0.55; cursor: default; }
+/* Narrow: the columns stack, Start and the progress first. */
+@media (max-width: 900px) {
+  .tune { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .tune > .tuprogress { order: -1; }
+}
+
+/* Controller tab: the small diagram of what the running variant does
+   (src/ui/ctldiagram.js), under the variant list. Theme colours only. */
+.ctdiag { margin: 2px 0 0; padding: 5px 3px 3px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); cursor: zoom-in; }
+.ctdiag:hover { border-color: var(--line-strong); }
+.ctdiag figcaption { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 4px; }
+.ctdiag figcaption span { font-size: 11px; color: var(--muted); }
+.ctdiag svg { display: block; width: 100%; max-width: 405px; height: auto; margin: 0 auto; }
+.cdg { font-family: var(--mono); font-size: 10px; }
+.cdg .w { fill: none; stroke: var(--ink-2); stroke-width: 1.1; stroke-linejoin: round; }
+.cdg .w.d { stroke-dasharray: 3 2; }
+.cdg .w.o { stroke-dasharray: 1 2; }
+.cdg .halo { fill: none; stroke: var(--panel); stroke-width: 5; }
+.cdg .ah, .cdg .dot { fill: var(--ink-2); }
+.cdg .b { fill: var(--key-top); stroke: var(--ink-2); stroke-width: 1; }
+.cdg .t { fill: var(--ink); }
+.cdg .k { fill: var(--muted); }
+.cdg .v { fill: var(--ink); font-weight: 600; }
+.cdg .p { fill: var(--ink); font-size: 11px; font-weight: 600; }
+.cdg .n { fill: var(--muted); font-size: 9px; }
+.cdg .n.warn { fill: var(--bad); font-weight: 600; }
+.cdg .sg { fill: var(--ink-2); font-size: 9px; }
+.cdg .f { opacity: 0.3; }
+.ctdiag-big { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); cursor: zoom-out; padding: 16px; }
+.ctdiag-big figure { margin: 0; width: min(100%, 840px); background: var(--panel); border-radius: 12px; padding: 14px 16px 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35); }
+.ctdiag-big svg { display: block; width: 100%; height: auto; }
+.ctdiag-big figcaption { font-size: 12.5px; color: var(--muted); margin: 0 0 8px; }
+.ctdiag-big figcaption + svg + figcaption { margin: 8px 0 0; }
+.ctdiag-big b { color: var(--ink); }
+.tuchk { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); }
+/* Narrow: the Controller tab's columns stack, two and then one across. */
+@media (max-width: 900px) {
+  .ctl { grid-template-columns: repeat(2, minmax(0, 1fr)); height: auto; }
+  .ctl > .gcol { overflow: visible; }
+}
+@media (max-width: 560px) {
+  .ctl { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Live (HIL, ui/live.js) and Save (ui/record.js). Live is a second row of
+   Run Control, two lines under its keys whatever its state; Save sits under
+   the screen beside the channel badges, in the bezel's colours, like a
+   scope's save keys. */
+.st-live { background: transparent; color: var(--lit-green); box-shadow: inset 0 0 0 1px var(--lit-green); }
+.st-estop { background: var(--lit-red); color: #3a0606; }
+.st-wait { background: transparent; color: var(--lit-amber); box-shadow: inset 0 0 0 1px var(--lit-amber); }
+.st-offline { background: transparent; color: #8a97a1; box-shadow: inset 0 0 0 1px #4a555e; }
+.lv { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.lv-line { display: flex; align-items: center; gap: 8px; }
+.lv-url { flex: 1; min-width: 0; height: 20px; padding: 0 4px; margin-left: -4px; border: 1px solid transparent; border-radius: 4px; background: transparent; font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
+.lv-url:hover:not(:disabled) { border-color: var(--line-strong); }
+.lv-url:focus { outline: none; background: var(--lcd); color: var(--lcd-ink); border-color: var(--lcd-ink); }
+.lv-url:disabled { color: var(--ink-2); }
+.lv-link { border: 0; background: none; padding: 0; font-size: 11.5px; color: var(--ink-2); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; white-space: nowrap; }
+.lv-link:hover { color: var(--ink); }
+.lv-stats { font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--ink-2); min-height: 1.45em; }
+.lv-stats > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lv-line[hidden] + .lv-stats { min-height: calc(24px + 1.45em); }  /* the address line's height: the block keeps its size */
+.lv-stats .bad { color: var(--bad); font-weight: 600; }
+.lv-stats .ok { color: var(--lit-green); }
+.key.estop:not(.lit-red):not(:disabled) { color: var(--bad); }
+.lv-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.display { grid-template-columns: minmax(0, 1fr) auto; }
+.display > .status, .display > .screen { grid-column: 1 / -1; }
+.display > .status { grid-row: 1; }
+.display > .screen { grid-row: 2; }
+.display > .badges { grid-row: 3; grid-column: 1; }
+.recbar { grid-row: 3; grid-column: 2; display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; color: #c9d3da; white-space: nowrap; }
+.recbar .rc-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #7f8c96; }
+.recbar .rc-state { color: #9aa7b1; }
+.recbar .rc-len { width: 54px; height: 24px; padding: 0 4px; border-radius: 4px; border: 1px solid #333a40; background: var(--lcd); color: var(--lcd-ink); font: inherit; text-align: center; }
+.recbar .rc-len:focus { outline: none; border-color: var(--lcd-ink); }
+.recbar .rkey { height: 26px; padding: 0 9px; border-radius: 4px; border: 1px solid #333a40; background: #13171b; color: #c9d3da; font: inherit; cursor: pointer; white-space: nowrap; }
+.recbar .rkey:hover { border-color: #5d6973; color: #e7ebee; }
+.recbar .rkey:focus-visible { outline: 2px solid #c9d3da; outline-offset: 1px; }
+.rc-menu { position: relative; }
+.rc-pop { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 5; display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 6px; border: 1px solid #333a40; background: #0f1316; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); }
+.rc-pop .rkey { height: 24px; padding: 0 8px; }
+.rc-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.rc-what { display: flex; flex-direction: column; color: #e7ebee; font-size: 12px; line-height: 1.25; }
+.rc-note { color: #7f8c96; font-size: 11px; }
+.rc-keys { display: flex; gap: 4px; }
+.rc-rec { display: inline-flex; align-items: center; gap: 6px; }
+.recbar .rc-step { padding: 0 7px; }
+.recbar .rkey:disabled { opacity: 0.4; cursor: default; }
+.rc-refs { display: inline-flex; gap: 4px; }
+.recbar .rc-ref { border-style: dashed; color: #9aa7b1; }
+@media (max-width: 900px) {
+  .display { grid-template-rows: 22px minmax(0, 1fr) 30px auto; height: 420px; }
+  .recbar { grid-row: 4; grid-column: 1 / -1; flex-wrap: wrap; }
+}
+/* On a phone the status line takes two lines (it would be cut off at the
+   levels), and the display grows by the second, so the screen keeps its size;
+   the absolute ceiling in the unit is left to the strip's hover there. */
+@media (max-width: 560px) {
+  .display { height: 356px; grid-template-rows: 38px minmax(0, 1fr) 30px auto; }
+  .status { flex-wrap: wrap; align-content: flex-start; row-gap: 2px; }
+  .status .wide { display: none; }
+}
+
+/* The spectrogram levels strip's readout, outside the screen to its right. */
+.striptip { position: fixed; z-index: 30; pointer-events: none; background: rgba(10, 13, 16, 0.92); border: 1px solid rgba(160, 175, 190, 0.4); border-radius: 4px; padding: 5px 8px; font: 11.5px/16px var(--mono); white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }

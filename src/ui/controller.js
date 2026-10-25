@@ -16,19 +16,23 @@ import { CONTROLLERS, normalizeVariant } from '../core/controllers.js';
 import { OBSERVERS } from '../core/observers.js';
 import { normalizeDiagram, parseEnd, blockInputNames } from '../core/diagram.js';
 import { num, parseSI } from './units.js';
+import { drawStructure } from './ctldiagram.js';
 
 // What each implementation is for, in a sentence or two.
 const ABOUT = {
   off: 'No control: the plant gets u = 0. Shows what the plant does on its own.',
-  pid: 'The workhorse. P reacts to the error, I removes what is left, D damps (on the measurement, filtered by Tf). b weights the reference in P; the prefilter Tr (Vorfilter) smooths reference jumps; u min/max are the actuator limits, with anti-windup.',
+  pid: 'The workhorse. P reacts to the error, I removes what is left, D damps (on the measurement, filtered by Tf). b weights the reference in P; the prefilter Tr (Vorfilter) smooths reference jumps. Feedforward puts out what following r takes, from r alone: Kff·r, Kv·dr/dt, Ka·d²r/dt². u min/max are the actuator limits; anti-windup (clamping, back-calculation with Tt, or off) keeps the integral from winding up at a limit.',
   stateFeedback: 'u = kr·r − K·y: one gain per measured state (a matrix controller, Zustandsregler). With all states measured it can place every pole; LQR picks K by weighing state errors against effort. kr is the static prefilter so the output follows r.',
   lqr: 'State feedback whose gains are computed from the plant as it is wired: the page linearises it at its origin and solves the discrete LQR problem. Q weighs the error of each measurement, R the effort; every state must be measured. Change the plant and the gains follow.',
   gainScheduled: 'A PI whose gains are looked up from the measurement: for plants whose behaviour changes with the operating point. Give the points (At) and Kp, Ki at each; between them the gains are interpolated.',
-  scheduledPI: 'A PI computed from the plant: at each level of the measurement the page finds the input that holds it, linearises the plant there and fits a first-order lag; Kp and Ki then cancel that lag so the loop answers with the time constant Tcl. One level gives a fixed PI, several a gain-scheduled one. It starts with the input that holds the level the plant starts at.',
+  scheduledPI: 'A PI computed from the plant: at each level of the measurement the page finds the input that holds it, linearises the plant there and fits a first-order lag; Kp and Ki then cancel that lag so the loop answers with the time constant Tcl. One level gives a fixed PI, several a gain-scheduled one. It starts with the input that holds the level the plant starts at. The reference feedforward (Kff, Kv, Ka) and the anti-windup are yours, as in the PID.',
   swingUp: 'For a pendulum on a cart (inputs r, x, θ, v, ω). Far from upright it pumps energy into the swing, so that a Lyapunov function of the energy error always falls; near the top it switches to state feedback and holds the pole.',
   swingUpLqr: 'The energy swing-up (the pump gains are yours), with the catch near the top designed by LQR from the cart and pole as they are wired: Q weighs x, θ, v, ω, R the force. The pole length and g the pump measures energy with come from the plant too. Change the pole and both follow.',
   trajectory: 'A swing-up planned in the page from the plant as it is wired: a force F(t) that takes it from where it starts to rest at the top in T seconds, followed with time-varying LQR that corrects small errors along the way, then LQR holds it. The plan uses a share of the force limit and leaves the rest to the feedback. Changing T, the segments, that share or a limit plans again (a few seconds); Q, R and the start only recompute the gains.',
   kalman: 'Predicts the states with a model of the plant as it is wired (linearised at its origin), then corrects with the measurements, weighing them by the noise: Q is a random push on u (or one value per state), R the noise on each measurement, taken from the noise and quantizer blocks on its way when left empty. A large R trusts the model, a large Q the measurements. The gain is the steady-state Kalman gain; its estimates are the states the observer can see, and a controller designed on them looks through to those states.',
+  relay: 'On/off control, as a thermostat: full push one way or the other by the sign of the error, switching once it passes ±ε. Around a setpoint it makes the loop oscillate; the Auto-tune tab reads Ku and Pu from that oscillation.',
+  slidingMode: 'Sliding mode (inputs r, y, ẏ): drives s = λ·e + ė to zero by switching u = u0 ± K. On the line s = 0 the error decays as e^(−λt) whatever the inertia or the load, so λ sets how the loop settles. φ = 0 is the textbook relay: robust, but it chatters at the sampling rate, hard on the actuator. φ > 0 is a boundary layer: proportional inside |s| < φ (a stiff PD, Kp = K·λ/φ, Kd = K/φ), smooth, but a load leaves an error. Needs a clean ẏ; put a differentiator in the diagram, not in the law.',
+  superTwisting: 'Super-twisting, a second-order sliding mode (inputs r, y, ẏ): u = k1·√|s|·sign(s) + v, with the integral part v rising at k2 by the sign of s. The voltage is continuous and v rejects a constant load; actuator dynamics leave a small ripple, and a long reaching phase winds v up, so s overshoots the line before it slides. Size k1, k2 for the weakest plant.',
   luenberger: 'Predicts with the model and corrects with a fixed gain L that you choose (by pole placement, for example).',
   difference: 'The naive estimate: each measurement and its rate by finite differences, optionally low-pass filtered. Quantised or noisy measurements make the rate jump.',
 };
@@ -52,6 +56,7 @@ export function createControllerTab(host, app) {
         <div class="ghead"><h3 class="glabel">Variants</h3><button class="key small" id="ct-dup" title="Copy the running variant">Duplicate</button><button class="key small" id="ct-del" title="Remove the running variant">Delete</button></div>
         <ul class="plist vlist" id="ct-vars" role="listbox" aria-label="Variants: click one to run it"></ul>
         <p class="phelp">Click a variant to run it; the run before stays faded on the display. Double-click to rename.</p>
+        <figure class="ctdiag" id="ct-diag" hidden></figure>
       </section>
       <section class="gcol" aria-label="Parameters">
         <div class="ghead"><h3 class="glabel" id="ct-ptitle">Parameters</h3></div>
@@ -114,6 +119,8 @@ export function createControllerTab(host, app) {
     const per = p.per === 'measurement' ? `for ${meas.join(', ')}` : p.per === 'level' ? `levels of ${meas[0] ?? 'y1'}` : '';
     return [p.kind === 'vector' ? 'comma-separated' : '', per, p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : '', p.nullable ? p.empty ?? 'empty: from the plant' : ''].filter(Boolean).join(' · ');
   }
+  // A parameter with named options (anti-windup): a select.
+  const choice = (key, p, value) => `<label class="pf" title="${esc(p.help ?? '')}"><span class="pfl">${esc(p.label)}</span><select class="field pfi" data-k="${esc(key)}" data-kind="choice">${Object.entries(p.options).map(([k, l]) => `<option value="${esc(k)}" ${k === value ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><span class="pfh"></span></label>`;
 
   function render() {
     const all = controllers();
@@ -138,11 +145,13 @@ export function createControllerTab(host, app) {
     $('#ct-vars').innerHTML = b.variants.map((v, i) => `<li class="srow vrow ${i === b.variant ? 'editing' : ''}" data-v="${i}" role="option" aria-selected="${i === b.variant}">
         <span class="vdot" aria-hidden="true">${i === b.variant ? '▶' : ''}</span><span class="sd">${esc(v.name)}</span><span class="vtype"></span></li>`).join('');
     $('#ct-del').disabled = b.variants.length < 2;
+    drawStructure($('#ct-diag'), b, lib, names);
 
     const v = b.variants[b.variant];
     const def = lib[v.type];
-    $('#ct-ptitle').textContent = `${v.name} · ${def.summary}`;
-    const one = (p) => p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), hintOf(p, names), p.kind ?? 'number', p.help ?? '', !!p.nullable);
+    // The formula keeps its case (Λ and Φ are other letters than λ and φ).
+    $('#ct-ptitle').innerHTML = `${esc(v.name)} ·<span class="eq">${esc(def.summary)}</span>`;
+    const one = (p) => p.kind === 'choice' ? choice(`p:${p.key}`, p, v.params[p.key]) : p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), hintOf(p, names), p.kind ?? 'number', p.help ?? '', !!p.nullable);
     // Inputs that start a long computation (a plan) sit in a fold, so they
     // are changed on purpose, not nudged by the way.
     const light = def.params.filter((p) => !p.heavy), heavy = def.params.filter((p) => p.heavy);
@@ -168,6 +177,8 @@ export function createControllerTab(host, app) {
     renderGlyphs(c, st);
     const box = $('#ct-computed');
     const v = b.variants[b.variant], def = lib[v.type];
+    // The picture of what it does carries the numbers the design computed.
+    if (def.designed) drawStructure($('#ct-diag'), b, lib, blockInputNames(root(), c.path), st?.values ?? null);
     box.hidden = !def.designed;
     if (!def.designed) { box.innerHTML = ''; return; }
     const off = b.type === 'observer' ? 'zero estimates' : 'u = 0';
@@ -262,6 +273,7 @@ export function createControllerTab(host, app) {
     if (inp.value === inp.defaultValue) return;
     let value;
     if (raw === '' && inp.dataset.null) value = null;
+    else if (inp.dataset.kind === 'choice') value = inp.value;
     else if (inp.dataset.kind === 'vector') {
       value = raw.split(/[\s,;]+/).filter(Boolean).map(parseSI);
       if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas.'); render(); return; }
@@ -315,6 +327,12 @@ export function createControllerTab(host, app) {
       inp.addEventListener('blur', () => { if (inp.dataset.cancel) { delete inp.dataset.cancel; render(); return; } commitField(inp); });
       inp.addEventListener('wheel', (e) => nudge(inp, e), { passive: false });
     });
+    // A change re-renders the tab: the new select takes the focus, so the
+    // arrow keys keep stepping through the options.
+    host.querySelectorAll('select[data-k]').forEach((sel) => sel.addEventListener('change', () => {
+      commitField(sel);
+      host.querySelector(`select[data-k="${sel.dataset.k}"]`)?.focus();
+    }));
     host.querySelectorAll('[data-v]').forEach((row) => {
       row.addEventListener('click', () => { const i = Number(row.dataset.v); if (i !== c.block.variant) edit((blk) => { blk.variant = i; }); });
       row.addEventListener('dblclick', () => rename(row, Number(row.dataset.v)));
@@ -333,6 +351,10 @@ export function createControllerTab(host, app) {
     host.querySelectorAll('[data-add]').forEach((btn) => btn.addEventListener('click', () => edit((blk) => {
       const type = btn.dataset.add, prev = blk.variants[blk.variant].params;
       if (blk.type === 'observer') { blk.variants.push(normalizeVariant({ type }, 'variant', OBSERVERS)); blk.variant = blk.variants.length - 1; return; }
+      // A type this block cannot run (sliding mode on a block without ẏ) is
+      // refused here, saying what to change, not by the diagram's check.
+      const why = CONTROLLERS[type].check?.(normalizeVariant({ type }).params, { inputs: blk.params.inputs });
+      if (why) { app.toast(`${CONTROLLERS[type].label} cannot run on this block: ${why}.`); return false; }
       const v = normalizeVariant({ type });
       // A new variant drives the same actuator: it keeps the limits, and a
       // gain or weight vector gets one entry per measurement.

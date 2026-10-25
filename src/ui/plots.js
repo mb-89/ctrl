@@ -43,7 +43,11 @@ export function createPlot(canvas) {
   return {
     g,
     get P() { return P; },
+    // The axes as last drawn (after equal scaling).
+    get ax() { return ax; },
     X, Y,
+    // Data coordinates of a point in the canvas (CSS pixels), linear axes.
+    at(px, py) { return [ax.x0 + ((px - P.l) / (P.r - P.l)) * (ax.x1 - ax.x0), ax.y0 + ((P.b - py) / (P.b - P.t)) * (ax.y1 - ax.y0)]; },
     // axes: { x0, x1, y0, y1, xlog, title, xlabel, ylabel, xunit, yunit, equal }
     frame(axes) {
       size();

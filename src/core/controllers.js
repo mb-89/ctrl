@@ -7,20 +7,28 @@
 //
 // Each runs digitally at the block's sample time Ts. make(params, Ts) returns
 // { step(inputs) -> u }, called once per sample with the inputs at that instant.
+// A law reads its parameters at every step, so an edit while running (Live
+// mode changes the params object in place) takes effect at the next sample
+// and the law keeps its state; only u0, the integral at the start, waits for
+// the next start. (A designed variant's inputs change its design, so Live
+// mode rebuilds its law instead: live.js.)
 //
 // A law that is linear about an operating point also has linear(params, Ts,
 // at, values) for the Analysis tab: its discrete state space { A, B, C, D }
 // (arrays of rows) from [r, y1 … ym] to u at Ts, valid while u is inside its
 // limits. at.y holds the measurements at the operating point, at.t the time
 // of the run the law is at (a snapshot; a planned law's gains change with
-// it). The prefilter on r lies outside the loop and is left out. It throws
+// it). The prefilter on r lies outside the loop and is left out of A, B, C,
+// D; the model carries its time constant as Tr, so a step response can feed
+// r through it as the law does. The reference feedforward is in r's column.
+// Anti-windup acts only at a limit, so it is not in the model. It throws
 // when the law is not linear there. A designed type takes the values its
 // design computed, and gives its Copy as numbers twin's model; it may add a
 // `note` for the analysis (a plan's gains frozen at one sample).
 //
 // A designed type computes its numbers from the plant instead of being given
 // them (design/output/designs.md). Its params are inputs only (weights,
-// levels, limits); it adds
+// levels, limits, and hand gains such as a feedforward); it adds
 //   designed: true, version          version enters the cache key; bump it when results change
 //   computes: ['K', 'kr']            refused in params: a file never holds computed numbers
 //   twin: 'stateFeedback'            the hand type(s) "Copy as numbers" turns it into
@@ -45,6 +53,21 @@ const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 
 const LIMITS = [num('umin', 'u min', -Infinity, { unit: 'u' }), num('umax', 'u max', Infinity, { unit: 'u' })];
 const PREFILTER = num('Tr', 'Prefilter Tr', 0, { unit: 's', min: 0, help: 'Vorfilter: a first-order lag on r; 0 is off' });
 const START = num('u0', 'Start output u0', 0, { unit: 'u', help: 'the integral part at t = 0, so a loop can start in balance' });
+// Reference feedforward: terms of u computed from the prefiltered reference
+// rf alone, outside the loop. 0 is off.
+const FEEDFORWARD = [
+  num('Kff', 'Feedforward Kff', 0, { unit: 'u per r', help: 'static feedforward: u += Kff · rf; the input that holds y at r, per unit of r' }),
+  num('Kv', 'Velocity FF Kv', 0, { unit: 'u per r/s', help: 'velocity feedforward: u += Kv · drf/dt' }),
+  num('Ka', 'Acceleration FF Ka', 0, { unit: 'u per r/s²', help: 'acceleration feedforward: u += Ka · d²rf/dt²' }),
+];
+// Anti-windup: what the integral does while u sits at a limit.
+export const ANTI_WINDUP = { clamp: 'clamping', back: 'back-calculation', off: 'off (windup)' };
+const WINDUP = [
+  { key: 'aw', label: 'Anti-windup', default: 'clamp', kind: 'choice', options: ANTI_WINDUP, help: 'clamping: the integral stops at a limit; back-calculation: it is pulled back with time constant Tt; off: it winds up' },
+  num('Tt', 'Tracking Tt', 0, { unit: 's', min: 0, help: 'back-calculation only: how fast the integral follows the limit; 0: √(Ti·Td), or Ti/2 without D' }),
+];
+// What the scheduled PI passes on to pidCore unchanged, read at every sample.
+const SHARED = ['Kff', 'Kv', 'Ka', 'aw', 'Tt', 'umin', 'umax'];
 // The energy pump of the swing-up: hand gains, shared by its two types.
 const SWING = [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 })];
 // The weights of an LQR design.
@@ -58,11 +81,16 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
 
 // A first-order prefilter on the reference (Vorfilter), exact for a held input.
-function prefilter(Tr, Ts) {
-  if (!(Tr > 0)) return (r) => r;
-  const a = Math.exp(-Ts / Tr);
-  let rf = null;
-  return (r) => { rf = rf === null ? r : a * rf + (1 - a) * r; return rf; };
+// It reads p.Tr at every sample, so a change made while running (Live mode)
+// takes effect at the next one and the filtered value carries on.
+function prefilter(p, Ts) {
+  let rf = null, Tr = null, a = 0;
+  return (r) => {
+    if (!(p.Tr > 0)) { rf = r; return r; }
+    if (p.Tr !== Tr) { Tr = p.Tr; a = Math.exp(-Ts / Tr); }
+    rf = rf === null ? r : a * rf + (1 - a) * r;
+    return rf;
+  };
 }
 
 // Linear interpolation in a table, held flat beyond its ends.
@@ -72,42 +100,91 @@ function lookup(xs, ys, x) {
   return ys[ys.length - 1];
 }
 
-// A PI(D) step shared by the fixed and the scheduled controller: derivative on
-// the measurement (filtered), setpoint weight b on the P part, integration
-// stopped while the output is saturated and the error would push it further.
+// The tracking time constant of back-calculation: Tt when given, else the
+// rule of thumb of Åström and Hägglund, Tt = √(Ti·Td) (between Td and Ti),
+// and Ti/2 for a PI, with Ti = Kp/Ki and Td = Kd/Kp; never below Ts.
+export function trackingTime(g, Ts) {
+  if (g.Tt > 0) return g.Tt;
+  const Ti = Math.abs(g.Kp / g.Ki), Td = Math.abs(g.Kd / g.Kp);
+  const t = Td > 0 ? Math.sqrt(Ti * Td) : Ti / 2;
+  return Number.isFinite(t) && t > Ts ? t : Ts;
+}
+
+// A PI(D) step shared by the fixed and the scheduled controller, on the
+// prefiltered reference rf and the measurement y:
+//   P   Kp (b·rf − y)              setpoint weight b on the P part
+//   I   Ki ∫ (rf − y)              starting at u0
+//   D   −Kd dy/dt, filtered (Tf)   on the measurement: a step of r gives no kick
+//   FF  Kff·rf + Kv·drf/dt + Ka·d²rf/dt², by differences over Ts. Before
+//       the first sample rf is taken to have rested at its first value, so
+//       the first sample puts out no kick
+// v = P + I + D + FF; u is v held to [umin, umax]. While u sits at a limit
+// the anti-windup (g.aw) keeps the integral from running away:
+//   clamp  conditional integration: it stops while the error would push u further
+//   back   back-calculation: dI/dt = Ki·e + (u − v)/Tt, so I tracks the limit.
+//          The feedforward's own excess beyond a limit (a kick as r starts
+//          to move) is left out of (u − v): the integral cannot undo it, and
+//          tracking it would leave I offset once the kick has passed
+//   off    it integrates on (windup)
+// The parameters are read at every sample (Live mode edits them in place).
+// A change of a feedforward gain while running is bumpless: the integral
+// takes the step the new gain would put into u, and lets it go at its own
+// pace (only with a Ki; without one there is nothing to carry it).
 function pidCore(Ts, u0 = 0) {
-  let I = u0, D = 0, yPrev = null;
+  let I = u0, D = 0, yPrev = null, r1 = null, r2 = null;
+  let kff = 0, kv = 0, ka = 0;   // the feedforward gains of the sample before
   return (rf, y, g) => {
-    if (yPrev === null) yPrev = y;
+    const Kff = g.Kff ?? 0, Kv = g.Kv ?? 0, Ka = g.Ka ?? 0;
+    if (yPrev === null) { yPrev = y; r1 = r2 = rf; kff = Kff; kv = Kv; ka = Ka; }
     D = (g.Tf * D - g.Kd * (y - yPrev)) / (g.Tf + Ts);
     yPrev = y;
+    const ffOf = (a, b, c) => a * rf + (b * (rf - r1)) / Ts + (c * (rf - 2 * r1 + r2)) / (Ts * Ts);
+    const ff = ffOf(Kff, Kv, Ka);
+    if (g.Ki && (Kff !== kff || Kv !== kv || Ka !== ka)) I -= ff - ffOf(kff, kv, ka);
+    kff = Kff; kv = Kv; ka = Ka;
+    r2 = r1; r1 = rf;
     const e = rf - y;
-    const v = g.Kp * (g.b * rf - y) + I + D;
+    const v = g.Kp * (g.b * rf - y) + I + D + ff;
     const u = clamp(v, g.umin, g.umax);
-    if (u === v || Math.sign(e) !== Math.sign(v - u)) I += g.Ki * Ts * e;
+    if (!g.Ki) return u;
+    if (g.aw === 'back') {
+      // Tracking, exact for a held excess: I moves by the fraction
+      // 1 − e^(−Ts/Tt) of it per sample.
+      const vb = v - ff + clamp(ff, g.umin, g.umax);
+      I += g.Ki * Ts * e + (1 - Math.exp(-Ts / trackingTime(g, Ts))) * (clamp(vb, g.umin, g.umax) - vb);
+    } else if (g.aw === 'off' || u === v || Math.sign(g.Ki * e) !== Math.sign(v - u)) I += g.Ki * Ts * e;
     return u;
   };
 }
 
 // pidCore's linear model with the gains g, for m measurements (only y1 is
-// used). States: the integral I (when Ki ≠ 0); the filtered derivative D and
-// the previous measurement (when Kd ≠ 0).
+// used). States, each only when its gain is not 0: the integral I; the
+// filtered derivative D and the previous measurement; the reference one and
+// two samples back (for Kv and Ka).
 function pidLinear(g, Ts, m = 1) {
   const pad = (row) => [...row, ...new Array(m + 1 - row.length).fill(0)];
   const A = [], B = [], C = [], D = [pad([g.Kp * g.b, -g.Kp])];
-  if (g.Ki) { A.push([1]); B.push(pad([g.Ki * Ts, -g.Ki * Ts])); C.push(1); }
+  // A new state: its input row b and its weight c in u; A's entries are set after.
+  const state = (b, c) => { for (const row of A) row.push(0); A.push(new Array(A.length + 1).fill(0)); B.push(pad(b)); C.push(c); return A.length - 1; };
+  if (g.Ki) { const i = state([g.Ki * Ts, -g.Ki * Ts], 1); A[i][i] = 1; }
   if (g.Kd) {
-    const c = 1 / (g.Tf + Ts), i = A.length;
-    for (const row of A) row.push(0, 0);
-    A.push([...new Array(i).fill(0), g.Tf * c, g.Kd * c], new Array(i + 2).fill(0));
-    B.push(pad([0, -g.Kd * c]), pad([0, 1]));
-    C.push(g.Tf * c, g.Kd * c);
+    const c = 1 / (g.Tf + Ts);
+    const d = state([0, -g.Kd * c], g.Tf * c), p = state([0, 1], g.Kd * c);
+    A[d][d] = g.Tf * c; A[d][p] = g.Kd * c;
     D[0][1] -= g.Kd * c;
   }
-  return { A, B, C: [C], D };
+  // FF = Kff·r + Kv·(r − r1)/Ts + Ka·(r − 2·r1 + r2)/Ts².
+  const kv = (g.Kv ?? 0) / Ts, ka = (g.Ka ?? 0) / (Ts * Ts);
+  D[0][0] += (g.Kff ?? 0) + kv + ka;
+  if (kv || ka) {
+    const r1 = state([1], -kv - 2 * ka);
+    if (ka) { const r2 = state([0], ka); A[r2][r1] = 1; }
+  }
+  return { A, B, C: [C], D, Tr: g.Tr ?? 0 };
 }
 // A static law u = kr r − K · y.
-const staticLinear = (kr, K) => ({ A: [], B: [], C: [[]], D: [[kr, ...K.map((k) => -k)]] });
+const staticLinear = (kr, K, Tr = 0) => ({ A: [], B: [], C: [[]], D: [[kr, ...K.map((k) => -k)]], Tr });
+
 
 // The law of a designed variant without values (pending, or failed): u = 0.
 const OFF = { step: () => 0 };
@@ -132,9 +209,9 @@ export const CONTROLLERS = {
   },
   pid: {
     label: 'PID', summary: 'u = Kp e + Ki ∫e + Kd ė',
-    params: [num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1), PREFILTER, START, ...LIMITS],
+    params: [num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1, { help: 'weights r in the P part only (two degrees of freedom); not feedforward' }), PREFILTER, ...FEEDFORWARD, START, ...LIMITS, ...WINDUP],
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
+      const pre = prefilter(p, Ts), core = pidCore(Ts, p.u0);
       return { step: (x) => core(pre(x[0]), x[1] ?? 0, p) };
     },
     linear: (p, Ts, at) => pidLinear(p, Ts, at?.y?.length || 1),
@@ -143,7 +220,7 @@ export const CONTROLLERS = {
     label: 'State feedback', summary: 'u = kr r − K · y',
     params: [vec('K', 'Gains K', [1], { per: 'measurement' }), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts);
+      const pre = prefilter(p, Ts);
       return {
         step(x) {
           let u = p.kr * pre(x[0]);
@@ -152,7 +229,7 @@ export const CONTROLLERS = {
         },
       };
     },
-    linear: (p) => staticLinear(p.kr, p.K),
+    linear: (p) => staticLinear(p.kr, p.K, p.Tr),
   },
   lqr: {
     // Discrete LQR at the origin of the plant the block sees, which must be an
@@ -173,15 +250,17 @@ export const CONTROLLERS = {
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
-    params: [vec('at', 'At y =', [0, 1]), vec('Kp', 'Kp', [1, 1]), vec('Ki', 'Ki', [0, 0]), PREFILTER, START, ...LIMITS],
+    params: [vec('at', 'At y =', [0, 1]), vec('Kp', 'Kp', [1, 1]), vec('Ki', 'Ki', [0, 0]), PREFILTER, ...FEEDFORWARD, START, ...LIMITS, ...WINDUP],
     check(p) { if (p.Kp.length !== p.at.length || p.Ki.length !== p.at.length) return 'At, Kp and Ki need the same number of values'; if (p.at.some((v, i) => i && v <= p.at[i - 1])) return 'the At values must increase'; return ''; },
     make(p, Ts) {
-      const pre = prefilter(p.Tr, Ts), core = pidCore(Ts, p.u0);
-      const g = { Kp: 0, Ki: 0, Kd: 0, Tf: 0, b: 1, umin: p.umin, umax: p.umax };
+      const pre = prefilter(p, Ts), core = pidCore(Ts, p.u0);
+      const g = { Kp: 0, Ki: 0, Kd: 0, Tf: 0, b: 1 };
       return {
         step(x) {
           const y = x[1] ?? 0;
           g.Kp = lookup(p.at, p.Kp, y); g.Ki = lookup(p.at, p.Ki, y);
+          // Read at every sample, as the PID reads p: an edit while running counts.
+          for (const k of SHARED) g[k] = p[k];
           return core(pre(x[0]), y, g);
         },
       };
@@ -190,7 +269,7 @@ export const CONTROLLERS = {
     // loop sees a PI with the gains at y.
     linear(p, Ts, at) {
       const y = at?.y?.[0] ?? p.at[0];
-      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1 }, Ts, at?.y?.length || 1);
+      return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1, Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka }, Ts, at?.y?.length || 1);
     },
   },
   scheduledPI: {
@@ -199,15 +278,16 @@ export const CONTROLLERS = {
     // fitted as K e^(−θs) / (τs + 1), and Kp = τ / (K Tcl), Ki = 1 / (K Tcl)
     // make the loop a first-order lag with time constant Tcl (design.js).
     // One level gives a fixed PI; several, a gain-scheduled one. u0 holds the
-    // level the plant starts at.
+    // level the plant starts at. The reference feedforward and the
+    // anti-windup are hand inputs, passed on to the PI as they are.
     label: 'PI from the plant', summary: 'PI by pole cancellation at levels of y',
     designed: true, version: 1, computes: ['Kp', 'Ki', 'u0'], twin: ['pid', 'gainScheduled'],
-    params: [vec('at', 'At y =', [1], { per: 'level', help: 'the levels of the first measurement to design at; one level gives a fixed PI, several are interpolated' }), num('Tcl', 'Closed loop Tcl', 0.25, { unit: 's', positive: true, help: 'the time constant the loop should have' }), PREFILTER, ...LIMITS],
+    params: [vec('at', 'At y =', [1], { per: 'level', help: 'the levels of the first measurement to design at; one level gives a fixed PI, several are interpolated' }), num('Tcl', 'Closed loop Tcl', 0.25, { unit: 's', positive: true, help: 'the time constant the loop should have' }), PREFILTER, ...FEEDFORWARD, ...LIMITS, ...WINDUP],
     check(p) { return p.at.some((v, i) => i && v <= p.at[i - 1]) ? 'the At values must increase' : ''; },
     design: (p, ctx) => scheduledPIDesign(p, ctx),
     make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.scheduledPI.manual(p, values), Ts) : OFF; },
     manual(p, values) {
-      const common = { Tr: p.Tr, u0: values.u0, umin: p.umin, umax: p.umax };
+      const common = { Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, u0: values.u0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
       return values.at.length === 1
         ? { type: 'pid', params: { Kp: values.Kp[0], Ki: values.Ki[0], Kd: 0, ...common } }
         : { type: 'gainScheduled', params: { at: [...values.at], Kp: [...values.Kp], Ki: [...values.Ki], ...common } };
@@ -302,13 +382,119 @@ export const CONTROLLERS = {
       return { ...staticLinear(0, Array.from(values.K.subarray(j * m, (j + 1) * m))), note: `the plan's gains at sample ${j} of ${steps} (t = ${((j + Math.round(p.start / Ts)) * Ts).toFixed(2)} s), frozen: along the plan they change every sample` };
     },
   },
+  relay: {
+    // On/off control: u0 + d while the error is positive, u0 − d while it is
+    // negative, switching only once e passes ±ε (hysteresis), so a noisy
+    // measurement cannot make it chatter. Auto-tune's relay experiment
+    // (Åström–Hägglund) runs one to find Ku and Pu. A negative d reverses it,
+    // for a plant whose y falls when u rises.
+    label: 'Relay (on/off)', summary: 'u = u0 ± d by the sign of e, hysteresis ε',
+    params: [num('d', 'Amplitude d', 1, { unit: 'u', help: 'negative for a plant whose y falls when u rises' }), num('eps', 'Hysteresis ε', 0, { min: 0, help: 'switches when e = r − y passes +ε or −ε' }), num('u0', 'Bias u0', 0, { unit: 'u' }), ...LIMITS],
+    make(p) {
+      let high = null;
+      return {
+        step(x) {
+          const e = x[0] - (x[1] ?? 0);
+          if (high === null) high = e >= 0;
+          if (e > p.eps) high = true;
+          else if (e < -p.eps) high = false;
+          return clamp(p.u0 + (high ? p.d : -p.d), p.umin, p.umax);
+        },
+      };
+    },
+    linear() { throw new Error('a relay switches between two outputs: it has no linear model'); },
+  },
+  slidingMode: {
+    // First-order sliding mode, model-free (Utkin 1977; Slotine & Li ch. 7),
+    // for a plant whose output rises with u. Inputs r, y, ẏ. The sliding
+    // variable s = λ·e + ė (e = r − y, in y's unit per second) is driven to
+    // zero; on s = 0 the error decays as e^(−λt), whatever the inertia or a
+    // load entering with u, while K dominates them. φ = 0 is the ideal relay
+    // u = u0 + K·sign(s); φ > 0 is a boundary layer, u = u0 + K·sat(s/φ):
+    // inside it a PD with Kp = K·λ/φ and Kd = K/φ, outside the relay.
+    // ė = ṙf − ẏ, with ṙf the prefilter's own derivative (r − rf)/Tr, 0 without
+    // a prefilter (derivative on the measurement): the law never differentiates.
+    label: 'Sliding mode', summary: 'u = u0 + K·sign(s) or K·sat(s/φ), s = λe + ė',
+    params: [
+      num('lambda', 'Surface slope λ', 10, { unit: '1/s', min: 0, help: 'on the line s = 0 the error decays as e^(−λt): λ sets its time constant 1/λ' }),
+      num('K', 'Switching gain K', 1, { unit: 'u', help: 'negative for a plant whose y falls when u rises' }),
+      num('phi', 'Boundary layer φ', 0, { unit: 'y/s', min: 0, help: '0 is the ideal relay; above 0, proportional inside |s| < φ' }),
+      PREFILTER, num('u0', 'Bias u0', 0, { unit: 'u' }), ...LIMITS,
+    ],
+    check: needsRate,
+    make(p, Ts) {
+      const surf = surface(p, Ts);
+      return {
+        step(x) {
+          const s = surf(x);
+          const sw = p.phi > 0 ? clamp(s / p.phi, -1, 1) : Math.sign(s);
+          return clamp(p.u0 + p.K * sw, p.umin, p.umax);
+        },
+      };
+    },
+    // Inside the layer and the limits, with the prefilter left out (ṙf = 0):
+    // no state, u = (K·λ/φ)·(r − y) − (K/φ)·ẏ.
+    linear(p, Ts, at) {
+      if (!(p.phi > 0)) throw new Error('an ideal sliding mode switches: it has no linear model; give it a boundary layer φ > 0');
+      const m = Math.max(2, at?.y?.length ?? 2);
+      return staticLinear((p.K * p.lambda) / p.phi, [(p.K * p.lambda) / p.phi, p.K / p.phi, ...new Array(m - 2).fill(0)]);
+    },
+  },
+  superTwisting: {
+    // Super-twisting (Levant 1993), a second-order sliding mode on the same s:
+    // u = k1·√|s|·sign(s) + v, with v the integral part, v += Ts·k2·sign(s)
+    // (explicit Euler). u is continuous, and v rejects a slowly varying load.
+    // Both u and v are clamped to the limits (v's clamp is the anti-windup).
+    // The sign is flipped from Levant's form because raising u lowers s here.
+    label: 'Super-twisting', summary: 'u = k1·√|s|·sign(s) + v, v̇ = k2·sign(s)',
+    params: [
+      num('lambda', 'Surface slope λ', 10, { unit: '1/s', min: 0, help: 'on the line s = 0 the error decays as e^(−λt): λ sets its time constant 1/λ' }),
+      num('k1', 'Gain k1', 1, { unit: 'u per √(y/s)', help: 'negative for a plant whose y falls when u rises' }),
+      num('k2', 'Gain k2', 10, { unit: 'u/s', help: 'the rate of the integral part v; negative for a plant whose y falls when u rises' }),
+      PREFILTER, START, ...LIMITS,
+    ],
+    check: needsRate,
+    make(p, Ts) {
+      const surf = surface(p, Ts);
+      let v = clamp(p.u0, p.umin, p.umax);
+      return {
+        step(x) {
+          const s = surf(x), sg = Math.sign(s);
+          const u = clamp(p.k1 * Math.sqrt(Math.abs(s)) * sg + v, p.umin, p.umax);
+          v = clamp(v + Ts * p.k2 * sg, p.umin, p.umax);
+          return u;
+        },
+      };
+    },
+    linear() { throw new Error('super-twisting has no linear model: √|s| has infinite slope at s = 0'); },
+  },
 };
+
+// The sliding variable s = λ·e + ė of both sliding-mode laws, from the inputs
+// [r, y, ẏ]: e = rf − y and ė = ṙf − ẏ, with rf the prefiltered reference and
+// ṙf = (r − rf)/Tr its exact derivative (the filter's own state; 0 when Tr = 0).
+function surface(p, Ts) {
+  const pre = prefilter(p, Ts);
+  return (x) => {
+    const r = x[0], rf = pre(r);
+    const rdot = p.Tr > 0 ? (r - rf) / p.Tr : 0;
+    return p.lambda * (rf - (x[1] ?? 0)) + rdot - (x[2] ?? 0);
+  };
+}
+// A sliding-mode law reads ẏ on input 3; it never differentiates y itself.
+function needsRate(p, ctx) {
+  return ctx?.inputs !== undefined && ctx.inputs < 3 ? 'sliding mode needs ẏ on input 3: set the Controller block\'s Inputs to 3 in the Plant tab and wire the measured rate there (a Finite difference observer makes it from y)' : '';
+}
 
 export const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
 
 function normalizeParam(spec, v, where) {
   if (spec.nullable && (v === null || v === '')) return null;
   v ??= spec.default;
+  if (spec.kind === 'choice') {
+    if (!Object.hasOwn(spec.options, v)) throw new Error(`${where}.${spec.key}: one of ${Object.keys(spec.options).join(', ')}`);
+    return v;
+  }
   if (spec.kind === 'vector') {
     if (v === null && spec.nullable) return null;   // e.g. "from the plant"
     if (!Array.isArray(v) || !v.length || !v.every((x) => Number.isFinite(Number(x)))) throw new Error(`${where}.${spec.key}: a list of numbers`);
@@ -329,27 +515,37 @@ function normalizeParam(spec, v, where) {
 // the valid choices named. A designed type's computed numbers are refused:
 // a file holds inputs only.
 // lib: the library the variant comes from (CONTROLLERS, or OBSERVERS for an
-// Observer block); both share this format.
-export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
+// Observer block); both share this format. ctx: what the block gives the
+// variant ({ inputs }), when known, for checks that need it.
+export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS, ctx = undefined) {
   const def = lib[v?.type];
   if (!def) throw new Error(`${where}.type: one of ${Object.keys(lib).join(', ')}`);
   const given = (def.computes ?? []).filter((k) => v.params?.[k] !== undefined);
   if (given.length) {
-    const inputs = def.params.map((p) => p.key).filter((k) => !/^(umin|umax|Tr)$/.test(k));
+    const inputs = def.params.map((p) => p.key).filter((k) => !/^(umin|umax|Tr|Kff|Kv|Ka|aw|Tt)$/.test(k));
     const twins = [].concat(def.twin ?? []).map((t) => lib[t]?.label ?? t).join(' or ');
     throw new Error(`${where}.params.${given[0]}: ${v.type} computes ${and(def.computes)} from the plant and ${and(inputs)}; ${twins ? `to set them by hand use Copy as numbers (a ${twins} variant)` : 'they are never kept in a file'}`);
   }
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
   if (params.umin > params.umax) [params.umin, params.umax] = [params.umax, params.umin];
-  const bad = def.check?.(params);
+  const bad = def.check?.(params, ctx);
   if (bad) throw new Error(`${where}: ${bad}`);
   return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
 }
 
 // The law of a block's active variant; a designed one runs on the values its
-// design computed (null: u = 0).
+// design computed (null: u = 0). Normalised first: a project restored from
+// JSON (undo, redo) has its open limits as null, not ±Infinity. Params
+// already in normal form are used as they are, so an edit of them while the
+// law runs (Live mode) reaches it. An experiment Auto-tune runs
+// (src/core/autotune.js: hold r, then step u) brings its own law as a
+// function, so it can never come from a file.
+const same = (a, b) => (Array.isArray(b) ? Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]) : a === b);
 export function makeLaw(variant, Ts, lib = CONTROLLERS, values = null) {
-  return lib[variant.type].make(variant.params, Ts, values);
+  if (typeof variant.law === 'function') return variant.law(Ts);
+  const { params } = normalizeVariant(variant, 'variant', lib);
+  const keep = variant.params && Object.keys(params).every((k) => same(variant.params[k], params[k]));
+  return lib[variant.type].make(keep ? variant.params : params, Ts, values);
 }
 

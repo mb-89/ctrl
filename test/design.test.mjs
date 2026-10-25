@@ -95,8 +95,8 @@ test('LQR from the plant reproduces the gains the library held, to 0.1 %; it ref
   // The motor measures its angle only.
   const motor = statusOf(project('DC motor', [lqr([1], 1)]));
   assert.equal(motor.error.code, 'states-not-measured');
-  assert.match(motor.error.message, /sees angle but not Motor\/armature and Motor\/load\./);
-  assert.match(motor.error.hint, /^wire armature and load to inputs, or add a Kalman Observer$/);
+  assert.match(motor.error.message, /sees angle but not Motor\/armature 1\/\(Ls \+ R\) and Motor\/rotor 1\/\(Js \+ b\)\./);
+  assert.match(motor.error.hint, /^wire armature 1\/\(Ls \+ R\) and rotor 1\/\(Js \+ b\) to inputs, or add a Kalman Observer$/);
   // No weight on a mode that does not decay by itself: the cart's position
   // (an integrator, |z| = 1), or with Q = 0 the falling pole too. Q says so,
   // not the wiring.
@@ -226,7 +226,8 @@ test('scheduledPI: pole cancellation from the tank at each level reproduces the 
   const tank = p.system.plant.diagram.blocks.find((b) => b.type === 'conicalTank').params;
   const A = (h) => Math.PI * (tank.r0 + ((tank.R - tank.r0) * Math.min(h, tank.H)) / tank.H) ** 2;
   const rel = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol * Math.abs(b), `${what}: ${a}, not ${b}`);
-  const at = [0.1, 0.25, 0.5, 0.75, 1];
+  // The top level is 0.95 m: at the brim, 1 m, the tank overflows (below).
+  const at = [0.1, 0.25, 0.5, 0.75, 0.95];
   const st = statusOf(p);
   assert.equal(st.status, 'ok', JSON.stringify(st.error));
   assert.equal(st.type, 'scheduledPI');
@@ -236,12 +237,17 @@ test('scheduledPI: pole cancellation from the tank at each level reproduces the 
     rel(Kp[i], A(h) / 0.25, 1e-6, `Kp at ${h}`);
     rel(Ki[i], (tank.a * Math.sqrt(2 * tank.g)) / (2 * Math.sqrt(h) * 0.25), 1e-6, `Ki at ${h}`);
   });
-  // The table the library held, to 0.5 %.
-  [0.113, 0.332, 0.95, 1.887, 3.142].forEach((v, i) => rel(Kp[i], v, 5e-3, `old Kp[${i}]`));
-  [2.801, 1.772, 1.253, 1.023, 0.886].forEach((v, i) => rel(Ki[i], v, 5e-3, `old Ki[${i}]`));
+  // The table the library held, to 0.5 %, at the levels it shares.
+  [0.113, 0.332, 0.95, 1.887].forEach((v, i) => rel(Kp[i], v, 5e-3, `old Kp[${i}]`));
+  [2.801, 1.772, 1.253, 1.023].forEach((v, i) => rel(Ki[i], v, 5e-3, `old Ki[${i}]`));
   rel(u0, tank.a * Math.sqrt(2 * tank.g * tank.h0), 1e-9, 'u0');
   assert.equal(Number(u0.toFixed(4)), 0.1716);
-  assert.equal(st.at, 'h = 0.1 … 1 m (5 levels)');
+  assert.equal(st.at, 'h = 0.1 … 0.95 m (5 levels)');
+  // At the brim the level's rate has a slope below and none above (what
+  // comes in beyond it overflows): a kink, so no PI is designed there.
+  const brim = statusOf(project('Conical tank', [{ type: 'scheduledPI', params: { at: [0.5, 1], umin: 0, umax: 3 } }]));
+  assert.equal(brim.error.code, 'kink');
+  assert.match(brim.error.message, /^pole cancellation needs slopes, and the plant has a kink at h = 1 m, q = 0\.443: the slope of the rate of tank\.h along tank\.h differs left and right/);
   assert.deepEqual(st.rows[0].head, ['h (m)', 'q', 'K', 'τ (s)', 'Kp', 'Ki']);
   assert.deepEqual(st.rows[0].table.map((row) => row.slice(4)), at.map((_, i) => [Kp[i], Ki[i]]));
   assert.deepEqual(st.rows[1], { label: 'dead time θ', value: 0.1, note: 's, left out' });
@@ -342,7 +348,10 @@ test('guard: the library stores inputs only, never numbers computed from a plant
   assert.ok(variants.length >= 10);
   for (const v of variants) {
     const lib = CONTROLLERS[v.type] ? CONTROLLERS : OBSERVERS;
-    assert.ok(lib[v.type].designed || ['pid', 'off'].includes(v.type), `${v.name}: ${v.type} holds numbers; use a designed type`);
+    // Sliding mode's λ, K, φ (and super-twisting's k1, k2) are tuning
+    // inputs a person chooses, as a PID's gains are, not numbers derived
+    // from the plant.
+    assert.ok(lib[v.type].designed || ['pid', 'off', 'slidingMode', 'superTwisting'].includes(v.type), `${v.name}: ${v.type} holds numbers; use a designed type`);
     assert.ok(!('u0' in (v.params ?? {})), `${v.name}: a start output is a trim value, computed from the plant`);
   }
   for (const b of delays) assert.ok(b.params.y0 === null || b.params.y0 === undefined || b.params.y0 === 0, `${b.name}: y0 ${b.params.y0} is a computed start flow; leave it empty`);

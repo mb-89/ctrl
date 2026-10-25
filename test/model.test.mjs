@@ -61,11 +61,12 @@ const REFERENCE = {
     for (let j = 0; j < n; j++) { dX[1 + j] = w[j]; dX[n + 2 + j] = q[j + 1]; }
     dX[n + 1] = q[0];
   },
+  // It cannot run dry below 0 or hold more than H: beyond the brim it overflows.
   conicalTank(X, u, p, dX) {
-    const h = Math.max(0, X[0]);
-    const r = p.r0 + ((p.R - p.r0) * Math.min(h, p.H)) / p.H;
+    const h = Math.min(p.H, Math.max(0, X[0]));
+    const r = p.r0 + ((p.R - p.r0) * h) / p.H;
     const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
-    dX[0] = h <= 0 && flow < 0 ? 0 : flow / (Math.PI * r * r);
+    dX[0] = (h <= 0 && flow < 0) || (h >= p.H && flow > 0) ? 0 : flow / (Math.PI * r * r);
   },
 };
 
@@ -148,20 +149,21 @@ test('model mode: the plant a block sees, reduced to what u moves and the measur
   assert.equal(pel.seen('ctrl'), pel.seen('ctrl', { held: {} }), 'memoised per block and operating point');
   assert.notEqual(pel.seen('ctrl'), pel.seen('ctrl', { sources: { d: 1 } }));
 
-  // Motor position: armature, load and angle are kept; an integrator fed by
-  // a Source and one that only feeds a Sink are dropped.
+  // Motor position: armature (its state the current i), rotor (the speed)
+  // and angle are kept; an integrator fed by a Source and one that only
+  // feeds a Sink are dropped.
   const motor = system('DC motor');
   motor.blocks.push(block('drift', 'integrator', { K: 1 }), block('dsum', 'sink', { name: 'dsum' }), block('odo', 'integrator', { K: 1 }), block('turns', 'sink', { name: 'turns' }));
   motor.wires.push(wire('d', 'drift'), wire('drift', 'dsum'), wire('motor', 'odo'), wire('odo', 'turns'));
   const mm = modelOf(normalizeDiagram(motor));
-  assert.deepEqual(mm.states.map((s) => s.label), ['Motor/armature', 'Motor/load', 'angle']);
+  assert.deepEqual(mm.states.map((s) => s.label), ['Motor/armature 1/(Ls + R)', 'Motor/rotor 1/(Js + b)', 'angle']);
   assert.deepEqual(mm.outputs.map((o) => o.label), ['angle']);
   const dx = new Float64Array(3), y = new Float64Array(1);
   mm.f([0, 0, 0], 1, dx);
-  assert.deepEqual(Array.from(dx), [100, 0, 0], 'the armature lag K/(τs + 1) with τ = 10 ms, C = 1');
+  assert.deepEqual(Array.from(dx), [100, 0, 0], 'the armature 1/(Ls + R) with L = 10 mH, R = 1 Ω, C = 1');
   mm.y([0, 0, 0.7], 0, y);
   assert.equal(y[0], 0.7, 'a first-order block is realised with C = 1: its state is its output');
-  // The same state order in a run, so a snapshot fits; the load's state is the speed.
+  // The same state order in a run, so a snapshot fits; the rotor's state is the speed.
   const run = compileDiagram(normalizeDiagram(motor), 'plant', { standalone: true });
   assert.deepEqual(run.states, compileDiagram(normalizeDiagram(motor), 'plant', { mode: 'model' }).states);
   const X = new Float64Array(run.n).map((_, i) => 0.1 * (i + 1));

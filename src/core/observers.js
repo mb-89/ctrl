@@ -40,12 +40,25 @@ function checkModel(p) {
 
 // Predict with the model, then correct with gain L (filter form):
 // x̂ = x̂⁻ + L (y − C x̂⁻), every innovation taken from the prediction before
-// any correction (the gain is designed for all measurements at once).
-function estimator({ n, m, Ad, Bd, C, L }) {
-  const x = new Float64Array(n), xp = new Float64Array(n), e = new Float64Array(m), out = new Float64Array(n);
-  let first = true;
+// any correction (the gain is designed for all measurements at once). The
+// design (Ad, Bd, C, L) is redone when one of the parameter lists `keys` is
+// replaced while running (Live mode edits the params object in place), and
+// the estimate carries on unless the number of states changes.
+function estimator(p, keys, design) {
+  let d = null, seen = [], x, xp, e, out, first = true;
+  const current = () => {
+    if (d && keys.every((k, i) => p[k] === seen[i])) return d;
+    seen = keys.map((k) => p[k]);
+    const next = design();
+    if (!d || next.n !== d.n) { x = new Float64Array(next.n); xp = new Float64Array(next.n); out = new Float64Array(next.n); first = true; }
+    if (!d || next.m !== d.m) e = new Float64Array(next.m);
+    d = next;
+    return d;
+  };
+  current();
   return {
     step(inp) {
+      const { n, m, Ad, Bd, C, L } = current();
       const u = inp[0] ?? 0;
       if (first) { first = false; } else {
         for (let i = 0; i < n; i++) { let s = Bd[i][0] * u; for (let j = 0; j < n; j++) s += Ad[i][j] * x[j]; xp[i] = s; }
@@ -91,10 +104,12 @@ export const OBSERVERS = {
     params: [...MODEL, vec('L', 'Gain L (rows)', [0.5, 10])],
     check(p) { const bad = checkModel(p); if (bad) return bad; if (p.L.length !== p.C.length) return 'L needs n × m values, row by row'; return ''; },
     make(p, Ts) {
-      const { n, m, A, B, C } = model(p);
-      const { Ad, Bd } = c2d(A, B, Ts);
-      const L = Array.from({ length: n }, (_, i) => p.L.slice(i * m, i * m + m));
-      return estimator({ n, m, Ad, Bd, C, L });
+      return estimator(p, ['A', 'B', 'C', 'L'], () => {
+        const { n, m, A, B, C } = model(p);
+        const { Ad, Bd } = c2d(A, B, Ts);
+        const L = Array.from({ length: n }, (_, i) => p.L.slice(i * m, i * m + m));
+        return { n, m, Ad, Bd, C, L };
+      });
     },
   },
   difference: {
@@ -104,9 +119,9 @@ export const OBSERVERS = {
     params: [num('Tf', 'Rate filter Tf', 0, { unit: 's', min: 0 })],
     make(p, Ts) {
       let prev = null, rate = null, out = null;
-      const a = p.Tf > 0 ? Ts / (p.Tf + Ts) : 1;
       return {
         step(inp) {
+          const a = p.Tf > 0 ? Ts / (p.Tf + Ts) : 1;
           const y = Array.from(inp).slice(1);
           out ??= new Float64Array(2 * y.length);
           prev ??= y; rate ??= y.map(() => 0);

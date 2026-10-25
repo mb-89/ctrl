@@ -104,12 +104,13 @@ test('linearize and the first-order fit: exact on a lag; mean residence time on 
   close(fit.tau, 0.7, 1e-9, 'τ');
   assert.equal(fit.theta, 0);
 
-  // The motor's speed: two lags in a loop, K = 5 / 3.5 and τ = C A⁻² B / K =
-  // (τa + τm) / 3.5 (from G(s) = 5 / ((τa s + 1)(τm s + 1) + 2.5)).
+  // The motor's speed: armature and rotor in a loop, K = 5 / 3.5 and
+  // τ = C A⁻² B / K = 0.21 / 3.5 (from G(s) = Kt / ((Ls + R)(Js + b) + Kt Ke)
+  // = 0.5 / ((0.01 s + 1)(0.02 s + 0.1) + 0.25)).
   const motor = system('DC motor');
   motor.wires = motor.wires.map((w) => (w.to === 'ctrl:1' ? wire('motor', 'ctrl:1') : w));
   const speed = linearize(modelOf(normalizeDiagram(motor)));
-  assert.deepEqual(speed.states.map((s) => s.label), ['Motor/armature', 'Motor/load']);
+  assert.deepEqual(speed.states.map((s) => s.label), ['Motor/armature 1/(Ls + R)', 'Motor/rotor 1/(Js + b)']);
   const sf = firstOrderFit(speed);
   close(sf.K, 5 / 3.5, 1e-9, 'K');
   close(sf.tau, 0.21 / 3.5, 1e-9, 'τ');
@@ -157,16 +158,28 @@ test('kinks: a saturation at its limit, one narrower than the step and the empty
   assert.ok(tank.kinks.some((k) => /along q differs left and right/.test(k)), tank.kinks.join(' | '));
   refusal(() => kalmanDesign(tank, { Q: [1], R: [1e-4], Ts: 0.02 }), 'kink', /^the Kalman filter needs slopes/);
 
-  // Smooth plants have none: the carts hanging and upright, the tank at its
-  // levels (also at the wall's top, H = 1, where only the curvature bends),
-  // the encoder with its resonance.
+  // The tank at its brim, h = H = 1 m: above it the water overflows, so the
+  // level's rate has its slope below the brim and none above (the library's
+  // schedule tops out at 0.95 m for this; decisions.md).
   const tm = modelOf(system('Conical'));
-  for (const h of [0.1, 0.45, 1]) assert.deepEqual(linearize(tm, { y: [h] }).kinks, [], `tank at ${h}`);
+  assert.ok(linearize(tm, { y: [1] }).kinks.some((k) => /^the slope of the rate of tank\.h along tank\.h differs left and right/.test(k)));
+  // Smooth plants have none: the carts hanging and upright, the tank at its
+  // levels below the brim, the encoder with its resonance.
+  for (const h of [0.1, 0.45, 0.95, 0.999]) assert.deepEqual(linearize(tm, { y: [h] }).kinks, [], `tank at ${h}`);
   const pend = modelOf(system('Pendulum swing-up'));
   assert.deepEqual(linearize(pend, 'origin').kinks, []);
   assert.deepEqual(linearize(pend, 'initial').kinks, []);
   assert.deepEqual(linearize(modelOf(system('Encoder')), 'origin').kinks, []);
   assert.deepEqual(linearize(modelOf(system('Triple')), 'origin').kinks, []);
+  // The encoder in the middle of its sweep (the Analysis tab at the scope's
+  // time): the shaft's x2 is badly scaled (the angle is wn²·x2), so a step
+  // of it moves the angle 0.19 rad and the encoder's sines bend within ten
+  // steps; the one-sided slopes then differ by the curvature (0.5 %), which
+  // shrinks with a shorter step: no kink. It read as one before the merge.
+  const enc = modelOf(system('Encoder'));
+  const x = Float64Array.from(enc.x0);
+  enc.states.forEach((s, i) => { x[i] = { angle: 8.405, 'shaft resonance 70 Hz.x1': 1.841e-4, 'shaft resonance 70 Hz.x2': 4.343e-5, 'speed from angle': -8367 }[s.label] ?? [2.683, 35.63][i] ?? 0; });
+  assert.deepEqual(linearize(enc, { x, u: 10, label: 'mid-sweep', warnings: [] }).kinks, []);
 });
 
 test('trim starts from the levels: an empty tank trims at 0.1 m and its PI designs; levels of millimetres', () => {

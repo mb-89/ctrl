@@ -6,22 +6,30 @@ import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluat
 import { diagramNames } from '../core/diagram.js';
 import { createDesignStore, useDesigns } from '../core/design.js';
 import { createPlantEditor } from './plant.js';
+import { drawnValues, refitSwitched } from './xyview.js';
 import { createControllerTab } from './controller.js';
+import { createAutotuneTab } from './autotune.js';
+import { loopOverlays, autotune, placeVariant, tuneReport, withVariant } from '../core/autotune.js';
+import { createAnalysisTab } from './analysis.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
-import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../core/systems.js';
+import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem, libraryTags, filterByTags } from '../core/systems.js';
 import { createDisplay } from './display.js';
 import { createControls } from './controls.js';
 import { createGenerator } from './generator.js';
 import { createSplitters } from './layout.js';
+import { createLive } from './live.js';
+import { createRecord } from './record.js';
+import { createSpeed } from './speed.js';
+import { speedToJson } from '../core/speed.js';
 
 const STORE_KEY = 'loop-tuner:v2:autosave';
 const TABS = [
   { key: 'input', label: 'Input' },
   { key: 'plant', label: 'Plant' },
   { key: 'controller', label: 'Controller' },
-  { key: 'tune', label: 'Auto-tune', next: 'Set the goal (minimise a metric under bounds such as overshoot and settling time) and let the optimiser search the gains.' },
-  { key: 'analysis', label: 'Analysis', next: 'Computed views of the loop: root locus, Bode, Nyquist and pole-zero maps, step metrics.' },
+  { key: 'tune', label: 'Auto-tune' },
+  { key: 'analysis', label: 'Analysis' },
 ];
 
 function startApp() {
@@ -36,16 +44,22 @@ function startApp() {
   const app = { project: null, channel: 0, tab: 'input', signal: 'r' };
 
   // History: snapshots of the project, taken before each edit.
+  // An edit that changed nothing (a lit key pressed again) leaves no step,
+  // and the redo it cleared comes back.
   const undoStack = [], redoStack = [];
-  let editOpen = false;
+  let editOpen = false, redoBefore = [];
   app.beginEdit = () => {
     if (editOpen) return;
     undoStack.push(JSON.stringify(app.project));
     if (undoStack.length > 300) undoStack.shift();
-    redoStack.length = 0;
+    redoBefore = redoStack.splice(0);
     editOpen = true;
   };
-  app.endEdit = () => { editOpen = false; renderChrome(); };
+  app.endEdit = () => {
+    if (editOpen && undoStack.at(-1) === JSON.stringify(app.project)) { undoStack.pop(); redoStack.push(...redoBefore); }
+    editOpen = false; redoBefore = [];
+    renderChrome();
+  };
   const restore = (s) => { app.project = JSON.parse(s); changed(); };
   app.undo = () => { if (!undoStack.length) return; redoStack.push(JSON.stringify(app.project)); restore(undoStack.pop()); toast('Undone'); };
   app.redo = () => { if (!redoStack.length) return; undoStack.push(JSON.stringify(app.project)); restore(redoStack.pop()); toast('Redone'); };
@@ -56,10 +70,15 @@ function startApp() {
   // changes (a new version of the page), the old work is not restored over it.
   const startText = embeddedText || JSON.stringify(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY[0], SYSTEM_PARTS.filter((k) => SYSTEM_LIBRARY[0][k])));
   const base = `${startText.length}:${hash(startText)}`;
+  const saveNow = () => { saveTimer = null; try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch { /* storage unavailable */ } };
   function autosave() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ base, project: withUi() })); } catch { /* storage unavailable */ } }, 300);
+    saveTimer = setTimeout(saveNow, 300);
   }
+  // A reload or a closed tab right after a change still keeps it.
+  const flushSave = () => { if (saveTimer) { clearTimeout(saveTimer); saveNow(); } };
+  window.addEventListener('pagehide', flushSave);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
 
   // Designs computed from the plant (design/output/designs.md). Light ones
   // are computed while the diagram compiles; a heavy one (a swing-up plan)
@@ -77,11 +96,20 @@ function startApp() {
   // controller there is only r(t).
   let acqKey = '', acq = null, loopNote = '';
   app.systemError = '';
+  // A plan that settles (the design store's generation) makes it again.
+  const acqKeyOf = (p) => JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal, designs.generation]);
   function acquire() {
     const p = app.project;
-    const key = JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal, designs.generation]);
+    const key = acqKeyOf(p);
     if (key === acqKey) return acq;
     acqKey = key;
+    const t0 = performance.now();
+    acq = simulateScreen(p);
+    timedSim(key, simOf(p).duration, performance.now() - t0, () => simulateScreen(p));
+    pumpDesigns();
+    return acq;
+  }
+  function simulateScreen(p) {
     loopNote = '';
     app.systemError = '';
     app.designStatuses = [];
@@ -94,24 +122,66 @@ function startApp() {
         Object.assign(signals, { y: result.y, u: result.u, e: result.e, ym: result.ym, d: result.d });
         loopNote = `loop: ${cand.name}`;
       } catch (err) { app.systemError = err.message; }
-      acq = { t, signals };
-      return acq;
+      return { t, signals };
     }
     // No controller yet: the diagram is the whole system. If it cannot run,
     // the signals still show and the Plant tab says why.
     try {
       const sys = evaluateSystem(p, { designs });
-      acq = { t: sys.t, signals: sys.signals };
       app.designStatuses = sys.info.designs ?? [];
+      return { t: sys.t, signals: sys.signals };
     } catch (err) {
       app.systemError = err.message;
       const signals = {};
       let t = null;
       for (const name of Object.keys(p.system.signals)) { const tr = referenceTrace(p, name); signals[name] = tr.r; t = tr.t; }
-      acq = { t, signals };
+      return { t, signals };
     }
-    pumpDesigns();
-    return acq;
+  }
+  // How fast this page simulates the screen: its simulated seconds over the
+  // wall time the simulation took, the fastest of up to three timings (a
+  // first run is slowed by the browser compiling; the others are taken only
+  // while the speed is held to it). A screen simulated in under 2 ms is run a
+  // few more times, so the timing is longer than the clock's resolution. No
+  // speed runs faster (core/speed.js paceOf); ∞ runs at it.
+  let simTiming = { key: '', duration: 0, ms: [], again: null, at: 0, timer: 0 };
+  function timedSim(key, duration, ms, again) {
+    let n = 1;
+    if (ms < 2) { const t0 = performance.now() - ms; while (performance.now() - t0 < 2 && n < 64) { again(); n++; } ms = (performance.now() - t0) / n; }
+    clearTimeout(simTiming.timer);
+    simTiming = { key, duration, ms: [ms], again, at: performance.now(), timer: 0 };
+  }
+  app.simRate = ({ retime = false } = {}) => {
+    const ms = Math.min(...simTiming.ms);
+    const rate = ms > 0 && simTiming.duration > 0 ? simTiming.duration / (ms / 1000) : Infinity;
+    // Sweeping held to it: time it again (once a second, twice at most), as
+    // the first timing may be the slow one.
+    if (retime && simTiming.ms.length < 3 && !simTiming.timer && simTiming.again && performance.now() - simTiming.at > 1000 && (app.speed?.() ?? 1) >= rate) {
+      const t = simTiming;
+      t.timer = setTimeout(() => {
+        t.timer = 0;
+        if (t !== simTiming || acqKeyOf(app.project) !== t.key) return;
+        const t0 = performance.now();
+        t.again();
+        t.ms.push(performance.now() - t0);
+        t.at = performance.now();
+      }, 0);
+    }
+    return rate;
+  };
+  // Auto-tune's run with the gains it just put in stands for the screen's own
+  // when the screen would simulate exactly that: the same diagram but for the
+  // tuned block's variants, the same inputs, one period of the input on the
+  // same time grid. Saves simulating it again for every improvement.
+  function adoptRun({ run, ctx, variant }) {
+    const p = app.project;
+    if (!run || !ctx || loopReady(p) || p.system.plant?.type !== 'diagram') return;
+    if (JSON.stringify(simOf(p)) !== JSON.stringify(ctx.sim) || JSON.stringify(p.system.signals) !== JSON.stringify(ctx.signals)) return;
+    if (JSON.stringify(withVariant(p.system.plant.diagram, ctx.path, variant)) !== JSON.stringify(withVariant(ctx.diagram, ctx.path, variant))) return;
+    acqKey = acqKeyOf(p);
+    acq = { t: run.t, signals: run.signals };
+    loopNote = '';
+    app.systemError = '';
   }
 
   // The pump: while the store has jobs, a slice of work per task. A
@@ -165,6 +235,7 @@ function startApp() {
     display.setData(acquire());
     if (refit) { display.setScope(app.project.scope, app.channel); controls.render(display.mode); autosave(); }
     controllerTab.renderComputed();
+    if (app.tab === 'analysis') analysisTab.render();
     renderChrome();
     const f = finished.at(-1), st = (app.designStatuses ?? []).find((s) => s.path === f.path);
     const what = f.title || 'The plan';
@@ -172,7 +243,7 @@ function startApp() {
     else toast(`${f.title ? `${f.title} planned` : 'Planned'} in ${(f.ms / 1000).toFixed(1)} s${st?.status === 'warn' ? ', with a warning: see the Controller tab' : ''}`);
   }
   // Cancel the plan a status waits on, or plan again after a cancel.
-  function designsChanged() { display.setData(acquire()); controllerTab.renderComputed(); renderChrome(); }
+  function designsChanged() { display.setData(acquire()); controllerTab.renderComputed(); if (app.tab === 'analysis') analysisTab.render(); renderChrome(); }
   app.cancelDesign = (key) => { if (designs.cancel(key)) { designsChanged(); toast('Planning cancelled'); } };
   app.retryDesign = (key) => { if (designs.retry(key)) designsChanged(); };
   // The loop a Controller closes, cut at its output, linearised at an
@@ -267,11 +338,11 @@ function startApp() {
   };
   // Signal values at the scope's current instant, for 2D views.
   app.sceneEnv = () => {
-    const data = acquire();
+    const data = live?.data() ?? acquire();  // live: the sweep on the screen
     const t = display.time();
     const env = { t };
     if (data?.t?.length > 1) {
-      const k = Math.max(0, Math.min(data.t.length - 1, Math.round(t / (data.t[1] - data.t[0]))));
+      const k = Math.max(0, Math.min(data.t.length - 1, Math.round((t - data.t[0]) / (data.t[1] - data.t[0]))));
       env.t = data.t[k];
       for (const [name, v] of Object.entries(data.signals)) env[name] = v[k];
     }
@@ -321,9 +392,14 @@ function startApp() {
     display.setPreview({ channel, alone, sum, label: SIGNALS[previewReq.comp.type].label.toLowerCase(), signal: app.signal });
   }
 
-  // Run control
-  app.toggleRun = () => { display.setMode(display.mode === 'stop' ? 'run' : 'stop'); controls.render(display.mode); };
-  app.single = () => { display.setMode('single'); controls.render(display.mode); };
+  // Run control. In Live mode Run and Stop go through the plant (ui/live.js).
+  app.setMode = (m) => {
+    // The scope's Stop while Auto-tune sweeps its runs stops the tuning.
+    if (m === 'stop') tuneTab?.scopeStopped();
+    display.setMode(m); controls.render(display.mode); live?.mode(m);
+  };
+  app.toggleRun = () => app.setMode(display.mode === 'stop' ? 'run' : 'stop');
+  app.single = () => app.setMode('single');
   // Auto Scale: one period of the input across the screen, then every
   // channel with a signal fitted to about six divisions. Fitted while a
   // design is still being computed (a plan, when a system loads), it fits
@@ -332,13 +408,25 @@ function startApp() {
   let fitPending = false;
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
-    const data = acquire();
-    for (const ch of app.project.scope.channels) {
-      const fit = data.signals[ch.source] && fitChannel(data.signals[ch.source]);
+    const data = live?.data() ?? acquire();  // live: the sweep on the screen
+    const sc = app.project.scope;
+    sc.channels.forEach((ch, i) => {
+      // XY with Δ: the channels draw channel 1 minus themselves; fit that.
+      const v = drawnValues(data.signals, sc, i, app.unitOf), fit = v && fitChannel(v);
       if (fit) Object.assign(ch, fit);
+    });
+    // A Controller block's r and the y it compares with r share one scale and
+    // offset, so they overlay (src/core/autotune.js loopOverlays); not in XY,
+    // where channel 1 is the beam's x.
+    if (sc.view?.mode !== 'xy') for (const g of loopOverlays(sc.channels, data.signals, app.unitOf)) {
+      const fit = fitChannel(g.flatMap((i) => Array.from(data.signals[sc.channels[i].source])));
+      if (fit) for (const i of g) Object.assign(sc.channels[i], fit);
     }
     fitPending = (app.designStatuses ?? []).some((s) => s.status === 'pending' || s.status === 'stale');
   }
+  // After a change of display mode or Δ: a channel that now draws another
+  // quantity (X − Y in XY, itself elsewhere) is fitted to it.
+  app.refitSwitched = (before, sc) => { const d = display.data; if (d) refitSwitched(before, sc, d.signals, app.unitOf); };
   app.autoScale = () => {
     app.beginEdit();
     fitScope();
@@ -348,21 +436,58 @@ function startApp() {
   };
 
   // Rendering
+  let live = null;  // Live mode (ui/live.js), made below
+  let tuneTab = null;  // the Auto-tune tab (ui/autotune.js), made below
+  // Speed, in the header (ui/speed.js): the factor every clock of the page
+  // runs at, held at 1× while a live plant is connected (it owns the clock),
+  // and the speed achieved.
+  app.speedLock = () => live?.lockReason() ?? null;
+  app.speedChanged = () => autosave();
+  const speed = createSpeed(app);
+  app.speed = () => speed.effective();
+  app.timeRan = (t, seconds) => speed.ran(t, seconds);
+  app.speedRender = () => speed.render();
   const display = createDisplay($('display'), {
     onSelectChannel: (i) => app.selectChannel(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
-    onStopped: () => controls.render(display.mode),
+    onStopped: () => { controls.render(display.mode); live?.mode('stop'); app.sweepEnded?.(); },  // a Single ended
     frameMs: () => app.frameMs(),
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
+    onTime: () => app.onScopeTime?.(),
+    liveTag: () => live?.tag(),
+    speed: () => speed.effective(),
+    simRate: () => app.simRate({ retime: true }),
+    onSweep: (t, seconds) => speed.ran(t, seconds),
+    onLevels: () => app.renderLevels?.(),  // the typed spectrogram levels follow the strip
   });
+  app.display = display;
   const controls = createControls($('controls'), app);
+  app.renderLevels = controls.renderLevels;
+  // Save and references under the screen (ui/record.js); Live in Run Control.
+  const record = createRecord(app, display);
+  live = createLive(app, display, $('controls'), record);
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
   const controllerTab = createControllerTab($('tab-controller'), app);
   // Opens the Controller tab on one Controller block (path of block ids).
   app.openController = (path) => { controllerTab.open(path); app.tab = 'controller'; renderTabs(); };
+  // The Analysis tab; the scope's time (the cursor, the sweep, where the
+  // cursor last was, or the right edge) is its "Scope time" operating point,
+  // and the tab follows it as it moves.
+  const analysisTab = createAnalysisTab($('tab-analysis'), app);
+  app.scopeTime = () => display.time();
+  app.scopeTimeFrom = () => display.timeFrom();
+  app.onScopeTime = () => analysisTab.followTime();
+  // Auto-tune changes the project many times in one run but takes one undo
+  // step for all of it (beginEdit at its start, endEdit at its end); each
+  // change goes through tuneEdit. It shows whole runs while it works.
+  app.tuneEdit = (fn, from) => { fn(app.project); if (from) adoptRun(from); changed(); };
+  app.showLoop = () => display.setData(acquire());  // the loop's own run back on the display
+  app.playRun = (d, past) => { display.play(d, past); controls.render(display.mode); };  // one run swept once
+  app.setRunMode = (m) => { display.setMode(m); controls.render(display.mode); };
+  tuneTab = createAutotuneTab($('tab-tune'), app, display);
 
   function renderTabs() {
     $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
@@ -373,6 +498,10 @@ function startApp() {
     $('tab-plant').hidden = app.tab !== 'plant';
     $('tab-controller').hidden = app.tab !== 'controller';
     if (app.tab === 'controller') controllerTab.shown();
+    $('tab-tune').hidden = app.tab !== 'tune';
+    if (app.tab === 'tune') tuneTab.shown();
+    $('tab-analysis').hidden = app.tab !== 'analysis';
+    if (app.tab === 'analysis') analysisTab.shown();
     if (app.tab !== 'plant') plantEditor.hidden();
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
@@ -417,6 +546,10 @@ function startApp() {
     generator.render();
     if (app.tab === 'plant') plantEditor.render();
     if (app.tab === 'controller') controllerTab.render();
+    if (app.tab === 'tune') tuneTab.render();
+    if (app.tab === 'analysis') analysisTab.render();
+    live.changed();  // a running loop takes the edit at its next cycle
+    record.changed();  // references follow the window
     renderChrome();
     autosave();
   }
@@ -425,11 +558,12 @@ function startApp() {
   // `ui` when it is saved, and is applied when a project or system opens.
   let layout = null;
   const withUi = () => {
-    const ui = { run: display.mode, ...(UI_TABS.includes(app.tab) ? { tab: app.tab } : {}), ...(plantEditor.viewName() ? { view: plantEditor.viewName() } : {}), ...(layout ? { setup: layout.setupShare() } : {}) };
+    const ui = { run: display.mode, ...(UI_TABS.includes(app.tab) ? { tab: app.tab } : {}), ...(plantEditor.viewName() ? { view: plantEditor.viewName() } : {}), ...(layout ? { setup: layout.setupShare() } : {}), speed: speedToJson(speed.set) };
     return { ...app.project, ui };
   };
   function applyUi(ui = {}) {
     if (ui.tab) app.tab = ui.tab;
+    if (ui.speed !== undefined) speed.setSpeed(ui.speed);
     plantEditor.view(ui.view ?? '');
     if (ui.setup) layout?.setSetup(ui.setup);
     renderTabs();
@@ -462,19 +596,39 @@ function startApp() {
     const json = exportJson().replace(/</g, '\\u003c');
     return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n</script>\n<script id="lt-script">${$('lt-script').textContent}</script>\n</body>\n</html>\n`;
   }
-  function download(name, text, type) {
+  // Saving a file. Where the hosting page offers a save adapter (the hosted
+  // build adds one; the viewer confirms each save), through it; in a plain
+  // browser, through a download link. Resolves true once the file is on its
+  // way. Framed without an adapter, only the Copy buttons are offered.
+  let saver = null;
+  (window.__ltHost?.saver?.() ?? Promise.resolve(null)).then((d) => {
+    saver = d;
+    if (d && framed) document.querySelectorAll('[data-standalone]').forEach((el) => { el.hidden = false; });
+  }).catch(() => {});
+  async function download(name, data, type) {
+    if (saver) {
+      try { await saver.save({ filename: name, data }); return true; } catch (err) {
+        if (err?.code !== 'declined') toast(`Could not save ${name}: ${err?.message ?? err?.code ?? err}`);
+        return false;
+      }
+    }
+    if (framed) { toast('Saving files is not available here; use Copy JSON or Copy HTML.'); return false; }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
     a.download = name;
     document.body.append(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    return true;
   }
+  app.download = download;
+  app.canDownload = () => !framed || !!saver;  // else Save offers Copy (ui/record.js)
   const stem = () => app.project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loop';
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied to the clipboard`); } catch { toast('Copying was blocked by the browser.'); }
   }
-  $('save').addEventListener('click', () => { download(`${stem()}.json`, exportJson(), 'application/json'); toast('Saved the project as JSON'); });
-  $('export').addEventListener('click', () => { download(`${stem()}.html`, exportHtml(), 'text/html'); toast('Exported a standalone page with this project inside'); });
+  app.copy = copy;  // for Save and the plant script (ui/record.js, ui/live.js)
+  $('save').addEventListener('click', async () => { if (await download(`${stem()}.json`, exportJson(), 'application/json')) toast('Saved the project as JSON'); });
+  $('export').addEventListener('click', async () => { if (await download(`${stem()}.html`, exportHtml(), 'text/html')) toast('Exported a standalone page with this project inside'); });
   $('copy').addEventListener('click', () => copy(exportJson(), 'Project JSON'));
   $('copy-html').addEventListener('click', () => copy(exportHtml(), 'Standalone HTML'));
   $('open').addEventListener('click', () => $('file').click());
@@ -511,13 +665,32 @@ function startApp() {
   };
   const pop = $('syslib-pop');
   const PART_LABEL = { input: 'Input', plant: 'Plant', controller: 'Controller' };
-  pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
-    + SYSTEM_LIBRARY.map((e, i) => `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => `<span class="tag tag-${t.kind}">${esc(t.label)}</span>`).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
-      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>`).join('');
+  // Tags filter the list: every tag in the library is a chip at the top; a
+  // click on one there or on a card toggles it; systems must carry them all.
+  const tagFilter = new Set();
+  const chip = (t, extra = '') => `<button type="button" class="tag tag-${t.kind} tone-${t.tone}${extra}" data-tag="${esc(t.label)}" aria-pressed="${tagFilter.has(t.label)}" title="Show only systems tagged ${esc(t.label)}">${esc(t.label)}</button>`;
+  function renderLibrary() {
+    const shown = new Set(filterByTags([...tagFilter]));
+    pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
+      + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
+      + `<div class="tagfilter" role="group" aria-label="Filter by tag">${libraryTags().map((t) => chip(t)).join('')}`
+      + `<span class="tagcount">${tagFilter.size ? `${shown.size} of ${SYSTEM_LIBRARY.length} <button type="button" class="key small" data-tagclear>Clear</button>` : `${SYSTEM_LIBRARY.length} systems · click a tag to filter`}</span></div>`
+      + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
+      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>` : '')).join('');
+  }
+  renderLibrary();
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
-  $('syslib').addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; $('syslib').setAttribute('aria-expanded', String(!pop.hidden)); });
+  $('syslib').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (pop.hidden) document.dispatchEvent(new MouseEvent('click'));  // one menu open at a time: the others close
+    pop.hidden = !pop.hidden;
+    $('syslib').setAttribute('aria-expanded', String(!pop.hidden));
+  });
   pop.addEventListener('click', (e) => {
     e.stopPropagation();
+    const tag = e.target.closest('[data-tag]');
+    if (tag) { if (!tagFilter.delete(tag.dataset.tag)) tagFilter.add(tag.dataset.tag); renderLibrary(); return; }
+    if (e.target.closest('[data-tagclear]')) { tagFilter.clear(); renderLibrary(); return; }
     const b = e.target.closest('[data-sys]');
     if (!b) return;
     const entry = SYSTEM_LIBRARY[Number(b.dataset.sys)];
@@ -539,7 +712,7 @@ function startApp() {
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? app.redo() : app.undo(); return; }
     if (mod && e.key.toLowerCase() === 'y' && !inField) { e.preventDefault(); app.redo(); return; }
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed ? 'copy' : 'save').click(); return; }
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); $(framed && !saver ? 'copy' : 'save').click(); return; }
     if (!inField && app.tab === 'plant' && $('help-dlg').hidden && plantEditor.handleKey(e)) { e.preventDefault(); return; }
     if (inField || mod || e.altKey) return;
     if (!$('help-dlg').hidden) { if (e.key === 'Escape') $('help-dlg').hidden = true; return; }
@@ -570,8 +743,18 @@ function startApp() {
     addComponent: (c) => { app.addComponent(c); return structuredClone(refs()); },
     reference: () => { const { t, r } = referenceTrace(app.project); return { t: Array.from(t), r: Array.from(r) }; },
     autoScale: () => app.autoScale(),
-    run: () => { display.setMode('run'); controls.render('run'); },
-    stop: () => { display.setMode('stop'); controls.render('stop'); },
+    run: () => app.setMode('run'),
+    stop: () => app.setMode('stop'),
+    single: () => app.setMode('single'),
+    // The speed of time: x a factor, or -1 (or 'inf') for as fast as possible.
+    // Returns { speed, effective, achieved, simulation, locked } (-1 for as
+    // fast as possible; simulation: how fast the page simulates the screen,
+    // which no speed exceeds, or null if not timed).
+    speed: (x) => {
+      if (x !== undefined && !speed.setSpeed(x)) throw new Error('speed: a factor above 0, or -1 for as fast as possible');
+      const sim = app.simRate();
+      return { speed: speedToJson(speed.set), effective: speedToJson(speed.effective()), achieved: speed.achieved(), simulation: Number.isFinite(sim) ? sim : null, locked: speed.locked() };
+    },
     // What each running designed variant computed from the plant (status, rows, errors).
     designs: () => { acquire(); return structuredClone(app.designStatuses ?? []); },
     // Resolves, with the statuses, once no design is being computed in the
@@ -587,6 +770,20 @@ function startApp() {
     // 'initial', { y: [levels] }, { t: seconds }): { plant, ctrl, Ts, … }.
     loopModel: (path, op) => structuredClone(app.loopModel(path, op)),
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
+    live: live.api,  // connect(url), disconnect(), estop(), reset(), state(): design/output/hil.md
+    record: record.api,  // screen(format), live(format), reference(text, name), clearReferences(), state()
+    // Auto-tune a Controller block at once, as the Auto-tune tab does step by
+    // step: opts { block (id path, 'ctrl'), method, goal, rule, simc,
+    // amplitude, maxIter, feedforward, apply = true }. Applied, the result
+    // goes into a variant of its own, running if it scores better: one undo
+    // step.
+    autotune: (opts = {}) => {
+      tuneTab.stop();
+      let res;
+      try { res = autotune(app.project, opts.block ? String(opts.block).split('/') : null, opts); } catch (err) { return { ok: false, why: err.message }; }
+      if (res.ok && opts.apply !== false) { app.beginEdit(); placeVariant(app.project, res.path, res.variant, { run: res.better }); app.endEdit(); changed(); }
+      return tuneReport(res);
+    },
   };
 
   // Boot: the embedded project, unless this browser has newer work on it.

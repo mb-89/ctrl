@@ -86,9 +86,11 @@ export function compileExpr(src, opts = {}) {
     if (tk.k === 'id') {
       take();
       const name = tk.v.toLowerCase();
-      if (name === 't') return (e) => e.t;
+      // In a view, a signal named T, E or PI is that signal, not the time or a constant.
+      const own = opts.vars && tk.v !== name && peek()?.v !== '(' ? tk.v : null;
+      if (name === 't') return own ? (e) => (Object.hasOwn(e, own) ? e[own] : e.t) : (e) => e.t;
       // Own properties only: names such as "constructor" must not resolve.
-      if (Object.hasOwn(CONST, name)) { const v = CONST[name]; return () => v; }
+      if (Object.hasOwn(CONST, name)) { const v = CONST[name]; return own ? (e) => (Object.hasOwn(e, own) ? e[own] : v) : () => v; }
       const arity = Object.hasOwn(FN1, name) ? 1 : Object.hasOwn(FN2, name) ? 2 : Object.hasOwn(FN3, name) ? 3 : 0;
       if (!arity && opts.vars && peek()?.v !== '(') { const v = tk.v; return (e) => (Object.hasOwn(e, v) ? e[v] : NaN); }
       if (!arity) throw new Error(`unknown name "${tk.v}"; use t, pi, e or a function such as sin, exp, step`);

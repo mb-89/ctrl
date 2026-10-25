@@ -264,7 +264,10 @@ export function trim(model, targets, { umin = -Infinity, umax = Infinity } = {})
 // square root at 0) makes the slope differ left and right, and the central
 // difference is then neither. So each slope is also taken one-sided; where
 // the two sides disagree beyond 10⁻³ (and beyond the curvature a smooth
-// function shows: the gap must not shrink with a 10× shorter step), lin.kinks
+// function shows: the gap must not grow with a 10× longer step, nor shrink
+// with a 10× shorter one, where a smooth function's gap is its curvature
+// times the step: a badly scaled state, whose step moves what it feeds a
+// long way, bends within 10 steps), lin.kinks
 // names the state or input and what it moves, and LQR, the Kalman filter and
 // the PI design refuse. Saturations at their limit are named there too.
 export function linearize(model, op = 'origin') {
@@ -287,14 +290,14 @@ export function linearize(model, op = 'origin') {
     for (let i = 0; i < rows; i++) S[i][j] = (p[i] - q[i]) / (2 * h);
     side.push({ h, p, q });
   }
-  // One-sided slopes against the central ones; a suspect gap is checked with a 10× longer step.
+  // One-sided slopes against the central ones; a suspect gap is checked with a 10× longer and a 10× shorter step.
   const rowScale = S.map((row) => Math.max(0, ...row.map((v) => (Number.isFinite(v) ? Math.abs(v) : 0))));
   const kinks = [];
   const rowName = (i) => (i < n ? `the rate of ${model.states[i].label}` : model.outputs[i - n].label);
   const colName = (j) => (j < n ? model.states[j].label : uName);
   for (let j = 0; j < cols; j++) {
     const { h, p, q } = side[j];
-    let far = null;
+    let far = null, near = null;
     for (let i = 0; i < rows; i++) {
       const fw = (p[i] - c0[i]) / h, bw = (c0[i] - q[i]) / h, gap = Math.abs(fw - bw);
       const noise = (1e3 * Number.EPSILON * Math.max(Math.abs(c0[i]), Math.abs(p[i]), Math.abs(q[i]))) / h;
@@ -302,6 +305,10 @@ export function linearize(model, op = 'origin') {
       if (!far) far = { p: moved(j, 10 * h), q: moved(j, -10 * h) };
       const gapFar = Math.abs((far.p[i] - c0[i]) / (10 * h) - (c0[i] - far.q[i]) / (10 * h));
       if (Number.isFinite(gap) && Number.isFinite(gapFar) && !(gap > 0.5 * gapFar)) continue;
+      // A smooth function's gap shrinks with the step; a kink's stays.
+      if (!near) near = { p: moved(j, h / 10), q: moved(j, -h / 10) };
+      const gapNear = Math.abs((near.p[i] - c0[i]) / (h / 10) - (c0[i] - near.q[i]) / (h / 10));
+      if (Number.isFinite(gap) && Number.isFinite(gapNear) && gapNear < 0.5 * gap) continue;
       kinks.push(Number.isFinite(gap) ? `the slope of ${rowName(i)} along ${colName(j)} differs left and right (${fmt(bw)} and ${fmt(fw)})` : `${rowName(i)} has no slope along ${colName(j)} there`);
       break;
     }

@@ -253,3 +253,28 @@ test('loopModel: refusals and notes: a law not linear there, no design yet, an O
   assert.deepEqual(lo.outputs.map((o) => o.label), ['x', 'θ']);
   assert.equal(lo.input.label, 'F');
 });
+
+test('loopModel on main\'s systems: sliding mode linear only in its boundary layer; an External plant has no model', () => {
+  // The sliding modes: the boundary layer is a PD inside |s| < φ; the ideal
+  // relay and super-twisting have no slope at s = 0, and say so.
+  const smc = project('DC motor, sliding');
+  const names = blk(smc, 'ctrl').variants.map((v) => v.name);
+  blk(smc, 'ctrl').variant = names.indexOf('Relay (theory)');
+  refusal(() => loopModel(smc, 'ctrl', 'origin'), 'not-linear', /an ideal sliding mode switches: it has no linear model/);
+  blk(smc, 'ctrl').variant = names.indexOf('Super-twisting');
+  refusal(() => loopModel(smc, 'ctrl', 'origin'), 'not-linear', /super-twisting has no linear model/);
+  blk(smc, 'ctrl').variant = names.indexOf('Boundary layer');
+  const bl = loopModel(smc, 'ctrl', 'origin');
+  const { lambda, K, phi } = blk(smc, 'ctrl').variants[blk(smc, 'ctrl').variant].params;
+  assert.deepEqual(bl.ctrl.D[0], [K * lambda / phi, -K * lambda / phi, -K / phi]);
+  assert.deepEqual(bl.plant.outputs.map((o) => o.label), ['angle', 'speed (Motor)']);
+  // A plant outside the page (Live mode): what u drives runs elsewhere, so
+  // neither a design nor the Analysis tab has a model of it.
+  const hil = project('HIL');
+  refusal(() => loopModel(hil, 'ctrl', 'origin'), 'external-plant', /^the plant runs outside the page \(External plant 'motor'\): the page has no model of it/);
+  blk(hil, 'ctrl').variants = [normalizeVariant({ name: 'LQR', type: 'lqr', params: { Q: [1], R: 1 } })];
+  blk(hil, 'ctrl').variant = 0;
+  const st = evaluateSystem(hil).info.designs[0];
+  assert.equal(st.status, 'error');
+  assert.equal(st.error.code, 'external-plant');
+});
