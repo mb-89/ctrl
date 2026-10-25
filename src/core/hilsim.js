@@ -508,13 +508,15 @@ export function createSimPlant(spec) {
     for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * d * k2[i];
     el.eval(ts + 0.5 * d, Xt, 0, 0, k3);
     for (let i = 0; i < N; i++) Xt[i] = X[i] + d * k3[i];
-    el.eval(ts + d, Xt, 0, 0, k4);
+    // The end of a step reads what a dead time's input was before a sample there (diagram.js histAt).
+    el.eval(ts + d, Xt, 0, 0, k4, true);
     for (let i = 0; i < N; i++) X[i] += (d / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   };
   const onGrid = (t) => Math.round(t * 1e9) / 1e9;
   // A grid point's record (what dead times remember) waits for the input
   // that holds from it: in the page the sample there sets u first, and here
-  // the next span brings it.
+  // the next span brings it. What the step ended on, before it, is recorded
+  // at the step's end (recordLeft), as simulateSystem does.
   let pending = true;
   const recordAt = (t) => { if (!pending) return; el.eval(t, X, 0, 0, null); el.record(); pending = false; };
   el.eval(0, X, 0, 0, null);
@@ -538,6 +540,7 @@ export function createSimPlant(spec) {
     if (end) {
       rk4(at, ts + h - at);
       el.eval(stop, X, 0, 0, null);
+      el.recordLeft();
       el.sample(stop, X, 0, 0);
       pending = true;
       a = 0;

@@ -272,7 +272,7 @@ ctx = {
 
 ```json
 { "name": "LQR only", "type": "lqr", "params": { "Q": [10, 50, 1, 1], "R": 0.1, "track": 1, "Tr": 0, "umin": -25, "umax": 25 } }
-{ "name": "Gain-scheduled PI", "type": "scheduledPI", "params": { "at": [0.1, 0.25, 0.5, 0.75, 1], "Tcl": 0.25, "Tr": 0.1, "umin": 0, "umax": 3 } }
+{ "name": "Gain-scheduled PI", "type": "scheduledPI", "params": { "at": [0.1, 0.25, 0.5, 0.75, 0.95], "Tcl": 0.25, "Tr": 0.1, "umin": 0, "umax": 3 } }
 { "name": "Planned swing-up + TV-LQR", "type": "trajectory", "params": { "T": 2.4, "segments": 12, "planShare": 0.75, "start": 0, "Q": [10, 100, 100, 100, 1, 1, 1, 1], "R": 0.1, "umin": -40, "umax": 40 } }
 { "name": "Kalman", "type": "kalman", "params": { "Q": 1, "R": null } }
 ```
@@ -480,7 +480,7 @@ values === null:  u = 0
 - **Conical tank:**
   ```js
   ctrl(130, 90, 2, 0.02, [
-    { name: 'Gain-scheduled PI', type: 'scheduledPI', params: { at: [0.1, 0.25, 0.5, 0.75, 1], Tcl: 0.25, Tr: 0.1, umin: 0, umax: 3 } },
+    { name: 'Gain-scheduled PI', type: 'scheduledPI', params: { at: [0.1, 0.25, 0.5, 0.75, 0.95], Tcl: 0.25, Tr: 0.1, umin: 0, umax: 3 } },   // 0.95: the tank overflows at 1 m (decisions v2.7.2)
     { name: 'PI tuned for full',  type: 'scheduledPI', params: { at: [0.8],  Tcl: 0.25, umin: 0, umax: 3 } },
     { name: 'PI tuned for empty', type: 'scheduledPI', params: { at: [0.15], Tcl: 0.25, umin: 0, umax: 3 } },
     { name: 'Off', type: 'off', params: {} },
@@ -651,7 +651,7 @@ Test files: `test/linearize.test.mjs`, `test/design.test.mjs`, `test/planner.tes
 - Plans are computed when a system loads (2–4 s, visible) and are not kept across page loads. A plan that failed still runs, so the attempt can be seen.
 - Hand types stay for people who want numbers. "Copy as numbers" is the bridge, offered for LQR, PI and Kalman, never for plans.
 
-## 15. Follow-up: a feedforward computed from the plant the block sees
+## 15. Follow-up: a feedforward computed from the plant the block sees (built, v2.7.4: `pidFF`)
 
 Added 2026-10-24 with the reference feedforward of the PID and the gain-scheduled PI ([controller-proposal.md](controller-proposal.md), [input](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)). Today Kff, Kv and Ka are hand-set tuning inputs (the sine example's Kv 1.7) or found by Auto-tune's Iterate. A feedforward that is really the plant's inverse is computable, so the design layer should offer it, not the library:
 
@@ -659,4 +659,5 @@ Added 2026-10-24 with the reference feedforward of the PID and the gain-schedule
 - Plus what the feedback's parts on y take away when y follows r: Kv += Kd (D on the measurement), Kff += Kp(1 − b). For the sine example that gives Kv = 0.7 + 1 = 1.7, the hand value.
 - As a designed twin of the PID (say `pidFF`, or an option of `scheduledPI`) whose inputs are the feedback gains and which computes Kff, Kv, Ka; "Copy as numbers" gives a PID with them. Dead time is left out and reported, as for the other designs; a non-minimum-phase or unstable inverse is refused with a sentence.
 - Nothing of it is stored: the values follow the plant, like every design.
+- Built (v2.7.4) as `pidFF`, after the library review found the sine example's hand Kv 1.7 to be exactly the plant's inverse plus Kd: one more term than planned, Ka −= Kd·Tf (the derivative's filter), and an `order` input (0, 1, 2) so the example keeps the velocity term alone and runs as before ([designs.md](designs.md)).
 

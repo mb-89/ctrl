@@ -75,7 +75,7 @@ With `"level": 3` beside `levels`, the Board would run level 3 whatever the glob
   - the Plant tab's check (`ui/plant.js`, the `compileDiagram` call near line 336; it forces the viewed level, §3.1);
   - Live (`live.js` `build`). Its `update()` compares the applied diagram, so changing the global level, an override or Clear during Live rebuilds;
   - the v1 loop path (`sim.js`, via `plantDiagram`);
-  - the model compiles of the design layer (`project.js` and the closure in `compileDiagram`, on feat/designs);
+  - the model compiles of the design layer (`project.js` and the closure in `compileDiagram`, the design layer from feat/designs);
   - `cli.mjs`.
   
   The editors (Plant tab, Controller tab) keep editing the stored diagram.
@@ -289,7 +289,7 @@ The header's Speed readout shows the same cost live. At ∞ it runs at the simul
 
 All three use the running levels, through `runDiagram` (§2.1). Nothing in them chooses a level.
 
-**The design layer** (needs feat/designs merged):
+**The design layer** (merged from feat/designs):
 - **Model compiles** take the applied diagram, so the plant a block sees ([designs-in-the-page.md](designs-in-the-page.md) §4) is the running levels.
 - **`plantKey`** replaces each subsystem with levels by its running level's diagram with formulas resolved to numbers, and leaves out Valid range blocks and the level fields (`name`, `valid`), as it leaves out Sink names today. Consequences:
   - editing a level that does not run, or a mask value that only other levels or validity checks read (C_L while level 1 runs), never re-designs;
@@ -542,7 +542,7 @@ With this, a subsystem of 4 levels without `level` runs level 2, one with `"leve
 
 ## 12. Implementation steps (each one agent; `npm test` green at the end of each)
 
-**First, merge feat/designs into main.** It rewrote large parts of `diagram.js` (641 lines changed against main) and `simulateSystem`, so building the step bound or levels on main first means doing them twice. transparent-models.md's step 0 needs the same merge. Its worktree holds a merge of main in progress.
+**First, merge feat/designs into main.** It rewrote large parts of `diagram.js` (641 lines changed against main) and `simulateSystem`, so building the step bound or levels on main first means doing them twice. transparent-models.md's step 0 needs the same merge. The branch has main merged in (decisions v2.7.2, and again v2.7.4) and waits to land; once it has, this step is done.
 
 0. **Record.** Rules of §1 and the interpretations of §14 into decisions.md. The person's answers are already there (v2.8, detail levels answered), and their words are saved (inputs 10 and 13). The README's row for this page is current. Roadmap entries.
 1. **Eigenvalue step bound and run info** (§5, §4):

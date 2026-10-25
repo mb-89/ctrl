@@ -463,6 +463,9 @@ export function createDisplay(root, handlers) {
   // (handlers.simRate(), measured; ∞ runs at it); each frame tells
   // handlers.onSweep how much simulated time it swept, for the achieved speed.
   // A live feed brings its own scan line and its own clock.
+  // While the page makes a plan (handlers.frameMs() > 0) the sweep keeps
+  // its time but draws at most every frameMs, so the plan gets the thread.
+  let drawn = 0;
   function frame(now) {
     raf = 0;
     framing = true;
@@ -509,7 +512,8 @@ export function createDisplay(root, handlers) {
       }
     }
     framing = false;
-    draw();
+    const every = mode === 'stop' ? 0 : handlers.frameMs?.() ?? 0;
+    if (!every || now - drawn >= every) { drawn = now; draw(); }
     if (mode !== 'stop') { if (!raf) raf = requestAnimationFrame(frame); handlers.onTime?.(); }
     else last = 0;
   }
@@ -842,6 +846,16 @@ export function createDisplay(root, handlers) {
       draw();
     },
     clearRuns() { past = []; draw(); },
+    // A design settled on its own (a plan made in the background): the run
+    // so far stays, faded, and the sweep starts again at the window's start,
+    // so the new run is seen from its beginning. Call before setData.
+    restartSweep() {
+      if (mode === 'stop' || !scope || feed || run) return;
+      keepRun();
+      tScan = win()[0];
+      last = 0;
+      kick();
+    },
     // Auto-tune: the earlier runs behind the one on screen, newest first.
     setPast(list) { past = list.filter(Boolean).slice(0, RUNS - 1); draw(); },
     // Auto-tune: run d (from t = 0) sweeps once across the screen at the

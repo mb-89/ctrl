@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { normalizeProject, evaluateCandidate, evaluateProject } from '../src/core/project.js';
 import { computeMetrics } from '../src/core/metrics.js';
 import { runTune } from '../src/core/tune.js';
-import { EXAMPLES } from '../src/core/examples.js';
+import { EXAMPLES } from '../src/core/examples-v1.js';
 import { buildHtml, bundleScript } from '../build.mjs';
 import { referenceFn, normalizeReference, parseWaveform } from '../src/core/signals.js';
 import { referenceTrace, autoTimebase, simOf, fitChannel } from '../src/core/project.js';
@@ -72,6 +72,16 @@ test('auto-tune finds a feasible PID for the third-order example and is reproduc
   assert.equal(a.best.evaluation.feasible, true);
   assert.ok(a.best.evaluation.score < evaluateCandidate(p, start).evaluation.score);
   assert.deepEqual(a.best.params, b.best.params);
+});
+
+test('the v1 example loops stay out of the page: their gains were computed offline from their plants', async () => {
+  const { buildHtml } = await import('../build.mjs');
+  const html = buildHtml();
+  for (const ex of EXAMPLES) {
+    assert.ok(!html.includes(ex.notes), `${ex.title}: its notes are in the page`);
+    // (Candidate names such as "SIMC PI" are words the page uses itself.)
+    assert.ok(!html.includes(`title: '${ex.title}'`), `${ex.title} is in the page`);
+  }
 });
 
 test('every example evaluates', () => {
@@ -305,7 +315,10 @@ test('controllers: the variants of every system run; the good ones control, the 
     c.variant = c.variants.findIndex((v) => v.name === variant);
     assert.ok(c.variant >= 0, variant);
     const res = evaluateSystem(p);
-    return (sig, t) => res.signals[sig][Math.round((t / 5) * (res.signals[sig].length - 1))];
+    const at = (sig, t) => res.signals[sig][Math.round((t / 5) * (res.signals[sig].length - 1))];
+    at.all = (sig) => res.signals[sig];
+    at.designs = res.info.designs;
+    return at;
   };
   const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
   // Motor: the aggressive P overshoots 2 rad by more than 15 %; PD does not.
@@ -313,19 +326,31 @@ test('controllers: the variants of every system run; the good ones control, the 
   const peak = (f) => Math.max(...Array.from({ length: 100 }, (_, i) => f('angle', 0.25 + i * 0.0125)));
   assert.ok(peak(pAgg) > 2.3 && peak(pd) < 2.05, `${peak(pAgg)} ${peak(pd)}`);
   assert.ok(Math.abs(pd('angle', 1.4) - 2) < 0.02);
-  // Tank: the scheduled PI holds every level; the PI tuned for full oscillates when nearly empty.
+  // Tank: the scheduled PI holds every level; the PI tuned for full rings
+  // when the level is low. Its computed u0 balances the outlet exactly, so
+  // it rests at 0.15 m until the step to 0.45 m at 1.5 s, then overshoots
+  // and swings back below 0.35 m.
   const sched = run('Conical tank', 'Gain-scheduled PI'), full = run('Conical tank', 'PI tuned for full');
   for (const [t, r] of [[1.4, 0.15], [2.15, 0.45], [4.9, 0.8]]) assert.ok(Math.abs(sched('h', t) - r) < 0.03, `h(${t}) = ${sched('h', t)}`);
-  const swing = (f, a, b) => { const v = Array.from({ length: 50 }, (_, i) => f('h', a + ((b - a) * i) / 50)); return Math.max(...v) - Math.min(...v); };
-  assert.ok(swing(full, 0.5, 1.5) > 0.1 && swing(sched, 0.5, 1.5) < 0.08, `${swing(full, 0.5, 1.5)} ${swing(sched, 0.5, 1.5)}`);
-  // Swing-up: from hanging to upright and held, through the push; state feedback alone cannot.
-  const up = run('Pendulum', 'Swing-up + state feedback'), sf = run('Pendulum', 'State feedback only');
+  const after = (f) => Array.from({ length: 70 }, (_, i) => f('h', 1.5 + i * 0.01));
+  const top = (f) => Math.max(...after(f)), dip = (f) => { const v = after(f); return Math.min(...v.slice(v.indexOf(Math.max(...v)))); };
+  assert.ok(top(full) > 0.55 && dip(full) < 0.35, `full: peak ${top(full)}, then ${dip(full)}`);
+  assert.ok(top(sched) < 0.49, `scheduled: peak ${top(sched)}`);
+  // Swing-up: from hanging to upright and held, through the push; LQR alone cannot.
+  const up = run('Pendulum', 'Swing-up + LQR catch'), sf = run('Pendulum', 'LQR only');
   for (const t of [2.5, 3.4, 4.9]) assert.ok(Math.abs(wrap(up('theta', t))) < 0.05, `θ(${t}) = ${up('theta', t)}`);
   assert.ok(Math.abs(wrap(sf('theta', 4.9))) > 1);
-  // Triple pendulum: LQR keeps all three rods within 5° and follows the cart reference.
-  const lqr = run('Triple', 'LQR');
-  for (const t of [0.5, 1.5, 3, 4.9]) for (const k of ['theta1', 'theta2', 'theta3']) assert.ok(Math.abs(lqr(k, t)) < 0.09, `${k}(${t}) = ${lqr(k, t)}`);
-  assert.ok(lqr('x', 4.9) > 0.35);
+  // Triple pendulum (test 10): from hanging, the swing-up planned in the
+  // page brings all three rods up and holds them through the push at 3.5 s,
+  // the cart within 1 m; LQR alone never gets them up.
+  const rods = ['theta1', 'theta2', 'theta3'];
+  const planned = run('Triple', 'Planned swing-up + TV-LQR'), only = run('Triple', 'LQR only (cannot swing up)');
+  assert.equal(planned.designs[0].status, 'ok', JSON.stringify(planned.designs[0].warnings));
+  for (const k of rods) assert.ok(Math.abs(Math.abs(wrap(planned(k, 0))) - Math.PI) < 1e-9, `${k} starts hanging`);
+  for (const t of [3.4, 4.9]) for (const k of rods) assert.ok(Math.abs(wrap(planned(k, t))) < 0.05, `${k}(${t}) = ${planned(k, t)}`);
+  assert.ok(planned.all('x').every((x) => Math.abs(x) < 1), 'the cart stays within 1 m');
+  const last = (f) => Math.max(...rods.flatMap((k) => Array.from(f.all(k)).slice(-Math.round(f.all(k).length / 5)).map((v) => Math.abs(wrap(v)))));
+  assert.ok(last(only) > 1, `LQR only: the rods within ${last(only)} rad of upright in the last second`);
 });
 
 test('controller variants are validated; view captions keep their width', async () => {

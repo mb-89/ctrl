@@ -10,11 +10,12 @@ const CH = 6;       // px per character at the diagram's 10 px monospace
 const LINE = 11;    // px between the lines of a block
 
 // Draws the running variant of a Controller or Observer block into el.
-// lib: the block's library; names: what feeds each input.
-export function drawStructure(el, block, lib, names) {
+// lib: the block's library; names: what feeds each input; values: what a
+// designed variant's design computed (its status's values), if it has any.
+export function drawStructure(el, block, lib, names, values = null) {
   const v = block.variants[block.variant ?? 0];
   let d = null;
-  try { d = describeVariant(normalizeVariant(v, 'variant', lib), { inputs: names, Ts: block.params.Ts, def: lib[v.type] }); } catch { d = null; }
+  try { d = describeVariant(normalizeVariant(v, 'variant', lib), { inputs: names, Ts: block.params.Ts, def: lib[v.type], values }); } catch { d = null; }
   if (!d) { el.hidden = true; el.innerHTML = ''; return; }
   el.hidden = false;
   const svg = structureSvg(d);

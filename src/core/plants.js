@@ -3,9 +3,15 @@
 // position x, …) and on the scope, and its view shows the motion
 // (design/output/system-library.md). Each runs 5 s and opens running, on its
 // view in the Plant tab (ui). The controlled ones grow in difficulty: a PID
-// on a motor, a gain-scheduled PI on a tank, an energy (Lyapunov) swing-up of a
-// pendulum, state feedback on a triple pendulum. Each has a reference r and a
-// disturbance d, and a Controller block whose variants can be flipped.
+// on a motor, a gain-scheduled PI on a tank, an energy (Lyapunov) swing-up of
+// a pendulum, a swing-up of a triple pendulum planned in the page. Each has a
+// reference r and a disturbance d, and a Controller block whose variants can
+// be flipped.
+//
+// Only inputs are stored here: physics, hand gains (PID, the energy pump),
+// and the weights, levels and limits of designed variants. Every gain,
+// table and start value those compute comes from the plant, in the page
+// (design/output/designs.md).
 
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
@@ -123,11 +129,10 @@ function cartView(name, rods, caption, box) {
   };
 }
 
-// Cart–pole gains: discrete LQR (Ts = 10 ms) at the upright rest, for the
-// outputs in block order (x, θ…, v, ω…); see design/output/system-library.md.
-const K_SINGLE = [-9.177, -63.18, -10.33, -13.34];
-const K_TRIPLE = [-6.9896, -497.8, 1400.5, -1011.7, -12.018, -18.079, 79.602, -102.41];
-const K_TRIPLE_GENTLE = [-2.3, -417, 1050, -686, -4.496, -14.83, 62.84, -67.32];
+// LQR weights for the cart–poles, one per measurement (x, θ…, v, ω…): the
+// cart's position, the angles, the rates.
+const Q_SINGLE = [10, 50, 1, 1];
+const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 
 export const EXAMPLE_PLANTS = [
   {
@@ -202,7 +207,7 @@ export const EXAMPLE_PLANTS = [
   {
     name: 'Following a sine (XY)',
     summary: 'The motor following a slow sine, drawn as error against reference. Step through P, PD, PID and feedforward: why feedback alone lags a moving target, and what feedforward adds.',
-    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line.\n\nPID + feedforward adds a velocity feedforward Kv, set by hand, so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
+    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line.\n\nPID + feedforward adds a velocity feedforward Kv that the page computes from the motor (the voltage per rad/s its inverse needs, plus the PID\'s Kd, which the derivative on the angle takes away), so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time. Try its Feedforward choice "and acceleration": Ka from the motor\'s inertia flattens the figure about four times more.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'sine', params: { amplitude: 1, frequency: 0.2 } }] },
       d: { period: PERIOD, components: [] },
@@ -213,15 +218,18 @@ export const EXAMPLE_PLANTS = [
       { name: 'P', type: 'pid', params: { Kp: 3, umin: -12, umax: 12 } },
       { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
       { name: 'PID', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, umin: -12, umax: 12 } },
-      // Kv set by hand: raised until the figure lay flat.
-      { name: 'PID + feedforward', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, Kv: 1.7, umin: -12, umax: 12 } },
+      // The same PID, its feedforward computed from the motor: Kv = Ke + R·b/Kt
+      // (0.7) + Kd (1) = 1.7, the velocity term only (order 1).
+      { name: 'PID + feedforward', type: 'pidFF', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, order: '1', umin: -12, umax: 12 } },
     ]),
     views: motorViews(),
   },
   {
     // Sliding mode on the library motor (design/research/sliding-mode.md):
     // three variants, each showing one thing; the gains are design inputs
-    // (λ, φ, limits) and hand gains (K, k1, k2), nothing computed from the plant.
+    // (λ, φ, limits) and hand gains (K, k1). k2 = 44 is Levant's 1.1·L/β with
+    // this motor's β = Kt/(J·R) and a guessed L: derived from the plant, an
+    // open question for the person (roadmap).
     name: 'DC motor, sliding mode',
     summary: 'The motor under sliding-mode control, on its phase portrait. Compare the ideal relay, a boundary layer and super-twisting: a response the load cannot change, and what chattering costs.',
     notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: open Motor and triple J (rotor den [0.06, 0.1]): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (den [0.001, 1]): the relay chatters at 250 Hz and makes about five times the heat.',
@@ -299,7 +307,7 @@ export const EXAMPLE_PLANTS = [
   {
     name: 'Conical tank, gain scheduling',
     summary: 'A tank that widens upwards: quick when nearly empty, slow when full. Compare a gain-scheduled PI with fixed ones: why one set of gains cannot fit a plant that changes.',
-    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The gain-scheduled PI looks its gains up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
+    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other.\n\nThe page computes the PI gains from the tank itself at each level (pole cancellation), and the gain-scheduled PI looks them up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
     signals: {
       r: { period: PERIOD, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }] },
       d: { period: PERIOD, components: [pulse(0.15, 2.2, 0.5)] },
@@ -310,15 +318,18 @@ export const EXAMPLE_PLANTS = [
       blocks: [
         src('r', 30, 112, 'm'),
         src('d', 300, 220, 'm³/s'),
-        // PI by pole cancellation for a 0.25 s closed loop at level h:
-        // Kp = A(h) / 0.25, Ki = a √(2g) / (2 √h · 0.25); u0 balances the outlet at 0.15 m.
+        // PIs by pole cancellation for a 0.25 s closed loop, computed from
+        // the tank at these levels; each starts in balance at the start level.
+        // The top level is 0.95 m, not the brim: at H = 1 m the tank
+        // overflows, so its slope differs left and right there (decisions.md).
         ctrl(130, 90, 2, 0.02, [
-          { name: 'Gain-scheduled PI', type: 'gainScheduled', params: { at: [0.1, 0.25, 0.5, 0.75, 1], Kp: [0.113, 0.332, 0.95, 1.887, 3.142], Ki: [2.801, 1.772, 1.253, 1.023, 0.886], u0: 0.172, Tr: 0.1, umin: 0, umax: 3 } },
-          { name: 'PI tuned for full', type: 'pid', params: { Kp: 2.112, Ki: 0.99, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
-          { name: 'PI tuned for empty', type: 'pid', params: { Kp: 0.173, Ki: 2.287, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
+          { name: 'Gain-scheduled PI', type: 'scheduledPI', params: { at: [0.1, 0.25, 0.5, 0.75, 0.95], Tcl: 0.25, Tr: 0.1, umin: 0, umax: 3 } },
+          { name: 'PI tuned for full', type: 'scheduledPI', params: { at: [0.8], Tcl: 0.25, umin: 0, umax: 3 } },
+          { name: 'PI tuned for empty', type: 'scheduledPI', params: { at: [0.15], Tcl: 0.25, umin: 0, umax: 3 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
-        { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: 0.172 }, x: 320, y: 96 },
+        // The pipe was already flowing: before 0.1 s it delivers what the pump gives at t = 0.
+        { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: null }, x: 320, y: 96 },
         { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
         { id: 'tank', type: 'conicalTank', name: 'tank', params: { r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }, x: 510, y: 90 },
         sink('h', 720, 106, 'm'),
@@ -347,8 +358,8 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Pendulum swing-up',
-    summary: 'A pendulum below a cart, swung up and balanced. Compare with state feedback alone, and push it: energy-based control brings it near the top, a linear controller holds it there.',
-    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with state feedback and holds it; at 3.5 s it is pushed (d). Flip to "State feedback only" to see why the swing-up is needed.',
+    summary: 'A pendulum below a cart, swung up and balanced. Compare with LQR alone, and push it: energy-based control brings it near the top, a linear controller computed from the cart and pole holds it there.',
+    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with LQR, its gains computed from the cart and pole, and holds it; at 3.5 s it is pushed (d). Flip to "LQR only" to see why the swing-up is needed.',
     signals: {
       r: { period: PERIOD, components: [] },
       d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
@@ -360,8 +371,8 @@ export const EXAMPLE_PLANTS = [
         src('r', 30, 112, 'm'),
         src('d', 300, 200, 'N'),
         ctrl(130, 80, 5, 0.01, [
-          { name: 'Swing-up + state feedback', type: 'swingUp', params: { kE: 3, kx: 8, kv: 5, l: 0.5, g: 9.81, thetaS: 0.4, K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
-          { name: 'State feedback only', type: 'stateFeedback', params: { K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
+          { name: 'Swing-up + LQR catch', type: 'swingUpLqr', params: { kE: 3, kx: 8, kv: 5, thetaS: 0.4, Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
+          { name: 'LQR only', type: 'lqr', params: { Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 104 },
@@ -379,25 +390,26 @@ export const EXAMPLE_PLANTS = [
   },
   {
     name: 'Triple pendulum',
-    summary: 'Three rods balanced on a moving cart by state feedback (LQR). Push it, move the cart, try the gentle LQR: how one controller that uses every state balances an unstable chain.',
-    notes: 'Three rods balanced on top of each other on a cart, held up by state feedback from all eight states (positions, angles and their rates; gains from LQR). It starts with the lowest rod tilted 3°, is pushed at 1 s (d), and the cart is moved 0.5 m at 2.5 s (r). Flip to the gentle LQR to see a softer, slower controller.',
+    summary: 'Three rods hanging below a cart, swung up by a plan the page computes, then held by LQR. Push it, or flip to LQR only: why a controller for the top alone cannot get there.',
+    notes: 'Three rods hang below a cart. When the system loads, the page plans a swing-up from the cart and rods themselves; until the plan is ready (a few seconds, its progress beside the title) the rods hang.\n\nThe plan is a force that brings all three up in 2.4 s, followed with time-varying LQR, then LQR holds them. At 3.5 s the cart is pushed (d). Flip to "LQR only" to see that a controller for the top alone cannot get there.',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 0.5, time: 2.5 } }] },
-      d: { period: PERIOD, components: [pulse(4, 1, 0.1)] },
+      r: { period: PERIOD, components: [] },
+      d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
     },
-    scope: { channels: channels('r', 'x', 'theta1', 'F') },
+    scope: { channels: channels('x', 'theta1', 'F', 'd') },
     ui: ui('Cart and triple pendulum'),
     diagram: {
       blocks: [
         src('r', 30, 132, 'm'),
         src('d', 300, 260, 'N'),
+        // The plan may use 75 % of the ±40 N, leaving the rest to the feedback.
         ctrl(130, 70, 9, 0.01, [
-          { name: 'LQR', type: 'stateFeedback', params: { K: K_TRIPLE, kr: K_TRIPLE[0], umin: -40, umax: 40 } },
-          { name: 'LQR, gentle', type: 'stateFeedback', params: { K: K_TRIPLE_GENTLE, kr: K_TRIPLE_GENTLE[0], umin: -40, umax: 40 } },
+          { name: 'Planned swing-up + TV-LQR', type: 'trajectory', params: { T: 2.4, segments: 12, planShare: 0.75, Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
+          { name: 'LQR only (cannot swing up)', type: 'lqr', params: { Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },
-        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: 0.05, theta20: 0, theta30: 0 }, x: 400, y: 60 },
+        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }, x: 400, y: 60 },
         sink('x', 640, 64, 'm'), sink('theta1', 640, 100, 'rad'), sink('theta2', 640, 136, 'rad'), sink('theta3', 640, 172, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
@@ -411,7 +423,7 @@ export const EXAMPLE_PLANTS = [
       { len: 0.25, angle: '-theta1' },
       { len: 0.25, angle: '-(theta2 - theta1)' },
       { len: 0.25, angle: '-(theta3 - theta2)' },
-    ], 'x {x:5.2} m   θ1 {theta1*180/pi:5.1}°   θ2 {theta2*180/pi:5.1}°   θ3 {theta3*180/pi:5.1}°   F {F:5.1} N', [-1.3, -0.4, 1.3, 1.1])],
+    ], 'x {x:5.2} m   θ1 {theta1*180/pi:6.1}°   θ2 {theta2*180/pi:6.1}°   θ3 {theta3*180/pi:6.1}°   F {F:5.1} N', [-1.3, -0.8, 1.3, 1.1])],
   },
   {
     // Made for the Auto-tune tab: a classic process (three lags and a dead

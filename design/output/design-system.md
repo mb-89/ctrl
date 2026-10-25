@@ -89,6 +89,10 @@ The lamp's colour says what kind of on it is:
 - `.banner`: a state in a sentence, across the page, that stays: ⚠ (`.banner-icon`), then the words (`.banner-text`); with a lamp, filled in its colour, as a lit badge is. The limited environment's warning (`data-lamp="warn"`).
 - `.badge`: a state in a word, small capitals. Neutral (outlined): SPECTROGRAM, an XY note, a tab's *later*. With a lamp (`data-lamp`): filled (RUN, STOP, SINGLE, E-STOP), or `.badge-outline` in the lamp's colour (LIVE, CONNECTED, OFFLINE neutral).
 
+### Progress
+
+`.progress`: how far a long computation is (the planned swing-up's plan): a track, and its fill (`<span>`, its width the fraction) in the waiting lamp's colour (`--lamp-warn`); `role="progressbar"` carries the number, and a line beside it says what is happening in words.
+
 ### Panel, Card, LCD, Bezel
 
 `.panel` (a raised area: the controls, the tab panel), `.card` (a thing on a panel: the controller's diagram, which opens larger), `.lcd` (a readout panel: the generator's parameters and signal, the variants, Auto-tune's rows; dark in both themes), `.bezel` (the instrument's frame: the display, the Analysis plots). `.list` lays out a list.

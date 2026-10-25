@@ -293,7 +293,7 @@ export function createPlantEditor(root, app) {
   // parameters are on the right), else its first parameters, cut to fit.
   function summary(b) {
     const def = diagramBlockDef(b.type);
-    const text = def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector').slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
+    const text = def.summary ? def.summary(b.params) : def.ode ? def.formula : b.type === 'fcn' ? `y = ${b.params.expr}` : b.type === 'controller' ? `▸ ${b.variants?.[b.variant]?.name ?? ''}` : def.params.filter((p) => p.kind !== 'vector' && b.params[p.key] !== null).slice(0, 3).map((p) => `${p.label} ${typeof b.params[p.key] === 'number' ? num(b.params[p.key], 3) : b.params[p.key]}`).join(' · ') || def.formula;
     const room = Math.floor((size(b)[0] - 18 - (def.outputs ? 16 : 0)) / 6.4);
     return text.length > room ? `${text.slice(0, room - 1)}…` : text;
   }
@@ -372,7 +372,7 @@ export function createPlantEditor(root, app) {
     compileMsg = '';
     const errs = new Set();
     try {
-      const el = compileDiagram(rootDiagram(), 'plant', { standalone: true, sources: Object.fromEntries(Object.keys(app.project.system.signals).map((n) => [n, () => 0])) });
+      const el = compileDiagram(rootDiagram(), 'plant', { standalone: true, laws: false, sources: Object.fromEntries(Object.keys(app.project.system.signals).map((n) => [n, () => 0])) });
       compileMsg = el.warnings.join('\n');
     } catch (err) {
       compileMsg = err.message;
@@ -416,8 +416,8 @@ export function createPlantEditor(root, app) {
       for (const p of def.params) {
         if (p.kind === 'hidden') continue;  // set elsewhere (the External block's full scales: Live settings)
         const v = b.params[p.key];
-        const hint = p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}`;
-        html += field(`p:${p.key}`, p.label, p.kind === 'vector' || Array.isArray(v) ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', hint);
+        const hint = p.kind === 'vector' ? 'highest power first' : p.kind === 'expr' ? 'u: the input, t: time' : p.kind ? '' : `unit: ${p.unit ?? '1'}${p.nullable ? ` · empty: ${p.nullable}` : ''}`;
+        html += field(`p:${p.key}`, p.label, p.kind === 'vector' || Array.isArray(v) ? v.join(', ') : p.kind ? v : v === null ? '' : num(v, 6), p.kind ?? 'number', hint);
       }
       html += '</div><div class="pbtns">';
       if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="btn btn-sm" data-act="flip">Flip</button>`;
@@ -458,7 +458,9 @@ export function createPlantEditor(root, app) {
         const f = inp.dataset.f, kind = inp.dataset.kind, raw = inp.value.trim();
         if (f === 'libname') { saveName = raw; return; }
         let value = raw;
-        if (kind === 'number') { value = parseSI(raw); if (!Number.isFinite(value)) { app.toast('Enter a number, e.g. 0.5, 20m, 2k.'); renderProps(); return; } }
+        const nullable = f.startsWith('p:') && diagramBlockDef(b.type).params.find((p) => p.key === f.slice(2))?.nullable;
+        if (kind === 'number' && raw === '' && nullable) value = null;
+        else if (kind === 'number') { value = parseSI(raw); if (!Number.isFinite(value)) { app.toast('Enter a number, e.g. 0.5, 20m, 2k.'); renderProps(); return; } }
         if (kind === 'vector') { value = raw.split(/[\s,;]+/).filter(Boolean).map(Number); if (!value.length || !value.every(Number.isFinite)) { app.toast('Enter numbers separated by commas, highest power of s first.'); renderProps(); return; } }
         edit((d) => {
           const blk = d.blocks.find((x) => x.id === b.id);

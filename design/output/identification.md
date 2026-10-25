@@ -697,7 +697,7 @@ The step is then "✕ did not behave as predicted".
 
 **The experiment** runs on a copy of the diagram, exactly as on HIL. The diagram's own Noise and Quantizer blocks apply. A diagram without noise gives near-perfect data, and the model says so: "this plant has no noise; real plants do".
 
-**Compare with the diagram** (a toggle in the Check column, simulated plants only). It needs the design layer's `linearizeBlock` ([designs-in-the-page.md](designs-in-the-page.md) §5, branch feat/designs).
+**Compare with the diagram** (a toggle in the Check column, simulated plants only). It needs the design layer's `linearizeBlock` ([designs-in-the-page.md](designs-in-the-page.md) §5; merged).
 - On Bode and Step, the diagram's true linearisation is drawn dashed at each place the test sat (`linearizeBlock(project, path, { y: level })`).
 - A small table, "found vs the diagram", lists gain, time scale or f, ζ and dead time per place.
 - A sentence. For example, on a plant whose gain changes with its level: "The identified gain sits between the diagram's gains at the two places the test sat: one linear model is a compromise for this plant."
@@ -914,7 +914,7 @@ Each step is one agent, with `npm test` green at the end.
    - Test 13 (the whole harness).
 10. **Try on the plant.** `planTry`, screening, steps, monitor, fallback, chips. Test 16.
 11. **Teaching.**
-    - Compare with the diagram (after feat/designs is merged); Hide a variation and the reveal.
+    - Compare with the diagram (the design layer is merged); Hide a variation and the reveal.
     - A System library entry, **Unknown oven: identify, then tune**: the badly tuned oven with a hidden variation (seed 3), opening on Identify. Two things: identification, and tuning on the model.
     - Tests 17 and 18.
 12. **Docs sweep.**

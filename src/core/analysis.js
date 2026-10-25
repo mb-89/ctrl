@@ -429,11 +429,29 @@ export function loopMargins(fd, Ts, { L, poles = [], probe = [] } = {}) {
       phaseCrossings.push({ w: wx, mag: -g, gm: -1 / g, gmDb: -20 * Math.log10(-g), at });
     }
   }
-  let ms = 0, wMs = NaN, mt = 0, wMt = NaN;
+  let ms = 0, wMs = NaN, mt = 0, wMt = NaN, iS = -1, iT = -1;
   for (let i = 0; i < w.length; i++) {
     const d = Math.hypot(1 + re[i], im[i]);
-    if (1 / d > ms) { ms = 1 / d; wMs = w[i]; }
-    if (mag[i] / d > mt) { mt = mag[i] / d; wMt = w[i]; }
+    if (1 / d > ms) { ms = 1 / d; wMs = w[i]; iS = i; }
+    if (mag[i] / d > mt) { mt = mag[i] / d; wMt = w[i]; iT = i; }
+  }
+  // The peaks between grid points, on L itself (golden section in log ω
+  // between the neighbours of the grid's largest value): a lightly damped
+  // mode is narrower than the grid (the encoder's shaft read Ms 5.78, not 5.93).
+  if (L) {
+    const peak = (i, g) => {
+      let a = Math.log(w[Math.max(0, i - 1)]), b = Math.log(w[Math.min(w.length - 1, i + 1)]);
+      const q = (Math.sqrt(5) - 1) / 2;
+      let c = b - q * (b - a), d = a + q * (b - a), fc = g(Math.exp(c)), fd = g(Math.exp(d));
+      for (let it = 0; it < 60 && b - a > 1e-12; it++) {
+        if (fc > fd) { b = d; d = c; fd = fc; c = b - q * (b - a); fc = g(Math.exp(c)); } else { a = c; c = d; fc = fd; d = a + q * (b - a); fd = g(Math.exp(d)); }
+      }
+      return fc > fd ? [fc, Math.exp(c)] : [fd, Math.exp(d)];
+    };
+    const S = (x) => { const v = respondAt(L, x); return 1 / Math.hypot(1 + v.re, v.im); };
+    const T = (x) => { const v = respondAt(L, x); return Math.hypot(v.re, v.im) / Math.hypot(1 + v.re, v.im); };
+    if (iS >= 0) { const [v, x] = peak(iS, S); if (v > ms) { ms = v; wMs = x; } }
+    if (iT >= 0) { const [v, x] = peak(iT, T); if (v > mt) { mt = v; wMt = x; } }
   }
   // The gain interval that keeps the loop where it is: the nearest changes of
   // stability above and below the present gain.

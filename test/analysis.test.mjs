@@ -64,21 +64,31 @@ test("each linear law's state space reproduces its step() while u is inside its 
     ['swingUp', { kE: 1, kx: 0, kv: 0, l: 0.5, g: 9.81, thetaS: 0.4, K: [-1, -30, -2, -5], kr: -1, umin: -Infinity, umax: Infinity }, 4],
     // Inside its boundary layer (|s| < φ) a sliding mode is a PD on [y, ẏ].
     ['slidingMode', { lambda: 10, K: 12, phi: 2, Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 2],
+    // With a prefilter Tr the model's r input is the prefiltered rf (as the
+    // tab's step feeds it); the sliding mode's ṙf = (r − rf)/Tr is then one
+    // state, rf of the sample before (it read r with gain Kλ/φ, 36 % off).
+    ['slidingMode', { lambda: 10, K: 12, phi: 2, Tr: 0.05, u0: 0, umin: -Infinity, umax: Infinity }, 2],
+    ['pid', { Kp: 2, Ki: 3, Kd: 0.4, Tf: 0.02, b: 0.7, Tr: 0.1, Kff: 0.8, Kv: 0.3, Ka: 0.02, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    ['stateFeedback', { K: [1, -2, 0.5], kr: 3, Tr: 0.2, umin: -Infinity, umax: Infinity }, 3],
   ];
   for (const [type, p, m] of cases) {
     // About an operating point: the scheduled PI at y = 0.5 sees small moves only.
     const y0 = type === 'gainScheduled' ? 0.5 : 0;
     const law = CONTROLLERS[type].make(p, Ts), lin = CONTROLLERS[type].linear(p, Ts, { y: new Array(m).fill(y0) });
     const n = lin.A.length;
-    let x = new Array(n).fill(0), worst = 0, u0 = null;
+    let x = new Array(n).fill(0), worst = 0, u0 = null, rf = 0;
+    const a = lin.Tr > 0 ? Math.exp(-Ts / lin.Tr) : 0;
     for (let k = 0; k < 200; k++) {
       const v = k === 0 ? new Array(m + 1).fill(0) : Array.from({ length: m + 1 }, (_, i) => 1e-3 * Math.sin(0.3 * k * (i + 1) + i));
       const inp = v.map((d) => d + y0);
       const uLaw = law.step(inp);
       u0 ??= uLaw;   // the law's output at the operating point
-      let u = lin.D[0].reduce((s, d, i) => s + d * v[i], 0);
+      // The model's r is the prefiltered one where the law has a prefilter.
+      rf = a * rf + (1 - a) * v[0];
+      const w = [rf, ...v.slice(1)];
+      let u = lin.D[0].reduce((s, d, i) => s + d * w[i], 0);
       for (let j = 0; j < n; j++) u += lin.C[0][j] * x[j];
-      x = lin.A.map((row, i) => row.reduce((s, a, j) => s + a * x[j], 0) + lin.B[i].reduce((s, b, j) => s + b * v[j], 0));
+      x = lin.A.map((row, i) => row.reduce((s, a, j) => s + a * x[j], 0) + lin.B[i].reduce((s, b, j) => s + b * w[j], 0));
       worst = Math.max(worst, Math.abs(uLaw - u0 - u));
     }
     // The scheduled PI's slope term is second order in the small moves; Ka/Ts² is large, so its rounding is too.
@@ -135,14 +145,17 @@ test('the gain interval includes the crossings at z = 1 and z = −1', async () 
 });
 
 test("the library pendulum's catch loop: its gain interval is the poles' stable range on both sides", async () => {
-  const { CONTROLLERS } = await import('../src/core/controllers.js');
   const { EXAMPLE_PLANTS } = await import('../src/core/plants.js');
   const { ELEMENTS } = await import('../src/core/diagram.js');
+  const { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } = await import('../src/core/systems.js');
+  const { DEFAULT_PROJECT } = await import('../src/core/examples.js');
+  const { normalizeProject, loopModel } = await import('../src/core/project.js');
   const entry = EXAMPLE_PLANTS.find((e) => e.name === 'Pendulum swing-up');
-  const blk = entry.diagram.blocks, cart = blk.find((b) => b.type === 'cartPole').params, swing = blk.find((b) => b.type === 'controller').variants[0].params;
+  const cart = entry.diagram.blocks.find((b) => b.type === 'cartPole').params;
   // The cart–pole block linearised upright by central differences; its state
   // is [x, v, θ, ω], the controller reads [x, θ, v, ω].
-  const f = (X, u) => { const d = new Array(4); ELEMENTS.cartPole.ode.f(X, 0, u, cart, d); return d; };
+  const rates = ELEMENTS.cartPole.ode.make(cart);
+  const f = (X, u) => { const d = new Array(4); rates(X, 0, u, d); return d; };
   const h = 1e-6, A = [[], [], [], []], B = [];
   for (let j = 0; j < 4; j++) {
     const xp = [0, 0, 0, 0], xm = [0, 0, 0, 0]; xp[j] = h; xm[j] = -h;
@@ -152,7 +165,10 @@ test("the library pendulum's catch loop: its gain interval is the poles' stable 
   const up = f([0, 0, 0, 0], h), down = f([0, 0, 0, 0], -h);
   for (let i = 0; i < 4; i++) B.push([(up[i] - down[i]) / (2 * h)]);
   const cartPole = { A, B, C: [[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], D: [[0], [0], [0], [0]] };
-  const Ts = 0.01, ctrl = CONTROLLERS.swingUp.linear(swing, Ts, { y: [0, 0, 0, 0] });
+  // The library's swing-up catches with LQR gains computed from the plant
+  // (the design layer); its law, linear where it catches, upright.
+  const project = normalizeProject(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY.find((e) => e.name === entry.name), SYSTEM_PARTS));
+  const Ts = 0.01, { ctrl } = loopModel(project, 'ctrl', 'origin');
   const res = analyzeLoop(cartPole, ctrl, Ts), L = openLoop(cartPole, ctrl, Ts);
   assert.ok(res.stable && res.P === 1, 'the upright pendulum is open-loop unstable and caught');
   // Before the fix the interval read ×0.349 … ∞: the upper edge, a crossing at z = −1, was missed.

@@ -15,10 +15,10 @@ Open `dist/loop-tuner.html` in a browser. It is an oscilloscope for a control lo
 - **Tabs** below set the loop up one step at a time:
   - **Input**: a signal generator that sums primitives (DC, step, ramp, square/pulse train, sine, chirp, noise, a typed formula y(t), or a waveform loaded from a CSV file) into named signals, repeated with their period, with a dashed preview before each one is added.
   - **Plant**: the system as a block diagram, Simulink-style: Source blocks play signals, Sink blocks (x, speed, …) are what the scope shows, blocks nest into subsystems. A plant can carry 2D views (simple shapes, or standard SVG bound to signals) that move with the simulation.
-  - **Controller**: Controller blocks in the diagram hold interchangeable variants (PID, state feedback, gain-scheduled PI, energy swing-up); flip and tune them here. The run before stays faded on the display, for comparison.
+  - **Controller**: Controller blocks in the diagram hold interchangeable variants, set by hand (PID with feedforward and anti-windup, state feedback, gain-scheduled PI, energy swing-up, relay, sliding mode) or computed in the page from the plant as it is wired (LQR, a PI from the plant, a swing-up with an LQR catch, a planned swing-up, a Kalman filter): nothing plant-specific is stored, and changing a mass changes the gains with it. Flip and tune them here; a small diagram shows what the running variant does. The run before stays faded on the display, for comparison.
   - The **System library** in the header holds complete systems, from a mass–spring–damper to a triple pendulum on a cart; load one whole, or only its input or plant.
   - **Auto-tune**: improves a Controller block's running variant by simulation (iterate with Nelder–Mead, relay feedback, step response with SIMC); the result is a new variant to compare.
-  - **Analysis**: a Controller block's loop, linearised: stability, gain and phase margins, Ms, poles, root locus, Bode, Nyquist and the linear step, discrete as simulated. Built; it shows its numbers once the plant model from the design layer is merged, and says so until then.
+  - **Analysis**: a Controller block's loop, linearised at rest, at the start or at the scope's time: stability, gain and phase margins, Ms, poles, root locus, Bode, Nyquist and the linear step, discrete as simulated. A law that is not linear there (a relay, a swing-up pumping energy) is named with the reason.
 
 Projects are plain JSON, including how the display is set. Save, open, drop or paste them; **Export HTML** writes a copy of the page with the project inside, to send to someone. The built page carries no comments and no trace of where it was made (enforced by `test/provenance.test.mjs`). Where a hosting page offers a save adapter, saving goes through it; otherwise through a download link, and Copy JSON and Copy HTML remain.
 
@@ -50,8 +50,13 @@ node tools/view3d-shots.mjs         # the 3D view's own checks in headless Chrom
 | `src/core/sim.js` | The closed loop: a digital controller (sampled, zero-order hold) driving continuous actuator, plant and sensor models integrated with RK4; dead time, saturation and seeded measurement noise. |
 | `src/core/metrics.js` | Step-response and effort metrics (`node cli.mjs metrics` lists them). |
 | `src/core/goal.js` | Score and feasibility from the goal. |
-| `src/core/tune.js` | Auto-tune: a seeded scan, then Nelder–Mead on the penalised score. |
-| `src/core/project.js` | The project file: normalisation, evaluation, candidates. |
+| `src/core/tune.js` | The v1 tuner for projects with candidates: a seeded scan, then Nelder–Mead on the penalised score. |
+| `src/core/controllers.js`, `src/core/observers.js` | The Controller and Observer blocks' variants: hand laws (PID with feedforward and anti-windup, state feedback, gain-scheduled PI, swing-up, relay, sliding mode, super-twisting; Luenberger, finite differences) and the types designed from the plant; each law's linear model for the Analysis tab. |
+| `src/core/linearize.js`, `src/core/design.js`, `src/core/planner.js` | The design layer: the plant a block sees, trimmed and linearised at an operating point (kinks refused); LQR, the PI from the plant, the swing-up's catch, the Kalman filter; the triple pendulum's swing-up plan and TV-LQR; the design store, which caches in memory only. Nothing plant-specific is stored ([design/output/designs.md](design/output/designs.md)). |
+| `src/core/structure.js`, `src/ui/ctldiagram.js` | The picture of what the running variant does, for every controller type. |
+| `src/core/autotune.js` | The Auto-tune tab's methods: Iterate (Nelder–Mead on a simulated cost), relay feedback with its rules, the step response with SIMC (also integrating plants and per point of a gain schedule). |
+| `src/core/analysis.js` | The Analysis tab's numbers: the loop discretised at Ts, margins, Ms, poles, root locus, Bode, Nyquist, the linear step. |
+| `src/core/project.js` | The project file: normalisation, evaluation, candidates; the loop a Controller closes (`loopModel`), for the Analysis tab. |
 | `src/core/hil.js`, `src/core/live.js`, `src/core/ramp.js` | Live mode: the protocol, the External plant block, full scales, the ramp-in, watchdogs, the scope's keys through the plant, and the loop that steps the diagram against an external plant (in a Web Worker). |
 | `src/core/guide.js` | The page's guide for agents: `window.loopTuner.help()`, `.api`, and the Help dialog's For agents. |
 | `src/core/trace.js`, `src/ui/record.js` | Saving traces: the screen or the live record (a ring buffer of every live signal) as CSV, JSON or PNG, and back as references; where live and saved time lands on the screen. |

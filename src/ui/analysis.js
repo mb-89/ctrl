@@ -8,9 +8,12 @@
 // Research and thresholds: design/research/analysis.md; core: core/analysis.js.
 //
 // From app it takes project, loopModel(path, op) → { plant, ctrl, Ts,
-// opLabel, variantName, warnings }, scopeTime() and, if there,
-// scopeTimeFrom() ('cursor', 'sweep' or 'edge'). It returns render, shown,
-// open and followTime (called while the scope's time moves).
+// opLabel, variantName, warnings } (core/project.js, from the design layer:
+// the plant the block sees, linearised, and the running variant's law),
+// designs.generation (it goes up when a plan made in the background
+// settles), scopeTime() and, if there, scopeTimeFrom() ('cursor', 'sweep'
+// or 'edge'). It returns render, shown, open and followTime (called while
+// the scope's time moves).
 
 import { analyzeLoop, stepInfo, stepResponse, sPlanePoint, respondAt, phaseAt } from '../core/analysis.js';
 import { createPlot, extent } from './plots.js';
@@ -139,9 +142,10 @@ export function createAnalysisTab(host, app) {
     target = c.path;
     // A plant outside the page is a black box (input 20): no diagram to analyse.
     if (findExternal(app.project.system.plant?.diagram)) return { c, all, error: 'The plant runs outside the page and is a black box: the page knows only its interface (Plant tab, Interface). Analysis needs an identified model of it, which Identify will give (not built yet).' };
-    if (!app.loopModel) return { c, all, error: 'The analysis needs the plant a block sees, linearised at an operating point. That comes with the design layer.' };
+    if (!app.loopModel) return { c, all, error: 'The analysis needs the plant a block sees, linearised at an operating point.' };
     const spec = opSpec(), from = op === 't' ? app.scopeTimeFrom?.() : null;
-    const key = JSON.stringify([app.project.system, c.path, spec]);
+    // A plan that settles (or is cancelled) changes the law: the design generation is in the key.
+    const key = JSON.stringify([app.project.system, c.path, spec, app.designs?.generation ?? 0]);
     if (key === lastKey && last) { if (last.res) last.from = from; return last; }
     lastKey = key;
     try {
@@ -153,7 +157,8 @@ export function createAnalysisTab(host, app) {
       if (st) st.uPeak = Math.max(...stepResponse(m.plant, m.ctrl, m.Ts, Math.min(4000, Math.ceil(st.T / m.Ts))).u.map(Math.abs));
       last = { c, all, m, res, st, spec, from };
     } catch (err) {
-      last = { c, all, error: err.message };
+      // The reason, and what to do instead (a DesignError's hint).
+      last = { c, all, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
     }
     return last;
   }
@@ -170,14 +175,23 @@ export function createAnalysisTab(host, app) {
       $('#an-notes').textContent = v.error ?? '';
       return;
     }
-    const { res, m, st } = v, g = res.margins, Ts = m.Ts, ok = res.stable;
+    const { res, m, st } = v, g = res.margins, Ts = m.Ts;
+    // Where the linear loop does not hold (u at a limit: the loop is open),
+    // its numbers are shown but not graded, and the verdict says so first:
+    // the oven at rest read "✕ unstable" with the reason only in the notes
+    // below. (A kink at the operating point is refused by loopModel: the
+    // central slope is neither side's, so there are no numbers to show.)
+    const caveat = m.atLimit ? `${esc(m.plant.input?.label ?? 'u')} is at its limit there: the controller saturates, and the linear loop does not hold` : '';
+    const ok = res.stable && !caveat;
     const plural = (k, w) => `${k} ${w}${k > 1 ? 's' : ''}`;
-    // The verdict; why, in its tooltip.
-    $('#an-verdict').innerHTML = ok
-      ? `<span class="grade text-ok" title="Every closed-loop pole inside the unit circle">✓ stable</span>`
-      : res.marginal
-        ? `<span class="grade text-warn" title="${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows">! marginal</span>`
-        : `<span class="grade text-bad" title="${plural(res.Z, 'closed-loop pole')} outside the unit circle">✕ unstable</span>`;
+    // The verdict; why, in its tooltip. Where the linear loop does not hold
+    // (u at a limit), it says so first and grades nothing.
+    $('#an-verdict').innerHTML = (caveat ? `<span class="grade text-warn" title="${caveat}">! not linear here</span> ` : '')
+      + (res.stable
+        ? `<span class="grade ${caveat ? 'text-warn' : 'text-ok'}" title="Every closed-loop pole inside the unit circle">${caveat ? 'as linearised: stable' : '✓ stable'}</span>`
+        : res.marginal
+          ? `<span class="grade text-warn" title="${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows">${caveat ? 'as linearised: marginal' : '! marginal'}</span>`
+          : `<span class="grade text-bad" title="${plural(res.Z, 'closed-loop pole')} outside the unit circle">${caveat ? 'as linearised: unstable' : '✕ unstable'}</span>`);
     const rows = [];
     const row = (k, val, extra = '', title = '') => rows.push(`<tr title="${esc(title)}"><th>${k}</th><td>${val}</td><td>${extra}</td></tr>`);
     const factor = (k) => `×${num(k, 3)}`;

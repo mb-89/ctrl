@@ -39,11 +39,20 @@ function fromPlant(e) {
 // beside it on three cards), so XY moved to yellow. No tone is violet: in the
 // page violet means selected (design/output/design-system.md).
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
-const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
+// A type's tags; a function reads the variant (a PI from the plant at one
+// level is a plain PI, at several it is scheduled).
+const VARIANT_TAGS = {
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
+  scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
+};
+const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
 export const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'slate', 'red'];
 const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta', 'Black box': 'yellow',
-  PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'slate', 'Trajectory planning': 'green', Relay: 'blue',
+  // LQR sits beside Disturbance (slate) on both pendulums, so it took State
+  // feedback's orange, and State feedback, on no card with a disturbance
+  // now that the library's gains are computed, took slate.
+  PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
   // Seven of the eight tones are taken by controller tags: this one is set.
   'Sliding mode': 'red',
   'Kalman filter': 'slate', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
@@ -79,8 +88,8 @@ export function systemTags(e) {
   // In reference mode the plant runs its own controller: none in the page.
   const ownLoop = blocks.some((b) => b.type === 'external' && (b.params?.kinds ?? []).includes('reference'));
   if (!ctrls.length) add(ownLoop ? 'Controller in the plant' : 'No controller', 'none');
-  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
-  for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
+  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') for (const t of variantTags(v, CONTROLLERS[v.type]?.label ?? v.type)) add(t, 'controller');
+  for (const b of obs) for (const v of b.variants ?? []) for (const t of variantTags(v, 'Observer')) add(t, 'observer');
   // A disturbance only when d plays something: a Source d whose signal has
   // no components stays at 0 (Following a sine keeps one for the person to fill).
   const plays = (name) => !e.signals || (e.signals[name]?.components?.length ?? 0) > 0;

@@ -17,7 +17,7 @@ export function createScene(host, app) {
   svg.setAttribute('class', 'pscene');
   svg.setAttribute('role', 'img');
   host.append(svg);
-  let view = null, scene = null, raf = 0, error = '', svgRoot = null, binds = null;
+  let view = null, scene = null, raf = 0, error = '', svgRoot = null, binds = null, last = '';
 
   // An SVG view: the drawing is cleaned (no scripts, event handlers, outside
   // links), inserted once, and its bound attributes updated every frame.
@@ -46,9 +46,14 @@ export function createScene(host, app) {
     }
   }
 
-  function draw() {
+  // While the page makes a plan, at most 20 frames a second (app.frameMs).
+  let drawn = 0;
+  function draw(now = 0) {
     raf = 0;
     if (!view || host.hidden) return;
+    const every = app.frameMs?.() ?? 0;
+    if (every && now - drawn < every) { raf = requestAnimationFrame(draw); return; }
+    drawn = now;
     if (view.kind === 'svg') { try { drawSvg(); } catch { /* a bad selector draws nothing */ } raf = requestAnimationFrame(draw); return; }
     const [x0, y0, x1, y1] = view.view;
     const r = host.getBoundingClientRect();
@@ -77,7 +82,8 @@ export function createScene(host, app) {
       }
       html += `<text class="sctime" x="10" y="${r.height - 10}">t = ${env.t.toFixed(3)} s</text>`;
     } catch (err) { html += `<text class="scerr" x="10" y="20">${String(err.message)}</text>`; }
-    svg.innerHTML = html;
+    // Unchanged (the scope stopped, the cursor still): nothing to lay out and paint again.
+    if (html !== last) { svg.innerHTML = html; last = html; }
     raf = requestAnimationFrame(draw);
   }
 
@@ -96,6 +102,6 @@ export function createScene(host, app) {
       if (!raf) raf = requestAnimationFrame(draw);
       return error;
     },
-    stop() { if (raf) cancelAnimationFrame(raf); raf = 0; view = null; unmountSvg(); },
+    stop() { if (raf) cancelAnimationFrame(raf); raf = 0; view = null; last = ''; unmountSvg(); },
   };
 }

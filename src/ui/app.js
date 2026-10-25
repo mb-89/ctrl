@@ -2,8 +2,9 @@
 // shows, and wiring between display, controls and tabs. window.loopTuner is
 // the browser API for agents driving the page.
 
-import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS } from '../core/project.js';
+import { normalizeProject, referenceTrace, loopReady, evaluateCandidate, evaluateSystem, designSystem, findCandidate, simOf, autoTimebase, fitChannel, MAX_SAMPLES, channelNames, pruneChannels, UI_TABS, loopModel } from '../core/project.js';
 import { diagramNames } from '../core/diagram.js';
+import { createDesignStore, useDesigns } from '../core/design.js';
 import { findExternal, blockMode, fullScaleChannel } from '../core/hil.js';
 import { GUIDE, AGENT_NOTE, apiList, guideText } from '../core/guide.js';
 import { createPlantEditor } from './plant.js';
@@ -83,11 +84,24 @@ function startApp() {
   window.addEventListener('pagehide', flushSave);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
 
+  // Designs computed from the plant (design/output/designs.md). Light ones
+  // are computed while the diagram compiles; a heavy one (a swing-up plan)
+  // runs in the background, in slices between frames, while its block runs
+  // u = 0 or its previous values. When it is done, the store's generation
+  // goes up and the acquisition is made again.
+  const designs = createDesignStore({ mode: 'async' });
+  // Every compile in the page uses it: one that names no store (an analysis,
+  // an auto-tune run) reads its designs and plans as a guest and never plans
+  // on the main thread. app.designs.generation goes up when a plan settles.
+  useDesigns(designs);
+  app.designs = designs;
+
   // The acquisition: every signal the display can show. Without a plant and a
   // controller there is only r(t).
   let acqKey = '', acq = null, loopNote = '';
   app.systemError = '';
-  const acqKeyOf = (p) => JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal]);
+  // A plan that settles (the design store's generation) makes it again.
+  const acqKeyOf = (p) => JSON.stringify([simOf(p), p.system, p.candidates, p.selected, p.goal, designs.generation]);
   function acquire() {
     const p = app.project;
     const key = acqKeyOf(p);
@@ -96,14 +110,19 @@ function startApp() {
     const t0 = performance.now();
     acq = simulateScreen(p);
     timedSim(key, simOf(p).duration, performance.now() - t0, () => simulateScreen(p));
+    pumpDesigns();
     return acq;
   }
   function simulateScreen(p) {
     loopNote = '';
     app.systemError = '';
+    app.designStatuses = [];
     // A plant outside the page is not simulated: offline its outputs would
     // read 0, so the screen stays empty until the plant runs (Live).
     if (p.system.plant?.type === 'diagram' && findExternal(p.system.plant.diagram)) {
+      // A variant from the plant still says why it is refused (no model of
+      // a plant outside the page).
+      try { app.designStatuses = designSystem(p, { designs }); } catch (err) { app.systemError = err.message; }
       return { t: new Float64Array(0), signals: Object.fromEntries(channelNames(p).map((n) => [n, new Float64Array(0)])) };
     }
     if (loopReady(p)) {
@@ -120,7 +139,8 @@ function startApp() {
     // No controller yet: the diagram is the whole system. If it cannot run,
     // the signals still show and the Plant tab says why.
     try {
-      const sys = evaluateSystem(p);
+      const sys = evaluateSystem(p, { designs });
+      app.designStatuses = sys.info.designs ?? [];
       return { t: sys.t, signals: sys.signals };
     } catch (err) {
       app.systemError = err.message;
@@ -175,6 +195,73 @@ function startApp() {
     loopNote = '';
     app.systemError = '';
   }
+
+  // The pump: while the store has jobs, a slice of work per task. A
+  // MessageChannel message starts the next slice at once (setTimeout would
+  // wait at least 4 ms), and the browser draws frames between slices. A
+  // slice lasts as long as the browser was away since the last one, between
+  // 24 and 40 ms, and meanwhile the display and the plant's view draw at most
+  // 20 frames a second (app.frameMs): what runs is u = 0 or the previous
+  // plan, so the plan gets most of the main thread (headless Chromium: the
+  // default plan in 5 to 6 s, Node 3 s). While a job waits out its
+  // debounce, a timer.
+  const pumpChannel = new MessageChannel();
+  let pumping = false, sliceEnd = 0;
+  app.frameMs = () => (pumping ? 50 : 0);
+  function pumpDesigns() {
+    if (pumping || !designs.busy()) return;
+    pumping = true;
+    sliceEnd = 0;
+    pumpChannel.port2.postMessage(0);
+  }
+  pumpChannel.port1.onmessage = () => {
+    const away = sliceEnd ? performance.now() - sliceEnd : 0;
+    const r = designs.runJobs(Math.min(40, Math.max(24, away)));
+    sliceEnd = performance.now();
+    // The next slice is scheduled even if showing this one's result fails.
+    try { if (r.finished.length) designsSettled(r.finished); } finally {
+      if (!designs.busy()) pumping = false;
+      else if (r.waitMs > 0) setTimeout(() => pumpChannel.port2.postMessage(0), r.waitMs);
+      else pumpChannel.port2.postMessage(0);
+    }
+  };
+  // Progress, at most 10 times a second: only the Computed box, the variant
+  // marker and the note beside the title change; no input is re-rendered.
+  designs.onProgress((queue) => {
+    for (const s of app.designStatuses ?? []) {
+      const job = queue.find((j) => j.path === s.path);
+      if (job && (s.status === 'pending' || s.status === 'stale')) s.progress = job.progress;
+    }
+    controllerTab.renderProgress();
+    renderNote();
+  });
+  // A background design is done (generation went up): the light path. The
+  // display takes the new run from the start of the sweep (the run before
+  // stays faded), the Computed box and the note follow, and the Controller
+  // tab's inputs are left alone, so typing in them goes on. An Auto Scale
+  // made while the design was pending is made again on the new run.
+  function designsSettled(finished) {
+    display.restartSweep();
+    const refit = fitPending;
+    if (refit) fitScope();
+    display.setData(acquire());
+    if (refit) { display.setScope(app.project.scope, app.channel); controls.render(display.mode); autosave(); }
+    controllerTab.renderComputed();
+    if (app.tab === 'analysis') analysisTab.render();
+    renderChrome();
+    const f = finished.at(-1), st = (app.designStatuses ?? []).find((s) => s.path === f.path);
+    const what = f.title || 'The plan';
+    if (f.error) toast(`${what} failed: ${f.error}`);
+    else toast(`${f.title ? `${f.title} planned` : 'Planned'} in ${(f.ms / 1000).toFixed(1)} s${st?.status === 'warn' ? ', with a warning: see the Controller tab' : ''}`);
+  }
+  // Cancel the plan a status waits on, or plan again after a cancel.
+  function designsChanged() { display.setData(acquire()); controllerTab.renderComputed(); if (app.tab === 'analysis') analysisTab.render(); renderChrome(); }
+  app.cancelDesign = (key) => { if (designs.cancel(key)) { designsChanged(); toast('Planning cancelled'); } };
+  app.retryDesign = (key) => { if (designs.retry(key)) designsChanged(); };
+  // The loop a Controller closes, cut at its output, linearised at an
+  // operating point ('origin', 'initial', { y }, { t }): for the Analysis
+  // tab, with the page's designs (a plan is never made twice).
+  app.loopModel = (path, op) => loopModel(app.project, path, op, { designs });
   // What a scope channel can show: only names the diagram gives (its Sources
   // and Sinks, r always), each with its unit.
   app.signalNames = () => channelNames(app.project);
@@ -193,6 +280,7 @@ function startApp() {
   // re-acquires; a window with too many controller samples is refused.
   app.editScope = (fn) => {
     const before = JSON.stringify(app.project.scope);
+    fitPending = false;
     app.beginEdit();
     fn(app.project.scope);
     const sim = simOf(app.project);
@@ -330,7 +418,11 @@ function startApp() {
   app.toggleRun = () => app.setMode(display.mode === 'stop' ? 'run' : 'stop');
   app.single = () => app.setMode('single');
   // Auto Scale: one period of the input across the screen, then every
-  // channel with a signal fitted to about six divisions.
+  // channel with a signal fitted to about six divisions. Fitted while a
+  // design is still being computed (a plan, when a system loads), it fits
+  // the run without it, so it is made again when the design settles, unless
+  // the scope was set by hand in between.
+  let fitPending = false;
   function fitScope() {
     app.project.scope.timebase = autoTimebase(app.project);
     const liveData = live?.data();
@@ -351,6 +443,7 @@ function startApp() {
       const fit = fitChannel(g.flatMap((i) => Array.from(data.signals[sc.channels[i].source])));
       if (fit) for (const i of g) Object.assign(sc.channels[i], fit);
     }
+    fitPending = (app.designStatuses ?? []).some((s) => s.status === 'pending' || s.status === 'stale');
   }
   // After a change of display mode or Δ: a channel that now draws another
   // quantity (X − Y in XY, itself elsewhere) is fitted to it.
@@ -390,6 +483,7 @@ function startApp() {
     onChannelKey: (i) => app.channelKey(i),
     onSelectLine: (i) => { if (i !== null) app.channel = i; changed({ data: false }); },
     onStopped: () => { app.runChanged(); live?.swept(); app.sweepEnded?.(); },  // a Single ended (live: the plant stops)
+    frameMs: () => app.frameMs(),
     edit: (fn) => app.editScope(fn),
     unitOf: (name) => app.unitOf(name),
     endEdit: () => app.endEdit(),
@@ -452,12 +546,40 @@ function startApp() {
     }
   }
 
+  // The note beside the title: a plant that does not run, a design that
+  // failed, or one being planned; a click opens the tab that says why.
+  let noteAction = null;
+  function designNote() {
+    const order = ['error', 'pending', 'stale', 'cancelled', 'warn'];
+    const s = (app.designStatuses ?? []).filter((x) => order.includes(x.status)).sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status))[0];
+    if (!s) return null;
+    const pct = `${Math.round(100 * (s.progress?.fraction ?? 0))} %${s.progress?.start > 1 ? ` (start ${s.progress.start} of ${s.progress.starts})` : ''}`;
+    const what = { error: 'no design', warn: 'check its design', pending: `planning ${pct}`, stale: `re-planning ${pct}`, cancelled: 'planning cancelled' }[s.status];
+    return { who: `${s.block} · ${s.variant}`, what, path: s.path };
+  }
   function renderChrome() {
     $('undo').disabled = !undoStack.length;
     $('redo').disabled = !redoStack.length;
-    $('title').value = app.project.title;
-    $('loopnote').textContent = app.systemError ? 'plant: see the Plant tab' : loopNote;
+    if (document.activeElement !== $('title')) $('title').value = app.project.title;
+    renderNote();
   }
+  // A design's note is "block · variant: what"; where the header is short of
+  // room the name gives way (an ellipsis) and "planning 43 %" stays. The note
+  // takes no room of its own in the header's rows (style.css), so a plan that
+  // starts or settles never wraps the header and moves the page.
+  function renderNote() {
+    const note = app.systemError ? null : designNote();
+    const el = $('loopnote');
+    if (note) {
+      el.innerHTML = `<span class="ln-who"></span><span class="ln-what"></span>`;
+      el.firstChild.textContent = note.who;
+      el.lastChild.textContent = `: ${note.what}`;
+    } else el.textContent = app.systemError ? 'plant: see the Plant tab' : loopNote;
+    noteAction = app.systemError ? () => { app.tab = 'plant'; renderTabs(); } : note ? () => app.openController(note.path.split('/')) : null;
+    if (noteAction) { el.setAttribute('role', 'button'); el.tabIndex = 0; el.title = `${el.textContent}. Open the tab that says why`; } else { el.removeAttribute('role'); el.removeAttribute('tabindex'); el.title = ''; }
+  }
+  $('loopnote').addEventListener('click', () => noteAction?.());
+  $('loopnote').addEventListener('keydown', (e) => { if (noteAction && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); noteAction(); } });
 
   function changed({ data = true } = {}) {
     if (data) display.setData(acquire());
@@ -744,6 +866,20 @@ function startApp() {
       const sim = app.simRate();
       return { speed: speedToJson(speed.set), effective: speedToJson(speed.effective()), achieved: speed.achieved(), simulation: Number.isFinite(sim) ? sim : null, locked: speed.locked() };
     },
+    // What each running designed variant computed from the plant (status, rows, errors).
+    designs: () => { acquire(); return structuredClone(app.designStatuses ?? []); },
+    // Resolves, with the statuses, once no design is being computed in the
+    // background (a plan) and the display shows the run that uses it.
+    whenDesigned: async () => {
+      for (;;) {
+        acquire();
+        if (!designs.busy()) return structuredClone(app.designStatuses ?? []);
+        await designs.idle();
+      }
+    },
+    // The loop the Controller at path closes, linearised at op ('origin',
+    // 'initial', { y: [levels] }, { t: seconds }): { plant, ctrl, Ts, … }.
+    loopModel: (path, op) => structuredClone(app.loopModel(path, op)),
     selectCandidate: (ref) => { const i = findCandidate(app.project, ref); app.beginEdit(); app.project.selected = app.project.candidates[i].name; app.endEdit(); changed(); },
     live: live.api,  // connect(url), disconnect(), estop(), reset(), hold(on), settings(s), downloadPlant(), plantFiles(), state(): design/output/hil.md
     limited,  // () => { limited, reasons }: ui/limited.js
@@ -765,16 +901,22 @@ function startApp() {
   // Boot: the embedded project, unless this browser has newer work on it.
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch { /* storage unavailable */ }
-  try {
-    if (saved && saved.base === base) app.project = normalizeProject(saved.project);
-    else {
+  // Work kept in this browser that cannot be read opens the page's own
+  // project, and says so (it said the embedded project could not be read).
+  let bootNote = '', fromSaved = false;
+  if (saved && saved.base === base) {
+    try { app.project = normalizeProject(saved.project); fromSaved = true; } catch (err) { bootNote = `The work this browser kept could not be read (${err.message}); opened the page's own project instead.`; }
+  }
+  if (!fromSaved) {
+    try {
       app.project = normalizeProject(JSON.parse(startText));
       if (!embeddedText) fitScope();  // the library's system, scaled as when it is loaded
+    } catch (err) {
+      app.project = normalizeProject(structuredClone(DEFAULT_PROJECT));
+      bootNote = `The embedded project could not be read (${err.message}); opened a new one instead.`;
     }
-  } catch (err) {
-    app.project = normalizeProject(structuredClone(DEFAULT_PROJECT));
-    setTimeout(() => toast(`The embedded project could not be read (${err.message}); opened a new one instead.`));
   }
+  if (bootNote) setTimeout(() => toast(bootNote));
   renderTabs();
   changed();
   layout = createSplitters($('lt-shell'));

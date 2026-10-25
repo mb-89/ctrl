@@ -7,7 +7,7 @@
   "DC motor, position control": {
     "samples": 2001,
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed",
-    "hash": "d859246c"
+    "hash": "d884117d"
   },
   "Following a sine (XY)": {
     "samples": 2001,
@@ -17,36 +17,36 @@
   "DC motor, sliding mode": {
     "samples": 20001,
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,e,i,r,speed",
-    "hash": "36f24ab8"
+    "hash": "dc5b9021"
   },
   "Encoder errors and torque ripple": {
     "samples": 2001,
     "signals": "V,ctrl.r,ctrl.u,ctrl.y,r,speed,speed_m",
-    "hash": "f881f43d"
+    "hash": "bf121d90"
   },
   "Conical tank, gain scheduling": {
     "samples": 2001,
     "signals": "ctrl.r,ctrl.u,ctrl.y,d,h,q,r",
-    "hash": "49205ca1"
+    "hash": "a756d0b9"
   },
   "Pendulum swing-up": {
     "samples": 2001,
     "signals": "F,ctrl.r,ctrl.u,ctrl.y,d,r,theta,x",
-    "hash": "5b008e03"
+    "hash": "bea2f547"
   },
   "Triple pendulum": {
     "samples": 2001,
     "signals": "F,ctrl.r,ctrl.u,ctrl.y,d,r,theta1,theta2,theta3,x",
-    "hash": "72c97be4"
+    "hash": "f88b0105"
   },
   "Oven, badly tuned": {
     "samples": 2001,
     "signals": "P,T,ctrl.r,ctrl.u,ctrl.y,d,r",
-    "hash": "827be82d"
+    "hash": "dec8753d"
   },
   "DC motor with an unbalanced arm": {
     "samples": 2001,
     "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,current,load,r,speed",
-    "hash": "38617472"
+    "hash": "23d8e117"
   }
 }

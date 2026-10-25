@@ -680,6 +680,73 @@ function ctrb(A, B) {
   return Bm.map((_, i) => blocks.flatMap((M) => M[i]));
 }
 
+function equilibrate(M) {
+  const m = M.length, n = m ? M[0].length : 0;
+  const S = M.map((row) => Array.from(row)), r = new Array(m).fill(1), c = new Array(n).fill(1);
+  const pow2 = (v) => 2 ** -Math.ceil(Math.log2(v));
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < m; i++) {
+      let a = 0;
+      for (let j = 0; j < n; j++) a = Math.max(a, Math.abs(S[i][j]));
+      if (!(a > 0 && Number.isFinite(a))) continue;
+      const f = pow2(a);
+      r[i] *= f;
+      for (let j = 0; j < n; j++) S[i][j] *= f;
+    }
+    for (let j = 0; j < n; j++) {
+      let a = 0;
+      for (let i = 0; i < m; i++) a = Math.max(a, Math.abs(S[i][j]));
+      if (!(a > 0 && Number.isFinite(a))) continue;
+      const f = pow2(a);
+      c[j] *= f;
+      for (let i = 0; i < m; i++) S[i][j] *= f;
+    }
+  }
+  return { M: S, r, c };
+}
+
+function krylov(M, v, tol) {
+  const n = M.length, Q = [];
+  const norm = (w) => Math.hypot(...w);
+  let size = 0;
+  for (const row of M) for (const x of row) size += x * x;
+  size = Math.sqrt(size);
+  const v0 = norm(v);
+  if (!(v0 > 0)) return Q;
+  Q.push(v.map((x) => x / v0));
+  while (Q.length < n) {
+    const q = Q.at(-1);
+    const w = M.map((row) => row.reduce((s, x, j) => s + x * q[j], 0));
+    for (let pass = 0; pass < 2; pass++) {
+      for (const b of Q) {
+        const s = b.reduce((t, x, i) => t + x * w[i], 0);
+        for (let i = 0; i < n; i++) w[i] -= s * b[i];
+      }
+    }
+    const h = norm(w);
+    if (!(h > tol * size)) break;
+    Q.push(w.map((x) => x / h));
+  }
+  return Q;
+}
+
+function minreal(A, b, c, tol = 1e-8) {
+  const n = square(A, 'minreal');
+  if (!n) return { A: [], b: [], c: [] };
+  const a = A.map((row) => Array.from(row));
+  const d = balance(a);
+  const project = (M, v, w, Q) => ({
+    A: Q.map((p) => Q.map((q) => p.reduce((s, x, i) => s + x * M[i].reduce((t, y, j) => t + y * q[j], 0), 0))),
+    b: Q.map((p) => p.reduce((s, x, i) => s + x * v[i], 0)),
+    c: Q.map((q) => q.reduce((s, x, i) => s + x * w[i], 0)),
+  });
+  const ctl = project(a, b.map((v, i) => v / d[i]), c.map((v, i) => v * d[i]), krylov(a, b.map((v, i) => v / d[i]), tol));
+  const r = ctl.A.length;
+  if (!r) return ctl;
+  const At = ctl.A.map((_, i) => ctl.A.map((row) => row[i]));
+  return project(ctl.A, ctl.b, ctl.c, krylov(At, ctl.c, tol));
+}
+
 function rank(M, tol) {
   const m = M.length, n = m ? M[0].length : 0;
   if (!m || !n) return 0;
@@ -708,7 +775,7 @@ function rank(M, tol) {
   return diag.filter((x) => x > t).length;
 }
 
-return { zeros, eye, mul, add, scale, transpose, solve, inv, det, expm, c2d, eig, eigPerturbed, dare, dlqr, dlqe, csolve, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, rank };
+return { zeros, eye, mul, add, scale, transpose, solve, inv, det, expm, c2d, balance, eig, eigPerturbed, dare, dlqr, dlqe, csolve, freqResp, bode, logspace, margins, rootLocus, tzeros, ctrb, equilibrate, minreal, rank };
 })();
 // ---- core/scale.js
 __mods['core/scale.js'] = (() => {
@@ -1539,9 +1606,1287 @@ function penalized(ev) {
 
 return { DEFAULT_GOAL, normalizeGoal, evaluateGoal, compareEvals, penalized };
 })();
+// ---- core/linearize.js
+__mods['core/linearize.js'] = (() => {
+
+const { solve, eig, minreal } = __mods['core/linalg.js'];
+class DesignError extends Error {
+  constructor(code, message, hint = '') {
+    super(message);
+    this.name = 'DesignError';
+    this.code = code;
+    this.hint = hint;
+  }
+}
+
+const fmt = (v) => (Number.isFinite(v) ? String(Number(Number(v).toPrecision(3))) : String(v));
+const maxAbs = (v) => { let m = 0; for (let i = 0; i < v.length; i++) m = Math.max(m, Math.abs(v[i])); return m; };
+const sumSq = (v) => { let s = 0; for (let i = 0; i < v.length; i++) s += v[i] * v[i]; return s; };
+const REST = 1e-6;
+const step = (v) => 1e-6 * Math.max(1, Math.abs(v));
+
+function parseOp(spec, where = 'operating point') {
+  if (spec === undefined || spec === null || spec === 'origin') return { kind: 'origin' };
+  if (spec === 'initial') return { kind: 'initial' };
+  if (typeof spec === 'object' && ['origin', 'initial', 'y', 't'].includes(spec.kind)) return spec;
+  if (typeof spec === 'object' && 'y' in spec) {
+    const y = Array.isArray(spec.y) ? spec.y : [spec.y];
+    if (!y.length || !y.every((v) => v === null || Number.isFinite(v))) throw new DesignError('bad-op', `${where}: y takes levels, one per measurement`, 'null leaves a measurement free');
+    return { kind: 'y', y: y.map((v) => (v === null ? null : Number(v))) };
+  }
+  if (typeof spec === 'object' && 't' in spec) {
+    if (!(Number(spec.t) >= 0)) throw new DesignError('bad-op', `${where}: t is a time of the run, in seconds`, 'a time from 0 to the end of the screen');
+    return { kind: 't', t: Number(spec.t), u: Number(spec.u) || 0 };
+  }
+  throw new DesignError('bad-op', `${where}: 'origin', 'initial', { y: [levels] } or { t: seconds }`, 'origin: all states 0; initial: the start state; y: an equilibrium at these levels; t: a moment of the run');
+}
+
+function opLabel(op, model = null) {
+  op = parseOp(op);
+  if (op.kind === 'origin') return 'origin (all states 0, u = 0)';
+  if (op.kind === 'initial') return 'the initial state';
+  if (op.kind === 't') return `t = ${op.t.toFixed(2)} s of the run`;
+  return op.y.map((v, k) => {
+    if (v === null) return '';
+    const o = model?.outputs[k];
+    return `${o?.label ?? `y${k + 1}`} = ${fmt(v)}${o?.unit ? ` ${o.unit}` : ''}`;
+  }).filter(Boolean).join(', ') || 'an equilibrium near the initial state';
+}
+
+function moving(model, f) {
+  let j = 0;
+  for (let i = 1; i < f.length; i++) if (Math.abs(f[i]) > Math.abs(f[j])) j = i;
+  const s = model.states[j];
+  return `${s.label} moves at ${fmt(f[j])}${s.unit ? ` ${s.unit}` : ''}/s`;
+}
+
+function operatingPoint(model, op, { umin = -Infinity, umax = Infinity } = {}) {
+  op = parseOp(op);
+  const { n, m } = model, uName = model.input?.label ?? 'u';
+  let x, u;
+  if (op.kind === 'origin') { x = new Float64Array(n); u = 0; }
+  else if (op.kind === 'initial') { x = Float64Array.from(model.x0); u = restInput(model, x, umin, umax); }
+  else if (op.kind === 'y') ({ x, u } = trim(model, op.y, { umin, umax }));
+  else { x = Float64Array.from(model.x0); u = op.u; }
+  const f = new Float64Array(n), y = new Float64Array(m);
+  model.f(x, u, f);
+  model.y(x, u, y);
+  const drift = maxAbs(f), rest = drift <= REST;
+  const warnings = [];
+  if (!rest) {
+    if (op.kind === 'origin') warnings.push(`the origin is not at rest: ${moving(model, f)} with ${uName} = 0`);
+    else if (op.kind === 'initial') warnings.push(`no ${uName} holds the initial state at rest: ${moving(model, f)} at best`);
+    else if (op.kind === 't') warnings.push(`t = ${op.t.toFixed(2)} s is not an equilibrium: ${moving(model, f)}`);
+  }
+  warnings.push(...(model.atLimits?.(x, u) ?? []));
+  const base = opLabel(op, model);
+  const label = op.kind === 'initial' || op.kind === 'y' ? `${base}, ${uName} = ${fmt(Math.abs(u) < 1e-12 ? 0 : u)}` : base;
+  return { kind: op.kind, op, x, u, y, drift, rest, label, warnings };
+}
+
+function slope(p, c, q, h) {
+  if (!Number.isFinite(q) || (q === c && p !== c)) return (p - c) / h;
+  if (!Number.isFinite(p) || (p === c && q !== c)) return (c - q) / h;
+  return (p - q) / (2 * h);
+}
+
+function restInput(model, x, umin, umax) {
+  const n = model.n, f0 = new Float64Array(n), fp = new Float64Array(n), fm = new Float64Array(n);
+  const cost = (u) => { model.f(x, u, f0); let s = 0; for (let i = 0; i < n; i++) s += f0[i] * f0[i]; return s; };
+  const clamp = (v) => Math.min(umax, Math.max(umin, v));
+  let u = clamp(0), c = cost(u);
+  for (let it = 0; it < 50 && c > 0; it++) {
+    const h = step(u);
+    model.f(x, u + h, fp); model.f(x, u - h, fm);
+    cost(u);
+    let gf = 0, gg = 0;
+    for (let i = 0; i < n; i++) { const g = slope(fp[i], f0[i], fm[i], h); gf += g * f0[i]; gg += g * g; }
+    if (!(gg > 0)) break;
+    let du = -gf / gg, moved = false;
+    for (let tries = 0; tries < 30; tries++, du /= 2) {
+      const un = clamp(u + du), cn = cost(un);
+      if (cn < c) { moved = un !== u; u = un; c = cn; break; }
+    }
+    if (!moved) break;
+  }
+  return u;
+}
+
+function trim(model, targets, { umin = -Infinity, umax = Infinity } = {}) {
+  const { n, m } = model, N = n + 1, uName = model.input?.label ?? 'u';
+  const tg = Array.isArray(targets) ? targets : [targets];
+  if (tg.length > m) throw new DesignError('bad-op', `${tg.length} levels for ${m} measurement${m === 1 ? '' : 's'} (${model.outputs.map((o) => o.label).join(', ')})`, 'give at most one level per measurement, null to leave one free');
+  const free = [];
+  tg.forEach((v, k) => { if (v !== null && v !== undefined) free.push(k); });
+  const P = n + free.length;
+  const label = opLabel({ kind: 'y', y: tg.map((v) => v ?? null) }, model);
+  const f = new Float64Array(n), y = new Float64Array(m), goal = new Float64Array(free.length);
+  const residual = (zz, r) => {
+    const x = zz.subarray(0, n), u = zz[n];
+    model.f(x, u, f);
+    model.y(x, u, y);
+    for (let i = 0; i < n; i++) r[i] = f[i];
+    for (let j = 0; j < free.length; j++) r[n + j] = y[free[j]] - goal[j];
+  };
+  const zt = new Float64Array(N), r = new Float64Array(P), rt = new Float64Array(P), rp = new Float64Array(P), rm = new Float64Array(P);
+  const J = Array.from({ length: P }, () => new Array(N).fill(0)), rs = new Float64Array(P), tol = new Float64Array(P);
+  const scaledCost = (v) => { let s = 0; for (let i = 0; i < P; i++) s += (rs[i] * v[i]) ** 2; return s; };
+  const tolerances = (z) => { for (let i = 0; i < P; i++) { let s = 0; for (let j = 0; j < N; j++) s += Math.abs(J[i][j] * z[j]); tol[i] = 1e-8 + 1e-12 * s; } };
+  const worst = () => { let w = 0; for (let i = 0; i < P; i++) w = Math.max(w, Math.abs(r[i]) / tol[i]); return w; };
+  const solveFrom = (z, iterations) => {
+    residual(z, r);
+    let lambda = 0, jacobian = false;
+    for (let it = 0; it < iterations; it++) {
+      for (let j = 0; j < N; j++) {
+        const v = z[j], h = step(v);
+        zt.set(z); zt[j] = v + h; residual(zt, rp);
+        zt[j] = v - h; residual(zt, rm);
+        let pBad = false, mBad = false, pFlat = true, mFlat = true;
+        for (let i = 0; i < P; i++) {
+          if (!Number.isFinite(rp[i])) pBad = true;
+          if (!Number.isFinite(rm[i])) mBad = true;
+          if (rp[i] !== r[i]) pFlat = false;
+          if (rm[i] !== r[i]) mFlat = false;
+        }
+        for (let i = 0; i < P; i++) J[i][j] = mBad || (mFlat && !pFlat) ? (rp[i] - r[i]) / h : pBad || (pFlat && !mFlat) ? (r[i] - rm[i]) / h : (rp[i] - rm[i]) / (2 * h);
+      }
+      jacobian = true;
+      tolerances(z);
+      if (worst() <= 1) return true;
+      for (let i = 0; i < P; i++) { let s = 0; for (let j = 0; j < N; j++) s += J[i][j] * J[i][j]; rs[i] = s > 0 && Number.isFinite(s) ? 1 / Math.sqrt(s) : 1; }
+      const Js = J.map((row, i) => row.map((v) => v * rs[i]));
+      const JJ = Js.map((a) => Js.map((b) => a.reduce((s, x, k) => s + x * b[k], 0)));
+      const scale = Math.max(1e-300, ...JJ.map((row, i) => row[i]));
+      lambda = lambda ? Math.max(lambda / 10, 1e-15 * scale) : 1e-12 * scale;
+      const cost = scaledCost(r), rsc = Array.from(r, (v, i) => v * rs[i]);
+      let accepted = false;
+      for (let tries = 0; tries < 12; tries++) {
+        let w = null;
+        try { w = solve(JJ.map((row, i) => row.map((v, j) => v + (i === j ? lambda : 0))), rsc); } catch {   }
+        if (w) {
+          for (let j = 0; j < N; j++) { let s = 0; for (let i = 0; i < P; i++) s += Js[i][j] * w[i]; zt[j] = z[j] - s; }
+          residual(zt, rt);
+          const c = scaledCost(rt);
+          if (c < cost) { z.set(zt); r.set(rt); accepted = true; break; }
+        }
+        lambda *= 10;
+      }
+      if (!accepted) break;
+    }
+    if (!jacobian) return false;
+    return worst() <= 1;
+  };
+  const z0 = new Float64Array(N);
+  z0.set(model.x0);
+  z0[n] = restInput(model, model.x0, umin, umax);
+  model.y(model.x0, z0[n], y);
+  const y0 = free.map((k) => y[k]);
+  free.forEach((k, j) => { goal[j] = tg[k]; });
+  const seed = Float64Array.from(z0);
+  let seeded = false;
+  free.forEach((k, j) => {
+    const o = model.outputs[k];
+    if (!(o && Number.isInteger(o.state) && Math.abs(o.slope) > 0)) return;
+    seed[o.state] = model.x0[o.state] + (tg[k] - y0[j]) / o.slope;
+    seeded = true;
+  });
+  let z = seed, ok = false;
+  if (seeded) {
+    seed[n] = restInput(model, seed.subarray(0, n), umin, umax);
+    ok = solveFrom(z, 50);
+  }
+  if (!ok) { z = Float64Array.from(z0); ok = solveFrom(z, 50); }
+  if (!ok) {
+    z = Float64Array.from(z0);
+    for (let s = 1; s <= 8; s++) {
+      free.forEach((k, j) => { goal[j] = y0[j] + ((tg[k] - y0[j]) * s) / 8; });
+      ok = solveFrom(z, s < 8 ? 20 : 50);
+    }
+  }
+  residual(z, r);
+  const res = maxAbs(r);
+  if (!ok) throw new DesignError('trim-failed', `no equilibrium with ${label}: the best found leaves a residual of ${fmt(res)}`, `the level may be out of reach of ${uName}, or the levels contradict each other`);
+  const u = z[n];
+  if (u > umax + 1e-12) throw new DesignError('u-limit', `holding ${label} needs ${uName} = ${fmt(u)}, above u max ${fmt(umax)}`, 'choose a level the actuator can hold, or raise u max');
+  if (u < umin - 1e-12) throw new DesignError('u-limit', `holding ${label} needs ${uName} = ${fmt(u)}, below u min ${fmt(umin)}`, 'choose a level the actuator can hold, or lower u min');
+  return { x: Float64Array.from(z.subarray(0, n)), u, residual: res };
+}
+
+function linearize(model, op = 'origin') {
+  const pt = op && op.x && 'u' in op ? op : operatingPoint(model, op);
+  const { n, m } = model, x = Float64Array.from(pt.x), u = pt.u, uName = model.input?.label ?? 'u';
+  const f0 = new Float64Array(n), y0 = new Float64Array(m);
+  model.f(x, u, f0); model.y(x, u, y0);
+  const c0 = Float64Array.from([...f0, ...y0]);
+  const moved = (j, d) => {
+    const fv = new Float64Array(n), yv = new Float64Array(m);
+    if (j < n) { const v = x[j]; x[j] = v + d; model.f(x, u, fv); model.y(x, u, yv); x[j] = v; } else { model.f(x, u + d, fv); model.y(x, u + d, yv); }
+    return Float64Array.from([...fv, ...yv]);
+  };
+  const rows = n + m, cols = n + 1;
+  const S = Array.from({ length: rows }, () => new Array(cols).fill(0));
+  const side = [];
+  for (let j = 0; j < cols; j++) {
+    const v = j < n ? x[j] : u, h = step(v), p = moved(j, h), q = moved(j, -h);
+    for (let i = 0; i < rows; i++) S[i][j] = (p[i] - q[i]) / (2 * h);
+    side.push({ h, p, q });
+  }
+  const rowScale = S.map((row) => Math.max(0, ...row.map((v) => (Number.isFinite(v) ? Math.abs(v) : 0))));
+  const kinks = [];
+  const rowName = (i) => (i < n ? `the rate of ${model.states[i].label}` : model.outputs[i - n].label);
+  const colName = (j) => (j < n ? model.states[j].label : uName);
+  for (let j = 0; j < cols; j++) {
+    const { h, p, q } = side[j];
+    let far = null, near = null;
+    for (let i = 0; i < rows; i++) {
+      const fw = (p[i] - c0[i]) / h, bw = (c0[i] - q[i]) / h, gap = Math.abs(fw - bw);
+      const noise = (1e3 * Number.EPSILON * Math.max(Math.abs(c0[i]), Math.abs(p[i]), Math.abs(q[i]))) / h;
+      if (Number.isFinite(gap) && !(gap > 1e-3 * Math.max(Math.abs(fw), Math.abs(bw)) + 1e-6 * rowScale[i] + noise)) continue;
+      if (!far) far = { p: moved(j, 10 * h), q: moved(j, -10 * h) };
+      const gapFar = Math.abs((far.p[i] - c0[i]) / (10 * h) - (c0[i] - far.q[i]) / (10 * h));
+      if (Number.isFinite(gap) && Number.isFinite(gapFar) && !(gap > 0.5 * gapFar)) continue;
+      if (!near) near = { p: moved(j, h / 10), q: moved(j, -h / 10) };
+      const gapNear = Math.abs((near.p[i] - c0[i]) / (h / 10) - (c0[i] - near.q[i]) / (h / 10));
+      if (Number.isFinite(gap) && Number.isFinite(gapNear) && gapNear < 0.5 * gap) continue;
+      kinks.push(Number.isFinite(gap) ? `the slope of ${rowName(i)} along ${colName(j)} differs left and right (${fmt(bw)} and ${fmt(fw)})` : `${rowName(i)} has no slope along ${colName(j)} there`);
+      break;
+    }
+  }
+  const edges = (model.limits?.(x, u) ?? []).filter((s) => s.edge).map((s) => s.sentence);
+  const A = S.slice(0, n).map((row) => row.slice(0, n)), B = S.slice(0, n).map((row) => [row[n]]);
+  const C = S.slice(n).map((row) => row.slice(0, n)), D = S.slice(n).map((row) => [row[n]]);
+  return {
+    A, B, C, D, n, m,
+    states: model.states, outputs: model.outputs, input: model.input ?? { label: 'u' },
+    op: pt, delay: model.delay, sensors: model.sensors,
+    kinks: [...edges, ...kinks],
+    warnings: [...new Set([...model.warnings, ...pt.warnings, ...kinks.map((k) => `a kink at the operating point: ${k}`)])],
+  };
+}
+
+function refuseKinks(lin, what) {
+  if (!lin.kinks?.length) return;
+  throw new DesignError('kink', `${what} needs slopes, and the plant has a kink at ${lin.op.label}: ${lin.kinks[0]}`, 'choose an operating point away from the limit or kink, or move the limit');
+}
+
+function pathRealisation(lin, k = 0) {
+  if (!(k >= 0 && k < lin.m)) throw new DesignError('bad-output', `no measurement ${k + 1}; this block has ${lin.m}`);
+  const label = lin.outputs[k].label, uName = lin.input.label;
+  const n = lin.n, d = lin.D[k][0];
+  const reach = (seed, edge) => {
+    const on = seed.slice(), stack = [];
+    on.forEach((v, i) => { if (v) stack.push(i); });
+    while (stack.length) { const i = stack.pop(); for (let j = 0; j < n; j++) if (!on[j] && edge(i, j)) { on[j] = true; stack.push(j); } }
+    return on;
+  };
+  const fromU = reach(lin.B.map((b) => b[0] !== 0), (i, j) => lin.A[j][i] !== 0);
+  const toY = reach(lin.C[k].map((c) => c !== 0), (i, j) => lin.A[i][j] !== 0);
+  const path = [];
+  for (let i = 0; i < n; i++) if (fromU[i] && toY[i]) path.push(i);
+  if (!path.length && d === 0) throw new DesignError('no-path', `${uName} does not reach ${label}`, 'check the wiring from the controller output to the plant and on to this measurement');
+  const mr = minreal(path.map((i) => path.map((j) => lin.A[i][j])), path.map((i) => lin.B[i][0]), path.map((j) => lin.C[k][j]));
+  return { A: mr.A, b: mr.b, c: mr.c, d, label, uName };
+}
+
+function firstOrderFit(lin, k = 0) {
+  const { A, b: B, c: C, d, label, uName } = pathRealisation(lin, k);
+  const r = A.length;
+  if (!r) {
+    if (d === 0) throw new DesignError('zero-gain', `${uName} has no static effect on ${label}`, 'pole cancellation needs a plant whose output settles away from 0');
+    return { K: d, tau: 0, theta: lin.delay[k] ?? 0, label, warnings: [] };
+  }
+  let size = 0;
+  for (const row of A) for (const v of row) size += v * v;
+  size = Math.sqrt(size);
+  const poles = eig(A);
+  if (poles.some((p) => Math.hypot(p.re, p.im) <= 1e-9 * size)) throw new DesignError('integrating-plant', `${label} integrates ${uName}: it has no static gain`, 'pole cancellation needs a self-regulating plant; measure a rate, or use another design');
+  const rhp = poles.filter((p) => p.re > 1e-9 * size);
+  if (rhp.length) throw new DesignError('unstable-plant', `the path from ${uName} to ${label} is unstable: a pole at ${fmt(rhp[0].re)}${rhp[0].im ? ` ± ${fmt(Math.abs(rhp[0].im))}i` : ''} rad/s`, 'pole cancellation needs a stable plant; stabilise it first (an inner loop), or use LQR');
+  const x1 = solve(A, B), x2 = solve(A, x1);
+  const K = d - C.reduce((s, c, i) => s + c * x1[i], 0);
+  if (!(Math.abs(K) > 1e-9 * Math.max(Math.abs(d), Math.hypot(...C) * Math.hypot(...B) / size))) throw new DesignError('zero-gain', `${uName} has no static effect on ${label}`, 'pole cancellation needs a plant whose output settles away from 0');
+  const tau = C.reduce((s, c, i) => s + c * x2[i], 0) / K;
+  const warnings = tau > 0 ? [] : [`the step response of ${label} is not lag-like (τ = ${fmt(tau)} s): it overshoots or starts the wrong way`];
+  return { K, tau, theta: lin.delay[k] ?? 0, label, warnings };
+}
+
+return { DesignError, parseOp, opLabel, operatingPoint, trim, linearize, refuseKinks, pathRealisation, firstOrderFit };
+})();
+// ---- core/planner.js
+__mods['core/planner.js'] = (() => {
+
+const { inv } = __mods['core/linalg.js'];
+const PLAN_VERSION = 2;
+
+const STAGES = [[3e-3, 1, 120], [1e-3, 10, 80], [3e-4, 100, 80]];
+const CAP = 300;          
+const HINGE = 3;          
+const TRIES = 10;         
+const STALL = 4;          
+const STARTS = [3, 2, 4]; 
+
+const wrapAngle = (d) => d - 2 * Math.PI * Math.round(d / (2 * Math.PI));
+const fmt = (v) => String(Number(Number(v).toPrecision(3)));
+const isRate = (s) => /\/s$/.test(s.unit ?? '');
+const planTol = (s) => (s.angle ? 0.02 : isRate(s) ? 0.5 : 0.02);
+const holdTol = (s) => (s.angle ? 0.05 : isRate(s) ? 0.5 : 0.25);
+
+function stepper(f, n, Ts, sub) {
+  const h = Ts / sub, k1 = new Float64Array(n), k2 = new Float64Array(n), k3 = new Float64Array(n), k4 = new Float64Array(n), xt = new Float64Array(n);
+  return (x, u) => {
+    for (let s = 0; s < sub; s++) {
+      f(x, u, k1);
+      for (let i = 0; i < n; i++) xt[i] = x[i] + 0.5 * h * k1[i];
+      f(xt, u, k2);
+      for (let i = 0; i < n; i++) xt[i] = x[i] + 0.5 * h * k2[i];
+      f(xt, u, k3);
+      for (let i = 0; i < n; i++) xt[i] = x[i] + h * k3[i];
+      f(xt, u, k4);
+      for (let i = 0; i < n; i++) x[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+    }
+  };
+}
+
+function substeps(model, Ts) {
+  const hmax = Math.min(0.005, model.bound > 0 ? 0.5 / model.bound : Infinity);
+  return Math.max(1, Math.ceil(Ts / hmax - 1e-9));
+}
+
+function* planTransfer(model, { T, Ts, segments = 12, nodesPerSegment = 4, Fmax = Infinity, Fmin = -Fmax } = {}) {
+  const n = model.n, M = Math.max(1, Math.round(segments)), nps = Math.max(1, Math.round(nodesPerSegment));
+  if (!(Ts > 0) || !(T > 0)) throw new Error('planTransfer: T and Ts must be above 0');
+  if (!n) throw new Error('planTransfer: the model has no states');
+  if (!(Fmin <= 0 && Fmax >= 0)) throw new Error('planTransfer: Fmin ≤ 0 ≤ Fmax');
+  const hold = Math.max(1, Math.ceil(0.005 / Ts - 1e-9)), Th = hold * Ts;
+  const P = Math.max(4, Math.round(T / (Th * M)));
+  const Tp = M * P * Th, N = M * nps, K = M * P * hold;
+  const sub = substeps(model, Ts);
+  const step = stepper(model.f, n, Th, substeps(model, Th));
+  const states = model.states, angle = states.map((s) => !!s.angle);
+  const x0 = Float64Array.from(model.x0);
+  const ia = new Int32Array(P), iw = new Float64Array(P);
+  for (let i = 0; i < P; i++) { const q = i * nps; ia[i] = Math.floor(q / P); iw[i] = (q - ia[i] * P) / P; }
+
+  const nz = N + 1 + n * (M - 1), nr = n * M + 2 * (N + 1) + N;
+  const z = new Float64Array(nz), zt = new Float64Array(nz);
+  const sOff = (j) => N + 1 + n * (j - 1);   
+  const startsOf = (v) => Array.from({ length: M }, (_, j) => (j === 0 ? x0 : v.subarray(sOff(j), sOff(j) + n)));
+  const S = startsOf(z), St = startsOf(zt);
+  const ends = new Float64Array(M * n), endsT = new Float64Array(M * n);
+  const E = Array.from({ length: M }, (_, j) => ends.subarray(j * n, (j + 1) * n));
+  const Et = Array.from({ length: M }, (_, j) => endsT.subarray(j * n, (j + 1) * n));
+  const r = new Float64Array(nr), rt = new Float64Array(nr);
+  const xs = new Float64Array(n);
+  const w = { lam: STAGES[0][0], wd: STAGES[0][1] };
+
+  function segment(v, j, s, out) {
+    xs.set(s);
+    const b = j * nps;
+    for (let i = 0; i < P; i++) { const a = b + ia[i]; step(xs, v[a] + (v[a + 1] - v[a]) * iw[i]); }
+    out.set(xs);
+  }
+  function fill(v, en, res) {
+    let q = 0;
+    for (let j = 0; j < M - 1; j++) { const s = v.subarray(sOff(j + 1), sOff(j + 1) + n); for (let i = 0; i < n; i++) res[q++] = w.wd * (en[j * n + i] - s[i]); }
+    for (let i = 0; i < n; i++) { const d = en[(M - 1) * n + i]; res[q++] = w.wd * (angle[i] ? wrapAngle(d) : d); }
+    for (let k = 0; k <= N; k++) res[q++] = w.lam * v[k];
+    for (let k = 0; k <= N; k++) res[q++] = HINGE * ((Fmax < Infinity ? Math.max(0, v[k] - Fmax) : 0) + (Fmin > -Infinity ? Math.max(0, Fmin - v[k]) : 0));
+    for (let k = 0; k < N; k++) res[q++] = w.lam * (v[k + 1] - v[k]);
+  }
+  const sumsq = (v) => { let s = 0; for (let i = 0; i < v.length; i++) s += v[i] * v[i]; return s; };
+  const norm = (v, a, b) => { let s = 0; for (let i = a; i < b; i++) s += v[i] * v[i]; return Math.sqrt(s); };
+  const defectOf = (res) => norm(res, 0, n * (M - 1)) / w.wd;
+  const terminalOf = (res) => norm(res, n * (M - 1), n * M) / w.wd;
+  const reachOf = (v) => { let p = 0; for (let k = 0; k <= N; k++) p = Math.max(p, v[k] / Fmax, v[k] / Fmin); return p; };
+
+  const ncol = nps + 1 + n, G = new Float64Array(n * ncol), endC = new Float64Array(n), idx = new Int32Array(ncol);
+  function columns(j) {
+    const cols = j > 0 ? ncol : nps + 1;
+    for (let c = 0; c < cols; c++) {
+      const zi = c <= nps ? j * nps + c : sOff(j) + c - nps - 1;
+      const v = z[zi], vp = v + 1e-6 * Math.max(1, Math.abs(v)), d = vp - v;
+      z[zi] = vp;
+      segment(z, j, S[j], endC);
+      z[zi] = v;
+      for (let i = 0; i < n; i++) G[i * ncol + c] = (endC[i] - E[j][i]) / d;
+      idx[c] = zi;
+    }
+    return cols;
+  }
+  const H = new Float64Array(nz * nz), g = new Float64Array(nz);
+  function accumulate(j, cols) {
+    const last = j === M - 1, wi = w.wd, base = last ? n * (M - 1) : n * j;
+    for (let i = 0; i < n; i++) {
+      const ri = r[base + i], gi = i * ncol;
+      for (let a = 0; a < cols; a++) {
+        const ga = wi * G[gi + a];
+        if (ga === 0) continue;
+        g[idx[a]] += ga * ri;
+        const row = idx[a] * nz;
+        for (let b = 0; b < cols; b++) H[row + idx[b]] += ga * wi * G[gi + b];
+      }
+      if (!last) {
+        const s = sOff(j + 1) + i;
+        g[s] -= w.wd * ri;
+        H[s * nz + s] += w.wd * w.wd;
+        for (let a = 0; a < cols; a++) { const v = -w.wd * wi * G[gi + a]; H[idx[a] * nz + s] += v; H[s * nz + idx[a]] += v; }
+      }
+    }
+  }
+  const ord = new Int32Array(nz), bw = 2 * n + nps, W = bw + 1;
+  for (let j = 0, q = 0; j < M; j++) {
+    if (j > 0) for (let i = 0; i < n; i++) ord[q++] = sOff(j) + i;
+    for (let c = 0; c < nps; c++) ord[q++] = j * nps + c;
+    if (j === M - 1) ord[q] = N;
+  }
+  const Lb = new Float64Array(nz * W), yb = new Float64Array(nz), dz = new Float64Array(nz);
+  function lmSolve(mu) {
+    for (let i = 0; i < nz; i++) {
+      const hi = ord[i] * nz, i0 = Math.max(0, i - bw), li = i * W + i;
+      for (let j = i0; j <= i; j++) {
+        let s = H[hi + ord[j]];
+        if (j === i) s += mu * (1 + s);
+        const lj = j * W + j;
+        for (let k = Math.max(i0, j - bw); k < j; k++) s -= Lb[li - k] * Lb[lj - k];
+        if (j < i) Lb[li - j] = s / Lb[j * W];
+        else if (s > 0) Lb[i * W] = Math.sqrt(s);
+        else return false;
+      }
+    }
+    for (let i = 0; i < nz; i++) { const li = i * W + i; let s = g[ord[i]]; for (let k = Math.max(0, i - bw); k < i; k++) s -= Lb[li - k] * yb[k]; yb[i] = s / Lb[i * W]; }
+    for (let i = nz - 1; i >= 0; i--) { let s = yb[i]; for (let k = i + 1, e = Math.min(nz - 1, i + bw); k <= e; k++) s -= Lb[k * W + k - i] * yb[k]; yb[i] = s / Lb[i * W]; }
+    for (let i = 0; i < nz; i++) dz[ord[i]] = yb[i];
+    return true;
+  }
+  function evaluate(v, St2, en, Ev, res) {
+    for (let j = 0; j < M; j++) segment(v, j, St2[j], Ev[j]);
+    fill(v, en, res);
+    return sumsq(res);
+  }
+
+  const dist = Float64Array.from(x0, (v, i) => (angle[i] ? wrapAngle(-v) : -v));
+  let span = 0;
+  for (let i = 0; i < n; i++) span = Math.max(span, Math.abs(dist[i]));
+  const b0 = new Float64Array(n), b1 = new Float64Array(n);
+  model.f(x0, 1e-3, b0); model.f(x0, -1e-3, b1);
+  let gain = Infinity;
+  for (let i = 0; i < n; i++) { const bi = Math.abs(b0[i] - b1[i]) / 2e-3; if (bi > 1e-9) gain = Math.min(gain, bi); }
+  const Fchar = Number.isFinite(gain) ? (2 * span * (2 * Math.PI / Tp) ** 2) / gain : 1;
+  const amp = 0.5 * Math.min(Fmax, -Fmin, Fchar || 1);
+  function guess(k) {
+    for (let i = 0; i <= N; i++) z[i] = amp * Math.sin((k * Math.PI * i) / N);
+    for (let j = 1; j < M; j++) for (let i = 0; i < n; i++) z[sOff(j) + i] = x0[i] + (j / M) * dist[i];
+  }
+
+  function judge() {
+    const terminal = Float64Array.from(E[M - 1], (d, i) => (angle[i] ? wrapAngle(d) : d));
+    let worst = 0, at = 0;
+    terminal.forEach((d, i) => { const q = Math.abs(d) / planTol(states[i]); if (q > worst) { worst = q; at = i; } });
+    const defect = defectOf(r), reach = reachOf(z);
+    const ok = defect < 1e-4 && worst < 1 && !(reach > 1.05) && Number.isFinite(defect);
+    return { ok, terminal, defect, reach, worst, at, badness: Number.isFinite(defect) ? worst + defect / 1e-4 + Math.max(0, reach - 1.05) * 10 : Infinity };
+  }
+
+  let total = 0, best = null, tried = 0;
+  for (let s = 0; s < STARTS.length && total < CAP; s++) {
+    guess(STARTS[s]);
+    tried++;
+    let mu = 1e-2, done = false, fraction = 0, spare = 0, far0 = 0;
+    for (let st = 0; st < STAGES.length && !done && total < CAP; st++) {
+      const [lam, wd, own] = STAGES[st], cap = own + spare, first = total;
+      w.lam = lam; w.wd = wd;
+      for (let j = 0; j < M; j++) { segment(z, j, S[j], E[j]); yield null; }
+      fill(z, ends, r);
+      let cost = sumsq(r);
+      const hist = [];
+      for (let it = 0; it < cap && total < CAP; it++) {
+        H.fill(0); g.fill(0);
+        for (let j = 0; j < M; j++) { accumulate(j, columns(j)); yield null; }
+        for (let k = 0; k <= N; k++) {
+          H[k * nz + k] += w.lam * w.lam;
+          g[k] += w.lam * r[n * M + k];
+          const hr = r[n * M + N + 1 + k];
+          if (hr > 0) { const sg = Math.sign(z[k]) * HINGE; H[k * nz + k] += sg * sg; g[k] += sg * hr; }
+        }
+        for (let k = 0; k < N; k++) {
+          const e = w.lam, rs = r[n * M + 2 * (N + 1) + k];
+          H[k * nz + k] += e * e; H[(k + 1) * nz + k + 1] += e * e; H[k * nz + k + 1] -= e * e; H[(k + 1) * nz + k] -= e * e;
+          g[k] -= e * rs; g[k + 1] += e * rs;
+        }
+        let accepted = false;
+        for (let tries = 0; tries < TRIES && !accepted; tries++) {
+          const solved = lmSolve(mu);
+          yield null;
+          if (solved) {
+            for (let i = 0; i < nz; i++) zt[i] = z[i] - dz[i];
+            const ct = evaluate(zt, St, endsT, Et, rt);
+            if (Number.isFinite(ct) && ct < cost) {
+              z.set(zt); ends.set(endsT); r.set(rt); cost = ct;
+              mu = Math.max(1e-9, mu / 3); accepted = true;
+            }
+          }
+          if (!accepted) mu *= 4;
+          yield null;
+        }
+        total++;
+        const defect = defectOf(r), terminal = terminalOf(r);
+        const far = Math.max(1, defect / 1e-6, terminal / 1e-3);
+        far0 ||= far;
+        const near = far0 > 1 ? Math.min(1, Math.max(0, Math.log(far0 / far) / Math.log(far0))) : 1;
+        fraction = Math.max(fraction, Math.min(0.99, 0.25 * (st + (it + 1) / cap) / STAGES.length + 0.75 * near));
+        yield { stage: st + 1, stages: STAGES.length, iteration: total, cost, defect, terminal, fraction, start: s + 1, starts: STARTS.length };
+        if (!accepted) break;   
+        if (defect < 1e-6 && terminal < 1e-3 && !(reachOf(z) > 1.05)) { done = true; break; }
+        hist.push(cost);
+        if (hist.length > STALL && hist[hist.length - 1 - STALL] - cost < 1e-3 * hist[hist.length - 1 - STALL]) break;
+      }
+      spare = cap - (total - first);
+    }
+    const q = judge();
+    if (!best || q.badness < best.q.badness) best = { q, s, z: Float64Array.from(z) };
+    if (q.ok) break;
+  }
+
+  z.set(best.z);
+  evaluate(z, S, ends, E, r);
+  const q = judge();
+  const F = new Float64Array(K);
+  for (let j = 0; j < M; j++) for (let i = 0; i < P; i++) { const a = j * nps + ia[i], k = (j * P + i) * hold; F.fill(z[a] + (z[a + 1] - z[a]) * iw[i], k, k + hold); }
+  let Fpeak = 0, Flo = 0, Fhi = 0;
+  for (let k = 0; k < K; k++) { Fpeak = Math.max(Fpeak, Math.abs(F[k])); Flo = Math.min(Flo, F[k]); Fhi = Math.max(Fhi, F[k]); }
+  const worst = states[q.at];
+  const endError = { label: worst.name ?? worst.label, value: q.terminal[q.at], unit: worst.unit ?? '' };
+  const plan = {
+    ok: q.ok, code: q.ok ? null : 'plan-not-converged', message: '', hint: '',
+    T: Tp, Ts, segments: M, perSegment: P * hold, hold, nodesPerSegment: nps, sub,
+    z: Float64Array.from(z), F, S: S.map((v) => Float64Array.from(v)),
+    iterations: total, start: best.s + 1, starts: STARTS.length,
+    defect: q.defect, terminal: q.terminal, endError, Fpeak, Flo, Fhi, Fmin, Fmax,
+  };
+  if (!q.ok) {
+    const off = `${endError.label} ends ${fmt(Math.abs(endError.value))}${endError.unit ? ` ${endError.unit}` : ''} off`;
+    const u = model.input?.label ?? 'u';
+    const tries = `${total} iterations, ${tried} start${tried > 1 ? 's' : ''}`;
+    const up = Fhi / Fmax >= Flo / Fmin, side = up ? `up to ${fmt(Fhi)}, of the ${fmt(Fmax)}` : `down to ${fmt(Flo)}, of the ${fmt(Fmin)}`;
+    if (q.reach > 1.05) {
+      plan.message = `no plan found within the limit: it needs ${u} ${side} it may use (${tries})`;
+      plan.hint = `needs more force or a longer T (now ${fmt(Tp)} s)`;
+    } else if (q.worst >= 1 && q.reach >= 0.95) {
+      plan.message = `no plan found: ${off} at T = ${fmt(Tp)} s with ${u} at its limit ${fmt(up ? Fmax : Fmin)} (${tries})`;
+      plan.hint = `needs more force or a longer T (now ${fmt(Tp)} s)`;
+    } else if (q.defect >= 1e-4) {
+      plan.message = `no plan found: the segments do not join (defect ${fmt(q.defect)}, ${tries})`;
+      plan.hint = `more segments or a longer T (now ${M} segments, T = ${fmt(Tp)} s)`;
+    } else {
+      plan.message = `no plan found: ${off} at T = ${fmt(Tp)} s (${tries})`;
+      plan.hint = `a longer T (now ${fmt(Tp)} s) or more force`;
+    }
+  }
+  return plan;
+}
+
+function runPlan(gen, onProgress) {
+  for (;;) {
+    const s = gen.next();
+    if (s.done) return s.value;
+    if (s.value) onProgress?.(s.value);
+  }
+}
+
+function alongPlan(model, plan) {
+  return runPlan(alongPlanSteps(model, plan));
+}
+function* alongPlanSteps(model, plan) {
+  const n = model.n, m = model.m ?? 0, { segments: M, perSegment: P, Ts, sub, F } = plan, K = M * P;
+  const step = stepper(model.f, n, Ts, sub);
+  const xs = new Float64Array((K + 1) * n), Ad = new Float64Array(K * n * n), Bd = new Float64Array(K * n), Cy = new Float64Array(K * m * n);
+  const x = new Float64Array(n), xp = new Float64Array(n), xm = new Float64Array(n), yp = new Float64Array(m), ym = new Float64Array(m);
+  for (let j = 0; j < M; j++) {
+    x.set(plan.S[j]);
+    for (let i = 0; i < P; i++) {
+      const k = j * P + i, u = F[k];
+      xs.set(x, k * n);
+      for (let c = 0; c < n; c++) {
+        const d = 1e-6 * Math.max(1, Math.abs(x[c]));
+        xp.set(x); xp[c] += d; step(xp, u);
+        xm.set(x); xm[c] -= d; step(xm, u);
+        for (let r = 0; r < n; r++) Ad[k * n * n + r * n + c] = (xp[r] - xm[r]) / (2 * d);
+        if (m) {
+          xp.set(x); xp[c] += d; model.y(xp, u, yp);
+          xm.set(x); xm[c] -= d; model.y(xm, u, ym);
+          for (let r = 0; r < m; r++) Cy[k * m * n + r * n + c] = (yp[r] - ym[r]) / (2 * d);
+        }
+      }
+      const du = 1e-6 * Math.max(1, Math.abs(u));
+      xp.set(x); step(xp, u + du);
+      xm.set(x); step(xm, u - du);
+      for (let r = 0; r < n; r++) Bd[k * n + r] = (xp[r] - xm[r]) / (2 * du);
+      step(x, u);
+    }
+    yield null;
+  }
+  xs.set(x, K * n);
+  return { n, m, K, Ts, sub, xs, F: Float64Array.from(F), Ad, Bd, Cy, angle: model.states.map((s) => !!s.angle) };
+}
+
+function tvlqrGains(along, { Q, R, Pend }) {
+  const { n, K: steps, Ad, Bd } = along;
+  const P = new Float64Array(n * n), PA = new Float64Array(n * n), PB = new Float64Array(n), Ks = new Float64Array(steps * n), Kk = new Float64Array(n), next = new Float64Array(n * n);
+  for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) P[a * n + b] = Pend[a][b];
+  for (let k = steps - 1; k >= 0; k--) {
+    const A = Ad.subarray(k * n * n, (k + 1) * n * n), B = Bd.subarray(k * n, (k + 1) * n);
+    for (let a = 0; a < n; a++) { let s = 0; for (let b = 0; b < n; b++) s += P[a * n + b] * B[b]; PB[a] = s; }
+    for (let a = 0; a < n; a++) for (let c = 0; c < n; c++) { let s = 0; for (let b = 0; b < n; b++) s += P[a * n + b] * A[b * n + c]; PA[a * n + c] = s; }
+    let S = R;
+    for (let a = 0; a < n; a++) S += B[a] * PB[a];
+    for (let c = 0; c < n; c++) { let s = 0; for (let a = 0; a < n; a++) s += B[a] * PA[a * n + c]; Kk[c] = s / S; }
+    Ks.set(Kk, k * n);
+    for (let a = 0; a < n; a++) for (let c = 0; c < n; c++) PA[a * n + c] -= PB[a] * Kk[c];
+    for (let a = 0; a < n; a++) for (let c = 0; c < n; c++) { let s = Q[a][c]; for (let b = 0; b < n; b++) s += A[b * n + a] * PA[b * n + c]; next[a * n + c] = s; }
+    for (let a = 0; a < n; a++) for (let c = 0; c <= a; c++) { const v = 0.5 * (next[a * n + c] + next[c * n + a]); P[a * n + c] = v; P[c * n + a] = v; }
+  }
+  return Ks;
+}
+
+function planValues(model, along, Kx, { K: Kup, kr }) {
+  const n = model.n, m = model.m, steps = along.K;
+  const Y = new Float64Array(steps * m), K = new Float64Array(steps * m), y = new Float64Array(m);
+  for (let k = 0; k < steps; k++) {
+    model.y(along.xs.subarray(k * n, (k + 1) * n), along.F[k], y);
+    Y.set(y, k * m);
+    const Ck = Array.from({ length: m }, (_, r) => Array.from(along.Cy.subarray((k * m + r) * n, (k * m + r + 1) * n)));
+    let Ci;
+    try { Ci = inv(Ck); } catch { Ci = null; }
+    if (!Ci || !Ci.every((row) => row.every(Number.isFinite))) {
+      throw Object.assign(new Error(`the measurements do not tell the states apart at t = ${(k * along.Ts).toFixed(2)} s of the plan`), { code: 'states-not-measured', hint: 'measure each state with a sensor whose slope stays away from 0 along the swing' });
+    }
+    for (let i = 0; i < m; i++) { let s = 0; for (let c = 0; c < n; c++) s += Kx[k * n + c] * Ci[c][i]; K[k * m + i] = s; }
+  }
+  return { F: Float64Array.from(along.F), Y, K, Kup: Array.from(Kup), kr, angle: model.outputs.map((o) => !!o.angle) };
+}
+
+function planLaw(values, Ts, { start = 0, umin = -Infinity, umax = Infinity } = {}) {
+  const { F, Y, K: Kt, Kup, kr, angle } = values, m = Kup.length, steps = F.length, j0 = Math.round(start / Ts);
+  let k = 0;
+  return {
+    step(x) {
+      const j = k++ - j0;
+      let u = 0;
+      if (j >= 0 && j < steps) {
+        u = F[j];
+        for (let i = 0; i < m; i++) { const d = (x[i + 1] ?? 0) - Y[j * m + i]; u -= Kt[j * m + i] * (angle[i] ? wrapAngle(d) : d); }
+      } else if (j >= steps) {
+        u = kr * x[0];
+        for (let i = 0; i < m; i++) { const y = x[i + 1] ?? 0; u -= Kup[i] * (angle[i] ? wrapAngle(y) : y); }
+      }
+      return Math.min(umax, Math.max(umin, u));
+    },
+  };
+}
+
+function verifyLoop(model, law, { x0 = model.x0, Ts, sub, duration, umin = -Infinity, umax = Infinity, d = null }) {
+  const n = model.n, m = model.m, step = stepper(model.f, n, Ts, sub ?? substeps(model, Ts));
+  const x = Float64Array.from(x0), y = new Float64Array(m), inputs = new Array(m + 1).fill(0);
+  const steps = Math.round(duration / Ts);
+  const pos = model.states.map((s) => !s.angle && !isRate(s));
+  let Fpeak = 0, xmax = 0, u = 0, finite = true;
+  for (let k = 0; k < steps && finite; k++) {
+    model.y(x, u, y);
+    for (let i = 0; i < m; i++) inputs[i + 1] = y[i];
+    const v = law.step(inputs);
+    Fpeak = Math.max(Fpeak, Math.abs(v));
+    u = Math.min(umax, Math.max(umin, v));
+    step(x, d ? u + d(k * Ts) : u);
+    for (let i = 0; i < n; i++) { if (!Number.isFinite(x[i])) finite = false; if (pos[i]) xmax = Math.max(xmax, Math.abs(x[i])); }
+  }
+  let worst = -1, at = 0;
+  for (let i = 0; i < n; i++) {
+    const s = model.states[i], e = s.angle ? wrapAngle(x[i]) : x[i];
+    const q = Number.isFinite(e) ? Math.abs(e) / holdTol(s) : Infinity;
+    if (q > worst) { worst = q; at = i; }
+  }
+  const s = model.states[at];
+  return { ok: finite && worst < 1, endError: { label: s.name ?? s.label, value: s.angle ? wrapAngle(x[at]) : x[at], unit: s.unit ?? '' }, Fpeak, xmax, x };
+}
+
+return { PLAN_VERSION, substeps, planTransfer, runPlan, alongPlan, alongPlanSteps, tvlqrGains, planValues, planLaw, verifyLoop };
+})();
+// ---- core/design.js
+__mods['core/design.js'] = (() => {
+
+const { c2d, dlqr, dlqe, eig, solve, inv, rank, mul, transpose, equilibrate, tzeros } = __mods['core/linalg.js'];
+const { DesignError, operatingPoint, linearize, firstOrderFit, pathRealisation, refuseKinks } = __mods['core/linearize.js'];
+const { PLAN_VERSION, planTransfer, alongPlanSteps, tvlqrGains, planValues, planLaw, verifyLoop, runPlan } = __mods['core/planner.js'];
+const fmt = (v) => (Number.isFinite(v) ? String(Number(Number(v).toPrecision(4))) : String(v));
+const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
+const now = () => globalThis.performance?.now() ?? Date.now();
+
+
+function canonical(x) {
+  if (x === null || x === undefined) return 'null';
+  if (typeof x === 'number') return Number.isFinite(x) ? JSON.stringify(x === 0 ? 0 : x) : Number.isNaN(x) ? '"nan"' : x > 0 ? '"inf"' : '"-inf"';
+  if (typeof x === 'string' || typeof x === 'boolean') return JSON.stringify(x);
+  if (Array.isArray(x) || ArrayBuffer.isView(x)) return `[${Array.from(x, canonical).join(',')}]`;
+  if (x instanceof Map) return canonical([...x].sort((a, b) => (String(a[0]) < String(b[0]) ? -1 : 1)));
+  if (typeof x === 'object') return `{${Object.keys(x).filter((k) => x[k] !== undefined && typeof x[k] !== 'function').sort().map((k) => `${JSON.stringify(k)}:${canonical(x[k])}`).join(',')}}`;
+  return 'null';
+}
+
+function hashKey(s) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, '0').slice(-4) + (h1 >>> 0).toString(16).padStart(8, '0');
+}
+
+function plantKey(diagram) {
+  const strip = (d) => ({
+    blocks: d.blocks.map(({ x, y, flip, ...b }) => {
+      if (b.type === 'sink') return { id: b.id, type: b.type };
+      if (b.type === 'controller') { const { variants, variant, ...rest } = b; return rest; }
+      if (b.type === 'subsystem') return { ...b, diagram: strip(b.diagram) };
+      return b;
+    }),
+    wires: d.wires,
+  });
+  return canonical(strip(diagram));
+}
+function sinkNames(diagram) {
+  const out = [];
+  const walk = (d, at) => { for (const b of d.blocks) { if (b.type === 'sink') out.push([`${at}${b.id}`, b.params?.name ?? '']); if (b.type === 'subsystem') walk(b.diagram, `${at}${b.id}/`); } };
+  walk(diagram, '');
+  return canonical(out);
+}
+
+
+function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 } = {}) {
+  if (mode !== 'sync' && mode !== 'async') throw new Error(`design store mode "${mode}": 'sync' or 'async'`);
+  const designs = new Map(), models = new Map(), heavies = new Map();
+  const counts = { runs: 0, hits: 0, heavyRuns: 0 };
+  const remember = (map, key, value, size) => { map.delete(key); map.set(key, value); if (map.size > size) map.delete(map.keys().next().value); };
+  const jobs = new Map(), slots = new Map(), cancelled = new Map(), waitsOn = new Map();
+  const listeners = new Set();
+  let waiters = [], lastEmit = -Infinity;
+  const settleWaiters = () => { if (jobs.size) return; const w = waiters; waiters = []; for (const res of w) res(); };
+  const queue = () => [...jobs.values()].map((j) => ({ key: j.key, path: j.path, block: j.block, variant: j.variant, title: j.title, running: !!j.gen, progress: j.progress }));
+  const emit = () => { lastEmit = now(); const list = queue(); for (const fn of listeners) fn(list); };
+
+  function run(def, p, block, compiled, seeThrough, plant, slot, asked, guest) {
+    const used = { model: null, at: '', warnings: [], heavy: null };
+    const lins = new Map();
+    const ctx = {
+      Ts: block.Ts, idPath: block.idPath, name: block.name, kind: block.kind, inputs: block.inputs, outputs: block.outputs,
+      model() {
+        if (!used.model) used.model = compiled().seen(block.idPath, seeThrough.size ? { seeThrough } : {});
+        return used.model;
+      },
+      linearize(op = 'origin', limits = {}) {
+        const key = canonical([op, limits]);
+        if (!lins.has(key)) {
+          const lin = linearize(ctx.model(), operatingPoint(ctx.model(), op, limits));
+          used.at ||= lin.op.label;
+          used.warnings.push(...lin.op.warnings);
+          lins.set(key, lin);
+        }
+        return lins.get(key);
+      },
+      trim(targets, limits = {}) {
+        const pt = operatingPoint(ctx.model(), { y: targets }, limits);
+        used.warnings.push(...pt.warnings);
+        return pt;
+      },
+      heavy(kind, inputs, start, { title = '' } = {}) {
+        const key = hashKey(canonical([kind, inputs, plant(), block.idPath, block.Ts]));
+        used.heavy = { key, status: 'ready' };
+        let h = heavies.get(key);
+        if (!h && mode === 'sync') {
+          counts.heavyRuns++;
+          const t0 = now();
+          const value = runPlan(start());
+          h = { value, ms: now() - t0 };
+        }
+        if (h) {
+          remember(heavies, key, h, 8);
+          if (h.error) throw h.error;
+          return { status: 'ready', value: h.value, ms: h.ms, key };
+        }
+        const mark = cancelled.get(slot);
+        if (mark === key) { used.heavy.status = 'cancelled'; return { status: 'cancelled', key }; }
+        if (mark) cancelled.delete(slot);
+        let job = jobs.get(key);
+        if (!job && guest) { used.heavy.status = 'pending'; return { status: 'pending', progress: null, key }; }
+        if (!job) {
+          job = { key, kind, title, path: block.idPath, block: block.name, variant: slot.split('#')[1], start, asked: now(), gen: null, started: 0, progress: null };
+          jobs.set(key, job);
+        }
+        asked.add(key);
+        used.heavy.status = 'pending';
+        return { status: 'pending', progress: job.progress, key };
+      },
+    };
+    const t0 = now();
+    let out;
+    try {
+      out = def.design(p, ctx);
+      if (!out) throw new Error(`${block.idPath}: the design returned nothing`);
+      if ('pending' in out) {
+        if (!used.heavy || used.heavy.status === 'ready') throw new Error('a design came back pending without waiting on a heavy job');
+        const mdl = used.model;
+        return {
+          pending: true, cancelled: used.heavy.status === 'cancelled', heavy: used.heavy.key, progress: out.pending ?? null,
+          status: 'pending', values: null, rows: [], warnings: [...new Set([...(mdl?.warnings ?? []), ...used.warnings, ...(out.warnings ?? [])])],
+          quality: null, error: null, at: out.at ?? used.at, states: mdl ? mdl.states.map((s) => s.name) : null, ms: now() - t0,
+        };
+      }
+    } catch (err) {
+      out = { error: { code: err.code ?? 'internal', message: err.message, hint: err.hint ?? '' } };
+    }
+    const mdl = used.model;
+    return {
+      status: out.error ? 'error' : out.quality && out.quality.ok === false ? 'warn' : 'ok',
+      values: out.error ? null : out.values ?? null,
+      rows: out.rows ?? [],
+      warnings: [...new Set([...(mdl?.warnings ?? []), ...used.warnings, ...(out.warnings ?? [])])],
+      quality: out.quality ?? null,
+      error: out.error ?? null,
+      at: out.at ?? used.at,
+      states: mdl ? mdl.states.map((s) => s.name) : null,
+      ms: now() - t0,
+    };
+  }
+
+  const store = {
+    mode,
+    generation: 0,
+    begin(diagram, compileModel, { guest = false } = {}) {
+      let pk = null, sk = null, el = null;
+      const plant = () => (pk ??= plantKey(diagram));
+      const sinks = () => (sk ??= sinkNames(diagram));
+      const compiled = () => {
+        if (el) return el;
+        const key = hashKey(plant() + sinks());
+        el = models.get(key) ?? compileModel();
+        remember(models, key, el, 8);
+        return el;
+      };
+      const seeThrough = new Map();
+      const asked = new Set();
+      return {
+        resolve(block, variant, lib) {
+          const def = lib[variant.type];
+          const key = hashKey(canonical([variant.type, def.version ?? 1, variant.params, block.Ts, plant(), block.idPath, block.input, block.inputs, sinks()]));
+          const slot = `${block.idPath}#${variant.name}#${variant.type}`;
+          let entry = designs.get(key), cached = !!entry;
+          if (cached) counts.hits++;
+          else { counts.runs++; entry = run(def, variant.params, block, compiled, seeThrough, plant, slot, asked, guest); }
+          let { status, values, rows } = entry;
+          if (entry.pending) {
+            remember(waitsOn, key, { heavy: entry.heavy, slot }, limit);
+            const before = slots.get(slot), here = { m: block.inputs.length - 1, Ts: block.Ts };
+            const fits = !!before && (def.compatible ? def.compatible(before, here) : before.m === here.m && before.Ts === here.Ts);
+            status = entry.cancelled ? 'cancelled' : fits ? 'stale' : 'pending';
+            values = fits ? before.values : null;
+            rows = fits ? before.rows : [];
+          } else {
+            remember(designs, key, entry, limit);
+            if (values) remember(slots, slot, { values, rows, m: block.inputs.length - 1, Ts: block.Ts }, limit);
+          }
+          if (block.kind === 'observer' && values?.stateIndex) seeThrough.set(block.idPath, values.stateIndex);
+          const seen = entry.states ? `${block.input} → ${block.inputs.slice(1).join(', ')} · ${entry.states.length} state${entry.states.length === 1 ? '' : 's'} (${entry.states.join(', ')})` : '';
+          const out = {
+            path: block.idPath, block: block.name, variant: variant.name, type: variant.type, key,
+            status, ms: Number(entry.ms.toFixed(2)), cached,
+            at: entry.at, seen, rows, warnings: entry.warnings, error: entry.error, progress: entry.pending ? entry.progress : null,
+          };
+          Object.defineProperty(out, 'values', { value: values, enumerable: false });
+          return out;
+        },
+        end() {
+          if (mode !== 'async' || guest) return;
+          for (const k of [...jobs.keys()]) if (!asked.has(k)) jobs.delete(k);
+          settleWaiters();
+        },
+      };
+    },
+    runJobs(budgetMs = 8) {
+      const t0 = now(), finished = [];
+      let waitMs = 0, moved = false;
+      while (jobs.size && now() - t0 < budgetMs) {
+        const job = jobs.values().next().value;
+        if (!job.gen) {
+          const wait = job.asked + debounceMs - now();
+          if (wait > 0) { waitMs = wait; break; }
+          job.started = now();
+          job.gen = job.start();
+          moved = true;
+        }
+        let done = null;
+        try {
+          for (;;) {
+            const s = job.gen.next();
+            if (s.done) { done = { value: s.value }; break; }
+            if (s.value) { job.progress = s.value; moved = true; }
+            if (now() - t0 >= budgetMs) break;
+          }
+        } catch (err) { done = { error: err }; }
+        if (!done) continue;
+        const ms = now() - job.started;
+        jobs.delete(job.key);
+        remember(heavies, job.key, { ...done, ms }, 8);
+        counts.heavyRuns++;
+        store.generation++;
+        finished.push({ key: job.key, path: job.path, block: job.block, variant: job.variant, title: job.title, ms, error: done.error ? done.error.message : null });
+      }
+      if (moved && listeners.size && now() - lastEmit >= 100) emit();
+      settleWaiters();
+      return { busy: jobs.size > 0, finished, waitMs };
+    },
+    busy: () => jobs.size > 0,
+    queue,
+    cancel(key) {
+      const w = waitsOn.get(key) ?? [...waitsOn.values()].find((x) => x.heavy === key);
+      if (!w) return false;
+      jobs.delete(w.heavy);
+      cancelled.set(w.slot, w.heavy);
+      store.generation++;
+      settleWaiters();
+      return true;
+    },
+    retry(key) {
+      const w = waitsOn.get(key) ?? [...waitsOn.values()].find((x) => x.heavy === key);
+      if (!w || cancelled.get(w.slot) !== w.heavy) return false;
+      cancelled.delete(w.slot);
+      store.generation++;
+      return true;
+    },
+    onProgress(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    idle: () => (jobs.size ? new Promise((res) => waiters.push(res)) : Promise.resolve()),
+    stats: () => ({ ...counts }),
+  };
+  return store;
+}
+
+const SYNC_DESIGNS = createDesignStore();
+let fallback = null;
+function useDesigns(store) { fallback = store ?? null; }
+function defaultDesigns() { return fallback ?? SYNC_DESIGNS; }
+
+
+function stateText(s) {
+  return s.label.endsWith(`.${s.name}`) ? `${s.name} (${s.label.slice(0, -s.name.length - 1)})` : s.label;
+}
+
+function lqrDesign(lin, { Q, R, track = 1, Ts }) {
+  const { n, m, states, outputs } = lin;
+  const labels = outputs.map((o) => o.label);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this block sees has ${n} states; LQR here handles up to 40`);
+  if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')})`, lin.warnings.join('; ') || 'wire the controller output to the plant, and the plant to the measurements');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'LQR is designed at the origin, which must be an equilibrium with u = 0');
+  refuseKinks(lin, 'LQR');
+  const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
+  if (direct.length) throw new DesignError('states-not-measured', `LQR needs measurements of states; ${direct.join(', ')} depends on ${lin.input.label} directly`, 'feed back states only (a Sink of u is fine, an input of the controller is not)');
+  if (m !== n || rank(equilibrate(lin.C).M) < n) {
+    const sole = lin.C.map((row) => { const nz = row.flatMap((v, j) => (Math.abs(v) > 1e-9 ? [j] : [])); return nz.length === 1 ? nz[0] : -1; });
+    const seen = [...new Set(sole.filter((j) => j >= 0))].map((j) => states[j]), missing = states.filter((_, j) => !sole.includes(j));
+    if (missing.length && m <= n) {
+      throw new DesignError('states-not-measured', `LQR needs every state measured. This block sees ${seen.length ? seen.map((s) => s.name).join(', ') : 'none of them'} but not ${and(missing.map(stateText))}.`, `wire ${and(missing.map((s) => s.name))} to ${missing.length > 1 ? 'inputs' : 'an input'}, or add a Kalman Observer`);
+    }
+    throw new DesignError('states-not-measured', `LQR needs exactly one measurement per state: this block has ${m} measurement${m === 1 ? '' : 's'} (${labels.join(', ')}) for ${n} state${n === 1 ? '' : 's'} (${states.map((s) => s.name).join(', ')})`, 'measure each state once');
+  }
+  const q = Array.isArray(Q) ? Q : [Q];
+  if (q.length !== 1 && q.length !== m) throw new DesignError('q-length', `Q has ${q.length} values; this block has ${m} measurements (${labels.join(', ')})`, 'give one weight per measurement, or one for all');
+  const w = q.length === 1 ? new Array(m).fill(q[0]) : q;
+  if (!w.every((v) => v >= 0) || !(R > 0)) throw new DesignError('bad-weights', 'Q must be at least 0 and R above 0');
+  if (!(Number.isInteger(track) && track >= 0 && track <= m)) throw new DesignError('bad-track', `r applies to measurement ${track}; this block has ${m} (${labels.join(', ')}); 0 for none`);
+
+  const { Ad, Bd } = c2d(lin.A, lin.B, Ts);
+  const Ct = transpose(lin.C);
+  const Qx = mul(Ct, lin.C.map((row, k) => row.map((v) => v * w[k])));
+  const { K: Kr, P, converged } = dlqr(Ad, Bd, Qx, R);
+  const Kx = Kr[0];
+  const Acl = Ad.map((row, i) => row.map((v, j) => v - Bd[i][0] * Kx[j]));
+  const poles = eig(Acl);
+  const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
+  if (!converged || !(radius < 1)) {
+    const mode = stuck(Ad, Bd, Qx);
+    const zero = labels.filter((_, k) => w[k] === 0);
+    if (mode && !mode.unreached && mode.unweighted && zero.length) throw new DesignError('not-stabilisable', `LQR finds no gain that holds this plant: Q gives no weight to ${and(zero)}, and a mode seen only there does not decay by itself (|z| = ${fmt(mode.radius)})`, `give ${and(zero)} a weight above 0`);
+    throw new DesignError('not-stabilisable', `LQR finds no gain that holds this plant (a closed-loop pole stays at |z| = ${fmt(radius)})`, `${lin.input.label} may not reach every state; check the wiring`);
+  }
+  const K = solve(Ct, Kx);
+  let kr = 0;
+  const warnings = [];
+  if (track) {
+    const xs = solve(Acl.map((row, i) => row.map((v, j) => (i === j ? 1 : 0) - v)), Bd.map((b) => b[0]));
+    const g = lin.C[track - 1].reduce((s, c, j) => s + c * xs[j], 0);
+    if (Math.abs(g) > 1e-12) kr = 1 / g;
+    else warnings.push(`${labels[track - 1]} has no static gain from r in this loop: kr = 0`);
+  }
+  const sensed = labels.filter((_, k) => lin.sensors?.[k] && (lin.sensors[k].std > 0 || lin.sensors[k].q > 0));
+  if (sensed.length) warnings.push(`quantisers and noise on ${sensed.join(', ')} are not in this design`);
+  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this design`); });
+  const rows = [
+    { label: 'K', value: K, labels },
+    { label: 'kr', value: kr, note: track ? `${labels[track - 1]} follows r` : 'r is not used' },
+    { label: 'slowest pole', value: slowest(poles, Ts) },
+  ];
+  return { K, kr, Kx, P, Qx, Ad, Bd, poles, rows, warnings };
+}
+
+function poleOf(lin) {
+  const Ci = inv(lin.C), A = mul(mul(lin.C, lin.A), Ci), B = mul(lin.C, lin.B).map((b) => b[0]);
+  const c = -B[3] / B[2], row = A[3].map((v, j) => v + c * A[2][j]), gl = row[1];
+  const size = Math.max(...row.map(Math.abs));
+  if (!(Number.isFinite(c) && c !== 0 && gl > 0 && [0, 2, 3].every((j) => Math.abs(row[j]) <= 1e-4 * size))) {
+    throw new DesignError('swing-plant', `the energy swing-up needs one pendulum on a cart, θ̈ = (g/l) θ − ẍ / l at the top; the plant this block sees is not one`, 'use LQR, or the planned swing-up');
+  }
+  const l = 1 / Math.abs(c);
+  return { l, g: gl * l };
+}
+
+function slowest(poles, Ts) {
+  const slow = poles.reduce((a, z) => (Math.hypot(z.re, z.im) > Math.hypot(a.re, a.im) ? z : a));
+  const s = { re: Math.log(Math.hypot(slow.re, slow.im)) / Ts, im: Math.atan2(slow.im, slow.re) / Ts };
+  const wn = Math.hypot(s.re, s.im), zeta = wn > 0 ? -s.re / wn : 1;
+  return `${fmt(wn)} rad/s, ζ ${fmt(zeta)}`;
+}
+
+function stuck(Ad, B, W) {
+  const n = Ad.length;
+  const full = (M, size) => {
+    const { M: S } = equilibrate(M);
+    let big = 0;
+    for (let j = 0; j < S[0].length; j++) { let c = 0; for (const row of S) c += row[j] * row[j]; big = Math.max(big, Math.sqrt(c)); }
+    return rank(S, 1e-8 * big) >= size;
+  };
+  for (const z of eig(Ad)) {
+    const radius = Math.hypot(z.re, z.im);
+    if (radius < 1 - 1e-9) continue;
+    const cplx = Math.abs(z.im) > 1e-12, k = cplx ? 2 : 1;
+    const Z = Array.from({ length: k * n }, (_, i) => Array.from({ length: k * n }, (__, j) => {
+      const bi = Math.floor(i / n), bj = Math.floor(j / n), ii = i % n, jj = j % n;
+      if (bi === bj) return (ii === jj ? z.re : 0) - Ad[ii][jj];
+      return ii === jj ? (bi === 0 ? -z.im : z.im) : 0;
+    }));
+    const side = (M) => Array.from({ length: k * n }, (_, i) => Array.from({ length: k * M[0].length }, (__, j) => (Math.floor(j / M[0].length) === Math.floor(i / n) ? M[i % n][j % M[0].length] : 0)));
+    const below = (M) => Array.from({ length: k * M.length }, (_, i) => Array.from({ length: k * n }, (__, j) => (Math.floor(j / n) === Math.floor(i / M.length) ? M[i % M.length][j % n] : 0)));
+    const unreached = !full(Z.map((row, i) => [...row, ...side(B)[i]]), k * n);
+    const unweighted = !full([...Z, ...below(W)], k * n);
+    if (unreached || unweighted) return { z, radius, unreached, unweighted };
+  }
+  return null;
+}
+
+function kalmanDesign(lin, { Q, R = null, Ts, outputs = lin.n }) {
+  const { n, m, states, outputs: meas } = lin;
+  const labels = meas.map((o) => o.label), names = states.map((s) => s.name);
+  if (n > 40) throw new DesignError('too-many-states', `the plant this observer sees has ${n} states; the filter here handles up to 40`);
+  if (!m) throw new DesignError('no-measurement', 'this observer has no measurement to correct its estimate with', 'wire the measurements to inputs 2, 3, …');
+  if (n === 0) throw new DesignError('no-states', `${lin.input.label} moves none of the measurements (${labels.join(', ')}), so there is nothing to estimate`, lin.warnings.join('; ') || 'wire input 1 (u) to what drives the plant, and the plant to the measurements');
+  if (lin.op.kind === 'origin' && !lin.op.rest) throw new DesignError('not-at-rest', `the plant is not at rest at the origin: ${lin.op.warnings[0].replace(/^the origin is not at rest: /, '')}`, 'the filter is designed at the origin, which must be an equilibrium with u = 0');
+  refuseKinks(lin, 'the Kalman filter');
+  const direct = labels.filter((_, k) => lin.D[k][0] !== 0);
+  if (direct.length) throw new DesignError('feedthrough', `${and(direct)} ${direct.length > 1 ? 'depend' : 'depends'} on ${lin.input.label} directly; the filter needs measurements of states`, 'measure after a block with state, or use a Luenberger observer with your own model');
+  const q = Array.isArray(Q) ? Q : [Q];
+  if (q.length !== 1 && q.length !== n) throw new DesignError('q-length', `Q has ${q.length} values; the plant this observer sees has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')})`, `give one value (a push on ${lin.input.label}) or one per state`);
+  const given = R !== null && R !== undefined;
+  const rv = given ? (Array.isArray(R) ? R : [R]) : null;
+  if (given && rv.length !== 1 && rv.length !== m) throw new DesignError('r-length', `R has ${rv.length} values; this observer has ${m} measurement${m === 1 ? '' : 's'} (${labels.join(', ')})`, 'give one per measurement, or one for all; empty takes them from the sensor blocks');
+  if (!q.every((v) => v >= 0) || (given && !rv.every((v) => v > 0))) throw new DesignError('bad-weights', 'Q must be at least 0 and R above 0');
+
+  const warnings = [];
+  const parts = given ? [] : lin.sensors.flatMap((s) => s.parts ?? []);
+  const r = given ? (rv.length === 1 ? new Array(m).fill(rv[0]) : rv) : lin.sensors.map((s, k) => {
+    const v = s.std ** 2 + s.q ** 2 / 12;
+    if (v > 0) return v;
+    warnings.push(`no sensor block on ${labels[k]}: R = 1`);
+    return 1;
+  });
+  const { Ad, Bd } = c2d(lin.A, lin.B, Ts);
+  const diag = (v) => v.map((x, i) => v.map((_, j) => (i === j ? x : 0)));
+  const Qw = q.length === 1 ? Bd.map((a) => Bd.map((b) => q[0] * a[0] * b[0])) : diag(q);
+  const { L, converged } = dlqe(Ad, lin.C, Qw, diag(r));
+  const ILC = L.map((row, i) => lin.C[0].map((_, j) => (i === j ? 1 : 0) - row.reduce((s, l, k) => s + l * lin.C[k][j], 0)));
+  const poles = eig(mul(ILC, Ad));
+  const radius = Math.max(...poles.map((z) => Math.hypot(z.re, z.im)));
+  if (!converged || !(radius < 1)) {
+    const Ct = transpose(lin.C), mode = stuck(transpose(Ad), Ct, transpose(Qw));
+    if (mode && !mode.unreached && mode.unweighted) throw new DesignError('not-detectable', `the estimate's error would not die out: Q gives no process noise to a mode that does not decay by itself (|z| = ${fmt(mode.radius)}), so the filter would trust its model there for ever`, 'give Q a value above 0');
+    throw new DesignError('not-detectable', `the estimate's error would not die out: a pole of the filter stays at |z| = ${fmt(radius)}`, `the measurements may not show every state (${names.join(', ')}); measure more, or raise Q`);
+  }
+
+  if (outputs !== n) warnings.push(`the plant seen has ${n} state${n === 1 ? '' : 's'} (${names.join(', ')}); set Estimates to ${n}`);
+  lin.op.y?.forEach((v, k) => { if (Math.abs(v) > 1e-9) warnings.push(`${labels[k]} reads ${fmt(v)} at the origin: the filter does not know that offset`); });
+  lin.delay?.forEach((d, k) => { if (d > 0) warnings.push(`dead time ${fmt(d)} s on ${labels[k]} is not in this filter`); });
+  const estimates = Array.from({ length: outputs }, (_, j) => (j < n ? names[j] : '0'));
+  const rows = [
+    { label: 'estimates', value: estimates, labels: estimates.map((_, j) => `x̂${j + 1}`) },
+    { label: 'L', head: ['L', ...labels], table: L.map((row, i) => [names[i], ...row]) },
+    { label: 'R', value: r, labels, note: given ? '' : parts.length ? `from ${and(parts)}` : 'none: no sensor blocks' },
+    q.length === 1 ? { label: 'Q', value: q[0], note: `a push on ${lin.input.label}, per sample` } : { label: 'Q', value: q, labels: names },
+    { label: 'slowest pole', value: slowest(poles, Ts), note: 'of the error' },
+  ];
+  const values = {
+    A: lin.A.flat(), B: lin.B.map((b) => b[0]), C: lin.C.flat(), L: L.flat(),
+    stateIndex: Array.from({ length: outputs }, (_, j) => (j < n ? states[j].index : -1)),
+  };
+  return { values, rows, warnings, quality: { ok: outputs === n } };
+}
+
+function inverseSeries(path) {
+  const { A, b, c, d } = path, n = A.length;
+  const P = new Array(n + 1).fill(0), N = new Array(n + 1).fill(0);
+  P[n] = 1;
+  let M = A.map((row, i) => row.map((_, j) => (i === j ? 1 : 0)));
+  for (let k = 1; k <= n + 1; k++) {
+    if (k <= n) N[n - k] += c.reduce((s, ci, i) => s + ci * M[i].reduce((t, mij, j) => t + mij * b[j], 0), 0);
+    if (k > n) break;
+    const AM = mul(A, M);
+    P[n - k] = -AM.reduce((s, row, i) => s + row[i], 0) / k;
+    M = AM.map((row, i) => row.map((v, j) => v + (i === j ? P[n - k] : 0)));
+  }
+  for (let j = 0; j <= n; j++) N[j] += d * P[j];
+  const scale = Math.max(...N.map(Math.abs));
+  const zeros = n ? tzeros({ A, B: b.map((v) => [v]), C: [c], D: d }) : [];
+  const poles = n ? eig(A) : [];
+  if (!(Math.abs(N[0]) > 1e-12 * scale)) return { h: null, zeros, poles };
+  const h0 = P[0] / N[0], h1 = ((P[1] ?? 0) - h0 * (N[1] ?? 0)) / N[0], h2 = ((P[2] ?? 0) - h0 * (N[2] ?? 0) - h1 * (N[1] ?? 0)) / N[0];
+  return { h: [h0, h1, h2], zeros, poles };
+}
+
+function feedforwardDesign(p, ctx) {
+  const lin = ctx.linearize('origin');
+  refuseKinks(lin, 'a feedforward from the plant');
+  if (!lin.m) throw new DesignError('no-measurement', 'this block has no measurement to follow r with', 'wire the measurement to input 2');
+  const path = pathRealisation(lin, 0), { label, uName } = path;
+  const { h, zeros, poles } = inverseSeries(path);
+  const size = Math.max(1, ...poles.map((q) => Math.hypot(q.re, q.im)));
+  const rhp = zeros.filter((z) => z.re > 1e-9 * size);
+  if (rhp.length) throw new DesignError('nonminimum-phase', `the path from ${uName} to ${label} has a zero at s = ${fmt(rhp[0].re)}${rhp[0].im ? ` ± ${fmt(Math.abs(rhp[0].im))}i` : ''} in the right half-plane: its inverse is unstable, so no feedforward follows r through it`, 'use the feedback alone, or a hand feedforward (PID)');
+  if (!h) throw new DesignError('zero-at-origin', `${uName} has no steady effect on ${label} (a zero at s = 0): no input holds ${label} at a steady r`, 'measure what u moves at rest (an angle, not a speed of a motor that ramps), or use the feedback alone');
+  const order = Number(p.order);
+  const Kff = h[0] + p.Kp * (1 - p.b), Kv = order >= 1 ? h[1] + p.Kd : 0, Ka = order >= 2 ? h[2] - p.Kd * p.Tf : 0;
+  const unit = lin.outputs[0].unit ? ` ${lin.outputs[0].unit}` : '';
+  const warnings = [];
+  const theta = lin.delay?.[0] ?? 0;
+  if (theta > 0) warnings.push(`dead time ${fmt(theta)} s on ${label} is not in this feedforward: u comes ${fmt(theta)} s before ${label} follows`);
+  const rows = [
+    { label: 'plant inverse', value: h, labels: ['h0', 'h1', 'h2'], note: `1/G(s) ≈ h0 + h1 s + h2 s², ${uName} per ${label}` },
+    { label: 'feedforward', value: [Kff, Kv, Ka], labels: ['Kff', 'Kv', 'Ka'], note: order >= 2 ? `with Kp (1 − b), Kd and Kd·Tf of the PID` : order === 1 ? 'with Kp (1 − b) and Kd of the PID; Ka off' : 'with Kp (1 − b) of the PID; Kv and Ka off' },
+  ];
+  if (theta > 0) rows.push({ label: 'dead time θ', value: theta, note: 's, left out' });
+  return { values: { Kff, Kv, Ka }, rows, warnings, at: `${label}${unit} at the origin` };
+}
+
+function piCancel(fit, Tcl) {
+  return { Kp: fit.tau / (fit.K * Tcl), Ki: 1 / (fit.K * Tcl) };
+}
+
+function scheduledPIDesign(p, ctx) {
+  const model = ctx.model();
+  if (!model.m) throw new DesignError('no-measurement', 'this block has no measurement to design a PI for', 'wire the measurement to input 2');
+  const out = model.outputs[0], uName = model.input?.label ?? 'u';
+  const unit = out.unit ? ` ${out.unit}` : '';
+  const limits = { umin: p.umin, umax: p.umax };
+  const warnings = [];
+  const pts = p.at.map((level) => {
+    const lin = ctx.linearize({ y: [level] }, limits);
+    refuseKinks(lin, 'pole cancellation');
+    const fit = firstOrderFit(lin, 0);
+    warnings.push(...fit.warnings);
+    return { level, u: lin.op.u, fit, ...piCancel(fit, p.Tcl) };
+  });
+  const y = new Float64Array(model.m);
+  model.y(model.x0, 0, y);
+  let u0 = 0;
+  try { u0 = ctx.trim([y[0]], limits).u; } catch (err) { warnings.push(`u0 = 0: ${err.message}`); }
+  const theta = pts[0].fit.theta;
+  if (theta > 0) warnings.push(`dead time ${fmt(theta)} s on ${out.label} is not in this design: pole cancellation leaves it out`);
+  const Ts = ctx.Ts, lag = theta + Ts / 2;
+  let ok = true;
+  if (p.Tcl < lag) {
+    ok = false;
+    warnings.push(`Tcl ${fmt(p.Tcl)} s is faster than the loop can be: the dead time ${fmt(theta)} s and half the sample time ${fmt(Ts)} s add ${fmt(lag)} s, and the loop will ring or cycle; make Tcl at least ${fmt(lag)} s`);
+  } else if (Ts > p.Tcl / 2) {
+    ok = false;
+    warnings.push(`the sample time ${fmt(Ts)} s is long against the closed loop Tcl ${fmt(p.Tcl)} s; make Ts at most Tcl / 4 (${fmt(p.Tcl / 4)} s)`);
+  } else if (Ts > p.Tcl / 4) warnings.push(`the sample time ${fmt(Ts)} s is long against the closed loop Tcl ${fmt(p.Tcl)} s; Ts ≤ Tcl / 4 (${fmt(p.Tcl / 4)} s) follows it closely`);
+  const rows = [
+    { label: 'gains', head: [`${out.label}${unit ? ` (${unit.trim()})` : ''}`, uName, 'K', 'τ (s)', 'Kp', 'Ki'], table: pts.map((q) => [q.level, q.u, q.fit.K, q.fit.tau, q.Kp, q.Ki]) },
+    { label: 'dead time θ', value: theta, note: theta > 0 ? 's, left out' : 's' },
+    { label: 'u0', value: u0, note: `holds ${out.label} = ${fmt(y[0])}${unit}, where it starts` },
+  ];
+  const at = p.at.length === 1 ? `${out.label} = ${fmt(p.at[0])}${unit}, ${uName} = ${fmt(pts[0].u)}` : `${out.label} = ${fmt(p.at[0])} … ${fmt(p.at.at(-1))}${unit} (${p.at.length} levels)`;
+  return { values: { at: [...p.at], Kp: pts.map((q) => q.Kp), Ki: pts.map((q) => q.Ki), u0 }, rows, warnings: [...new Set(warnings)], quality: { ok }, at };
+}
+
+function trajectoryDesign(p, ctx) {
+  const lin = ctx.linearize('origin');
+  const Ts = ctx.Ts;
+  if (!(p.umin < 0 && p.umax > 0)) throw new DesignError('bad-limits', `the swing-up pushes both ways: u min must be below 0 and u max above 0 (now ${fmt(p.umin)} to ${fmt(p.umax)})`, 'set the actuator\'s limits; an open limit (empty) is fine');
+  const up = lqrDesign(lin, { Q: p.Q, R: p.R, track: 1, Ts });
+  const model = ctx.model();
+  const labels = lin.outputs.map((o) => o.label), uName = lin.input.label;
+  const Fmin = p.planShare * p.umin, Fmax = p.planShare * p.umax;
+  const groups = [];
+  model.states.forEach((s, i) => {
+    const v = model.x0[i], text = `${fmt(v)}${s.unit ? ` ${s.unit}` : ''}`;
+    if (Math.abs(v) < 1e-12) return;
+    const g = groups.at(-1);
+    if (g && g.text === text) g.names.push(s.name); else groups.push({ names: [s.name], text });
+  });
+  const at = `${groups.length ? groups.map((g) => `${g.names.join(', ')} = ${g.text}`).join(', ') : 'rest'} → origin`;
+  const h = ctx.heavy('plan', { version: PLAN_VERSION, T: p.T, segments: p.segments, Fmin, Fmax }, function* plan() {
+    const pl = yield* planTransfer(model, { T: p.T, Ts, segments: p.segments, Fmin, Fmax });
+    const along = yield* alongPlanSteps(model, pl);
+    return { plan: pl, along };
+  }, { title: 'Swing-up' });
+  if (h.status !== 'ready') return { pending: h.progress ?? null, at, warnings: up.warnings };
+  const { plan, along } = h.value;
+  const Kx = tvlqrGains(along, { Q: up.Qx, R: p.R, Pend: up.P });
+  const values = planValues(model, along, Kx, { K: up.K, kr: up.kr });
+  const check = verifyLoop(model, planLaw(values, Ts, { start: p.start }), { Ts, sub: plan.sub, duration: p.start + plan.T + 1, umin: p.umin, umax: p.umax });
+  const limText = ` (limits ${fmt(p.umin)} to ${fmt(p.umax)})`;
+  const end = check.endError, endText = `${end.label} is ${fmt(Math.abs(end.value))}${end.unit ? ` ${end.unit}` : ''} off`;
+  const warnings = [...up.warnings];
+  if (p.start > 0) {
+    const f = new Float64Array(model.n);
+    model.f(model.x0, 0, f);
+    if (f.some((v) => Math.abs(v) > 1e-6)) warnings.push(`the plant does not rest at its start state, and the plan assumes it does until start (${fmt(p.start)} s): start at 0, or start the plant at rest`);
+  }
+  if (!plan.ok) warnings.push(`${plan.message}: ${plan.hint}`);
+  const over = check.Fpeak > Math.min(-p.umin, p.umax);
+  if (!check.ok) warnings.push(`the loop does not hold: ${endText} 1 s after the plan; peak ${uName} ${fmt(check.Fpeak)}${limText}: ${over ? 'lengthen T or raise the limits' : 'lengthen T, or weigh the states more (Q)'}`);
+  const planned = `${plan.ok ? 'Planned' : 'Not converged'} in ${(h.ms / 1000).toFixed(1)} s (${plan.iterations} iterations, start ${plan.start} of ${plan.starts}).`;
+  const held = check.ok ? `Verified: at rest at the origin 1 s after T, peak ${uName} ${fmt(check.Fpeak)}${limText}.` : `The loop does not hold: ${endText} 1 s after T.`;
+  const every = Math.max(1, Math.ceil(plan.F.length / 120));
+  const spark = Array.from(plan.F).filter((_, i) => i % every === 0);
+  const ends = model.states.map((s, i) => [s.name, plan.terminal[i]]);
+  const rows = [
+    { label: 'plan', value: `${planned} ${held}`, sentence: true },
+    { label: 'T', value: plan.T, note: `s, ${plan.segments} segments of ${plan.perSegment} samples` },
+    { label: `${uName}(t)`, spark, note: `${fmt(plan.Flo)} to ${fmt(plan.Fhi)}${Number.isFinite(Fmax) || Number.isFinite(Fmin) ? `, of ${fmt(Fmin)} to ${fmt(Fmax)} it may use` : ''}` },
+    { label: 'end error', value: ends.map(([, v]) => v), labels: ends.map(([n]) => n) },
+    { label: 'defect', value: plan.defect, note: 'between segments' },
+    { label: 'K at the origin', value: up.K, labels },
+    ...up.rows.slice(1),
+  ];
+  return { values, rows, warnings: [...new Set(warnings)], quality: { ok: plan.ok && check.ok }, at };
+}
+
+return { canonical, hashKey, plantKey, createDesignStore, SYNC_DESIGNS, useDesigns, defaultDesigns, lqrDesign, poleOf, kalmanDesign, inverseSeries, feedforwardDesign, piCancel, scheduledPIDesign, trajectoryDesign };
+})();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
 
+const { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, poleOf } = __mods['core/design.js'];
+const { DesignError } = __mods['core/linearize.js'];
+const { planLaw } = __mods['core/planner.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
 const LIMITS = [num('umin', 'u min', -Infinity, { unit: 'u' }), num('umax', 'u max', Infinity, { unit: 'u' })];
@@ -1558,7 +2903,13 @@ const WINDUP = [
   num('Tt', 'Tracking Tt', 0, { unit: 's', min: 0, help: 'back-calculation only: how fast the integral follows the limit; 0: √(Ti·Td), or Ti/2 without D' }),
 ];
 const SHARED = ['Kff', 'Kv', 'Ka', 'aw', 'Tt', 'umin', 'umax'];
+const SWING = [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 })];
+const WEIGHTS = [
+  vec('Q', 'Weights Q', [1], { min: 0, per: 'measurement', help: 'what an error in each measurement costs, one per measurement; one value weighs them all' }),
+  num('R', 'Effort weight R', 1, { positive: true, help: 'how much u costs: larger is gentler' }),
+];
 
+const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list.join(''));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const wrap = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
 
@@ -1631,10 +2982,22 @@ function pidLinear(g, Ts, m = 1) {
 }
 const staticLinear = (kr, K, Tr = 0) => ({ A: [], B: [], C: [[]], D: [[kr, ...K.map((k) => -k)]], Tr });
 
+
+const OFF = { step: () => 0 };
+const twinLaw = (twin, Ts) => CONTROLLERS[twin.type].make(normalizeVariant(twin).params, Ts);
+const noDesign = (type) => new DesignError('no-design', `${CONTROLLERS[type].label} has no design to analyse yet`, 'see its Computed box in the Controller tab: the design is pending, cancelled or refused');
+function twinLinear(type) {
+  return (p, Ts, at, values) => {
+    if (!values) throw noDesign(type);
+    const twin = CONTROLLERS[type].manual(p, values);
+    return CONTROLLERS[twin.type].linear(normalizeVariant(twin).params, Ts, at);
+  };
+}
+
 const CONTROLLERS = {
   off: {
     label: 'Off', summary: 'u = 0', params: [],
-    make: () => ({ step: () => 0 }),
+    make: () => OFF,
     linear: (p, Ts, at) => staticLinear(0, new Array(at?.y?.length || 1).fill(0)),
   },
   pid: {
@@ -1648,7 +3011,7 @@ const CONTROLLERS = {
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
-    params: [vec('K', 'Gains K', [1]), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
+    params: [vec('K', 'Gains K', [1], { per: 'measurement' }), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
     make(p, Ts) {
       const pre = prefilter(p, Ts);
       return {
@@ -1660,6 +3023,21 @@ const CONTROLLERS = {
       };
     },
     linear: (p) => staticLinear(p.kr, p.K, p.Tr),
+  },
+  lqr: {
+    label: 'LQR', summary: 'u = kr r − K · y, K from the plant (LQR)',
+    designed: true, version: 1, computes: ['K', 'kr'], twin: 'stateFeedback',
+    params: [...WEIGHTS, num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }), PREFILTER, ...LIMITS],
+    design(p, ctx) {
+      const d = lqrDesign(ctx.linearize('origin'), { Q: p.Q, R: p.R, track: p.track, Ts: ctx.Ts });
+      return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
+    },
+    make(p, Ts, values) {
+      if (!values) return OFF;
+      return CONTROLLERS.stateFeedback.make({ K: values.K, kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax }, Ts);
+    },
+    manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax } }),
+    linear: twinLinear('lqr'),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',
@@ -1682,9 +3060,37 @@ const CONTROLLERS = {
       return pidLinear({ Kp: lookup(p.at, p.Kp, y), Ki: lookup(p.at, p.Ki, y), Kd: 0, Tf: 0, b: 1, Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka }, Ts, at?.y?.length || 1);
     },
   },
+  scheduledPI: {
+    label: 'PI from the plant', summary: 'PI by pole cancellation at levels of y',
+    designed: true, version: 1, computes: ['Kp', 'Ki', 'u0'], twin: ['pid', 'gainScheduled'],
+    params: [vec('at', 'At y =', [1], { per: 'level', help: 'the levels of the first measurement to design at; one level gives a fixed PI, several are interpolated' }), num('Tcl', 'Closed loop Tcl', 0.25, { unit: 's', positive: true, help: 'the time constant the loop should have' }), PREFILTER, ...FEEDFORWARD, ...LIMITS, ...WINDUP],
+    check(p) { return p.at.some((v, i) => i && v <= p.at[i - 1]) ? 'the At values must increase' : ''; },
+    design: (p, ctx) => scheduledPIDesign(p, ctx),
+    make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.scheduledPI.manual(p, values), Ts) : OFF; },
+    manual(p, values) {
+      const common = { Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, u0: values.u0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
+      return values.at.length === 1
+        ? { type: 'pid', params: { Kp: values.Kp[0], Ki: values.Ki[0], Kd: 0, ...common } }
+        : { type: 'gainScheduled', params: { at: [...values.at], Kp: [...values.Kp], Ki: [...values.Ki], ...common } };
+    },
+    linear: twinLinear('scheduledPI'),
+  },
+  pidFF: {
+    label: 'PID + feedforward from the plant', summary: 'PID; Kff, Kv, Ka from the plant\'s inverse',
+    designed: true, version: 1, computes: ['Kff', 'Kv', 'Ka'], twin: 'pid',
+    params: [
+      num('Kp', 'Kp', 1), num('Ki', 'Ki', 0), num('Kd', 'Kd', 0), num('Tf', 'D filter Tf', 0.01, { unit: 's', min: 0 }), num('b', 'Setpoint weight b', 1, { help: 'weights r in the P part only; the feedforward makes up for it' }), PREFILTER,
+      { key: 'order', label: 'Feedforward', default: '2', kind: 'choice', options: { 0: 'static: Kff', 1: 'and velocity: Kv', 2: 'and acceleration: Ka' }, help: 'how many terms of the plant\'s inverse: Kff (the input that holds y at r), Kv (per r/s), Ka (per r/s²)' },
+      START, ...LIMITS, ...WINDUP,
+    ],
+    design: (p, ctx) => feedforwardDesign(p, ctx),
+    make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.pidFF.manual(p, values), Ts) : OFF; },
+    manual: (p, values) => ({ type: 'pid', params: { Kp: p.Kp, Ki: p.Ki, Kd: p.Kd, Tf: p.Tf, b: p.b, Tr: p.Tr, Kff: values.Kff, Kv: values.Kv, Ka: values.Ka, u0: p.u0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt } }),
+    linear: twinLinear('pidFF'),
+  },
   swingUp: {
     label: 'Swing-up (Lyapunov) + state feedback', summary: 'energy pumping, then u = kr r − K · y',
-    params: [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 }), vec('K', 'Gains K', [-1, -30, -2, -5]), num('kr', 'Prefilter kr', -1), ...LIMITS],
+    params: [...SWING, vec('K', 'Gains K', [-1, -30, -2, -5], { per: 'measurement' }), num('kr', 'Prefilter kr', -1), ...LIMITS],
     make(p) {
       let caught = false;
       return {
@@ -1708,6 +3114,43 @@ const CONTROLLERS = {
       const th = wrap(at?.y?.[1] ?? 0);
       if (Math.abs(th) >= p.thetaS) throw new Error(`the swing-up pumps energy at θ = ${th.toFixed(2)} rad; it is a linear loop only where it catches (|θ| < ${p.thetaS} rad)`);
       return staticLinear(p.kr, p.K);
+    },
+  },
+  swingUpLqr: {
+    label: 'Swing-up + LQR catch', summary: 'energy pumping, then u = kr r − K · y, K from the plant',
+    designed: true, version: 2, computes: ['K', 'kr', 'l', 'g'], twin: 'swingUp',
+    params: [...SWING.filter((s) => s.key !== 'l' && s.key !== 'g'), ...WEIGHTS, ...LIMITS],
+    design(p, ctx) {
+      const lin = ctx.linearize('origin');
+      const labels = lin.outputs.map((o) => o.label);
+      if (lin.m !== 4 || !lin.outputs[1].angle) throw new DesignError('swing-inputs', `the swing-up reads x, θ, v, ω (θ an angle) from inputs 2 to 5; this block has ${labels.length ? labels.join(', ') : 'no measurements'}`, 'wire the cart–pole\'s x, θ, v, ω to inputs 2 to 5, or use LQR');
+      const d = lqrDesign(lin, { Q: p.Q, R: p.R, track: 1, Ts: ctx.Ts });
+      const { l, g } = poleOf(lin);
+      return { values: { K: d.K, kr: d.kr, l, g }, rows: [...d.rows, { label: 'pole', value: [l, g], labels: ['l', 'g'], note: 'm, m/s²: what the pump measures energy with' }], warnings: d.warnings };
+    },
+    make(p, Ts, values) { return values ? twinLaw(CONTROLLERS.swingUpLqr.manual(p, values), Ts) : OFF; },
+    manual: (p, values) => ({ type: 'swingUp', params: { kE: p.kE, kx: p.kx, kv: p.kv, l: values.l, g: values.g, thetaS: p.thetaS, K: [...values.K], kr: values.kr, umin: p.umin, umax: p.umax } }),
+    linear: twinLinear('swingUpLqr'),
+  },
+  trajectory: {
+    label: 'Planned swing-up + TV-LQR', summary: 'u = F(t) − K(t)·(y − y*(t)), then u = kr r − K·y',
+    designed: true, version: 1, computes: ['F', 'Y', 'K', 'Kup', 'kr'],
+    params: [
+      num('T', 'Swing-up time T', 2.4, { unit: 's', positive: true, heavy: true, tune: false, help: 'how long the swing-up takes; rounded to whole samples' }),
+      num('segments', 'Segments', 12, { int: true, min: 2, max: 40, heavy: true, tune: false, help: 'pieces the plan is solved in (multiple shooting); more take longer' }),
+      num('planShare', 'Plan may use', 0.75, { min: 0.05, max: 1, heavy: true, tune: false, help: 'the share of the force limit the plan may use; the rest is left for the feedback' }),
+      num('start', 'Starts at', 0, { unit: 's', min: 0, help: 'until then u = 0' }),
+      ...WEIGHTS, ...LIMITS,
+    ],
+    design: (p, ctx) => trajectoryDesign(p, ctx),
+    make(p, Ts, values) { return values ? planLaw(values, Ts, p) : OFF; },
+    linear(p, Ts, at, values) {
+      if (!values) throw noDesign('trajectory');
+      const m = values.Kup.length, steps = values.F.length;
+      const j = at?.t === undefined ? Infinity : Math.floor(at.t / Ts + 1e-9) - Math.round(p.start / Ts);
+      if (j < 0) return { ...staticLinear(0, new Array(m).fill(0)), note: `before the plan starts (at ${p.start} s) u = 0: the loop is open` };
+      if (j >= steps) return staticLinear(values.kr, values.Kup);
+      return { ...staticLinear(0, Array.from(values.K.subarray(j * m, (j + 1) * m))), note: `the plan's gains at sample ${j} of ${steps} (t = ${((j + Math.round(p.start / Ts)) * Ts).toFixed(2)} s), frozen: along the plan they change every sample` };
     },
   },
   relay: {
@@ -1747,9 +3190,12 @@ const CONTROLLERS = {
       };
     },
     linear(p, Ts, at) {
-      if (!(p.phi > 0)) throw new Error('an ideal sliding mode switches: it has no linear model; give it a boundary layer φ > 0');
-      const m = Math.max(2, at?.y?.length ?? 2);
-      return staticLinear((p.K * p.lambda) / p.phi, [(p.K * p.lambda) / p.phi, p.K / p.phi, ...new Array(m - 2).fill(0)]);
+      if (!(p.phi > 0)) throw Object.assign(new Error('an ideal sliding mode switches: it has no linear model; give it a boundary layer φ > 0'), { hint: 'give it a boundary layer φ > 0, or analyse another variant' });
+      const m = Math.max(2, at?.y?.length ?? 2), k = p.K / p.phi;
+      const ys = [k * p.lambda, k, ...new Array(m - 2).fill(0)];
+      if (!(p.Tr > 0)) return staticLinear(k * p.lambda, ys);
+      const a = Math.exp(-Ts / p.Tr), c = (k * a) / ((1 - a) * p.Tr);
+      return { A: [[0]], B: [[1, ...new Array(m).fill(0)]], C: [[-c]], D: [[k * p.lambda + c, ...ys.map((g) => -g)]], Tr: p.Tr };
     },
   },
   superTwisting: {
@@ -1773,7 +3219,7 @@ const CONTROLLERS = {
         },
       };
     },
-    linear() { throw new Error('super-twisting has no linear model: √|s| has infinite slope at s = 0'); },
+    linear() { throw Object.assign(new Error('super-twisting has no linear model: √|s| has infinite slope at s = 0'), { hint: 'analyse another variant (a sliding mode with a boundary layer is linear inside it)' }); },
   },
 };
 
@@ -1792,25 +3238,38 @@ function needsRate(p, ctx) {
 const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
 
 function normalizeParam(spec, v, where) {
+  if (spec.nullable && (v === null || v === '')) return null;
   v ??= spec.default;
   if (spec.kind === 'choice') {
     if (!Object.hasOwn(spec.options, v)) throw new Error(`${where}.${spec.key}: one of ${Object.keys(spec.options).join(', ')}`);
     return v;
   }
   if (spec.kind === 'vector') {
+    if (v === null && spec.nullable) return null;   
     if (!Array.isArray(v) || !v.length || !v.every((x) => Number.isFinite(Number(x)))) throw new Error(`${where}.${spec.key}: a list of numbers`);
+    if (spec.min !== undefined && v.some((x) => Number(x) < spec.min)) throw new Error(`${where}.${spec.key}: each at least ${spec.min}`);
     return v.map(Number);
   }
   if (v === null || v === '' || v === 'inf' || v === 'Infinity' || v === '-inf' || v === '-Infinity') return v && String(v).startsWith('-') ? -Infinity : spec.default;
-  const n = Number(v);
+  let n = Number(v);
   if (Number.isNaN(n)) throw new Error(`${where}.${spec.key}: expected a number`);
+  if (spec.int) n = Math.round(n);
   if (spec.min !== undefined && n < spec.min) throw new Error(`${where}.${spec.key}: at least ${spec.min}`);
+  if (spec.max !== undefined && n > spec.max) throw new Error(`${where}.${spec.key}: at most ${spec.max}`);
+  if (spec.positive && !(n > 0)) throw new Error(`${where}.${spec.key}: above 0`);
   return n;
 }
 
 function normalizeVariant(v, where = 'variant', lib = CONTROLLERS, ctx = undefined) {
+  if (lib[v?.type]?.migrate) v = lib[v.type].migrate(v);
   const def = lib[v?.type];
   if (!def) throw new Error(`${where}.type: one of ${Object.keys(lib).join(', ')}`);
+  const given = (def.computes ?? []).filter((k) => v.params?.[k] !== undefined);
+  if (given.length) {
+    const inputs = def.params.map((p) => p.key).filter((k) => !/^(umin|umax|Tr|Kff|Kv|Ka|aw|Tt)$/.test(k));
+    const twins = [].concat(def.twin ?? []).map((t) => lib[t]?.label ?? t).join(' or ');
+    throw new Error(`${where}.params.${given[0]}: ${v.type} computes ${and(def.computes)} from the plant and ${and(inputs)}; ${twins ? `to set them by hand use Copy as numbers (a ${twins} variant)` : 'they are never kept in a file'}`);
+  }
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
   if (params.umin > params.umax) [params.umin, params.umax] = [params.umax, params.umin];
@@ -1820,11 +3279,11 @@ function normalizeVariant(v, where = 'variant', lib = CONTROLLERS, ctx = undefin
 }
 
 const same = (a, b) => (Array.isArray(b) ? Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]) : a === b);
-function makeLaw(variant, Ts, lib = CONTROLLERS) {
+function makeLaw(variant, Ts, lib = CONTROLLERS, values = null) {
   if (typeof variant.law === 'function') return variant.law(Ts);
   const { params } = normalizeVariant(variant, 'variant', lib);
   const keep = variant.params && Object.keys(params).every((k) => same(variant.params[k], params[k]));
-  return lib[variant.type].make(keep ? variant.params : params, Ts);
+  return lib[variant.type].make(keep ? variant.params : params, Ts, values);
 }
 
 
@@ -1846,8 +3305,9 @@ function fmt(v) {
   return `${Number(x.toPrecision(3))}${unit}`.replace('-', '−');
 }
 const secs = (v) => (Number.isFinite(v) && v !== 0 && Math.abs(v) < 0.1 ? `${fmt(v * 1e3)} ms` : `${fmt(v)} s`);
-const range = (xs) => { const lo = Math.min(...xs), hi = Math.max(...xs); return lo === hi ? fmt(lo) : `${fmt(lo)}…${fmt(hi)}`; };
+const range = (xs) => { if (xs.some(Number.isNaN)) return '–'; const lo = Math.min(...xs), hi = Math.max(...xs); return lo === hi ? fmt(lo) : `${fmt(lo)}…${fmt(hi)}`; };
 const secsRange = (xs) => {
+  if (!xs.length || xs.some(Number.isNaN)) return '–';
   const lo = Math.min(...xs), hi = Math.max(...xs);
   if (lo === hi) return secs(lo);
   return Math.abs(hi) < 0.1 ? `${fmt(lo * 1e3)}…${fmt(hi * 1e3)} ms` : `${fmt(lo)}…${fmt(hi)} s`;
@@ -1934,7 +3394,7 @@ function antiWindup(s, p, ix, iy, y, yOut, noLimits, tts, rule) {
 
 function pid(p, { inputs, Ts }) {
   const s = sheet('PID', DIAGRAM_WIDTH, 144);
-  const P = !!p.Kp, I = !!p.Ki, Dd = !!p.Kd;
+  const P = p.Kp !== 0, I = p.Ki !== 0, Dd = p.Kd !== 0;
   reference(s, p, 40);
   const ffOff = feedforward(s, p, 40);
   s.wire([[70, 40], [78, 40]], { faint: !P || !p.b });
@@ -1961,7 +3421,7 @@ function pid(p, { inputs, Ts }) {
   s.block({ x: 168, y: p.u0 ? 97 : 92, w: 52, h: p.u0 ? 26 : 16, lines: [[['∫ ', ''], ...kv('Ki', fmt(p.Ki))], ...(p.u0 ? [kv('u0', fmt(p.u0))] : [])], faint: !I, tip: `Integral gain Ki on the error rf − y; it starts at u0 ${fmt(p.u0)}` });
   s.wire([[194, 92], [213, 92]], { faint: !I });
   const noLimits = output(s, p, 6, 100, [[14, ffOff ? '' : '+'], [40, '+'], [66, '−'], [92, '+']], 53);
-  if (I) antiWindup(s, p, 168, iy, 120, 53, noLimits, [trackingTime(p, Ts)], '√(Ti·Td), or Ti/2 without D');
+  if (I) antiWindup(s, p, 168, iy, 120, 53, noLimits, [Number.isNaN(p.Ki) ? NaN : trackingTime(p, Ts)], '√(Ti·Td), or Ti/2 without D');
   return s.done();
 }
 
@@ -1985,7 +3445,7 @@ function gainScheduled(p, { inputs, Ts }) {
   s.wire([[146, 79], [146, bottom]], { dotted: true, tip: 'The table sets Kp and Ki' });
   s.note({ x: 142, y: (79 + bottom) / 2, text: 'Kp, Ki', anchor: 'end' });
   const noLimits = output(s, p, 6, 52, [[14, ffOff ? '' : '+'], [44, '+']], 29);
-  const tts = p.at.map((_, i) => trackingTime({ Kp: p.Kp[i], Ki: p.Ki[i], Kd: 0, Tt: p.Tt }, Ts)).filter((t, i) => p.Ki[i]);
+  const tts = p.at.map((_, i) => (Number.isNaN(p.Ki[i]) ? NaN : trackingTime({ Kp: p.Kp[i], Ki: p.Ki[i], Kd: 0, Tt: p.Tt }, Ts))).filter((t, i) => p.Ki[i] !== 0);
   if (I) antiWindup(s, p, 186, bottom, 120, 29, noLimits, tts, 'Ti/2 at each point of the schedule, Ti = Kp/Ki');
   return s.done();
 }
@@ -1997,13 +3457,13 @@ function stateFeedback(p, { inputs }) {
   s.port({ x: 4, y: 14, text: 'r', anchor: 'start' });
   s.wire([[12, 14], [16, 14]]);
   s.block({ x: 39, y: 14, w: 46, h: 16, lines: [kv('Tr', p.Tr > 0 ? secs(p.Tr) : '0')], faint: !(p.Tr > 0), tip: 'Prefilter (Vorfilter) on r; 0 is off' });
-  s.wire([[62, 14], [74, 14]], { faint: !p.kr });
-  s.block({ x: 100, y: 14, w: 52, h: 16, lines: [kv('kr', fmt(p.kr))], faint: !p.kr, tip: 'Static prefilter kr: scales r so the output settles at r' });
-  s.wire([[126, 14], [191, 14]], { faint: !p.kr });
+  s.wire([[62, 14], [74, 14]], { faint: p.kr === 0 });
+  s.block({ x: 100, y: 14, w: 52, h: 16, lines: [kv('kr', fmt(p.kr))], faint: p.kr === 0, tip: 'Static prefilter kr: scales r so the output settles at r' });
+  s.wire([[126, 14], [191, 14]], { faint: p.kr === 0 });
   s.sum({ x: 196, y: 14, r: 5, signs: { w: '+', s: '−' } });
   const top = rowY(0) - 8, bottom = rowY(m - 1) + 8, mid = (top + bottom) / 2;
   for (let i = 0; i < m; i++) {
-    const y = rowY(i), off = !p.K[i];
+    const y = rowY(i), off = p.K[i] === 0;
     s.port({ x: 4, y, text: short(inputs[i + 1] ?? `y${i + 1}`), anchor: 'start', faint: off, tip: `Input ${i + 2}: ${inputs[i + 1] ?? 'not connected'}` });
     s.wire([[58, y], [74, y]], { faint: off });
     s.block({ x: 100, y, w: 52, h: 14, lines: [kv(`K${i + 1}`, fmt(p.K[i]))], faint: off });
@@ -2082,9 +3542,8 @@ function off() {
   return s.done();
 }
 
-function estimator(p, { inputs }, kind) {
-  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, kind === 'kalman' ? 117 : 106);
-  const n = p.B.length, m = p.C.length / n;
+function estimator(p, { inputs }, kind, { n = p.B.length, m = p.C.length / p.B.length, lines = [] } = {}) {
+  const s = sheet(kind === 'kalman' ? 'Kalman filter' : 'Luenberger observer', DIAGRAM_WIDTH, 95 + 11 * (kind === 'kalman' ? lines.length : 1));
   s.port({ x: 4, y: 36, text: 'u', anchor: 'start', tip: `Plant input: ${inputs[0] ?? 'not connected'}` });
   s.wire([[12, 36], [24, 36]]);
   s.block({ x: 74, y: 36, w: 100, h: 28, lines: [[['predict', 'k']], [['Ad·x̂ + Bd·u', '']]], tip: 'Predict: the model, discretised at Ts, carries the estimate one sample ahead with the input u' });
@@ -2092,17 +3551,15 @@ function estimator(p, { inputs }, kind) {
   s.block({ x: 190, y: 36, w: 100, h: 28, lines: [[['correct', 'k']], [['+ L·(y − C·x̂)', '']]], tip: 'Correct: the estimate moves toward the measurements by the gain L times what the model did not predict' });
   s.wire([[240, 36], [252, 36]]);
   s.dot({ x: 246, y: 36 });
-  s.port({ x: 254, y: 36, text: 'x̂', anchor: 'start', tip: `${n} estimated states` });
+  s.port({ x: 254, y: 36, text: 'x̂', anchor: 'start', tip: Number.isNaN(n) ? 'the estimated states' : `${n} estimated states` });
   s.wire([[246, 36], [246, 9], [165, 9]]);
   s.block({ x: 150, y: 9, w: 30, h: 13, lines: [[['z⁻¹', '']]], tip: 'The estimate of the sample before' });
   s.wire([[135, 9], [74, 9], [74, 22]]);
   s.port({ x: 4, y: 70, text: 'y', anchor: 'start', tip: `Measurements: ${inputs.slice(1).join(', ') || 'none'}` });
   s.wire([[12, 70], [190, 70], [190, 50]]);
-  s.note({ x: 4, y: 87, text: `${n} state${n === 1 ? '' : 's'}, ${m} measurement${m === 1 ? '' : 's'}`, anchor: 'start' });
-  if (kind === 'kalman') {
-    s.note({ x: 4, y: 98, text: 'L: the steady Kalman gain from Q and R', anchor: 'start' });
-    s.note({ x: 4, y: 109, text: `Q ${p.Q.map(fmt).join(' ')}  R ${p.R.map(fmt).join(' ')}`, anchor: 'start' });
-  } else s.note({ x: 4, y: 98, text: `L ${p.L.map(fmt).join(' ')}`, anchor: 'start' });
+  s.note({ x: 4, y: 87, text: `${Number.isNaN(n) ? 'the states it sees' : `${n} state${n === 1 ? '' : 's'}`}, ${m} measurement${m === 1 ? '' : 's'}`, anchor: 'start' });
+  if (kind === 'kalman') lines.forEach((text, i) => s.note({ x: 4, y: 98 + 11 * i, text, anchor: 'start' }));
+  else s.note({ x: 4, y: 98, text: `L ${p.L.map(fmt).join(' ')}`, anchor: 'start' });
   return s.done();
 }
 
@@ -2199,11 +3656,81 @@ function superTwisting(p, { inputs, Ts }) {
   return s.done();
 }
 
-const LAYOUTS = { pid, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, kalman: (p, o) => estimator(p, o, 'kalman'), luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+const UNKNOWN = NaN;
+const unknown = (n) => new Array(n).fill(UNKNOWN);
+function below(d, text, title = d.title) {
+  const room = Math.floor((d.w - 6) / NOTE_CHAR), chars = [...text];
+  const cut = chars.length > room ? `${chars.slice(0, room - 1).join('')}…` : text;
+  return { ...d, title, h: d.h + 13, nodes: [...d.nodes, { kind: 'note', x: 4, y: d.h + 6, text: cut, anchor: 'start', ...(cut !== text ? { tip: text } : {}) }] };
+}
+const weights = (p) => `Q ${p.Q.map(fmt).join(' ')}, R ${fmt(p.R)}`;
 
-function describeVariant(variant, { inputs = [], Ts = 0.01, def = null } = {}) {
+function lqr(p, o) {
+  const v = o.values, m = Math.max(1, o.inputs.length - 1);
+  const d = stateFeedback({ K: v?.K ?? unknown(m), kr: v?.kr ?? UNKNOWN, Tr: p.Tr, umin: p.umin, umax: p.umax }, o);
+  return below(d, `K, kr: LQR from the plant at its origin, ${weights(p)}`, 'LQR');
+}
+
+function scheduledPI(p, o) {
+  const v = o.values, n = p.at.length;
+  const common = { Tr: p.Tr, Kff: p.Kff, Kv: p.Kv, Ka: p.Ka, u0: v?.u0 ?? 0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt };
+  const d = n === 1
+    ? pid({ Kp: v?.Kp[0] ?? UNKNOWN, Ki: v?.Ki[0] ?? UNKNOWN, Kd: 0, Tf: 0.01, b: 1, ...common }, o)
+    : gainScheduled({ at: p.at, Kp: v?.Kp ?? unknown(n), Ki: v?.Ki ?? unknown(n), ...common }, o);
+  return below(d, `Kp, Ki, u0 from the plant at y = ${p.at.map(fmt).join(', ')}; Tcl ${secs(p.Tcl)}`, 'PI from the plant');
+}
+
+function pidFF(p, o) {
+  const v = o.values;
+  const d = pid({ Kp: p.Kp, Ki: p.Ki, Kd: p.Kd, Tf: p.Tf, b: p.b, Tr: p.Tr, Kff: v?.Kff ?? UNKNOWN, Kv: v?.Kv ?? UNKNOWN, Ka: v?.Ka ?? UNKNOWN, u0: p.u0, umin: p.umin, umax: p.umax, aw: p.aw, Tt: p.Tt }, o);
+  return below(d, `Kff, Kv, Ka: the plant's inverse at its origin, with the PID's Kp (1 − b) and Kd; order ${p.order}`, 'PID + feedforward from the plant');
+}
+
+function swingUpLqr(p, o) {
+  const v = o.values;
+  const d = swingUp({ ...p, K: v?.K ?? unknown(4), kr: v?.kr ?? UNKNOWN }, o);
+  return below(d, `K, kr: LQR from the plant, ${weights(p)}; l, g too`, 'Swing-up + LQR catch');
+}
+
+function trajectory(p, { inputs, values }) {
+  const v = values, steps = v?.F?.length ?? 0;
+  const s = sheet('Planned swing-up + TV-LQR', DIAGRAM_WIDTH, 116);
+  let lo = Infinity, hi = -Infinity;
+  for (let k = 0; k < steps; k++) { lo = Math.min(lo, v.F[k]); hi = Math.max(hi, v.F[k]); }
+  s.block({ x: 70, y: 20, w: 110, h: 26, lines: [[['plan ', 'k'], ['F(t), y*(t)', '']], [...kv('T', secs(p.T)), ...kv('  seg.', String(p.segments))]], tip: `The plan: the force F(t) that takes the plant from where it starts to rest at the origin in T ${secs(p.T)}, and the measurements y*(t) along it; computed in the page from the plant (${p.segments} segments, multiple shooting), using ${fmt(100 * p.planShare)} % of each force limit` });
+  s.wire([[125, 14], [213, 14]]);
+  s.note({ x: 132, y: 7, text: 'F(t)', anchor: 'start' });
+  s.wire([[100, 33], [100, 55]]);
+  s.port({ x: 4, y: 60, text: 'y', anchor: 'start', tip: `Measurements: ${inputs.slice(1).join(', ') || 'none'}` });
+  s.wire([[12, 60], [95, 60]]);
+  s.sum({ x: 100, y: 60, r: 5, signs: { w: '+', n: '−' } });
+  s.wire([[105, 60], [118, 60]]);
+  s.block({ x: 148, y: 60, w: 60, h: 16, lines: [[['K(t) ', 'k'], ['TV-LQR', '']]], tip: `Time-varying LQR along the plan (Q ${p.Q.map(fmt).join(' ')}, R ${fmt(p.R)}): it corrects what the plant does off the plan, with the gains of each sample` });
+  s.wire([[178, 60], [213, 60]]);
+  output(s, p, 6, 68, [[14, '+'], [60, '−']], 37);
+  s.note({ x: 4, y: 86, text: 'after T: u = kr·r − K·y, the LQR at the origin', anchor: 'start' });
+  s.note({ x: 4, y: 98, text: `u = 0 until ${secs(p.start)}; the plan may use ${fmt(100 * p.planShare)} % of u`, anchor: 'start' });
+  s.note({ x: 4, y: 110, text: steps ? `planned from the plant: F ${fmt(lo)}…${fmt(hi)}` : 'planned from the plant: F – (not yet)', anchor: 'start' });
+  return s.done();
+}
+
+function kalman(p, o) {
+  const v = o.values;
+  const n = v ? v.B.length : UNKNOWN, m = v ? v.C.length / v.B.length : Math.max(1, o.inputs.length - 1);
+  const lines = ['model and L from the plant, at its origin', `Q ${p.Q.map(fmt).join(' ')}  R ${p.R ? p.R.map(fmt).join(' ') : 'from the sensors'}`];
+  return estimator(p, o, 'kalman', { n, m, lines });
+}
+
+function kalmanModel(p, o) {
+  const lines = ['L from your model A, B, C, Q and R (Riccati)', `Q ${p.Q.map(fmt).join(' ')}  R ${p.R.map(fmt).join(' ')}`];
+  return estimator(p, o, 'kalman', { lines });
+}
+
+const LAYOUTS = { pid, pidFF, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, lqr, scheduledPI, swingUpLqr, trajectory, kalman, kalmanModel, luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+
+function describeVariant(variant, { inputs = [], Ts = 0.01, def = null, values = null } = {}) {
   const layout = LAYOUTS[variant.type];
-  return layout ? layout(variant.params, { inputs, Ts }) : generic(variant, def);
+  return layout ? layout(variant.params, { inputs, Ts, values }) : generic(variant, def);
 }
 
 const DESCRIBED_TYPES = Object.keys(LAYOUTS);
@@ -2214,6 +3741,8 @@ return { DIAGRAM_WIDTH, fmt, limitsText, NOTE_CHAR, describeVariant, DESCRIBED_T
 __mods['core/observers.js'] = (() => {
 
 const { c2d, dlqe } = __mods['core/linalg.js'];
+const { kalmanDesign } = __mods['core/design.js'];
+const { normalizeVariant } = __mods['core/controllers.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
 
@@ -2233,12 +3762,13 @@ function checkModel(p) {
 }
 
 function estimator(p, keys, design) {
-  let d = null, seen = [], x, xp, out, first = true;
+  let d = null, seen = [], x, xp, e, out, first = true;
   const current = () => {
     if (d && keys.every((k, i) => p[k] === seen[i])) return d;
     seen = keys.map((k) => p[k]);
     const next = design();
     if (!d || next.n !== d.n) { x = new Float64Array(next.n); xp = new Float64Array(next.n); out = new Float64Array(next.n); first = true; }
+    if (!d || next.m !== d.m) e = new Float64Array(next.m);
     d = next;
     return d;
   };
@@ -2252,21 +3782,41 @@ function estimator(p, keys, design) {
         x.set(xp);
       }
       for (let k = 0; k < m; k++) {
-        let e = inp[k + 1] ?? 0;
-        for (let j = 0; j < n; j++) e -= C[k][j] * x[j];
-        for (let i = 0; i < n; i++) x[i] += L[i][k] * e;
+        let s = inp[k + 1] ?? 0;
+        for (let j = 0; j < n; j++) s -= C[k][j] * x[j];
+        e[k] = s;
       }
+      for (let i = 0; i < n; i++) { let s = 0; for (let k = 0; k < m; k++) s += L[i][k] * e[k]; x[i] += s; }
       out.set(x);
       return out;
     },
   };
 }
 
+const NONE = new Float64Array(0);
+const ZERO = { step: () => NONE };
+
 const OBSERVERS = {
   kalman: {
-    label: 'Kalman filter', summary: 'x̂ = model prediction + L (y − C x̂)',
-    params: [...MODEL, vec('Q', 'Process noise Q (diag)', [1, 1]), vec('R', 'Measurement noise R (diag)', [1])],
-    check(p) { const bad = checkModel(p); if (bad) return bad; if (p.Q.length !== p.B.length) return 'Q needs one value per state'; if (p.R.length !== p.C.length / p.B.length) return 'R needs one value per measurement'; return ''; },
+    label: 'Kalman filter', summary: 'x̂ = prediction + L (y − C x̂), model and L from the plant',
+    designed: true, version: 1, computes: ['A', 'B', 'C', 'L'], twin: 'luenberger',
+    params: [
+      vec('Q', 'Process noise Q', [1], { min: 0, help: 'one value: the variance of a random push on u, per sample; or one per state' }),
+      vec('R', 'Measurement noise R', null, { nullable: true, per: 'measurement', empty: 'empty: from the sensor blocks', help: 'the variance of the noise on each measurement (one value: all); empty takes it from the noise and quantizer blocks on its way' }),
+    ],
+    check(p) { return p.R && !p.R.every((v) => v > 0) ? 'R: each above 0' : ''; },
+    design(p, ctx) {
+      const d = kalmanDesign(ctx.linearize('origin'), { Q: p.Q, R: p.R, Ts: ctx.Ts, outputs: ctx.outputs });
+      return { values: d.values, rows: d.rows, warnings: d.warnings, quality: d.quality };
+    },
+    make(p, Ts, values) { return values ? OBSERVERS.luenberger.make(normalizeVariant(OBSERVERS.kalman.manual(p, values), 'variant', OBSERVERS).params, Ts) : ZERO; },
+    manual: (p, values) => ({ type: 'luenberger', params: { A: [...values.A], B: [...values.B], C: [...values.C], L: [...values.L] } }),
+    migrate: (v) => (['A', 'B', 'C'].some((k) => v.params?.[k] !== undefined) && v.params?.L === undefined ? { ...v, type: 'kalmanModel' } : v),
+  },
+  kalmanModel: {
+    label: 'Kalman filter, own model', summary: 'x̂ = model prediction + L (y − C x̂), L from your model, Q and R',
+    params: [...MODEL, vec('Q', 'Process noise Q (diag)', [1, 1], { min: 0 }), vec('R', 'Measurement noise R (diag)', [1], { min: 0 })],
+    check(p) { const bad = checkModel(p); if (bad) return bad; if (p.Q.length !== p.B.length) return 'Q needs one value per state'; if (p.R.length !== p.C.length / p.B.length) return 'R needs one value per measurement'; if (!p.R.every((v) => v > 0)) return 'R: each above 0'; return ''; },
     make(p, Ts) {
       return estimator(p, ['A', 'B', 'C', 'Q', 'R'], () => {
         const { n, m, A, B, C } = model(p);
@@ -3388,8 +4938,9 @@ const { BLOCKS, blockDef, normalizeBlock } = __mods['core/blocks.js'];
 const { tf2ss, rootBound } = __mods['core/poly.js'];
 const { gaussAt } = __mods['core/signals.js'];
 const { compileExpr } = __mods['core/expr.js'];
-const { normalizeVariant, makeLaw } = __mods['core/controllers.js'];
+const { CONTROLLERS, normalizeVariant, makeLaw } = __mods['core/controllers.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
+const { SYNC_DESIGNS, defaultDesigns } = __mods['core/design.js'];
 const { EXTERNAL_BLOCK } = __mods['core/hil.js'];
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -3407,7 +4958,7 @@ const ELEMENTS = {
   gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
   integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
-  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before T_d', 0)], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
+  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before T_d', 0, { nullable: 'its input at t = 0' })], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
   fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
@@ -3417,13 +4968,17 @@ const ELEMENTS = {
     params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
     ode: {
       n: 4,
+      states: () => [state('x', 'm'), state('v', 'm/s'), state('θ', 'rad', true), state('ω', 'rad/s')],
       init: (p) => [0, 0, p.theta0, 0],
       out: (X, o, p, y) => { y[0] = X[o]; y[1] = X[o + 2]; y[2] = X[o + 1]; y[3] = X[o + 3]; },
-      f: (X, o, u, p, dX) => {
-        const v = X[o + 1], th = X[o + 2], w = X[o + 3];
-        const s = Math.sin(th), c = Math.cos(th);
-        const a = (u - p.b * v + p.m * p.l * w * w * s - p.m * p.g * s * c) / (p.M + p.m * s * s);
-        dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (p.g * s - a * c) / p.l;
+      make(p) {
+        const { M, m, l, g, b } = p, ml = m * l, mg = m * g;
+        return (X, o, u, dX) => {
+          const v = X[o + 1], th = X[o + 2], w = X[o + 3];
+          const s = Math.sin(th), c = Math.cos(th);
+          const a = (u - b * v + ml * w * w * s - mg * s * c) / (M + m * s * s);
+          dX[o] = v; dX[o + 1] = a; dX[o + 2] = w; dX[o + 3] = (g * s - a * c) / l;
+        };
       },
       bound: (p) => 2 * Math.sqrt(p.g * (p.M + p.m) / (p.M * p.l)) + p.b / p.M,
     },
@@ -3438,9 +4993,10 @@ const ELEMENTS = {
       ...[1, 2, 3].map((i) => num(`theta${i}0`, `Start θ${i}₀`, i === 1 ? 0.05 : 0, { unit: 'rad' }))],
     ode: {
       n: (p) => 2 * p.links + 2,
+      states: (p) => [state('x', 'm'), ...links(p).map((i) => state(`θ${i + 1}`, 'rad', true)), state('v', 'm/s'), ...links(p).map((i) => state(`ω${i + 1}`, 'rad/s'))],
       init: (p) => { const n = p.links; return [0, ...links(p).map((i) => p[`theta${i + 1}0`]), 0, ...new Array(n).fill(0)]; },
       out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
-      f: (X, o, u, p, dX) => chainRates(X, o, u, p, dX),
+      make: (p) => chainRates(p),
       bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
     },
   },
@@ -3449,13 +5005,17 @@ const ELEMENTS = {
     params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
     ode: {
       n: 1,
+      states: () => [state('h', 'm')],
       init: (p) => [Math.min(p.H, p.h0)],
       out: (X, o, p, y) => { y[0] = Math.min(p.H, Math.max(0, X[o])); },
-      f: (X, o, u, p, dX) => {
-        const h = Math.min(p.H, Math.max(0, X[o]));
-        const r = p.r0 + ((p.R - p.r0) * h) / p.H;
-        const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
-        dX[o] = (h <= 0 && flow < 0) || (h >= p.H && flow > 0) ? 0 : flow / (Math.PI * r * r);
+      make(p) {
+        const { r0, H } = p, slope = (p.R - r0) / H, out = p.a * Math.sqrt(2 * p.g);
+        return (X, o, u, dX) => {
+          const h = Math.min(H, Math.max(0, X[o]));
+          const r = r0 + slope * h;
+          const flow = u - out * Math.sqrt(h);
+          dX[o] = (h <= 0 && flow < 0) || (h >= H && flow > 0) ? 0 : flow / (Math.PI * r * r);
+        };
       },
       bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
     },
@@ -3475,48 +5035,60 @@ const ELEMENTS = {
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
 };
 
-const VARIANT_LIBS = { controller: undefined, observer: OBSERVERS };
+const VARIANT_LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
 
 const links = (p) => Array.from({ length: p.links }, (_, i) => i);
 
-const CH = { m: new Float64Array(3), l: new Float64Array(3), mu: new Float64Array(3), th: new Float64Array(3), w: new Float64Array(3), A: new Float64Array(20), q: new Float64Array(4) };
-function chainRates(X, o, u, p, dX) {
-  const n = p.links, N = n + 1, W = N + 1, { m, l, mu, th, w, A, q } = CH;
-  for (let i = 0; i < n; i++) { m[i] = p[`m${i + 1}`]; l[i] = p[`l${i + 1}`]; th[i] = X[o + 1 + i]; w[i] = X[o + n + 2 + i]; }
-  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += m[i]; mu[i] = acc; }   
-  const v = X[o + n + 1];
-  A.fill(0);
-  A[0] = p.M + mu[0];
-  A[N] = u - p.b * v;   
+const state = (name, unit, angle = false) => ({ name, unit, angle });
+
+function chainRates(p) {
+  const n = p.links, N = n + 1, { g, b } = p;
+  const mu = new Float64Array(n), ml = new Float64Array(n), mgl = new Float64Array(n), mll = new Float64Array(n * n);
+  for (let i = n - 1, acc = 0; i >= 0; i--) { acc += p[`m${i + 1}`]; mu[i] = acc; }
   for (let j = 0; j < n; j++) {
-    const c = mu[j] * l[j] * Math.cos(th[j]), sj = Math.sin(th[j]);
-    A[j + 1] = c; A[(j + 1) * W] = c;
-    A[N] += mu[j] * l[j] * sj * w[j] * w[j];
-    let r = mu[j] * p.g * l[j] * sj;
-    for (let k = 0; k < n; k++) {
-      const mk = mu[Math.max(j, k)] * l[j] * l[k];
-      A[(j + 1) * W + k + 1] = mk * Math.cos(th[j] - th[k]);
-      r -= mk * Math.sin(th[j] - th[k]) * w[k] * w[k];
+    const lj = p[`l${j + 1}`];
+    ml[j] = mu[j] * lj; mgl[j] = mu[j] * g * lj;
+    for (let k = 0; k < n; k++) mll[j * n + k] = mu[Math.max(j, k)] * lj * p[`l${k + 1}`];
+  }
+  const total = p.M + mu[0];
+  const s = new Float64Array(n), c = new Float64Array(n), w2 = new Float64Array(n);
+  const A = new Float64Array(N * N), r = new Float64Array(N), q = new Float64Array(N);
+  return (X, o, u, dX) => {
+    for (let j = 0; j < n; j++) {
+      const th = X[o + 1 + j], w = X[o + n + 2 + j];
+      s[j] = Math.sin(th); c[j] = Math.cos(th); w2[j] = w * w;
     }
-    A[(j + 1) * W + N] = r;
-  }
-  for (let c = 0; c < N; c++) {
-    let piv = c;
-    for (let r = c + 1; r < N; r++) if (Math.abs(A[r * W + c]) > Math.abs(A[piv * W + c])) piv = r;
-    if (piv !== c) for (let k = 0; k < W; k++) { const t = A[c * W + k]; A[c * W + k] = A[piv * W + k]; A[piv * W + k] = t; }
-    for (let r = c + 1; r < N; r++) {
-      const f = A[r * W + c] / A[c * W + c];
-      for (let k = c; k < W; k++) A[r * W + k] -= f * A[c * W + k];
+    A[0] = total;
+    r[0] = u - b * X[o + n + 1];
+    for (let j = 0; j < n; j++) {
+      const row = (j + 1) * N;
+      A[row] = ml[j] * c[j];
+      r[0] += ml[j] * s[j] * w2[j];
+      let rj = mgl[j] * s[j];
+      for (let k = 0; k < n; k++) {
+        const cjk = c[j] * c[k] + s[j] * s[k], sjk = s[j] * c[k] - c[j] * s[k];   
+        if (k <= j) A[row + k + 1] = mll[j * n + k] * cjk;
+        rj -= mll[j * n + k] * sjk * w2[k];
+      }
+      r[j + 1] = rj;
     }
-  }
-  for (let r = N - 1; r >= 0; r--) {
-    let s2 = A[r * W + N];
-    for (let k = r + 1; k < N; k++) s2 -= A[r * W + k] * q[k];
-    q[r] = s2 / A[r * W + r];
-  }
-  dX[o] = v;
-  for (let j = 0; j < n; j++) { dX[o + 1 + j] = w[j]; dX[o + n + 2 + j] = q[j + 1]; }
-  dX[o + n + 1] = q[0];
+    for (let j = 0; j < N; j++) {
+      let d = A[j * N + j];
+      for (let k = 0; k < j; k++) d -= A[j * N + k] * A[j * N + k] * A[k * N + k];
+      A[j * N + j] = d;
+      for (let i = j + 1; i < N; i++) {
+        let e = A[i * N + j];
+        for (let k = 0; k < j; k++) e -= A[i * N + k] * A[j * N + k] * A[k * N + k];
+        A[i * N + j] = e / d;
+      }
+    }
+    for (let i = 0; i < N; i++) { let e = r[i]; for (let k = 0; k < i; k++) e -= A[i * N + k] * q[k]; q[i] = e; }
+    for (let i = 0; i < N; i++) q[i] /= A[i * N + i];
+    for (let i = N - 1; i >= 0; i--) { let e = q[i]; for (let k = i + 1; k < N; k++) e -= A[k * N + i] * q[k]; q[i] = e; }
+    dX[o] = X[o + n + 1];
+    for (let j = 0; j < n; j++) { dX[o + 1 + j] = X[o + n + 2 + j]; dX[o + n + 2 + j] = q[j + 1]; }
+    dX[o + n + 1] = q[0];
+  };
 }
 
 function outputNames(def, params) {
@@ -3565,6 +5137,8 @@ function normalizeParams(type, params = {}, where) {
     } else if (p.kind === 'signs') {
       v = String(v);
       if (!/^[+-]{1,8}$/.test(v)) throw new Error(`${where}.signs: one to eight of + and -`);
+    } else if (p.nullable && (params[p.key] === null || params[p.key] === '')) {
+      v = null;   
     } else {
       v = Number(v);
       if (!Number.isFinite(v)) throw new Error(`${where}.${p.key}: expected a number`);
@@ -3645,21 +5219,48 @@ function diagramNames(diagram) {
   return { sources: [...sources], sinks, units };
 }
 
+function blockInputNames(diagram, idPath) {
+  const path = Array.isArray(idPath) ? idPath : String(idPath).split('/');
+  const lv = path.slice(0, -1).reduce((d, id) => d?.blocks.find((b) => b.id === id)?.diagram, diagram);
+  const blk = lv?.blocks.find((b) => b.id === path.at(-1));
+  if (!blk) throw new Error(`no block "${path.join('/')}"`);
+  return Array.from({ length: blockPorts(blk)[0] }, (_, k) => {
+    const w = lv.wires.find((x) => { const t = parseEnd(x.to); return t.id === blk.id && t.port === k; });
+    if (!w) return 'not connected';
+    const f = parseEnd(w.from), src = lv.blocks.find((b) => b.id === f.id);
+    if (src.type === 'source') return src.params.signal;
+    if (src.type === 'subsystem') {
+      const out = src.diagram.blocks.find((b) => b.type === 'outport' && b.params.port === f.port + 1);
+      return out?.name ? `${out.name} (${src.name ?? src.id})` : (src.name ?? src.id);
+    }
+    return outputNames(diagramBlockDef(src.type), src.params)[f.port] || (src.name ?? src.id);
+  });
+}
+
+function modelError(code, message, hint = '') {
+  return Object.assign(new Error(message), { code, hint });
+}
+const fmt = (v) => String(Number(Number(v).toPrecision(3)));
+const NONE = [];
+
 function compileDiagram(diagram, path = 'plant', opts = {}) {
+  const model = opts.mode === 'model';
+  const standalone = opts.standalone || model;
+  const laws = opts.laws !== false && !model;
   const nodes = [];
   const warnings = [];
   const probeList = [];
-  const add = (node) => { nodes.push({ inputs: [], ...node }); return nodes.length - 1; };
+  const add = (node) => { nodes.push({ inputs: [], ...node, i: nodes.length }); return nodes.length - 1; };
   const externals = [];
   let extNode = -1, outNode = -1;
   const ctrlNodes = [];  
 
-  function level(d, prefix, root, ids = '') {
+  function level(d, prefix, ids, root) {
     const outs = {}, ins = {};
     for (const b of d.blocks) {
-      const name = `${prefix}${b.name ?? b.id}`;
+      const name = `${prefix}${b.name ?? b.id}`, idPath = `${ids}${b.id}`;
       if (b.type === 'subsystem') {
-        const inner = level(b.diagram, `${name}/`, false, `${ids}${b.id}/`);
+        const inner = level(b.diagram, `${name}/`, `${idPath}/`, false);
         const ports = (t) => b.diagram.blocks.filter((x) => x.type === t).sort((a, c) => a.params.port - c.params.port);
         outs[b.id] = ports('outport').map((x) => inner.outs[x.id][0]);
         ins[b.id] = ports('inport').map((x) => inner.ins[x.id][0]);
@@ -3667,8 +5268,8 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       if (b.type === 'source') {
         const fn = opts.sources?.[b.params.signal];
-        if (!fn) warnings.push(`${path}: no signal "${b.params.signal}" for ${name}`);
-        const k = add({ kind: 'src', name, ft: false, fn: fn ?? (() => 0), signal: b.params.signal });
+        if (!fn && !model) warnings.push(`${path}: no signal "${b.params.signal}" for ${name}`);
+        const k = add({ kind: 'src', name, signal: b.params.signal, at: 0, ft: false, fn: fn ?? (() => 0) });
         probeList.push([b.params.signal, k]);
         outs[b.id] = [k]; ins[b.id] = [];
         continue;
@@ -3686,9 +5287,9 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         continue;
       }
       if (b.type === 'inport') {
-        if (root && opts.standalone) {
-          const k = add({ kind: 'src', name, ft: false, fn: () => 0 });
-          warnings.push(`${path}: ${name} reads 0 until a controller drives the plant`);
+        if (root && standalone) {
+          const k = add({ kind: 'src', name, signal: null, at: 0, ft: false, fn: () => 0 });
+          if (!model) warnings.push(`${path}: ${name} reads 0 until a controller drives the plant`);
           outs[b.id] = [k]; ins[b.id] = [];
         } else if (root) {
           if (extNode >= 0) throw new Error(`${path}: one input (In) only, for now`);
@@ -3702,7 +5303,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
       if (b.type === 'outport') {
         const k = add({ kind: 'pass', name, ft: true, inputs: [-1] });
-        if (root && !opts.standalone) { if (outNode >= 0) throw new Error(`${path}: one output (Out) only, for now`); outNode = k; }
+        if (root && !standalone) { if (outNode >= 0) throw new Error(`${path}: one output (Out) only, for now`); outNode = k; }
         outs[b.id] = [k]; ins[b.id] = [[k, 0]];
         continue;
       }
@@ -3711,8 +5312,9 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (b.type === 'controller' || b.type === 'observer') {
         const lib = VARIANT_LIBS[b.type];
         const v = b.variants?.[b.variant ?? 0] ?? normalizeVariant({ type: b.type === 'observer' ? 'difference' : 'pid' }, b.id, lib);
-        const k = add({ kind: 'ctrl', name, ft: false, observer: b.type === 'observer', inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: makeLaw(v, b.params.Ts, lib), next: 0, k: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
-        outs[b.id] = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j })) : [k];
+        const k = add({ kind: 'ctrl', name, idPath, ft: false, observer: b.type === 'observer', variant: v, lib, inputs: new Array(nIn).fill(-1), Ts: b.params.Ts, law: null, next: 0, k: 0, u: 0, outv: new Float64Array(nOut), x: new Float64Array(nIn) });
+        nodes[k].taps = b.type === 'observer' ? Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.x̂${j + 1}`, ft: false, parent: k, j, see: -1 })) : [];
+        outs[b.id] = b.type === 'observer' ? nodes[k].taps : [k];
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         if (b.type === 'controller') ctrlNodes.push([`${ids}${b.id}`, k]); 
         continue;
@@ -3725,21 +5327,22 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         continue;
       }
       if (def.ode) {
-        const k = add({ kind: 'ode', name, ft: false, ode: def.ode, p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
-        outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j }));
+        const k = add({ kind: 'ode', name, short: b.name ?? b.id, ft: false, ode: def.ode, rates: def.ode.make(b.params), p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
+        outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j, see: -1 }));
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
-      const node = { name, inputs: new Array(nIn).fill(-1) };
+      const node = { name, short: b.name ?? b.id, inputs: new Array(nIn).fill(-1) };
       if (def.tf) {
         const tf = def.tf(b.params);
         const ss = tf2ss(tf.num, tf.den);
-        Object.assign(node, { kind: 'ss', ss, ft: ss.D !== 0, bound: rootBound(tf.den), delay: Number(tf.delay) || 0 });
-        if (node.delay > 0) node.ft = false;
+        if (ss.n === 1) { ss.B[0] *= ss.C[0]; ss.C[0] = 1; }
+        const delay = Number(tf.delay) || 0;
+        Object.assign(node, { kind: 'ss', ss, ft: ss.D !== 0 && (model || !(delay > 0)), bound: rootBound(tf.den), delay });
       } else if (b.type === 'gain') Object.assign(node, { kind: 'gain', K: b.params.K, ft: true });
       else if (b.type === 'sum') Object.assign(node, { kind: 'sum', signs: [...b.params.signs].map((c) => (c === '-' ? -1 : 1)), ft: true });
       else if (b.type === 'saturation') Object.assign(node, { kind: 'sat', lo: Math.min(b.params.min, b.params.max), hi: Math.max(b.params.min, b.params.max), ft: true });
-      else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, y0: b.params.y0, ft: b.params.L <= 0 });
+      else if (b.type === 'delay') Object.assign(node, { kind: 'delay', L: b.params.L, y0: b.params.y0, ft: model || b.params.L <= 0 });
       else if (b.type === 'switch') Object.assign(node, { kind: 'switch', pick: b.params.position - 1, ft: true });
       else if (b.type === 'fcn') Object.assign(node, { kind: 'fcn', f: compileExpr(b.params.expr, { vars: true }), env: { u: 0, t: 0 }, ft: true });
       else if (b.type === 'quantizer') Object.assign(node, { kind: 'quant', q: b.params.q, ft: true });
@@ -3755,14 +5358,14 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
     return { outs, ins };
   }
-  level(diagram, '', true);
+  level(diagram, '', '', true);
   for (const [key, k] of ctrlNodes) {
     const [r = -1, y = -1] = nodes[k].inputs;
     if (r >= 0) probeList.push([`${key}.r`, r]);
     if (y >= 0) probeList.push([`${key}.y`, y]);
     probeList.push([`${key}.u`, k]);
   }
-  if (!opts.standalone) {
+  if (!standalone) {
     if (outNode < 0) throw new Error(`${path}: add an Out block for the plant output y`);
     if (extNode < 0) warnings.push(`${path}: no In block, so the plant ignores u`);
   }
@@ -3777,34 +5380,105 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (nodes[i].inputs.every((s) => s < 0 || !pending.has(s))) { order.push(i); pending.delete(i); progress = true; }
     }
   }
-  if (pending.size) throw new Error(`${path}: algebraic loop through ${[...pending].map((i) => nodes[i].name).join(', ')}; put a block with state (integrator, lag) in the loop`);
+  if (pending.size) throw new Error(`${path}: algebraic loop through ${[...pending].map((i) => nodes[i].name).join(', ')}; put a block with state (integrator, lag) in the loop${model ? ' (in a model, dead times pass straight through)' : ''}`);
 
   let n = 0, bound = 0;
+  const stateNodes = [];
   for (const nd of nodes) {
-    if (nd.kind === 'ss') { nd.off = n; n += nd.ss.n; bound = Math.max(bound, nd.bound); }
-    if (nd.kind === 'ode') { nd.off = n; n += typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n; bound = Math.max(bound, nd.bound); }
+    if (nd.kind !== 'ss' && nd.kind !== 'ode') continue;
+    nd.nx = nd.kind === 'ss' ? nd.ss.n : typeof nd.ode.n === 'function' ? nd.ode.n(nd.p) : nd.ode.n;
+    nd.off = n; n += nd.nx; bound = Math.max(bound, nd.bound);
+    if (nd.nx > 0) stateNodes.push(nd);
   }
+  const states = [];
+  for (const nd of stateNodes) {
+    if (nd.kind === 'ode') nd.ode.states(nd.p).forEach((s, j) => states.push({ label: `${nd.name}.${s.name}`, name: s.name, unit: s.unit, angle: s.angle, index: nd.off + j }));
+    else for (let j = 0; j < nd.nx; j++) states.push(nd.nx === 1 ? { label: nd.name, name: nd.short, unit: '', angle: false, index: nd.off } : { label: `${nd.name}.x${j + 1}`, name: `${nd.short}.x${j + 1}`, unit: '', angle: false, index: nd.off + j });
+  }
+
   const vals = new Float64Array(nodes.length);
   const ctrls = nodes.filter((nd) => nd.kind === 'ctrl').sort((a, b) => b.observer - a.observer);
   const minTs = Math.min(Infinity, ...ctrls.map((nd) => nd.Ts));
   const sampleTimes = [...new Set(ctrls.map((nd) => nd.Ts))];
-  const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
+
+  const designs = [];
+  if (laws) {
+    const job = (opts.designs ?? defaultDesigns()).begin(diagram, () => compileDiagram(structuredClone(diagram), path, { mode: 'model' }), { guest: !opts.designs && defaultDesigns() !== SYNC_DESIGNS });
+    for (const nd of ctrls) {
+      if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
+      const inputs = blockInputNames(diagram, nd.idPath);
+      const fed = nd.observer ? nd.inputs[0] : nd.i;
+      const sink = fed >= 0 ? probeList.find(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === fed) : null;
+      const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: sink?.[0] ?? (nd.observer ? inputs[0] : 'u'), outputs: nd.outv.length };
+      const status = job.resolve(block, nd.variant, nd.lib);
+      nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
+      designs.push(status);
+    }
+    job.end();
+  }
+  const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
   let h = 0;
-  const histAt = (hist, tau, y0 = 0) => {
+  let left = false;
+  const histAt = (nd, tau, y0 = 0) => {
+    const hist = nd.hist;
     if (tau < 0 || !hist.length) return y0;
-    const f = tau / h, i = Math.floor(f);
+    const f = tau / h, i = left ? Math.max(0, Math.ceil(f - 1e-9) - 1) : Math.floor(f + 1e-9);
     if (i >= hist.length - 1) return hist[hist.length - 1];
-    return hist[i] + (hist[i + 1] - hist[i]) * (f - i);
+    return hist[i] + ((nd.histL[i + 1] ?? hist[i + 1]) - hist[i]) * (f - i);
   };
   const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
   const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
 
+  function outputs(list, t, X, o, u) {
+    for (let q = 0; q < list.length; q++) {
+      const i = list[q], nd = nodes[i];
+      let y;
+      switch (nd.kind) {
+        case 'ext': y = u; break;
+        case 'src': y = model ? nd.at : nd.fn(t); break;
+        case 'pass': y = inOf(nd); break;
+        case 'gain': y = nd.K * inOf(nd); break;
+        case 'sum': y = 0; for (let s = 0; s < nd.signs.length; s++) y += nd.signs[s] * inOf(nd, s); break;
+        case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
+        case 'delay': y = model || nd.L <= 0 ? inOf(nd) : histAt(nd, t - nd.L, nd.y0 ?? (nd.hist.length ? nd.hist[0] : inOf(nd))); break;
+        case 'switch': y = inOf(nd, nd.pick); break;
+        case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
+        case 'quant': y = model ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
+        case 'noise': y = model ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
+        case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
+        case 'tap': y = nd.see >= 0 ? X[o + nd.see] : nodes[nd.parent].outv[nd.j]; break;
+        case 'ctrl': y = nd.u; break;
+        case 'xplant': y = nd.outv[0]; break;
+        default: {
+          const { ss } = nd;
+          const inp = nd.delay > 0 && !model ? histAt(nd, t - nd.delay) : inOf(nd);
+          y = ss.D * inp;
+          for (let j = 0; j < ss.n; j++) y += ss.C[j] * X[o + nd.off + j];
+        }
+      }
+      vals[i] = y;
+    }
+  }
+  function rates(list, t, X, o, dX) {
+    for (let q = 0; q < list.length; q++) {
+      const nd = list[q];
+      if (nd.kind === 'ode') { nd.rates(X, o + nd.off, inOf(nd), dX); continue; }
+      const { ss } = nd, base = o + nd.off;
+      const inp = nd.delay > 0 && !model ? histAt(nd, t - nd.delay) : inOf(nd);
+      for (let r = 0; r < ss.n; r++) {
+        let s = ss.B[r] * inp;
+        for (let c = 0; c < ss.n; c++) s += ss.A[r * ss.n + c] * X[base + c];
+        dX[base + r] = s;
+      }
+    }
+  }
+
   const self = {
-    n, bound, warnings, minTs, sampleTimes,
+    n, bound, warnings, minTs, sampleTimes, states, designs,
     setStep(step) { h = step; },
     sample(t, X, o, u) {
       for (const nd of ctrls) {
-        if (t < nd.next - 1e-9) continue;
+        if (!nd.law || t < nd.next - 1e-9) continue;
         for (let s = 0; s < nd.x.length; s++) nd.x[s] = inOf(nd, s);
         const y = nd.law.step(nd.x);
         if (nd.observer) nd.outv.set(y.subarray ? y.subarray(0, nd.outv.length) : y.slice(0, nd.outv.length)); else nd.u = y;
@@ -3813,53 +5487,22 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       }
     },
     nextSample() { let t = Infinity; for (const nd of ctrls) if (nd.next < t) t = nd.next; return t; },
-    init(X, o) { for (const nd of nodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
-    eval(t, X, o, u, dX) {
-      for (const i of order) {
-        const nd = nodes[i];
-        let y;
-        switch (nd.kind) {
-          case 'ext': y = u; break;
-          case 'src': y = nd.fn(t); break;
-          case 'pass': y = inOf(nd); break;
-          case 'gain': y = nd.K * inOf(nd); break;
-          case 'sum': y = 0; for (let s = 0; s < nd.signs.length; s++) y += nd.signs[s] * inOf(nd, s); break;
-          case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
-          case 'delay': y = nd.L > 0 ? histAt(nd.hist, t - nd.L, nd.y0) : inOf(nd); break;
-          case 'switch': y = inOf(nd, nd.pick); break;
-          case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
-          case 'quant': y = nd.q * Math.round(inOf(nd) / nd.q); break;
-          case 'noise': y = inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
-          case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
-          case 'tap': y = nodes[nd.parent].outv[nd.j]; break;
-          case 'ctrl': y = nd.u; break;
-          case 'xplant': y = nd.outv[0]; break;
-          default: {
-            const { ss } = nd;
-            const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
-            y = ss.D * inp;
-            for (let j = 0; j < ss.n; j++) y += ss.C[j] * X[o + nd.off + j];
-          }
-        }
-        vals[i] = y;
-      }
-      if (dX) {
-        for (const nd of nodes) {
-          if (nd.kind === 'ode') { nd.ode.f(X, o + nd.off, inOf(nd), nd.p, dX); continue; }
-          if (nd.kind !== 'ss') continue;
-          const { ss } = nd, base = o + nd.off;
-          const inp = nd.delay > 0 ? histAt(nd.hist, t - nd.delay) : inOf(nd);
-          for (let r = 0; r < ss.n; r++) {
-            let s = ss.B[r] * inp;
-            for (let c = 0; c < ss.n; c++) s += ss.A[r * ss.n + c] * X[base + c];
-            dX[base + r] = s;
-          }
-        }
-      }
+    init(X, o) { for (const nd of stateNodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
+    eval(t, X, o, u, dX, end = false) {
+      left = end;
+      outputs(order, t, X, o, u);
+      if (dX) rates(stateNodes, t, X, o, dX);
       return outNode >= 0 ? vals[outNode] : 0;
     },
     probes: () => probeList.map(([name, k]) => [name, vals[k]]),
-    record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
+    record() { for (const nd of delays) { nd.hist.push(inOf(nd)); if (nd.histL.length < nd.hist.length) nd.histL.push(inOf(nd)); } },
+    recordLeft() { for (const nd of delays) nd.histL.push(inOf(nd)); },
+    snapshot(t, X, o = 0) {
+      const held = {}, inputs = {}, sources = {};
+      for (const nd of ctrls) { held[nd.idPath] = nd.observer ? Float64Array.from(nd.outv) : nd.u; inputs[nd.idPath] = Float64Array.from(nd.x); }
+      for (const nd of nodes) if (nd.kind === 'src' && nd.signal !== null) sources[nd.signal] = nd.fn(t);
+      return { t, X: Float64Array.from(X.subarray(o, o + n)), held, inputs, sources };
+    },
     externals: externals.map((k) => ({ name: nodes[k].name, params: nodes[k].p, y: nodes[k].outv, u: () => nodes[k].inputs.map((s) => (s < 0 ? 0 : vals[s])) })),
     links() {
       const ext = externals[0] ?? -1;
@@ -3887,10 +5530,229 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       return { sinks, sources, ctrls };
     },
   };
+  if (!model) return self;
+
+  const owner = new Int32Array(n);   
+  for (const nd of stateNodes) owner.fill(nd.i, nd.off, nd.off + nd.nx);
+  const blockNode = (idPath) => nodes.find((nd) => nd.kind === 'ctrl' && nd.idPath === idPath);
+  let active = null;   
+  const memo = new Map();
+  const sorted = (o) => Object.entries(o ?? {}).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const plain = (v) => (typeof v === 'number' ? v : Array.from(v ?? []));
+
+  function buildModel(idPath, at) {
+    const blk = blockNode(idPath);
+    if (!blk) throw modelError('no-block', `no Controller or Observer "${idPath}" in the plant`);
+    const cut = blk.observer ? blk.inputs[0] : blk.i;
+    if (cut < 0) throw modelError('no-cut', `nothing is wired to input 1 (u) of the observer '${blk.name}', so it cannot know what drives the plant`, 'wire the plant input u to it');
+    const meas = blk.inputs.slice(1), m = meas.length;
+    const see = new Map();
+    for (const [obs, idx] of at.seeThrough ?? []) {
+      const o = blockNode(obs);
+      if (!o?.observer) throw modelError('no-block', `no Observer "${obs}" to look through`);
+      o.taps.forEach((tp, j) => { if (Number.isInteger(idx[j]) && idx[j] >= 0 && idx[j] < n) see.set(tp, idx[j]); });
+    }
+    const deps = (i) => {
+      if (i === cut) return NONE;
+      const nd = nodes[i];
+      if (nd.kind === 'src' || nd.kind === 'ext' || nd.kind === 'ctrl') return NONE;
+      if (nd.kind === 'tap') return nodes[nd.parent].kind === 'ode' ? [nd.parent] : see.has(i) ? [owner[see.get(i)]] : NONE;
+      if (nd.kind === 'switch') return [nd.inputs[nd.pick]];
+      return nd.inputs;
+    };
+    const reads = (i) => (nodes[i].kind === 'ode' || (nodes[i].kind === 'ss' && nodes[i].ss.D === 0) ? NONE : deps(i));
+    const users = nodes.map(() => []);
+    nodes.forEach((nd, i) => { for (const s of deps(i)) if (s >= 0) users[s].push(i); });
+    const walk = (starts, next) => {
+      const mark = new Uint8Array(nodes.length), stack = [];
+      for (const s of starts) if (s >= 0 && !mark[s]) { mark[s] = 1; stack.push(s); }
+      while (stack.length) for (const j of next(stack.pop())) if (j >= 0 && !mark[j]) { mark[j] = 1; stack.push(j); }
+      return mark;
+    };
+    const fromCut = walk([cut], (i) => users[i]);
+    const toMeas = walk(meas, deps);
+    const kept = stateNodes.filter((nd) => nd.i !== cut && fromCut[nd.i] && toMeas[nd.i]);
+    const outside = nodes.find((nd, i) => nd.kind === 'xplant' && (fromCut[i] || nd.i === cut || nodes.some((tp, j) => tp.kind === 'tap' && tp.parent === i && toMeas[j])));
+    if (outside) throw modelError('external-plant', `the plant runs outside the page (External plant '${outside.name}'): the page has no model of it to design with or analyse`, 'identify it first (the Identify tab is designed, not built yet), or set the gains by hand and tune it live');
+    const sliceOf = (starts) => { const used = walk(starts, reads); return Int32Array.from(order.filter((i) => used[i] && i !== cut)); };
+    const sliceF = sliceOf(kept.flatMap((nd) => nd.inputs));
+    const slice = sliceOf([...meas, ...kept.flatMap((nd) => nd.inputs)]);
+    const keep = Int32Array.from(kept.flatMap((nd) => Array.from({ length: nd.nx }, (_, j) => nd.off + j)));
+    const nk = keep.length;
+
+    const X0 = new Float64Array(n);
+    if (at.X) {
+      if (at.X.length !== n) throw modelError('bad-state', `the state has ${at.X.length} values; this plant has ${n}`);
+      X0.set(at.X);
+    } else self.init(X0, 0);
+    const t0 = Number(at.t) || 0;
+    const labels = blockInputNames(diagram, blk.idPath).slice(1);
+    const notes = [];
+
+    const held = at.held ?? {}, setU = [], setO = [], setSrc = [], setSee = [], through = new Set();
+    for (const i of slice) {
+      const nd = nodes[i];
+      if (nd.kind === 'tap' && see.has(i)) through.add(nodes[nd.parent].name);
+      if (nd.kind === 'ctrl' && !nd.observer) {
+        const v = Number(held[nd.idPath] ?? 0);
+        setU.push([i, v]);
+        notes.push(`controller '${nd.name}' holds its output at ${fmt(v)}: the design sees its loop open`);
+      }
+      if (nd.kind === 'src') setSrc.push([i, nd.signal === null ? 0 : Number(at.sources?.[nd.signal] ?? 0)]);
+      if (nd.kind === 'tap' && nodes[nd.parent].kind === 'ctrl') {
+        setSee.push([i, see.has(i) ? see.get(i) : -1]);
+        const o = nodes[nd.parent];
+        if (!see.has(i) && !setO.some(([k]) => k === o.i)) {
+          const v = new Float64Array(o.outv.length), hv = held[o.idPath];
+          if (typeof hv === 'number') v.fill(hv); else if (hv) v.set(Array.from(hv).slice(0, v.length));
+          setO.push([o.i, v]);
+          const extra = o.taps.filter((tp) => !see.has(tp)).map((tp) => nodes[tp].name.slice(o.name.length + 1));
+          notes.push(o.taps.some((tp) => see.has(tp)) ? `${extra.join(', ')} of '${o.name}' ${extra.length === 1 ? 'stands' : 'stand'} for no state of this plant and ${extra.length === 1 ? 'is' : 'are'} held` : `estimates of '${o.name}' are held; the design does not look through a hand observer`);
+        }
+      }
+    }
+
+    const sensorPath = meas.map((mk) => walk([mk], reads));
+    const sensors = meas.map(() => ({ std: 0, q: 0, parts: [] }));
+    for (const i of slice) {
+      const nd = nodes[i];
+      if ((nd.kind !== 'quant' && nd.kind !== 'noise') || sensorPath.some((on) => on[i])) continue;
+      notes.push(nd.kind === 'quant' ? `quantizer '${nd.name}' is the identity in the model (step ${fmt(nd.q)})` : `noise '${nd.name}' adds 0 in the model (σ ${fmt(nd.std)}): it is on no measurement's way`);
+    }
+
+    const delayOf = (i) => (nodes[i].kind === 'delay' ? nodes[i].L : nodes[i].kind === 'ss' ? nodes[i].delay : 0);
+    const delay = meas.map((mk, k) => {
+      if (mk < 0 || !fromCut[mk]) return 0;
+      const back = walk([mk], deps), list = [];
+      for (let i = 0; i < nodes.length; i++) if (back[i] && fromCut[i] && i !== cut) list.push(i);
+      const lo = new Float64Array(nodes.length).fill(Infinity), hi = new Float64Array(nodes.length).fill(-Infinity);
+      lo[cut] = hi[cut] = 0;
+      let settled = false;
+      for (let it = 0; it <= list.length + 1 && !settled; it++) {
+        settled = true;
+        for (const j of list) {
+          const w = delayOf(j);
+          for (const s of deps(j)) {
+            if (s < 0 || !(s === cut || (back[s] && fromCut[s]))) continue;
+            if (lo[s] + w < lo[j]) { lo[j] = lo[s] + w; settled = false; }
+            if (hi[s] + w > hi[j] + 1e-12) { hi[j] = hi[s] + w; settled = false; }
+          }
+        }
+      }
+      const longest = settled ? hi[mk] : Infinity;
+      if (longest - lo[mk] > 1e-12) notes.push(`dead time on the way to ${labels[k]} differs between paths (${fmt(lo[mk])} to ${longest === Infinity ? '∞' : fmt(longest)} s): it sits in a loop or a parallel branch and is left out${lo[mk] > 0 ? `, but for the ${fmt(lo[mk])} s every path has` : ''}`);
+      return lo[mk] === Infinity ? 0 : lo[mk];
+    });
+
+    const sink = probeList.find(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === cut);
+    const inputLabel = sink?.[0] ?? (blk.observer ? nodes[cut].name : 'u');
+    if (!meas.some((mk) => mk >= 0 && fromCut[mk])) {
+      const between = nodes.filter((nd) => nd.kind === 'ctrl' && !nd.observer && nd.i !== cut && nd.inputs.some((s) => s >= 0 && fromCut[s])).map((nd) => `'${nd.name}'`);
+      notes.push(`${inputLabel} reaches none of the measurements${between.length ? `: controller ${between.join(', ')} holds its output in between` : ''}`);
+    }
+
+    const Xf = Float64Array.from(X0), dXf = new Float64Array(n), yScratch = new Float64Array(m);
+    const bind = () => {
+      for (const [i, v] of setU) nodes[i].u = v;
+      for (const [i, v] of setO) nodes[i].outv.set(v);
+      for (const [i, v] of setSrc) nodes[i].at = v;
+      for (const [i, s] of setSee) nodes[i].see = s;
+      active = mdl;
+    };
+    const evaluate = (x, u, list) => {
+      if (active !== mdl) bind();
+      for (let i = 0; i < nk; i++) Xf[keep[i]] = x[i];
+      vals[cut] = u;
+      outputs(list, t0, Xf, 0, 0);
+    };
+    const mdl = {
+      idPath: blk.idPath, name: blk.name, kind: blk.observer ? 'observer' : 'controller',
+      n: nk, m, X0, x0: Float64Array.from(keep, (g) => X0[g]),
+      input: { label: inputLabel },
+      states: Array.from(keep, (g) => ({ ...states[g] })),
+      outputs: labels.map((label) => ({ label, angle: false, unit: '' })),
+      delay, sensors, through: [...through],
+      bound: Math.max(0, ...kept.map((nd) => nd.bound)),
+      warnings: notes,
+      f(x, u, dx) {
+        evaluate(x, u, sliceF);
+        rates(kept, t0, Xf, 0, dXf);
+        for (let i = 0; i < nk; i++) dx[i] = dXf[keep[i]];
+      },
+      y(x, u, out) {
+        evaluate(x, u, slice);
+        for (let k = 0; k < m; k++) out[k] = meas[k] < 0 ? 0 : vals[meas[k]];
+      },
+      limits(x, u) {
+        mdl.y(x, u, yScratch);
+        const out = [];
+        for (const i of slice) {
+          const nd = nodes[i];
+          if (nd.kind !== 'sat') continue;
+          const v = inOf(nd), near = 1e-6 * Math.max(1, Math.abs(v)), lim = `(input ${fmt(v)}, limits ${fmt(nd.lo)} to ${fmt(nd.hi)})`;
+          if (v < nd.lo || v > nd.hi) out.push({ name: nd.name, edge: false, sentence: `'${nd.name}' is saturated at the operating point ${lim}: the model sees no slope through it` });
+          else if (v - nd.lo <= near || nd.hi - v <= near) out.push({ name: nd.name, edge: true, sentence: `'${nd.name}' is at its limit at the operating point ${lim}: the slope differs left and right` });
+        }
+        return out;
+      },
+      atLimits: (x, u) => mdl.limits(x, u).map((s) => s.sentence),
+    };
+    const zx = new Float64Array(nk);
+    const gainTo = (i, k) => {
+      if (meas[k] === i) return 1;
+      const p = slice.indexOf(i);
+      if (p < 0 || meas[k] < 0) return 0;
+      const head = slice.subarray(0, p + 1), tail = slice.subarray(p + 1);
+      evaluate(zx, 0, head);
+      const d = 1e-6 * Math.max(1, Math.abs(vals[i]));
+      const at = (e) => { evaluate(zx, 0, head); vals[i] += e; outputs(tail, t0, Xf, 0, 0); return vals[meas[k]]; };
+      return Math.abs((at(d) - at(-d)) / (2 * d));
+    };
+    sensors.forEach((sn, k) => {
+      let std2 = 0, q2 = 0;
+      for (const i of slice) {
+        const nd = nodes[i];
+        if (!sensorPath[k][i] || (nd.kind !== 'quant' && nd.kind !== 'noise')) continue;
+        const g = gainTo(i, k), times = Math.abs(g - 1) > 1e-6 ? ` × ${fmt(g)}` : '';
+        if (nd.kind === 'quant') { q2 += (g * nd.q) ** 2; sn.parts.push(`quantizer '${nd.name}' step ${fmt(nd.q)}${times}`); }
+        else { std2 += (g * nd.std) ** 2; sn.parts.push(`noise '${nd.name}' σ ${fmt(nd.std)}${times}`); }
+      }
+      sn.std = Math.sqrt(std2);
+      sn.q = Math.sqrt(q2);
+    });
+    const xs = Float64Array.from(mdl.x0), yp = new Float64Array(m), ym = new Float64Array(m);
+    const slopes = Array.from({ length: m }, () => []);
+    for (let i = 0; i < nk; i++) {
+      const x = xs[i], dx = 1e-6 * Math.max(1, Math.abs(x));
+      xs[i] = x + dx; mdl.y(xs, 0, yp);
+      xs[i] = x - dx; mdl.y(xs, 0, ym);
+      xs[i] = x;
+      for (let k = 0; k < m; k++) { const d = (yp[k] - ym[k]) / (2 * dx); if (Math.abs(d) > 1e-9) slopes[k].push([i, d]); }
+    }
+    slopes.forEach((row, k) => {
+      const one = row.length === 1 && Math.abs(row[0][1] - 1) < 1e-6;
+      mdl.outputs[k].angle = one && mdl.states[row[0][0]].angle;
+      mdl.outputs[k].unit = one ? mdl.states[row[0][0]].unit : '';
+      if (row.length === 1) Object.assign(mdl.outputs[k], { state: row[0][0], slope: row[0][1] });
+    });
+    return mdl;
+  }
+
+  self.seen = (idPath, at = {}) => {
+    const id = Array.isArray(idPath) ? idPath.join('/') : String(idPath);
+    const key = JSON.stringify([id, sorted(at.held).map(([k, v]) => [k, plain(v)]), sorted(at.sources), at.X ? Array.from(at.X) : null, Number(at.t) || 0, at.seeThrough ? [...at.seeThrough].map(([k, v]) => [k, Array.from(v)]).sort() : null]);
+    let mdl = memo.get(key);
+    if (!mdl) {
+      mdl = buildModel(id, at);
+      if (memo.size >= 16) memo.delete(memo.keys().next().value);
+      memo.set(key, mdl);
+    }
+    return mdl;
+  };
   return self;
 }
 
-return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, compileDiagram };
+return { ELEMENTS, outputNames, diagramBlockDef, diagramTypes, blockPorts, parseEnd, normalizeDiagram, wrapPlant, plantDiagram, diagramNames, blockInputNames, compileDiagram };
 })();
 // ---- core/sim.js
 __mods['core/sim.js'] = (() => {
@@ -3941,12 +5803,13 @@ function simulate(loop, sim, opts = {}) {
   for (const el of elems) { el.off = N; N += el.n; el.setStep(h); }
   const sig = new Float64Array(3);
 
-  function chainEval(t, X, u, dX) {
-    sig[0] = elems[0].eval(t, X, elems[0].off, u, dX);
-    sig[1] = elems[1].eval(t, X, elems[1].off, sig[0] + distFn(t), dX);
-    sig[2] = elems[2].eval(t, X, elems[2].off, sig[1], dX);
+  function chainEval(t, X, u, dX, end = false) {
+    sig[0] = elems[0].eval(t, X, elems[0].off, u, dX, end);
+    sig[1] = elems[1].eval(t, X, elems[1].off, sig[0] + distFn(t), dX, end);
+    sig[2] = elems[2].eval(t, X, elems[2].off, sig[1], dX, end);
   }
   function record() { for (const el of elems) el.record(); }
+  function recordLeft() { for (const el of elems) el.recordLeft(); }
 
   const ctrl = opts.openLoop ? null : makeController(loop.controller, Ts, warnings);
   const rand = gaussian(noise.seed);
@@ -3964,7 +5827,6 @@ function simulate(loop, sim, opts = {}) {
   let unstable = false;
   let blowup = 1;
   chainEval(0, X, 0, null);
-  record();
 
   for (let k = 0; k <= K; k++) {
     const t = k * Ts;
@@ -3985,6 +5847,8 @@ function simulate(loop, sim, opts = {}) {
       break;
     }
     if (k === K) break;
+    chainEval(t, X, u, null);
+    record();
 
     for (let s = 0; s < m; s++) {
       const ts = t + s * h;
@@ -3994,10 +5858,10 @@ function simulate(loop, sim, opts = {}) {
       for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k2[i];
       chainEval(ts + 0.5 * h, Xt, u, k3);
       for (let i = 0; i < N; i++) Xt[i] = X[i] + h * k3[i];
-      chainEval(ts + h, Xt, u, k4);
+      chainEval(ts + h, Xt, u, k4, true);
       for (let i = 0; i < N; i++) X[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
       chainEval(ts + h, X, u, null);
-      record();
+      if (s < m - 1) record(); else recordLeft();
     }
   }
 
@@ -4110,11 +5974,15 @@ const substeps = (...a) => stepPlan(...a).m;
 
 const onGrid = (t) => Math.round(t * 1e9) / 1e9;
 
-function simulateSystem(diagram, signals, sim) {
+function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
   const Ts = Number(sim.sampleTime), duration = Number(sim.duration);
-  const K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
+  let K = Math.min(Math.round(duration / Ts), MAX_SAMPLES);
+  if (until !== undefined) {
+    if (!(Number(until) >= 0)) throw new Error('until: a time of the run, at least 0 s');
+    K = Math.min(K, Math.round(Number(until) / Ts));
+  }
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
-  const el = compileDiagram(diagram, 'plant', { sources, standalone: true });
+  const el = compileDiagram(diagram, 'plant', { sources, standalone: true, designs });
   const warnings = [...el.warnings];
   const { m, split } = stepPlan(Ts, el.bound, el.sampleTimes, K, warnings);
   const h = Ts / m, N = el.n;
@@ -4129,7 +5997,7 @@ function simulateSystem(diagram, signals, sim) {
     for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
     el.eval(ts + 0.5 * dt, Xt, 0, 0, k3);
     for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
-    el.eval(ts + dt, Xt, 0, 0, k4);
+    el.eval(ts + dt, Xt, 0, 0, k4, true);
     for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   };
   const t = new Float64Array(K + 1);
@@ -4159,11 +6027,14 @@ function simulateSystem(diagram, signals, sim) {
       rk4(a, ts + h - a);
       steps++;
       el.eval(te, X, 0, 0, null);
+      el.recordLeft();
       el.sample(te, X, 0, 0);
       el.record();
     }
   }
-  return { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings } };
+  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs } };
+  if (until !== undefined) res.snapshot = unstable ? null : el.snapshot(K * Ts, X);
+  return res;
 }
 
 return { simulate, stepPlan, substeps, simulateSystem };
@@ -4268,9 +6139,8 @@ function cartView(name, rods, caption, box) {
   };
 }
 
-const K_SINGLE = [-9.177, -63.18, -10.33, -13.34];
-const K_TRIPLE = [-6.9896, -497.8, 1400.5, -1011.7, -12.018, -18.079, 79.602, -102.41];
-const K_TRIPLE_GENTLE = [-2.3, -417, 1050, -686, -4.496, -14.83, 62.84, -67.32];
+const Q_SINGLE = [10, 50, 1, 1];
+const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 
 const EXAMPLE_PLANTS = [
   {
@@ -4344,7 +6214,7 @@ const EXAMPLE_PLANTS = [
   {
     name: 'Following a sine (XY)',
     summary: 'The motor following a slow sine, drawn as error against reference. Step through P, PD, PID and feedforward: why feedback alone lags a moving target, and what feedforward adds.',
-    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line.\n\nPID + feedforward adds a velocity feedforward Kv, set by hand, so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time.',
+    notes: 'The motor follows a slow sine, one period per sweep. The scope opens in XY mode with Δ: across is the reference r, up is the error r − angle. Perfect following would be a flat line on the axis. With P alone the error leads r by a quarter period and the figure is a wide ellipse; PD shrinks it; the integral of the PID turns the error against r, so the figure collapses to a thin tilted line.\n\nPID + feedforward adds a velocity feedforward Kv that the page computes from the motor (the voltage per rad/s its inverse needs, plus the PID\'s Kd, which the derivative on the angle takes away), so the voltage the moving reference needs comes from r itself: once the start-up ringing has died away, the figure lies flat on the axis. Each figure reads out its best line and its spread σ. Press Time to see the same runs over time. Try its Feedforward choice "and acceleration": Ka from the motor\'s inertia flattens the figure about four times more.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'sine', params: { amplitude: 1, frequency: 0.2 } }] },
       d: { period: PERIOD, components: [] },
@@ -4355,7 +6225,7 @@ const EXAMPLE_PLANTS = [
       { name: 'P', type: 'pid', params: { Kp: 3, umin: -12, umax: 12 } },
       { name: 'PD', type: 'pid', params: { Kp: 20, Kd: 1.5, Tf: 0.01, umin: -12, umax: 12 } },
       { name: 'PID', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, umin: -12, umax: 12 } },
-      { name: 'PID + feedforward', type: 'pid', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, Kv: 1.7, umin: -12, umax: 12 } },
+      { name: 'PID + feedforward', type: 'pidFF', params: { Kp: 30, Ki: 80, Kd: 1, Tf: 0.02, order: '1', umin: -12, umax: 12 } },
     ]),
     views: motorViews(),
   },
@@ -4433,7 +6303,7 @@ const EXAMPLE_PLANTS = [
   {
     name: 'Conical tank, gain scheduling',
     summary: 'A tank that widens upwards: quick when nearly empty, slow when full. Compare a gain-scheduled PI with fixed ones: why one set of gains cannot fit a plant that changes.',
-    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other. The gain-scheduled PI looks its gains up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
+    notes: 'A pump fills a tank that widens upwards; its outlet drains by gravity. Nearly empty, the level reacts fast; nearly full, slowly: a PI tuned for one level is wrong at the other.\n\nThe page computes the PI gains from the tank itself at each level (pole cancellation), and the gain-scheduled PI looks them up from the level. The reference climbs 0.15 → 0.45 → 0.8 m; at 2.2 s water is drawn off (d).',
     signals: {
       r: { period: PERIOD, components: [{ type: 'dc', params: { level: 0.15 } }, { type: 'step', params: { amplitude: 0.3, time: 1.5 } }, { type: 'step', params: { amplitude: 0.35, time: 3 } }] },
       d: { period: PERIOD, components: [pulse(0.15, 2.2, 0.5)] },
@@ -4445,12 +6315,12 @@ const EXAMPLE_PLANTS = [
         src('r', 30, 112, 'm'),
         src('d', 300, 220, 'm³/s'),
         ctrl(130, 90, 2, 0.02, [
-          { name: 'Gain-scheduled PI', type: 'gainScheduled', params: { at: [0.1, 0.25, 0.5, 0.75, 1], Kp: [0.113, 0.332, 0.95, 1.887, 3.142], Ki: [2.801, 1.772, 1.253, 1.023, 0.886], u0: 0.172, Tr: 0.1, umin: 0, umax: 3 } },
-          { name: 'PI tuned for full', type: 'pid', params: { Kp: 2.112, Ki: 0.99, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
-          { name: 'PI tuned for empty', type: 'pid', params: { Kp: 0.173, Ki: 2.287, Kd: 0, u0: 0.172, umin: 0, umax: 3 } },
+          { name: 'Gain-scheduled PI', type: 'scheduledPI', params: { at: [0.1, 0.25, 0.5, 0.75, 0.95], Tcl: 0.25, Tr: 0.1, umin: 0, umax: 3 } },
+          { name: 'PI tuned for full', type: 'scheduledPI', params: { at: [0.8], Tcl: 0.25, umin: 0, umax: 3 } },
+          { name: 'PI tuned for empty', type: 'scheduledPI', params: { at: [0.15], Tcl: 0.25, umin: 0, umax: 3 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
-        { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: 0.172 }, x: 320, y: 96 },
+        { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: null }, x: 320, y: 96 },
         { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
         { id: 'tank', type: 'conicalTank', name: 'tank', params: { r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }, x: 510, y: 90 },
         sink('h', 720, 106, 'm'),
@@ -4479,8 +6349,8 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Pendulum swing-up',
-    summary: 'A pendulum below a cart, swung up and balanced. Compare with state feedback alone, and push it: energy-based control brings it near the top, a linear controller holds it there.',
-    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with state feedback and holds it; at 3.5 s it is pushed (d). Flip to "State feedback only" to see why the swing-up is needed.',
+    summary: 'A pendulum below a cart, swung up and balanced. Compare with LQR alone, and push it: energy-based control brings it near the top, a linear controller computed from the cart and pole holds it there.',
+    notes: 'A pendulum hangs below a cart. The controller pumps energy into the swing (a Lyapunov function of the energy falls with every push), then, near the top, catches the pole with LQR, its gains computed from the cart and pole, and holds it; at 3.5 s it is pushed (d). Flip to "LQR only" to see why the swing-up is needed.',
     signals: {
       r: { period: PERIOD, components: [] },
       d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
@@ -4492,8 +6362,8 @@ const EXAMPLE_PLANTS = [
         src('r', 30, 112, 'm'),
         src('d', 300, 200, 'N'),
         ctrl(130, 80, 5, 0.01, [
-          { name: 'Swing-up + state feedback', type: 'swingUp', params: { kE: 3, kx: 8, kv: 5, l: 0.5, g: 9.81, thetaS: 0.4, K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
-          { name: 'State feedback only', type: 'stateFeedback', params: { K: K_SINGLE, kr: K_SINGLE[0], umin: -25, umax: 25 } },
+          { name: 'Swing-up + LQR catch', type: 'swingUpLqr', params: { kE: 3, kx: 8, kv: 5, thetaS: 0.4, Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
+          { name: 'LQR only', type: 'lqr', params: { Q: Q_SINGLE, R: 0.1, umin: -25, umax: 25 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 104 },
@@ -4511,25 +6381,25 @@ const EXAMPLE_PLANTS = [
   },
   {
     name: 'Triple pendulum',
-    summary: 'Three rods balanced on a moving cart by state feedback (LQR). Push it, move the cart, try the gentle LQR: how one controller that uses every state balances an unstable chain.',
-    notes: 'Three rods balanced on top of each other on a cart, held up by state feedback from all eight states (positions, angles and their rates; gains from LQR). It starts with the lowest rod tilted 3°, is pushed at 1 s (d), and the cart is moved 0.5 m at 2.5 s (r). Flip to the gentle LQR to see a softer, slower controller.',
+    summary: 'Three rods hanging below a cart, swung up by a plan the page computes, then held by LQR. Push it, or flip to LQR only: why a controller for the top alone cannot get there.',
+    notes: 'Three rods hang below a cart. When the system loads, the page plans a swing-up from the cart and rods themselves; until the plan is ready (a few seconds, its progress beside the title) the rods hang.\n\nThe plan is a force that brings all three up in 2.4 s, followed with time-varying LQR, then LQR holds them. At 3.5 s the cart is pushed (d). Flip to "LQR only" to see that a controller for the top alone cannot get there.',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 0.5, time: 2.5 } }] },
-      d: { period: PERIOD, components: [pulse(4, 1, 0.1)] },
+      r: { period: PERIOD, components: [] },
+      d: { period: PERIOD, components: [pulse(4, 3.5, 0.1)] },
     },
-    scope: { channels: channels('r', 'x', 'theta1', 'F') },
+    scope: { channels: channels('x', 'theta1', 'F', 'd') },
     ui: ui('Cart and triple pendulum'),
     diagram: {
       blocks: [
         src('r', 30, 132, 'm'),
         src('d', 300, 260, 'N'),
         ctrl(130, 70, 9, 0.01, [
-          { name: 'LQR', type: 'stateFeedback', params: { K: K_TRIPLE, kr: K_TRIPLE[0], umin: -40, umax: 40 } },
-          { name: 'LQR, gentle', type: 'stateFeedback', params: { K: K_TRIPLE_GENTLE, kr: K_TRIPLE_GENTLE[0], umin: -40, umax: 40 } },
+          { name: 'Planned swing-up + TV-LQR', type: 'trajectory', params: { T: 2.4, segments: 12, planShare: 0.75, Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
+          { name: 'LQR only (cannot swing up)', type: 'lqr', params: { Q: Q_TRIPLE, R: 0.1, umin: -40, umax: 40 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
         { id: 'sum', type: 'sum', params: { signs: '++' }, x: 330, y: 124 },
-        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: 0.05, theta20: 0, theta30: 0 }, x: 400, y: 60 },
+        { id: 'cart', type: 'pendulumCart', name: 'cart and 3 rods', params: { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, g: 9.81, b: 0.1, theta10: Math.PI, theta20: Math.PI, theta30: Math.PI }, x: 400, y: 60 },
         sink('x', 640, 64, 'm'), sink('theta1', 640, 100, 'rad'), sink('theta2', 640, 136, 'rad'), sink('theta3', 640, 172, 'rad'),
         sink('F', 330, 20, 'N'),
       ],
@@ -4543,7 +6413,7 @@ const EXAMPLE_PLANTS = [
       { len: 0.25, angle: '-theta1' },
       { len: 0.25, angle: '-(theta2 - theta1)' },
       { len: 0.25, angle: '-(theta3 - theta2)' },
-    ], 'x {x:5.2} m   θ1 {theta1*180/pi:5.1}°   θ2 {theta2*180/pi:5.1}°   θ3 {theta3*180/pi:5.1}°   F {F:5.1} N', [-1.3, -0.4, 1.3, 1.1])],
+    ], 'x {x:5.2} m   θ1 {theta1*180/pi:6.1}°   θ2 {theta2*180/pi:6.1}°   θ3 {theta3*180/pi:6.1}°   F {F:5.1} N', [-1.3, -0.8, 1.3, 1.1])],
   },
   {
     name: 'Oven, badly tuned',
@@ -4954,8 +6824,10 @@ const { ceil125 } = __mods['core/scale.js'];
 const { simulate, simulateSystem } = __mods['core/sim.js'];
 const { computeMetrics } = __mods['core/metrics.js'];
 const { normalizeGoal, evaluateGoal, compareEvals } = __mods['core/goal.js'];
-const { normalizeDiagram, diagramNames } = __mods['core/diagram.js'];
+const { normalizeDiagram, diagramNames, compileDiagram } = __mods['core/diagram.js'];
 const { normalizeView } = __mods['core/views.js'];
+const { DesignError, parseOp, operatingPoint, linearize } = __mods['core/linearize.js'];
+const { CONTROLLERS } = __mods['core/controllers.js'];
 const { parseSpeed, speedToJson } = __mods['core/speed.js'];
 const FORMAT = 'loop-tuner/2';
 const PALETTE_SIZE = 8;
@@ -5207,15 +7079,85 @@ function referenceTrace(project, name = 'r') {
   return { t, r: v };
 }
 
-function evaluateSystem(project) {
+function evaluateSystem(project, { designs } = {}) {
   const plant = project.system.plant;
   const sim = simOf(project);
   if (plant?.type !== 'diagram') {
     const signals = {};
     for (const name of Object.keys(project.system.signals)) signals[name] = referenceTrace(project, name).r;
-    return { t: referenceTrace(project).t, signals, info: { warnings: [] } };
+    return { t: referenceTrace(project).t, signals, info: { warnings: [], designs: [] } };
   }
-  return simulateSystem(plant.diagram, project.system.signals, sim);
+  return simulateSystem(plant.diagram, project.system.signals, sim, { designs });
+}
+
+function designSystem(project, { designs } = {}) {
+  const plant = project.system.plant;
+  if (plant?.type !== 'diagram') return [];
+  return compileDiagram(plant.diagram, 'plant', { standalone: true, designs }).designs ?? [];
+}
+
+
+function blockModel(project, idPath, at, { designs, limits } = {}) {
+  const plant = project.system.plant;
+  if (plant?.type !== 'diagram') throw new DesignError('no-diagram', 'the plant is not a block diagram, so no block sees a plant in it', 'build the plant in the Plant tab, or load a system from the System library');
+  const diagram = plant.diagram, id = Array.isArray(idPath) ? idPath.join('/') : String(idPath);
+  const parts = id.split('/');
+  const level = parts.slice(0, -1).reduce((d, x) => d?.blocks.find((b) => b.id === x && b.type === 'subsystem')?.diagram, diagram);
+  const block = level?.blocks.find((b) => b.id === parts.at(-1));
+  if (!block || (block.type !== 'controller' && block.type !== 'observer')) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl');
+  const op = parseOp(at);
+  const store = designs;
+  let statuses, snap = null;
+  if (op.kind === 't') {
+    const sim = simOf(project);
+    const run = simulateSystem(diagram, project.system.signals, { ...sim, duration: Math.max(sim.duration, op.t) }, { designs: store, until: op.t });
+    snap = run.snapshot;
+    if (!snap) throw new DesignError('diverged', `the run diverges before t = ${op.t} s: there is no state to linearise at`, 'pick an earlier time, or steady the loop first');
+    statuses = run.info.designs;
+  } else statuses = compileDiagram(diagram, 'plant', { standalone: true, sources: {}, designs: store }).designs;
+  const seeThrough = new Map();
+  for (const s of statuses) if (s.path !== id && s.values?.stateIndex) seeThrough.set(s.path, s.values.stateIndex);
+  const el = compileDiagram(structuredClone(diagram), 'plant', { mode: 'model' });
+  const model = el.seen(id, { ...(seeThrough.size ? { seeThrough } : {}), ...(snap ? { X: snap.X, held: snap.held, sources: snap.sources, t: snap.t } : {}) });
+  const v = block.variants?.[block.variant ?? 0]?.params ?? {};
+  const lim = limits ?? { umin: v.umin ?? -Infinity, umax: v.umax ?? Infinity };
+  const pt = snap ? operatingPoint(model, { kind: 't', t: snap.t, u: block.type === 'observer' ? snap.inputs[id]?.[0] ?? 0 : snap.held[id] ?? 0 }, lim) : operatingPoint(model, op, lim);
+  return { model, pt, statuses, block, id, snap };
+}
+
+function linearizeBlock(project, idPath, at = 'origin', opts = {}) {
+  const { model, pt, block, id, snap } = blockModel(project, idPath, at, opts);
+  return Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts, ...(snap ? { t: snap.t } : {}) });
+}
+
+function loopModel(project, idPath, at = 'origin', { designs } = {}) {
+  const { model, pt, statuses, block, id, snap } = blockModel(project, idPath, at, { designs });
+  if (block.type !== 'controller') throw new DesignError('not-a-controller', `'${block.name ?? block.id}' is an Observer: a loop is cut at a Controller's output`, 'pick the Controller that drives the plant');
+  const plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
+  if (plant.kinks.length) throw new DesignError('kink', `the plant has a kink at ${plant.op.label}: ${plant.kinks[0]}; a linear loop there would show the slope of neither side`, 'pick Start or Scope time (a state of the run), or a level away from the kink');
+  const variant = block.variants[block.variant ?? 0], def = CONTROLLERS[variant.type], Ts = block.params.Ts;
+  let values = null;
+  if (def.designed) {
+    const st = statuses.find((s) => s.path === id);
+    values = st?.values ?? null;
+    if (!values) {
+      const why = st?.error ? `: ${st.error.message}` : st?.status === 'pending' || st?.status === 'cancelled' ? ': its plan is not made yet' : '';
+      throw new DesignError('no-design', `${variant.name} has no design to analyse${why}`, st?.error?.hint || 'see its Computed box in the Controller tab');
+    }
+  }
+  if (!def.linear) throw new DesignError('no-linear', `${def.label} has no linear model`, 'analyse another variant');
+  const t = snap ? snap.t : parseOp(at).kind === 'initial' ? 0 : undefined;
+  let ctrl;
+  try { ctrl = def.linear(variant.params, Ts, { y: Array.from(plant.op.y), ...(t !== undefined ? { t } : {}) }, values); } catch (err) {
+    throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'pick an operating point where the law is linear, such as at rest');
+  }
+  const warnings = [...plant.warnings];
+  if (ctrl.note) warnings.push(ctrl.note);
+  const { umin = -Infinity, umax = Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
+  const atLimit = u >= umax - tol || u <= umin + tol;
+  if (atLimit) warnings.push(`${plant.input.label} = ${fmt(u)} is at its limit (${fmt(umin)} to ${fmt(umax)}) there: the controller saturates, and the linear loop does not hold`);
+  for (const obs of model.through) warnings.push(`the estimates of '${obs}' are read as the states they stand for: the filter's own dynamics are not in this loop`);
+  return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
 }
 
 function nextColor(candidates) {
@@ -5281,7 +7223,7 @@ function fmt(v, digits = 3) {
   return String(Number(v.toPrecision(digits)));
 }
 
-return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, FILTER_TYPES, VIEW_MODES, withLevels, levelsOf, withAboveNoise, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
+return { FORMAT, PALETTE_SIZE, LOOP_SIGNALS, normalizeProject, UI_RUN, UI_TABS, normalizeUi, checkName, normalizePlant, defaultSampleTime, MAX_SAMPLES, simOf, autoTimebase, fitChannel, LOOP_CHANNELS, normalizeScope, FILTER_TYPES, VIEW_MODES, withLevels, levelsOf, withAboveNoise, channelNames, pruneChannels, evaluateOpenLoop, loopReady, referenceTrace, evaluateSystem, designSystem, linearizeBlock, loopModel, nextColor, resolveLoop, evaluateCandidate, evaluateProject, findCandidate, uniqueName, describeController, fmt };
 })();
 // ---- core/tune.js
 __mods['core/tune.js'] = (() => {
@@ -5418,111 +7360,7 @@ const DEFAULT_PROJECT = {
   candidates: [],
 };
 
-const EXAMPLES = [
-  {
-    format: 'loop-tuner/1',
-    title: 'Third-order lag',
-    notes: 'Åström & Hägglund\'s classic test process 1/(s+1)³ with a load step at t = 16 s. Goal: fast with little overshoot, effort kept below 4. The Ziegler–Nichols settings are the textbook starting point (Ku = 8, Pu = 3.63 s).',
-    sim: { duration: 30, sampleTime: 0.01 },
-    system: {
-      reference: { type: 'step', params: { amplitude: 1, time: 1 } },
-      actuator: { type: 'ideal' },
-      disturbance: { type: 'step', params: { amplitude: 0.5, time: 16 } },
-      plant: { type: 'lagChain', params: { K: 1, tau: 1, n: 3 } },
-      sensor: { type: 'ideal' },
-      noise: { type: 'none' },
-    },
-    goal: { minimize: { itae: 1 }, subjectTo: { overshoot: { max: 5 }, uPeak: { max: 4 } }, settlingBand: 0.02 },
-    candidates: [
-      { name: 'P only', color: 0, controller: { type: 'P', params: { Kp: 1 } } },
-      { name: 'Z–N PI', color: 1, controller: { type: 'PI', params: { Kp: 3.6, Ki: 1.19, b: 1 } } },
-      { name: 'Z–N PID', color: 2, controller: { type: 'PID', params: { Kp: 4.8, Ki: 2.65, Kd: 2.18, Tf: 0.05, b: 1, c: 0 } } },
-      { name: 'Detuned PID', color: 3, controller: { type: 'PID', params: { Kp: 1.5, Ki: 0.6, Kd: 1, Tf: 0.05, b: 1, c: 0 } } },
-    ],
-    selected: 'Detuned PID',
-  },
-  {
-    format: 'loop-tuner/1',
-    title: 'Process with dead time',
-    notes: 'First order plus dead time, K = 2, τ = 5 s, L = 1 s, with measurement noise. SIMC rule (τc = L): Kp = τ / (K (τc + L)) = 1.25, Ti = τ = 5 s.',
-    sim: { duration: 40, sampleTime: 0.02 },
-    system: {
-      reference: { type: 'step', params: { amplitude: 1, time: 2 } },
-      actuator: { type: 'ideal' },
-      disturbance: { type: 'step', params: { amplitude: -0.3, time: 22 } },
-      plant: { type: 'fopdt', params: { K: 2, tau: 5, delay: 1 } },
-      sensor: { type: 'ideal' },
-      noise: { type: 'white', params: { std: 0.005, seed: 7 } },
-    },
-    goal: { minimize: { iae: 1 }, subjectTo: { overshoot: { max: 10 }, uTV: { max: 6 } }, settlingBand: 0.05 },
-    candidates: [
-      { name: 'SIMC PI', color: 0, controller: { type: 'PI', params: { Kp: 1.25, Ki: 0.25, b: 1 } } },
-      { name: 'Aggressive PI', color: 1, controller: { type: 'PI', params: { Kp: 2.2, Ki: 0.5, b: 1 } } },
-      { name: 'PID, noisy D', color: 2, controller: { type: 'PID', params: { Kp: 1.8, Ki: 0.3, Kd: 1.2, Tf: 0.02, b: 1, c: 0 } } },
-    ],
-  },
-  {
-    format: 'loop-tuner/1',
-    title: 'Motor position',
-    notes: 'DC motor shaft angle: integrator plus a 0.5 s mechanical lag, voltage limited to ±2. Goal: settle fast with almost no overshoot.',
-    sim: { duration: 12, sampleTime: 0.005 },
-    system: {
-      reference: { type: 'step', params: { amplitude: 1, time: 0.5 } },
-      actuator: { type: 'saturation', params: { uMin: -2, uMax: 2 } },
-      disturbance: { type: 'none' },
-      plant: { type: 'integratorLag', params: { K: 1, tau: 0.5 } },
-      sensor: { type: 'ideal' },
-      noise: { type: 'none' },
-    },
-    goal: { minimize: { settlingTime: 1 }, subjectTo: { overshoot: { max: 2 } }, settlingBand: 0.02 },
-    candidates: [
-      { name: 'P', color: 0, controller: { type: 'P', params: { Kp: 1 } } },
-      { name: 'P, high gain', color: 1, controller: { type: 'P', params: { Kp: 4 } } },
-      { name: 'PD', color: 2, controller: { type: 'PD', params: { Kp: 4, Kd: 0.8, Tf: 0.02, c: 0 } } },
-    ],
-  },
-  {
-    format: 'loop-tuner/1',
-    title: 'Lightly damped resonance',
-    notes: 'Second-order plant with ζ = 0.1. Goal: the smoothest control effort that still settles within 8 s with under 5 % overshoot.',
-    sim: { duration: 20, sampleTime: 0.01 },
-    system: {
-      reference: { type: 'step', params: { amplitude: 1, time: 1 } },
-      actuator: { type: 'ideal' },
-      disturbance: { type: 'none' },
-      plant: { type: 'secondOrder', params: { K: 1, wn: 2, zeta: 0.1 } },
-      sensor: { type: 'ideal' },
-      noise: { type: 'none' },
-    },
-    goal: { minimize: { uTV: 1 }, subjectTo: { settlingTime: { max: 8 }, overshoot: { max: 5 } }, settlingBand: 0.02 },
-    candidates: [
-      { name: 'Integral only', color: 0, controller: { type: 'PI', params: { Kp: 0.01, Ki: 0.3, b: 1 } } },
-      { name: 'PI', color: 1, controller: { type: 'PI', params: { Kp: 0.3, Ki: 0.6, b: 1 } } },
-      { name: 'PID', color: 2, controller: { type: 'PID', params: { Kp: 0.5, Ki: 0.8, Kd: 0.3, Tf: 0.05, b: 1, c: 0 } } },
-    ],
-  },
-  {
-    format: 'loop-tuner/1',
-    title: 'Inverse response',
-    notes: 'Non-minimum-phase plant K (1 − 0.5 s) / ((s + 1)(2 s + 1)): the output first moves the wrong way. Pushing for speed increases the undershoot.',
-    sim: { duration: 30, sampleTime: 0.01 },
-    system: {
-      reference: { type: 'step', params: { amplitude: 1, time: 1 } },
-      actuator: { type: 'ideal' },
-      disturbance: { type: 'none' },
-      plant: { type: 'inverseResponse', params: { K: 1, Tz: 0.5, tau1: 1, tau2: 2 } },
-      sensor: { type: 'ideal' },
-      noise: { type: 'none' },
-    },
-    goal: { minimize: { itae: 1 }, subjectTo: { undershoot: { max: 20 }, overshoot: { max: 5 } }, settlingBand: 0.02 },
-    candidates: [
-      { name: 'Slow PI', color: 0, controller: { type: 'PI', params: { Kp: 0.5, Ki: 0.25, b: 1 } } },
-      { name: 'Fast PI', color: 1, controller: { type: 'PI', params: { Kp: 1.5, Ki: 0.6, b: 1 } } },
-    ],
-  },
-];
-
-return { DEFAULT_PROJECT, EXAMPLES };
+return { DEFAULT_PROJECT };
 })();
 // ---- core/systems.js
 __mods['core/systems.js'] = (() => {
@@ -5544,11 +7382,15 @@ function fromPlant(e) {
 }
 
 const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturation', 'quantizer', 'fcn', 'switch']);
-const VARIANT_TAGS = { pid: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference' };
+const VARIANT_TAGS = {
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', difference: 'Finite difference',
+  scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
+};
+const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
 const TAG_TONES = ['blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'slate', 'red'];
 const TONE = {
   Linear: 'blue', Nonlinear: 'red', 'Dead time': 'magenta', 'Black box': 'yellow',
-  PID: 'aqua', 'State feedback': 'orange', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'slate', 'Trajectory planning': 'green', Relay: 'blue',
+  PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
   'Sliding mode': 'red',
   'Kalman filter': 'slate', 'Luenberger observer': 'aqua', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
@@ -5577,8 +7419,8 @@ function systemTags(e) {
   const ctrls = blocks.filter((b) => b.type === 'controller'), obs = blocks.filter((b) => b.type === 'observer');
   const ownLoop = blocks.some((b) => b.type === 'external' && (b.params?.kinds ?? []).includes('reference'));
   if (!ctrls.length) add(ownLoop ? 'Controller in the plant' : 'No controller', 'none');
-  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') add(VARIANT_TAGS[v.type] ?? CONTROLLERS[v.type]?.label ?? v.type, 'controller');
-  for (const b of obs) for (const v of b.variants ?? []) add(VARIANT_TAGS[v.type] ?? 'Observer', 'observer');
+  for (const b of ctrls) for (const v of b.variants ?? []) if (v.type !== 'off') for (const t of variantTags(v, CONTROLLERS[v.type]?.label ?? v.type)) add(t, 'controller');
+  for (const b of obs) for (const v of b.variants ?? []) for (const t of variantTags(v, 'Observer')) add(t, 'observer');
   const plays = (name) => !e.signals || (e.signals[name]?.components?.length ?? 0) > 0;
   if (blocks.some((b) => b.type === 'source' && b.params.signal === 'd') && plays('d')) add('Disturbance', 'feature');
   if (e.scope?.view?.mode) add({ fft: 'FFT', spectrogram: 'Spectrogram', xy: 'XY' }[e.scope.view.mode], 'feature');
@@ -6055,7 +7897,7 @@ function createSimPlant(spec) {
     for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * d * k2[i];
     el.eval(ts + 0.5 * d, Xt, 0, 0, k3);
     for (let i = 0; i < N; i++) Xt[i] = X[i] + d * k3[i];
-    el.eval(ts + d, Xt, 0, 0, k4);
+    el.eval(ts + d, Xt, 0, 0, k4, true);
     for (let i = 0; i < N; i++) X[i] += (d / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   };
   const onGrid = (t) => Math.round(t * 1e9) / 1e9;
@@ -6080,6 +7922,7 @@ function createSimPlant(spec) {
     if (end) {
       rk4(at, ts + h - at);
       el.eval(stop, X, 0, 0, null);
+      el.recordLeft();
       el.sample(stop, X, 0, 0);
       pending = true;
       a = 0;
@@ -6978,11 +8821,26 @@ function loopMargins(fd, Ts, { L, poles = [], probe = [] } = {}) {
       phaseCrossings.push({ w: wx, mag: -g, gm: -1 / g, gmDb: -20 * Math.log10(-g), at });
     }
   }
-  let ms = 0, wMs = NaN, mt = 0, wMt = NaN;
+  let ms = 0, wMs = NaN, mt = 0, wMt = NaN, iS = -1, iT = -1;
   for (let i = 0; i < w.length; i++) {
     const d = Math.hypot(1 + re[i], im[i]);
-    if (1 / d > ms) { ms = 1 / d; wMs = w[i]; }
-    if (mag[i] / d > mt) { mt = mag[i] / d; wMt = w[i]; }
+    if (1 / d > ms) { ms = 1 / d; wMs = w[i]; iS = i; }
+    if (mag[i] / d > mt) { mt = mag[i] / d; wMt = w[i]; iT = i; }
+  }
+  if (L) {
+    const peak = (i, g) => {
+      let a = Math.log(w[Math.max(0, i - 1)]), b = Math.log(w[Math.min(w.length - 1, i + 1)]);
+      const q = (Math.sqrt(5) - 1) / 2;
+      let c = b - q * (b - a), d = a + q * (b - a), fc = g(Math.exp(c)), fd = g(Math.exp(d));
+      for (let it = 0; it < 60 && b - a > 1e-12; it++) {
+        if (fc > fd) { b = d; d = c; fd = fc; c = b - q * (b - a); fc = g(Math.exp(c)); } else { a = c; c = d; fc = fd; d = a + q * (b - a); fd = g(Math.exp(d)); }
+      }
+      return fc > fd ? [fc, Math.exp(c)] : [fd, Math.exp(d)];
+    };
+    const S = (x) => { const v = respondAt(L, x); return 1 / Math.hypot(1 + v.re, v.im); };
+    const T = (x) => { const v = respondAt(L, x); return Math.hypot(v.re, v.im) / Math.hypot(1 + v.re, v.im); };
+    if (iS >= 0) { const [v, x] = peak(iS, S); if (v > ms) { ms = v; wMs = x; } }
+    if (iT >= 0) { const [v, x] = peak(iT, T); if (v > mt) { mt = v; wMt = x; } }
   }
   let range;
   if (L) range = gainRange(L, [...phaseCrossings.map((c) => c.gm), ...(L.D < 0 ? [-1 / L.D] : [])], probe);
@@ -7179,9 +9037,10 @@ return { ON_CIRCLE, AT_ORIGIN, poleSides, discretePlant, openLoop, openLoopPoles
 __mods['core/autotune.js'] = (() => {
 
 const { simulateSystem } = __mods['core/sim.js'];
-const { defaultSampleTime } = __mods['core/project.js'];
-const { normalizeVariant, makeLaw } = __mods['core/controllers.js'];
-const { parseEnd, blockPorts } = __mods['core/diagram.js'];
+const { defaultSampleTime, loopModel } = __mods['core/project.js'];
+const { analyzeLoop } = __mods['core/analysis.js'];
+const { normalizeVariant, makeLaw, CONTROLLERS } = __mods['core/controllers.js'];
+const { parseEnd, blockPorts, compileDiagram } = __mods['core/diagram.js'];
 const { blockMode, EXTERNAL_BLOCK } = __mods['core/hil.js'];
 const { amplitudeSpectrum } = __mods['core/spectrum.js'];
 const DIVERGED = 100;        
@@ -7276,13 +9135,24 @@ function tuneContext(project, path) {
   const { level } = locate(plant.diagram, hit.path);
   if (!wireTo(level, block.id, 0)) throw new Error(`${hit.where}: wire the reference r to input 1`);
   if (!wireTo(level, block.id, 1)) throw new Error(`${hit.where}: wire the measurement y to input 2`);
-  const variant = normalizeVariant(block.variants[block.variant ?? 0]);
+  const running = normalizeVariant(block.variants[block.variant ?? 0]);
+  const { variant, designed } = asTuned(plant.diagram, hit, running);
   const period = Math.max(...Object.values(project.system.signals).map((s) => s.period));
   const sim = { duration: period, sampleTime: project.sim?.sampleTime ?? defaultSampleTime(period) };
-  const ctx = { diagram: structuredClone(plant.diagram), signals: structuredClone(project.system.signals), path: hit.path, key: hit.key, where: hit.where, block, variant, sim, Ts: block.params.Ts };
+  const ctx = { diagram: structuredClone(plant.diagram), signals: structuredClone(project.system.signals), path: hit.path, key: hit.key, where: hit.where, block, variant, designed, sim, Ts: block.params.Ts };
   ctx.source = upstreamSource(ctx.diagram, ctx.path, 0);
   ctx.others = ctx.source ? Object.keys(ctx.signals).filter((k) => k !== ctx.source) : [];
   return ctx;
+}
+
+function asTuned(diagram, hit, running) {
+  const def = CONTROLLERS[running.type];
+  if (!def?.designed) return { variant: running, designed: null };
+  let st = null;
+  try { st = compileDiagram(diagram, 'plant', { standalone: true }).designs.find((x) => x.path === hit.key); } catch { st = null; }
+  if (!def.manual || !st?.values) return { variant: running, designed: { label: def.label, type: running.type, error: st?.error?.message ?? (st && st.status !== 'ok' && st.status !== 'warn' ? `its design is ${st.status}` : '') } };
+  const twin = normalizeVariant(def.manual(running.params, st.values));
+  return { variant: { ...twin, name: running.name }, designed: { label: def.label, type: running.type, from: twin.type } };
 }
 
 function runVariant(ctx, variant, signals = ctx.signals, sim = ctx.sim) {
@@ -7396,7 +9266,9 @@ const UNTUNABLE = {
   off: 'Off has nothing to tune. Add a PID to this block in the Controller tab, then tune that.',
   swingUp: 'A swing-up switches between pumping energy and catching the pole; its gains do not act on r − y. Tune its catching gains as a State feedback variant.',
   relay: 'A relay has no gains to tune; the relay method uses one to find Ku and Pu.',
+  trajectory: 'A planned swing-up follows a plan computed from the plant: it has no gains of its own to tune. Change its inputs (T, Q, R) in the Controller tab.',
 };
+const undesigned = (v) => `${CONTROLLERS[v.type].label} computes its numbers from the plant, and has none now; see its Computed box in the Controller tab, or tune a hand variant`;
 
 const FF_KEYS = ['Kff', 'Kv', 'Ka'];
 const isOn = (v) => Number.isFinite(v) && v !== 0;
@@ -7434,7 +9306,7 @@ function tuningSpace(variant, { start = null, part = 'all' } = {}) {
     const keys = fb ? (variant.type === 'slidingMode' ? ['lambda', 'phi'] : ['lambda', 'k1', 'k2']).filter((k) => on(p[k])) : [];
     names = keys.map((k) => (k === 'lambda' ? 'λ' : k === 'phi' ? 'φ' : k));
     apply = (x) => { const q = { ...p }; keys.forEach((k, i) => { q[k] = p[k] * f(x[i]); }); return q; };
-  } else throw new Error(UNTUNABLE[variant.type] ?? `a ${variant.type} variant cannot be tuned`);
+  } else throw new Error(UNTUNABLE[variant.type] ?? (CONTROLLERS[variant.type]?.designed ? undesigned(variant) : `a ${variant.type} variant cannot be tuned`));
   if (!names.length) throw new Error('every gain of this variant is 0; give the gains it should use a start value, then tune');
   return { names, started, base: started.length ? { ...variant, params: p } : variant, apply: (x) => ({ ...variant, params: apply(x) }) };
 }
@@ -7949,8 +9821,8 @@ function* stepAt(ctx, point, du, bound = Infinity) {
   const hold = loopSignals(point.hold, ctx.key);
   const st = settleTime(hold.t, hold.y, point.scale);
   const notes = [];
-  if (!st.settled) notes.push(`${ctx.variant.name} does not settle at r0 = ${fmtN(point.r0)}, so the test starts at t = 0 from the plant's start: exact for a linear plant, rough otherwise`);
-  const tHold = st.settled ? Math.ceil(st.time / ctx.Ts - 1e-6) * ctx.Ts : 0;
+  if (!st.settled) notes.push(`${ctx.variant.name} does not settle at r0 = ${fmtN(point.r0)}, so the test starts one sample after t = 0, from the plant's start: exact for a linear plant, rough otherwise`);
+  const tHold = st.settled ? Math.ceil(st.time / ctx.Ts - 1e-6) * ctx.Ts : ctx.Ts;
   const out = { du, u0: point.u0, r0: point.r0, tHold, notes };
   let W = ctx.sim.duration, runB = null;
   for (let tries = 0; tries < 2; tries++, W *= 4) {
@@ -8120,8 +9992,8 @@ const simcFactor = (rule) => {
 
 function tauCSource(g, rule = 'tight') {
   const f = SIMC[rule]?.f ?? 1, x = f === 1 ? '' : `${f} × `;
-  if (g.by === 'ripple') return `${x}the ripple's period on y (our floor), not the dead time θ = ${fmtN(g.theta)} s`;
-  if (g.by === 'lag') return `${x}a tenth of the lag τ (our floor), not the dead time θ = ${fmtN(g.theta)} s, which is shorter`;
+  if (g.by === 'ripple') return `${x}the ripple's period on y (our floor), not the dead time θ = ${fmtN(g.theta)} s (half a controller sample included)`;
+  if (g.by === 'lag') return `${x}a tenth of the lag τ (our floor), not the dead time θ = ${fmtN(g.theta)} s (half a controller sample included), which is shorter`;
   if (g.by === 'given') return 'given';
   const dead = `the dead time${g.Tf ? ' with the derivative\'s filter' : ''}`;
   return f === 1 ? `θ, ${dead} (Skogestad's tight rule)` : `${f}θ (θ = ${fmtN(g.theta)} s, ${dead})`;
@@ -8194,8 +10066,8 @@ function* stepTuneSteps(project, path, opts = {}) {
 
 function simcNotes(m, g, scheduled = false) {
   const notes = [];
-  if (g.by === 'ripple') notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s): a faster loop would chase the ripple`);
-  if (g.by === 'lag') notes.push(`τc = ${fmtN(g.tauC)} s is set from a tenth of the lag τ = ${fmtN(m.tau)} s (our floor), not from the dead time θ = ${fmtN(g.theta)} s, which is shorter`);
+  if (g.by === 'ripple') notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s, half a controller sample included): a faster loop would chase the ripple`);
+  if (g.by === 'lag') notes.push(`τc = ${fmtN(g.tauC)} s is set from a tenth of the lag τ = ${fmtN(m.tau)} s (our floor), not from the dead time θ = ${fmtN(g.theta)} s (half a controller sample included), which is shorter`);
   if (m.model === 'integrating' && m.tau2 > 0.02 * m.L) {
     if (g.Kd) notes.push(`the lag τ2 = ${fmtN(m.tau2)} s is longer than the dead time θ = ${fmtN(g.thetaPlant)} s (half a controller sample included), so the PI gets a derivative that cancels it (SIMC PID)`);
     else notes.push(`${scheduled ? 'a gain-scheduled PI has no derivative' : `the lag τ2 = ${fmtN(m.tau2)} s is no longer than the dead time`}, so half of τ2 counts as dead time (the half rule)`);
@@ -8243,7 +10115,25 @@ function* autotuneSteps(project, path, opts = {}) {
   }
   const out = { ...res, ...head, before, after, better: after.J < before.cost.J };
   if (!out.better) out.worse = whyWorse(out, ctx);
+  const start = unstableAtStart(project, ctx, res.variant);
+  if (start && !unstableAtStart(project, ctx, ctx.variant)) {
+    out.unstableAtStart = start;
+    out.worse = [start.sentence, out.better ? whyWorse(out, ctx, { cost: false }) : out.worse].filter(Boolean).join('; ');
+    out.better = false;
+  }
   return out;
+}
+
+function unstableAtStart(project, ctx, variant) {
+  let m, r;
+  try {
+    const p = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: withVariant(ctx.diagram, ctx.path, variant) } } };
+    m = loopModel(p, ctx.path, 'initial');
+    if (m.atLimit) return null;
+    r = analyzeLoop(m.plant, m.ctrl, m.Ts);
+  } catch { return null; }
+  if (r.stable || r.marginal) return null;
+  return { Z: r.Z, label: m.opLabel, sentence: `it is unstable where the run starts (${m.opLabel}: ${r.Z} closed-loop pole${r.Z > 1 ? 's' : ''} outside the unit circle); the run rests there only because it starts in exact balance, and the first disturbance there sets it off` };
 }
 
 const autotune = (project, path, opts) => drain(autotuneSteps(project, path, opts));
@@ -8260,7 +10150,7 @@ function measurement(ctx) {
   return sink ? { name: sink.params.name, unit: sink.params.unit && sink.params.unit !== '1' ? sink.params.unit : '' } : { name: '', unit: '' };
 }
 
-function whyWorse(res, ctx) {
+function whyWorse(res, ctx, { cost = true } = {}) {
   const was = res.before.variant, now = res.variant, a = res.before.cost, b = res.after, goal = res.goal;
   const y = measurement(ctx), yName = y.name || 'y', at = (v) => `${yName} = ${fmtN(v)}${y.unit ? ` ${y.unit}` : ''}`;
   const kind = (v) => (v.type === 'gainScheduled' ? 'gain-scheduled PI' : v.params.Kd ? 'PID' : v.params.Ki ? 'PI' : 'P controller');
@@ -8277,6 +10167,7 @@ function whyWorse(res, ctx) {
   if (res.ripple && !Array.isArray(now.params.Kp) && Number.isFinite(hi - lo) && kp * res.ripple >= 0.05 * (hi - lo)) {
     out.push(`${yName} ripples by ±${fmtN(res.ripple)}${y.unit ? ` ${y.unit}` : ''}, and its Kp passes ±${fmtN(kp * res.ripple)} of that to u (${fmtN((100 * kp * res.ripple) / (hi - lo))} % of u's range)`);
   }
+  if (!cost) return out.join('; ');
   if (b.diverged) out.push('the loop diverges with it');
   else {
     const [part] = Object.keys(b.parts).map((k) => [k, b.parts[k] - (a.parts?.[k] ?? 0)]).sort((p, q) => q[1] - p[1])[0];
@@ -8297,6 +10188,7 @@ function tuneReport(res) {
   else {
     Object.assign(out, { better: res.better, before: { variant: res.before.variant, cost: cost(res.before.cost) }, after: { variant: res.variant, cost: cost(res.after) }, notes: res.notes });
     if (!res.better) out.worse = res.worse;
+    if (res.unstableAtStart) out.unstableAtStart = { Z: res.unstableAtStart.Z, at: res.unstableAtStart.label };
     if (res.method === 'iterate') Object.assign(out, { iterations: res.iterations, evals: res.evals, tuned: res.names });
     if (res.method === 'relay') Object.assign(out, { Ku: res.Ku, Pu: res.Pu, amplitude: res.a, r0: res.r0, u0: res.u0, d: res.d, rule: res.rule, gains: res.gains });
     if (res.method === 'step') {
@@ -8356,7 +10248,7 @@ function fmtN(v) {
   return String(Number(v.toPrecision(3)));
 }
 
-return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, feedforwardStart, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, ripplePeriod, settledLevel, settledSlope, fitFopdt, fitIntegrating, stepExperimentSteps, stepExperiment, SIMC, tauCSource, tauCShort, simcGains, simcIntegrating, stepTuneSteps, stepTune, METHODS, autotuneSteps, autotune, measurement, whyWorse, tuneReport, baseName, resultName, placeVariant, derivativeFilter, pidVariant };
+return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, feedforwardStart, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, ripplePeriod, settledLevel, settledSlope, fitFopdt, fitIntegrating, stepExperimentSteps, stepExperiment, SIMC, tauCSource, tauCShort, simcGains, simcIntegrating, stepTuneSteps, stepTune, METHODS, autotuneSteps, unstableAtStart, autotune, measurement, whyWorse, tuneReport, baseName, resultName, placeVariant, derivativeFilter, pidVariant };
 })();
 // ---- core/ramp.js
 __mods['core/ramp.js'] = (() => {
@@ -8442,6 +10334,8 @@ return { fallbackScale, createRampIn };
 __mods['core/live.js'] = (() => {
 
 const { compileDiagram, normalizeDiagram, diagramNames, parseEnd } = __mods['core/diagram.js'];
+const { CONTROLLERS } = __mods['core/controllers.js'];
+const { OBSERVERS } = __mods['core/observers.js'];
 const { referenceFn } = __mods['core/signals.js'];
 const { createRampIn } = __mods['core/ramp.js'];
 const { HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, uMessage, startParams, parseMessage, checkDescription, pageWatchdog, createLinkStats, fullScales, blockMode } = __mods['core/hil.js'];
@@ -8458,10 +10352,11 @@ function controllerOnReference(params, links) {
 }
 
 const SAMPLED = ['controller', 'observer'];
+const LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
 function structureKey(diagram) {
   return JSON.stringify(diagram, function (k, v) {
     if ((k === 'x' || k === 'y') && typeof v === 'number' && this.id !== undefined) return undefined;
-    if (k === 'variants' && SAMPLED.includes(this.type) && Array.isArray(v)) return v.map((x) => x.type);
+    if (k === 'variants' && SAMPLED.includes(this.type) && Array.isArray(v)) return v.map((x, i) => (LIBS[this.type][x.type]?.designed && i === (this.variant ?? 0) ? { type: x.type, params: x.params } : x.type));
     if (k === 'params' && this.type === 'external' && v) { const { ramp, scales, ...rest } = v; void ramp; void scales; return rest; }
     return v;
   });
@@ -8549,7 +10444,7 @@ function createLiveRunner(diagram, signals) {
     for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
     el.eval(t + 0.5 * dt, Xt, 0, 0, k3);
     for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
-    el.eval(t + dt, Xt, 0, 0, k4);
+    el.eval(t + dt, Xt, 0, 0, k4, true);
     for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   }
 
@@ -8578,11 +10473,12 @@ function createLiveRunner(diagram, signals) {
           for (let s = 0; s < m; s++) {
             const ts = tPrev + s * dt;
             if (el.n) rk4(ts, dt);
-            if (s < m - 1) { el.eval(ts + dt, X, 0, 0, null); el.sample(ts + dt, X, 0, 0); el.record(); }
+            if (s < m - 1) { el.eval(ts + dt, X, 0, 0, null); el.recordLeft(); el.sample(ts + dt, X, 0, 0); el.record(); }
           }
         }
       }
       el.eval(t, X, 0, 0, null);
+      if (tPrev !== null) el.recordLeft();
       el.sample(t, X, 0, 0);
       el.record();
       tPrev = t;
@@ -9135,6 +11031,9 @@ const GUIDE = {
     M('loopTuner.speed(x?)', 'x: a factor, or -1 for as fast as possible', 'How fast simulated time runs; held at 1 while a plant is connected.', 'loopTuner.speed(10)', '{ speed, effective, achieved, simulation, locked }'),
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
     M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
+    M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
+    M('loopTuner.whenDesigned()', '', 'Resolves once no design is being computed in the background (a plan for the planned swing-up takes seconds; meanwhile the block runs u = 0 or its previous plan) and the display shows the run that uses it. Await it before judging a run.', 'await loopTuner.whenDesigned()', 'a promise of designs()'),
+    M('loopTuner.loopModel(path, op)', 'path: a Controller block\'s id path; op: "origin" (at rest), "initial" (the start), { y: [levels] } or { t: seconds }', 'The loop the Controller closes, as the Analysis tab draws it: the plant it sees linearised at op, and the running variant\'s own law, as state space. Refused, with the reason, where there is none (a relay, a kink at op, a plant outside the page).', 'loopTuner.loopModel("ctrl", "initial")', '{ plant: { A, B, C, D, delay, ... }, ctrl: { A, B, C, D }, Ts, opLabel, variantName, warnings }'),
     M('loopTuner.live.state()', '', 'The live link: state ("offline", "connecting", "open", "running"), pending ("run" or "stop" while the plant has not answered a key yet), message (the last message the page showed), estop ({ by, reason } or null), mode ("control", "reference", "log"), the plant\'s ports, ramp ({ left, to } while the references ramp in), link and plant figures, hold.', 'loopTuner.live.state().state'),
     M('loopTuner.live.connect(url?)', 'url: default the block\'s, ws://127.0.0.1:8765', 'Opens the link and reads the plant\'s description; resolves once the plant has described itself (or the link failed), so Run can follow at once. Nothing starts: the plant stays stopped until Run.', 'await loopTuner.live.connect()', 'a promise of state()'),
     M('loopTuner.live.disconnect()', '', 'Stops the plant, then closes the link.', 'await loopTuner.live.disconnect()', 'a promise of state() once the link is closed'),

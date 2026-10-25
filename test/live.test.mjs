@@ -112,6 +112,29 @@ test('live stepping: the u sent is what the controller law gives for the y recei
   assert.equal(wild.step(0.11, [NaN, 0]).u[0], 12, 'a y that is not a number reads 0');
 });
 
+test('live stepping: a Dead time on the page delays the held u exactly, between cycles too', () => {
+  // u steps 0 → 1 at 0.05 s (r's step, angle 0), leaves a 0.05 s dead time at
+  // 0.1 s and is integrated on the page into V: V(t) = t − 0.1. Read across
+  // an integration step, the history moved the step half a step early (V
+  // 0.005 high).
+  const d = normalizeDiagram({
+    blocks: [
+      { id: 'r', type: 'source', params: { signal: 'r' } },
+      { id: 'd', type: 'source', params: { signal: 'd' } },
+      { id: 'c', type: 'controller', params: { inputs: 2, Ts: 0.01 }, variants: [{ name: 'P', type: 'pid', params: { Kp: 1 } }], variant: 0 },
+      { id: 'del', type: 'delay', params: { L: 0.05, y0: 0 } },
+      { id: 'int', type: 'integrator', params: { K: 1 } },
+      { id: 'p', type: 'external', params: externalParams(checkDescription(DESC)) },
+    ],
+    wires: [{ from: 'r', to: 'c' }, { from: 'c', to: 'del' }, { from: 'del', to: 'int' }, { from: 'int', to: 'p' }, { from: 'd', to: 'p:1' }, { from: 'p', to: 'c:1' }],
+  });
+  const runner = createLiveRunner(d, SIGNALS);
+  for (let k = 0; k <= 30; k++) {
+    const t = k * 0.01, { u } = runner.step(t, [0, 0]);
+    assert.ok(Math.abs(u[0] - Math.max(0, t - 0.1)) < 1e-9, `t ${t.toFixed(2)}: V ${u[0]}, not ${Math.max(0, t - 0.1)}`);
+  }
+});
+
 test('live edits: parameters change at the next cycle and keep the state; a new variant restarts', () => {
   const p = { Kp: 3, Ki: 2, Kd: 0, umin: -12, umax: 12 };
   const runner = createLiveRunner(LOOP({ name: 'PI', type: 'pid', params: p }), SIGNALS);
@@ -368,17 +391,41 @@ test('live edits of any variant parameter are taken in place; names are cosmetic
   const out = r2.step(0.1, [0, 0]);
   assert.equal(out.values[3], 30, 'V: Kp 30 on r = 1, no limit');
   assert.equal(out.u[0], 12, 'sent within the plant\'s 12 V');
-  // Every parameter of every controller type.
+  // Every parameter of every controller type. A designed type's parameters
+  // are inputs to its design: a change designs it again, so the loop is
+  // rebuilt (and a design on a plant outside the page is refused, saying so).
   for (const type of CONTROLLER_TYPES) {
     const v = { name: type, type, params: LAW_PARAMS[type] ?? {} };
-    const r = createLiveRunner(LOOP(v), SIGNALS);
+    let r = createLiveRunner(LOOP(v), SIGNALS);
     r.step(0, [0.1, 0]);
     for (const spec of CONTROLLERS[type].params) {
+      // (After a rebuild the runner holds the edited loop: start each edit from the same one.)
+      if (CONTROLLERS[type].designed) { r = createLiveRunner(LOOP(v), SIGNALS); r.step(0, [0.1, 0]); }
       const d = LOOP(v), c = d.blocks.find((b) => b.id === 'c');
-      c.variants[0].params[spec.key] = other(c.variants[0].params[spec.key], spec);
-      assert.equal(r.update(normalizeDiagram(d), SIGNALS), 'kept', `${type}.${spec.key}`);
+      const was = c.variants[0].params[spec.key], next = other(was, spec);
+      c.variants[0].params[spec.key] = spec.max !== undefined && next > spec.max ? spec.max * 0.9 : next;
+      const changed = JSON.stringify(c.variants[0].params[spec.key]) !== JSON.stringify(was);
+      assert.equal(r.update(normalizeDiagram(d), SIGNALS), CONTROLLERS[type].designed && changed ? 'rebuilt' : 'kept', `${type}.${spec.key}`);
     }
   }
+  // A designed variant that does not run is designed when it is switched to:
+  // editing it keeps the running loop and its state (an LQR's R edited
+  // beside a running PID rebuilt the loop, resetting the PID's integral).
+  const two = () => {
+    const d = LOOP();
+    d.blocks.find((b) => b.id === 'c').variants.push({ name: 'LQR', type: 'lqr', params: { Q: [1], R: 1 } });
+    return normalizeDiagram(d);
+  };
+  const beside = createLiveRunner(two(), SIGNALS);
+  beside.step(0, [0.1, 0]);
+  const edit = two();
+  edit.blocks.find((b) => b.id === 'c').variants[2].params.R = 5;
+  assert.equal(beside.update(edit, SIGNALS), 'kept', 'a designed variant that does not run');
+  edit.blocks.find((b) => b.id === 'c').variant = 2;
+  assert.equal(beside.update(edit, SIGNALS), 'rebuilt', 'switched to: designed afresh');
+  const rerun = structuredClone(edit);
+  rerun.blocks.find((b) => b.id === 'c').variants[2].params.R = 7;
+  assert.equal(beside.update(rerun, SIGNALS), 'rebuilt', 'the running designed variant');
   // An output that is not a number (null on the wire) holds its last number
   // and is reported, never taken for a measured 0.
   const held = createLiveRunner(LOOP(), SIGNALS);
@@ -392,7 +439,9 @@ test('live edits of any variant parameter are taken in place; names are cosmetic
 });
 
 test('an observer in a live loop takes parameter edits in place and keeps its estimate', () => {
-  const kalman = { name: 'KF', type: 'kalman', params: { A: [0, 1, 0, 0], B: [0, 1], C: [1, 0], Q: [1, 1], R: [1] } };
+  // A hand observer (a Kalman filter's own numbers come from the plant, and
+  // this plant runs outside the page).
+  const kalman = { name: 'KF', type: 'luenberger', params: { A: [0, 1, 0, 0], B: [0, 1], C: [1, 0], L: [0.5, 10] } };
   const diagram = () => normalizeDiagram({
     blocks: [
       { id: 'r', type: 'source', params: { signal: 'r' } },
@@ -410,7 +459,7 @@ test('an observer in a live loop takes parameter edits in place and keeps its es
   const edited = createLiveRunner(diagram(), SIGNALS), same = createLiveRunner(diagram(), SIGNALS);
   for (let k = 0; k < 30; k++) { edited.step(k * 0.01, [0.5, 0]); same.step(k * 0.01, [0.5, 0]); }
   const d = diagram();
-  d.blocks.find((b) => b.id === 'o').variants[0].params.Q = [1.2, 1.2];
+  d.blocks.find((b) => b.id === 'o').variants[0].params.L = [0.6, 12];
   assert.equal(edited.update(d, SIGNALS), 'kept');
   const xa = edited.step(0.3, [0.5, 0]).values[2], xb = same.step(0.3, [0.5, 0]).values[2];
   const xc = createLiveRunner(diagram(), SIGNALS).step(0.3, [0.5, 0]).values[2];
@@ -485,7 +534,9 @@ test('hil_plant.py speaks the protocol: describe, the y/u cycle, its watchdog, R
   const notes = [], waiting = new Map();
   let id = 0, answer = true, closed = null;
   const call = (method, params) => new Promise((resolve) => { const i = ++id; waiting.set(i, resolve); ws.send(rpcRequest(i, method, params)); });
-  const until = (pred, ms = 2000) => new Promise((resolve, reject) => {
+  // It resolves as soon as pred holds: the long limit only matters on a busy
+  // machine (it hit 2 s at a load of 11 on four cores).
+  const until = (pred, ms = 10000) => new Promise((resolve, reject) => {
     const t0 = Date.now();
     const check = () => { const hit = pred(); if (hit) resolve(hit); else if (Date.now() - t0 > ms) reject(new Error('timed out')); else setTimeout(check, 5); };
     check();
