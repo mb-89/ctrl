@@ -27,7 +27,7 @@
   "Variable gain against anti-windup": {
     "samples": 2001,
     "signals": "angle,ctrl.r,ctrl.u,ctrl.y,d,r,speed,torque,u",
-    "hash": "f3a827e7"
+    "hash": "d40d082a"
   },
   "Encoder errors and torque ripple": {
     "samples": 2001,
