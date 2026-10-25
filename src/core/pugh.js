@@ -659,26 +659,28 @@ function pughEngine() {
 
   // The report as a standalone HTML page (standalone: false gives the
   // <section> alone). style: { css, license } (above); theme: 'light' or
-  // 'dark' fixes the page's theme (data-theme), else it follows the system. sections: false leaves the per-option sections out
-  // (what the page budget is measured against). interactive: false leaves
-  // out the matrix and the engine (a static page).
-  //   The overview table (input 63, 64), laid out as a Pugh matrix usually
-  //   is: the criteria as rows, their weight and tolerance in columns of
-  //   their own (edited there, the only place a criterion is defined), the
-  //   datum's column first, then every option, vetoed ones too; under the
-  //   marks the counts of +, S and − and the weighted total. Its marks are
-  //   for reading.
-  //   Each option's section: its vetoes, one per reason, each lifted on its
-  //   own; a small table of criterion, weight, its mark and the mark's
-  //   weighted contribution, where the mark is vetoed or nudged and the
-  //   weight (the same for every option) may be changed; its actions.
-  function renderHtml(res, { standalone = true, sections = true, interactive = true, live = false, style = null, theme = 'system' } = {}) {
-    const cols = [...res.candidates.filter((c) => c.datum), ...res.candidates.filter((c) => !c.datum)];
+  // 'dark' fixes the page's theme (data-theme), else it follows the system.
+  // open: the keys of the options shown open. sections: false leaves each
+  // option's panel out (what the page budget is measured against).
+  // interactive: false leaves out the matrix and the engine (a static page).
+  //   One table, an option a row (inputs 66, 67): the criteria are its
+  //   columns, their names on end, each one's weight and tolerance in the
+  //   head (the only place they are changed); the datum is the first row,
+  //   then the ranking, then the vetoed options, greyed. A row, collapsed,
+  //   is the option's bottom line: its name, its total (× when vetoed) and
+  //   its marks, each changed in place. It opens (a <details>) to its
+  //   vetoes, its notes, its actions and its figures. Whatever the person
+  //   can change is a field (.field), the page's one look for "enter here";
+  //   nothing is said twice.
+  function renderHtml(res, { standalone = true, sections = true, interactive = true, live = false, style = null, theme = 'system', open = [] } = {}) {
+    const rows = [res.datum.key, ...res.ranking.filter((k) => k !== res.datum.key), ...res.candidates.filter((c) => !c.fits && c.key !== res.datum.key).map((c) => c.key)].map((k) => res.candidates.find((c) => c.key === k));
     const cls = (mk) => (mk > 0 ? 'plus' : mk < 0 ? 'minus' : '');
     const btn = (label, data, aria = '') => `<button type="button" class="btn btn-sm" ${Object.entries(data).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ')}${aria ? ` aria-label="${esc(aria)}"` : ''}>${esc(label)}</button>`;
+    // A value the person can change: a field, with its own name for a reader.
+    const field = (text, data, aria, extra = '') => `<button type="button" class="field field-sm rpt-field${extra ? ` ${extra}` : ''}" ${Object.entries(data).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ')} aria-label="${esc(aria)}">${text}</button>`;
     const sym = (v) => (v === null || v === undefined ? '?' : SYMBOL[Math.round(v)]);
     const pctTol = (t) => `±${fmt(100 * t)} %`;
-    const openVetoes = (c) => c.vetoes.filter((v) => !v.lifted);
+    const words = (t) => t.split(' ').map((w) => `<span class="rpt-word">${esc(w)}</span>`).join(' ');
     const h = [`<section class="rpt${live ? ' live' : ''}">`, `<h1>${esc(res.title)}</h1>`, `<p class="rpt-bottom" data-bottom>${bold(bottomLine(res))}</p>`];
     // The person's changes, under the bottom line (and in print).
     if (res.overrides?.length) {
@@ -687,67 +689,46 @@ function pughEngine() {
     // The keys, live only: Undo, Save, Export, Print, and the theme (the
     // page's own: system, light or dark; print is always light).
     const themes = `<span class="seg" role="group" aria-label="Theme">${THEMES.map(([k, label]) => `<button type="button" class="btn btn-sm" data-theme-set="${k}" aria-pressed="${k === theme}">${label}</button>`).join('')}</span>`;
-    h.push(`<div class="rpt-tools rpt-live">${btn('Undo', { tool: 'undo' })}${btn('Save report', { tool: 'save' })}${btn('Export changes', { tool: 'export' })}${btn('Print', { tool: 'print' })}${themes}<span class="dim">Weights and tolerances: in the table. Marks and vetoes: in each option's section.</span></div>`);
+    h.push(`<div class="rpt-tools rpt-live">${btn('Undo', { tool: 'undo' })}${btn('Save report', { tool: 'save' })}${btn('Export changes', { tool: 'export' })}${btn('Print', { tool: 'print' })}${themes}</div>`);
     if (res.sensitivity) h.push(`<div class="rpt-sens">${sensitivitySvg(res)}</div>`);
-    h.push(`<p class="dim">Datum: <strong>${esc(res.datum.label)}</strong>. Marks: ++ much better, + better, S the same within the tolerance, − worse, −− much worse (beyond ×${esc(fmt(res.strong))}), ? not judged (counts as S); a dashed frame: changed by the person.</p>`);
-    // The options' names stand on end (no word is broken, however many
-    // options); a table wider than the page scrolls in its own box.
-    h.push(`<div class="rpt-scroll"><table class="rpt-overview"><thead><tr><th>Criterion</th><th>Weight</th><th title="tolerance: the band within which a mark is S">Tol.</th>${cols.map((c) => `<th class="${[c.datum ? 'datum' : '', c.fits ? '' : 'out'].join(' ').trim()}"><span class="rpt-vhead">${c.label.split(' ').map((w) => `<span class="rpt-word">${esc(w)}</span>`).join(' ')}</span></th>`).join('')}</tr></thead><tbody>`);
-    res.criteria.forEach((cr, i) => {
-      const w = res.weights[i];
-      h.push(`<tr><td>${esc(cr.label)}${cr.kind === 'judged' ? ' (judged)' : ''}</td><td data-weight="${esc(cr.key)}" tabindex="0" role="button" aria-label="${esc(`${cr.label}: weight ${fmt(w)}; change`)}"${w !== cr.defaults.weight ? ' class="changed"' : ''}>${esc(fmt(w))}</td><td${cr.kind === 'measured' ? ` data-tol="${esc(cr.key)}" tabindex="0" role="button" aria-label="${esc(`${cr.label}: tolerance ${pctTol(cr.tolerance)}; change`)}"${cr.tolerance !== cr.defaults.tolerance ? ' class="changed"' : ''}` : ' class="dim"'}>${cr.kind === 'measured' ? esc(pctTol(cr.tolerance)) : '—'}</td>${cols.map((c) => {
+    h.push(`<p class="dim">Datum: <strong>${esc(res.datum.label)}</strong>, the first row. Marks: ++ much better, + better, S the same within the tolerance, − worse, −− much worse (beyond ×${esc(fmt(res.strong))}), ? not judged (counts as S); × after a total: vetoed. <span class="rpt-live">A boxed value can be changed: click it, or Tab to it and press Enter. A dashed frame: changed by the person. A row opens to its vetoes, actions and plots.</span></p>`);
+    // The head: the criteria on end, then their weights and tolerances.
+    const head = [`<div class="rpt-grid rpt-head"><span class="rpt-name">Option</span><span class="rpt-total">Total</span>${res.criteria.map((cr) => `<span class="rpt-c"><span class="rpt-vhead">${words(cr.label)}${cr.kind === 'judged' ? ' <span class="rpt-word">(judged)</span>' : ''}</span></span>`).join('')}</div>`];
+    head.push(`<div class="rpt-grid"><span class="rpt-name">Weight</span><span class="rpt-total"></span>${res.criteria.map((cr, i) => `<span class="rpt-c">${field(esc(fmt(res.weights[i])), { weight: cr.key }, `${cr.label}: weight ${fmt(res.weights[i])}; change`, res.weights[i] !== cr.defaults.weight ? 'changed' : '')}</span>`).join('')}</div>`);
+    head.push(`<div class="rpt-grid"><span class="rpt-name" title="the band within which a mark is S">Tolerance</span><span class="rpt-total"></span>${res.criteria.map((cr) => `<span class="rpt-c">${cr.kind === 'measured' ? field(esc(pctTol(cr.tolerance)), { tol: cr.key }, `${cr.label}: tolerance ${pctTol(cr.tolerance)}; change`, `rpt-tol${cr.tolerance !== cr.defaults.tolerance ? ' changed' : ''}`) : '<span class="dim">—</span>'}</span>`).join('')}</div>`);
+    // A row per option: its bottom line in the <summary>, the rest in its panel.
+    const optRows = rows.map((c) => {
+      const standing = c.vetoes.filter((v) => !v.lifted);
+      const total = `${c.datum && !c.offset ? '0' : esc(signed(c.total))}${c.fits ? '' : `<span class="rpt-x" title="${esc(c.whyNot)}"> ×</span>`}`;
+      const marks = res.criteria.map((cr) => {
+        if (c.datum) return '<span class="rpt-c dim">D</span>';
         const mk = c.marks[cr.key], ov = c.overridden?.[cr.key];
-        if (c.datum) return '<td class="datum">D</td>';
-        return `<td class="${[ov === 'veto' ? '' : cls(mk ?? 0), ov ? 'changed' : '', c.fits ? '' : 'out'].join(' ').trim()}">${ov === 'veto' ? `<span class="vetoed">${esc(sym(c.toolMarks[cr.key]))}</span>` : esc(sym(mk))}</td>`;
-      }).join('')}</tr>`);
+        const text = ov === 'veto' ? `<span class="vetoed">${esc(sym(c.toolMarks[cr.key]))}</span>` : esc(sym(mk));
+        return `<span class="rpt-c">${field(text, { cell: `${c.key}|${cr.key}` }, `${c.label}, ${cr.label}: ${ov === 'veto' ? 'vetoed' : sym(mk)}; change`, [ov === 'veto' ? '' : cls(mk ?? 0), ov ? 'changed' : ''].join(' ').trim())}</span>`;
+      }).join('');
+      const summary = `<summary class="rpt-grid"><span class="rpt-name"><span class="chev" aria-hidden="true"></span><span>${words(c.label)}</span></span><span class="rpt-total${c.nudge ? ' changed' : ''}" data-total="${esc(c.key)}" data-value="${c.total}">${total}</span>${marks}</summary>`;
+      const panel = [];
+      if (sections) {
+        if (c.vetoes.length) panel.push(`<ul class="rpt-vetoes">${c.vetoes.map((v) => `<li class="${v.lifted ? 'dim' : 'minus'}">${v.by === 'person' ? 'Vetoed by the person' : 'The tool’s veto'}: ${esc(v.why)}${v.lifted ? ` <span class="dim">— lifted: “${esc(v.lifted)}”</span>` : ''} <span class="rpt-live">${v.by === 'person' ? btn('Remove my veto', { act: 'unveto', cand: c.key }) : v.lifted ? btn('Restore', { restore: `${c.key}|${v.id}` }) : btn('Lift…', { lift: `${c.key}|${v.id}` })}</span></li>`).join('')}</ul>`);
+        if (c.datum) panel.push('<p class="dim">The datum: every other option is marked against it.</p>');
+        if (c.key === res.suggestion?.key && res.weakSpots.length) panel.push(`<p class="dim">Weak spots (for a hybrid): ${esc(res.weakSpots.map((w) => `${critLabel(res, w.criterion)}${w.strongerAt.length ? ` (better there: ${w.strongerAt.slice(0, 3).map((k) => labelOf(res, k)).join(', ')})` : ''}`).join('; '))}.</p>`);
+        if (!c.suggestable) panel.push('<p class="dim">Not to be suggested (it needs a change outside the options), but compared.</p>');
+        if (c.note) panel.push(`<p class="dim">${esc(c.note)}</p>`);
+        const acts = [standing.some((v) => v.by === 'person') ? '' : btn('Veto the option…', { act: 'veto', cand: c.key }), btn('Nudge up…', { act: 'up', cand: c.key }), btn('Nudge down…', { act: 'down', cand: c.key }), c.datum ? '' : btn('Make it the datum…', { act: 'datum', cand: c.key })].join('');
+        panel.push(`<div class="rpt-acts rpt-live">${acts}</div>`);
+        // Figures while the option is in (input 62: a vetoed option's come
+        // back with it).
+        const figs = c.fits ? (c.figures ?? []).slice(0, MAX_FIGURES) : [];
+        if (figs.length) panel.push(`<div class="rpt-figs">${figs.map((f) => `<figure>${plotSvg(f)}<figcaption>${esc(f.title)}</figcaption></figure>`).join('')}</div>`);
+      }
+      return `<details class="rpt-opt${c.fits ? ' in' : ' out'}" data-section="${esc(c.key)}" data-fits="${c.fits}"${open.includes(c.key) ? ' open' : ''}>${summary}<div class="rpt-panel">${panel.join('')}</div></details>`;
     });
-    // The counts, as a Pugh matrix shows them (input 63): how many marks
-    // are better, the same and worse than the datum, vetoed marks aside.
-    const count = (c, f) => res.criteria.filter((cr) => c.overridden?.[cr.key] !== 'veto' && f(c.marks[cr.key] ?? 0)).length;
-    for (const [label, f] of [['Σ +', (mk) => mk > 0], ['Σ S', (mk) => mk === 0], ['Σ −', (mk) => mk < 0]]) {
-      h.push(`<tr><td>${label}</td><td></td><td></td>${cols.map((c) => `<td class="${[c.datum ? 'datum' : '', c.fits ? '' : 'out'].join(' ').trim()}">${c.datum ? '' : count(c, f)}</td>`).join('')}</tr>`);
-    }
-    h.push(`<tr><th>Weighted total</th><th></th><th></th>${cols.map((c) => `<th data-total="${esc(c.key)}" data-value="${c.total}" class="${[c.datum ? 'datum' : '', c.nudge ? 'changed' : '', c.fits ? '' : 'out'].join(' ').trim()}">${c.datum && !c.offset ? '0' : esc(signed(c.total))}</th>`).join('')}</tr>`);
-    h.push(`<tr><td>Vetoes</td><td></td><td></td>${cols.map((c) => { const n = openVetoes(c).length, lifted = c.vetoes.length - n; return `<td data-fits="${esc(c.key)}" data-value="${c.fits}" class="${n ? 'minus' : ''}${lifted ? ' changed' : ''}">${n ? `${n} ✕` : 'none'}${lifted ? ` (${lifted} lifted)` : ''}</td>`; }).join('')}</tr></tbody></table></div>`);
+    // A table wider than its place scrolls in its own box, the names held.
+    h.push(`<div class="rpt-scroll">${head.join('')}${optRows.join('')}</div>`);
     if (res.sensitivity) {
       h.push(`<h2 class="rpt-gap">Runners-up</h2><div class="rpt-scroll"><table><thead><tr>${['Runner-up', 'Total', 'Ties when one weight changes', `Reasonable (±${esc(fmt(res.sensitivity.step))})`, 'All weights together', 'Share of draws'].map((t) => `<th>${t}</th>`).join('')}</tr></thead><tbody>`);
       for (const row of runnerRows(res)) h.push(`<tr>${row.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`);
       h.push('</tbody></table></div>');
-    }
-    if (sections) {
-      const order = [...res.ranking, ...cols.filter((c) => !c.fits).map((c) => c.key)];
-      order.forEach((key) => {
-        const c = cols.find((x) => x.key === key), rank = res.ranking.indexOf(key), open = openVetoes(c);
-        const personVeto = c.vetoes.find((v) => v.by === 'person');
-        const acts = [personVeto ? btn('Remove my veto', { act: 'unveto', cand: c.key }) : btn('Veto the option…', { act: 'veto', cand: c.key }), btn('Nudge up…', { act: 'up', cand: c.key }), btn('Nudge down…', { act: 'down', cand: c.key }), ...(c.datum ? [] : [btn('Make it the datum…', { act: 'datum', cand: c.key })])];
-        const lines = [`<h2>${rank >= 0 ? `${rank + 1}. ` : ''}${esc(c.label)} <span class="dim">(${c.datum ? 'the datum' : esc(signed(c.total))}${rank < 0 ? `; out: ${open.length} veto${open.length > 1 ? 'es' : ''}` : ''})</span></h2><div class="rpt-acts rpt-live">${acts.join('')}</div>`];
-        if (c.vetoes.length) {
-          lines.push(`<ul class="rpt-vetoes">${c.vetoes.map((v) => `<li class="${v.lifted ? 'dim' : 'minus'}">${v.by === 'person' ? 'Vetoed by the person' : 'The tool’s veto'}: ${esc(v.why)}${v.lifted ? ` <span class="dim">— lifted: “${esc(v.lifted)}”</span>` : ''} <span class="rpt-live">${v.by === 'person' ? '' : v.lifted ? btn('Restore', { restore: `${c.key}|${v.id}` }) : btn('Lift…', { lift: `${c.key}|${v.id}` })}</span></li>`).join('')}</ul>`);
-          lines.push(`<p class="dim">${open.length ? `${open.length} veto${open.length > 1 ? 'es' : ''} remain${open.length > 1 ? '' : 's'}: it is back in only when none does.` : 'Every veto is lifted: it is in.'}</p>`);
-        }
-        if (c.nudge) lines.push(`<p class="dim">Nudged ${c.nudge > 0 ? 'up' : 'down'} by the person: ${esc(signed(c.offset))} on its total.</p>`);
-        if (c.datum) lines.push('<p>The datum: every other option is marked against it.</p>');
-        else if (c.fits) {
-          if (c.gains.length) lines.push(`<p><span class="plus">Better</span> than the datum on ${esc(listOf(res, c.gains, 4))}.</p>`);
-          if (c.losses.length) lines.push(`<p><span class="minus">Worse</span> on ${esc(listOf(res, c.losses, 4))}.</p>`);
-          if (!c.gains.length && !c.losses.length) lines.push('<p>The same as the datum on every criterion.</p>');
-        }
-        if (key === res.suggestion?.key && res.weakSpots.length) lines.push(`<p class="dim">Weak spots (for a hybrid): ${esc(res.weakSpots.map((w) => `${critLabel(res, w.criterion)}${w.strongerAt.length ? ` (better there: ${w.strongerAt.slice(0, 3).map((k) => labelOf(res, k)).join(', ')})` : ''}`).join('; '))}.</p>`);
-        else if (!c.suggestable) lines.push('<p class="dim">Not to be suggested (it needs a change outside the options), but compared.</p>');
-        if (c.note) lines.push(`<p class="dim">${esc(c.note)}</p>`);
-        // The small table: in two halves side by side, so it stays short.
-        if (!c.datum) {
-          const rows = res.criteria.map((cr, i) => {
-            const mk = c.marks[cr.key], ov = c.overridden?.[cr.key], contrib = (mk ?? 0) * res.weights[i];
-            return `<tr><td>${esc(cr.label)}</td><td data-weight="${esc(cr.key)}" tabindex="0" role="button" aria-label="${esc(`${cr.label}: weight ${fmt(res.weights[i])} (for every option); change`)}"${res.weights[i] !== cr.defaults.weight ? ' class="changed"' : ''}>${esc(fmt(res.weights[i]))}</td><td data-cell="${esc(c.key)}|${esc(cr.key)}" tabindex="0" role="button" aria-label="${esc(`${c.label}, ${cr.label}: ${ov === 'veto' ? 'vetoed' : sym(mk)}; change`)}" class="${[ov === 'veto' ? '' : cls(mk ?? 0), ov ? 'changed' : ''].join(' ').trim()}">${ov === 'veto' ? `<span class="vetoed">${esc(sym(c.toolMarks[cr.key]))}</span>` : esc(sym(mk))}</td><td class="${cls(contrib)}">${contrib ? esc(signed(contrib)) : '0'}</td></tr>`;
-          });
-          const half = Math.ceil(rows.length / 2), head = '<thead><tr><th>Criterion</th><th>Weight</th><th>Mark</th><th>Adds</th></tr></thead>';
-          lines.push(`<div class="rpt-small"><table>${head}<tbody>${rows.slice(0, half).join('')}</tbody></table><table>${head}<tbody>${rows.slice(half).join('')}</tbody></table></div>`);
-        }
-        const figs = c.fits ? (c.figures ?? []).slice(0, MAX_FIGURES) : [];
-        if (figs.length) lines.push(`<div class="rpt-figs">${figs.map((f) => `<figure>${plotSvg(f)}<figcaption>${esc(f.title)}</figcaption></figure>`).join('')}</div>`);
-        h.push(`<div class="rpt-option${c.fits ? '' : ' out'}" data-section="${esc(c.key)}">${lines.join('')}</div>`);
-      });
     }
     if (res.notes.length) h.push(...res.notes.map((n) => `<p class="dim">Note: ${esc(n)}.</p>`));
     h.push('</section>');
@@ -774,9 +755,15 @@ function pughEngine() {
     const section = () => doc.querySelector('section.rpt');
     // The theme is the page's: data-theme on <html>, none for the system's.
     const html = doc.documentElement, themeNow = () => html.dataset.theme || 'system';
+    // Drawn again on every change, the rows the person opened stay open and
+    // the table stays where it was scrolled to.
     function render(focus) {
       res = decide({ ...base, overrides });
-      section().outerHTML = renderHtml(res, { standalone: false, live: true, theme: themeNow() });
+      const open = [...doc.querySelectorAll('details.rpt-opt[open]')].map((d) => d.dataset.section);
+      const left = doc.querySelector('.rpt-scroll')?.scrollLeft ?? 0;
+      section().outerHTML = renderHtml(res, { standalone: false, live: true, theme: themeNow(), open });
+      const box = doc.querySelector('.rpt-scroll');
+      if (box) box.scrollLeft = left;
       win.pughState = { overrides: overrides.slice(), result: res };
       if (focus) doc.querySelector(focus)?.focus();
     }
@@ -816,6 +803,7 @@ function pughEngine() {
       if (!section()?.contains(e.target)) return;
       const t = e.target.closest('[data-cell], [data-weight], [data-tol], [data-act], [data-lift], [data-restore], [data-tool], [data-theme-set]');
       if (!t) return;
+      e.preventDefault();   // a mark in a row's summary changes the mark, it does not open the row
       const d = t.dataset;
       if (d.themeSet) {
         if (d.themeSet === 'system') delete html.dataset.theme; else html.dataset.theme = d.themeSet;
@@ -867,7 +855,7 @@ function pughEngine() {
         return;
       }
       if (d.act) {
-        const ck = d.cand, c = res.candidates.find((x) => x.key === ck), focus = `[data-section="${ck}"] h2`;
+        const ck = d.cand, c = res.candidates.find((x) => x.key === ck), focus = `[data-section="${ck}"] summary`;
         if (d.act === 'unveto') { change(without((o) => o.kind === 'option' && o.action === 'veto' && o.candidate === ck), `[data-act="veto"][data-cand="${ck}"]`); return; }
         const make = {
           veto: ['Veto the option', (comment) => [...overrides, { kind: 'option', candidate: ck, action: 'veto', comment }]],
@@ -879,10 +867,6 @@ function pughEngine() {
         if (d.act === 'up' || d.act === 'down') choices.push({ id: 'clear', label: 'Remove my nudges', needsComment: false, apply: () => without((o) => o.kind === 'option' && o.action === 'nudge' && o.candidate === ck) });
         ask(`${c.label}: ${make[0].toLowerCase()}${d.act === 'up' || d.act === 'down' ? ` (a step is one mark at the largest weight, ${fmt(res.nudgeUnit)})` : ''}`, choices, { focus });
       }
-    });
-    // Enter or Space on a cell or a weight opens it, as a button does.
-    doc.addEventListener('keydown', (e) => {
-      if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[data-cell], [data-weight], [data-tol]')) { e.preventDefault(); e.target.click(); }
     });
     render();
   }

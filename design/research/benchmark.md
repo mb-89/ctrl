@@ -111,3 +111,5 @@ The person (input 63) asked how such a matrix is usually laid out, so that the r
 - **Not the convention here**: general decision matrices often turn it around, options as rows and criteria as columns (ASQ's and many templates'). Pugh's own form, criteria as rows, was kept: it reads down a concept's column against the datum's, and the list of criteria, the longer side, runs down the page.
 
 **Taken** ([../output/pugh.md](../output/pugh.md), "The report"): criteria as rows; Weight and Tol. (the tolerance, this framework's addition) as their own columns; the datum's column first; every option a column; Σ +, Σ S and Σ − rows, then the weighted total, then the vetoes still standing. The five-point marks (§3) count once each in Σ + and Σ − (a ++ is one better mark); the weighted total counts it twice.
+
+**Then superseded** by inputs 66 and 67 (decisions v2.9): the table is flipped, an option a row (the general decision matrix's orientation, ASQ's above), so that each row can be an option's `<details>`; the weight stays in the head with each criterion; the Σ rows went, since the marks in a row already show them.
