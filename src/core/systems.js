@@ -42,7 +42,7 @@ const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturatio
 // A type's tags; a function reads the variant (a PI from the plant at one
 // level is a plain PI, at several it is scheduled).
 const VARIANT_TAGS = {
-  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', huLin: 'State feedback', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference', speedPI: 'PID',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', huLin: 'Variable structure', relay: 'Variable structure', slidingMode: 'Variable structure', superTwisting: 'Variable structure', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference', speedPI: 'PID',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -52,9 +52,12 @@ const TONE = {
   // LQR sits beside Disturbance (slate) on both pendulums, so it took State
   // feedback's orange, and State feedback, on no card with a disturbance
   // now that the library's gains are computed, took slate.
-  PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green', Relay: 'blue',
-  // Seven of the eight tones are taken by controller tags: this one is set.
-  'Sliding mode': 'red',
+  PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green',
+  // A class of its own (the person, input 38): laws that switch their
+  // structure or gain with the state (a relay, sliding mode, super-twisting,
+  // Hu–Lin's variable gain). Seven of the eight tones are taken by controller
+  // tags: this one is set.
+  'Variable structure': 'red',
   // The observers sit together on one card, beside PID (aqua) and
   // Disturbance (slate): Luenberger took blue, the Kalman filter green.
   'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',

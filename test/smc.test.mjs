@@ -212,7 +212,7 @@ test('the sliding-mode system loads whole with its record step, its Measure chan
   assert.equal(normalizeProject(JSON.parse(JSON.stringify(p))).scope.channels[3].measure, true);
   assert.equal(normalizeProject({ scope: { channels: [{ source: 'r', measure: 'yes' }] } }).scope.channels[0].measure, undefined, 'only true turns it on');
   const tags = ENTRY.tags.map((t) => t.label);
-  for (const want of ['Linear', 'Sliding mode', 'Disturbance', 'XY']) assert.ok(tags.includes(want), `${want} in ${tags}`);
+  for (const want of ['Linear', 'Variable structure', 'Disturbance', 'XY']) assert.ok(tags.includes(want), `${want} in ${tags}`);
   assert.equal(systemTags({ diagram: { blocks: [{ id: 'c', type: 'controller', params: {}, variants: [{ type: 'superTwisting' }] }], wires: [] } }).find((t) => t.kind === 'controller').tone, 'red');
 });
 

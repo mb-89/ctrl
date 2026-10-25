@@ -2,6 +2,11 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: Variable structure is a class of its own; changes mid-run go to the backlog ([input 37](../input/2026-10-25-37-changes-apply-while-running-bumpless.md), [input 38](../input/2026-10-25-38-variable-structure-tag.md))
+
+- **Variable structure** is a controller tag of its own: "It's its own class of controller." **Interpretation:** the class holds the laws that switch their structure or gain with the state (a relay, sliding mode, super-twisting, Hu–Lin's variable gain) and replaces the *Sliding mode* and *Relay* tags and, on Hu–Lin, *State feedback*; it takes Sliding mode's red. Today it is on two cards: the sliding-mode motor and Hu–Lin.
+- **A change while running applies at that instant, bumpless**: in the backlog (roadmap.md), after the PUMA, with the generic routes to research (incremental form, tracking, initialising at the switch). The person: "This is not important for now. You also don't need to start it now."
+
 ## 2026-10-25 · v2.9: one click for both downloads; the MCP server explains itself ([input 36](../input/2026-10-25-36-zips-runme-mcp-explains-itself.md))
 
 The person: "I want the MCP server and the plant to download as a zip file, and they both have a runme ... a runme ps1, a runme shell, and a readme md. So no matter what, I just click the runme and it does everything. I don't need ... any options I can figure out with the help flag ... if we start the MCP server, the README and also the server itself should explain a bit how somebody who's not familiar with MCP servers would get an agent to work with that ... what you wrote here in the message ... the server should explain it itself."
