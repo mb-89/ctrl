@@ -64,3 +64,15 @@ One JSON document. Everything the person sets up is in it, including how the dis
 - `scope.view.noiseLevels` (optional): the levels used Above noise, per signal, `{ name: [floor, ceiling] }` in dB above the noise (0 dB = the noise at that frequency), with the same rules as `levels`. They are kept apart from `levels` because the units differ: switching shows the other unit's levels, switching back returns these. A signal without a pair has automatic levels (the floor 6 dB above the noise, the ceiling at the largest value shown). Example: `"view": { "mode": "spectrogram", "aboveNoise": true, "levels": { "speed_m": [-60, 20] }, "noiseLevels": { "speed_m": [3, 30] } }`.
 - `scope.channels[i].offset` is in the channel's units: the value drawn on the centre line is `−offset`.
 - Older files still load: `system.reference` becomes `system.signals.r`; version 1 (one reference block, `sim.duration`) becomes one component with a period no shorter than the old run; a `pulse` becomes a Square with count 1; a Square's `duty` becomes its high time.
+
+## Vector signals and robots (optional; [robot.md](robot.md))
+
+All of these are optional; a file without them means what it meant.
+- **A diagram's `robots`** (the root's only): `{ "puma560": { "urdf": "<robot …>", "gravity": [0, 0, -9.81] } }`. The robot blocks name one in their `robot` parameter; a 3D view names one in `robot`.
+- **Wires connect port groups**: a wire end's port index counts a block's groups, and a group may carry a vector (n elements) or a matrix (r·c, row by row). Widths are declared or follow from the inputs (vectors.js); Mux and Demux join and split.
+- **The new block types**: `mux` (`inputs`: a count "3" or widths "3,3"), `demux` (`sizes` "3,3"), `constant` (`value`: a number, a list or rows), `matrixGain` (`K` likewise), `product` (`inner`), `solve`, `norm`, `friction` (B, Tcp, Tcn, ws: numbers or lists), and the robot blocks `forwardKinematics`, `jacobian`, `jdotqd`, `massMatrix`, `biasForces`, `inverseDynamics`, `torqueSplit`, `dampedInverse`, `orientationError`, `frameTransform`, `jointLimits` (their parameters: `robot`, `frame`, `armature`, `scale`, `eps`, `lambdaMax`, `rows`, `rpy`, `groups`, `inverse`, `check`).
+- **Fields kept only when given**: a Source's `derivatives` (1 or 2: outputs ṙ, r̈); a Sink's `name` as a list `"x,y,z"` and `unit` as `"m,m,rad"` (a single name numbers itself: q → q1…q6); an Integrator's `x0` as a list and `width`; a Controller's `lanes` (one law per element of its groups) and `ff` 1 (a feedforward group after the measurements).
+- **A Sine's `ease`** (s): its phase rate rises from 0 over that time.
+- **The controller type `speedPI`** (inputs ω, ζ, Kf, integral, limit per lane, anti-windup; Kv, Ki and u0 are computed and refused in a file).
+- **A view of `kind: "3d"`**: `{ "name", "kind": "3d", "robot" | "urdf", "joints": "q" | { "j1": "q1", … }, "paths": [{ "x", "y", "z", "style": "reference" | "actual", "span": "all" | "to-now", "fade" }], "camera" }`, bound to Sinks by name ([plant-views.md](plant-views.md)).
+

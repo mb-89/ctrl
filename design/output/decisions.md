@@ -2,6 +2,20 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the PUMA 560 runs end to end ([robot.md](robot.md), "The PUMA as built")
+
+No new words from the person; built against the interfaces agreed in the entry below (input 29).
+- **Vector signals are a pass before the compiler** (`vectors.js`): a vector diagram in, a scalar diagram out; a diagram without vectors is itself, so every library system runs bit for bit as before (the fingerprints). The changes to `diagram.js` and `sim.js` are listed in robot.md for the foundations branch.
+- **"PUMA 560, a circle in space" is in the library** and opens on the 3D view: 0.049 mm rms with the model feedforward, 1.8 mm without, 8.6 mm with P alone; the compiled system equals the loop written plainly to 5·10⁻¹⁵ rad over 5 s; a 5 s run takes about 0.5 s in Node.
+- **The axis gains are computed per lane** by `speedPI` from the plant each lane sees at the start pose, with the trim of all six lanes at once; nothing plant-specific is stored.
+- **Interpretations:**
+  - The view binds to visible Sinks (q, x, y, z, xr, yr, zr) rather than hidden probes: the person's preferred end state (input 14), and it needs nothing new in the compiler.
+  - The circle's frame is placed by forward kinematics of a Constant start pose, not by an Initial value block (a latch the model compile would see at the wrong instant).
+  - Masks hold numbers, so each Motor carries its drive's numbers on its own mask; the controller's lists (its model of the six drives) and the start pose stay on blocks until masks take lists.
+  - P only keeps the trim (u0 holds gravity), as every variant without the model does: 8.6 mm, where the plan, without a trim, measured 14.
+  - The HIL simulator does not offer the PUMA yet (its plant rewriting is scalar).
+  - The library's tags: MIMO (a plant tag, slate) and 3D (a feature, blue); the plan's Feedforward tag is left out, since no feature tone is free beside the others on the card.
+
 ## 2026-10-25 · v2.9: the PUMA in parallel; an MCP server; the order to the end ([input 29](../input/2026-10-25-29-puma-parallel-mcp-order.md))
 
 The person: "why does the Puma have to wait for the foundations? Can you not clarify the interfaces that are needed in advance and then do it in parallel? ... finish up and make it runnable as an MCP ... before the overhaul. So tomorrow I could use that if the overhaul doesn't finish. Then you can start the overhaul at night, and after that you can start the benchmark feature. So they are nice to have, but if they don't make it in, that doesn't break anything. But the Puma, that's important."
