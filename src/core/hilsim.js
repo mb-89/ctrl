@@ -32,8 +32,10 @@ export function simulatorCore(script) {
 // ---- the models it can run
 
 const isLive = (e) => JSON.stringify(e.diagram).includes('"type":"external"');
-// Every library system with a plant of its own (not the HIL systems).
-export const simModels = () => EXAMPLE_PLANTS.filter((e) => !isLive(e));
+// Every library system with a plant of its own (not the HIL systems), but
+// those whose wires carry vectors (the PUMA: its HIL plant is not built,
+// design/output/robot.md §13).
+export const simModels = () => EXAMPLE_PLANTS.filter((e) => !isLive(e) && !e.vectors);
 
 // One seeded generator for every draw (mulberry32): uniform in [0, 1).
 export function seededRandom(seed) {

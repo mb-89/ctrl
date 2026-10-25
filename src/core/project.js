@@ -15,6 +15,7 @@ import { normalizeDiagram, diagramNames, compileDiagram } from './diagram.js';
 import { normalizeView } from './views.js';
 import { DesignError, parseOp, operatingPoint, linearize } from './linearize.js';
 import { CONTROLLERS } from './controllers.js';
+import { inv, mul } from './linalg.js';
 import { parseSpeed, speedToJson } from './speed.js';
 
 export const FORMAT = 'loop-tuner/2';
@@ -362,10 +363,15 @@ function blockModel(project, idPath, at, { designs, limits } = {}) {
   if (plant?.type !== 'diagram') throw new DesignError('no-diagram', 'the plant is not a block diagram, so no block sees a plant in it', 'build the plant in the Plant tab, or load a system from the System library');
   const diagram = plant.diagram, id = Array.isArray(idPath) ? idPath.join('/') : String(idPath);
   const parts = id.split('/');
+  // A lane of a Controller with lanes: 'ctl/servos[2]' (1-based; vectors.js).
+  const [, last, lane] = parts.at(-1).match(/^(.*?)(?:\[(\d+)\])?$/);
   const level = parts.slice(0, -1).reduce((d, x) => d?.blocks.find((b) => b.id === x && b.type === 'subsystem')?.diagram, diagram);
-  const block = level?.blocks.find((b) => b.id === parts.at(-1));
-  if (!block || (block.type !== 'controller' && block.type !== 'observer')) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl');
-  const op = parseOp(at);
+  const block = level?.blocks.find((b) => b.id === last);
+  if (!block || (block.type !== 'controller' && block.type !== 'observer') || (lane && !(lane >= 1 && lane <= (block.params.lanes ?? 1) && block.params.lanes > 1))) throw new DesignError('no-block', `no Controller or Observer "${id}" in the plant`, 'name a block by its id path, as motor/ctrl, or a lane as robot/servos[2]');
+  // A lane starts where the run starts (t = 0): every lane then holds what
+  // it puts out at the start, the torques that hold the arm, where a trim of
+  // this lane alone would leave the others at 0 and the arm falling.
+  const op = lane && parseOp(at).kind === 'initial' ? parseOp({ t: 0 }) : parseOp(at);
   // No store named: compileDiagram's default (Node: SYNC_DESIGNS; the page: its own, as a guest).
   const store = designs;
   let statuses, snap = null;
@@ -376,16 +382,22 @@ function blockModel(project, idPath, at, { designs, limits } = {}) {
     if (!snap) throw new DesignError('diverged', `the run diverges before t = ${op.t} s: there is no state to linearise at`, 'pick an earlier time, or steady the loop first');
     statuses = run.info.designs;
   } else statuses = compileDiagram(diagram, 'plant', { standalone: true, sources: {}, designs: store }).designs;
-  const seeThrough = new Map();
-  for (const s of statuses) if (s.path !== id && s.values?.stateIndex) seeThrough.set(s.path, s.values.stateIndex);
   const el = compileDiagram(structuredClone(diagram), 'plant', { mode: 'model' });
-  const model = el.seen(id, { ...(seeThrough.size ? { seeThrough } : {}), ...(snap ? { X: snap.X, held: snap.held, sources: snap.sources, t: snap.t } : {}) });
+  // Finite differences are looked through as a design looks through them (diagram.js, looked).
+  const seeThrough = new Map(el.looked ?? []);
+  for (const s of statuses) if (s.path !== id && s.values?.stateIndex) seeThrough.set(s.path, s.values.stateIndex);
+  const seenAt = { ...(seeThrough.size ? { seeThrough } : {}), ...(snap ? { X: snap.X, held: snap.held, sources: snap.sources, t: snap.t } : {}) };
+  const model = el.seen(id, seenAt);
   // The limits of the running variant, for a trim (u that holds a level).
   const v = block.variants?.[block.variant ?? 0]?.params ?? {};
   const lim = limits ?? { umin: v.umin ?? -Infinity, umax: v.umax ?? Infinity };
   // At a snapshot, u is what the block put out there (an Observer: what it read on its input u).
   const pt = snap ? operatingPoint(model, { kind: 't', t: snap.t, u: block.type === 'observer' ? snap.inputs[id]?.[0] ?? 0 : snap.held[id] ?? 0 }, lim) : operatingPoint(model, op, lim);
-  return { model, pt, statuses, block, id, snap };
+  // Another lane j of the same Controller, linearised at the same state with
+  // what it holds there (loopModel closes it round the plant).
+  const laneId = (j) => id.replace(/\[\d+\]$/, `[${j}]`);
+  const laneLin = (j) => { const m = el.seen(laneId(j), seenAt); return linearize(m, operatingPoint(m, { kind: 't', t: snap?.t ?? 0, u: Number(snap?.held[laneId(j)] ?? 0) })); };
+  return { model, pt, statuses, block, id, snap, lane: Number(lane) || 0, laneId, laneLin };
 }
 
 // The plant the block idPath sees, linearised at an operating point
@@ -416,32 +428,48 @@ export function linearizeBlock(project, idPath, at = 'origin', opts = {}) {
 // outside the page, and a kink at the operating point (the slope there is
 // neither side's and depends on the difference step; designs refuse it too).
 export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
-  const { model, pt, statuses, block, id, snap } = blockModel(project, idPath, at, { designs });
+  const { model, pt, statuses, block, id, snap, lane, laneId, laneLin } = blockModel(project, idPath, at, { designs });
   if (block.type !== 'controller') throw new DesignError('not-a-controller', `'${block.name ?? block.id}' is an Observer: a loop is cut at a Controller's output`, 'pick the Controller that drives the plant');
-  const plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
+  let plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
   // At a kink the central slope is neither side's (and depends on the step):
   // margins and poles from it say nothing, so the loop is refused, as a design refuses it.
   if (plant.kinks.length) throw new DesignError('kink', `the plant has a kink at ${plant.op.label}: ${plant.kinks[0]}; a linear loop there would show the slope of neither side`, 'pick Start or Scope time (a state of the run), or a level away from the kink');
   const variant = block.variants[block.variant ?? 0], def = CONTROLLERS[variant.type], Ts = block.params.Ts;
-  let values = null;
-  if (def.designed) {
-    const st = statuses.find((s) => s.path === id);
-    values = st?.values ?? null;
-    if (!values) {
-      const why = st?.error ? `: ${st.error.message}` : st?.status === 'pending' || st?.status === 'cancelled' ? ': its plan is not made yet' : '';
-      throw new DesignError('no-design', `${variant.name} has no design to analyse${why}`, st?.error?.hint || 'see its Computed box in the Controller tab');
+  const t = snap ? snap.t : parseOp(at).kind === 'initial' ? 0 : undefined;
+  // The running variant's linear law at lane path p (the block's own path, or a lane's).
+  function lawOf(p, lin) {
+    let values = null;
+    if (def.designed) {
+      const st = statuses.find((s) => s.path === p);
+      values = st?.values ?? null;
+      if (!values) {
+        const why = st?.error ? `: ${st.error.message}` : st?.status === 'pending' || st?.status === 'cancelled' ? ': its plan is not made yet' : '';
+        throw new DesignError('no-design', `${variant.name} has no design to analyse${why}`, st?.error?.hint || 'see its Computed box in the Controller tab');
+      }
+    }
+    if (!def.linear) throw new DesignError('no-linear', `${def.label} has no linear model`, 'analyse another variant');
+    try { return def.linear(variant.params, Ts, { y: Array.from(lin.op.y), ...(t !== undefined ? { t } : {}) }, values); } catch (err) {
+      // The law's own hint where it has one (no point makes a switching law linear).
+      throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'pick an operating point where the law is linear, such as at rest');
     }
   }
-  if (!def.linear) throw new DesignError('no-linear', `${def.label} has no linear model`, 'analyse another variant');
-  const t = snap ? snap.t : parseOp(at).kind === 'initial' ? 0 : undefined;
-  let ctrl;
-  try { ctrl = def.linear(variant.params, Ts, { y: Array.from(plant.op.y), ...(t !== undefined ? { t } : {}) }, values); } catch (err) {
-    // The law's own hint where it has one (no point makes a switching law linear).
-    throw err instanceof DesignError ? err : new DesignError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'pick an operating point where the law is linear, such as at rest');
-  }
+  const ctrl = lawOf(id, plant);
   const warnings = [...plant.warnings];
   if (ctrl.note) warnings.push(ctrl.note);
-  const { umin = -Infinity, umax = Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
+  // A lane: the other lanes closed round the plant by their own laws.
+  if (lane) {
+    const others = [];
+    for (let j = 1; j <= block.params.lanes; j++) if (j !== lane) { const lin = laneLin(j); others.push({ lin, ctrl: lawOf(laneId(j), lin) }); }
+    const closed = closeLanes(plant, others, Ts);
+    if (closed) {
+      plant = closed;
+      warnings.splice(0, warnings.length, ...warnings.filter((w) => !w.startsWith('the other lanes')));
+      warnings.push(`the other lanes of '${block.name ?? block.id}' run their law round the plant (taken to continuous time); r of every lane is held`);
+    }
+  }
+  // A lane's limit (speedPI's limit, ± per lane) as umin, umax.
+  const laneLim = Array.isArray(variant.params.limit) ? (variant.params.limit[(lane || 1) - 1] ?? variant.params.limit[0]) || Infinity : null;
+  const { umin = laneLim === null ? -Infinity : -laneLim, umax = laneLim ?? Infinity } = variant.params, u = plant.op.u, tol = 1e-9 * Math.max(1, Math.abs(u));
   const atLimit = u >= umax - tol || u <= umin + tol;
   if (atLimit) warnings.push(`${plant.input.label} = ${fmt(u)} is at its limit (${fmt(umin)} to ${fmt(umax)}) there: the controller saturates, and the linear loop does not hold`);
   for (const obs of model.through) warnings.push(`the estimates of '${obs}' are read as the states they stand for: the filter's own dynamics are not in this loop`);
@@ -449,6 +477,75 @@ export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
   // Analysis tab's verdict, Auto-tune's check at the start): u at a limit.
   // (A kink at the operating point is refused above.)
   return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
+}
+
+// The plant lane k sees with the other lanes of its Controller closed round
+// it (robot.md §5: one loop at a time, the others tracking), so the arm's
+// other joints do not fall while lane k is cut. Each other lane's discrete
+// law (inputs r, its measurements) is taken to continuous time (Tustin,
+// exact at low frequency; the sample-and-hold of the other lanes is left
+// out), its r held: u_j = C_j x_j + D_j y_j, ẋ_j = A_j x_j + B_j y_j. Its
+// plant column and rows come from its own cut at the same state. null where
+// the lanes' plants are not one (other states, a dead time, feedthrough):
+// the other lanes then hold their outputs, as seen() leaves them.
+function closeLanes(plant, others, Ts) {
+  const n = plant.A.length, names = plant.states.map((s) => s.label).join('|');
+  if (others.some(({ lin }) => lin.A.length !== n || lin.states.map((s) => s.label).join('|') !== names || lin.D.flat().some((v) => v !== 0) || (lin.delay ?? []).some((d) => d > 0))) return null;
+  const parts = others.map(({ lin, ctrl }) => {
+    const m = lin.C.length, nc = ctrl.A.length;
+    const cols = (row) => Array.from({ length: m }, (_, k) => row[1 + k] ?? 0);
+    if (!nc) return { lin, nc, A: [], B: [], C: [], D: cols(ctrl.D[0]) };
+    // Tustin backwards: A = (2/Ts)(Φ + I)⁻¹(Φ − I), B = (Φ + I)⁻¹Γ, C = H (2/Ts I − A), D = J − H B.
+    const P = ctrl.A.map((r, i) => r.map((v, j) => v + (i === j ? 1 : 0)));
+    const Pi = inv(P);
+    const A = mul(Pi, ctrl.A.map((r, i) => r.map((v, j) => v - (i === j ? 1 : 0)))).map((r) => r.map((v) => (2 / Ts) * v));
+    const B = mul(Pi, ctrl.B.map(cols));
+    const H = ctrl.C[0];
+    const C = A.map((_, j) => (2 / Ts) * H[j] - H.reduce((s, h, i) => s + h * A[i][j], 0));
+    const D = cols(ctrl.D[0]).map((d, k) => d - H.reduce((s, h, i) => s + h * B[i][k], 0));
+    return { lin, nc, A, B, C, D };
+  });
+  const N = n + parts.reduce((s, p) => s + p.nc, 0);
+  const A = Array.from({ length: N }, (_, i) => (i < n ? [...plant.A[i], ...new Array(N - n).fill(0)] : new Array(N).fill(0)));
+  let o = n;
+  for (const p of parts) {
+    const Bu = p.lin.B.map((r) => r[0]), Cy = p.lin.C;
+    // u_j's weight on the plant's states (D_j y) and on the law's own.
+    const dx = Array.from({ length: n }, (_, c) => p.D.reduce((s, d, k) => s + d * Cy[k][c], 0));
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < n; c++) A[i][c] += Bu[i] * dx[c];
+      for (let c = 0; c < p.nc; c++) A[i][o + c] += Bu[i] * p.C[c];
+    }
+    for (let r = 0; r < p.nc; r++) {
+      for (let c = 0; c < n; c++) A[o + r][c] = p.B[r].reduce((s, b, k) => s + b * Cy[k][c], 0);
+      for (let c = 0; c < p.nc; c++) A[o + r][o + c] = p.A[r][c];
+    }
+    o += p.nc;
+  }
+  // A law state that integrates what is a plant state's rate (a PI's
+  // integral of a measured speed is the angle, scaled: ẋ_c = β·ẋ_s) stays
+  // β·x_s apart from it, a constant: taken out (x_c = β·x_s, exact for the
+  // deviations), or it would be a pole at s = 0 that neither u nor y moves.
+  const drop = [];
+  for (let r = n; r < N; r++) {
+    if (A[r].some((v, c) => c >= n && v !== 0) || A.some((row, i) => i >= n && i !== r && row[r] !== 0)) continue;
+    const w = A[r].slice(0, n), big = Math.max(...w.map(Math.abs));
+    if (!(big > 0)) continue;
+    for (let sIdx = 0; sIdx < n; sIdx++) {
+      const a = plant.A[sIdx], j = a.findIndex((v) => v !== 0);
+      if (j < 0 || plant.B[sIdx][0] !== 0 || A[sIdx].some((v, c) => c >= n && v !== 0)) continue;
+      const beta = w[j] / a[j];
+      if (!w.every((v, c) => Math.abs(v - beta * a[c]) <= 1e-12 * big)) continue;
+      for (const row of A) row[sIdx] += beta * row[r];
+      drop.push(r);
+      break;
+    }
+  }
+  const keep = A.map((_, i) => i).filter((i) => !drop.includes(i));
+  const Ar = keep.map((i) => keep.map((j) => A[i][j])), M = keep.length;
+  const pad = (row) => [...row, ...new Array(M - n).fill(0)];
+  const lawStates = Array.from({ length: M - n }, (_, i) => ({ label: `other lanes' law ${i + 1}`, name: `x${i + 1}`, unit: '', angle: false, index: n + i }));
+  return { ...plant, A: Ar, B: plant.B.concat(Array.from({ length: M - n }, () => [0])), C: plant.C.map(pad), n: M, states: [...plant.states, ...lawStates] };
 }
 
 // The least-used palette slot, earliest first, so a colour follows its

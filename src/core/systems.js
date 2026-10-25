@@ -42,7 +42,7 @@ const NONLINEAR = new Set(['cartPole', 'pendulumCart', 'conicalTank', 'saturatio
 // A type's tags; a function reads the variant (a PI from the plant at one
 // level is a plain PI, at several it is scheduled).
 const VARIANT_TAGS = {
-  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', huLin: 'State feedback', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference',
+  pid: 'PID', pidFF: 'PID', stateFeedback: 'State feedback', gainScheduled: 'Gain scheduling', swingUp: 'Lyapunov swing-up', trajectory: 'Trajectory planning', lqr: 'LQR', huLin: 'State feedback', relay: 'Relay', slidingMode: 'Sliding mode', superTwisting: 'Sliding mode', kalman: 'Kalman filter', kalmanModel: 'Kalman filter', luenberger: 'Luenberger observer', luenbergerPlaced: 'Luenberger observer', difference: 'Finite difference', speedPI: 'PID',
   scheduledPI: (v) => (v.params?.at?.length > 1 ? 'Gain scheduling' : 'PID'), swingUpLqr: ['Lyapunov swing-up', 'LQR'],
 };
 const variantTags = (v, fallback) => { const t = VARIANT_TAGS[v.type]; return [].concat(typeof t === 'function' ? t(v) : t ?? fallback); };
@@ -60,6 +60,8 @@ const TONE = {
   'Kalman filter': 'green', 'Luenberger observer': 'blue', 'Finite difference': 'orange',
   Disturbance: 'slate', FFT: 'blue', Spectrogram: 'magenta', XY: 'yellow', 'Auto-tune': 'green', HIL: 'orange',
   'Controller in the plant': 'green', Agent: 'red',
+  // The PUMA's: a plant with several inputs and outputs, and a 3D view.
+  MIMO: 'slate', '3D': 'blue',
 };
 // A value without its own tone gets one from its label, so it stays put.
 const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TAG_TONES.length];

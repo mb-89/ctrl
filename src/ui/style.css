@@ -601,6 +601,11 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .pdiag .wire .hit { stroke: transparent; stroke-width: 12; fill: none; }
 .pdiag .wire .line { stroke: var(--ink-2); stroke-width: 1.5; fill: none; }
 .pdiag .wire.sel .line { stroke: var(--accent-ink); stroke-width: 2.6; }
+/* A vector or matrix wire: a hollow double stroke (the canvas's surface inside), its element count above it */
+.pdiag .wire.vec .line { stroke-width: 4.6; }
+.pdiag .wire.vec .core { stroke: var(--surface); stroke-width: 1.8; fill: none; }
+.pdiag .wire.vec.sel .line { stroke: var(--accent-ink); stroke-width: 5.4; }
+.pdiag .wn { font-family: var(--font-mono); font-size: var(--text-2xs); fill: var(--ink-2); }
 .pdiag .arrowhead { fill: var(--ink-2); }
 .pdiag .wire-temp { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
 .pdiag .marquee { fill: color-mix(in srgb, var(--accent) 12%, transparent); stroke: var(--accent-ink); stroke-dasharray: 4 3; }

@@ -54,7 +54,7 @@ export function createControllerTab(host, app) {
     <div class="banner notloop" id="ct-notloop" role="note" hidden></div>
     <div class="ctl">
       <section class="gcol" aria-label="Controller block">
-        <div class="ghead"><h3 class="label">Controller</h3></div>
+        <div class="ghead"><h3 class="label">Controller</h3><span class="badge" id="ct-lanes" title="One block, its variants shared by every lane; each lane runs its own copy of the law, with its own design" hidden></span></div>
         <div id="ct-blocks" class="ctblocks"></div>
         <div id="ct-block" class="pform"></div>
         <p class="note" id="ct-ports"></p>
@@ -100,8 +100,17 @@ export function createControllerTab(host, app) {
     const hit = target && all.find((c) => c.path.join('/') === target.join('/'));
     return hit ?? all[0] ?? null;
   };
-  // What the running designed variant of a block computed (app.designStatuses, from the last run).
-  const statusOf = (c) => (app.designStatuses ?? []).find((s) => s.path === c.path.join('/')) ?? null;
+  // A Controller with lanes (robot.md §5): its lane count, else 0.
+  const lanesOf = (c) => (c.block.type === 'controller' && c.block.params.lanes > 1 ? c.block.params.lanes : 0);
+  // What the running designed variant of a block computed (app.designStatuses,
+  // from the last run). A block with lanes is designed per lane
+  // ('ctl/servos[2]'): its statuses as one, the numbers a table by lane.
+  const statusOf = (c) => {
+    const all = app.designStatuses ?? [], p = c.path.join('/'), n = lanesOf(c);
+    if (!n) return all.find((s) => s.path === p) ?? null;
+    const per = Array.from({ length: n }, (_, k) => all.find((s) => s.path === `${p}[${k + 1}]`) ?? null);
+    return per.every(Boolean) ? lanesStatus(per) : null;
+  };
 
   // Edits the current block in a copy of the diagram; the app takes it as one undo step.
   function edit(fn) {
@@ -123,7 +132,7 @@ export function createControllerTab(host, app) {
   // for, named by what feeds the block's inputs ("x, θ, v, ω").
   function hintOf(p, names) {
     const meas = names.slice(1);
-    const per = p.per === 'measurement' ? `for ${meas.join(', ')}` : p.per === 'level' ? `levels of ${meas[0] ?? 'y1'}` : '';
+    const per = p.per === 'measurement' ? `for ${meas.join(', ')}` : p.per === 'level' ? `levels of ${meas[0] ?? 'y1'}` : p.per === 'lane' ? 'per lane, or one for all' : '';
     return [p.kind === 'vector' ? 'comma-separated' : '', per, p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : '', p.nullable ? p.empty ?? 'empty: from the plant' : ''].filter(Boolean).join(' · ');
   }
   // A parameter with named options (anti-windup): a select.
@@ -151,12 +160,15 @@ export function createControllerTab(host, app) {
     const b = c.block;
     $('#ct-blocks').innerHTML = all.length > 1 ? all.map((x) => `<button class="btn btn-block" data-path="${esc(x.path.join('/'))}" aria-pressed="${x === c}">${esc(x.where)}</button>`).join('') : `<div class="heading">${esc(c.where)}</div>`;
     $('#ct-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
-    const obs = b.type === 'observer', lib = LIBS[b.type];
+    const obs = b.type === 'observer', lib = LIBS[b.type], lanes = lanesOf(c);
+    $('#ct-lanes').hidden = !lanes;
+    $('#ct-lanes').textContent = lanes ? `${lanes} lanes` : '';
     $('#ct-block').innerHTML = field('b:inputs', 'Inputs', b.params.inputs, obs ? 'u, then the measurements' : 'r, then the measurements')
       + (obs ? field('b:outputs', 'Estimates', b.params.outputs, 'states it puts out') : '')
       + field('b:Ts', 'Sample time', num(b.params.Ts, 4), 'Ts, s; every variant runs at it');
     const names = blockInputNames(root(), c.path);
-    $('#ct-ports').innerHTML = `<b>In</b> <span class="ports">${names.map((n, k) => `<span class="chip">${k + 1} ${esc(n)}</span>`).join('')}</span>`;
+    $('#ct-ports').innerHTML = `<b>In</b> <span class="ports">${names.map((n, k) => `<span class="chip">${k + 1} ${esc(n)}${lanes ? ` ×${lanes}` : ''}</span>`).join('')}</span>`
+      + (lanes ? `<br>Each input is a group of ${lanes}, one per lane${b.params.ff ? ', the last the feedforward ff' : ''}; u is ${lanes} wide. The variants are shared by every lane, each lane designed on its own.` : '');
 
     // The type beside each name (.vtype: a variant from the plant says how its
     // design stands, renderGlyphs).
@@ -197,7 +209,7 @@ export function createControllerTab(host, app) {
     const box = $('#ct-computed');
     const v = b.variants[b.variant], def = lib[v.type];
     // The picture of what it does carries the numbers the design computed.
-    if (def.designed) drawStructure($('#ct-diag'), b, lib, blockInputNames(root(), c.path), st?.values ?? null);
+    if (def.designed) drawStructure($('#ct-diag'), b, lib, blockInputNames(root(), c.path), st?.lanes ? null : st?.values ?? null);
     box.hidden = !def.designed;
     if (!def.designed) { box.innerHTML = ''; return; }
     const off = b.type === 'observer' ? 'zero estimates' : 'u = 0';
@@ -206,10 +218,10 @@ export function createControllerTab(host, app) {
       return;
     }
     const waiting = WAITING.includes(st.status);
-    const canCopy = st.values && def.manual && !waiting && st.status !== 'cancelled';
+    const canCopy = st.values && def.manual && !waiting && st.status !== 'cancelled' && !st.lanes;
     const time = waiting ? percent(st) : st.status === 'cancelled' ? '' : st.cached ? 'cached' : st.ms >= 1000 ? `${(st.ms / 1000).toFixed(1)} s` : `${st.ms < 10 ? st.ms.toFixed(1) : Math.round(st.ms)} ms`;
     let body = `<p><b>${esc(def.label)}</b>${st.at ? ` at ${esc(st.at)}` : ''}</p>`;
-    if (st.seen) body += `<p><span class="muted">plant seen</span> ${esc(st.seen)}</p>`;
+    if (st.seen) body += `<p><span class="muted">plant seen${st.lanes ? ' by lane 1' : ''}</span> ${esc(st.seen)}</p>`;
     if (st.error) body += `<p class="text-bad">${esc(st.error.message)}</p>${st.error.hint ? `<p class="note">${esc(st.error.hint)}</p>` : ''}<p class="note">Until then the block puts out ${off}.</p>`;
     // A plan being made in the background: its progress, and what runs meanwhile.
     // Its Cancel (or, once cancelled, Plan) sits right under it, above the rows.
@@ -426,6 +438,29 @@ export function createControllerTab(host, app) {
     renderProgress() { if (!host.hidden) renderProgress(); },
     shown: render,
     open(path) { target = path; },
+  };
+}
+
+// The design statuses of a block's lanes as one (Controller tab, Computed):
+// the worst status, the first error (with its lane), the warnings once each
+// (with the lanes they hold for, unless all), and the numbers as a table, a
+// row per lane. Notes that differ by lane are left out.
+const WORST = ['error', 'cancelled', 'pending', 'stale', 'warn', 'ok'];
+function lanesStatus(per) {
+  const n = per.length, worst = WORST.find((w) => per.some((s) => s.status === w)) ?? per[0].status;
+  const bad = per.findIndex((s) => s.error);
+  const nums = per[0].rows.filter((r) => typeof r.value === 'number');
+  const table = per.map((s, k) => [k + 1, ...nums.map((r) => s.rows.find((x) => x.label === r.label)?.value ?? '–')]);
+  const notes = nums.filter((r) => r.note && per.every((s) => s.rows.find((x) => x.label === r.label)?.note === r.note)).map((r) => `${r.label}: ${r.note}`);
+  const said = new Map();
+  per.forEach((s, k) => { for (const w of s.warnings) said.set(w, [...(said.get(w) ?? []), k + 1]); });
+  const warnings = [...said].map(([w, ks]) => (ks.length === n ? w : `lane${ks.length > 1 ? 's' : ''} ${ks.join(', ')}: ${w}`));
+  const rows = nums.length ? [{ table, head: ['lane', ...nums.map((r) => r.label)] }, ...(notes.length ? [{ sentence: true, label: '', value: notes.join(' · ') }] : [])] : [];
+  return {
+    ...per[0], lanes: n, status: worst, values: per.every((s) => s.values) ? per[0].values : null,
+    ms: per.reduce((a, s) => a + (s.ms ?? 0), 0), cached: per.every((s) => s.cached),
+    error: bad < 0 ? null : { ...per[bad].error, message: `lane ${bad + 1}: ${per[bad].error.message}` },
+    progress: per.find((s) => s.progress)?.progress ?? null, rows, warnings,
   };
 }
 

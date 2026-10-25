@@ -359,7 +359,8 @@ test('guard: the library stores inputs only, never numbers computed from a plant
     // person chooses, as a PID's gains are. (The library's super-twisting
     // k2 = 44 is Levant's 1.1·L/β with the motor's β, a guessed L: derived
     // from the plant, an open question for the person; roadmap.) A finite
-    // difference holds only its rate filter's Tf, nothing of the plant.
+    // difference's rate filter (the PUMA's encoders, Tf 0) is a sensor
+    // choice, not a number from the plant.
     assert.ok(lib[v.type].designed || ['pid', 'off', 'slidingMode', 'superTwisting', 'difference'].includes(v.type), `${v.name}: ${v.type} holds numbers; use a designed type`);
     assert.ok(!('u0' in (v.params ?? {})), `${v.name}: a start output is a trim value, computed from the plant`);
     // A feedforward that follows r is the plant's inverse: computed (pidFF), never a hand number in the library.

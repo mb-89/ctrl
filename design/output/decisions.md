@@ -9,6 +9,21 @@ The person: "I want the MCP server and the plant to download as a zip file, and 
 - **The MCP server explains itself** on start and in its README: what an MCP server is in two sentences, how to connect an agent (the exact command or config for common MCP clients, with the server's own path filled in), that the page it serves is at the printed address, and what to ask the agent (help me tune this, let's look at this identification together).
 - **Naming MCP clients**: the person asked for the explanation given in chat, which names Claude Code; the page carries the zips, and its provenance rule forbids names of the person, accounts, repositories and sessions. Interpretation: products that act as MCP clients (Claude Code, Claude Desktop, VS Code, Cursor and others) may be named in the MCP server's own help and README, as instructions; the provenance test keeps forbidding the person's identifiers, `claude.ai`, the host's adapter and everything else on its list.
 
+## 2026-10-25 · v2.9: the PUMA 560 runs end to end ([robot.md](robot.md), "The PUMA as built")
+
+No new words from the person; built against the interfaces agreed in the entry below (input 29).
+- **Vector signals are a pass before the compiler** (`vectors.js`): a vector diagram in, a scalar diagram out; a diagram without vectors is itself, so every library system runs bit for bit as before (the fingerprints). The changes to `diagram.js` and `sim.js` are listed in robot.md for the foundations branch.
+- **"PUMA 560, a circle in space" is in the library** and opens on the 3D view: 0.049 mm rms with the model feedforward, 1.8 mm without, 8.6 mm with P alone; the compiled system equals the loop written plainly to 5·10⁻¹⁵ rad over 5 s; a 5 s run takes about 0.5 s in Node.
+- **The axis gains are computed per lane** by `speedPI` from the plant each lane sees at the start pose, with the trim of all six lanes at once; nothing plant-specific is stored.
+- **Interpretations:**
+  - The view binds to visible Sinks (q, x, y, z, xr, yr, zr) rather than hidden probes: the person's preferred end state (input 14), and it needs nothing new in the compiler.
+  - The circle's frame is placed by forward kinematics of a Constant start pose, not by an Initial value block (a latch the model compile would see at the wrong instant).
+  - Masks hold numbers, so each Motor carries its drive's numbers on its own mask; the controller's lists (its model of the six drives) and the start pose stay on blocks until masks take lists.
+  - P only keeps the trim (u0 holds gravity), as every variant without the model does: 8.6 mm, where the plan, without a trim, measured 14.
+  - The HIL simulator does not offer the PUMA yet (its plant rewriting is scalar).
+  - The Analysis tab closes the other lanes by their own laws when it cuts one lane (robot.md §5 had them hold their trim, which leaves an arm that gravity tips over: every lane read unstable).
+  - The error signals are in mm, as planned; the Measure line reads a unit with its own prefix (mm, ms, kN) in its base unit first, so 0.0335 mm reads "33.5 µm" (it read "33.5 mmm").
+  - The library's tags: MIMO (a plant tag, slate) and 3D (a feature, blue); the plan's Feedforward tag is left out, since no feature tone is free beside the others on the card.
 ## 2026-10-25 · v2.9: a deadbeat example; the benchmark's Pugh matrix; no holding back on usage ([input 34](../input/2026-10-25-34-hu-lin-scheduling-variable.md), [input 35](../input/2026-10-25-35-deadbeat-and-pugh-matrix.md))
 
 - **Hu–Lin, reproduced**: the person remembers the paper gave everything except how to compute one important scheduling variable, which they once had to work out; the session reproduces the paper's results and derives that variable, with the derivation written down.

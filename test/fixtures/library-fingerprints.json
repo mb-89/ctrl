@@ -58,5 +58,10 @@
     "samples": 2001,
     "signals": "angle,ctrl.r,ctrl.u,ctrl.y,d,r,speed,torque,u",
     "hash": "f3a827e7"
+  },
+  "PUMA 560, a circle in space": {
+    "samples": 5001,
+    "signals": "a_r,b_r,ctl/servos[1].r,ctl/servos[1].u,ctl/servos[1].y,ctl/servos[2].r,ctl/servos[2].u,ctl/servos[2].y,ctl/servos[3].r,ctl/servos[3].u,ctl/servos[3].y,ctl/servos[4].r,ctl/servos[4].u,ctl/servos[4].y,ctl/servos[5].r,ctl/servos[5].u,ctl/servos[5].y,ctl/servos[6].r,ctl/servos[6].u,ctl/servos[6].y,e,ea,eb,ec,eo,i1,i2,i3,i4,i5,i6,q1,q2,q3,q4,q5,q6,sigma,tau1,tau2,tau3,tau4,tau5,tau6,tauC1,tauC2,tauC3,tauC4,tauC5,tauC6,tauF1,tauF2,tauF3,tauF4,tauF5,tauF6,tauG1,tauG2,tauG3,tauG4,tauG5,tauG6,tauI1,tauI2,tauI3,tauI4,tauI5,tauI6,x,xr,y,yr,z,zr",
+    "hash": "ef55693a"
   }
 }

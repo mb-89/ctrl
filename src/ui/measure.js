@@ -61,8 +61,13 @@ export function measure(t, x, j0, j1, h) {
 // 0.0042 rad -> "4.2 mrad", 0.5 V -> "0.5 V" (no prefix from 0.1 up); values
 // below a thousandth of ref (the channel's scale) read 0.
 const PREFIX = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n']];
+// A unit that carries a prefix of its own (mm, ms, kN) is read in its base
+// unit first, so 0.0335 mm reads "33.5 µm", not "33.5 mmm".
+const OWN = { k: 1e3, M: 1e6, m: 1e-3, µ: 1e-6, u: 1e-6, n: 1e-9 };
+const BASE = /^(?:m|s|A|V|N|W|g|Hz|rad|N·m|J|Pa)(?:\/s|\/s²)?$/;
 export function measureValue(v, unit, ref = 0) {
   if (!Number.isFinite(v)) return '—';
+  if (unit && unit.length > 1 && OWN[unit[0]] && BASE.test(unit.slice(1))) { const f = OWN[unit[0]]; return measureValue(v * f, unit.slice(1), ref * f); }
   const u = unit === '1' ? '' : unit;
   if (v === 0 || Math.abs(v) < ref * 1e-3) return `0${u ? ` ${u}` : ''}`;
   const a = Math.abs(v);
