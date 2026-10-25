@@ -71,6 +71,13 @@ The person, after the prototype ranked Hu–Lin first on "DC motor, deadbeat" wi
 - **"Measure it instead" by matching**: the sensor for an observer is the block output whose run matches the measured signal's rate within 5 %, so it works on the Servo motor main now has (the structure trace of the first prototype found no integrator there).
 - **Results**: sliding-mode motor, the boundary-layer sliding mode (+10, robust); oven, the PID, sensitive (the PI from the plant ties it, the feedforward ties if complexity's weight drops to 0.75); tank, keep the loaded schedule (robust); deadbeat motor, state feedback (+16, robust), Hu–Lin, LQR, the planned swing-up and the relay fail the main job.
 
+## 2026-10-25 · v2.9, Identify: the docs sweep (§18 step 12)
+
+Built on branch `feat/identify-tab`; no new words from the person.
+
+- **The docs say Identify is built**: tabs.md, autotune.md (now "Tab 5", with a section "On the identified model"), analysis.md ("Tab 6", the identified model as plant), hil.md, project-format.md (`system.identify`), roadmap.md, AGENTS.md, the README and design/output/README.md, each pointing to identification.md for the detail.
+- **The MCP server's `identify` tool runs the core** (it was a stub "until the Identify core lands"): Identify's whole test on a simulated plant, the command line's `--json` report without the record, `keep` for `autotune` with `plant: "identified"`. Interpretation: the stub said it would run the core once it landed; a live plant stays the page's, where the person sees the test and can stop it.
+
 ## 2026-10-25 · v2.9, Identify: Compare, Hide a variation, Unknown oven (§18 step 11)
 
 Built on branch `feat/identify-tab` from [identification.md](identification.md) §13 and [input 58](../input/2026-10-25-58-identify-without-hil.md) ("run the identification without a HIL … see how far they are from what I actually parameterized"); [§13.1](identification.md#131-built-step-11) has the numbers:

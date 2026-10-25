@@ -98,7 +98,7 @@ const { normalizeProject } = CORE.mods['core/project.js'];
 const { normalizeComponent, SIGNALS } = CORE.mods['core/signals.js'];
 const { autotuneSteps, tuneReport, placeVariant, controllerBlocks } = CORE.mods['core/autotune.js'];
 const { parseTrace } = CORE.mods['core/trace.js'];
-const { keptModel, modelTuneSteps } = CORE.mods['core/identify.js'];
+const { keptModel, modelTuneSteps, identify } = CORE.mods['core/identify.js'];
 const { parseProject, embedProject, listSystems, findSystem, systemProject, allBlocks, findBlock, projectDesigns, runProject, analyzeProject, autotuneOptions, traceSummary } = CORE.mods['core/ops.js'];
 let basePage = null;
 const pageHtml = (project) => { basePage ??= CORE.page(); return project ? embedProject(basePage, project) : basePage; };
@@ -475,10 +475,34 @@ const TOOLS = [
     run: ({ project, block }) => { const { name, project: p } = take(project); return { project: name, designs: projectDesigns(p, block) }; },
   },
   {
-    name: 'identify', title: 'Identify a plant (not built yet)',
-    description: 'NOT BUILT YET: identifying a plant from a recorded experiment, with the fitted model, its uncertainty and validation (Identify, design/output/identification.md), is designed but its core is not built. This tool says so; it will run the core once it lands. Meanwhile read the data with page_signals (source "record" for a live plant).',
-    inputSchema: obj({ project: projectArg }),
-    run: () => { throw new Error('identify is not built yet: the Identify core (design/output/identification.md) has not landed. Meanwhile, read the experiment\'s data with page_signals (source "record" for a live plant) and reason about it; tune a simulated plant with autotune'); },
+    name: 'identify', title: 'Identify a plant',
+    description: 'Runs the Identify tab\'s whole test on a simulated plant (design/output/identification.md): the page eases in (Listen, growing pushes, a gentle loop made quicker try by try, a Check the model was not fitted to), then fits small models and grades them on the Check. The same report as node cli.mjs identify --json, without the record: the model (sentences, structure, chain with ±2σ, candidates, the Check\'s fit, the places, the gentlest controller that held), the test\'s time, tries and end, and with vary the hidden factors drawn. keep: true stores the record (never the model) in the project in memory, for autotune with plant "identified". A plant outside the page is identified in the page (page_ tools), not here.',
+    inputSchema: obj({
+      project: projectArg,
+      block: { type: 'string', description: 'The Controller block\'s id path; by default the first.' },
+      band: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'How far y may move, [low, high]; by default r\'s range widened by a third of its span on each side.' },
+      budget: { type: 'number', description: 'Seconds of plant time the test may take (default 120).' },
+      vary: { type: 'object', properties: { share: { type: 'number' }, seed: { type: 'integer' } }, required: ['share', 'seed'], additionalProperties: false, description: 'A hidden variation of the plant: every physical parameter within ±share, from seed; revealed in the answer.' },
+      structure: { type: 'string', enum: ['lag', 'lags', 'resonance', 'intLag', 'intRes'], description: 'Use this candidate instead of the page\'s choice.' },
+      keep: { type: 'boolean', description: 'Store the record in the project (default false).' },
+    }),
+    run: ({ project, block, band, budget, vary, structure, keep: store = false }) => {
+      const { name, project: p } = take(project);
+      const path = block ? block.split('/') : null;
+      const settings = Object.fromEntries(Object.entries({ band, budget, vary, structure }).filter(([, v]) => v !== undefined));
+      const res = identify(p, path, settings);
+      if (store) {
+        const next = structuredClone(p);
+        const entry = (next.system.identify ??= {})[res.block.key] ??= { kept: [] };
+        for (const k of ['band', 'budget', 'vary', 'structure']) if (settings[k] !== undefined) entry[k] = settings[k];
+        entry.kept ??= [];
+        entry.kept.push({ name: `${res.plan.names.y} · test ${entry.kept.length + 1}`, plan: res.plan, record: res.record });
+        entry.use = entry.kept.length - 1;
+        keep(name, normalizeProject(next));
+      }
+      const { record, ...rest } = res;
+      return JSON.parse(JSON.stringify({ project: name, ...rest, samples: record.y.length, kept: store }));
+    },
   },
   {
     name: 'save_project', title: 'Save the project to a file',

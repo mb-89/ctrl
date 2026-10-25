@@ -100,7 +100,11 @@ for (const system of SYSTEMS) {
     assert.match(at.at, /t = 1\.00 s/);
 
     assert.deepEqual((await s.call('designs')).designs, cli('design', file, '--json').designs);
-    await assert.rejects(s.call('identify'), /not built yet/);
+    // Identify: the command line's report, without the record.
+    const id = await s.call('identify', { budget: 60 });
+    const { title, ...byCli } = cli('identify', file, '--budget', '60', '--json');
+    assert.deepEqual(without(id, 'project'), byCli);
+    assert.ok(id.ok && id.model.ok, id.model.sentences?.[0]);
 
     // Auto-tune: the command line's report; applied, the result runs if better.
     const tuned = await s.call('autotune', { method: 'relay' });
