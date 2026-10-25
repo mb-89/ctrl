@@ -5802,8 +5802,27 @@ function createExperiment(plan) {
     return null;
   }
 
+  function* recheck() {
+    yield* listen();
+    if (st.done || stopping) return null;
+    if (!inBand(listenInfo.y0)) return finish('outside', `${names.y} is at ${yU(listenInfo.y0)}, outside 'may move within': widen it, or bring the plant inside first`);
+    chips.nudge = '–'; chips.ease = '–'; chips.shake = '–';
+    test = testR; check = P.check?.r ? P.check.r.slice() : testR.slice();
+    enter('hold');
+    const g = P.law, lim = g.lim ?? [P.umin, P.umax];
+    switchTo(g, 'hold', lim);
+    const ok = yield* settle(check[0], 4 * ((g.tauC ?? 1) + (g.theta ?? 0)) + E.hold.slack, `Holding ${names.y} at ${yU(check[0])} with the controller that held before`, true);
+    if (ok === 'left') return finish('band', `${names.y} left 'may move within' under the controller that held before: the page stopped the plant`);
+    if (ok === 'away') return finish('away', `the controller that held before pushed ${names.y} away from ${yU(check[0])}: the page stopped the plant; the plant has changed`);
+    inc = { gains: g, tauC: g.tauC, J: Infinity, n: 0, lim };
+    yield* runCheck();
+    if (st.done || stopping) return null;
+    return finish('done', 'Checked again: the plant is stopped');
+  }
+
 
   function* program() {
+    if (P.kind === 'recheck') return yield* recheck();
     yield* listen();
     if (st.done || stopping) return null;
     const L = listenInfo;
@@ -16262,9 +16281,10 @@ function rk4Of(el, X) {
 
 const scopeProbes = (el) => el.probes().flatMap(([n], i) => (n.includes('.') ? [] : [i]));
 
-function createLiveRunner(diagram, signals) {
+function createLiveRunner(diagram, signals, { identify = null } = {}) {
   const fns = {};
   let own, key, el, ext, keep, X, rk4, tPrev, h, links, ramp = null, started = false, log = [], period = Infinity;
+  let exp = null, law = null, kNow = 0;
   let sigs = {};
 
   function setSignals(next) {
@@ -16276,8 +16296,18 @@ function createLiveRunner(diagram, signals) {
   function build(d) {
     own = normalizeDiagram(structuredClone(d));
     key = structureKey(own);
-    const sources = new Proxy({}, { get: (_, name) => (t) => (started && ramp ? ramp.value(name, t) : wave(name)(0)) });
+    if (identify) {
+      let block = null, level = own;
+      for (const id of identify.key.split('/')) { block = level?.blocks.find((b) => b.id === id); level = block?.diagram; }
+      if (block?.type !== 'controller') throw new Error(`Identify: no Controller block ${identify.key}`);
+      block.variants = [{ name: 'Identify', type: 'experiment', params: { plan: identify.plan } }];
+      block.variant = 0;
+    }
+    const played = (name) => (name === identify.source ? (exp ? exp.reference(kNow) : identify.plan.test.r?.[0] ?? identify.plan.test.r0) : identify.hold?.[name] ?? 0);
+    const sources = new Proxy({}, { get: (_, name) => (t) => (identify ? played(name) : started && ramp ? ramp.value(name, t) : wave(name)(0)) });
     el = compileDiagram(own, 'plant', { standalone: true, sources });
+    law = identify ? el.laws[identify.key] : null;
+    exp = law?.experiment ?? null;
     keep = scopeProbes(el);
     if (el.externals.length !== 1) throw new Error(el.externals.length ? 'one External plant per system, for now' : 'this system has no External plant block: add one from the Live group in the Plant tab');
     ext = el.externals[0];
@@ -16302,7 +16332,7 @@ function createLiveRunner(diagram, signals) {
     });
   }
   function makeRamp() {
-    const played = diagramNames(own).sources.filter((n) => sigs[n]);
+    const played = identify ? [] : diagramNames(own).sources.filter((n) => sigs[n]);
     period = Math.max(...played.map((n) => sigs[n].period), 0) || Infinity;
     const fs = fullScales(ext.params, links);
     ramp = createRampIn({ refs: played.map((name) => ({ name, fn: wave(name), fs: fs[name] ? fs[name][1] - fs[name][0] : null })), period, rate: ext.params.ramp / 100 });
@@ -16334,8 +16364,10 @@ function createLiveRunner(diagram, signals) {
     get log() { return log.map(({ name, unit }) => ({ name, unit })); },
     get period() { return period; },
     ramp: () => (ramp && started ? ramp.state() : null),
-    step(t, y) {
+    get experiment() { return exp; },
+    step(t, y, at = null) {
       const missing = [];
+      if (at) kNow = at.k;
       for (let j = 0; j < ext.y.length; j++) {
         if (Number.isFinite(y[j])) ext.y[j] = y[j];
         else missing.push(ext.params.outputs[j]);
@@ -16359,6 +16391,7 @@ function createLiveRunner(diagram, signals) {
       }
       el.eval(t, X, 0, 0, null);
       if (tPrev !== null) el.recordLeft();
+      if (at && law) law.at(at.k, at.applied);
       el.sample(t, X, 0, 0);
       el.record();
       tPrev = t;
@@ -16557,6 +16590,7 @@ function createLiveLoop(post, env = globalThis) {
   let batch = empty(), lastFlush = 0, names = [], lastRamp = null;
   let appliedOn = false, appliedUnits = {};
   let id = 0, gen = 0, bad = 0;
+  let ident = null, identNext = null;
   const calls = new Map();
   const programWaiters = [], closeWaiters = [];
 
@@ -16582,6 +16616,7 @@ function createLiveLoop(post, env = globalThis) {
     if (latched) return;
     latched = { by, reason };
     halt();
+    identEnd(reason);
     post({ type: 'estop', by, reason });
     if (open()) say('open', 'e-stop');
   }
@@ -16611,11 +16646,13 @@ function createLiveLoop(post, env = globalThis) {
   }
   function makeRunner() {
     if (!program) throw new Error('nothing to run yet');
-    runner = createLiveRunner(program.diagram, program.signals);
+    runner = createLiveRunner(program.diagram, program.signals, { identify: ident });
     appliedOn = false;
     sampleNames();
   }
   function begin(by) {
+    ident = by === 'page' ? identNext : null;
+    identNext = null;
     makeRunner();
     post({ type: 'run', by });  
     stats = createLinkStats(desc.rate_hz);
@@ -16631,7 +16668,8 @@ function createLiveLoop(post, env = globalThis) {
     armed = true;
     if (!runner || !running) return;
     let res;
-    try { res = runner.step(m.t, m.y); } catch (err) { trip(`the diagram failed: ${err.message}`, 'the page\'s diagram failed'); return; }
+    const sampleAt = ident ? { k: Math.round(m.t / ident.plan.Ts), applied: m.applied?.[ident.applied] } : null;
+    try { res = runner.step(m.t, m.y, sampleAt); } catch (err) { trip(`the diagram failed: ${err.message}`, 'the page\'s diagram failed'); return; }
     if (res.missing.length) {
       if (++bad >= NAN_CYCLES) { trip(`no number for ${res.missing.join(', ')} in ${bad} cycles`, `the page got no number for ${res.missing.join(', ')}`); return; }
     } else bad = 0;
@@ -16644,7 +16682,26 @@ function createLiveLoop(post, env = globalThis) {
     batch.values.push(appliedOn ? [...res.values, ...Array.from({ length: n }, (_, i) => (m.applied?.length === n ? m.applied[i] : NaN))] : res.values);
     lastRamp = res.ramp && res.ramp.phase === 'ramp' ? { left: res.ramp.left, to: res.ramp.to, first: res.ramp.first } : null;
     if (at - lastFlush >= 33) { lastFlush = at; flush(); }
+    if (ident) identTell(at);
     if (stats && at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
+  }
+
+  function identTell(at) {
+    const exp = runner?.experiment;
+    if (!exp) return;
+    const st = exp.state;
+    if (exp.needs && !ident.asked) { ident.asked = true; post({ type: 'identify', state: st, needs: exp.needs, record: exp.record() }); return; }
+    if (!exp.needs) ident.asked = false;
+    if (st.checkAt !== null && !ident.checkSent) { ident.checkSent = true; post({ type: 'identify', state: st, check: exp.found.check, record: exp.record() }); return; }
+    if (st.done || exp.stopAsked) { identEnd(null); handlers.stop(); return; }
+    if (at - ident.posted >= 100) { ident.posted = at; post({ type: 'identify', state: st }); }
+  }
+  function identEnd(reason) {
+    const exp = runner?.experiment;
+    if (!ident || !exp) { ident = null; return; }
+    if (reason) exp.abort(reason);
+    ident = null;
+    post({ type: 'identify', state: exp.state, done: true, record: exp.record() });
   }
 
   function onText(text) {
@@ -16711,6 +16768,7 @@ function createLiveLoop(post, env = globalThis) {
         for (const c of calls.values()) c.reject(new Error('connection closed'));
         calls.clear();
         if (wasRunning && !latched) latch('page', 'connection lost');
+        identEnd('the connection was lost');
         say('closed', e.reason || (opened ? 'the connection was lost' : e.code === 1006 ? 'no plant answered at that address (or this page may not open connections)' : `code ${e.code}`));
         for (const w of closeWaiters.splice(0)) w();
       };
@@ -16729,8 +16787,24 @@ function createLiveLoop(post, env = globalThis) {
     async start() {
       try { await start(); return {}; } catch (err) { fail(err.message); post({ type: 'refused', message: err.message }); return { error: err.message }; }
     },
+    async identify({ key, plan, source, hold, applied }) {
+      identNext = { key, plan, source, hold, applied, posted: 0, asked: false };
+      try { await start(); return {}; } catch (err) { identNext = null; ident = null; return { error: err.message }; }
+    },
+    supply({ data }) {
+      const exp = runner?.experiment;
+      if (!ident || !exp?.needs) return { error: 'nothing waits for a fit' };
+      exp.supply('fit', data ?? {});
+      return {};
+    },
+    identifyStop() {
+      if (!ident) return {};
+      runner?.experiment?.stop();
+      return {};
+    },
     async stop() {
       const my = ++gen;
+      if (ident) identEnd('stopped');
       halt();
       try { await call('stop'); } catch {   }
       if (my !== gen) return {};
@@ -17799,14 +17873,14 @@ function varyDiagram(diagram, share, seed) {
 }
 
 
-function identifyRun(project, path = null, settings = {}) {
+function identifyRun(project, path = null, settings = {}, { plan: ready = null, recheck = null } = {}) {
   const known = knownFor(project, path);
   if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: it is identified in the page while connected', 'identify() simulates the plant; a live plant runs in the page');
   const stored = project.system.identify?.[known.block.key] ?? {};
   const given = Object.fromEntries(Object.entries(settings ?? {}).filter(([, v]) => v !== undefined));
   const merged = { ...stored, ...given };
   const s = settingsFor(known, merged);
-  const plan = planExperiment(known, s);
+  const plan = ready ?? planExperiment(known, s);
   const vary = merged.vary ?? null;
   let diagram = project.system.plant.diagram, factors = null;
   if (vary) {
@@ -17835,6 +17909,10 @@ function identifyRun(project, path = null, settings = {}) {
     }
     if (!exp.state.done) exp.stop();
     const record = compactRecord(exp.record());
+    if (recheck) {
+      const end = exp.state.end;
+      return { ok: end.code === 'done', block: known.block, plan, record, end: { code: end.code, message: end.message }, time: record.y.length * Ts, recheck: recheckFit(recheck.model, record, recheck.record) };
+    }
     const model = yield* tagged(identifySteps(record, { plan, structure: s.structure, reuse: pre }), 'model');
     const end = exp.state.end;
     return {
@@ -17852,6 +17930,38 @@ function* tagged(gen, stage) {
 
 function identify(project, path = null, settings = {}) {
   return drain(identifyRun(project, path, settings).steps);
+}
+
+
+const RECHECK = { points: 5 };
+
+function planRecheck(plan, model, record) {
+  const g = readLog(record);
+  if (!model?.ok || !g.check) throw new IdentifyError('recheck', 'this model had no Check to repeat: identify again', 'Check again repeats a test that ended done');
+  const r = record.r.slice(g.check.iStart, g.check.iEnd).map((v) => nan(v));
+  let law = null;
+  for (const e of g.laws) if (e.i <= g.check.iStart) law = e;
+  if (!law || r.length < 2) throw new IdentifyError('recheck', 'this model had no Check to repeat: identify again');
+  return { ...structuredClone(plan), kind: 'recheck', test: { r }, check: { r }, law: { Kp: law.Kp, Ki: law.Ki, tauC: law.tauC ?? 1, theta: model.params.theta ?? 0, lim: [law.umin, law.umax] } };
+}
+
+function recheckFit(model, record, original = null) {
+  const now = checkReplayFit(model, record);
+  if (now === null) return { fit: null, was: model.check?.fit ?? null, still: false, message: 'the Check did not run: identify again' };
+  const was = (original && checkReplayFit(model, original)) ?? model.check?.fit ?? model.fit;
+  const still = now >= was - RECHECK.points;
+  return { fit: now, was, still, message: still ? `still fits ✓ (${pctText(now)} % now, ${pctText(was)} % when it was identified)` : `the plant has changed: identify again (${pctText(now)} % now, ${pctText(was)} % when it was identified) ✕` };
+}
+function checkReplayFit(model, record) {
+  const g = readLog(record);
+  if (!g.check || !g.listen) return null;
+  const Ts = record.Ts, w = Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9));
+  const seg = closedSegment(record, g.laws, g.check.iStart, g.check.iEnd, w, 'check');
+  const fs = fitSegment(record, seg, g.listen, Ts);
+  const yh = simulateSegment(discretise(model.structure, model.params, Ts), fs).y;
+  const y = [], h = [];
+  for (let k = 0; k < yh.length; k++) if (finite(fs.y[k])) { y.push(fs.y[k]); h.push(yh[k]); }
+  return y.length > 2 ? fitPercent(y, h) : null;
 }
 
 
@@ -17938,7 +18048,7 @@ function discreteAt(d, Om) {
   return [sr * mr - si * mi, sr * mi + si * mr];
 }
 
-return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, identify, modelSamples, predictCheck, modelStep, modelBode };
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, identify, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {

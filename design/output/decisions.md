@@ -2,6 +2,16 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9, Identify: on a live plant (§18 step 7)
+
+Built on branch `feat/identify-tab` from [identification.md](identification.md) §3, §5.5, §5.8, §14 (no new words from the person; [§5.11](identification.md#511-built-step-7-on-a-live-plant) and [§14.1](identification.md#141-built-step-7-the-connection-and-check-again) have the details):
+
+- **The live loop runs the experiment**, the page fits: `createLiveRunner(…, { identify })` gives the block the hidden law, plays r from the experiment and holds the others, without a ramp-in; the loop posts state, and the whole record at the pause, at the Check and at the end (interpretation of "record in chunks": whole records, simpler, about 1 MB at 2 min).
+- **The sample number is the plant's time over Ts**, and the tab refuses a Ts that is not a whole number of the plant's cycles (interpretation: a block sampling every n cycles would otherwise see a gap at each sample).
+- **The scope's Stop during a live test is soft** (§5.8): it goes to the experiment, not straight to the plant; the plant stops when the controller has brought y back. E-STOP stays the hard stop.
+- **Check again runs Listen first**, then the controller that held and the Check (interpretation of "Hold and Check alone": the controller's settling needs Listen's noise); **its verdict compares like with like**: the model's replay of the new Check against its replay of the original Check from the same starting point (the graded Check fit replays from an earlier rest and read 10 points higher on the arm, so every arm would have read "changed").
+- **The connection a model was measured on** is remembered for this page session only (a kept record from an earlier session counts as an earlier connection): it is not stored, since the page cannot know whether a later connection is the same plant.
+
 ## 2026-10-25 · v2.9, Identify: the tab (§18 step 6)
 
 Built on branch `feat/identify-tab` from [identification.md](identification.md) §4 (no new words from the person; [§4.1](identification.md#41-built-step-6) has the details):

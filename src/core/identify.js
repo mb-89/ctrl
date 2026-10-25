@@ -1279,17 +1279,19 @@ export function varyDiagram(diagram, share, seed) {
 // time passes; values in the order of run.names) and { kind: 'fit', stage:
 // 'pause' | 'model' } while it fits (no plant time passes), and returns what
 // identify() returns. run.exp is the experiment (its state for the page),
-// run.stop() asks for its soft Stop. settings: { band, budget, vary: {
+// run.stop() asks for its soft Stop. opts: plan (a plan made already: Check
+// again's), recheck ({ model, record }: Check again ends with its verdict,
+// recheckFit, instead of a model). settings: { band, budget, vary: {
 // share, seed } | null, structure, seed }, over the stored ones
 // (system.identify[key]).
-export function identifyRun(project, path = null, settings = {}) {
+export function identifyRun(project, path = null, settings = {}, { plan: ready = null, recheck = null } = {}) {
   const known = knownFor(project, path);
   if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: it is identified in the page while connected', 'identify() simulates the plant; a live plant runs in the page');
   const stored = project.system.identify?.[known.block.key] ?? {};
   const given = Object.fromEntries(Object.entries(settings ?? {}).filter(([, v]) => v !== undefined));
   const merged = { ...stored, ...given };
   const s = settingsFor(known, merged);
-  const plan = planExperiment(known, s);
+  const plan = ready ?? planExperiment(known, s);
   const vary = merged.vary ?? null;
   let diagram = project.system.plant.diagram, factors = null;
   if (vary) {
@@ -1319,6 +1321,10 @@ export function identifyRun(project, path = null, settings = {}) {
     }
     if (!exp.state.done) exp.stop();
     const record = compactRecord(exp.record());
+    if (recheck) {
+      const end = exp.state.end;
+      return { ok: end.code === 'done', block: known.block, plan, record, end: { code: end.code, message: end.message }, time: record.y.length * Ts, recheck: recheckFit(recheck.model, record, recheck.record) };
+    }
     const model = yield* tagged(identifySteps(record, { plan, structure: s.structure, reuse: pre }), 'model');
     const end = exp.state.end;
     return {
@@ -1340,6 +1346,50 @@ function* tagged(gen, stage) {
 // settings, vary, record, model, end, time, tries }.
 export function identify(project, path = null, settings = {}) {
   return drain(identifyRun(project, path, settings).steps);
+}
+
+// ---- Check again (§14)
+
+// How many points a Check again may lose against the model's own Check
+// before the plant counts as changed.
+export const RECHECK = { points: 5 };
+
+// The plan of a Check again: Listen, then the controller that held the
+// Check before brings y to the Check's start, and the Check's reference as
+// it was played (from the record the model came from). plan: that record's
+// plan. Throws when the model has no Check to repeat.
+export function planRecheck(plan, model, record) {
+  const g = readLog(record);
+  if (!model?.ok || !g.check) throw new IdentifyError('recheck', 'this model had no Check to repeat: identify again', 'Check again repeats a test that ended done');
+  const r = record.r.slice(g.check.iStart, g.check.iEnd).map((v) => nan(v));
+  let law = null;
+  for (const e of g.laws) if (e.i <= g.check.iStart) law = e;
+  if (!law || r.length < 2) throw new IdentifyError('recheck', 'this model had no Check to repeat: identify again');
+  return { ...structuredClone(plan), kind: 'recheck', test: { r }, check: { r }, law: { Kp: law.Kp, Ki: law.Ki, tauC: law.tauC ?? 1, theta: model.params.theta ?? 0, lim: [law.umin, law.umax] } };
+}
+
+// A Check again's verdict: the model replayed over the new record's Check
+// (from its settled start, under the logged law, fed its own y) against the
+// same replay of the Check of the record the model came from (original), so
+// both are read the same way; without it, against the model's own Check fit.
+// Returns { fit, was, still, message }.
+export function recheckFit(model, record, original = null) {
+  const now = checkReplayFit(model, record);
+  if (now === null) return { fit: null, was: model.check?.fit ?? null, still: false, message: 'the Check did not run: identify again' };
+  const was = (original && checkReplayFit(model, original)) ?? model.check?.fit ?? model.fit;
+  const still = now >= was - RECHECK.points;
+  return { fit: now, was, still, message: still ? `still fits ✓ (${pctText(now)} % now, ${pctText(was)} % when it was identified)` : `the plant has changed: identify again (${pctText(now)} % now, ${pctText(was)} % when it was identified) ✕` };
+}
+function checkReplayFit(model, record) {
+  const g = readLog(record);
+  if (!g.check || !g.listen) return null;
+  const Ts = record.Ts, w = Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9));
+  const seg = closedSegment(record, g.laws, g.check.iStart, g.check.iEnd, w, 'check');
+  const fs = fitSegment(record, seg, g.listen, Ts);
+  const yh = simulateSegment(discretise(model.structure, model.params, Ts), fs).y;
+  const y = [], h = [];
+  for (let k = 0; k < yh.length; k++) if (finite(fs.y[k])) { y.push(fs.y[k]); h.push(yh[k]); }
+  return y.length > 2 ? fitPercent(y, h) : null;
 }
 
 // ---- What the page draws from a model (§4, §5.7)

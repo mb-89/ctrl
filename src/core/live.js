@@ -95,9 +95,15 @@ const scopeProbes = (el) => el.probes().flatMap(([n], i) => (n.includes('.') ? [
 
 // diagram: a normalised plant diagram with one External plant block.
 // signals: the project's named signals (the Sources play them).
-export function createLiveRunner(diagram, signals) {
+// identify: { key, plan, source, hold } runs Identify's experiment as the
+// Controller block's law at key (identification.md §3, step 7): the r Source
+// (source) plays the experiment's reference at the cycle's sample k, the
+// other Sources hold their values (hold: { name: value }), and nothing ramps
+// in (the experiment eases in itself).
+export function createLiveRunner(diagram, signals, { identify = null } = {}) {
   const fns = {};
   let own, key, el, ext, keep, X, rk4, tPrev, h, links, ramp = null, started = false, log = [], period = Infinity;
+  let exp = null, law = null, kNow = 0;
   let sigs = {};
 
   function setSignals(next) {
@@ -113,10 +119,20 @@ export function createLiveRunner(diagram, signals) {
   function build(d) {
     own = normalizeDiagram(structuredClone(d));
     key = structureKey(own);
+    if (identify) {
+      let block = null, level = own;
+      for (const id of identify.key.split('/')) { block = level?.blocks.find((b) => b.id === id); level = block?.diagram; }
+      if (block?.type !== 'controller') throw new Error(`Identify: no Controller block ${identify.key}`);
+      block.variants = [{ name: 'Identify', type: 'experiment', params: { plan: identify.plan } }];
+      block.variant = 0;
+    }
     // Before the run's first cycle the Sources read their first value; then
-    // the ramp-in plays them.
-    const sources = new Proxy({}, { get: (_, name) => (t) => (started && ramp ? ramp.value(name, t) : wave(name)(0)) });
+    // the ramp-in plays them. Identify plays its own.
+    const played = (name) => (name === identify.source ? (exp ? exp.reference(kNow) : identify.plan.test.r?.[0] ?? identify.plan.test.r0) : identify.hold?.[name] ?? 0);
+    const sources = new Proxy({}, { get: (_, name) => (t) => (identify ? played(name) : started && ramp ? ramp.value(name, t) : wave(name)(0)) });
     el = compileDiagram(own, 'plant', { standalone: true, sources });
+    law = identify ? el.laws[identify.key] : null;
+    exp = law?.experiment ?? null;
     keep = scopeProbes(el);
     if (el.externals.length !== 1) throw new Error(el.externals.length ? 'one External plant per system, for now' : 'this system has no External plant block: add one from the Live group in the Plant tab');
     ext = el.externals[0];
@@ -146,7 +162,7 @@ export function createLiveRunner(diagram, signals) {
   }
   // Every Source the diagram plays gets a ramp-in, with its full scale.
   function makeRamp() {
-    const played = diagramNames(own).sources.filter((n) => sigs[n]);
+    const played = identify ? [] : diagramNames(own).sources.filter((n) => sigs[n]);
     period = Math.max(...played.map((n) => sigs[n].period), 0) || Infinity;
     const fs = fullScales(ext.params, links);
     ramp = createRampIn({ refs: played.map((name) => ({ name, fn: wave(name), fs: fs[name] ? fs[name][1] - fs[name][0] : null })), period, rate: ext.params.ramp / 100 });
@@ -193,8 +209,14 @@ export function createLiveRunner(diagram, signals) {
     // values for the plant's log, the ramp-in's state, and the outputs that
     // came without a number (missing): those hold their last number, never a
     // made-up 0 (the loop latches an E-stop after NAN_CYCLES of them).
-    step(t, y) {
+    // Identify's experiment (its state, needs, supply, stop), or null.
+    get experiment() { return exp; },
+    // at: { k, applied } for Identify: the controller sample this cycle is
+    // (from the plant's time; a jump is a gap the plant held u over) and the
+    // u the plant applied over the cycle just ended.
+    step(t, y, at = null) {
       const missing = [];
+      if (at) kNow = at.k;
       for (let j = 0; j < ext.y.length; j++) {
         if (Number.isFinite(y[j])) ext.y[j] = y[j];
         else missing.push(ext.params.outputs[j]);
@@ -221,6 +243,7 @@ export function createLiveRunner(diagram, signals) {
       }
       el.eval(t, X, 0, 0, null);
       if (tPrev !== null) el.recordLeft();
+      if (at && law) law.at(at.k, at.applied);
       el.sample(t, X, 0, 0);
       el.record();
       tPrev = t;
@@ -507,6 +530,9 @@ export function createLiveLoop(post, env = globalThis) {
   // applied.NAME after the diagram's signals, NaN in a cycle without them.
   let appliedOn = false, appliedUnits = {};
   let id = 0, gen = 0, bad = 0;
+  // Identify's test (identification.md §3, step 7): { key, plan, source, hold,
+  // applied (the u port's index), posted, asked } while it runs.
+  let ident = null, identNext = null;
   const calls = new Map();
   const programWaiters = [], closeWaiters = [];
 
@@ -533,6 +559,7 @@ export function createLiveLoop(post, env = globalThis) {
     if (latched) return;
     latched = { by, reason };
     halt();
+    identEnd(reason);
     post({ type: 'estop', by, reason });
     // Still connected: the plant is stopped (latched) until Reset, then Run.
     if (open()) say('open', 'e-stop');
@@ -569,12 +596,14 @@ export function createLiveLoop(post, env = globalThis) {
   }
   function makeRunner() {
     if (!program) throw new Error('nothing to run yet');
-    runner = createLiveRunner(program.diagram, program.signals);
+    runner = createLiveRunner(program.diagram, program.signals, { identify: ident });
     appliedOn = false;
     sampleNames();
   }
   // The page's side of a fresh run: the controllers and the ramp-in afresh.
   function begin(by) {
+    ident = by === 'page' ? identNext : null;
+    identNext = null;
     makeRunner();
     post({ type: 'run', by });  // what follows is a new run: its time starts again
     stats = createLinkStats(desc.rate_hz);
@@ -590,7 +619,8 @@ export function createLiveLoop(post, env = globalThis) {
     armed = true;
     if (!runner || !running) return;
     let res;
-    try { res = runner.step(m.t, m.y); } catch (err) { trip(`the diagram failed: ${err.message}`, 'the page\'s diagram failed'); return; }
+    const sampleAt = ident ? { k: Math.round(m.t / ident.plan.Ts), applied: m.applied?.[ident.applied] } : null;
+    try { res = runner.step(m.t, m.y, sampleAt); } catch (err) { trip(`the diagram failed: ${err.message}`, 'the page\'s diagram failed'); return; }
     // An output that is not a number holds its last one for a moment; then
     // the page stops rather than control on a stale measurement.
     if (res.missing.length) {
@@ -607,7 +637,31 @@ export function createLiveLoop(post, env = globalThis) {
     batch.values.push(appliedOn ? [...res.values, ...Array.from({ length: n }, (_, i) => (m.applied?.length === n ? m.applied[i] : NaN))] : res.values);
     lastRamp = res.ramp && res.ramp.phase === 'ramp' ? { left: res.ramp.left, to: res.ramp.to, first: res.ramp.first } : null;
     if (at - lastFlush >= 33) { lastFlush = at; flush(); }
+    if (ident) identTell(at);
     if (stats && at - lastStats >= 500) { lastStats = at; post({ type: 'stats', link: stats.read(), plant: plantStatus }); }
+  }
+
+  // Identify: the experiment's state to the page (at most 10 times a
+  // second), the record when it waits for the fit, and the end: the plant is
+  // stopped (the experiment asked for it) and the record goes to the page.
+  function identTell(at) {
+    const exp = runner?.experiment;
+    if (!exp) return;
+    const st = exp.state;
+    if (exp.needs && !ident.asked) { ident.asked = true; post({ type: 'identify', state: st, needs: exp.needs, record: exp.record() }); return; }
+    if (!exp.needs) ident.asked = false;
+    // The Check starts: the record so far, for its prediction (§5.7).
+    if (st.checkAt !== null && !ident.checkSent) { ident.checkSent = true; post({ type: 'identify', state: st, check: exp.found.check, record: exp.record() }); return; }
+    if (st.done || exp.stopAsked) { identEnd(null); handlers.stop(); return; }
+    if (at - ident.posted >= 100) { ident.posted = at; post({ type: 'identify', state: st }); }
+  }
+  // The test ends: done, or ended by an E-stop or a lost plant (reason).
+  function identEnd(reason) {
+    const exp = runner?.experiment;
+    if (!ident || !exp) { ident = null; return; }
+    if (reason) exp.abort(reason);
+    ident = null;
+    post({ type: 'identify', state: exp.state, done: true, record: exp.record() });
   }
 
   function onText(text) {
@@ -692,6 +746,7 @@ export function createLiveLoop(post, env = globalThis) {
         for (const c of calls.values()) c.reject(new Error('connection closed'));
         calls.clear();
         if (wasRunning && !latched) latch('page', 'connection lost');
+        identEnd('the connection was lost');
         say('closed', e.reason || (opened ? 'the connection was lost' : e.code === 1006 ? 'no plant answered at that address (or this page may not open connections)' : `code ${e.code}`));
         for (const w of closeWaiters.splice(0)) w();
       };
@@ -710,8 +765,27 @@ export function createLiveLoop(post, env = globalThis) {
     async start() {
       try { await start(); return {}; } catch (err) { fail(err.message); post({ type: 'refused', message: err.message }); return { error: err.message }; }
     },
+    // Identify's test on the plant: a fresh run in which the Controller
+    // block at key runs the experiment (plan), nothing ramps in, and the
+    // plant is stopped when the experiment ends.
+    async identify({ key, plan, source, hold, applied }) {
+      identNext = { key, plan, source, hold, applied, posted: 0, asked: false };
+      try { await start(); return {}; } catch (err) { identNext = null; ident = null; return { error: err.message }; }
+    },
+    supply({ data }) {
+      const exp = runner?.experiment;
+      if (!ident || !exp?.needs) return { error: 'nothing waits for a fit' };
+      exp.supply('fit', data ?? {});
+      return {};
+    },
+    identifyStop() {
+      if (!ident) return {};
+      runner?.experiment?.stop();
+      return {};
+    },
     async stop() {
       const my = ++gen;
+      if (ident) identEnd('stopped');
       halt();
       try { await call('stop'); } catch { /* already gone */ }
       // The plant has taken this stop after anything sent before it: it is

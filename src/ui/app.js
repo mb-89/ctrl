@@ -432,7 +432,13 @@ function startApp() {
   // Returns { display, plant, why }: why says why a key was refused.
   app.setMode = (m) => {
     // The scope's Stop while Auto-tune sweeps its runs stops the tuning.
-    if (m === 'stop') { tuneTab?.scopeStopped(); identifyTab?.scopeStopped(); }
+    if (m === 'stop') {
+      tuneTab?.scopeStopped();
+      // Identify's test on a live plant stops softly: the controller brings y
+      // back first, then the plant stops (identification.md §5.8).
+      if (identifyTab?.running() && live?.owns()) { identifyTab.scopeStopped(); app.runChanged(); return { display: display.mode, plant: null, why: null }; }
+      identifyTab?.scopeStopped();
+    }
     if (live?.owns()) { const r = live.key(m); app.runChanged(); return r; }
     display.setMode(m); app.runChanged();
     return { display: display.mode, plant: null, why: null };
@@ -531,6 +537,7 @@ function startApp() {
   const generator = createGenerator($('tab-input'), app);
   const plantEditor = createPlantEditor($('tab-plant'), app);
   live = createLive(app, display, record, $('tab-plant').querySelector('.pprops'));
+  app.live = live;
   // The mode of a system's External plant: control, reference (the plant
   // runs its own controller), log (it takes no inputs), or null (none).
   app.hilMode = () => { const hit = app.project.system.plant?.type === 'diagram' ? findExternal(app.project.system.plant.diagram) : null; return hit ? blockMode(hit.block.params) : null; };
