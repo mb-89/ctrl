@@ -13,8 +13,8 @@
 // open and followTime (called while the scope's time moves).
 
 import { analyzeLoop, stepInfo, stepResponse, sPlanePoint, respondAt, phaseAt } from '../core/analysis.js';
-import { createPlot, extent, PLOT_COLORS } from './plots.js';
-import { CHANNEL_COLORS } from './display.js';
+import { createPlot, extent } from './plots.js';
+import { palette as C } from './palette.js';
 import { num } from './units.js';
 
 const OPS = [
@@ -23,14 +23,17 @@ const OPS = [
   { key: 't', label: 'Scope time', title: "The state at the scope's time: under the cursor or where it last was, at the sweep while running (followed), or at the right edge of the screen" },
 ];
 const FROM = { cursor: 'at the scope cursor', sweep: 'at the sweep, following it', edge: 'at the right edge of the screen' };
-const [C_L, C_CL, , C_U] = CHANNEL_COLORS;
+// The plots' series follow the scope's channel order (design-system.md):
+// L, the open loop, first; the closed loop second; poles and margins fourth.
+const C_L = () => C().ch[0], C_CL = () => C().ch[1], C_U = () => C().ch[3];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 // Good / fair / poor against the usual ranges (Åström & Murray §9.3,
 // Skogestad §2.4.3), always with a word, never colour alone. Only a stable
 // loop is graded: an unstable one has no margins to grade.
 const GRADES = { good: ['✓', 'good'], fair: ['!', 'fair'], poor: ['✕', 'poor'] };
-const grade = (g) => (g ? `<span class="grade grade-${g}" title="${GRADES[g][1]}">${GRADES[g][0]} ${GRADES[g][1]}</span>` : '');
+const TEXT = { good: 'text-ok', fair: 'text-warn', poor: 'text-bad' };
+const grade = (g) => (g ? `<span class="grade ${TEXT[g]}" title="${GRADES[g][1]}">${GRADES[g][0]} ${GRADES[g][1]}</span>` : '');
 const gradeMs = (ms) => (ms <= 1.4 ? 'good' : ms <= 2 ? 'fair' : 'poor');
 const gradePm = (pm) => (pm >= 45 ? 'good' : pm >= 30 ? 'fair' : 'poor');
 const gradeGm = (gm) => (gm >= 2.5 ? 'good' : gm >= 1.7 ? 'fair' : 'poor');
@@ -47,21 +50,21 @@ export function createAnalysisTab(host, app) {
   host.innerHTML = `
     <div class="an">
       <section class="gcol an-side" aria-label="Key numbers">
-        <div class="ghead"><h3 class="glabel">Analysis</h3></div>
+        <div class="ghead"><h3 class="label">Analysis</h3></div>
         <div id="an-blocks" class="ctblocks"></div>
-        <div class="an-op" role="group" aria-label="Operating point">${OPS.map((o) => `<button class="key small" data-op="${o.key}" title="${esc(o.title)}">${o.label}</button>`).join('')}</div>
-        <div id="an-verdict" class="an-verdict"></div>
+        <div class="seg seg-fill" role="group" aria-label="Operating point">${OPS.map((o) => `<button class="btn btn-sm" data-op="${o.key}" title="${esc(o.title)}">${o.label}</button>`).join('')}</div>
+        <div id="an-verdict" class="note"></div>
         <table class="kw" id="an-kw"></table>
-        <div id="an-notes" class="phelp"></div>
+        <div id="an-notes" class="note"></div>
       </section>
       <div class="an-grid" id="an-grid">
-        <figure class="an-fig"><figcaption><span>Root locus · poles</span><span class="an-tg"><button class="key small" data-plane="s">s</button><button class="key small" data-plane="z">z</button></span></figcaption><canvas id="an-locus" aria-label="Root locus"></canvas></figure>
-        <figure class="an-fig"><figcaption><span>Bode · open loop L</span><span id="an-bode-read" class="dim"></span></figcaption><canvas id="an-mag" aria-label="Bode magnitude"></canvas><canvas id="an-phase" aria-label="Bode phase"></canvas></figure>
-        <figure class="an-fig"><figcaption><span>Nyquist · Ortskurve of L</span><span id="an-nyq-read" class="dim"></span></figcaption><canvas id="an-nyq" aria-label="Nyquist plot"></canvas></figure>
-        <figure class="an-fig"><figcaption><span>Step r → y · linear model</span><span id="an-step-read" class="dim"></span></figcaption><canvas id="an-step" aria-label="Step response"></canvas></figure>
+        <figure class="bezel an-fig"><figcaption class="on-dark"><span>Root locus · poles</span><span class="seg" role="group" aria-label="Plane"><button class="btn btn-sm" data-plane="s" title="The s-plane">s</button><button class="btn btn-sm" data-plane="z" title="The z-plane">z</button></span></figcaption><canvas id="an-locus" aria-label="Root locus"></canvas></figure>
+        <figure class="bezel an-fig"><figcaption class="on-dark"><span>Bode · open loop L</span><span id="an-bode-read" class="muted"></span></figcaption><canvas id="an-mag" aria-label="Bode magnitude"></canvas><canvas id="an-phase" aria-label="Bode phase"></canvas></figure>
+        <figure class="bezel an-fig"><figcaption class="on-dark"><span>Nyquist · Ortskurve of L</span><span id="an-nyq-read" class="muted"></span></figcaption><canvas id="an-nyq" aria-label="Nyquist plot"></canvas></figure>
+        <figure class="bezel an-fig"><figcaption class="on-dark"><span>Step r → y · linear model</span><span id="an-step-read" class="muted"></span></figcaption><canvas id="an-step" aria-label="Step response"></canvas></figure>
       </div>
     </div>
-    <div class="ctempty" id="an-empty" hidden></div>`;
+    <div class="notice note" id="an-empty" hidden></div>`;
   const $ = (s) => host.querySelector(s);
   const plots = { locus: createPlot($('#an-locus')), mag: createPlot($('#an-mag')), phase: createPlot($('#an-phase')), nyq: createPlot($('#an-nyq')), step: createPlot($('#an-step')) };
 
@@ -154,10 +157,10 @@ export function createAnalysisTab(host, app) {
 
   function renderSide(v) {
     $('#an-blocks').innerHTML = v.all?.length > 1
-      ? v.all.map((x) => `<button class="sigkey ${x === v.c ? 'on' : ''}" data-path="${esc(x.path.join('/'))}">${esc(x.where)}</button>`).join('')
-      : v.c ? `<div class="ctname">${esc(v.c.where)} · ${esc(v.c.block.variants?.[v.c.block.variant ?? 0]?.name ?? '')}</div>` : '';
+      ? v.all.map((x) => `<button class="btn btn-block" data-path="${esc(x.path.join('/'))}" aria-pressed="${x === v.c}">${esc(x.where)}</button>`).join('')
+      : v.c ? `<div class="heading">${esc(v.c.where)} · ${esc(v.c.block.variants?.[v.c.block.variant ?? 0]?.name ?? '')}</div>` : '';
     $('#an-blocks').querySelectorAll('[data-path]').forEach((el) => el.addEventListener('click', () => { target = el.dataset.path.split('/'); render(); }));
-    host.querySelectorAll('[data-op]').forEach((b) => { b.classList.toggle('lit-view', b.dataset.op === op); b.setAttribute('aria-pressed', String(b.dataset.op === op)); });
+    host.querySelectorAll('[data-op]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.op === op)));
     if (!v.res) {
       $('#an-verdict').innerHTML = '';
       $('#an-kw').innerHTML = '';
@@ -167,10 +170,10 @@ export function createAnalysisTab(host, app) {
     const { res, m, st } = v, g = res.margins, Ts = m.Ts, ok = res.stable;
     const plural = (k, w) => `${k} ${w}${k > 1 ? 's' : ''}`;
     $('#an-verdict').innerHTML = ok
-      ? `<span class="grade grade-good">✓ stable</span> <span class="dim">every closed-loop pole inside the unit circle</span>`
+      ? `<span class="grade text-ok">✓ stable</span> <span class="muted">every closed-loop pole inside the unit circle</span>`
       : res.marginal
-        ? `<span class="grade grade-fair">! marginal</span> <span class="dim">${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows</span>`
-        : `<span class="grade grade-poor">✕ unstable</span> <span class="dim">${plural(res.Z, 'closed-loop pole')} outside the unit circle</span>`;
+        ? `<span class="grade text-warn">! marginal</span> <span class="muted">${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows</span>`
+        : `<span class="grade text-bad">✕ unstable</span> <span class="muted">${plural(res.Z, 'closed-loop pole')} outside the unit circle</span>`;
     const rows = [];
     const row = (k, val, extra = '', title = '') => rows.push(`<tr title="${esc(title)}"><th>${k}</th><td>${val}</td><td>${extra}</td></tr>`);
     const factor = (k) => `×${num(k, 3)}`;
@@ -239,17 +242,17 @@ export function createAnalysisTab(host, app) {
       // Stability boundary and, in s, the ζ = 0.7 rays.
       if (plane === 'z') {
         const th = Array.from({ length: 181 }, (_, i) => (i / 180) * 2 * Math.PI);
-        p.line(th.map(Math.cos), th.map(Math.sin), { color: PLOT_COLORS.axis, width: 1.2 });
+        p.line(th.map(Math.cos), th.map(Math.sin), { color: C().axis, width: 1.2 });
       } else {
         const c = Math.cos(Math.acos(0.7)), s = Math.sin(Math.acos(0.7)), R = 2 * Math.max(Math.abs(fr.x0), Math.abs(fr.x1), Math.abs(fr.y0), Math.abs(fr.y1));
-        p.line([0, -R * c], [0, R * s], { color: PLOT_COLORS.grid, width: 1, dash: [3, 4] });
-        p.line([0, -R * c], [0, -R * s], { color: PLOT_COLORS.grid, width: 1, dash: [3, 4] });
+        p.line([0, -R * c], [0, R * s], { color: C().gridFaint, width: 1, dash: [3, 4] });
+        p.line([0, -R * c], [0, -R * s], { color: C().gridFaint, width: 1, dash: [3, 4] });
       }
       g.globalAlpha = 0.55;
-      for (const { poles } of res.locus) for (const z of poles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'dot', color: C_L, size: 2.4 }); }
+      for (const { poles } of res.locus) for (const z of poles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'dot', color: C_L(), size: 2.4 }); }
       g.globalAlpha = 1;
-      for (const z of res.olPoles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'x', color: C_U, size: 5 }); }
-      for (const { z } of res.clPoles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'dot', color: C_CL, size: 8 }); }
+      for (const z of res.olPoles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'x', color: C_U(), size: 5 }); }
+      for (const { z } of res.clPoles) { const q = map(z); if (q) p.mark(q[0], q[1], { shape: 'dot', color: C_CL(), size: 8 }); }
     });
     p.text(fr.x0, fr.y0, ` × open loop  ● closed loop  · gain ×0.01…×100${hidden ? `  · ${hidden} faster off the plot` : ''}`, { base: 'bottom', dy: -4, dx: 4 });
   }
@@ -263,12 +266,12 @@ export function createAnalysisTab(host, app) {
     const [d0, d1] = extent(dB.filter((x) => x > -200), 0.08);
     const a = plots.mag.frame({ x0: fd.w[0], x1: fd.w.at(-1), xlog: true, y0: Math.max(d0, -120), y1: Math.min(d1, 160), ylabel: '|L| dB' });
     plots.mag.clip(() => {
-      plots.mag.line([a.x0, a.x1], [0, 0], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
-      plots.mag.line(fd.w, dB, { color: C_L, width: 1.8 });
-      for (const c of g.gainCrossings) plots.mag.mark(c.w, 0, { shape: 'o', color: C_CL, size: 4 });
+      plots.mag.line([a.x0, a.x1], [0, 0], { color: C().axis, width: 1, dash: [4, 3] });
+      plots.mag.line(fd.w, dB, { color: C_L(), width: 1.8 });
+      for (const c of g.gainCrossings) plots.mag.mark(c.w, 0, { shape: 'o', color: C_CL(), size: 4 });
       const P = plots.mag.P, sg = g.stableGains, unstable = res.Z > 0;
       for (const c of g.phaseCrossings) {
-        plots.mag.line([at(c.w), at(c.w)], [20 * Math.log10(c.mag), 0], { color: C_U, width: 1.5 });
+        plots.mag.line([at(c.w), at(c.w)], [20 * Math.log10(c.mag), 0], { color: C_U(), width: 1.5 });
         // Only the crossings that bound the gain interval get a label; an
         // unstable loop's, the ones that bound the gains it would be stable for.
         const label = !unstable ? (c.gm === g.gmUp || c.gm === g.gmDown) && `GM ×${num(c.gm, 3)}`
@@ -277,21 +280,21 @@ export function createAnalysisTab(host, app) {
         // Inside the plot, and at the ω = 0 end below the axis title in the corner.
         const y = 20 * Math.log10(c.mag) / 2, py = plots.mag.Y(y), top = P.t + (c.at === 'dc' ? 24 : 8);
         const dy = py < top ? top - py : py > P.b - 8 ? P.b - 8 - py : 0;
-        plots.mag.text(at(c.w), y, label, { color: C_U, dx: c.at === 'nyquist' ? -5 : 5, dy, align: c.at === 'nyquist' ? 'right' : 'left' });
+        plots.mag.text(at(c.w), y, label, { color: C_U(), dx: c.at === 'nyquist' ? -5 : 5, dy, align: c.at === 'nyquist' ? 'right' : 'left' });
       }
-      if (cursorW) plots.mag.line([cursorW, cursorW], [a.y0, a.y1], { color: PLOT_COLORS.ink, width: 1, alpha: 0.6 });
+      if (cursorW) plots.mag.line([cursorW, cursorW], [a.y0, a.y1], { color: C().ink, width: 1, alpha: 0.6 });
     });
     const [p0, p1] = extent(fd.phase, 0.08);
     const b = plots.phase.frame({ x0: fd.w[0], x1: fd.w.at(-1), xlog: true, y0: Math.min(p0, -190), y1: Math.max(p1, -80), xlabel: `ω rad/s · Nyquist ${num(Math.PI / m.Ts, 3)}`, ylabel: '∠L °' });
     plots.phase.clip(() => {
-      for (let k = Math.ceil((b.y0 + 180) / 360); k * 360 - 180 <= b.y1; k++) plots.phase.line([b.x0, b.x1], [k * 360 - 180, k * 360 - 180], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
-      plots.phase.line(fd.w, fd.phase, { color: C_L, width: 1.8 });
+      for (let k = Math.ceil((b.y0 + 180) / 360); k * 360 - 180 <= b.y1; k++) plots.phase.line([b.x0, b.x1], [k * 360 - 180, k * 360 - 180], { color: C().axis, width: 1, dash: [4, 3] });
+      plots.phase.line(fd.w, fd.phase, { color: C_L(), width: 1.8 });
       for (const c of g.gainCrossings) {
         const ph = phaseAt(fd, res.L, c.w);
-        plots.phase.line([c.w, c.w], [ph, ph - c.pm], { color: C_CL, width: 1.5 });
-        plots.phase.text(c.w, ph - c.pm / 2, res.Z === 0 ? `PM ${num(c.pm, 3)}°` : `${num(c.pm, 3)}° from −180°`, { color: C_CL, dx: -5, align: 'right' });
+        plots.phase.line([c.w, c.w], [ph, ph - c.pm], { color: C_CL(), width: 1.5 });
+        plots.phase.text(c.w, ph - c.pm / 2, res.Z === 0 ? `PM ${num(c.pm, 3)}°` : `${num(c.pm, 3)}° from −180°`, { color: C_CL(), dx: -5, align: 'right' });
       }
-      if (cursorW) plots.phase.line([cursorW, cursorW], [b.y0, b.y1], { color: PLOT_COLORS.ink, width: 1, alpha: 0.6 });
+      if (cursorW) plots.phase.line([cursorW, cursorW], [b.y0, b.y1], { color: C().ink, width: 1, alpha: 0.6 });
     });
     // The readout gives the phase the curve shows (unwrapped), not atan2's.
     const L = cursorW ? respondAt(res.L, cursorW) : null;
@@ -306,14 +309,14 @@ export function createAnalysisTab(host, app) {
     p.frame({ ...(view.nyq ?? { x0: -3.2, x1: 1.6, y0: -2, y1: 2 }), equal: true, xlabel: 'Re L', ylabel: 'Im L  (|L| > 1: 1 + ln|L|)' });
     p.clip(() => {
       const th = Array.from({ length: 181 }, (_, i) => (i / 180) * 2 * Math.PI);
-      p.line(th.map(Math.cos), th.map(Math.sin), { color: PLOT_COLORS.axis, width: 1 });
+      p.line(th.map(Math.cos), th.map(Math.sin), { color: C().axis, width: 1 });
       // The Ms circle: |1 + L| = 1/Ms, the closest approach to −1.
       const ring = th.map((a) => squash(-1 + Math.cos(a) / g.ms, Math.sin(a) / g.ms));
-      p.line(ring.map((q) => q[0]), ring.map((q) => q[1]), { color: C_U, width: 1.2, dash: [4, 3] });
-      p.line(xs, ys.map((y) => -y), { color: C_L, width: 1.2, dash: [5, 4], alpha: 0.6 });
-      p.line(xs, ys, { color: C_L, width: 1.8 });
-      p.mark(-1, 0, { shape: '+', color: '#ffffff', size: 6, width: 2 });
-      if (cursorW) { const at = respondAt(res.L, cursorW), q = squash(at.re, at.im); p.mark(q[0], q[1], { shape: 'o', color: '#ffffff', size: 5 }); }
+      p.line(ring.map((q) => q[0]), ring.map((q) => q[1]), { color: C_U(), width: 1.2, dash: [4, 3] });
+      p.line(xs, ys.map((y) => -y), { color: C_L(), width: 1.2, dash: [5, 4], alpha: 0.6 });
+      p.line(xs, ys, { color: C_L(), width: 1.8 });
+      p.mark(-1, 0, { shape: '+', color: C().mark, size: 6, width: 2 });
+      if (cursorW) { const at = respondAt(res.L, cursorW), q = squash(at.re, at.im); p.mark(q[0], q[1], { shape: 'o', color: C().mark, size: 5 }); }
     });
     $('#an-nyq-read').textContent = `P ${res.P} · N ${res.N} · Z ${res.Z} · Ms ${num(g.ms, 3)}`;
   }
@@ -334,9 +337,9 @@ export function createAnalysisTab(host, app) {
     const [y0, y1] = extent([...y, 0, 1, st.yf], 0.08);
     p.frame({ x0: 0, x1: t.at(-1), y0, y1, xunit: 's', ylabel: 'y (r = 1)' });
     p.clip(() => {
-      p.line([0, t.at(-1)], [1, 1], { color: PLOT_COLORS.axis, width: 1, dash: [4, 3] });
-      if (Math.abs(st.yf - 1) > 1e-3) p.line([0, t.at(-1)], [st.yf, st.yf], { color: C_CL, width: 1, dash: [2, 3], alpha: 0.7 });
-      p.line(t, y, { color: C_CL, width: 1.8 });
+      p.line([0, t.at(-1)], [1, 1], { color: C().axis, width: 1, dash: [4, 3] });
+      if (Math.abs(st.yf - 1) > 1e-3) p.line([0, t.at(-1)], [st.yf, st.yf], { color: C_CL(), width: 1, dash: [2, 3], alpha: 0.7 });
+      p.line(t, y, { color: C_CL(), width: 1.8 });
     });
     $('#an-step-read').textContent = `final ${num(st.yf, 3)} · overshoot ${num(st.overshoot, 3)} %${st.settled ? '' : ' · not settled'}`;
   }
@@ -344,7 +347,7 @@ export function createAnalysisTab(host, app) {
   function draw() {
     const v = last;
     if (!v?.res || host.hidden || $('#an-grid').hidden) return;
-    host.querySelectorAll('[data-plane]').forEach((b) => b.classList.toggle('lit-view', b.dataset.plane === plane));
+    host.querySelectorAll('[data-plane]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.plane === plane)));
     drawLocus(v); drawBode(v); drawNyquist(v); drawStep(v);
   }
 

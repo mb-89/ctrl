@@ -28,34 +28,34 @@ export function createGenerator(root, app) {
   root.innerHTML = `
     <div class="gen">
       <section class="gcol gsig" aria-label="Signal being edited">
-        <h3 class="glabel">Edit</h3>
+        <h3 class="label">Edit</h3>
         <div class="siglist" id="g-sigs"></div>
       </section>
       <section class="gcol gwave" aria-label="Waveform">
-        <h3 class="glabel">Waveform</h3>
-        <div class="wkeys">${ORDER.map((t) => `<button class="key wkey" data-type="${t}" title="${KEY_TITLE[t] ?? SIGNALS[t].label}">${icon(t)}<span>${SIGNALS[t].label}</span></button>`).join('')}</div>
-        <div class="lenrow" id="g-period" title="The input repeats with this period; Auto Scale shows one period"></div>
+        <h3 class="label">Waveform</h3>
+        <div class="wkeys" role="group" aria-label="Waveform">${ORDER.map((t) => `<button class="btn btn-sm btn-col wkey" data-type="${t}" aria-pressed="false" title="${KEY_TITLE[t] ?? SIGNALS[t].label}">${icon(t)}<span>${SIGNALS[t].label}</span></button>`).join('')}</div>
+        <div class="lcd lenrow" id="g-period" title="The input repeats with this period; Auto Scale shows one period"></div>
         <input type="file" id="arb-file" accept=".csv,.tsv,.txt,text/csv,text/plain" hidden>
       </section>
       <section class="gcol gparams" aria-label="Parameters">
-        <div class="ghead"><h3 class="glabel" id="g-mode"></h3>
-          <button class="key small primary" id="g-add">Add</button>
-          <button class="key small" id="g-cancel">Cancel</button></div>
-        <div class="plist" id="g-plist"></div>
+        <div class="ghead"><h3 class="label" id="g-mode"></h3>
+          <button class="btn btn-sm btn-primary" id="g-add">Add</button>
+          <button class="btn btn-sm" id="g-cancel">Cancel</button></div>
+        <div class="lcd list plist" id="g-plist"></div>
       </section>
       <section class="gcol gstack" aria-label="Signal">
-        <h3 class="glabel">Signal <span class="eq" id="g-eq">r(t) = Σ</span></h3>
-        <ol class="slist" id="g-stack"></ol>
+        <h3 class="label">Signal <span class="mono" id="g-eq">r(t) = Σ</span></h3>
+        <ol class="lcd list slist" id="g-stack"></ol>
       </section>
       <section class="gcol gentry" aria-label="Entry">
-        <h3 class="glabel">Entry</h3>
+        <h3 class="label">Entry</h3>
         <div class="entry">
           <div class="keypad" id="g-keypad"></div>
           <div class="dialcol">
             <span id="g-dial"></span>
             <div class="arrows">
-              <button class="key arrow" id="g-left" title="Move the digit cursor left (←)" aria-label="Cursor left">◀</button>
-              <button class="key arrow" id="g-right" title="Move the digit cursor right (→)" aria-label="Cursor right">▶</button>
+              <button class="btn btn-icon" id="g-left" title="Move the digit cursor left (←)" aria-label="Cursor left">◀</button>
+              <button class="btn btn-icon" id="g-right" title="Move the digit cursor right (→)" aria-label="Cursor right">▶</button>
             </div>
           </div>
         </div>
@@ -146,7 +146,7 @@ export function createGenerator(root, app) {
 
   // Digits in a 3 × 4 block; Del, Cancel and Enter as a row of small keys under it.
   const PAD = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '±', 'Del', 'Cancel', 'Enter'];
-  $('#g-keypad').innerHTML = PAD.map((k) => `<button class="key pk ${/^[\d.±]$/.test(k) ? '' : 'fn'}" data-k="${k}">${k}</button>`).join('');
+  $('#g-keypad').innerHTML = PAD.map((k) => `<button class="btn btn-sm ${/^[\d.±]$/.test(k) ? '' : 'fn'}" data-k="${k}">${k}</button>`).join('');
   $('#g-keypad').querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => press(b.dataset.k)));
 
   function press(k) {
@@ -214,51 +214,51 @@ export function createGenerator(root, app) {
   }
 
   function fieldRow(f) {
-    return `<button class="pfield ${f.key === active ? 'active' : ''}" data-key="${f.key}">
+    return `<button class="item pfield" aria-pressed="${f.key === active}" data-key="${f.key}">
       <span class="pl">${f.label}</span><span class="pv">${valueHtml(f.key)}</span><span class="pu">${f.unit ?? ''}</span></button>`;
   }
 
   function renderSignals() {
     const names = app.sourceNames();
-    $('#g-sigs').innerHTML = names.map((n) => `<button class="sigkey ${n === app.signal ? 'on' : ''}" data-sig="${n}" aria-pressed="${n === app.signal}" title="Edit the signal ${n}, played by the Source blocks named ${n}"><span class="sigsym">${n}</span>${app.unitOf(n) === '1' ? '' : app.unitOf(n)}</button>`).join('')
-      + '<p class="sighint">Add a Source block in the Plant tab for another signal.</p>';
+    $('#g-sigs').innerHTML = names.map((n) => `<button class="btn btn-block" data-sig="${n}" aria-pressed="${n === app.signal}" title="Edit the signal ${n}, played by the Source blocks named ${n}"><span class="chip">${n}</span>${app.unitOf(n) === '1' ? '' : app.unitOf(n)}</button>`).join('')
+      + '<p class="hint">Add a Source block in the Plant tab for another signal.</p>';
     $('#g-sigs').querySelectorAll('[data-sig]').forEach((b) => b.addEventListener('click', () => app.selectSignal(b.dataset.sig)));
   }
 
   function render() {
     renderSignals();
     const comps = app.signalRef().components;
-    root.querySelectorAll('.wkey').forEach((b) => b.classList.toggle('lit', draft?.comp.type === b.dataset.type));
+    root.querySelectorAll('.wkey').forEach((b) => b.setAttribute('aria-pressed', String(draft?.comp.type === b.dataset.type)));
     $('#g-mode').textContent = !draft ? 'Parameters' : draft.mode === 'edit' ? `Edit ${draft.index + 1} · ${SIGNALS[draft.comp.type].label}` : `New ${SIGNALS[draft.comp.type].label} · preview`;
     $('#g-plist').innerHTML = draft
       ? SIGNALS[draft.comp.type].params.map(fieldRow).join('')
-        + (draft.comp.type === 'arb' ? `<div class="hint">${(draft.comp.points ?? []).length} points${draft.comp.name ? ` from ${draft.comp.name}` : ''}</div>` : '')
-        + (draft.comp.type === 'fn' ? `<label class="fnrow"><span class="pl">y(t) =</span><input class="fnin" id="g-expr" spellcheck="false" autocomplete="off" value="${draft.comp.expr.replace(/"/g, '&quot;')}"></label><div class="hint" id="g-expr-msg">${EXPR_HELP}</div>` : '')
-      : `<div class="hint">Press a waveform key to draft a component. The display previews it dashed, alone and added to ${app.signal}(t); <b>Add</b> puts it into the signal.</div>`;
+        + (draft.comp.type === 'arb' ? `<div class="note">${(draft.comp.points ?? []).length} points${draft.comp.name ? ` from ${draft.comp.name}` : ''}</div>` : '')
+        + (draft.comp.type === 'fn' ? `<label class="fnrow"><span class="flabel">y(t) =</span><input class="field field-sm mono" id="g-expr" spellcheck="false" autocomplete="off" value="${draft.comp.expr.replace(/"/g, '&quot;')}"></label><div class="note" id="g-expr-msg">${EXPR_HELP}</div>` : '')
+      : `<div class="note">Press a waveform key to draft a component. The display previews it dashed, alone and added to ${app.signal}(t); <b>Add</b> puts it into the signal.</div>`;
     $('#g-mode').title = draft ? '' : 'Parameters of the component being drafted or edited';
     $('#g-add').textContent = draft?.mode === 'edit' ? 'Apply' : 'Add';
     $('#g-add').disabled = !draft;
     $('#g-cancel').disabled = !draft && !buffer;
     $('#g-stack').innerHTML = comps.length
-      ? comps.map((c, i) => `<li class="srow ${c.enabled === false ? 'off' : ''} ${draft?.mode === 'edit' && draft.index === i ? 'editing' : ''}" data-i="${i}">
-          <span class="sn">${i + 1}</span>${icon(c.type)}<span class="sd" title="Edit">${describeComponent(c)}</span>
-          <button class="sw ${c.enabled === false ? '' : 'on'}" data-tog="${i}" role="switch" aria-checked="${c.enabled !== false}" aria-label="Component ${i + 1} on"></button>
-          <button class="x" data-del="${i}" aria-label="Remove component ${i + 1}" title="Remove">✕</button></li>`).join('')
-      : `<li class="empty">No components yet: ${app.signal}(t) = 0.</li>`;
+      ? comps.map((c, i) => `<li class="srow ${c.enabled === false ? 'off' : ''}">
+          <button class="item" data-edit="${i}" aria-pressed="${draft?.mode === 'edit' && draft.index === i}" title="Edit component ${i + 1}"><span class="muted mono">${i + 1}</span>${icon(c.type)}<span class="sd">${describeComponent(c)}</span></button>
+          <button class="btn btn-sm onoff" data-tog="${i}" role="switch" aria-checked="${c.enabled !== false}" aria-label="Component ${i + 1} on">${c.enabled === false ? 'off' : 'on'}</button>
+          <button class="btn btn-sm btn-icon btn-danger" data-del="${i}" aria-label="Remove component ${i + 1}" title="Remove">✕</button></li>`).join('')
+      : `<li class="note">No components yet: ${app.signal}(t) = 0.</li>`;
     $('#g-period').innerHTML = fieldRow(PERIOD);
     $('#g-eq').textContent = `${app.signal}(t) = Σ`;
     const exprIn = $('#g-expr');
     if (exprIn) {
       const check = () => {
-        try { compileExpr(exprIn.value); exprIn.classList.remove('err'); $('#g-expr-msg').textContent = EXPR_HELP; return true; }
-        catch (err) { exprIn.classList.add('err'); $('#g-expr-msg').textContent = err.message; return false; }
+        try { compileExpr(exprIn.value); exprIn.removeAttribute('aria-invalid'); $('#g-expr-msg').textContent = EXPR_HELP; return true; }
+        catch (err) { exprIn.setAttribute('aria-invalid', 'true'); $('#g-expr-msg').textContent = err.message; return false; }
       };
       exprIn.addEventListener('input', () => { draft.comp.expr = exprIn.value; if (check()) preview(); });
       exprIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); exprIn.blur(); commitDraft(); } if (e.key === 'Escape') { exprIn.blur(); cancelDraft(); } });
       check();
     }
     root.querySelectorAll('.pfield').forEach((b) => b.addEventListener('click', () => { if (buffer) press('Enter'); active = b.dataset.key; render(); }));
-    root.querySelectorAll('.srow').forEach((li) => li.addEventListener('click', (e) => { if (!e.target.closest('button')) editComponent(Number(li.dataset.i)); }));
+    root.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => editComponent(Number(b.dataset.edit))));
     root.querySelectorAll('[data-tog]').forEach((b) => b.addEventListener('click', () => app.toggleComponent(Number(b.dataset.tog))));
     root.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {
       const i = Number(b.dataset.del);

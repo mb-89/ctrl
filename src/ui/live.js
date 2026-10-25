@@ -25,6 +25,7 @@ const RUN_PY = 'uv run hil_plant.py';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const ms = (v) => (Number.isFinite(v) ? `${v < 10 ? v.toFixed(2) : v.toFixed(1)} ms` : '–');
+const lamp = (el, v) => { if (v) el.dataset.lamp = v; else delete el.dataset.lamp; };
 
 export function createLive(app, display, controlsRoot, record) {
   const framed = window.self !== window.top;
@@ -35,12 +36,12 @@ export function createLive(app, display, controlsRoot, record) {
   liveEl.className = 'lv';
   liveEl.setAttribute('aria-label', 'Live: the external plant');
   liveEl.innerHTML = `
-    <div class="row">
-      <button class="key" id="lv-connect" title="Connect to the external plant; Run and Stop then start and stop it">Connect</button>
-      <button class="key estop" id="lv-estop" title="Emergency stop: the plant applies its safe inputs until Reset">E-STOP</button>
-      <button class="key" id="lv-reset" title="Clear the E-stop and go on, the controllers afresh">Reset</button>
+    <div class="keyrow">
+      <button class="btn" id="lv-connect" title="Connect to the external plant; Run and Stop then start and stop it">Connect</button>
+      <button class="btn btn-danger" id="lv-estop" title="Emergency stop: the plant applies its safe inputs until Reset">E-STOP</button>
+      <button class="btn" id="lv-reset" title="Clear the E-stop and go on, the controllers afresh">Reset</button>
     </div>
-    <div class="lv-line" id="lv-where"><input class="lv-url" id="lv-url" spellcheck="false" aria-label="Where the plant listens" title="Where the plant listens: click to type (kept in the External plant block)"><button class="lv-link" id="lv-script" title="The external plant of HIL: external motor, a Python script for your computer">plant script…</button></div>
+    <div class="lv-line" id="lv-where"><input class="field field-sm field-inline lv-url" id="lv-url" spellcheck="false" aria-label="Where the plant listens" title="Where the plant listens: click to type (kept in the External plant block)"><button class="btn btn-sm" id="lv-script" title="The external plant of HIL: external motor, a Python script for your computer, with how to run it">Plant script…</button></div>
     <div class="lv-stats" id="lv-stats" aria-live="polite"></div>`;
   controlsRoot.querySelector('.group').append(liveEl);
   const $ = (id) => document.getElementById(id);
@@ -261,8 +262,8 @@ export function createLive(app, display, controlsRoot, record) {
     <pre>sh runme.sh      Linux, macOS
 runme.ps1        Windows: right-click › Run with PowerShell</pre>
     <p>With uv already there: <code>${RUN_PY}</code>. With Python: <code>pip install websockets</code>, then <code>python3 hil_plant.py</code>. <code>--help</code> lists its options (port, rate, watchdog, and how far its plant varies from nominal: up to ±15 %, unknown to this page).</p>
-    <p class="dim" id="lv-dlg-note"></p>
-    <p class="lv-btns"><button class="key primary" id="lv-dl-zip">Download hil-plant.zip</button><button class="key" id="lv-dl">Download hil_plant.py</button><button class="key" id="lv-copy-py">Copy the script</button><button class="key" id="lv-close">Close</button></p>
+    <p class="hint" id="lv-dlg-note"></p>
+    <p class="lv-btns"><button class="btn btn-primary" id="lv-dl-zip">Download hil-plant.zip</button><button class="btn" id="lv-dl">Download hil_plant.py</button><button class="btn" id="lv-copy-py">Copy the script</button><button class="btn" id="lv-close">Close</button></p>
   </div>`;
   document.getElementById('lt-shell').append(dlg);
   const closeDlg = () => { dlg.hidden = true; };
@@ -304,8 +305,10 @@ runme.ps1        Windows: right-click › Run with PowerShell</pre>
     if (!hit) return;
     const k = $('lv-connect');
     k.textContent = on() ? 'Disconnect' : 'Connect';
-    k.className = `key ${state === 'running' ? 'lit-green' : on() ? 'lit-amber' : ''}`;
-    $('lv-estop').className = `key estop ${estop ? 'lit-red' : ''}`;
+    // Lamps: Connect green while the plant runs, amber while it is connected
+    // and waits; E-STOP red while latched.
+    lamp(k, state === 'running' ? 'ok' : on() ? 'warn' : null);
+    lamp($('lv-estop'), estop ? 'bad' : null);
     $('lv-estop').disabled = !connected();
     $('lv-reset').disabled = !(estop && connected());
     if (document.activeElement !== urlEl) urlEl.value = hit.block.params.url;
@@ -321,7 +324,7 @@ runme.ps1        Windows: right-click › Run with PowerShell</pre>
     el.title = '';
     const lines = (...ls) => { el.innerHTML = ls.map((l) => `<div>${l}</div>`).join(''); };
     if (estop) {
-      lines(`<span class="bad">E-STOP: ${esc(estop.reason)}</span>`, `${estop.by === 'plant' ? 'by the plant · safe' : 'safe inputs'} until ${connected() ? 'Reset' : 'Connect, Reset'}`);
+      lines(`<span class="text-bad">E-STOP: ${esc(estop.reason)}</span>`, `${estop.by === 'plant' ? 'by the plant · safe' : 'safe inputs'} until ${connected() ? 'Reset' : 'Connect, Reset'}`);
       el.title = `E-STOP: ${estop.reason}`;
       return;
     }
@@ -337,7 +340,7 @@ runme.ps1        Windows: right-click › Run with PowerShell</pre>
       return;
     }
     const p = plantStatus;
-    lines(`<span class="ok">●</span> ${link.rate.toFixed(1)} Hz · jitter ${ms(link.jitter)} · ${host.kind === 'worker' ? 'worker' : 'page'}`, `round trip ${ms(p?.rtt_ms?.mean)} · missed ${link.missed} · late ${p?.late ?? '–'}`);
+    lines(`<span class="text-ok">●</span> ${link.rate.toFixed(1)} Hz · jitter ${ms(link.jitter)} · ${host.kind === 'worker' ? 'worker' : 'page'}`, `round trip ${ms(p?.rtt_ms?.mean)} · missed ${link.missed} · late ${p?.late ?? '–'}`);
     el.title = `Page: arrivals deviate up to ${ms(link.jitter)} from the cycle; ${ms(link.compute)} per cycle (at most ${ms(link.computeMax)}) to answer.\n`
       + (p ? `Plant: ${p.rate_hz} Hz, cycle start late by ${ms(p.jitter_ms?.mean)} on average (at most ${ms(p.jitter_ms?.max)}); round trip ${ms(p.rtt_ms?.mean)} (at most ${ms(p.rtt_ms?.max)}); ${p.late} cycles without a new u, ${p.overruns} skipped, ${p.dropped} y dropped.` : '');
   }
@@ -385,11 +388,11 @@ runme.ps1        Windows: right-click › Run with PowerShell</pre>
     data: () => (feeding && sweep ? view(sweep) : null),
     tag() {
       if (!external()) return null;
-      if (estop) return { cls: 'st-estop', text: 'E-STOP', note: estop.reason };
-      if (state === 'running') return { cls: 'st-live', text: 'Live', note: `plant t ${lastT === null ? '–' : lastT.toFixed(2)} s` };
-      if (state === 'open') return { cls: 'st-wait', text: 'Connected', note: 'Run starts the plant' };
-      if (on()) return { cls: 'st-wait', text: 'Connecting' };
-      return { cls: 'st-offline', text: 'Offline', note: feeding ? 'the last live sweeps · Connect to go on' : 'external plant not connected: it reads 0 · Connect' };
+      if (estop) return { lamp: 'bad', text: 'E-STOP', note: estop.reason };
+      if (state === 'running') return { lamp: 'ok', outline: true, text: 'Live', note: `plant t ${lastT === null ? '–' : lastT.toFixed(2)} s` };
+      if (state === 'open') return { lamp: 'warn', outline: true, text: 'Connected', note: 'Run starts the plant' };
+      if (on()) return { lamp: 'warn', outline: true, text: 'Connecting' };
+      return { outline: true, text: 'Offline', note: feeding ? 'the last live sweeps · Connect to go on' : 'external plant not connected: it reads 0 · Connect' };
     },
   };
 }

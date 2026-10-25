@@ -72,11 +72,11 @@ export function createPlantEditor(root, app) {
       <div class="split split-v plsplit" id="pl-split" role="separator" aria-orientation="vertical" aria-label="Resize the library" tabindex="0" title="Drag to resize · double-click to reset"></div>
       <section class="pcan" aria-label="Diagram">
         <div class="ptool">
-          <div class="reps" id="pl-reps" role="tablist" aria-label="Representation"></div>
+          <div class="seg" id="pl-reps" role="tablist" aria-label="Representation"></div>
           <nav class="crumbs" id="pl-crumbs"></nav>
-          <button class="key small" id="pl-group" title="Put the selected blocks into a subsystem (Ctrl+G)">Group</button>
-          <button class="key small" id="pl-del" title="Delete the selection (Del)">Delete</button>
-          <button class="key small" id="pl-fit" title="Fit the diagram to the view">Fit</button>
+          <button class="btn btn-sm" id="pl-group" title="Put the selected blocks into a subsystem (Ctrl+G)">Group</button>
+          <button class="btn btn-sm btn-danger" id="pl-del" title="Delete the selection (Del)">Delete</button>
+          <button class="btn btn-sm" id="pl-fit" title="Fit the diagram to the view">Fit</button>
         </div>
         <div class="pview" id="pl-view" tabindex="0" aria-label="Diagram canvas: drag blocks in from the library; drag from an output to an input to wire; Shift-drag to select; double-click a subsystem to open it"></div>
         <div class="pview pscenebox" id="pl-scene" hidden></div>
@@ -177,17 +177,17 @@ export function createPlantEditor(root, app) {
   // Library
   function renderLibrary() {
     const lib = app.project.library ?? [];
-    const item = (data, label, title, extra = '') => `<button class="litem" draggable="true" data-add="${esc(data)}" title="${esc(title)}">${label}${extra}</button>`;
+    const item = (data, label, title, extra = '') => `<button class="btn btn-sm btn-block" draggable="true" data-add="${esc(data)}" title="${esc(title)}">${label}${extra}</button>`;
     const group = (name, body) => {
       const open = !folded.has(name);
-      return `<div class="lgroup"><button class="lgname" data-fold="${esc(name)}" aria-expanded="${open}"><span class="chev">${open ? '▾' : '▸'}</span>${esc(name)}</button>${open ? body : ''}</div>`;
+      return `<div class="lgroup"><button class="disclosure label" data-fold="${esc(name)}" aria-expanded="${open}"><span class="chev">${open ? '▾' : '▸'}</span>${esc(name)}</button>${open ? body : ''}</div>`;
     };
-    let html = '<h3 class="glabel">Library</h3>';
+    let html = '<h3 class="label">Library</h3>';
     for (const [g, types] of GROUPS) {
-      html += group(g, types.map((t) => { const def = diagramBlockDef(t); return item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="lf">${esc(def.formula)}</span>`); }).join(''));
+      html += group(g, types.map((t) => { const def = diagramBlockDef(t); return item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="btn-note">${esc(def.formula)}</span>`); }).join(''));
     }
-    html += group('My blocks', lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="lempty">Select a subsystem and save it here.</div>');
-    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="litem ex" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.notes} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="lf">plant</span></button>` : '')).join(''));
+    html += group('My blocks', lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="hint">Select a subsystem and save it here.</div>');
+    html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="btn btn-sm btn-block" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.notes} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="btn-note">plant</span></button>` : '')).join(''));
     $('#pl-lib').innerHTML = html;
     $('#pl-lib').querySelectorAll('[data-fold]').forEach((b) => b.addEventListener('click', () => {
       const n = b.dataset.fold;
@@ -300,8 +300,8 @@ export function createPlantEditor(root, app) {
   function renderReps() {
     const vs = plantViews();
     if (rep >= vs.length) rep = -1;
-    $('#pl-reps').innerHTML = `<button class="rep ${rep < 0 ? 'on' : ''}" data-rep="-1" role="tab" aria-selected="${rep < 0}">Diagram</button>`
-      + vs.map((v, i) => `<button class="rep ${rep === i ? 'on' : ''}" data-rep="${i}" role="tab" aria-selected="${rep === i}" title="A view of this plant, from its JSON">${esc(v.name)}</button>`).join('');
+    $('#pl-reps').innerHTML = `<button class="btn btn-sm" data-rep="-1" role="tab" aria-selected="${rep < 0}">Diagram</button>`
+      + vs.map((v, i) => `<button class="btn btn-sm" data-rep="${i}" role="tab" aria-selected="${rep === i}" title="A view of this plant, from its JSON">${esc(v.name)}</button>`).join('');
     $('#pl-reps').querySelectorAll('[data-rep]').forEach((b) => b.addEventListener('click', () => showRep(Number(b.dataset.rep))));
   }
 
@@ -319,9 +319,9 @@ export function createPlantEditor(root, app) {
   function renderViewProps() {
     const v = plantViews()[rep];
     const used = [...new Set((JSON.stringify(v).match(/[A-Za-z_]\w*/g) ?? []).filter((n) => app.signalNames().includes(n)))];
-    $('#pl-props').innerHTML = `<h3 class="glabel">${esc(v.name)}</h3>
-      <p class="phelp">A ${v.kind === 'svg' ? 'SVG drawing' : '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}. It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>
-      <p class="phelp">Views are set in the plant's JSON (<code>system.plant.views</code>); the format is in design/output/plant-views.md.</p>`;
+    $('#pl-props').innerHTML = `<h3 class="label">${esc(v.name)}</h3>
+      <p class="note">A ${v.kind === 'svg' ? 'SVG drawing' : '2D scene'} of this plant, moving with ${used.length ? used.map(esc).join(', ') : 'its signals'}. It follows the scope: the scan line while it runs (press <b>Single</b> for one run from t = 0), the cursor while you hover the plot.</p>
+      <p class="note">Views are set in the plant's JSON (<code>system.plant.views</code>); the format is in design/output/plant-views.md.</p>`;
   }
 
   let compileMsg = '';
@@ -360,7 +360,7 @@ export function createPlantEditor(root, app) {
     const parts = [['Plant', 0]];
     let cur = rootDiagram();
     path.forEach((id, i) => { const b = cur.blocks.find((x) => x.id === id); parts.push([b?.name ?? id, i + 1]); cur = b?.diagram ?? cur; });
-    $('#pl-crumbs').innerHTML = parts.map(([n, depth], i) => (i < parts.length - 1 ? `<button class="crumb" data-depth="${depth}">${esc(n)}</button><span class="csep">›</span>` : `<span class="crumb cur">${esc(n)}</span>`)).join('');
+    $('#pl-crumbs').innerHTML = parts.map(([n, depth], i) => (i < parts.length - 1 ? `<button class="btn btn-sm" data-depth="${depth}" title="Back up to ${esc(n)}">${esc(n)}</button><span class="muted">›</span>` : `<span class="heading" aria-current="location">${esc(n)}</span>`)).join('');
     $('#pl-crumbs').querySelectorAll('[data-depth]').forEach((b) => b.addEventListener('click', () => { path = path.slice(0, Number(b.dataset.depth)); sel.clear(); wireSel = -1; render(); }));
   }
 
@@ -372,7 +372,7 @@ export function createPlantEditor(root, app) {
       const b = d.blocks.find((x) => x.id === [...sel][0]);
       if (!b) { sel.clear(); return renderProps(); }
       const def = diagramBlockDef(b.type);
-      let html = `<h3 class="glabel">${esc(def.label)}</h3><div class="pform">`;
+      let html = `<h3 class="label">${esc(def.label)}</h3><div class="pform">`;
       if (!['source', 'sink', 'inport', 'outport'].includes(b.type)) html += field('name', 'Label', b.name ?? '', 'text', 'optional');
       for (const p of def.params) {
         const v = b.params[p.key];
@@ -380,33 +380,33 @@ export function createPlantEditor(root, app) {
         html += field(`p:${p.key}`, p.label, p.kind === 'vector' || Array.isArray(v) ? v.join(', ') : p.kind ? v : num(v, 6), p.kind ?? 'number', hint);
       }
       html += '</div><div class="pbtns">';
-      if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="key small" data-act="flip">Flip</button>`;
-      if (b.type === 'subsystem') html += `<button class="key small" data-act="open">Open</button><button class="key small" data-act="save">Save to library</button>`;
-      if (b.type === 'source') html += `<button class="key small" data-act="signal">Edit signal ${esc(b.params.signal)}</button>`;
-      if (b.type === 'controller') html += `<button class="key small primary" data-act="controller">Open in the Controller tab</button>`;
+      if (b.type !== 'sum' && blockPorts(b)[0] + blockPorts(b)[1] > 0) html += `<button class="btn btn-sm" data-act="flip">Flip</button>`;
+      if (b.type === 'subsystem') html += `<button class="btn btn-sm" data-act="open">Open</button><button class="btn btn-sm" data-act="save">Save to library</button>`;
+      if (b.type === 'source') html += `<button class="btn btn-sm" data-act="signal">Edit signal ${esc(b.params.signal)}</button>`;
+      if (b.type === 'controller') html += `<button class="btn btn-sm btn-primary" data-act="controller">Open in the Controller tab</button>`;
       html += '</div>';
-      if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="key small primary" data-act="saveok">Save</button><button class="key small" data-act="savecancel">Cancel</button></div>`;
+      if (saveName !== null && b.type === 'subsystem') html += `<div class="pform">${field('libname', 'Library name', saveName, 'text', '')}</div><div class="pbtns"><button class="btn btn-sm btn-primary" data-act="saveok">Save</button><button class="btn btn-sm" data-act="savecancel">Cancel</button></div>`;
       const role = { sink: ' · recorded: pick it as a scope channel source', source: ' · plays the signal made in the Input tab', terminator: ' · ends a signal without recording it', outport: ' · passes the signal up to the enclosing block', inport: ' · takes the signal from the enclosing block', switch: ' · double-click it on the canvas to move to the next input', controller: ` · runs “${esc(b.variants?.[b.variant]?.name ?? '')}”; double-click it to open the Controller tab` }[b.type] ?? '';
-      html += `<p class="phelp">${esc(def.formula)}${role}</p>`;
+      html += `<p class="note">${esc(def.formula)}${role}</p>`;
       box.innerHTML = html;
       bindFields(b);
       box.querySelectorAll('[data-act]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.act, b)));
       return;
     }
     if (sel.size > 1) {
-      box.innerHTML = `<h3 class="glabel">${sel.size} blocks</h3><div class="pbtns"><button class="key small primary" data-act="group">Group into subsystem</button><button class="key small" data-act="delete">Delete</button></div><p class="phelp">Grouping keeps the wires: those that cross the boundary become the subsystem's In and Out ports.</p>`;
+      box.innerHTML = `<h3 class="label">${sel.size} blocks</h3><div class="pbtns"><button class="btn btn-sm btn-primary" data-act="group">Group into subsystem</button><button class="btn btn-sm btn-danger" data-act="delete">Delete</button></div><p class="note">Grouping keeps the wires: those that cross the boundary become the subsystem's In and Out ports.</p>`;
       box.querySelectorAll('[data-act]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.act)));
       return;
     }
     const names = diagramNames(rootDiagram());
-    box.innerHTML = `<h3 class="glabel">Plant</h3>
-      <p class="phelp"><b>Sources</b> ${names.sources.map(esc).join(', ') || 'none'} · <b>Sinks</b> ${names.sinks.map(esc).join(', ') || 'none'}</p>
-      ${compileMsg ? `<p class="pmsg">${esc(compileMsg).replace(/\n/g, '<br>')}</p>` : '<p class="phelp">The diagram is valid.</p>'}
-      <p class="phelp">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p>`;
+    box.innerHTML = `<h3 class="label">Plant</h3>
+      <p class="note"><b>Sources</b> ${names.sources.map(esc).join(', ') || 'none'} · <b>Sinks</b> ${names.sinks.map(esc).join(', ') || 'none'}</p>
+      ${compileMsg ? `<p class="note text-bad">${esc(compileMsg).replace(/\n/g, '<br>')}</p>` : '<p class="note">The diagram is valid.</p>'}
+      <p class="note">Drag blocks in from the library. Drag from an output (right) to an input (left) to wire. Shift-drag to select several; <kbd>Ctrl</kbd> <kbd>G</kbd> groups them. Double-click a subsystem to open it. Wheel zooms, dragging the background pans.</p>`;
   }
 
   function field(key, label, value, kind, hint) {
-    return `<label class="pf"><span class="pfl">${esc(label)}</span><input class="field pfi" data-f="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false"><span class="pfh">${esc(hint)}</span></label>`;
+    return `<label class="pf"><span class="flabel">${esc(label)}</span><input class="field field-sm mono" data-f="${esc(key)}" data-kind="${kind}" value="${esc(value)}" spellcheck="false"><span class="hint">${esc(hint)}</span></label>`;
   }
 
   function bindFields(b) {
@@ -474,7 +474,7 @@ export function createPlantEditor(root, app) {
   function renameOnCanvas(b) {
     const v = view(), [w, h] = size(b);
     const input = document.createElement('input');
-    input.className = 'canvas-rename';
+    input.className = 'field mono canvas-rename';
     input.value = b.type === 'source' ? b.params.signal : b.params.name;
     input.setAttribute('aria-label', `Rename ${b.type}`);
     Object.assign(input.style, { left: `${v.x + b.x * v.k}px`, top: `${v.y + b.y * v.k}px`, width: `${Math.max(70, w * v.k)}px`, height: `${h * v.k}px` });

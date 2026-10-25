@@ -3,7 +3,6 @@
 // ("20m", "100 ms", "-0.4").
 
 import { createDial } from './dial.js';
-import { CHANNEL_COLORS } from './display.js';
 import { siUnit, num, parseSI } from './units.js';
 import { step125 } from '../core/scale.js';
 import { withAboveNoise } from '../core/project.js';
@@ -11,41 +10,44 @@ import { withAboveNoise } from '../core/project.js';
 export function createControls(root, app) {
   root.innerHTML = `
     <section class="group">
-      <h3 class="glabel">Run Control</h3>
-      <div class="row">
-        <button class="key runstop" id="k-run" title="Run / Stop (R)">Run<br>Stop</button>
-        <button class="key single" id="k-single" title="One sweep, then stop (S)">Single</button>
-        <button class="key auto" id="k-auto" title="Fit the display to one period of the input (A)">Auto<br>Scale</button>
+      <h3 class="label">Run Control</h3>
+      <div class="keyrow">
+        <button class="btn" id="k-run" title="Run / Stop (R)">Run<br>Stop</button>
+        <button class="btn" id="k-single" title="One sweep, then stop (S)">Single</button>
+        <button class="btn" id="k-auto" title="Fit the display to one period of the input (A)">Auto<br>Scale</button>
       </div>
-      <div class="row viewkeys" id="view-keys" role="group" aria-label="Display mode">
-        <button class="key small" data-view="time" title="Signals over time">Time</button>
-        <button class="key small" data-view="fft" title="Amplitude spectrum of every channel (what has run so far)">FFT</button>
-        <button class="key small" data-view="spectrogram" title="The selected channel's spectrum over time, its trace on the right axis">Spectrogram</button>
-        <button class="key small" data-view="xy" title="XY: channel 1 across, the other channels against it (a Lissajous figure)">XY</button>
-        <button class="key small" id="k-delta" title="XY: draw channel 1 minus each channel (r on 1 and y on 2: the error e = r − y over r)">Δ</button>
+      <div class="viewrow">
+        <div class="seg seg-fill" id="view-keys" role="group" aria-label="Display mode">
+          <button class="btn btn-sm" data-view="time" title="Signals over time">Time</button>
+          <button class="btn btn-sm" data-view="fft" title="Amplitude spectrum of every channel (what has run so far)">FFT</button>
+          <button class="btn btn-sm" data-view="spectrogram" title="The selected channel's spectrum over time, its trace on the right axis">Spectrogram</button>
+          <button class="btn btn-sm" data-view="xy" title="XY: channel 1 across, the other channels against it (a Lissajous figure)">XY</button>
+        </div>
+        <button class="btn btn-sm btn-icon" id="k-delta" title="XY: draw channel 1 minus each channel (r on 1 and y on 2: the error e = r − y over r)">Δ</button>
       </div>
-      <div class="srcrow lvrow lvmode" id="lv-mode" role="group" aria-label="Spectrogram colour" hidden><span>Colour</span>
-        <button class="key small" id="lv-abs" title="Absolute: the colour is dB of the signal's unit (0 dB is 1 unit), the same everywhere">Absolute</button>
-        <button class="key small" id="lv-noise" title="Above noise: the colour is dB above the noise at each frequency, so a weak line where the noise is low shows as well as a strong one where it is high">Above noise</button></div>
-      <div class="srcrow lvrow" id="lv-row" hidden><span>Levels</span>
-        <input class="field" data-lv="0" aria-label="Spectrogram floor, dB" title="Floor: below it black. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
-        <span class="dim">…</span>
-        <input class="field" data-lv="1" aria-label="Spectrogram ceiling, dB" title="Ceiling: above it the brightest colour. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
-        <span class="dim">dB</span>
-        <button class="key small axbtn" id="lv-auto" title="Automatic levels: the ceiling at the largest amplitude shown, the floor 10 dB above the median (the noise); above the noise, 6 dB above it">Auto</button></div>
+      <div class="srcrow" id="lv-mode" hidden><span class="flabel">Colour</span>
+        <div class="seg seg-fill" role="group" aria-label="Spectrogram colour">
+          <button class="btn btn-sm" id="lv-abs" title="Absolute: the colour is dB of the signal's unit (0 dB is 1 unit), the same everywhere">Absolute</button>
+          <button class="btn btn-sm" id="lv-noise" title="Above noise: the colour is dB above the noise at each frequency, so a weak line where the noise is low shows as well as a strong one where it is high">Above noise</button></div></div>
+      <div class="srcrow lvrow" id="lv-row" hidden><span class="flabel">Levels</span>
+        <input class="field field-sm mono" data-lv="0" aria-label="Spectrogram floor, dB" title="Floor: below it black. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
+        <span class="muted">…</span>
+        <input class="field field-sm mono" data-lv="1" aria-label="Spectrogram ceiling, dB" title="Ceiling: above it the brightest colour. Type a level in dB; ↑ ↓ step 1 dB, Shift 10 dB">
+        <span class="muted">dB</span>
+        <button class="btn btn-sm" id="lv-auto" title="Automatic levels: the ceiling at the largest amplitude shown, the floor 10 dB above the median (the noise); above the noise, 6 dB above it">Auto</button></div>
     </section>
     <section class="group">
-      <h3 class="glabel">Horizontal</h3>
+      <h3 class="label">Horizontal</h3>
       <div class="row dials" id="h-dials"></div>
     </section>
     <section class="group">
-      <h3 class="glabel">Vertical</h3>
-      <div class="row chkeys" id="ch-keys"></div>
-      <div class="srcrow"><span>Source</span><select id="ch-src" class="field"></select><button class="key small axbtn" id="ch-right" title="Show this channel's values on a second axis at the right of the screen">R axis</button><button class="key small axbtn" id="ch-meas" title="Measure: a line under the screen with this channel's mean, rms, ac rms, peak to peak, total variation per second and reversals per second, over what the screen shows">Measure</button></div>
-      <div class="srcrow filtrow"><span>Filter</span><select id="ch-filt" class="field" title="A display filter: changes what the scope shows and analyses, not the system">
+      <h3 class="label">Vertical</h3>
+      <div class="chkeys" id="ch-keys" role="group" aria-label="Channels"></div>
+      <div class="srcrow"><span class="flabel">Source</span><select id="ch-src" class="field field-sm"></select><button class="btn btn-sm" id="ch-right" title="Show this channel's values on a second axis at the right of the screen">R axis</button><button class="btn btn-sm" id="ch-meas" title="Measure: a line under the screen with this channel's mean, rms, ac rms, peak to peak, total variation per second and reversals per second, over what the screen shows">Measure</button></div>
+      <div class="srcrow"><span class="flabel">Filter</span><select id="ch-filt" class="field field-sm" title="A display filter: changes what the scope shows and analyses, not the system">
           <option value="">none</option><option value="lowpass">Low-pass</option><option value="highpass">High-pass</option><option value="bandpass">Band-pass</option><option value="notch">Notch</option></select>
         <span class="filtparams" id="filt-params"></span></div>
-      <div class="row dials" id="v-dials"></div>
+      <div class="row dials dials-ch" id="v-dials"></div>
     </section>`;
   const $ = (s) => root.querySelector(s);
 
@@ -69,10 +71,10 @@ export function createControls(root, app) {
     const wrap = document.createElement('div');
     wrap.className = 'dialbox';
     const lab = document.createElement('div');
-    lab.className = 'dlabel';
+    lab.className = 'flabel';
     lab.textContent = label;
     const val = document.createElement('input');
-    val.className = 'dval';
+    val.className = 'field field-sm readout mono';
     val.id = id;
     val.spellcheck = false;
     val.setAttribute('aria-label', `${label} value`);
@@ -127,10 +129,10 @@ export function createControls(root, app) {
   $('#v-dials').append(knobs.vScale.wrap, knobs.vPos.wrap);
 
   const keys = $('#ch-keys');
-  CHANNEL_COLORS.forEach((c, i) => {
+  [1, 2, 3, 4].forEach((n, i) => {
     const b = document.createElement('button');
-    b.className = 'key ch';
-    b.style.setProperty('--cc', c);
+    b.className = 'btn btn-ch';
+    b.style.setProperty('--cc', `var(--ch-${n})`);
     b.textContent = String(i + 1);
     b.title = `Channel ${i + 1}: select; press again to turn off`;
     b.addEventListener('click', () => app.channelKey(i));
@@ -225,10 +227,7 @@ export function createControls(root, app) {
   function renderLevels(force = false) {
     const lv = shownLevels(), vm = app.project.scope.view?.mode, above = !!app.project.scope.view?.aboveNoise;
     lvRow.hidden = lvMode.hidden = vm !== 'spectrogram';
-    for (const [id, on] of [['#lv-abs', !above], ['#lv-noise', above]]) {
-      $(id).classList.toggle('lit-view', on);
-      $(id).setAttribute('aria-pressed', String(on));
-    }
+    for (const [id, on] of [['#lv-abs', !above], ['#lv-noise', above]]) $(id).setAttribute('aria-pressed', String(on));
     // Above the noise with a sign: +6 dB is 6 dB above it.
     const fmt = (d) => { const r = Math.round(d * 10) / 10; return `${r < 0 ? '−' : lv?.aboveNoise && r > 0 ? '+' : ''}${Math.abs(r)}`; };
     lvIn.forEach((el, j) => {
@@ -237,7 +236,6 @@ export function createControls(root, app) {
     });
     const auto = $('#lv-auto');
     auto.disabled = !lv;
-    auto.classList.toggle('lit-view', !!lv?.auto);
     auto.setAttribute('aria-pressed', String(!!lv?.auto));
     lvRow.title = !lv ? '' : lv.aboveNoise ? `The spectrogram's levels of ${lv.source} in dB above the noise at each frequency (0 dB: the noise there)${lv.auto ? ', automatic' : ''}`
       : `The spectrogram's levels of ${lv.source} (dB of ${lv.unit}: 0 dB is 1 ${lv.unit})${lv.auto ? ', automatic' : ''}`;
@@ -250,14 +248,14 @@ export function createControls(root, app) {
   function render(m = mode) {
     mode = m;
     const sc = app.project.scope;
-    $('#k-run').className = `key runstop ${mode === 'stop' ? 'lit-red' : 'lit-green'}`;
-    $('#k-single').className = `key single ${mode === 'single' ? 'lit-amber' : ''}`;
+    // Run/Stop: lit green while running, red while stopped; Single amber while it sweeps.
+    $('#k-run').dataset.lamp = mode === 'stop' ? 'bad' : 'ok';
+    if (mode === 'single') $('#k-single').dataset.lamp = 'warn'; else delete $('#k-single').dataset.lamp;
     for (const k of Object.values(knobs)) if (document.activeElement !== k.val) k.val.value = k.read();
-    root.style.setProperty('--sel', CHANNEL_COLORS[app.channel]);
+    $('#v-dials').style.setProperty('--cc', `var(--ch-${app.channel + 1})`);
     [...keys.children].forEach((b, i) => {
-      b.classList.toggle('lit', sc.channels[i].on);
-      b.classList.toggle('sel', i === app.channel);
       b.setAttribute('aria-pressed', String(sc.channels[i].on));
+      b.setAttribute('aria-current', String(i === app.channel));
     });
     const names = [...new Set([...app.signalNames(), ch().source].filter(Boolean))];
     if (src.dataset.names !== names.join(',') + '|' + names.map(app.unitOf).join(',')) {
@@ -267,22 +265,20 @@ export function createControls(root, app) {
     src.value = ch().source;
     src.dataset.names = names.join(',') + '|' + names.map(app.unitOf).join(',');
     const vm = sc.view?.mode ?? 'time';
-    root.querySelectorAll('[data-view]').forEach((b) => { b.classList.toggle('lit-view', b.dataset.view === vm); b.setAttribute('aria-pressed', String(b.dataset.view === vm)); });
+    root.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === vm)));
     $('#k-delta').hidden = vm !== 'xy';
-    $('#k-delta').classList.toggle('lit-view', !!sc.view?.delta);
     $('#k-delta').setAttribute('aria-pressed', String(!!sc.view?.delta));
     const f = ch().filter;
     filt.value = f?.type ?? '';
     const fsig = f ? `${f.type}|${f.f0}|${f.order}|${f.q}` : '';
     if (fparams.dataset.sig !== fsig && !fparams.contains(document.activeElement)) {
-      fparams.innerHTML = !f ? '' : `<input class="field" data-f="f0" value="${siUnit(f.f0, 'Hz', 3)}" aria-label="Filter frequency" title="Corner or centre frequency; the wheel sweeps it">`
+      fparams.innerHTML = !f ? '' : `<input class="field field-sm mono" data-f="f0" value="${siUnit(f.f0, 'Hz', 3)}" aria-label="Filter frequency" title="Corner or centre frequency; the wheel sweeps it">`
         + (f.type === 'lowpass' || f.type === 'highpass'
-          ? `<select class="field" data-f="order" aria-label="Filter order" title="Order">${[2, 4, 6, 8].map((o) => `<option value="${o}" ${o === f.order ? 'selected' : ''}>${o}.</option>`).join('')}</select>`
-          : `<input class="field" data-f="q" value="${num(f.q, 3)}" aria-label="Filter Q" title="Q">`);
+          ? `<select class="field field-sm" data-f="order" aria-label="Filter order" title="Order">${[2, 4, 6, 8].map((o) => `<option value="${o}" ${o === f.order ? 'selected' : ''}>${o}.</option>`).join('')}</select>`
+          : `<input class="field field-sm mono" data-f="q" value="${num(f.q, 3)}" aria-label="Filter Q" title="Q">`);
       fparams.dataset.sig = fsig;
     }
-    $('#ch-right').classList.toggle('lit-view', sc.view?.right === app.channel);
-    $('#ch-meas').classList.toggle('lit-view', !!ch().measure);
+    $('#ch-right').setAttribute('aria-pressed', String(sc.view?.right === app.channel));
     $('#ch-meas').setAttribute('aria-pressed', String(!!ch().measure));
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;

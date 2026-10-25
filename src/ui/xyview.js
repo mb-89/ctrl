@@ -13,10 +13,10 @@
 
 import { channelSignal } from './freqview.js';
 import { num } from './units.js';
+import { palette as C } from './palette.js';
 import { fitChannel } from '../core/project.js';
 
 const DIVX = 10, DIVY = 8, MAX_POINTS = 6000;
-const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
 export const xOf = (P, ch, v) => P.l + P.w / 2 + ((v + ch.offset) / ch.scale) * P.dx;
 export const vOfX = (P, ch, x) => ((x - P.l - P.w / 2) / P.dx) * ch.scale - ch.offset;
@@ -142,9 +142,9 @@ export function drawXY(v) {
   const { g, P, data, scope, colors, vy } = v;
   v.drawGrid(g);
   const cx = scope.channels[0], X = channelSignal(data, cx);
-  g.font = `10.5px ${MONO}`;
+  g.font = `10.5px ${C().mono}`;
   if (!cx.on || !X) {
-    g.fillStyle = 'rgba(200, 210, 218, 0.75)'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = C().label; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText(xyEmpty(scope), P.l + P.w / 2, P.t + P.h / 2);
     return;
   }
@@ -200,15 +200,15 @@ export function drawXY(v) {
     // The beam: a bright dot where the figure is now.
     const y = ySignal(data, scope, i, v.unitLabel);
     if (j1 >= j0 && Number.isFinite(X[j1]) && Number.isFinite(y[j1])) {
-      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(xOf(P, cx, X[j1]), vy(ch, y[j1]), 3, 0, 2 * Math.PI); g.fill();
+      g.fillStyle = C().mark; g.beginPath(); g.arc(xOf(P, cx, X[j1]), vy(ch, y[j1]), 3, 0, 2 * Math.PI); g.fill();
     }
   }
   g.shadowBlur = 0; g.globalAlpha = 1;
   // The sample under the pointer: the instant the other views follow.
   const near = v.hover ? xyNearest(v, v.hover.x, v.hover.y) : null;
   if (near) {
-    g.strokeStyle = '#ffffff'; g.lineWidth = 1.5; g.beginPath(); g.arc(near.px, near.py, 6, 0, 2 * Math.PI); g.stroke();
-    g.fillStyle = 'rgba(235, 240, 245, 0.9)'; g.textAlign = near.px > P.r - 90 ? 'right' : 'left'; g.textBaseline = 'bottom';
+    g.strokeStyle = C().mark; g.lineWidth = 1.5; g.beginPath(); g.arc(near.px, near.py, 6, 0, 2 * Math.PI); g.stroke();
+    g.fillStyle = C().ink; g.textAlign = near.px > P.r - 90 ? 'right' : 'left'; g.textBaseline = 'bottom';
     g.fillText(`t ${num(t[near.j], 4)} s`, near.px + (near.px > P.r - 90 ? -9 : 9), near.py - 6);
   }
   g.restore();
@@ -225,7 +225,7 @@ export function drawXY(v) {
     const name = isDelta(scope, i, v.unitLabel) ? `${cx.source} − ${ch.source}` : ch.source;
     const text = fit ? fitLabel(name, cx.source, fit, ch.scale, cx.scale, unit(ch)) : name;
     const w = g.measureText(text).width;
-    g.fillStyle = 'rgba(10, 13, 16, 0.7)'; g.fillRect(P.l + 4, P.t + 4 + row * 16, w + 8, 15);
+    g.fillStyle = C().veil; g.fillRect(P.l + 4, P.t + 4 + row * 16, w + 8, 15);
     g.fillStyle = colors[i]; g.fillText(text, P.l + 8, P.t + 6 + row * 16);
   });
 }

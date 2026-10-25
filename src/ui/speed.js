@@ -10,6 +10,7 @@
 // travels with the project as ui.speed.
 // See design/output/instrument.md#speed.
 
+import { fitPopover } from './layout.js';
 import { SPEED_PRESETS, AS_FAST, parseSpeed, formatSpeed, formatAchieved, createSpeedMeter, stepPreset, paceOf } from '../core/speed.js';
 
 const NOTES = new Map([[0.1, 'slow motion'], [1, 'real time'], [AS_FAST, 'as fast as possible']]);
@@ -88,9 +89,10 @@ export function createSpeed(app) {
   function openPop() {
     if (lock) { app.toast(lock); return; }
     document.dispatchEvent(new MouseEvent('click'));  // one menu open at a time: the others close
-    pop.innerHTML = SPEED_PRESETS.map((s) => `<button type="button" class="speed-item" role="menuitemradio" aria-checked="${s === set}" data-speed="${s === AS_FAST ? 'inf' : s}" tabindex="-1">
-      <b>${formatSpeed(s)}</b><span>${NOTES.get(s) ?? ''}</span></button>`).join('');
+    pop.innerHTML = SPEED_PRESETS.map((s) => `<button type="button" class="item" role="menuitemradio" aria-checked="${s === set}" data-speed="${s === AS_FAST ? 'inf' : s}" tabindex="-1">
+      <b class="mono">${formatSpeed(s)}</b><span class="hint">${NOTES.get(s) ?? ''}</span></button>`).join('');
     pop.hidden = false;
+    fitPopover(pop);
     btn.setAttribute('aria-expanded', 'true');
     (items().find((b) => b.getAttribute('aria-checked') === 'true') ?? items()[0]).focus();
   }

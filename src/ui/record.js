@@ -15,8 +15,9 @@
 
 import { findExternal } from '../core/hil.js';
 import { createRecorder, traceToCsv, traceToCsvParts, traceToJsonParts, parseTrace, traceWindow, refShift, refSteps } from '../core/trace.js';
-import { CHANNEL_COLORS } from './display.js';
+import { palette as C } from './palette.js';
 import { num } from './units.js';
+import { fitPopover } from './layout.js';
 
 const RECORD_KEY = 'loop-tuner:record-seconds';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -37,13 +38,13 @@ const listed = (names) => (names.length > 6 ? `${names.slice(0, 6).join(', ')} a
 
 export function createRecord(app, display) {
   const bar = document.createElement('div');
-  bar.className = 'recbar';
+  bar.className = 'recbar on-dark';
   bar.setAttribute('aria-label', 'Save and references');
   bar.innerHTML = `
-    <span class="rc-rec" id="rc-rec" hidden><span class="rc-label" title="Rec: the last minutes of every live signal are kept, to be saved">Rec</span>
-      <span class="rc-state" id="rc-state"></span><input class="rc-len" id="rc-len" spellcheck="false" aria-label="Record length" title="How much live data is kept: 5 min, 30 s, 1 h"></span>
-    <span class="rc-menu"><button class="rkey" id="rc-save" aria-haspopup="true" aria-expanded="false" title="Save the screen (every signal, or a picture) or the live record">Save ▾</button><span class="rc-pop" id="rc-pop" role="menu" hidden></span></span>
-    <button class="rkey" id="rc-open" title="Open a saved trace (CSV or JSON): it is drawn dashed on the channels with the same names">Open…</button>
+    <span class="rc-rec" id="rc-rec" hidden><span class="label" title="Rec: the last minutes of every live signal are kept, to be saved">Rec</span>
+      <span class="muted mono" id="rc-state"></span><input class="field field-sm mono rc-len" id="rc-len" spellcheck="false" aria-label="Record length" title="How much live data is kept: 5 min, 30 s, 1 h"></span>
+    <span class="popwrap"><button class="btn btn-sm" id="rc-save" aria-haspopup="true" aria-expanded="false" title="Save the screen (every signal, or a picture) or the live record">Save ▾</button><span class="popover menu popover-up" id="rc-pop" role="menu" hidden></span></span>
+    <button class="btn btn-sm" id="rc-open" title="Open a saved trace (CSV or JSON): it is drawn dashed on the channels with the same names">Open…</button>
     <span class="rc-refs" id="rc-refs" hidden></span>
     <input type="file" id="rc-file" accept=".csv,.json,text/csv,application/json" hidden>`;
   document.getElementById('display').append(bar);
@@ -116,21 +117,21 @@ export function createRecord(app, display) {
     const c = document.createElement('canvas');
     c.width = src.width + 2 * pad; c.height = src.height + 2 * line + 2 * pad;
     const g = c.getContext('2d');
-    g.fillStyle = '#0a0d10'; g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = C().bg; g.fillRect(0, 0, c.width, c.height);
     g.drawImage(src, pad, pad + line);
-    g.font = `${Math.round(12 * k)}px "IBM Plex Mono", ui-monospace, monospace`;
+    g.font = `${Math.round(12 * k)}px ${C().mono}`;
     g.textBaseline = 'middle';
-    g.fillStyle = '#c9d3da';
+    g.fillStyle = C().ink;
     const status = [...document.querySelector('#display .status').children].map((e) => e.textContent.trim()).filter(Boolean).join('  ');
     g.fillText(`${app.project.title} · ${status}`, pad, pad + line / 2);
-    g.textAlign = 'right'; g.fillStyle = '#7f8c96';
+    g.textAlign = 'right'; g.fillStyle = C().label;
     g.fillText(new Date().toLocaleString(), c.width - pad, pad + line / 2);
     g.textAlign = 'left';
     let x = pad;
     app.project.scope.channels.forEach((ch, i) => {
       if (!ch.on || !ch.source) return;
       const text = `${i + 1} ${ch.source}  ${num(ch.scale)} ${app.unitOf(ch.source)}/div`;
-      g.fillStyle = CHANNEL_COLORS[i];
+      g.fillStyle = C().ch[i];
       g.fillText(text, x, c.height - pad - line / 2);
       x += g.measureText(text).width + 22 * k;
     });
@@ -141,11 +142,11 @@ export function createRecord(app, display) {
   const pop = $('rc-pop');
   function renderPop() {
     const scr = screenTrace(), lr = rec.length > 1;
-    const key = (what, kind, text, title) => `<button class="rkey" role="menuitem" data-save="${what}:${kind}" title="${esc(title)}">${text}</button>`;
+    const key = (what, kind, text, title) => `<button class="btn btn-sm" role="menuitem" data-save="${what}:${kind}" title="${esc(title)}">${text}</button>`;
     const keys = (what, png) => (!app.canDownload() ? key(what, 'copy', 'Copy CSV', 'CSV to the clipboard (files cannot be saved here)')
       : key(what, 'csv', 'CSV', 't and every signal, units in the header: for spreadsheets') + key(what, 'json', 'JSON', 'the same as JSON: for scripts')
         + (png ? key(what, 'png', 'PNG', 'a picture of the screen as it is') : '') + key(what, 'copy', 'Copy', 'CSV to the clipboard'));
-    const row = (label, note, body) => `<div class="rc-row"><span class="rc-what">${label}<span class="rc-note">${esc(note)}</span></span><span class="rc-keys">${body}</span></div>`;
+    const row = (label, note, body) => `<div class="rc-row"><span class="rc-what">${label}<span class="hint">${esc(note)}</span></span><span class="rc-keys">${body}</span></div>`;
     pop.innerHTML = row('Screen', scr ? `${duration(span(scr.trace))} · ${Object.keys(scr.trace.signals).length} signals` : 'nothing yet', scr ? keys('screen', true) : '')
       + (lr ? row('Live record', `${duration(rec.span())} · ${rec.names.length} signals`, keys('record', false)) : '');
     pop.querySelectorAll('[data-save]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); const [what, kind] = b.dataset.save.split(':'); save(what, kind); }));
@@ -155,6 +156,7 @@ export function createRecord(app, display) {
     e.stopPropagation();
     if (pop.hidden) { document.dispatchEvent(new MouseEvent('click')); renderPop(); }  // one menu open at a time: the others close
     pop.hidden = !pop.hidden;
+    fitPopover(pop);
     $('rc-save').setAttribute('aria-expanded', String(!pop.hidden));
   });
   document.addEventListener('click', closePop);
@@ -211,7 +213,7 @@ export function createRecord(app, display) {
     const lo = Math.max(...refs.map((r) => r.range[0])), hi = Math.min(...refs.map((r) => r.range[1]));
     const stepping = refs.some((r) => r.range[0] < r.range[1]);
     const at = refs[0].step;
-    box.innerHTML = `${stepping ? `<button class="rkey rc-step" id="rc-back" title="Show the screen width before" ${at <= lo ? 'disabled' : ''}>◀</button>` : ''}<button class="rkey rc-ref" id="rc-clear" title="References (dashed): ${esc(refs.map((r) => `${r.name}: ${partText(r)}`).join('; '))}. Click to clear them.">ref${refs.length > 1 ? ` ×${refs.length}` : ''} ✕</button>${stepping ? `<button class="rkey rc-step" id="rc-fwd" title="Show the next screen width" ${at >= hi ? 'disabled' : ''}>▶</button>` : ''}`;
+    box.innerHTML = `${stepping ? `<button class="btn btn-sm btn-icon" id="rc-back" title="Show the screen width before" ${at <= lo ? 'disabled' : ''}>◀</button>` : ''}<button class="btn btn-sm" id="rc-clear" title="References (dashed): ${esc(refs.map((r) => `${r.name}: ${partText(r)}`).join('; '))}. Click to clear them.">ref${refs.length > 1 ? ` ×${refs.length}` : ''} ✕</button>${stepping ? `<button class="btn btn-sm btn-icon" id="rc-fwd" title="Show the next screen width" ${at >= hi ? 'disabled' : ''}>▶</button>` : ''}`;
     $('rc-clear').addEventListener('click', () => { refs.length = 0; display.setRefs([]); renderRefs(); app.toast('References cleared'); });
     const step = (d) => { for (const r of refs) r.step += d; placeRefs(); app.toast(`Reference: ${partText(refs[0])}`); };
     $('rc-back')?.addEventListener('click', () => step(-1));

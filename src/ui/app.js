@@ -16,7 +16,7 @@ import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem, libraryTags, filterByTags } 
 import { createDisplay } from './display.js';
 import { createControls } from './controls.js';
 import { createGenerator } from './generator.js';
-import { createSplitters } from './layout.js';
+import { createSplitters, fitPopover } from './layout.js';
 import { createLive } from './live.js';
 import { createRecord } from './record.js';
 import { createSpeed } from './speed.js';
@@ -399,8 +399,8 @@ function startApp() {
   tuneTab = createAutotuneTab($('tab-tune'), app, display);
 
   function renderTabs() {
-    $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="tab ${t.key === app.tab ? 'on' : ''} ${t.next ? 'later' : ''}" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
-      <span class="tn">${i + 1}</span>${t.label}${t.next ? '<span class="soon">later</span>' : ''}</button>`).join('');
+    $('tabbar').innerHTML = TABS.map((t, i) => `<button role="tab" class="btn tab" data-tab="${t.key}" aria-selected="${t.key === app.tab}">
+      <span class="tab-num">${i + 1}</span>${t.label}${t.next ? '<span class="badge">later</span>' : ''}</button>`).join('');
     $('tabbar').querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { app.tab = b.dataset.tab; renderTabs(); }));
     const t = TABS.find((x) => x.key === app.tab);
     $('tab-input').hidden = app.tab !== 'input';
@@ -415,7 +415,7 @@ function startApp() {
     $('tab-later').hidden = !t.next;
     if (app.tab === 'plant') plantEditor.shown();
     if (t.next) {
-      $('tab-later').innerHTML = `<div class="later-box"><h3 class="glabel">${t.label} · comes next</h3><p>${t.next}</p><p class="dim">Until then the display shows what is set up so far. The order and plans are in design/output/tabs.md.</p></div>`;
+      $('tab-later').innerHTML = `<div class="notice"><h3 class="label">${t.label} · comes next</h3><p class="note">${t.next}</p><p class="hint">Until then the display shows what is set up so far. The order and plans are in design/output/tabs.md.</p></div>`;
     }
   }
 
@@ -556,15 +556,15 @@ function startApp() {
   // Tags filter the list: every tag in the library is a chip at the top; a
   // click on one there or on a card toggles it; systems must carry them all.
   const tagFilter = new Set();
-  const chip = (t, extra = '') => `<button type="button" class="tag tag-${t.kind} tone-${t.tone}${extra}" data-tag="${esc(t.label)}" aria-pressed="${tagFilter.has(t.label)}" title="Show only systems tagged ${esc(t.label)}">${esc(t.label)}</button>`;
+  const chip = (t, extra = '') => `<button type="button" class="tag tag-${t.kind} tone-${t.tone}${extra}" data-tag="${esc(t.label)}" aria-pressed="${tagFilter.has(t.label)}" title="Show only systems tagged ${esc(t.label)}">${tagFilter.has(t.label) ? '✓ ' : ''}${esc(t.label)}</button>`;
   function renderLibrary() {
     const shown = new Set(filterByTags([...tagFilter]));
-    pop.innerHTML = `<div class="pophead">System library <span>load a whole system, or one part of it</span></div>`
-      + `<div class="taglegend">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
+    pop.innerHTML = `<div class="pophead"><span class="heading">System library</span><span class="hint">load a whole system, or one part of it</span></div>`
+      + `<div class="taglegend hint">Tags: <span class="tag tag-plant">plant</span><span class="tag tag-controller">controller</span><span class="tag tag-observer">observer</span><span class="tag tag-feature">feature</span><span class="tag tag-none">none</span></div>`
       + `<div class="tagfilter" role="group" aria-label="Filter by tag">${libraryTags().map((t) => chip(t)).join('')}`
-      + `<span class="tagcount">${tagFilter.size ? `${shown.size} of ${SYSTEM_LIBRARY.length} <button type="button" class="key small" data-tagclear>Clear</button>` : `${SYSTEM_LIBRARY.length} systems · click a tag to filter`}</span></div>`
-      + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div class="sysname">${esc(e.name)}<div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="sysnote">${esc(e.notes)}</div></div>
-      <div class="sysbtns"><button class="key small primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="key small" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>` : '')).join('');
+      + `<span class="tagcount hint">${tagFilter.size ? `${shown.size} of ${SYSTEM_LIBRARY.length} <button type="button" class="btn btn-sm" data-tagclear>Clear</button>` : `${SYSTEM_LIBRARY.length} systems · click a tag to filter`}</span></div>`
+      + SYSTEM_LIBRARY.map((e, i) => (shown.has(i) ? `<div class="sysrow"><div><div class="heading">${esc(e.name)}</div><div class="systags">${e.tags.map((t) => chip(t)).join('')}</div><div class="note">${esc(e.notes)}</div></div>
+      <div class="sysbtns"><button class="btn btn-sm btn-primary" data-sys="${i}" data-parts="all">Load</button>${SYSTEM_PARTS.filter((k) => e[k]).map((k) => `<button class="btn btn-sm" data-sys="${i}" data-parts="${k}">${PART_LABEL[k]}</button>`).join('')}</div></div>` : '')).join('');
   }
   renderLibrary();
   const closePop = () => { pop.hidden = true; $('syslib').setAttribute('aria-expanded', 'false'); };
@@ -572,6 +572,7 @@ function startApp() {
     e.stopPropagation();
     if (pop.hidden) document.dispatchEvent(new MouseEvent('click'));  // one menu open at a time: the others close
     pop.hidden = !pop.hidden;
+    fitPopover(pop);
     $('syslib').setAttribute('aria-expanded', String(!pop.hidden));
   });
   pop.addEventListener('click', (e) => {
