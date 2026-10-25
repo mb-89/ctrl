@@ -541,9 +541,12 @@ const TOOLS = [
   },
   {
     name: 'page_live', title: 'The live plant on the page',
-    description: 'The page\'s link to an external (HIL) plant: action "state" (default) gives the connection, the mode, the plant\'s interface (its inputs and outputs: names, units, full scales, hard ranges), the ramp-in, the link\'s figures, any E-stop and who latched it, the last message; "connect" (url optional), "disconnect", "estop", "reset". The plant is real time: stop it (page_control stop) or E-stop it when in doubt.',
-    inputSchema: obj({ action: { type: 'string', enum: ['state', 'connect', 'disconnect', 'estop', 'reset'] }, url: { type: 'string', description: 'connect: where the plant listens; default the block\'s.' } }),
-    run: ({ action = 'state', url }) => pageCall(`live.${action}`, action === 'connect' && url ? [url] : [], 30000),
+    description: 'The page\'s link to an external (HIL) plant: action "state" (default) gives the connection, the mode, the plant\'s interface (its inputs and outputs: names, units, full scales, hard ranges), the ramp-in, the link\'s figures, any E-stop and who latched it, the last message; "connect" (url optional), "disconnect", "estop", "reset"; "mode" with mode "control" (the page\'s Controller drives the plant) or "reference" (the plant runs its own controller, the page sends r and records), while the plant is stopped. The plant is real time: stop it (page_control stop) or E-stop it when in doubt.',
+    inputSchema: obj({ action: { type: 'string', enum: ['state', 'connect', 'disconnect', 'estop', 'reset', 'mode'] }, url: { type: 'string', description: 'connect: where the plant listens; default the block\'s.' }, mode: { type: 'string', enum: ['control', 'reference'], description: 'mode: who controls the plant.' } }),
+    run: ({ action = 'state', url, mode }) => {
+      if (action === 'mode') { if (!mode) throw new Error('mode: "control" or "reference"'); return pageCall('live.setMode', [mode], 30000); }
+      return pageCall(`live.${action}`, action === 'connect' && url ? [url] : [], 30000);
+    },
   },
   {
     name: 'page_screenshot', title: 'A picture of the page\'s scope',

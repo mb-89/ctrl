@@ -30,7 +30,7 @@ function controllerOnReference(params, links) {
   for (const c of links.ctrls) {
     for (const i of c.drives ?? []) {
       if ((params.kinds?.[i] ?? 'effort') !== 'reference') continue;
-      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Wire the Controller's output elsewhere, load a system made for reference mode (such as "HIL: an external plant, reference mode"), or start the plant in control mode (hil_plant.py without --mode reference).`;
+      return `Controller "${c.key}" is wired to ${params.inputs[i]}, which this plant takes as a reference (reference mode: the plant runs its own controller). Switch the plant to control mode (Live settings, Mode: "The page controls"), let r go straight to it (Mode: "The plant controls" rewires it so), or start the plant in control mode (hil_plant.py without --mode reference).`;
     }
   }
   return null;
@@ -266,6 +266,35 @@ export function keptWires(wires, id, was, now) {
 // for a port that is gone goes with it. Returns { blocks, wires, renamed:
 // { old: new name, or null for one that went } } for the scope's channels.
 const SIGNAL_NAME = /^[A-Za-z][A-Za-z0-9_]{0,11}$/;
+const endIs = (end, id, port) => { const e = parseEnd(end); return e.id === id && e.port === port; };
+
+// The plant changed mode (Live settings' switch, or a plant started in the
+// other mode): its inputs that lost their wire are fed as the new mode
+// needs. A reference input where a Controller drove the effort takes what
+// fed that Controller's r (the plant runs its own controller now); an effort
+// input where a reference was fed takes the Controller whose r that was and
+// whose u drives nothing (the page controls again). blocks and wires are the
+// level's after keptWires; wires is extended.
+function modeWires(level, blocks, wires, id, now) {
+  const byId = (bid) => blocks.find((b) => b.id === bid);
+  const into = (bid, port) => wires.find((w) => endIs(w.to, bid, port));
+  now.inputs.forEach((_, j) => {
+    if (into(id, j)) return;
+    const before = level.wires.find((w) => endIs(w.to, id, j));
+    if (!before) return;
+    const feeder = byId(parseEnd(before.from).id), kind = now.kinds?.[j] || 'effort';
+    const to = j ? `${id}:${j}` : id;
+    if (kind === 'reference' && feeder?.type === 'controller') {
+      const r = level.wires.find((w) => endIs(w.to, feeder.id, 0));
+      if (r) wires.push({ from: r.from, to });
+    } else if (kind === 'effort' && feeder?.type !== 'controller') {
+      const ctl = blocks.find((b) => b.type === 'controller' && wires.some((w) => endIs(w.to, b.id, 0) && w.from === before.from)
+        && !wires.some((w) => parseEnd(w.from).id === b.id && parseEnd(w.to).id === id));
+      if (ctl) wires.push({ from: ctl.id, to });
+    }
+  });
+}
+
 export function followPorts(level, id, was, now) {
   const ext = level.blocks.find((b) => b.id === id);
   const fromPort = (w) => { const f = parseEnd(w.from); return f.id === id ? f.port : -1; };
@@ -275,11 +304,37 @@ export function followPorts(level, id, was, now) {
   const gone = new Set(level.blocks.filter((b) => b.type === 'sink' && fed(b).length && fed(b).every((w) => fromPort(w) >= now.outputs.length && b.params.name === was.outputs[fromPort(w)])).map((b) => b.id));
   for (const b of level.blocks) if (gone.has(b.id)) renamed[b.params.name] = null;
   const blocks = level.blocks.filter((b) => !gone.has(b.id)).map((b) => structuredClone(b));
-  const wires = keptWires(level.wires, id, was, now).filter((w) => !gone.has(parseEnd(w.to).id));
+  const wires = keptWires(level.wires, id, was, now).filter((w) => !gone.has(parseEnd(w.to).id)).map((w) => ({ ...w }));
+  modeWires(level, blocks, wires, id, now);
+  // A Sink of an output that went, where a Controller now drives the plant
+  // input of the same name, shows that Controller's u (control mode again).
+  for (const b of level.blocks) {
+    if (!gone.has(b.id) || b.type !== 'sink') continue;
+    const j = now.inputs.indexOf(b.params.name);
+    const drive = j < 0 ? null : wires.find((w) => endIs(w.to, id, j) && blocks.find((x) => x.id === parseEnd(w.from).id)?.type === 'controller');
+    if (!drive) continue;
+    gone.delete(b.id);
+    delete renamed[b.params.name];
+    blocks.push(structuredClone(b));
+    wires.push({ from: drive.from, to: b.id });
+  }
   const taken = new Set(diagramNames({ blocks, wires }).sinks.concat(diagramNames({ blocks, wires }).sources));
   now.outputs.forEach((name, j) => {
     const unit = now.outUnits?.[j] ?? '1';
     const sinks = blocks.filter((b) => b.type === 'sink' && wires.some((w) => parseEnd(w.to).id === b.id && fromPort(w) === j));
+    // A Sink named for this output that shows a Controller's u, where that
+    // Controller no longer drives the plant (reference mode: the plant's own
+    // effort comes back as an output), shows the output instead.
+    if (!sinks.length) {
+      const own = blocks.find((b) => b.type === 'sink' && b.params.name === name);
+      const feed = own && wires.find((w) => parseEnd(w.to).id === own.id);
+      const from = feed && blocks.find((x) => x.id === parseEnd(feed.from).id);
+      if (from?.type === 'controller' && !wires.some((w) => parseEnd(w.from).id === from.id && parseEnd(w.to).id === id)) {
+        feed.from = j ? `${id}:${j}` : id;
+        own.params.unit = unit;
+        sinks.push(own);
+      }
+    }
     for (const b of sinks) {
       if (b.params.name !== was.outputs[j]) continue;  // the person's own name stays
       if (name !== b.params.name && SIGNAL_NAME.test(name) && !taken.has(name)) { taken.delete(b.params.name); renamed[b.params.name] = name; b.params.name = name; taken.add(name); }
@@ -585,6 +640,18 @@ export function createLiveLoop(post, env = globalThis) {
         say('open', 'reset');
         return {};
       } catch (err) { fail(`reset: ${err.message}`); return { error: err.message }; }
+    },
+    // The Live settings' mode switch: the plant, stopped, runs in another
+    // mode and describes itself anew; the page takes the new ports as on
+    // Connect. A plant without the request says so in its error.
+    async mode({ mode }) {
+      if (!desc) return { error: 'not connected' };
+      if (running) return { error: 'stop the plant first: its mode changes only while it is stopped' };
+      try {
+        desc = checkDescription(await call('mode', { mode }));
+        post({ type: 'described', desc });
+        return {};
+      } catch (err) { return { error: err.message }; }
     },
     async disconnect() {
       if (!ws) return {};

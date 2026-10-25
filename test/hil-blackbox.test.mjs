@@ -17,7 +17,7 @@ const signalsOf = (sys) => Object.fromEntries(Object.entries(sys.input.signals).
 
 test('the HIL systems: a controller against one External plant block and nothing else on the plant side', async () => {
   const sys = await hilSystems();
-  assert.deepEqual(sys.map((s) => s.name), ['HIL: an external plant', 'HIL: an external plant, reference mode']);
+  assert.deepEqual(sys.map((s) => s.name), ['HIL: an external plant', 'HIL with an agent']);
   for (const s of sys) {
     const types = new Set(s.plant.diagram.blocks.map((b) => b.type));
     assert.deepEqual([...types].filter((t) => !['source', 'controller', 'external', 'sink'].includes(t)), [], `${s.name}: no model of the plant`);
@@ -33,13 +33,11 @@ test('the HIL systems: a controller against one External plant block and nothing
 });
 
 test('the interface: all the page knows, from the block as describe set it', async () => {
-  const [control, reference] = await hilSystems();
+  const [control] = await hilSystems();
   const f = interfaceOf(normalizeDiagram(control.plant.diagram).blocks.find((b) => b.type === 'external').params);
   assert.equal(f.mode, 'control');
   assert.deepEqual(f.inputs, [{ name: 'V', unit: 'V', fullScale: [-12, 12], safe: 0, kind: 'effort', measures: null }]);
   assert.deepEqual(f.outputs.map((o) => [o.name, o.unit, o.hard, o.kind]), [['angle', 'rad', [-2.5, 2.5], 'measurement'], ['speed', 'rad/s', [-60, 60], 'measurement'], ['current', 'A', [-10, 10], 'measurement']]);
-  const g = interfaceOf(normalizeDiagram(reference.plant.diagram).blocks.find((b) => b.type === 'external').params);
-  assert.deepEqual([g.mode, g.inputs[0].measures, g.outputs.at(-1).kind, g.outputs.at(-1).hard], ['reference', 'angle', 'effort', null]);
 });
 
 // What the page draws is what the plant describes: here the library system
@@ -95,10 +93,10 @@ test('hil_plant.py: no disturbance input unless --dyno offers one; the library m
   assert.deepEqual(ref.inputs.map((p) => [p.name, p.kind]), [['r', 'reference'], ['load', 'disturbance']]);
   assert.deepEqual(oven.inputs.map((p) => [p.name, p.kind]), [['P', 'effort'], ['d', 'disturbance']], 'the oven offers its door loss');
   assert.deepEqual(enc.inputs.map((p) => p.name), ['V'], 'the encoder example has no disturbance Source to offer');
-  const [control, reference] = await hilSystems();
+  const [control, agent] = await hilSystems();
   const block = (s) => normalizeDiagram(s.plant.diagram).blocks.find((b) => b.type === 'external');
   assert.ok(sameDescription(block(control).params, checkDescription(plain)), 'connecting the library system to the default plant changes nothing');
-  assert.ok(sameDescription(block(reference).params, checkDescription(py(['--mode', 'reference']))));
+  assert.ok(sameDescription(block(agent).params, checkDescription(plain)), 'HIL with an agent: the same interface');
   assert.ok(!sameDescription(block(control).params, checkDescription(dyno)), 'with --dyno the block takes the load input, an ordinary described input');
   // Without --dyno the model's load holds 0: the plant on one input runs as
   // the plant with --dyno whose load is 0.
@@ -116,4 +114,32 @@ for dyno in (False, True):
   assert.ok(one.startsWith('[1.0] ') && two.startsWith('[1.0, 0.0] '), out);
   assert.equal(one.slice(6), two.slice(11), 'the same outputs');
   assert.ok(!/nan/.test(one) && JSON.parse(one.slice(6))[0] > 0.05, 'the arm moved, untripped');
+});
+
+// Reference mode is a switch (input 31): the example plant described in
+// reference mode, as hil_plant.py --mode reference describes it.
+const REFERENCE = {
+  protocol: 'loop-tuner-hil/1', name: 'DC motor with an unbalanced arm', mode: 'reference', rate_hz: 100,
+  inputs: [{ name: 'r', unit: 'rad', min: -3, max: 3, safe: 0, kind: 'reference', measures: 'angle' }],
+  outputs: [{ name: 'angle', unit: 'rad', min: -Math.PI, max: Math.PI, hard_min: -2.5, hard_max: 2.5 }, { name: 'speed', unit: 'rad/s', min: -120, max: 120, hard_min: -60, hard_max: 60 }, { name: 'current', unit: 'A', min: -12, max: 12, hard_min: -10, hard_max: 10 }, { name: 'V', unit: 'V', min: -12, max: 12, kind: 'effort' }],
+};
+const wired = (d) => d.wires.map((w) => `${w.from}>${w.to}`).sort();
+
+test('the mode switch: in reference mode r goes straight to the plant and its own effort comes back; control mode puts the Controller back', async () => {
+  const { sys, d, next, sinks } = await take(REFERENCE);
+  const ext = next.blocks.find((b) => b.type === 'external');
+  const g = interfaceOf(ext.params);
+  assert.deepEqual([g.mode, g.inputs[0].measures, g.outputs.at(-1).kind], ['reference', 'angle', 'effort']);
+  assert.ok(wired(next).includes('r>plant'), 'r feeds the plant');
+  assert.ok(!wired(next).some((w) => w.startsWith('ctrl>plant')), 'the page\'s Controller drives nothing');
+  assert.ok(wired(next).includes('plant:3>V'), 'the Sink V shows the plant\'s own effort');
+  assert.deepEqual(sinks.find(([n]) => n === 'V'), ['V', 'V']);
+  assert.equal(liveProblem(next), null, 'Run is not refused');
+  // And back: the diagram is the library's again.
+  const control = d.blocks.find((b) => b.type === 'external').params;
+  const back = followPorts(next, ext.id, ext.params, control);
+  const again = normalizeDiagram({ ...next, blocks: back.blocks.map((b) => (b.id === ext.id ? { ...b, params: control } : b)), wires: back.wires });
+  assert.deepEqual(wired(again), wired(normalizeDiagram(sys.plant.diagram)));
+  assert.deepEqual(again.blocks.map((b) => b.id).sort(), normalizeDiagram(sys.plant.diagram).blocks.map((b) => b.id).sort());
+  assert.equal(liveProblem(again), null);
 });
