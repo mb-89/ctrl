@@ -202,12 +202,16 @@ test('loopModel: the linear loop of the plant seen and the law reproduces the si
   for (let k = 0; k < 300; k++) worst = Math.max(worst, Math.abs(run.signals.x[k * step] - lin.y1[k]), Math.abs(run.signals.F[k * step] - lin.u[k]) / 100);
   assert.ok(worst < 1e-5, `worst ${worst} (x in m, F/100 in N)`);
 
-  // The tank on the gain-scheduled PI about 0.45 m: a 1 cm step in r (between
-  // two samples, so both loops see it first at 0.52 s), the pipe's dead time
-  // as whole samples, the PI from the plant.
-  const t = project('Conical tank');
+  // The tank on the gain-scheduled PI about 0.45 m: a small step a in r
+  // (between two samples, so both loops see it first at 0.52 s), less the
+  // run without it, over a; the pipe's dead time as whole samples, the PI
+  // from the plant. What is left is the tank's own nonlinearity: the pipe's
+  // Dead time delays the held u exactly (it came out half an integration
+  // step early, 2.8·10⁻³ of the step).
+  const t = project('Conical tank'), a = 1e-5;
   blk(t, 'tank').params.h0 = 0.45;
-  t.system.signals.r = { period: 5, components: [{ type: 'dc', params: { level: 0.45 } }, { type: 'step', params: { amplitude: 0.01, time: 0.505 } }] };
+  const r = (amp) => ({ period: 5, components: [{ type: 'dc', params: { level: 0.45 } }, { type: 'step', params: { amplitude: amp, time: 0.505 } }] });
+  t.system.signals.r = r(a);
   t.system.signals.d = { period: 5, components: [] };
   blk(t, 'ctrl').variants[0].params.Tr = 0;   // the prefilter lies outside the loop
   const mt = loopModel(t, 'ctrl', 'initial');
@@ -216,12 +220,13 @@ test('loopModel: the linear loop of the plant seen and the law reproduces the si
   assert.deepEqual(mt.plant.delay, [0.1]);
   assert.equal(mt.ctrl.A.length, 1);   // a PI: its integral
   const runT = evaluateSystem(t, { designs: createDesignStore() });
+  const baseT = evaluateSystem({ ...t, system: { ...t.system, signals: { ...t.system.signals, r: r(0) } } }, { designs: createDesignStore() });
   const sT = Math.round(mt.Ts / (runT.t[1] - runT.t[0]));
-  const linT = linearLoop(mt, (k) => (k * mt.Ts >= 0.505 ? 0.01 : 0), 200);
+  const linT = linearLoop(mt, (k) => (k * mt.Ts >= 0.505 ? 1 : 0), 200);
   let worstT = 0;
-  for (let k = 0; k < 200; k++) worstT = Math.max(worstT, Math.abs(runT.signals.h[k * sT] - 0.45 - linT.y1[k]));
-  assert.ok(worstT < 2e-4, `tank: worst ${worstT} m of a 0.01 m step`);
-  assert.ok(Math.max(...linT.y1) > 0.0095, 'the step is followed');
+  for (let k = 0; k < 200; k++) worstT = Math.max(worstT, Math.abs((runT.signals.h[k * sT] - baseT.signals.h[k * sT]) / a - linT.y1[k]));
+  assert.ok(worstT < 5e-5, `tank: worst ${worstT} of the step`);
+  assert.ok(Math.max(...linT.y1) > 0.95, 'the step is followed');
 });
 
 test('loopModel: refusals and notes: a law not linear there, no design yet, an Observer, a look-through', () => {
@@ -232,16 +237,21 @@ test('loopModel: refusals and notes: a law not linear there, no design yet, an O
   // The triple pendulum's plan is not made yet in a page's store.
   const tp = project('Triple');
   refusal(() => loopModel(tp, 'ctrl', 'origin', { designs: createDesignStore({ mode: 'async' }) }), 'no-design', /Planned swing-up \+ TV-LQR has no design to analyse: its plan is not made yet/);
-  // The tank at the origin: u = 0 is the pump's lower limit, and the empty
-  // tank a kink. Flagged (atLimit, plant.kinks), so the Analysis tab's
-  // verdict does not grade these numbers (it read "✓ stable, ×4840 good").
-  const empty = loopModel(project('Conical tank'), 'ctrl', 'origin');
-  assert.ok(empty.warnings.some((w) => /q = 0 is at its limit \(0 to 3\) there: the controller saturates/.test(w)));
-  assert.equal(empty.atLimit, true);
-  assert.ok(empty.plant.kinks.length > 0, 'the empty tank is a kink');
+  // The tank at the origin (empty, q = 0) is a kink: the central slope is
+  // neither side's and depends on the difference step (A from −2.8·10³ to
+  // −2.8·10⁵ 1/s), so the loop is refused there, as a design refuses it (the
+  // tab read "✓ stable, ×4840 good" from it).
+  refusal(() => loopModel(project('Conical tank'), 'ctrl', 'origin'), 'kink', /kink at origin .*tank\.h/);
+  // At the start, no kink and u = 0 is no limit: no such note.
   const start = loopModel(project('Conical tank'), 'ctrl', 'initial');
   assert.equal(start.atLimit, false);
   assert.deepEqual(start.plant.kinks, []);
+  assert.ok(!start.warnings.some((w) => /at its limit/.test(w)));
+  // u at a limit (the oven's heater at rest) is flagged, not refused: the
+  // linear plant holds, the controller's saturation opens the loop.
+  const oven = loopModel(project('Oven'), 'ctrl', 'origin');
+  assert.equal(oven.atLimit, true);
+  assert.ok(oven.warnings.some((w) => /is at its limit .* there: the controller saturates/.test(w)));
   // A Controller on a Kalman filter's estimates: the loop reads them as the
   // states, and says the filter's dynamics are left out.
   const k = project('Pendulum', 1);
@@ -289,4 +299,31 @@ test('loopModel on main\'s systems: sliding mode linear only in its boundary lay
   const [off] = designSystem(hil);
   assert.equal(off.status, 'error');
   assert.equal(off.error.code, 'external-plant');
+});
+
+test('Ms and Mt are the peaks of |S| and |T| on L itself, not on the frequency grid', async () => {
+  const { analyzeLoop, respondAt } = await import('../src/core/analysis.js');
+  // The encoder's 70 Hz shaft is a peak narrower than the grid: Ms read 5.78
+  // against 5.93 at 420 rad/s.
+  for (const [name, at] of [['Encoder', 'origin'], ['DC motor, position', 'origin'], ['Oven', 'initial'], ['Following a sine', 'origin']]) {
+    const m = loopModel(project(name), 'ctrl', at);
+    const res = analyzeLoop(m.plant, m.ctrl, m.Ts), L = res.L;
+    // A dense scan of 1/|1 + L| and |L|/|1 + L| over the band the tab draws
+    // (its lowest frequency up to Nyquist), then a finer one about each
+    // scan's peak. (Below the band, an integrating loop's |T| still rises
+    // towards 1 at DC: the sine example's Mt reads 0.992.)
+    const w0 = res.fd.w[0], wN = res.fd.w.at(-1), N = 40000, S = (w) => { const v = respondAt(L, w); return 1 / Math.hypot(1 + v.re, v.im); };
+    const T = (w) => { const v = respondAt(L, w); return Math.hypot(v.re, v.im) / Math.hypot(1 + v.re, v.im); };
+    const peak = (f) => {
+      const w = (i) => w0 * (wN / w0) ** (i / N);
+      let best = 0, at = 0;
+      for (let i = 0; i <= N; i++) { const v = f(w(i)); if (v > best) { best = v; at = i; } }
+      const lo = w(Math.max(0, at - 1)), hi = w(Math.min(N, at + 1));
+      for (let j = 0; j <= 4000; j++) best = Math.max(best, f(lo + ((hi - lo) * j) / 4000));
+      return best;
+    };
+    const ms = peak(S), mt = peak(T);
+    assert.ok(res.margins.ms >= ms * (1 - 1e-6) && res.margins.ms <= ms * (1 + 1e-4), `${name}: Ms ${res.margins.ms}, the scan ${ms}`);
+    assert.ok(res.margins.mt >= mt * (1 - 1e-6) && res.margins.mt <= mt * (1 + 1e-4), `${name}: Mt ${res.margins.mt}, the scan ${mt}`);
+  }
 });

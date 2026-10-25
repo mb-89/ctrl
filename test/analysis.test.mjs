@@ -64,21 +64,31 @@ test("each linear law's state space reproduces its step() while u is inside its 
     ['swingUp', { kE: 1, kx: 0, kv: 0, l: 0.5, g: 9.81, thetaS: 0.4, K: [-1, -30, -2, -5], kr: -1, umin: -Infinity, umax: Infinity }, 4],
     // Inside its boundary layer (|s| < φ) a sliding mode is a PD on [y, ẏ].
     ['slidingMode', { lambda: 10, K: 12, phi: 2, Tr: 0, u0: 0, umin: -Infinity, umax: Infinity }, 2],
+    // With a prefilter Tr the model's r input is the prefiltered rf (as the
+    // tab's step feeds it); the sliding mode's ṙf = (r − rf)/Tr is then one
+    // state, rf of the sample before (it read r with gain Kλ/φ, 36 % off).
+    ['slidingMode', { lambda: 10, K: 12, phi: 2, Tr: 0.05, u0: 0, umin: -Infinity, umax: Infinity }, 2],
+    ['pid', { Kp: 2, Ki: 3, Kd: 0.4, Tf: 0.02, b: 0.7, Tr: 0.1, Kff: 0.8, Kv: 0.3, Ka: 0.02, u0: 0, umin: -Infinity, umax: Infinity }, 1],
+    ['stateFeedback', { K: [1, -2, 0.5], kr: 3, Tr: 0.2, umin: -Infinity, umax: Infinity }, 3],
   ];
   for (const [type, p, m] of cases) {
     // About an operating point: the scheduled PI at y = 0.5 sees small moves only.
     const y0 = type === 'gainScheduled' ? 0.5 : 0;
     const law = CONTROLLERS[type].make(p, Ts), lin = CONTROLLERS[type].linear(p, Ts, { y: new Array(m).fill(y0) });
     const n = lin.A.length;
-    let x = new Array(n).fill(0), worst = 0, u0 = null;
+    let x = new Array(n).fill(0), worst = 0, u0 = null, rf = 0;
+    const a = lin.Tr > 0 ? Math.exp(-Ts / lin.Tr) : 0;
     for (let k = 0; k < 200; k++) {
       const v = k === 0 ? new Array(m + 1).fill(0) : Array.from({ length: m + 1 }, (_, i) => 1e-3 * Math.sin(0.3 * k * (i + 1) + i));
       const inp = v.map((d) => d + y0);
       const uLaw = law.step(inp);
       u0 ??= uLaw;   // the law's output at the operating point
-      let u = lin.D[0].reduce((s, d, i) => s + d * v[i], 0);
+      // The model's r is the prefiltered one where the law has a prefilter.
+      rf = a * rf + (1 - a) * v[0];
+      const w = [rf, ...v.slice(1)];
+      let u = lin.D[0].reduce((s, d, i) => s + d * w[i], 0);
       for (let j = 0; j < n; j++) u += lin.C[0][j] * x[j];
-      x = lin.A.map((row, i) => row.reduce((s, a, j) => s + a * x[j], 0) + lin.B[i].reduce((s, b, j) => s + b * v[j], 0));
+      x = lin.A.map((row, i) => row.reduce((s, a, j) => s + a * x[j], 0) + lin.B[i].reduce((s, b, j) => s + b * w[j], 0));
       worst = Math.max(worst, Math.abs(uLaw - u0 - u));
     }
     // The scheduled PI's slope term is second order in the small moves; Ka/Ts² is large, so its rounding is too.

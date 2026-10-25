@@ -65,7 +65,7 @@ const REFERENCE = {
   conicalTank(X, u, p, dX) {
     const h = Math.min(p.H, Math.max(0, X[0]));
     const r = p.r0 + ((p.R - p.r0) * h) / p.H;
-    const flow = Math.max(0, u) - p.a * Math.sqrt(2 * p.g * h);
+    const flow = u - p.a * Math.sqrt(2 * p.g * h);
     dX[0] = (h <= 0 && flow < 0) || (h >= p.H && flow > 0) ? 0 : flow / (Math.PI * r * r);
   },
 };

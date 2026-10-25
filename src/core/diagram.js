@@ -92,9 +92,11 @@ export const ELEMENTS = {
   },
   conicalTank: {
     // A tank that widens upwards (radius r0 at the bottom, R at height H),
-    // filled at q and draining through an outlet of area a (Torricelli). Its
-    // dynamics are fast when nearly empty and slow when full. It cannot run
-    // dry below 0 or hold more than H: what comes in beyond that overflows.
+    // filled at the net flow q (negative: more is drawn off than pumped in)
+    // and draining through an outlet of area a (Torricelli). Its dynamics are
+    // fast when nearly empty and slow when full. It cannot run dry below 0 or
+    // hold more than H: what comes in beyond that overflows. A pump that
+    // cannot run backwards is the controller's limit (u min 0), not the tank's.
     label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
     params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
     ode: {
@@ -107,7 +109,9 @@ export const ELEMENTS = {
         return (X, o, u, dX) => {
           const h = Math.min(H, Math.max(0, X[o]));
           const r = r0 + slope * h;
-          const flow = Math.max(0, u) - out * Math.sqrt(h);
+          // u is the net flow in (a pump, less what is drawn off): a draw-off
+          // larger than the pump drains the tank, until it is empty.
+          const flow = u - out * Math.sqrt(h);
           dX[o] = (h <= 0 && flow < 0) || (h >= H && flow > 0) ? 0 : flow / (Math.PI * r * r);
         };
       },
@@ -590,13 +594,22 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
     job.end();
   }
-  const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
+  // A dead time remembers its input at each step: hist the value after the
+  // samples there, histL the value the step ended on, before them. Between
+  // two records it runs from the one to the other, so an input held by a
+  // Controller (it changes only at its samples) comes out exactly delayed,
+  // not spread over a step (which shortened the dead time by half a step).
+  const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
   let h = 0;
-  const histAt = (hist, tau, y0 = 0) => {
+  // left: the end of an integration step reads the value the step ran on
+  // (the left limit), not the one a sample there puts out after it.
+  let left = false;
+  const histAt = (nd, tau, y0 = 0) => {
+    const hist = nd.hist;
     if (tau < 0 || !hist.length) return y0;
-    const f = tau / h, i = Math.floor(f);
+    const f = tau / h, i = left ? Math.max(0, Math.ceil(f - 1e-9) - 1) : Math.floor(f + 1e-9);
     if (i >= hist.length - 1) return hist[hist.length - 1];
-    return hist[i] + (hist[i + 1] - hist[i]) * (f - i);
+    return hist[i] + ((nd.histL[i + 1] ?? hist[i + 1]) - hist[i]) * (f - i);
   };
   const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
   // Where a signal comes from, through Sinks, Ins and Outs (pass nodes).
@@ -617,7 +630,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
         // y0 null: before L, the input at t = 0 (the first recorded), or the
         // input now while nothing is recorded.
-        case 'delay': y = model || nd.L <= 0 ? inOf(nd) : histAt(nd.hist, t - nd.L, nd.y0 ?? (nd.hist.length ? nd.hist[0] : inOf(nd))); break;
+        case 'delay': y = model || nd.L <= 0 ? inOf(nd) : histAt(nd, t - nd.L, nd.y0 ?? (nd.hist.length ? nd.hist[0] : inOf(nd))); break;
         case 'switch': y = inOf(nd, nd.pick); break;
         case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
         case 'quant': y = model ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
@@ -630,7 +643,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         case 'xplant': y = nd.outv[0]; break;
         default: {
           const { ss } = nd;
-          const inp = nd.delay > 0 && !model ? histAt(nd.hist, t - nd.delay) : inOf(nd);
+          const inp = nd.delay > 0 && !model ? histAt(nd, t - nd.delay) : inOf(nd);
           y = ss.D * inp;
           for (let j = 0; j < ss.n; j++) y += ss.C[j] * X[o + nd.off + j];
         }
@@ -644,7 +657,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       const nd = list[q];
       if (nd.kind === 'ode') { nd.rates(X, o + nd.off, inOf(nd), dX); continue; }
       const { ss } = nd, base = o + nd.off;
-      const inp = nd.delay > 0 && !model ? histAt(nd.hist, t - nd.delay) : inOf(nd);
+      const inp = nd.delay > 0 && !model ? histAt(nd, t - nd.delay) : inOf(nd);
       for (let r = 0; r < ss.n; r++) {
         let s = ss.B[r] * inp;
         for (let c = 0; c < ss.n; c++) s += ss.A[r * ss.n + c] * X[base + c];
@@ -675,7 +688,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     nextSample() { let t = Infinity; for (const nd of ctrls) if (nd.next < t) t = nd.next; return t; },
     // Initial state: zero, except for physics blocks with initial conditions.
     init(X, o) { for (const nd of stateNodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
-    eval(t, X, o, u, dX) {
+    eval(t, X, o, u, dX, end = false) {
+      left = end;
       outputs(order, t, X, o, u);
       if (dX) rates(stateNodes, t, X, o, dX);
       return outNode >= 0 ? vals[outNode] : 0;
@@ -683,7 +697,10 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // Values of the Sources and Sinks after the last eval.
     probes: () => probeList.map(([name, k]) => [name, vals[k]]),
     // Called after each completed step: dead times remember their input.
-    record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
+    record() { for (const nd of delays) { nd.hist.push(inOf(nd)); if (nd.histL.length < nd.hist.length) nd.histL.push(inOf(nd)); } },
+    // Called at the end of a step, before the samples there: what the step
+    // ended on (record() then adds the value after them).
+    recordLeft() { for (const nd of delays) nd.histL.push(inOf(nd)); },
     // The run at t, after its samples there (simulateSystem's { until }), as
     // a model takes it (el.seen's `at`): the state X, what each Controller
     // and Observer holds (`held`: an output, or the estimates), what each

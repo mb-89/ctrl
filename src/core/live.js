@@ -160,7 +160,7 @@ export function createLiveRunner(diagram, signals) {
     for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
     el.eval(t + 0.5 * dt, Xt, 0, 0, k3);
     for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
-    el.eval(t + dt, Xt, 0, 0, k4);
+    el.eval(t + dt, Xt, 0, 0, k4, true);
     for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   }
 
@@ -201,11 +201,12 @@ export function createLiveRunner(diagram, signals) {
           for (let s = 0; s < m; s++) {
             const ts = tPrev + s * dt;
             if (el.n) rk4(ts, dt);
-            if (s < m - 1) { el.eval(ts + dt, X, 0, 0, null); el.sample(ts + dt, X, 0, 0); el.record(); }
+            if (s < m - 1) { el.eval(ts + dt, X, 0, 0, null); el.recordLeft(); el.sample(ts + dt, X, 0, 0); el.record(); }
           }
         }
       }
       el.eval(t, X, 0, 0, null);
+      if (tPrev !== null) el.recordLeft();
       el.sample(t, X, 0, 0);
       el.record();
       tPrev = t;

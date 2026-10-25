@@ -35,7 +35,7 @@ The person ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md
   Hovering a coefficient shows its value for this plant (l1·(m1 + m2 + m3) = 0.075).
 - **From outside nothing is lost.** The closed subsystem keeps the same ports (F → x, θ1…θ3, v, ω1…ω3) and the Parameters panel shows the same fields as the old block (M, m1…m3, l1…l3, g, b, start angles): a **mask**. The rates agree with the old block to 1.5·10⁻¹³ (relative), the planned swing-up is the same plan, and it is planned in the same time (median 3.18 s against 3.16 s, §4).
 
-**Double-click "tank" in the Conical tank** and it opens as five ordinary blocks: q → *pump only fills* (qin = max(0, q)) → *net inflow* (Σ, + −) → *level rate* (r = r0 + (R − r0)·h/H; A = π·r²; dh = Q/A) → ∫ *h* [0, H] → Out h, and h → *outlet (Torricelli)* (qout = a·√(2·g·h)) back into the Σ. The tank needs no new part: Equations, Sum and an Integrator with limits.
+**Double-click "tank" in the Conical tank** and it opens as four ordinary blocks: q (the net flow in: pump less draw-off; v2.7.4, a draw-off larger than the pump's flow drains the tank) → *net inflow* (Σ, + −) → *level rate* (r = r0 + (R − r0)·h/H; A = π·r²; dh = Q/A) → ∫ *h* [0, H] → Out h, and h → *outlet (Torricelli)* (qout = a·√(2·g·h)) back into the Σ. The tank needs no new part: Equations, Sum and an Integrator with limits.
 
 **New building blocks** (each with one formula, §1): five Mechanics parts (World, Rail, Hinge, Mass, Rod) and joins; the **Equations** block (the Function block, with several named inputs and outputs); the **Integrator** with a start value, limits, unit and angle flag; **masks** on subsystems (parameters that may be formulas in the mask's names). Rigid-body constraints are what the existing blocks cannot express without an algebraic loop, hence the parts.
 
@@ -175,13 +175,12 @@ The triple has 18 blocks, 7 joins and 9 wires; its port order is today's (F → 
 ```json
 { "blocks": [
     { "id": "q", "type": "inport", "name": "q", "params": { "port": 1 } },
-    { "id": "pump", "type": "fcn", "name": "pump only fills", "params": { "inputs": "q", "eqs": "qin = max(0, q)", "outputs": "qin" } },
     { "id": "net", "type": "sum", "name": "net inflow", "params": { "signs": "+-" } },
     { "id": "rate", "type": "fcn", "name": "level rate", "params": { "inputs": "Q, h", "eqs": "r = r0 + (R - r0)*h/H\nA = pi*r^2\ndh = Q/A", "outputs": "dh" } },
     { "id": "level", "type": "integrator", "name": "h", "params": { "x0": "h0", "min": 0, "max": "H", "unit": "m" } },
     { "id": "outlet", "type": "fcn", "name": "outlet (Torricelli)", "params": { "inputs": "h", "eqs": "qout = a*sqrt(2*g*h)", "outputs": "qout" }, "flip": true },
     { "id": "o_1", "type": "outport", "name": "h", "params": { "port": 1 } } ],
-  "wires": [ { "from": "q", "to": "pump" }, { "from": "pump", "to": "net" }, { "from": "net", "to": "rate" },
+  "wires": [ { "from": "q", "to": "net" }, { "from": "net", "to": "rate" },
              { "from": "level", "to": "rate:1" }, { "from": "rate", "to": "level" }, { "from": "level", "to": "o_1" },
              { "from": "level", "to": "outlet" }, { "from": "outlet", "to": "net:1" } ] }
 ```

@@ -62,12 +62,18 @@ export function simulate(loop, sim, opts = {}) {
 
   // Evaluates the chain at time t: fills dX (if given) and sig (the outputs
   // of actuator, plant and sensor). The disturbance adds at the plant input.
-  function chainEval(t, X, u, dX) {
-    sig[0] = elems[0].eval(t, X, elems[0].off, u, dX);
-    sig[1] = elems[1].eval(t, X, elems[1].off, sig[0] + distFn(t), dX);
-    sig[2] = elems[2].eval(t, X, elems[2].off, sig[1], dX);
+  // end: the end of an integration step (a dead time reads what the step
+  // ran on, not what a new u puts in there).
+  function chainEval(t, X, u, dX, end = false) {
+    sig[0] = elems[0].eval(t, X, elems[0].off, u, dX, end);
+    sig[1] = elems[1].eval(t, X, elems[1].off, sig[0] + distFn(t), dX, end);
+    sig[2] = elems[2].eval(t, X, elems[2].off, sig[1], dX, end);
   }
+  // Dead times remember their input at each step: the value the step ended
+  // on (recordLeft), and the one after a new u (record), so a held u comes
+  // out exactly delayed (diagram.js histAt).
   function record() { for (const el of elems) el.record(); }
+  function recordLeft() { for (const el of elems) el.recordLeft(); }
 
   const ctrl = opts.openLoop ? null : makeController(loop.controller, Ts, warnings);
   const rand = gaussian(noise.seed);
@@ -85,7 +91,6 @@ export function simulate(loop, sim, opts = {}) {
   let unstable = false;
   let blowup = 1;
   chainEval(0, X, 0, null);
-  record();
 
   for (let k = 0; k <= K; k++) {
     const t = k * Ts;
@@ -106,6 +111,9 @@ export function simulate(loop, sim, opts = {}) {
       break;
     }
     if (k === K) break;
+    // What the dead times take from t on: u is new here.
+    chainEval(t, X, u, null);
+    record();
 
     // Integrate one sample interval with u held.
     for (let s = 0; s < m; s++) {
@@ -116,10 +124,11 @@ export function simulate(loop, sim, opts = {}) {
       for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k2[i];
       chainEval(ts + 0.5 * h, Xt, u, k3);
       for (let i = 0; i < N; i++) Xt[i] = X[i] + h * k3[i];
-      chainEval(ts + h, Xt, u, k4);
+      chainEval(ts + h, Xt, u, k4, true);
       for (let i = 0; i < N; i++) X[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
       chainEval(ts + h, X, u, null);
-      record();
+      // At a sample instant the next u comes first (recorded above).
+      if (s < m - 1) record(); else recordLeft();
     }
   }
 
@@ -289,7 +298,7 @@ export function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
     for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
     el.eval(ts + 0.5 * dt, Xt, 0, 0, k3);
     for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
-    el.eval(ts + dt, Xt, 0, 0, k4);
+    el.eval(ts + dt, Xt, 0, 0, k4, true);
     for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   };
   const t = new Float64Array(K + 1);
@@ -320,6 +329,7 @@ export function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
       rk4(a, ts + h - a);
       steps++;
       el.eval(te, X, 0, 0, null);
+      el.recordLeft();
       el.sample(te, X, 0, 0);
       el.record();
     }

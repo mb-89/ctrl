@@ -476,17 +476,20 @@ test('results: a variant of their own, numbered, never overwriting; a worse one 
   block.variant = 1;
   assert.equal(resultName(block, 'iterate'), 'PID, badly tuned · auto-tuned', 'tuning again from a result updates it');
   assert.equal(baseName('PID · auto-tuned 2'), 'PID');
-  // The conical tank's gain scheduling beats a fixed PI from a relay rule: not better.
+  // The conical tank's gain scheduling against a fixed PID from a relay rule:
+  // the PID is unstable where the run starts (h = 0.15 m), so it does not
+  // run, though its run, resting in exact balance until the first step,
+  // costs a little less (×0.95 since the pipe's dead time is exact; ×1.006
+  // before).
   const tank = autotune(system('Conical'), null, { method: 'relay' });
-  assert.ok(tank.ok && !tank.better && tank.after.J > tank.before.cost.J, `${tank.before.cost.J} → ${tank.after.J}`);
+  assert.ok(tank.ok && !tank.better && tank.unstableAtStart?.Z === 6, `${tank.before.cost.J} → ${tank.after.J}`);
+  assert.ok(tank.after.J < tank.before.cost.J, 'its run alone would not tell');
   const rep = tuneReport(tank);
   assert.equal(rep.better, false);
-  // Why, in plain words: one PID where the running variant schedules its gains, and what grew.
-  // (The schedule is computed from the tank, up to 0.95 m.)
-  // (Before that: it is unstable where the run starts, which the run in exact
-  // balance cannot show; see the test of unstableAtStart.)
-  assert.match(rep.worse, /^it is unstable where the run starts .*; one PID from a relay test at h = 0\.475 m; Gain-scheduled PI changes its gains with h \(Kp 0\.113 … 2\.87\), which a single PID cannot;/);
-  assert.match(rep.worse, /overshoots|r − y is larger/);
+  // Why, in plain words: unstable at the start, and one PID where the
+  // running variant schedules its gains (computed from the tank, up to
+  // 0.95 m); nothing about a cost that did not grow.
+  assert.equal(rep.worse, 'it is unstable where the run starts (the initial state, q = 0.172: 6 closed-loop poles outside the unit circle); the run rests there only because it starts in exact balance, and the first disturbance there sets it off; one PID from a relay test at h = 0.475 m; Gain-scheduled PI changes its gains with h (Kp 0.113 … 2.87), which a single PID cannot');
   assert.equal(rep.before.variant.params.umax, 3);
   assert.equal(JSON.stringify(rep), JSON.stringify(JSON.parse(JSON.stringify(rep))), 'plain JSON');
 });

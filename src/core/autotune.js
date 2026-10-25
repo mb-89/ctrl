@@ -1247,8 +1247,10 @@ const simcFactor = (rule) => {
 // 'ripple' (the ripple's period on y); both floors are ours.
 export function tauCSource(g, rule = 'tight') {
   const f = SIMC[rule]?.f ?? 1, x = f === 1 ? '' : `${f} × `;
-  if (g.by === 'ripple') return `${x}the ripple's period on y (our floor), not the dead time θ = ${fmtN(g.theta)} s`;
-  if (g.by === 'lag') return `${x}a tenth of the lag τ (our floor), not the dead time θ = ${fmtN(g.theta)} s, which is shorter`;
+  // (g.theta is the fit's θ with half a controller sample, and the
+  // derivative's filter if any: what SIMC's rule uses.)
+  if (g.by === 'ripple') return `${x}the ripple's period on y (our floor), not the dead time θ = ${fmtN(g.theta)} s (half a controller sample included)`;
+  if (g.by === 'lag') return `${x}a tenth of the lag τ (our floor), not the dead time θ = ${fmtN(g.theta)} s (half a controller sample included), which is shorter`;
   if (g.by === 'given') return 'given';
   const dead = `the dead time${g.Tf ? ' with the derivative\'s filter' : ''}`;
   return f === 1 ? `θ, ${dead} (Skogestad's tight rule)` : `${f}θ (θ = ${fmtN(g.theta)} s, ${dead})`;
@@ -1354,8 +1356,8 @@ export function* stepTuneSteps(project, path, opts = {}) {
 // gain-scheduled PI, which has no derivative.
 function simcNotes(m, g, scheduled = false) {
   const notes = [];
-  if (g.by === 'ripple') notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s): a faster loop would chase the ripple`);
-  if (g.by === 'lag') notes.push(`τc = ${fmtN(g.tauC)} s is set from a tenth of the lag τ = ${fmtN(m.tau)} s (our floor), not from the dead time θ = ${fmtN(g.theta)} s, which is shorter`);
+  if (g.by === 'ripple') notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s, half a controller sample included): a faster loop would chase the ripple`);
+  if (g.by === 'lag') notes.push(`τc = ${fmtN(g.tauC)} s is set from a tenth of the lag τ = ${fmtN(m.tau)} s (our floor), not from the dead time θ = ${fmtN(g.theta)} s (half a controller sample included), which is shorter`);
   if (m.model === 'integrating' && m.tau2 > 0.02 * m.L) {
     if (g.Kd) notes.push(`the lag τ2 = ${fmtN(m.tau2)} s is longer than the dead time θ = ${fmtN(g.thetaPlant)} s (half a controller sample included), so the PI gets a derivative that cancels it (SIMC PID)`);
     else notes.push(`${scheduled ? 'a gain-scheduled PI has no derivative' : `the lag τ2 = ${fmtN(m.tau2)} s is no longer than the dead time`}, so half of τ2 counts as dead time (the half rule)`);
@@ -1424,10 +1426,12 @@ export function* autotuneSteps(project, path, opts = {}) {
   // An experiment's rule knows the loop only where the experiment ran (the
   // middle of r): a result unstable where the run starts, where the running
   // variant is not, is not run, whatever its run scores.
+  // Its run may even score better (the tank's relay PID, ×0.95): then the
+  // reasons the result itself gives, not the cost's.
   const start = unstableAtStart(project, ctx, res.variant);
   if (start && !unstableAtStart(project, ctx, ctx.variant)) {
     out.unstableAtStart = start;
-    out.worse = [start.sentence, out.better ? '' : out.worse].filter(Boolean).join('; ');
+    out.worse = [start.sentence, out.better ? whyWorse(out, ctx, { cost: false }) : out.worse].filter(Boolean).join('; ');
     out.better = false;
   }
   return out;
@@ -1440,14 +1444,15 @@ export function* autotuneSteps(project, path, opts = {}) {
 // outside the unit circle at h = 0.15 m) scored ×1.0 of the gain-scheduled
 // PI, where the 0.172 stored before had it ring at once (×3.6). The loop
 // linearised at the start state tells: null where it is stable there, or
-// where that cannot be said (no linear law, a kink, u at a limit); else
+// where that cannot be said (no linear law, a kink: loopModel refuses it, u
+// at a limit); else
 // { Z, label, sentence }.
 export function unstableAtStart(project, ctx, variant) {
   let m, r;
   try {
     const p = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: withVariant(ctx.diagram, ctx.path, variant) } } };
     m = loopModel(p, ctx.path, 'initial');
-    if (m.atLimit || m.plant.kinks?.length) return null;
+    if (m.atLimit) return null;
     r = analyzeLoop(m.plant, m.ctrl, m.Ts);
   } catch { return null; }
   if (r.stable || r.marginal) return null;
@@ -1472,8 +1477,8 @@ export function measurement(ctx) {
 
 // Why a result scores worse than the running variant, in plain words, as far
 // as it can be known: what the result cannot do that the running variant
-// does, then which part of the cost grew the most.
-export function whyWorse(res, ctx) {
+// does, then (unless cost: false) which part of the cost grew the most.
+export function whyWorse(res, ctx, { cost = true } = {}) {
   const was = res.before.variant, now = res.variant, a = res.before.cost, b = res.after, goal = res.goal;
   const y = measurement(ctx), yName = y.name || 'y', at = (v) => `${yName} = ${fmtN(v)}${y.unit ? ` ${y.unit}` : ''}`;
   const kind = (v) => (v.type === 'gainScheduled' ? 'gain-scheduled PI' : v.params.Kd ? 'PID' : v.params.Ki ? 'PI' : 'P controller');
@@ -1490,6 +1495,7 @@ export function whyWorse(res, ctx) {
   if (res.ripple && !Array.isArray(now.params.Kp) && Number.isFinite(hi - lo) && kp * res.ripple >= 0.05 * (hi - lo)) {
     out.push(`${yName} ripples by ±${fmtN(res.ripple)}${y.unit ? ` ${y.unit}` : ''}, and its Kp passes ±${fmtN(kp * res.ripple)} of that to u (${fmtN((100 * kp * res.ripple) / (hi - lo))} % of u's range)`);
   }
+  if (!cost) return out.join('; ');
   if (b.diverged) out.push('the loop diverges with it');
   else {
     const [part] = Object.keys(b.parts).map((k) => [k, b.parts[k] - (a.parts?.[k] ?? 0)]).sort((p, q) => q[1] - p[1])[0];

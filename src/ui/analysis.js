@@ -151,7 +151,8 @@ export function createAnalysisTab(host, app) {
       if (st) st.uPeak = Math.max(...stepResponse(m.plant, m.ctrl, m.Ts, Math.min(4000, Math.ceil(st.T / m.Ts))).u.map(Math.abs));
       last = { c, all, m, res, st, spec, from };
     } catch (err) {
-      last = { c, all, error: err.message };
+      // The reason, and what to do instead (a DesignError's hint).
+      last = { c, all, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
     }
     return last;
   }
@@ -169,13 +170,12 @@ export function createAnalysisTab(host, app) {
       return;
     }
     const { res, m, st } = v, g = res.margins, Ts = m.Ts;
-    // Where the linear loop does not hold (a kink at the operating point: the
-    // central slope is neither side's; u at a limit: the loop is open), its
-    // numbers are shown but not graded, and the verdict says so first: the
-    // empty tank at rest read "✓ stable, gain margin ×4840 good, settles in
-    // 1240 s" with the reason only in the notes below.
-    const caveat = m.plant.kinks?.length ? 'a kink at the operating point: the slopes differ left and right, and these numbers are those of the central slope, which neither side has'
-      : m.atLimit ? `${esc(m.plant.input?.label ?? 'u')} is at its limit there: the controller saturates, and the linear loop does not hold` : '';
+    // Where the linear loop does not hold (u at a limit: the loop is open),
+    // its numbers are shown but not graded, and the verdict says so first:
+    // the oven at rest read "✕ unstable" with the reason only in the notes
+    // below. (A kink at the operating point is refused by loopModel: the
+    // central slope is neither side's, so there are no numbers to show.)
+    const caveat = m.atLimit ? `${esc(m.plant.input?.label ?? 'u')} is at its limit there: the controller saturates, and the linear loop does not hold` : '';
     const ok = res.stable && !caveat;
     const plural = (k, w) => `${k} ${w}${k > 1 ? 's' : ''}`;
     $('#an-verdict').innerHTML = (caveat ? `<div><span class="grade grade-fair">! not linear here</span> <span class="dim">${caveat}</span></div>` : '')

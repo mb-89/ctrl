@@ -3948,8 +3948,11 @@ const CONTROLLERS = {
     },
     linear(p, Ts, at) {
       if (!(p.phi > 0)) throw new Error('an ideal sliding mode switches: it has no linear model; give it a boundary layer φ > 0');
-      const m = Math.max(2, at?.y?.length ?? 2);
-      return staticLinear((p.K * p.lambda) / p.phi, [(p.K * p.lambda) / p.phi, p.K / p.phi, ...new Array(m - 2).fill(0)]);
+      const m = Math.max(2, at?.y?.length ?? 2), k = p.K / p.phi;
+      const ys = [k * p.lambda, k, ...new Array(m - 2).fill(0)];
+      if (!(p.Tr > 0)) return staticLinear(k * p.lambda, ys);
+      const a = Math.exp(-Ts / p.Tr), c = (k * a) / ((1 - a) * p.Tr);
+      return { A: [[0]], B: [[1, ...new Array(m).fill(0)]], C: [[-c]], D: [[k * p.lambda + c, ...ys.map((g) => -g)]], Tr: p.Tr };
     },
   },
   superTwisting: {
@@ -4937,7 +4940,7 @@ const ELEMENTS = {
         return (X, o, u, dX) => {
           const h = Math.min(H, Math.max(0, X[o]));
           const r = r0 + slope * h;
-          const flow = Math.max(0, u) - out * Math.sqrt(h);
+          const flow = u - out * Math.sqrt(h);
           dX[o] = (h <= 0 && flow < 0) || (h >= H && flow > 0) ? 0 : flow / (Math.PI * r * r);
         };
       },
@@ -5340,13 +5343,15 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     }
     job.end();
   }
-  const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; return nd; });
+  const delays = nodes.filter((nd) => nd.kind === 'delay' || (nd.kind === 'ss' && nd.delay > 0)).map((nd) => { nd.hist = []; nd.histL = []; return nd; });
   let h = 0;
-  const histAt = (hist, tau, y0 = 0) => {
+  let left = false;
+  const histAt = (nd, tau, y0 = 0) => {
+    const hist = nd.hist;
     if (tau < 0 || !hist.length) return y0;
-    const f = tau / h, i = Math.floor(f);
+    const f = tau / h, i = left ? Math.max(0, Math.ceil(f - 1e-9) - 1) : Math.floor(f + 1e-9);
     if (i >= hist.length - 1) return hist[hist.length - 1];
-    return hist[i] + (hist[i + 1] - hist[i]) * (f - i);
+    return hist[i] + ((nd.histL[i + 1] ?? hist[i + 1]) - hist[i]) * (f - i);
   };
   const inOf = (nd, s = 0) => (nd.inputs[s] < 0 ? 0 : vals[nd.inputs[s]]);
   const origin = (i) => { while (i >= 0 && nodes[i].kind === 'pass') i = nodes[i].inputs[0]; return i; };
@@ -5362,7 +5367,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         case 'gain': y = nd.K * inOf(nd); break;
         case 'sum': y = 0; for (let s = 0; s < nd.signs.length; s++) y += nd.signs[s] * inOf(nd, s); break;
         case 'sat': y = Math.min(nd.hi, Math.max(nd.lo, inOf(nd))); break;
-        case 'delay': y = model || nd.L <= 0 ? inOf(nd) : histAt(nd.hist, t - nd.L, nd.y0 ?? (nd.hist.length ? nd.hist[0] : inOf(nd))); break;
+        case 'delay': y = model || nd.L <= 0 ? inOf(nd) : histAt(nd, t - nd.L, nd.y0 ?? (nd.hist.length ? nd.hist[0] : inOf(nd))); break;
         case 'switch': y = inOf(nd, nd.pick); break;
         case 'fcn': nd.env.u = inOf(nd); nd.env.t = t; y = nd.f(nd.env); break;
         case 'quant': y = model ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
@@ -5373,7 +5378,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
         case 'xplant': y = nd.outv[0]; break;
         default: {
           const { ss } = nd;
-          const inp = nd.delay > 0 && !model ? histAt(nd.hist, t - nd.delay) : inOf(nd);
+          const inp = nd.delay > 0 && !model ? histAt(nd, t - nd.delay) : inOf(nd);
           y = ss.D * inp;
           for (let j = 0; j < ss.n; j++) y += ss.C[j] * X[o + nd.off + j];
         }
@@ -5386,7 +5391,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       const nd = list[q];
       if (nd.kind === 'ode') { nd.rates(X, o + nd.off, inOf(nd), dX); continue; }
       const { ss } = nd, base = o + nd.off;
-      const inp = nd.delay > 0 && !model ? histAt(nd.hist, t - nd.delay) : inOf(nd);
+      const inp = nd.delay > 0 && !model ? histAt(nd, t - nd.delay) : inOf(nd);
       for (let r = 0; r < ss.n; r++) {
         let s = ss.B[r] * inp;
         for (let c = 0; c < ss.n; c++) s += ss.A[r * ss.n + c] * X[base + c];
@@ -5410,13 +5415,15 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     },
     nextSample() { let t = Infinity; for (const nd of ctrls) if (nd.next < t) t = nd.next; return t; },
     init(X, o) { for (const nd of stateNodes) if (nd.kind === 'ode') nd.ode.init(nd.p).forEach((v, i) => { X[o + nd.off + i] = v; }); },
-    eval(t, X, o, u, dX) {
+    eval(t, X, o, u, dX, end = false) {
+      left = end;
       outputs(order, t, X, o, u);
       if (dX) rates(stateNodes, t, X, o, dX);
       return outNode >= 0 ? vals[outNode] : 0;
     },
     probes: () => probeList.map(([name, k]) => [name, vals[k]]),
-    record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
+    record() { for (const nd of delays) { nd.hist.push(inOf(nd)); if (nd.histL.length < nd.hist.length) nd.histL.push(inOf(nd)); } },
+    recordLeft() { for (const nd of delays) nd.histL.push(inOf(nd)); },
     snapshot(t, X, o = 0) {
       const held = {}, inputs = {}, sources = {};
       for (const nd of ctrls) { held[nd.idPath] = nd.observer ? Float64Array.from(nd.outv) : nd.u; inputs[nd.idPath] = Float64Array.from(nd.x); }
@@ -5723,12 +5730,13 @@ function simulate(loop, sim, opts = {}) {
   for (const el of elems) { el.off = N; N += el.n; el.setStep(h); }
   const sig = new Float64Array(3);
 
-  function chainEval(t, X, u, dX) {
-    sig[0] = elems[0].eval(t, X, elems[0].off, u, dX);
-    sig[1] = elems[1].eval(t, X, elems[1].off, sig[0] + distFn(t), dX);
-    sig[2] = elems[2].eval(t, X, elems[2].off, sig[1], dX);
+  function chainEval(t, X, u, dX, end = false) {
+    sig[0] = elems[0].eval(t, X, elems[0].off, u, dX, end);
+    sig[1] = elems[1].eval(t, X, elems[1].off, sig[0] + distFn(t), dX, end);
+    sig[2] = elems[2].eval(t, X, elems[2].off, sig[1], dX, end);
   }
   function record() { for (const el of elems) el.record(); }
+  function recordLeft() { for (const el of elems) el.recordLeft(); }
 
   const ctrl = opts.openLoop ? null : makeController(loop.controller, Ts, warnings);
   const rand = gaussian(noise.seed);
@@ -5746,7 +5754,6 @@ function simulate(loop, sim, opts = {}) {
   let unstable = false;
   let blowup = 1;
   chainEval(0, X, 0, null);
-  record();
 
   for (let k = 0; k <= K; k++) {
     const t = k * Ts;
@@ -5767,6 +5774,8 @@ function simulate(loop, sim, opts = {}) {
       break;
     }
     if (k === K) break;
+    chainEval(t, X, u, null);
+    record();
 
     for (let s = 0; s < m; s++) {
       const ts = t + s * h;
@@ -5776,10 +5785,10 @@ function simulate(loop, sim, opts = {}) {
       for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k2[i];
       chainEval(ts + 0.5 * h, Xt, u, k3);
       for (let i = 0; i < N; i++) Xt[i] = X[i] + h * k3[i];
-      chainEval(ts + h, Xt, u, k4);
+      chainEval(ts + h, Xt, u, k4, true);
       for (let i = 0; i < N; i++) X[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
       chainEval(ts + h, X, u, null);
-      record();
+      if (s < m - 1) record(); else recordLeft();
     }
   }
 
@@ -5915,7 +5924,7 @@ function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
     for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
     el.eval(ts + 0.5 * dt, Xt, 0, 0, k3);
     for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
-    el.eval(ts + dt, Xt, 0, 0, k4);
+    el.eval(ts + dt, Xt, 0, 0, k4, true);
     for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   };
   const t = new Float64Array(K + 1);
@@ -5945,6 +5954,7 @@ function simulateSystem(diagram, signals, sim, { designs, until } = {}) {
       rk4(a, ts + h - a);
       steps++;
       el.eval(te, X, 0, 0, null);
+      el.recordLeft();
       el.sample(te, X, 0, 0);
       el.record();
     }
@@ -6947,6 +6957,7 @@ function loopModel(project, idPath, at = 'origin', { designs } = {}) {
   const { model, pt, statuses, block, id, snap } = blockModel(project, idPath, at, { designs });
   if (block.type !== 'controller') throw new DesignError('not-a-controller', `'${block.name ?? block.id}' is an Observer: a loop is cut at a Controller's output`, 'pick the Controller that drives the plant');
   const plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
+  if (plant.kinks.length) throw new DesignError('kink', `the plant has a kink at ${plant.op.label}: ${plant.kinks[0]}; a linear loop there would show the slope of neither side`, 'pick Start or Scope time (a state of the run), or a level away from the kink');
   const variant = block.variants[block.variant ?? 0], def = CONTROLLERS[variant.type], Ts = block.params.Ts;
   let values = null;
   if (def.designed) {
@@ -8206,11 +8217,26 @@ function loopMargins(fd, Ts, { L, poles = [], probe = [] } = {}) {
       phaseCrossings.push({ w: wx, mag: -g, gm: -1 / g, gmDb: -20 * Math.log10(-g), at });
     }
   }
-  let ms = 0, wMs = NaN, mt = 0, wMt = NaN;
+  let ms = 0, wMs = NaN, mt = 0, wMt = NaN, iS = -1, iT = -1;
   for (let i = 0; i < w.length; i++) {
     const d = Math.hypot(1 + re[i], im[i]);
-    if (1 / d > ms) { ms = 1 / d; wMs = w[i]; }
-    if (mag[i] / d > mt) { mt = mag[i] / d; wMt = w[i]; }
+    if (1 / d > ms) { ms = 1 / d; wMs = w[i]; iS = i; }
+    if (mag[i] / d > mt) { mt = mag[i] / d; wMt = w[i]; iT = i; }
+  }
+  if (L) {
+    const peak = (i, g) => {
+      let a = Math.log(w[Math.max(0, i - 1)]), b = Math.log(w[Math.min(w.length - 1, i + 1)]);
+      const q = (Math.sqrt(5) - 1) / 2;
+      let c = b - q * (b - a), d = a + q * (b - a), fc = g(Math.exp(c)), fd = g(Math.exp(d));
+      for (let it = 0; it < 60 && b - a > 1e-12; it++) {
+        if (fc > fd) { b = d; d = c; fd = fc; c = b - q * (b - a); fc = g(Math.exp(c)); } else { a = c; c = d; fc = fd; d = a + q * (b - a); fd = g(Math.exp(d)); }
+      }
+      return fc > fd ? [fc, Math.exp(c)] : [fd, Math.exp(d)];
+    };
+    const S = (x) => { const v = respondAt(L, x); return 1 / Math.hypot(1 + v.re, v.im); };
+    const T = (x) => { const v = respondAt(L, x); return Math.hypot(v.re, v.im) / Math.hypot(1 + v.re, v.im); };
+    if (iS >= 0) { const [v, x] = peak(iS, S); if (v > ms) { ms = v; wMs = x; } }
+    if (iT >= 0) { const [v, x] = peak(iT, T); if (v > mt) { mt = v; wMt = x; } }
   }
   let range;
   if (L) range = gainRange(L, [...phaseCrossings.map((c) => c.gm), ...(L.D < 0 ? [-1 / L.D] : [])], probe);
@@ -9362,8 +9388,8 @@ const simcFactor = (rule) => {
 
 function tauCSource(g, rule = 'tight') {
   const f = SIMC[rule]?.f ?? 1, x = f === 1 ? '' : `${f} × `;
-  if (g.by === 'ripple') return `${x}the ripple's period on y (our floor), not the dead time θ = ${fmtN(g.theta)} s`;
-  if (g.by === 'lag') return `${x}a tenth of the lag τ (our floor), not the dead time θ = ${fmtN(g.theta)} s, which is shorter`;
+  if (g.by === 'ripple') return `${x}the ripple's period on y (our floor), not the dead time θ = ${fmtN(g.theta)} s (half a controller sample included)`;
+  if (g.by === 'lag') return `${x}a tenth of the lag τ (our floor), not the dead time θ = ${fmtN(g.theta)} s (half a controller sample included), which is shorter`;
   if (g.by === 'given') return 'given';
   const dead = `the dead time${g.Tf ? ' with the derivative\'s filter' : ''}`;
   return f === 1 ? `θ, ${dead} (Skogestad's tight rule)` : `${f}θ (θ = ${fmtN(g.theta)} s, ${dead})`;
@@ -9436,8 +9462,8 @@ function* stepTuneSteps(project, path, opts = {}) {
 
 function simcNotes(m, g, scheduled = false) {
   const notes = [];
-  if (g.by === 'ripple') notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s): a faster loop would chase the ripple`);
-  if (g.by === 'lag') notes.push(`τc = ${fmtN(g.tauC)} s is set from a tenth of the lag τ = ${fmtN(m.tau)} s (our floor), not from the dead time θ = ${fmtN(g.theta)} s, which is shorter`);
+  if (g.by === 'ripple') notes.push(`τc = ${fmtN(g.tauC)} s is set from the ripple's period (${fmtN(m.rippleT)} s), not from the dead time (${fmtN(g.theta)} s, half a controller sample included): a faster loop would chase the ripple`);
+  if (g.by === 'lag') notes.push(`τc = ${fmtN(g.tauC)} s is set from a tenth of the lag τ = ${fmtN(m.tau)} s (our floor), not from the dead time θ = ${fmtN(g.theta)} s (half a controller sample included), which is shorter`);
   if (m.model === 'integrating' && m.tau2 > 0.02 * m.L) {
     if (g.Kd) notes.push(`the lag τ2 = ${fmtN(m.tau2)} s is longer than the dead time θ = ${fmtN(g.thetaPlant)} s (half a controller sample included), so the PI gets a derivative that cancels it (SIMC PID)`);
     else notes.push(`${scheduled ? 'a gain-scheduled PI has no derivative' : `the lag τ2 = ${fmtN(m.tau2)} s is no longer than the dead time`}, so half of τ2 counts as dead time (the half rule)`);
@@ -9488,7 +9514,7 @@ function* autotuneSteps(project, path, opts = {}) {
   const start = unstableAtStart(project, ctx, res.variant);
   if (start && !unstableAtStart(project, ctx, ctx.variant)) {
     out.unstableAtStart = start;
-    out.worse = [start.sentence, out.better ? '' : out.worse].filter(Boolean).join('; ');
+    out.worse = [start.sentence, out.better ? whyWorse(out, ctx, { cost: false }) : out.worse].filter(Boolean).join('; ');
     out.better = false;
   }
   return out;
@@ -9499,7 +9525,7 @@ function unstableAtStart(project, ctx, variant) {
   try {
     const p = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: withVariant(ctx.diagram, ctx.path, variant) } } };
     m = loopModel(p, ctx.path, 'initial');
-    if (m.atLimit || m.plant.kinks?.length) return null;
+    if (m.atLimit) return null;
     r = analyzeLoop(m.plant, m.ctrl, m.Ts);
   } catch { return null; }
   if (r.stable || r.marginal) return null;
@@ -9520,7 +9546,7 @@ function measurement(ctx) {
   return sink ? { name: sink.params.name, unit: sink.params.unit && sink.params.unit !== '1' ? sink.params.unit : '' } : { name: '', unit: '' };
 }
 
-function whyWorse(res, ctx) {
+function whyWorse(res, ctx, { cost = true } = {}) {
   const was = res.before.variant, now = res.variant, a = res.before.cost, b = res.after, goal = res.goal;
   const y = measurement(ctx), yName = y.name || 'y', at = (v) => `${yName} = ${fmtN(v)}${y.unit ? ` ${y.unit}` : ''}`;
   const kind = (v) => (v.type === 'gainScheduled' ? 'gain-scheduled PI' : v.params.Kd ? 'PID' : v.params.Ki ? 'PI' : 'P controller');
@@ -9537,6 +9563,7 @@ function whyWorse(res, ctx) {
   if (res.ripple && !Array.isArray(now.params.Kp) && Number.isFinite(hi - lo) && kp * res.ripple >= 0.05 * (hi - lo)) {
     out.push(`${yName} ripples by ±${fmtN(res.ripple)}${y.unit ? ` ${y.unit}` : ''}, and its Kp passes ±${fmtN(kp * res.ripple)} of that to u (${fmtN((100 * kp * res.ripple) / (hi - lo))} % of u's range)`);
   }
+  if (!cost) return out.join('; ');
   if (b.diverged) out.push('the loop diverges with it');
   else {
     const [part] = Object.keys(b.parts).map((k) => [k, b.parts[k] - (a.parts?.[k] ?? 0)]).sort((p, q) => q[1] - p[1])[0];
@@ -9813,7 +9840,7 @@ function createLiveRunner(diagram, signals) {
     for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
     el.eval(t + 0.5 * dt, Xt, 0, 0, k3);
     for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
-    el.eval(t + dt, Xt, 0, 0, k4);
+    el.eval(t + dt, Xt, 0, 0, k4, true);
     for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   }
 
@@ -9842,11 +9869,12 @@ function createLiveRunner(diagram, signals) {
           for (let s = 0; s < m; s++) {
             const ts = tPrev + s * dt;
             if (el.n) rk4(ts, dt);
-            if (s < m - 1) { el.eval(ts + dt, X, 0, 0, null); el.sample(ts + dt, X, 0, 0); el.record(); }
+            if (s < m - 1) { el.eval(ts + dt, X, 0, 0, null); el.recordLeft(); el.sample(ts + dt, X, 0, 0); el.record(); }
           }
         }
       }
       el.eval(t, X, 0, 0, null);
+      if (tPrev !== null) el.recordLeft();
       el.sample(t, X, 0, 0);
       el.record();
       tPrev = t;
@@ -12260,7 +12288,7 @@ function createAnalysisTab(host, app) {
       if (st) st.uPeak = Math.max(...stepResponse(m.plant, m.ctrl, m.Ts, Math.min(4000, Math.ceil(st.T / m.Ts))).u.map(Math.abs));
       last = { c, all, m, res, st, spec, from };
     } catch (err) {
-      last = { c, all, error: err.message };
+      last = { c, all, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
     }
     return last;
   }
@@ -12278,8 +12306,7 @@ function createAnalysisTab(host, app) {
       return;
     }
     const { res, m, st } = v, g = res.margins, Ts = m.Ts;
-    const caveat = m.plant.kinks?.length ? 'a kink at the operating point: the slopes differ left and right, and these numbers are those of the central slope, which neither side has'
-      : m.atLimit ? `${esc(m.plant.input?.label ?? 'u')} is at its limit there: the controller saturates, and the linear loop does not hold` : '';
+    const caveat = m.atLimit ? `${esc(m.plant.input?.label ?? 'u')} is at its limit there: the controller saturates, and the linear loop does not hold` : '';
     const ok = res.stable && !caveat;
     const plural = (k, w) => `${k} ${w}${k > 1 ? 's' : ''}`;
     $('#an-verdict').innerHTML = (caveat ? `<div><span class="grade grade-fair">! not linear here</span> <span class="dim">${caveat}</span></div>` : '')

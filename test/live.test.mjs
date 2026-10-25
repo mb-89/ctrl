@@ -113,6 +113,29 @@ test('live stepping: the u sent is what the controller law gives for the y recei
   assert.equal(wild.step(0.11, [NaN, 0]).u[0], 12, 'a y that is not a number reads 0');
 });
 
+test('live stepping: a Dead time on the page delays the held u exactly, between cycles too', () => {
+  // u steps 0 → 1 at 0.05 s (r's step, angle 0), leaves a 0.05 s dead time at
+  // 0.1 s and is integrated on the page into V: V(t) = t − 0.1. Read across
+  // an integration step, the history moved the step half a step early (V
+  // 0.005 high).
+  const d = normalizeDiagram({
+    blocks: [
+      { id: 'r', type: 'source', params: { signal: 'r' } },
+      { id: 'd', type: 'source', params: { signal: 'd' } },
+      { id: 'c', type: 'controller', params: { inputs: 2, Ts: 0.01 }, variants: [{ name: 'P', type: 'pid', params: { Kp: 1 } }], variant: 0 },
+      { id: 'del', type: 'delay', params: { L: 0.05, y0: 0 } },
+      { id: 'int', type: 'integrator', params: { K: 1 } },
+      { id: 'p', type: 'external', params: externalParams(checkDescription(DESC)) },
+    ],
+    wires: [{ from: 'r', to: 'c' }, { from: 'c', to: 'del' }, { from: 'del', to: 'int' }, { from: 'int', to: 'p' }, { from: 'd', to: 'p:1' }, { from: 'p', to: 'c:1' }],
+  });
+  const runner = createLiveRunner(d, SIGNALS);
+  for (let k = 0; k <= 30; k++) {
+    const t = k * 0.01, { u } = runner.step(t, [0, 0]);
+    assert.ok(Math.abs(u[0] - Math.max(0, t - 0.1)) < 1e-9, `t ${t.toFixed(2)}: V ${u[0]}, not ${Math.max(0, t - 0.1)}`);
+  }
+});
+
 test('live edits: parameters change at the next cycle and keep the state; a new variant restarts', () => {
   const p = { Kp: 3, Ki: 2, Kd: 0, umin: -12, umax: 12 };
   const runner = createLiveRunner(LOOP({ name: 'PI', type: 'pid', params: p }), SIGNALS);
@@ -386,6 +409,24 @@ test('live edits of any variant parameter are taken in place; names are cosmetic
       assert.equal(r.update(normalizeDiagram(d), SIGNALS), CONTROLLERS[type].designed && changed ? 'rebuilt' : 'kept', `${type}.${spec.key}`);
     }
   }
+  // A designed variant that does not run is designed when it is switched to:
+  // editing it keeps the running loop and its state (an LQR's R edited
+  // beside a running PID rebuilt the loop, resetting the PID's integral).
+  const two = () => {
+    const d = LOOP();
+    d.blocks.find((b) => b.id === 'c').variants.push({ name: 'LQR', type: 'lqr', params: { Q: [1], R: 1 } });
+    return normalizeDiagram(d);
+  };
+  const beside = createLiveRunner(two(), SIGNALS);
+  beside.step(0, [0.1, 0]);
+  const edit = two();
+  edit.blocks.find((b) => b.id === 'c').variants[2].params.R = 5;
+  assert.equal(beside.update(edit, SIGNALS), 'kept', 'a designed variant that does not run');
+  edit.blocks.find((b) => b.id === 'c').variant = 2;
+  assert.equal(beside.update(edit, SIGNALS), 'rebuilt', 'switched to: designed afresh');
+  const rerun = structuredClone(edit);
+  rerun.blocks.find((b) => b.id === 'c').variants[2].params.R = 7;
+  assert.equal(beside.update(rerun, SIGNALS), 'rebuilt', 'the running designed variant');
   // An output that is not a number (null on the wire) holds its last number
   // and is reported, never taken for a measured 0.
   const held = createLiveRunner(LOOP(), SIGNALS);

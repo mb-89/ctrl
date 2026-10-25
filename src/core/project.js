@@ -411,11 +411,17 @@ export function linearizeBlock(project, idPath, at = 'origin', opts = {}) {
 // Also Ts, opLabel, variantName, type, t (the snapshot's, or 0 for the
 // initial state), atLimit (u at a limit there) and warnings: the model's,
 // and where the linear loop does not hold (u at a limit; estimates read as
-// the states they stand for).
+// the states they stand for). Refused (DesignError) where there is no
+// linear loop: a law with no linear model, a design not made, a plant
+// outside the page, and a kink at the operating point (the slope there is
+// neither side's and depends on the difference step; designs refuse it too).
 export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
   const { model, pt, statuses, block, id, snap } = blockModel(project, idPath, at, { designs });
   if (block.type !== 'controller') throw new DesignError('not-a-controller', `'${block.name ?? block.id}' is an Observer: a loop is cut at a Controller's output`, 'pick the Controller that drives the plant');
   const plant = Object.assign(linearize(model, pt), { idPath: id, Ts: block.params.Ts });
+  // At a kink the central slope is neither side's (and depends on the step):
+  // margins and poles from it say nothing, so the loop is refused, as a design refuses it.
+  if (plant.kinks.length) throw new DesignError('kink', `the plant has a kink at ${plant.op.label}: ${plant.kinks[0]}; a linear loop there would show the slope of neither side`, 'pick Start or Scope time (a state of the run), or a level away from the kink');
   const variant = block.variants[block.variant ?? 0], def = CONTROLLERS[variant.type], Ts = block.params.Ts;
   let values = null;
   if (def.designed) {
@@ -439,9 +445,8 @@ export function loopModel(project, idPath, at = 'origin', { designs } = {}) {
   if (atLimit) warnings.push(`${plant.input.label} = ${fmt(u)} is at its limit (${fmt(umin)} to ${fmt(umax)}) there: the controller saturates, and the linear loop does not hold`);
   for (const obs of model.through) warnings.push(`the estimates of '${obs}' are read as the states they stand for: the filter's own dynamics are not in this loop`);
   // Where the linear loop does not hold, for a reader that grades it (the
-  // Analysis tab's verdict, Auto-tune's check at the start): a kink at the
-  // operating point (plant.kinks: the slopes differ left and right, so the
-  // central one is neither side's), or u at a limit.
+  // Analysis tab's verdict, Auto-tune's check at the start): u at a limit.
+  // (A kink at the operating point is refused above.)
   return { plant, ctrl, Ts, opLabel: plant.op.label, variantName: variant.name, type: variant.type, t, atLimit, warnings: [...new Set(warnings)] };
 }
 

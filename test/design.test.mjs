@@ -348,9 +348,10 @@ test('guard: the library stores inputs only, never numbers computed from a plant
   assert.ok(variants.length >= 10);
   for (const v of variants) {
     const lib = CONTROLLERS[v.type] ? CONTROLLERS : OBSERVERS;
-    // Sliding mode's λ, K, φ (and super-twisting's k1, k2) are tuning
-    // inputs a person chooses, as a PID's gains are, not numbers derived
-    // from the plant.
+    // Sliding mode's λ, K, φ (and super-twisting's k1) are tuning inputs a
+    // person chooses, as a PID's gains are. (The library's super-twisting
+    // k2 = 44 is Levant's 1.1·L/β with the motor's β, a guessed L: derived
+    // from the plant, an open question for the person; roadmap.)
     assert.ok(lib[v.type].designed || ['pid', 'off', 'slidingMode', 'superTwisting'].includes(v.type), `${v.name}: ${v.type} holds numbers; use a designed type`);
     assert.ok(!('u0' in (v.params ?? {})), `${v.name}: a start output is a trim value, computed from the plant`);
   }

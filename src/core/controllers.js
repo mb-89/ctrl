@@ -432,12 +432,18 @@ export const CONTROLLERS = {
         },
       };
     },
-    // Inside the layer and the limits, with the prefilter left out (ṙf = 0):
-    // no state, u = (K·λ/φ)·(r − y) − (K/φ)·ẏ.
+    // Inside the layer and the limits: u = (K/φ)·(λ·(rf − y) + ṙf − ẏ). The
+    // model's r input is the prefiltered rf (the tab feeds a step through Tr,
+    // as for the PID), and ṙf = (r − rf)/Tr = a·(rf − rf⁻)/((1 − a)·Tr) with
+    // a = e^(−Ts/Tr): one state, the rf of the sample before. Without a
+    // prefilter, no state: u = (K·λ/φ)·(r − y) − (K/φ)·ẏ.
     linear(p, Ts, at) {
       if (!(p.phi > 0)) throw new Error('an ideal sliding mode switches: it has no linear model; give it a boundary layer φ > 0');
-      const m = Math.max(2, at?.y?.length ?? 2);
-      return staticLinear((p.K * p.lambda) / p.phi, [(p.K * p.lambda) / p.phi, p.K / p.phi, ...new Array(m - 2).fill(0)]);
+      const m = Math.max(2, at?.y?.length ?? 2), k = p.K / p.phi;
+      const ys = [k * p.lambda, k, ...new Array(m - 2).fill(0)];
+      if (!(p.Tr > 0)) return staticLinear(k * p.lambda, ys);
+      const a = Math.exp(-Ts / p.Tr), c = (k * a) / ((1 - a) * p.Tr);
+      return { A: [[0]], B: [[1, ...new Array(m).fill(0)]], C: [[-c]], D: [[k * p.lambda + c, ...ys.map((g) => -g)]], Tr: p.Tr };
     },
   },
   superTwisting: {
