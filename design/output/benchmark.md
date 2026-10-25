@@ -167,6 +167,8 @@ Each candidate is run on the nominal plant (the system's run and the smooth move
 - **Interpretation**: the linear loop is taken at r's middle (a trim of y1 there), where the loop works, not at the start: the oven starts with the heater at 0, at its limit, where no linear loop holds. A system may name its own operating point (§10).
 
 ### 2.7 Gates: which ones fit
+**The decision part (§2.7–§2.9: the gates on Ms and the main job, the marks, the datum, the ranking, the weight sensitivity) is the generic Pugh module, `src/core/pugh.js` ([pugh.md](pugh.md))** since input 57: the benchmark hands it a matrix of its measured numbers and reads the result. Running the benchmark's own checks (diverging, unstable) stays here and arrives in the matrix as `fits: false` with the reason.
+
 A candidate **fits** when it (1) does not diverge on the nominal plant, (2) does not diverge on any of the varied plants, (3) is not unstable at r's middle, (4) is not unstable where the run starts (Auto-tune's check, v2.7.3: a loop that starts in exact balance rests even where it is unstable; marginal passes), (5) has Ms ≤ 2 where linear, and (6) **does its main job**: its following error (steps or smooth move) and its rejection error are at most **twice the datum's** (with the criterion's floor, as in the marks). A candidate that does not fit stays in the matrix, greyed, with its reason in the Fits row ("unstable where the run starts (2 poles outside); it rests there only because it starts in balance"; "fragile: Ms 12 at r's middle, PM 9°"); it is not ranked. This is input 29's "which ones fit".
 
 **Interpretation**: the prototype used Ms ≤ 3 to see the back-off work; the design takes **2**, the usual "acceptable" bound ([analysis.md](analysis.md) grades Ms ≤ 2 fair).
@@ -235,16 +237,15 @@ export const benchmark = (project, path, opts) => drain(benchmarkSteps(project, 
 export function scoreRun(run, key, ctx, scales, variant)   // → the run criteria (pure)
 export function gates(row, opts)             // → '' | why not
 export function standardTests(project, path) // → { project (with the standard load step if its d plays nothing), disturbance?, tau, moveDiagram }
-export function datum(rows)                  // → the tuned PID; the running variant if the PID does not fit
-export function mark(criterion, a, b)        // → −2 … +2, or null: the five-point rule (pure)
-export function mainJob(row, datum)          // → '' | why not: following or rejecting more than ×2 the datum's
-export function pugh(rows, datum, weights)   // → [{ type, marks, plus, minus, total }] (pure: re-run on a weight change)
-export function rank(rows, weights)          // → { matrix, ranking, suggestion: { type, sentence, runnerUp, changeAbove } }
-export function sensitivity(rank, weights, { step = 1, draws = 4000, seed }) // → { verdict, flips, minChange, acceptability } (pure)
+export function matrixOf(rows, weights)     // → a Pugh matrix (pugh.md): 13 measured criteria, lower is better; gates: the main job
+                                             //   (maxRatio 2, "fails the main job") and Ms (max 2, "fragile"); datum.prefer: the tuned PID,
+                                             //   then the running variant; plant changes suggestable: false; the running variant keep; tieBreak J
+// the decision: pugh.js's decide(matrixOf(rows, weights)) — marks, totals, fits, ranking, suggestion, sensitivity (pure: a weight
+// change re-decides without a run); the report's matrix part: pugh.js's renderMarkdown / renderHtml
 export function benchmarkReport(result, { format })  // → string
 // BenchResult = { version, plant: { source, label, fit? }, goal, opts, facts, refused, rows: [{ type, name, how,
 //   variant, start, evals, scores: { track, move, dist, … }, ffShare?: { steps, move }, margins: { ms, pm, gm, dm, marginal }, fits, whyNot, plantChange?, runs? }],
-//   tests, datum, matrix, ranking, suggestion, sensitivity, ms }
+//   tests, decision (pugh.js's result), ms }
 ```
 - `autotune.js` gains `goal.msMax` (Iterate's penalty), a cost over several runs (the system's and the smooth move), and exports what the benchmark reuses (`iterate`, the step test, `runCost`, `costScales`, `unstableAtStart`).
 - `controllers.js` gains the optional `bench` hook per type (§2.2); `identify.js` provides `varyDiagram` and `twinDiagram` (designed there).
@@ -253,6 +254,7 @@ export function benchmarkReport(result, { format })  // → string
 ## 6. Tests
 - **Registry-driven**: a fake type registered in a test library takes part with no change to `benchmark.js`; one with `applies` returning a sentence is listed as refused with it; one without a hook is computed or iterated from its defaults (the GENERIC path).
 - **Refusals are the designs' sentences**: the oven lists LQR's "needs every state measured … thermocouple but not heater and chamber", the motor *PI from the plant*'s "integrates V".
+- **The decision** is `pugh.js`'s, tested in `test/pugh.test.mjs` ([pugh.md](pugh.md)); here: `matrixOf` gives the gates, datum preference, suggestable and keep flags above.
 - **The five-point rule**: q at each band edge (½, 1/(1 + tol), 1 + tol, 2) gives the documented mark; the floor keeps 0 against 0 at S.
 - **The standard tests**: a system with a playing d gets none; *DC motor, deadbeat* gets −2.4 V at the plant's input from the middle of its longest stretch, on a copy (the project untouched); the smooth move is 99 % done in a fifth of the shortest stretch; a sine has none.
 - **The main job**: Hu–Lin on the deadbeat motor (×7.3) does not fit; a candidate at ×1.9 does.
@@ -332,7 +334,7 @@ The smooth move adds one run per scored candidate and doubles the knob searches;
 2. **`varyDiagram`** (from Identify's step list, if Identify has not built it yet), **`spliceNoise` / `probeMeasurements`**, and **`standardTests`**: the standard load step and the smooth move. Iterate takes a cost over several runs.
 3. **The `bench` hook** on each type of main, and the GENERIC path; `candidates()`. Tests: registry-driven, refusals.
 4. **`plantChanges()`**: the rate observer, the Kalman observer for the full state, the sensor for a Finite difference, Kalman or Luenberger estimate. Tests §6 (plant changes).
-5. **`benchmark.js`**: tuning, scoring, gates (the main job too), the datum, `mark`, `pugh`, `rank`, `sensitivity`, deterministic. Tests §6.
+5. **`benchmark.js`**: tuning, scoring, `matrixOf`, and the decision by `pugh.js` (built: [pugh.md](pugh.md)), deterministic. Tests §6.
 6. **CLI `benchmark`** and its `--json`; then the **MCP tool** on the server (if merged by then).
 7. **The report**, HTML and Markdown, through the Export path.
 8. **The page**: Auto-tune's mode switch, Setup and Matrix, the Worker (and several), weights live, Add the winner; `loopTuner.benchmark`. Help and AGENTS.md.
@@ -381,3 +383,6 @@ Each step keeps the library's fingerprints and the tests green (the overhaul's g
 4. **A gate on the main job**: more than ×2 the datum's following or rejection error does not fit (§2.7); it removes Hu–Lin's false win on the deadbeat motor.
 5. **Reverse sensitivity**: one weight at a time, all together, and random weights within one step, with a mechanical verdict (§2.9).
 6. **Mechanical**: every rule above is a formula on measured numbers.
+
+## 14. Input 57: the decision is generic
+The person: "the PUG matrix decision framework is something that could be relatively generic." The marks, gates, datum, ranking, weight sensitivity and the report's decision part moved into `src/core/pugh.js` ([pugh.md](pugh.md)), which knows nothing of controllers; the benchmark builds a matrix and reads the result. The prototype runs on it, and its rankings, marks, totals, fits and verdicts are unchanged on all eleven systems. What the generic version adds for judged criteria (marks against the datum, several raters by the median, their spread in the draws, weak spots for a hybrid) does not touch the benchmark, whose criteria are all measured.

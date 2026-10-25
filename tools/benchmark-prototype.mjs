@@ -23,6 +23,7 @@ import { CONTROLLERS, CONTROLLER_TYPES, normalizeVariant } from '../src/core/con
 import { diagramBlockDef, parseEnd, compileDiagram, blockPorts } from '../src/core/diagram.js';
 import { analyzeLoop } from '../src/core/analysis.js';
 import { simulateSystem } from '../src/core/sim.js';
+import { decide, SYMBOL } from '../src/core/pugh.js';
 import { tuneContext, withVariant, runVariant, loopSignals, costScales, runCost, iterate, autotune, tuningSpace, drain, GOAL } from '../src/core/autotune.js';
 
 const args = process.argv.slice(2);
@@ -673,107 +674,35 @@ function benchmark(name) {
 
   // Fit: stable and finite in the nominal run and in every varied plant.
   for (const row of rows) {
-    const fragile = row.ms !== null && row.ms > MS_MAX;
-    row.fits = !row.diverged && !row.varyBad && row.margins.stable !== false && !row.margins.startUnstable && !fragile;
-    row.whyNot = row.diverged ? 'diverges on the nominal plant' : row.varyBad ? `diverges on ${row.varyBad} of ${SWEEP} plants within ±15 %` : row.margins.stable === false ? `unstable at r's middle (${row.margins.note})` : row.margins.startUnstable ? `unstable where the run starts (${row.margins.startUnstable}); it rests there only because it starts in balance` : fragile ? `fragile: Ms ${fmt(row.ms, 2)} at r's middle (at most ${MS_MAX}), PM ${fmt(row.margins.pm, 2)}°` : '';
+    row.fits = !row.diverged && !row.varyBad && row.margins.stable !== false && !row.margins.startUnstable;
+    row.whyNot = row.diverged ? 'diverges on the nominal plant' : row.varyBad ? `diverges on ${row.varyBad} of ${SWEEP} plants within ±15 %` : row.margins.stable === false ? `unstable at r's middle (${row.margins.note})` : row.margins.startUnstable ? `unstable where the run starts (${row.margins.startUnstable}); it rests there only because it starts in balance` : '';
   }
   return { name: project.title, rows, refusals, changed, T, standard: std?.change ?? null, tau, step: st?.ok ? `${st.method === 'relay' ? 'relay' : st.model}` : st?.why, R, U };
 }
 
-// ---- The Pugh matrix ---------------------------------------------------------
-// One round against the datum (input 48), on a five-point scale (input 55:
-// "± is not enough ... probably a 5-point scale"), by rule, from the ratio of
-// the candidate's number to the datum's, q = (a + f) / (b + f), f the
-// criterion's absolute floor (so 0 % against 1 % overshoot is not ×0):
-//   S  0   within the criterion's tolerance:   1/(1 + tol) < q < 1 + tol
-//   +  1   better beyond it, up to twice as good           (q ≥ 1/2)
-//   ++ 2   more than twice as good                          (q < 1/2)
-//   −  −1, −− −2 the same the other way (q ≤ 2, q > 2)
-// for a criterion where lower is better (all of them here).
-const RATIO_STRONG = 2;
-function mark(cr, a, b) {
-  if (a === null || a === undefined || b === null || b === undefined || !finite(a) || !finite(b)) return null;
-  const q = (a + cr.abs) / (b + cr.abs), up = 1 + cr.tol;
-  if (q < 1 / RATIO_STRONG) return 2;
-  if (q <= 1 / up) return 1;
-  if (q > RATIO_STRONG) return -2;
-  if (q >= up) return -1;
-  return 0;
-}
-const SYMBOL = { 2: '++', 1: '+', 0: 'S', [-1]: '−', [-2]: '−−' };
+// ---- The decision: the generic Pugh module ----------------------------------
+// The marks, the gates on the main job and on Ms, the datum, the ranking and
+// the weight sensitivity are src/core/pugh.js (design/output/pugh.md): the
+// benchmark hands it a matrix of measured numbers and reads the result.
 
-// The marks of every row against the datum: [criterion] → −2 … +2 (null: '?').
-function marksOf(rows, datum) {
-  return rows.map((row) => CRITERIA.map((cr) => (row === datum ? 0 : mark(cr, row[cr.key], datum[cr.key]))));
-}
-const totalOf = (m, w) => m.reduce((t, s, i) => t + (s ?? 0) * w[i], 0);
-
-// The main job (input 55): a candidate that follows or rejects much worse
-// than the datum does not fit, whatever it wins elsewhere: its number more
-// than JOB_MAX times the datum's (with the floor, as in mark()).
-const JOB_MAX = 2;
-function jobGate(row, datum) {
-  if (row === datum) return '';
-  for (const cr of CRITERIA.filter((x) => x.job)) {
-    const a = row[cr.key], b = datum[cr.key];
-    if (!finite(b)) continue;
-    if (!finite(a)) return `${cr.label}: no number`;
-    const q = (a + cr.abs) / (b + cr.abs);
-    if (q > JOB_MAX) return `${cr.label} ×${fmt(q, 2)} of the datum's (at most ×${JOB_MAX})`;
-  }
-  return '';
-}
-
-// ---- Reverse sensitivity on the weights (input 55) -------------------------
-// The totals are linear in the weights, T_k = Σ w_i m_ki, so each question
-// has an exact answer. "Reasonable" (interpretation): every weight within one
-// step (±1) of its default and above 0.
-const STEP = 1;
-function sensitivity(cands, marks, w, winner) {
-  const iw = cands.indexOf(winner), out = { flips: [], minChange: [], acceptability: [] };
-  const T = (k, ww) => totalOf(marks[k], ww);
-  for (let j = 0; j < cands.length; j++) {
-    if (j === iw) continue;
-    // One weight at a time: the change Δ of w_i where j catches up.
-    const gap = T(iw, w) - T(j, w);
-    let best = null;
-    CRITERIA.forEach((cr, i) => {
-      const slope = (marks[j][i] ?? 0) - (marks[iw][i] ?? 0);
-      if (!slope) return;
-      const d = gap / slope;
-      if (w[i] + d < 0) return;
-      if (!best || Math.abs(d) < Math.abs(best.d)) best = { i, d };
-    });
-    if (best) out.flips.push({ j, criterion: CRITERIA[best.i].label, from: w[best.i], to: w[best.i] + best.d, reasonable: Math.abs(best.d) <= STEP && w[best.i] + best.d > 0 });
-    // The smallest change of all weights together (Euclidean): project w onto
-    // T_j = T_winner, D·w = 0 with D = m_j − m_winner, keeping w ≥ 0.
-    const D = CRITERIA.map((_, i) => (marks[j][i] ?? 0) - (marks[iw][i] ?? 0));
-    let ww = w.slice();
-    for (let it = 0; it < 20; it++) {
-      const dw = D.reduce((t, x, i) => t + x * ww[i], 0);
-      if (dw >= -1e-12) break;
-      const free = D.map((x, i) => (ww[i] > 0 || x > 0 ? x : 0)), nn = free.reduce((t, x) => t + x * x, 0);
-      if (!nn) { ww = null; break; }
-      ww = ww.map((x, i) => Math.max(0, x - (dw / nn) * free[i]));
-    }
-    if (ww) {
-      const dist = Math.hypot(...ww.map((x, i) => x - w[i])), norm = Math.hypot(...w);
-      out.minChange.push({ j, rel: dist / norm, maxStep: Math.max(...ww.map((x, i) => Math.abs(x - w[i]))) });
-    }
-  }
-  // SMAA's rank-1 acceptability: weights drawn uniformly within one step of
-  // the defaults (and above 0), seeded; the share of draws each candidate wins.
-  const r = rng(55), N = 4000, wins = new Array(cands.length).fill(0);
-  for (let n = 0; n < N; n++) {
-    const ww = w.map((x) => Math.max(0.01, x - STEP + 2 * STEP * r()));
-    let bk = 0, bt = -Infinity;
-    cands.forEach((c, k) => { const t = T(k, ww); if (t > bt + 1e-12 || (Math.abs(t - bt) <= 1e-12 && c.J < cands[bk].J)) { bt = t; bk = k; } });
-    wins[bk]++;
-  }
-  out.acceptability = wins.map((x) => x / N);
-  const reasonableFlip = out.flips.some((f) => f.reasonable);
-  out.verdict = !reasonableFlip && out.acceptability[iw] >= 0.75 ? 'robust' : 'sensitive';
-  return out;
+const JOB_MAX = 2, STEP = 1;
+function matrixOf(b) {
+  const keyOf = (i) => `c${i}`;
+  const pid = b.rows.findIndex((r) => r.type === 'pid' && !r.loaded && !r.plantChange), loadedRow = b.rows.findIndex((r) => r.loaded);
+  return {
+    title: b.name,
+    criteria: CRITERIA.map((cr) => ({ key: cr.key, label: cr.label, weight: cr.w, better: 'lower', tolerance: cr.tol, floor: cr.abs })),
+    candidates: b.rows.map((r, i) => ({
+      key: keyOf(i), label: r.name,
+      values: Object.fromEntries(CRITERIA.filter((cr) => typeof r[cr.key] === 'number').map((cr) => [cr.key, r[cr.key]])),
+      fits: r.fits, whyNot: r.whyNot, suggestable: !r.plantChange, keep: !!r.loaded, tieBreak: r.J,
+    })),
+    // The main job against the datum (input 55) and the Ms bound.
+    gates: [...CRITERIA.filter((cr) => cr.job).map((cr) => ({ criterion: cr.key, maxRatio: JOB_MAX, why: 'fails the main job' })), { criterion: 'ms', max: MS_MAX, why: "fragile, at r's middle" }],
+    // The tuned PID (input 48); the running variant when the PID does not fit.
+    datum: { prefer: [pid, loadedRow].filter((i) => i >= 0).map(keyOf) },
+    sensitivity: { step: STEP, draws: 4000, seed: 55, robustShare: 0.75, runnersUp: 3 },
+  };
 }
 
 // ---- Output ---------------------------------------------------------------
@@ -785,20 +714,18 @@ for (const name of SYSTEMS) {
   const b = benchmark(name);
   const total = now() - t0;
   results.push(b);
-  // The datum: the tuned PID (input 48); if it does not fit, the running
-  // variant; if neither fits, the tuned PID all the same.
-  const pid = b.rows.find((r) => r.type === 'pid' && !r.loaded && !r.plantChange), loadedRow = b.rows.find((r) => r.loaded);
-  const datum = pid?.fits ? pid : loadedRow?.fits ? loadedRow : pid ?? b.rows[0];
-  // The main job, against the datum.
-  for (const row of b.rows) { const why = row.fits ? jobGate(row, datum) : ''; if (why) { row.fits = false; row.whyNot = `fails the main job: ${why}`; } }
-  const w = CRITERIA.map((cr) => cr.w);
-  const marks = marksOf(b.rows, datum);
-  const totals = marks.map((m) => totalOf(m, w));
-  const order = b.rows.map((_, k) => k).filter((k) => b.rows[k].fits).sort((a, c) => totals[c] - totals[a] || b.rows[a].J - b.rows[c].J);
+  const res = decide(matrixOf(b));
+  const byKey = Object.fromEntries(res.candidates.map((c) => [c.key, c]));
+  b.rows.forEach((row, i) => { const c = byKey[`c${i}`]; row.fits = c.fits; row.whyNot = c.whyNot; });
+  const datum = b.rows[Number(res.datum.key.slice(1))];
+  const w = res.weights;
+  const marks = b.rows.map((_, i) => CRITERIA.map((cr) => byKey[`c${i}`].marks[cr.key]));
+  const totals = b.rows.map((_, i) => byKey[`c${i}`].total);
+  const order = res.ranking.map((k) => Number(k.slice(1)));
   const pos = (v) => `${v >= 0 ? '+' : ''}${fmt(v, 3)}`;
-  // The suggestion: the best fitting candidate that needs no plant change.
-  const eligible = order.filter((k) => !b.rows[k].plantChange), best = eligible[0];
-  const above = best === undefined ? [] : order.slice(0, order.indexOf(best));
+  const best = res.suggestion ? Number(res.suggestion.key.slice(1)) : undefined;
+  const above = res.suggestion ? res.suggestion.above.map((k) => Number(k.slice(1))) : [];
+  const eligible = order.filter((k) => !b.rows[k].plantChange);
 
   out.push(`\n## ${b.name}\n`);
   out.push(`Step test for the starts: ${b.step}. Total ${(total / 1000).toFixed(1)} s: load ${fmt(b.T.load / 1000)} s, starts ${fmt(b.T.starts / 1000)} s, tuning ${fmt(b.T.tune / 1000)} s, scoring ${fmt(b.T.score / 1000)} s, sweep (${SWEEP} plants) ${fmt(b.T.sweep / 1000)} s. One run ${fmt(b.T.run, 2)} ms, so about ${Math.round(total / b.T.run)} runs' worth.\n`);
@@ -829,15 +756,13 @@ for (const name of SYSTEMS) {
   const noFit = b.rows.filter((r) => !r.fits).map((r) => `${r.name}: ${r.whyNot}`);
   if (noFit.length) out.push(`\nNot ranked: ${noFit.join('; ')}.`);
   out.push(`\nSuggestion: ${best === undefined ? 'none fits' : b.rows[best].loaded ? `keep **${b.rows[best].name.replace('As loaded: ', '')}**, the running variant: nothing beats it` : `**${b.rows[best].name}** (${pos(totals[best])}), added as a variant, not switched on`}${above.length ? `; ranked above it with a plant change: ${above.map((k) => `${b.rows[k].name} (${pos(totals[k])}; ${b.rows[k].plantChange})`).join('; ')}` : ''}.`);
-  // Reverse sensitivity among the candidates the suggestion is chosen from.
-  if (eligible.length > 1) {
-    const cands = eligible.map((k) => b.rows[k]), cm = eligible.map((k) => marks[k]);
-    const sv = sensitivity(cands, cm, w, cands[0]);
-    const near = eligible.slice(1, 4).map((_, i) => i + 1);
-    out.push(`\nWeight sensitivity (winner ${cands[0].name}; reasonable: each weight within ±${STEP} of its default): **${sv.verdict}**. It wins ${fmt(100 * sv.acceptability[0], 3)} % of ${4000} weight draws within one step.`);
-    for (const j of near) {
-      const f = sv.flips.find((x) => x.j === j), mc = sv.minChange.find((x) => x.j === j);
-      out.push(`- ${cands[j].name} (${pos(totals[eligible[j]])}, wins ${fmt(100 * sv.acceptability[j], 3)} % of draws): ${f ? (Math.abs(f.to - f.from) < 1e-9 ? 'tied now: the same total, J breaks the tie' : `ties if ${f.criterion} goes ${fmt(f.from, 3)} → ${fmt(f.to, 3)} (${f.reasonable ? 'reasonable' : 'not reasonable'})`) : 'no single weight makes it tie'}; ${mc ? `all weights together: ${fmt(100 * mc.rel, 2)} % of the weights' size, the largest single change ${fmt(mc.maxStep, 2)}` : 'no weights make it tie'}.`);
+  // Reverse sensitivity, from the module.
+  const sv = res.sensitivity;
+  if (sv) {
+    out.push(`\nWeight sensitivity (winner ${b.rows[eligible[0]].name}; reasonable: each weight within ±${STEP} of its default): **${sv.verdict}**. It wins ${fmt(100 * sv.share, 3)} % of ${sv.draws} weight draws within one step.`);
+    for (const ru of sv.runnersUp) {
+      const f = ru.tie, mc = ru.minChange, label = (k) => CRITERIA.find((cr) => cr.key === k)?.label;
+      out.push(`- ${ru.label} (${pos(ru.total)}, wins ${fmt(100 * ru.share, 3)} % of draws): ${f ? (f.now ? 'tied now: the same total, J breaks the tie' : `ties if ${label(f.criterion)} goes ${fmt(f.from, 3)} → ${fmt(f.to, 3)} (${f.reasonable ? 'reasonable' : 'not reasonable'})`) : 'no single weight makes it tie'}; ${mc ? `all weights together: ${fmt(100 * mc.rel, 2)} % of the weights' size, the largest single change ${fmt(mc.maxStep, 2)}` : 'no weights make it tie'}.`);
     }
   }
 }

@@ -1,0 +1,19 @@
+{
+  "title": "Which message queue for the order service",
+  "criteria": [
+    { "key": "latency", "label": "p99 latency (ms)", "weight": 3, "better": "lower", "tolerance": 0.1, "floor": 0.5 },
+    { "key": "throughput", "label": "Throughput (msg/s)", "weight": 2, "better": "higher", "tolerance": 0.1 },
+    { "key": "cost", "label": "Cost per month (EUR)", "weight": 2, "better": "lower", "tolerance": 0.15, "floor": 10 },
+    { "key": "ops", "label": "Ease of operation", "weight": 2, "better": "higher", "kind": "judged" },
+    { "key": "fit", "label": "Fit with the team's skills", "weight": 1, "better": "higher", "kind": "judged" }
+  ],
+  "candidates": [
+    { "key": "current", "label": "Current queue", "keep": true, "values": { "latency": 12, "throughput": 8000, "cost": 400 } },
+    { "key": "log", "label": "Distributed log", "values": { "latency": 9, "throughput": 50000, "cost": 900 }, "marks": { "ops": [-1, -2, -1], "fit": 0 } },
+    { "key": "managed", "label": "Managed queue", "values": { "latency": 14, "throughput": 12000, "cost": 300 }, "marks": { "ops": [2, 1, 2], "fit": 1 } },
+    { "key": "db", "label": "Table in the database", "values": { "latency": 40, "throughput": 2000, "cost": 0 }, "marks": { "ops": 1, "fit": 2 } }
+  ],
+  "gates": [ { "criterion": "latency", "maxRatio": 2 }, { "criterion": "throughput", "min": 5000 } ],
+  "datum": { "prefer": ["current"] },
+  "sensitivity": { "seed": 7 }
+}
