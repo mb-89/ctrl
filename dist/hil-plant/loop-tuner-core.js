@@ -9685,11 +9685,12 @@ const EXAMPLE_PLANTS = [
   {
     name: 'Oven, badly tuned',
     summary: 'An oven with a poorly tuned temperature controller and a dead time. It opens on Auto-tune: press Start and watch automatic tuning remove the ringing; without anti-windup, see integrator windup.',
-    notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled to fit 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration. The variant without anti-windup has the same gains, but its integral winds up while the heater is full on: the first step overshoots to 67 °C instead of 52 °C.',
+    notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled so the test fits 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). From 5 s r ramps back down and the oven cools to where it started, so every cycle runs the same. It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration. The variant without anti-windup has the same gains, but its integral winds up while the heater is full on: the first step overshoots to 67 °C instead of 52 °C (63 °C in later cycles: at the bottom of the ramp, with the heater off, its integral winds down a little too).',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }] },
-      d: { period: PERIOD, components: [pulse(25, 3.6, 0.8)] },
+      r: { period: 10, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }, { type: 'ramp', params: { amplitude: -60, time: 5, rise: 4 } }] },
+      d: { period: 10, components: [pulse(25, 3.6, 0.8)] },
     },
+    sim: { sampleTime: 0.0025 },
     scope: { channels: channels('r', 'T', 'P', 'd') },
     ui: { ...ui('Oven'), tab: 'tune' },
     diagram: {

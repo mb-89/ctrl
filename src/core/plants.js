@@ -1,10 +1,11 @@
 // The System library's systems. Few, and each one does something visible:
 // its input moves the plant, its signals are named for what they are (force F,
 // position x, …) and on the scope, and its view shows the motion
-// (design/output/system-library.md). Each runs 5 s and opens running, on its
-// view in the Plant tab (ui). The controlled ones grow in difficulty: a PID
-// on a motor, a gain-scheduled PI on a tank, an energy (Lyapunov) swing-up of
-// a pendulum, a swing-up of a triple pendulum planned in the page. Each has a
+// (design/output/system-library.md). Each runs 5 s (the oven 10 s, to cool
+// back down) and opens running, on its view in the Plant tab (ui). The
+// controlled ones grow in difficulty: a PID on a motor, a gain-scheduled PI
+// on a tank, an energy (Lyapunov) swing-up of a pendulum, a swing-up of a
+// triple pendulum planned in the page. Each has a
 // reference r and a disturbance d, and a Controller block whose variants can
 // be flipped.
 //
@@ -763,15 +764,22 @@ export const EXAMPLE_PLANTS = [
   {
     // Made for the Auto-tune tab: a classic process (three lags and a dead
     // time) under a PID that was tuned badly by hand. Time is scaled so the
-    // demo fits 5 s. The gains are hand-picked to be poor; the tab computes
+    // test fits 5 s; then r ramps back down and the oven cools to where it
+    // started, so every cycle starts cold (inputs 50-52). A step back would
+    // leave the heater off while the oven cools on its own, and the PID
+    // without anti-windup would wind its integral down all that time and start
+    // the next cycle with it; along the ramp the heater stays on almost to the
+    // bottom. The record step of the 5 s run it was keeps its first 5 s as
+    // they were. The gains are hand-picked to be poor; the tab computes
     // better ones from the plant.
     name: 'Oven, badly tuned',
     summary: 'An oven with a poorly tuned temperature controller and a dead time. It opens on Auto-tune: press Start and watch automatic tuning remove the ringing; without anti-windup, see integrator windup.',
-    notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled to fit 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration. The variant without anti-windup has the same gains, but its integral winds up while the heater is full on: the first step overshoots to 67 °C instead of 52 °C.',
+    notes: 'A PID holds an oven\'s temperature: heater, chamber, a dead time and a thermocouple (time scaled so the test fits 5 s). Its gains were picked badly: every setpoint step overshoots and rings, and so does the door opening at 3.6 s (d). From 5 s r ramps back down and the oven cools to where it started, so every cycle runs the same. It opens on the Auto-tune tab: press Start and watch the cost fall and the ringing go, iteration by iteration. The variant without anti-windup has the same gains, but its integral winds up while the heater is full on: the first step overshoots to 67 °C instead of 52 °C (63 °C in later cycles: at the bottom of the ramp, with the heater off, its integral winds down a little too).',
     signals: {
-      r: { period: PERIOD, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }] },
-      d: { period: PERIOD, components: [pulse(25, 3.6, 0.8)] },
+      r: { period: 10, components: [{ type: 'step', params: { amplitude: 40, time: 0.2 } }, { type: 'step', params: { amplitude: 20, time: 2.2 } }, { type: 'ramp', params: { amplitude: -60, time: 5, rise: 4 } }] },
+      d: { period: 10, components: [pulse(25, 3.6, 0.8)] },
     },
+    sim: { sampleTime: 0.0025 },
     scope: { channels: channels('r', 'T', 'P', 'd') },
     ui: { ...ui('Oven'), tab: 'tune' },
     diagram: {

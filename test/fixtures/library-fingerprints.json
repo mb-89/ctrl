@@ -65,9 +65,9 @@
     "hash": "d33b15bf"
   },
   "Oven, badly tuned": {
-    "samples": 2001,
+    "samples": 4001,
     "signals": "P,T,ctrl.r,ctrl.u,ctrl.y,d,r",
-    "hash": "dec8753d"
+    "hash": "2f6f15f5"
   },
   "DC motor with an unbalanced arm": {
     "samples": 2001,

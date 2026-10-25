@@ -376,7 +376,7 @@ The switches happen inside the one law, so nothing is rebuilt. Today, flipping a
 - 12 tries;
 - the budget left cannot hold another try plus the fit pause and the Check.
 
-**Measured (E2's prototype; J is scored noise-free on the true plant):**
+**Measured (E2's prototype; J is scored noise-free on the true plant; the oven and the tank on their inputs before [inputs 50–52](../input/2026-10-25-52-a-spike-only-at-the-start.md), which gave the oven a 10 s cycle that cools back down and the tank a drop back at 4.5 s; measure again when Identify is built):**
 
 | Plant | Tries | Plant time | Best J of the ladder | Left the band |
 |---|---|---|---|---|
@@ -635,7 +635,7 @@ The twin's output feeds the Controller's measurement input. The real plant (or t
 
 **Teaching on simulated plants.** With the identified source, the result also runs on the diagram, and the status gives both costs: "on the model 0.061 · on the diagram 0.070".
 
-**Measured (E2):** tuning on a model fitted to the ladder's record came within 2–25 % of the best possible cost (Nelder–Mead on the true plant), with every margin ≥ 0.66:
+**Measured (E2, on the oven's and the tank's inputs before inputs 50–52):** tuning on a model fitted to the ladder's record came within 2–25 % of the best possible cost (Nelder–Mead on the true plant), with every margin ≥ 0.66:
 
 | | Oven | Motor | Tank | HIL arm (5 plants) |
 |---|---|---|---|---|

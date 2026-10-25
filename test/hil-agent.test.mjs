@@ -166,7 +166,7 @@ test('the plant script: both modes describe the library systems, any model, and 
   assert.equal(logger.inputs.length, 0);
   const oven = checkDescription(JSON.parse(py(['--describe', '--model', 'Oven, badly tuned'])));
   assert.deepEqual([oven.inputs[0].name, oven.outputs[0].name, oven.outputs[0].unit], ['P', 'T', '°C']);
-  assert.match(py(['--check', '--model', 'Oven, badly tuned']), /Oven, badly tuned, nominal, after 5 s of its own controller: T [\d.]+ °C/);
+  assert.match(py(['--check', '--model', 'Oven, badly tuned']), /Oven, badly tuned, nominal, after 10 s of its own controller: T [\d.]+ °C/);
   // Full scales for every port; no model, no physics in the description.
   for (const d of [control, reference, oven]) for (const p of [...d.inputs, ...d.outputs]) assert.ok(Number.isFinite(p.min) && Number.isFinite(p.max), `${p.name} has a full scale`);
   const raw = py(['--describe', '--seed', '3', '--random']);
