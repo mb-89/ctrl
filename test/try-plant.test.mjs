@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { identify, identifyRun, modelProject, planTry, tryOutcome, TRY } from '../src/core/identify.js';
+import { identify, identifyRun, twinProject, planTry, tryOutcome, TRY } from '../src/core/identify.js';
 import { autotune, drain } from '../src/core/autotune.js';
 import { libraryProject, runExperiment } from './fixtures/plants.mjs';
 import { armProject } from './fixtures/arm-project.mjs';
@@ -15,7 +15,7 @@ import { createArm, drawArm } from './fixtures/arm.mjs';
 
 const tunedOn = (p, opts) => {
   const r = identify(p, null, opts), path = r.block.path;
-  const tuned = autotune(modelProject(p, path, r.model), path, { method: 'iterate' });
+  const tuned = autotune(twinProject(p, path, r.model).project, path, { method: 'iterate' });
   return { r, path, tuned, src: { plan: r.plan, record: r.record } };
 };
 
@@ -45,9 +45,13 @@ test('16. screening refuses a step that is unstable or too sensitive for a model
   const tb = planTry(p, path, r.model, src, bold);
   assert.equal(tb.upto, 0);
   assert.match(tb.why, /^the result is bolder than what the model knows: not even its first step \(step 1: (Ms [\d.]+ above 2|unstable)/);
-  // The arm's own result: its first step holds; the next is too sensitive
-  // where the arm's gain is higher (a place), so the path ends at step 1.
-  const tp = planTry(p, path, r.model, src, tuned.variant);
+  // The arm's own result (tuned on the model with the test push alone, §10)
+  // holds at every step; one 2.5 × bolder holds at its first steps and is
+  // too sensitive further on, where the arm's gain is higher (a place), so
+  // the path ends there.
+  assert.equal(planTry(p, path, r.model, src, tuned.variant).upto, 3);
+  const bolder = { ...tuned.variant, params: { ...tuned.variant.params, Kp: 2.5 * tuned.variant.params.Kp } };
+  const tp = planTry(p, path, r.model, src, bolder);
   assert.ok(tp.upto >= 1 && tp.upto < 3, tp.why);
   assert.match(tp.why, new RegExp(`tried up to step ${tp.upto} \\(step ${tp.upto + 1}: .*(bars or places|unstable|room)`));
   assert.equal(tp.plan.steps.length, tp.upto, 'only the screened steps go to the plant');

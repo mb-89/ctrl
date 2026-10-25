@@ -6,10 +6,10 @@
 //
 //   decide(matrix)          → the result (data): marks, totals, fits, ranking,
 //                             suggestion, weight sensitivity, weak spots
-//   renderHtml(result)      → the report: one standalone HTML page, bottom
-//                             line first, figures as inline SVG, at most a
-//                             printed page per option (the page's tokens as
-//                             CSS variables, with print fallbacks)
+//   renderHtml(result, { style }) → the report: one standalone HTML page,
+//                             bottom line first, figures as inline SVG, at
+//                             most a printed page per option; its look is the
+//                             host's style sheet (style: { css, license })
 //   renderMarkdown(result)  → the decision as text, for a terminal or an agent
 //
 // The matrix (a plain object; the file shape is in pugh.md):
@@ -20,7 +20,7 @@
 //       suggestable?, keep?, tieBreak?, note?, figures?: [figure] }],
 //     gates?: [{ criterion, maxRatio | max | min, why? }],
 //     datum?: { prefer: [candidate keys] },
-//     strong?: 2, sensitivity?: { step, draws, seed, robustShare, runnersUp } }
+//     strong?: 2, sensitivity?: { step, draws, seed, holdShare, runnersUp } }
 
 // The whole engine is one function, pughEngine, so a report can carry the
 // very same code (its source) and decide again in the browser: nothing is
@@ -28,7 +28,7 @@
 function pughEngine() {
   const PUGH_VERSION = 1;
   const SYMBOL = { 2: '++', 1: '+', 0: 'S', [-1]: '−', [-2]: '−−' };
-  const DEFAULTS = { strong: 2, tolerance: 0.1, floor: 0, step: 1, draws: 4000, seed: 1, robustShare: 0.75, runnersUp: 3 };
+  const DEFAULTS = { strong: 2, tolerance: 0.1, floor: 0, step: 1, draws: 4000, seed: 1, holdShare: 0.75, runnersUp: 3 };
 
   class PughError extends Error {
     constructor(code, message) { super(message); this.code = code; }
@@ -109,8 +109,11 @@ function pughEngine() {
     if (!Array.isArray(prefer) || !prefer.length || !prefer.every((k) => ckeys.has(k))) fail('bad-datum', `datum.prefer: candidate keys (${[...ckeys].join(', ')})`);
     const strong = m.strong ?? DEFAULTS.strong;
     if (!finite(strong) || strong <= 1) fail('bad-strong', 'strong: a ratio above 1');
-    const s = { ...DEFAULTS, ...(m.sensitivity ?? {}) };
-    for (const k of ['step', 'draws', 'seed', 'robustShare', 'runnersUp']) if (!finite(s[k]) || s[k] < 0) fail('bad-sensitivity', `sensitivity.${k}: a number ≥ 0`);
+    // robustShare: the old name of holdShare (the verdict was renamed so it
+    // cannot be read as a controller's robustness).
+    const { robustShare, ...given } = m.sensitivity ?? {};
+    const s = { ...DEFAULTS, ...(robustShare !== undefined ? { holdShare: robustShare } : {}), ...given };
+    for (const k of ['step', 'draws', 'seed', 'holdShare', 'runnersUp']) if (!finite(s[k]) || s[k] < 0) fail('bad-sensitivity', `sensitivity.${k}: a number ≥ 0`);
     // The person's overrides (inputs 61–64), each with a comment: a
     // criterion's weight or tolerance; a cell vetoed (out of the calculation)
     // or nudged; an option vetoed or nudged; one of the tool's vetoes lifted;
@@ -146,7 +149,7 @@ function pughEngine() {
     });
     return {
       title: String(m.title ?? 'Decision'), criteria, candidates, gates, datum: { prefer }, strong, overrides,
-      sensitivity: { step: s.step, draws: Math.round(s.draws), seed: s.seed, robustShare: s.robustShare, runnersUp: Math.round(s.runnersUp) },
+      sensitivity: { step: s.step, draws: Math.round(s.draws), seed: s.seed, holdShare: s.holdShare, runnersUp: Math.round(s.runnersUp) },
     };
   }
 
@@ -394,11 +397,13 @@ function pughEngine() {
   //   share     SMAA's rank-1 acceptability: the share of seeded draws, each
   //             weight uniform within ±step of its own (at least 0.01), and
   //             each multi-rater mark one rater drawn at random, it wins
-  // Reasonable: every weight within ±step of its default and above 0. Robust:
-  // no reasonable single change ties a runner-up, and the winner takes at
-  // least robustShare of the draws.
+  // Reasonable: every weight within ±step of its default and above 0. The
+  // choice holds ('holds') when no reasonable single change ties a runner-up
+  // and the winner takes at least holdShare of the draws; else it depends on
+  // the weights ('depends'). The words are about the decision, never about a
+  // controller's robustness.
   function sensitivity(cands, criteria, w, opts = DEFAULTS) {
-    const { step, draws, seed, robustShare, runnersUp } = { ...DEFAULTS, ...opts };
+    const { step, draws, seed, holdShare, runnersUp } = { ...DEFAULTS, ...opts };
     // An option the person nudged carries its fixed offset (decide()).
     const marks = cands.map((r) => criteria.map((c) => r.marks_[c.key])), off = cands.map((r) => r.offset ?? 0);
     const T = (k, ww, mm = marks) => mm[k].reduce((t, s, i) => t + (s ?? 0) * ww[i], off[k]);
@@ -452,15 +457,15 @@ function pughEngine() {
     list.forEach((x, j) => { x.share = share[j + 1]; });
     const reasonableFlip = list.some((x) => x.tie?.reasonable);
     return {
-      winner: cands[0].key, verdict: !reasonableFlip && share[0] >= robustShare ? 'robust' : 'sensitive',
-      share: share[0], step, draws, seed, robustShare,
+      winner: cands[0].key, verdict: !reasonableFlip && share[0] >= holdShare ? 'holds' : 'depends',
+      share: share[0], step, draws, seed, holdShare,
       runnersUp: list.slice(0, runnersUp), all: list,
     };
   }
 
   // ---- Reports -----------------------------------------------------------------
   // The report is HTML (input 59): one standalone page, its graphs inline SVG,
-  // no script, printable. Bottom line first (the suggestion, its robustness,
+  // no script, printable. Bottom line first (the suggestion, whether it holds,
   // the main reason), then the matrix, then one compact section per option
   // that fits (why it ranks where it does, its weak spots, at most two
   // figures), a line for each one that does not. The page budget: at most one
@@ -495,8 +500,8 @@ function pughEngine() {
     const head = s.keep ? `Keep **${s.label}**: nothing beats it` : `Suggestion: **${s.label}** (${signed(s.total)} against the datum ${res.datum.label})`;
     const sv = res.sensitivity;
     const rob = !sv ? 'the only candidate that fits and may be suggested'
-      : sv.verdict === 'robust' ? `robust: it wins ${pct(sv.share)} of the weight draws within ±${fmt(sv.step)}`
-        : `sensitive: it wins ${pct(sv.share)} of the weight draws within ±${fmt(sv.step)}${(() => { const f = sv.runnersUp.find((x) => x.tie?.reasonable || x.tie?.now); return f ? `; ${f.label} ${f.tie.now ? 'ties it now' : `ties if ${critLabel(res, f.tie.criterion)} goes ${fmt(f.tie.from)} → ${fmt(f.tie.to)}`}` : ''; })()}`;
+      : sv.verdict === 'holds' ? `the choice holds: it wins ${pct(sv.share)} of the weight draws within ±${fmt(sv.step)}`
+        : `the choice depends on the weights: it wins ${pct(sv.share)} of the weight draws within ±${fmt(sv.step)}${(() => { const f = sv.runnersUp.find((x) => x.tie?.reasonable || x.tie?.now); return f ? `; ${f.label} ${f.tie.now ? 'ties it now' : `ties if ${critLabel(res, f.tie.criterion)} goes ${fmt(f.tie.from)} → ${fmt(f.tie.to)}`}` : ''; })()}`;
     const why = s.keep ? '' : mainReason(res);
     const above = s.above.length ? ` Ranked above it but not to be suggested: ${s.above.map((k) => labelOf(res, k)).join(', ')}.` : '';
     return `${head}; ${rob}${why ? `; ${why}` : ''}.${above}`;
@@ -540,10 +545,9 @@ function pughEngine() {
 
   // Colours are the page's design-system tokens, with the light theme's values
   // as fallbacks, so a report reads on screen, in the page and on paper.
-  const STROKE = {
-    option: 'var(--tone-blue, #2874d0)', datum: 'var(--ink-2, #3a4249)', reference: 'var(--tone-yellow, #b98000)', other: 'var(--tone-magenta, #c2477a)',
-  };
-  const DASH = { datum: '4 3', reference: '1 2' };
+  // Lines are classes (pl-option, pl-datum, pl-reference, pl-other): their
+  // colours and dashes come from the style sheet (Loop Tuner's: the scope's
+  // screen and channel colours, input 65).
   const n4 = (v) => Number(v.toFixed(2));
   // Round axis ends and a few ticks (1, 2, 5 × 10ⁿ).
   function ticks(lo, hi, n = 4) {
@@ -577,7 +581,7 @@ function pughEngine() {
     const [x0, x1] = fig.xRange ?? [Math.min(...xs), Math.max(...xs)];
     const H = top + fig.panels.length * (panelHeight + gap) - gap + bottom, W = width;
     const X = (v) => left + ((v - x0) / (x1 - x0 || 1)) * (W - left - right);
-    const g = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(fig.title)}" style="font-family:var(--font-ui, sans-serif);font-size:8px">`];
+    const g = [`<svg class="rpt-plot" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(fig.title)}">`];
     fig.panels.forEach((p, k) => {
       const y0p = top + k * (panelHeight + gap);
       let lo = Infinity, hi = -Infinity;
@@ -585,25 +589,25 @@ function pughEngine() {
       if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
       const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.1 || 1; lo -= pad; hi += pad;
       const Y = (v) => y0p + panelHeight - ((v - lo) / (hi - lo)) * panelHeight;
-      g.push(`<rect x="${left}" y="${y0p}" width="${W - left - right}" height="${panelHeight}" fill="none" stroke="var(--line, rgba(0,0,0,.15))"/>`);
-      for (const t of ticks(lo, hi, 3)) g.push(`<line x1="${left}" x2="${W - right}" y1="${n4(Y(t))}" y2="${n4(Y(t))}" stroke="var(--line, rgba(0,0,0,.15))" stroke-width="0.5"/><text x="${left - 3}" y="${n4(Y(t) + 3)}" text-anchor="end" fill="var(--ink-2, #3a4249)">${esc(fmt(t))}</text>`);
-      if (p.yLabel) g.push(`<text x="${left + 3}" y="${y0p + 9}" fill="var(--ink-2, #3a4249)">${esc(p.yLabel)}</text>`);
+      g.push(`<rect class="pl-frame" x="${left}" y="${y0p}" width="${W - left - right}" height="${panelHeight}"/>`);
+      for (const t of ticks(lo, hi, 3)) g.push(`<line class="pl-grid" x1="${left}" x2="${W - right}" y1="${n4(Y(t))}" y2="${n4(Y(t))}"/><text x="${left - 3}" y="${n4(Y(t) + 3)}" text-anchor="end">${esc(fmt(t))}</text>`);
+      if (p.yLabel) g.push(`<text x="${left + 3}" y="${y0p + 9}">${esc(p.yLabel)}</text>`);
       // The option on top: draw reference, datum, other, then the option.
       const order = ['reference', 'datum', 'other', 'option'];
       for (const sr of [...p.series].sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role))) {
         const pts = thin(sr.x, sr.y, x0, x1).map((i) => `${n4(X(sr.x[i]))},${n4(Y(Math.min(hi, Math.max(lo, sr.y[i]))))}`).join(' ');
-        g.push(`<polyline points="${pts}" fill="none" stroke="${STROKE[sr.role]}" stroke-width="${sr.role === 'option' ? 1.4 : 1}"${DASH[sr.role] ? ` stroke-dasharray="${DASH[sr.role]}"` : ''}/>`);
+        g.push(`<polyline class="pl-s pl-${sr.role}" points="${pts}"/>`);
       }
     });
     const yb = H - bottom;
-    for (const t of ticks(x0, x1, 5)) g.push(`<text x="${n4(X(t))}" y="${yb + 10}" text-anchor="middle" fill="var(--ink-2, #3a4249)">${esc(fmt(t))}</text>`);
-    if (fig.xLabel) g.push(`<text x="${W - right}" y="${yb + 19}" text-anchor="end" fill="var(--ink-2, #3a4249)">${esc(fig.xLabel)}</text>`);
+    for (const t of ticks(x0, x1, 5)) g.push(`<text x="${n4(X(t))}" y="${yb + 10}" text-anchor="middle">${esc(fmt(t))}</text>`);
+    if (fig.xLabel) g.push(`<text x="${W - right}" y="${yb + 19}" text-anchor="end">${esc(fig.xLabel)}</text>`);
     // The legend, once, from the first panel's series.
     let lx = left;
     for (const sr of fig.panels[0].series) {
       if (!sr.label) continue;
-      g.push(`<line x1="${lx}" x2="${lx + 12}" y1="${yb + 16}" y2="${yb + 16}" stroke="${STROKE[sr.role]}" stroke-width="1.4"${DASH[sr.role] ? ` stroke-dasharray="${DASH[sr.role]}"` : ''}/><text x="${lx + 15}" y="${yb + 19}" fill="var(--ink, #15191c)">${esc(sr.label)}</text>`);
-      lx += 22 + 4.2 * sr.label.length;
+      g.push(`<line class="pl-s pl-${sr.role}" x1="${lx}" x2="${lx + 12}" y1="${yb + 16}" y2="${yb + 16}"/><text class="pl-key" x="${lx + 15}" y="${yb + 19}">${esc(sr.label)}</text>`);
+      lx += 22 + 6.2 * sr.label.length;
     }
     g.push('</svg>');
     return g.join('');
@@ -619,19 +623,19 @@ function pughEngine() {
     const H = top + Math.max(1, rows.length) * rowH + 12, W = width;
     const hiW = Math.max(1, ...rows.map((x) => Math.max(x.tie.to, x.tie.from + sv.step))) * 1.05;
     const X = (v) => left + (Math.max(0, Math.min(hiW, v)) / hiW) * (W - left - right);
-    const g = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="weight sensitivity" style="font-family:var(--font-ui, sans-serif);font-size:9px">`];
+    const g = [`<svg class="rpt-sensplot" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="weight sensitivity">`];
     const winW = (W - left - right) * sv.share;
-    g.push(`<text x="0" y="12" fill="var(--ink, #15191c)">${esc(labelOf(res, sv.winner).slice(0, 34))} wins</text><rect x="${left}" y="4" width="${W - left - right}" height="10" fill="none" stroke="var(--line, rgba(0,0,0,.15))"/><rect x="${left}" y="4" width="${n4(winW)}" height="10" fill="${sv.verdict === 'robust' ? 'var(--tone-green, #008300)' : 'var(--tone-red, #c4302f)'}"/><text x="${W - right + 3}" y="12" fill="var(--ink, #15191c)">${esc(pct(sv.share))}</text>`);
+    g.push(`<text x="0" y="12">${esc(labelOf(res, sv.winner).slice(0, 34))} wins</text><rect class="sp-frame" x="${left}" y="4" width="${W - left - right}" height="10"/><rect class="sp-${sv.verdict}" x="${left}" y="4" width="${n4(winW)}" height="10"/><text x="${W - right + 3}" y="12">${esc(pct(sv.share))}</text>`);
     rows.forEach((x, k) => {
       const y = top + k * rowH + 10, w = x.tie.from;
-      g.push(`<text x="0" y="${y - 2}" fill="var(--ink, #15191c)">${esc(x.label.slice(0, 34))}</text><text x="0" y="${y + 8}" fill="var(--ink-2, #3a4249)">ties if ${esc(critLabel(res, x.tie.criterion).slice(0, 26))}: ${esc(fmt(w))} → ${esc(fmt(x.tie.to))}</text>`);
-      g.push(`<line x1="${left}" x2="${W - right}" y1="${y}" y2="${y}" stroke="var(--line, rgba(0,0,0,.15))"/>`);
-      g.push(`<rect x="${n4(X(Math.max(0, w - sv.step)))}" y="${y - 4}" width="${n4(X(w + sv.step) - X(Math.max(0, w - sv.step)))}" height="8" fill="var(--tone-green, #008300)" opacity="0.18"/>`);
-      g.push(`<line x1="${n4(X(w))}" x2="${n4(X(w))}" y1="${y - 5}" y2="${y + 5}" stroke="var(--ink, #15191c)"/>`);
-      g.push(`<path d="M${n4(X(x.tie.to))},${y - 5} l4,5 l-4,5 l-4,-5 z" fill="${x.tie.reasonable ? 'var(--tone-red, #c4302f)' : 'var(--ink-2, #3a4249)'}"/>`);
+      g.push(`<text x="0" y="${y - 2}">${esc(x.label.slice(0, 34))}</text><text class="dim" x="0" y="${y + 8}">ties if ${esc(critLabel(res, x.tie.criterion).slice(0, 26))}: ${esc(fmt(w))} → ${esc(fmt(x.tie.to))}</text>`);
+      g.push(`<line class="sp-line" x1="${left}" x2="${W - right}" y1="${y}" y2="${y}"/>`);
+      g.push(`<rect class="sp-band" x="${n4(X(Math.max(0, w - sv.step)))}" y="${y - 4}" width="${n4(X(w + sv.step) - X(Math.max(0, w - sv.step)))}" height="8"/>`);
+      g.push(`<line class="sp-default" x1="${n4(X(w))}" x2="${n4(X(w))}" y1="${y - 5}" y2="${y + 5}"/>`);
+      g.push(`<path class="sp-tie${x.tie.reasonable ? ' reasonable' : ''}" d="M${n4(X(x.tie.to))},${y - 5} l4,5 l-4,5 l-4,-5 z"/>`);
     });
-    if (!rows.length) g.push(`<text x="0" y="${top + 10}" fill="var(--ink-2, #3a4249)">No single weight makes a runner-up tie.</text>`);
-    g.push(`<text x="${left}" y="${H - 1}" fill="var(--ink-2, #3a4249)">the weight: | its default, band: ±${esc(fmt(sv.step))} (reasonable), ◆ where they tie</text>`);
+    if (!rows.length) g.push(`<text class="dim" x="0" y="${top + 10}">No single weight makes a runner-up tie.</text>`);
+    g.push(`<text class="dim" x="${left}" y="${H - 1}">the weight: | its default, band: ±${esc(fmt(sv.step))} (reasonable), ◆ where they tie</text>`);
     g.push('</svg>');
     return g.join('');
   }
@@ -644,80 +648,51 @@ function pughEngine() {
   // it reads as the static report it is. Controls are hidden in print, and
   // the person's changes print under the bottom line.
 
+  // Its look is the host's one style sheet (input 65: "one master style
+  // sheet. Everything goes through there"): the report writes classes only
+  // (.rpt…, .btn, .dialog, the plots' .rpt-plot), never a colour, a size or a
+  // style of its own. Loop Tuner's sheet is src/ui/style.css; build.mjs's
+  // reportStyle() hands it over as opts.style, and the report embeds it.
+  // Without it the page is plain HTML. A saved report carries the same sheet.
   const MAX_FIGURES = 2;
-  const CSS = `
-:root { --ink: #15191c; --ink-2: #3a4249; --ink-3: #4f5860; --line: rgba(0,0,0,.15); --paper: #ffffff; --hover: rgba(0,0,0,.07);
-  --tone-green: #008300; --tone-red: #c4302f; --tone-blue: #2874d0; --tone-yellow: #b98000; --tone-magenta: #c2477a; --focus: #2874d0;
-  --font-ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif; }
-@page { size: A4; margin: 12mm 12mm 14mm; }
-.pugh { color: var(--ink); font: 9.5pt/1.35 var(--font-ui); max-width: 186mm; margin: 0 auto; }
-body { margin: 0; padding: 8mm 0; background: var(--paper); }
-.pugh h1 { font-size: 15pt; margin: 0 0 2mm; } .pugh h2 { font-size: 11pt; margin: 0 0 1mm; }
-.pugh .bottom { font-size: 11pt; margin: 0 0 3mm; }
-.pugh table { border-collapse: collapse; font-size: 7.5pt; width: 100%; }
-.pugh th, .pugh td { padding: 1px 3px; border-bottom: 1px solid var(--line); text-align: center; vertical-align: bottom; }
-.pugh th:first-child, .pugh td:first-child { text-align: left; min-width: 30mm; }
-.pugh p.dim { margin: 0.6mm 0; }
-.pugh .plus { color: var(--tone-green); font-weight: 600; } .pugh .minus { color: var(--tone-red); font-weight: 600; }
-.pugh .dim { color: var(--ink-2); } .pugh .datum { background: rgba(0,0,0,.04); }
-.pugh .changed { outline: 1.5px dashed var(--tone-magenta); outline-offset: -2px; }
-.pugh .vetoed { color: var(--ink-3); text-decoration: line-through; }
-.pugh .person { border-left: 3px solid var(--tone-magenta); padding: 1mm 0 1mm 2mm; margin: 0 0 3mm; }
-.pugh .person p { margin: 0.4mm 0; }
-.pugh .option { break-inside: avoid; page-break-inside: avoid; border-top: 1px solid var(--line); margin-top: 4mm; padding-top: 2mm; }
-.pugh .option p { margin: 0.5mm 0; }
-.pugh .figs { display: flex; gap: 4mm; margin-top: 1.5mm; } .pugh figure { margin: 0; flex: 1 1 0; min-width: 0; }
-.pugh figcaption { font-size: 7.5pt; color: var(--ink-2); }
-.pugh .head { break-inside: avoid; }
-.pugh table.overview { table-layout: fixed; } .pugh table.overview th, .pugh table.overview td { overflow-wrap: break-word; hyphens: auto; -webkit-hyphens: auto; }
-.pugh table.overview col.c { width: 27mm; } .pugh table.overview col.w { width: 11mm; } .pugh table.overview col.t { width: 11mm; }
-.pugh .small { display: flex; gap: 4mm; margin-top: 1mm; } .pugh .small table { width: auto; flex: 1 1 0; }
-.pugh .small td, .pugh .small th { padding: 0 3px; }
-.pugh ul.vetoes { margin: 0.5mm 0; padding-left: 5mm; } .pugh ul.vetoes li.lifted { color: var(--ink-2); }
-.pugh .option.out h2 { color: var(--ink-2); } .pugh .overview .out { color: var(--ink-3); }
-.pugh .acts { margin: 0 0 1mm; flex-wrap: wrap; }
-.pugh .ctl { display: none; }
-.pugh.live .ctl { display: inline-flex; gap: 2mm; }
-.pugh.live [data-cell], .pugh.live [data-weight], .pugh.live [data-tol] { cursor: pointer; }
-.pugh.live [data-cell]:hover, .pugh.live [data-weight]:hover, .pugh.live [data-tol]:hover { background: var(--hover); }
-.pugh button { font: inherit; font-size: 8.5pt; padding: 1px 8px; border: 1px solid var(--line); border-radius: 3px; background: var(--paper); color: var(--ink); cursor: pointer; }
-.pugh :focus-visible, .pugh-dialog :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-.pugh .tools { margin: 0 0 3mm; }
-.pugh-dialog { font: 10pt/1.4 var(--font-ui); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; max-width: 30em; }
-.pugh-dialog strong, .pugh-dialog label { display: block; margin-bottom: 1.5mm; }
-.pugh-dialog textarea, .pugh-dialog input { font: inherit; width: 100%; box-sizing: border-box; margin: 1mm 0; }
-.pugh-dialog .row { display: flex; flex-wrap: wrap; gap: 2mm; margin-top: 2mm; }
-.pugh-dialog button { font: inherit; padding: 2px 10px; }
-@media print { body { padding: 0; } .pugh .ctl, .pugh-dialog { display: none !important; } .pugh .changed { outline: none; } }`;
+  const THEMES = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']];
 
   // The report as a standalone HTML page (standalone: false gives the
-  // <section> alone). sections: false leaves the per-option sections out
+  // <section> alone). style: { css, license } (above); theme: 'light' or
+  // 'dark' fixes the page's theme (data-theme), else it follows the system. sections: false leaves the per-option sections out
   // (what the page budget is measured against). interactive: false leaves
   // out the matrix and the engine (a static page).
-  //   The overview table (input 63, 64): the criteria as rows, their weight
-  //   and tolerance in columns of their own (edited there, the only place a
-  //   criterion is defined), every option a column, vetoed ones too; its
-  //   marks are for reading.
+  //   The overview table (input 63, 64), laid out as a Pugh matrix usually
+  //   is: the criteria as rows, their weight and tolerance in columns of
+  //   their own (edited there, the only place a criterion is defined), the
+  //   datum's column first, then every option, vetoed ones too; under the
+  //   marks the counts of +, S and − and the weighted total. Its marks are
+  //   for reading.
   //   Each option's section: its vetoes, one per reason, each lifted on its
   //   own; a small table of criterion, weight, its mark and the mark's
   //   weighted contribution, where the mark is vetoed or nudged and the
   //   weight (the same for every option) may be changed; its actions.
-  function renderHtml(res, { standalone = true, sections = true, interactive = true, live = false } = {}) {
-    const cols = res.candidates;
+  function renderHtml(res, { standalone = true, sections = true, interactive = true, live = false, style = null, theme = 'system' } = {}) {
+    const cols = [...res.candidates.filter((c) => c.datum), ...res.candidates.filter((c) => !c.datum)];
     const cls = (mk) => (mk > 0 ? 'plus' : mk < 0 ? 'minus' : '');
-    const btn = (label, data, aria = '') => `<button type="button" ${Object.entries(data).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ')}${aria ? ` aria-label="${esc(aria)}"` : ''}>${esc(label)}</button>`;
+    const btn = (label, data, aria = '') => `<button type="button" class="btn btn-sm" ${Object.entries(data).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ')}${aria ? ` aria-label="${esc(aria)}"` : ''}>${esc(label)}</button>`;
     const sym = (v) => (v === null || v === undefined ? '?' : SYMBOL[Math.round(v)]);
     const pctTol = (t) => `±${fmt(100 * t)} %`;
     const openVetoes = (c) => c.vetoes.filter((v) => !v.lifted);
-    const h = [`<section class="pugh${live ? ' live' : ''}">`, `<h1>${esc(res.title)}</h1>`, `<p class="bottom" data-bottom>${bold(bottomLine(res))}</p>`];
+    const h = [`<section class="rpt${live ? ' live' : ''}">`, `<h1>${esc(res.title)}</h1>`, `<p class="rpt-bottom" data-bottom>${bold(bottomLine(res))}</p>`];
     // The person's changes, under the bottom line (and in print).
     if (res.overrides?.length) {
-      h.push(`<div class="person"><h2>Changed by the person</h2>${res.overrides.map((o) => `<p>${esc(o.effect)} <span class="dim">— “${esc(o.comment)}”</span></p>`).join('')}${res.before && res.before.suggestion !== (res.suggestion?.label ?? null) ? `<p class="dim">Without these changes the suggestion was ${esc(res.before.suggestion ?? 'none')}.</p>` : ''}</div>`);
+      h.push(`<div class="rpt-person"><h2>Changed by the person</h2>${res.overrides.map((o) => `<p>${esc(o.effect)} <span class="dim">— “${esc(o.comment)}”</span></p>`).join('')}${res.before && res.before.suggestion !== (res.suggestion?.label ?? null) ? `<p class="dim">Without these changes the suggestion was ${esc(res.before.suggestion ?? 'none')}.</p>` : ''}</div>`);
     }
-    h.push(`<div class="ctl tools">${btn('Undo', { tool: 'undo' })}${btn('Save report', { tool: 'save' })}${btn('Export changes', { tool: 'export' })}${btn('Print', { tool: 'print' })}<span class="dim">Weights and tolerances: in the table. Marks and vetoes: in each option's section.</span></div>`);
-    if (res.sensitivity) h.push(`<div class="head" style="max-width:150mm">${sensitivitySvg(res)}</div>`);
+    // The keys, live only: Undo, Save, Export, Print, and the theme (the
+    // page's own: system, light or dark; print is always light).
+    const themes = `<span class="seg" role="group" aria-label="Theme">${THEMES.map(([k, label]) => `<button type="button" class="btn btn-sm" data-theme-set="${k}" aria-pressed="${k === theme}">${label}</button>`).join('')}</span>`;
+    h.push(`<div class="rpt-tools rpt-live">${btn('Undo', { tool: 'undo' })}${btn('Save report', { tool: 'save' })}${btn('Export changes', { tool: 'export' })}${btn('Print', { tool: 'print' })}${themes}<span class="dim">Weights and tolerances: in the table. Marks and vetoes: in each option's section.</span></div>`);
+    if (res.sensitivity) h.push(`<div class="rpt-sens">${sensitivitySvg(res)}</div>`);
     h.push(`<p class="dim">Datum: <strong>${esc(res.datum.label)}</strong>. Marks: ++ much better, + better, S the same within the tolerance, − worse, −− much worse (beyond ×${esc(fmt(res.strong))}), ? not judged (counts as S); a dashed frame: changed by the person.</p>`);
-    h.push(`<table class="overview"><colgroup><col class="c"><col class="w"><col class="t">${cols.map(() => '<col>').join('')}</colgroup><thead><tr><th>Criterion</th><th>Weight</th><th title="tolerance: the band within which a mark is S">Tol.</th>${cols.map((c) => `<th class="${[c.datum ? 'datum' : '', c.fits ? '' : 'out'].join(' ').trim()}">${esc(c.label)}</th>`).join('')}</tr></thead><tbody>`);
+    // The options' names stand on end (no word is broken, however many
+    // options); a table wider than the page scrolls in its own box.
+    h.push(`<div class="rpt-scroll"><table class="rpt-overview"><thead><tr><th>Criterion</th><th>Weight</th><th title="tolerance: the band within which a mark is S">Tol.</th>${cols.map((c) => `<th class="${[c.datum ? 'datum' : '', c.fits ? '' : 'out'].join(' ').trim()}"><span class="rpt-vhead">${c.label.split(' ').map((w) => `<span class="rpt-word">${esc(w)}</span>`).join(' ')}</span></th>`).join('')}</tr></thead><tbody>`);
     res.criteria.forEach((cr, i) => {
       const w = res.weights[i];
       h.push(`<tr><td>${esc(cr.label)}${cr.kind === 'judged' ? ' (judged)' : ''}</td><td data-weight="${esc(cr.key)}" tabindex="0" role="button" aria-label="${esc(`${cr.label}: weight ${fmt(w)}; change`)}"${w !== cr.defaults.weight ? ' class="changed"' : ''}>${esc(fmt(w))}</td><td${cr.kind === 'measured' ? ` data-tol="${esc(cr.key)}" tabindex="0" role="button" aria-label="${esc(`${cr.label}: tolerance ${pctTol(cr.tolerance)}; change`)}"${cr.tolerance !== cr.defaults.tolerance ? ' class="changed"' : ''}` : ' class="dim"'}>${cr.kind === 'measured' ? esc(pctTol(cr.tolerance)) : '—'}</td>${cols.map((c) => {
@@ -726,12 +701,18 @@ body { margin: 0; padding: 8mm 0; background: var(--paper); }
         return `<td class="${[ov === 'veto' ? '' : cls(mk ?? 0), ov ? 'changed' : '', c.fits ? '' : 'out'].join(' ').trim()}">${ov === 'veto' ? `<span class="vetoed">${esc(sym(c.toolMarks[cr.key]))}</span>` : esc(sym(mk))}</td>`;
       }).join('')}</tr>`);
     });
-    h.push(`<tr><th>Weighted</th><th></th><th></th>${cols.map((c) => `<th data-total="${esc(c.key)}" data-value="${c.total}" class="${[c.datum ? 'datum' : '', c.nudge ? 'changed' : '', c.fits ? '' : 'out'].join(' ').trim()}">${c.datum && !c.offset ? '0' : esc(signed(c.total))}</th>`).join('')}</tr>`);
-    h.push(`<tr><td>Vetoes</td><td></td><td></td>${cols.map((c) => { const n = openVetoes(c).length, lifted = c.vetoes.length - n; return `<td data-fits="${esc(c.key)}" data-value="${c.fits}" class="${n ? 'minus' : ''}${lifted ? ' changed' : ''}">${n ? `${n} ✕` : 'none'}${lifted ? ` (${lifted} lifted)` : ''}</td>`; }).join('')}</tr></tbody></table>`);
+    // The counts, as a Pugh matrix shows them (input 63): how many marks
+    // are better, the same and worse than the datum, vetoed marks aside.
+    const count = (c, f) => res.criteria.filter((cr) => c.overridden?.[cr.key] !== 'veto' && f(c.marks[cr.key] ?? 0)).length;
+    for (const [label, f] of [['Σ +', (mk) => mk > 0], ['Σ S', (mk) => mk === 0], ['Σ −', (mk) => mk < 0]]) {
+      h.push(`<tr><td>${label}</td><td></td><td></td>${cols.map((c) => `<td class="${[c.datum ? 'datum' : '', c.fits ? '' : 'out'].join(' ').trim()}">${c.datum ? '' : count(c, f)}</td>`).join('')}</tr>`);
+    }
+    h.push(`<tr><th>Weighted total</th><th></th><th></th>${cols.map((c) => `<th data-total="${esc(c.key)}" data-value="${c.total}" class="${[c.datum ? 'datum' : '', c.nudge ? 'changed' : '', c.fits ? '' : 'out'].join(' ').trim()}">${c.datum && !c.offset ? '0' : esc(signed(c.total))}</th>`).join('')}</tr>`);
+    h.push(`<tr><td>Vetoes</td><td></td><td></td>${cols.map((c) => { const n = openVetoes(c).length, lifted = c.vetoes.length - n; return `<td data-fits="${esc(c.key)}" data-value="${c.fits}" class="${n ? 'minus' : ''}${lifted ? ' changed' : ''}">${n ? `${n} ✕` : 'none'}${lifted ? ` (${lifted} lifted)` : ''}</td>`; }).join('')}</tr></tbody></table></div>`);
     if (res.sensitivity) {
-      h.push(`<h2 style="margin-top:3mm">Runners-up</h2><table><thead><tr>${['Runner-up', 'Total', 'Ties when one weight changes', `Reasonable (±${esc(fmt(res.sensitivity.step))})`, 'All weights together', 'Share of draws'].map((t) => `<th>${t}</th>`).join('')}</tr></thead><tbody>`);
+      h.push(`<h2 class="rpt-gap">Runners-up</h2><div class="rpt-scroll"><table><thead><tr>${['Runner-up', 'Total', 'Ties when one weight changes', `Reasonable (±${esc(fmt(res.sensitivity.step))})`, 'All weights together', 'Share of draws'].map((t) => `<th>${t}</th>`).join('')}</tr></thead><tbody>`);
       for (const row of runnerRows(res)) h.push(`<tr>${row.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`);
-      h.push('</tbody></table>');
+      h.push('</tbody></table></div>');
     }
     if (sections) {
       const order = [...res.ranking, ...cols.filter((c) => !c.fits).map((c) => c.key)];
@@ -739,9 +720,9 @@ body { margin: 0; padding: 8mm 0; background: var(--paper); }
         const c = cols.find((x) => x.key === key), rank = res.ranking.indexOf(key), open = openVetoes(c);
         const personVeto = c.vetoes.find((v) => v.by === 'person');
         const acts = [personVeto ? btn('Remove my veto', { act: 'unveto', cand: c.key }) : btn('Veto the option…', { act: 'veto', cand: c.key }), btn('Nudge up…', { act: 'up', cand: c.key }), btn('Nudge down…', { act: 'down', cand: c.key }), ...(c.datum ? [] : [btn('Make it the datum…', { act: 'datum', cand: c.key })])];
-        const lines = [`<h2>${rank >= 0 ? `${rank + 1}. ` : ''}${esc(c.label)} <span class="dim">(${c.datum ? 'the datum' : esc(signed(c.total))}${rank < 0 ? `; out: ${open.length} veto${open.length > 1 ? 'es' : ''}` : ''})</span></h2><div class="ctl acts">${acts.join('')}</div>`];
+        const lines = [`<h2>${rank >= 0 ? `${rank + 1}. ` : ''}${esc(c.label)} <span class="dim">(${c.datum ? 'the datum' : esc(signed(c.total))}${rank < 0 ? `; out: ${open.length} veto${open.length > 1 ? 'es' : ''}` : ''})</span></h2><div class="rpt-acts rpt-live">${acts.join('')}</div>`];
         if (c.vetoes.length) {
-          lines.push(`<ul class="vetoes">${c.vetoes.map((v) => `<li class="${v.lifted ? 'lifted' : 'minus'}">${v.by === 'person' ? 'Vetoed by the person' : 'The tool’s veto'}: ${esc(v.why)}${v.lifted ? ` <span class="dim">— lifted: “${esc(v.lifted)}”</span>` : ''} <span class="ctl">${v.by === 'person' ? '' : v.lifted ? btn('Restore', { restore: `${c.key}|${v.id}` }) : btn('Lift…', { lift: `${c.key}|${v.id}` })}</span></li>`).join('')}</ul>`);
+          lines.push(`<ul class="rpt-vetoes">${c.vetoes.map((v) => `<li class="${v.lifted ? 'dim' : 'minus'}">${v.by === 'person' ? 'Vetoed by the person' : 'The tool’s veto'}: ${esc(v.why)}${v.lifted ? ` <span class="dim">— lifted: “${esc(v.lifted)}”</span>` : ''} <span class="rpt-live">${v.by === 'person' ? '' : v.lifted ? btn('Restore', { restore: `${c.key}|${v.id}` }) : btn('Lift…', { lift: `${c.key}|${v.id}` })}</span></li>`).join('')}</ul>`);
           lines.push(`<p class="dim">${open.length ? `${open.length} veto${open.length > 1 ? 'es' : ''} remain${open.length > 1 ? '' : 's'}: it is back in only when none does.` : 'Every veto is lifted: it is in.'}</p>`);
         }
         if (c.nudge) lines.push(`<p class="dim">Nudged ${c.nudge > 0 ? 'up' : 'down'} by the person: ${esc(signed(c.offset))} on its total.</p>`);
@@ -761,11 +742,11 @@ body { margin: 0; padding: 8mm 0; background: var(--paper); }
             return `<tr><td>${esc(cr.label)}</td><td data-weight="${esc(cr.key)}" tabindex="0" role="button" aria-label="${esc(`${cr.label}: weight ${fmt(res.weights[i])} (for every option); change`)}"${res.weights[i] !== cr.defaults.weight ? ' class="changed"' : ''}>${esc(fmt(res.weights[i]))}</td><td data-cell="${esc(c.key)}|${esc(cr.key)}" tabindex="0" role="button" aria-label="${esc(`${c.label}, ${cr.label}: ${ov === 'veto' ? 'vetoed' : sym(mk)}; change`)}" class="${[ov === 'veto' ? '' : cls(mk ?? 0), ov ? 'changed' : ''].join(' ').trim()}">${ov === 'veto' ? `<span class="vetoed">${esc(sym(c.toolMarks[cr.key]))}</span>` : esc(sym(mk))}</td><td class="${cls(contrib)}">${contrib ? esc(signed(contrib)) : '0'}</td></tr>`;
           });
           const half = Math.ceil(rows.length / 2), head = '<thead><tr><th>Criterion</th><th>Weight</th><th>Mark</th><th>Adds</th></tr></thead>';
-          lines.push(`<div class="small"><table>${head}<tbody>${rows.slice(0, half).join('')}</tbody></table><table>${head}<tbody>${rows.slice(half).join('')}</tbody></table></div>`);
+          lines.push(`<div class="rpt-small"><table>${head}<tbody>${rows.slice(0, half).join('')}</tbody></table><table>${head}<tbody>${rows.slice(half).join('')}</tbody></table></div>`);
         }
         const figs = c.fits ? (c.figures ?? []).slice(0, MAX_FIGURES) : [];
-        if (figs.length) lines.push(`<div class="figs">${figs.map((f) => `<figure>${plotSvg(f)}<figcaption>${esc(f.title)}</figcaption></figure>`).join('')}</div>`);
-        h.push(`<div class="option${c.fits ? '' : ' out'}" data-section="${esc(c.key)}">${lines.join('')}</div>`);
+        if (figs.length) lines.push(`<div class="rpt-figs">${figs.map((f) => `<figure>${plotSvg(f)}<figcaption>${esc(f.title)}</figcaption></figure>`).join('')}</div>`);
+        h.push(`<div class="rpt-option${c.fits ? '' : ' out'}" data-section="${esc(c.key)}">${lines.join('')}</div>`);
       });
     }
     if (res.notes.length) h.push(...res.notes.map((n) => `<p class="dim">Note: ${esc(n)}.</p>`));
@@ -774,7 +755,8 @@ body { margin: 0; padding: 8mm 0; background: var(--paper); }
     if (!standalone) return body;
     const SCRIPT = 'scr' + 'ipt', end = `</${SCRIPT}>`;
     const embedded = !interactive || !res.input ? '' : `\n<${SCRIPT} type="application/json" id="pugh-matrix">${JSON.stringify(res.input).replace(/</g, '\\u003c')}${end}\n<${SCRIPT}>(function () { var E = (${pughEngine.toString().replace(/<\/(script)/gi, '<\\/$1')})(); E.boot(document); })();${end}`;
-    return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(res.title)}</title><style>${CSS}</style></head><body>\n${body}${embedded}\n</body></html>\n`;
+    const sheet = style ? `<style id="rpt-style"${style.license ? ` data-license="${esc(style.license)}"` : ''}>\n${style.css.replace(/<\/(style)/gi, '<\\/$1')}\n</style>` : '';
+    return `<!doctype html>\n<html lang="en"${theme === 'light' || theme === 'dark' ? ` data-theme="${theme}"` : ''}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(res.title)}</title>${sheet}</head><body>\n${body}${embedded}\n</body></html>\n`;
   }
 
   // ---- In the browser -------------------------------------------------------
@@ -789,10 +771,12 @@ body { margin: 0; padding: 8mm 0; background: var(--paper); }
     let overrides = (data.overrides ?? []).slice();
     const undo = [];
     let res = null;
-    const section = () => doc.querySelector('section.pugh');
+    const section = () => doc.querySelector('section.rpt');
+    // The theme is the page's: data-theme on <html>, none for the system's.
+    const html = doc.documentElement, themeNow = () => html.dataset.theme || 'system';
     function render(focus) {
       res = decide({ ...base, overrides });
-      section().outerHTML = renderHtml(res, { standalone: false, live: true });
+      section().outerHTML = renderHtml(res, { standalone: false, live: true, theme: themeNow() });
       win.pughState = { overrides: overrides.slice(), result: res };
       if (focus) doc.querySelector(focus)?.focus();
     }
@@ -807,10 +791,10 @@ body { margin: 0; padding: 8mm 0; background: var(--paper); }
     const slug = String(data.title ?? 'decision').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'decision';
     // The dialog: what to do, and why (a comment for every change).
     const dlg = doc.createElement('dialog');
-    dlg.className = 'pugh-dialog';
+    dlg.className = 'dialog rpt-dialog';
     doc.body.appendChild(dlg);
     function ask(title, choices, { weight = null, focus } = {}) {
-      dlg.innerHTML = `<form method="dialog"><strong>${esc(title)}</strong>${weight !== null ? `<label>Weight <input id="pugh-weight" type="number" min="0" step="0.5" value="${esc(weight)}"></label>` : ''}<label>Why (kept with the change) <textarea id="pugh-comment" rows="2"></textarea></label><p id="pugh-error" class="dim" role="alert"></p><div class="row">${choices.map((c) => `<button type="button" data-do="${esc(c.id)}">${esc(c.label)}</button>`).join('')}<button type="button" data-do="cancel">Cancel</button></div></form>`;
+      dlg.innerHTML = `<form method="dialog"><strong>${esc(title)}</strong>${weight !== null ? `<label>Weight <input id="pugh-weight" type="number" min="0" step="0.5" value="${esc(weight)}"></label>` : ''}<label>Why (kept with the change) <textarea id="pugh-comment" rows="2"></textarea></label><p id="pugh-error" class="dim" role="alert"></p><div class="rpt-acts">${choices.map((c) => `<button type="button" class="btn btn-sm" data-do="${esc(c.id)}">${esc(c.label)}</button>`).join('')}<button type="button" class="btn btn-sm" data-do="cancel">Cancel</button></div></form>`;
       dlg.onclick = (e) => {
         const b = e.target.closest('[data-do]');
         if (!b) return;
@@ -830,12 +814,21 @@ body { margin: 0; padding: 8mm 0; background: var(--paper); }
     const sym = (v) => (v === null || v === undefined ? '?' : SYMBOL[Math.round(v)]);
     doc.addEventListener('click', (e) => {
       if (!section()?.contains(e.target)) return;
-      const t = e.target.closest('[data-cell], [data-weight], [data-tol], [data-act], [data-lift], [data-restore], [data-tool]');
+      const t = e.target.closest('[data-cell], [data-weight], [data-tol], [data-act], [data-lift], [data-restore], [data-tool], [data-theme-set]');
       if (!t) return;
       const d = t.dataset;
+      if (d.themeSet) {
+        if (d.themeSet === 'system') delete html.dataset.theme; else html.dataset.theme = d.themeSet;
+        render(`[data-theme-set="${d.themeSet}"]`);
+        return;
+      }
       if (d.tool) {
         if (d.tool === 'undo' && undo.length) { overrides = undo.pop(); render('[data-tool="undo"]'); }
-        if (d.tool === 'save') download(`${slug}.html`, renderHtml(decide({ ...base, overrides })), 'text/html');
+        if (d.tool === 'save') {
+          // The same sheet and the chosen theme go with the saved report.
+          const st = doc.getElementById('rpt-style');
+          download(`${slug}.html`, renderHtml(decide({ ...base, overrides }), { style: st ? { css: st.textContent, license: st.dataset.license } : null, theme: themeNow() }), 'text/html');
+        }
         if (d.tool === 'export') download(`${slug}-changes.json`, `${JSON.stringify(overrides, null, 1)}\n`, 'application/json');
         if (d.tool === 'print') win.print();
         return;

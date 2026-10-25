@@ -853,3 +853,74 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .v3d-triad { position: absolute; left: 4px; bottom: 4px; width: 72px; height: 72px; pointer-events: none; }
 .v3d-tip { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none; white-space: pre; background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 5px; padding: 4px 7px; font: var(--text-xs)/15px var(--font-mono); box-shadow: var(--shadow-pop); }
 .v3d-note { position: absolute; right: 8px; bottom: 6px; font: var(--text-xs) var(--font-mono); color: var(--ink-3); pointer-events: none; }
+
+/* ==== Decision report (src/core/pugh.js) ===================================
+   The Pugh report, from these tokens like the page (input 65): the same
+   type, keys (.btn), dialog (.dialog) and status colours. A mark's colour is
+   its status (--ok better, --bad worse) beside its symbol; what the person
+   changed is outlined dashed in --warn (look here); a plot is drawn like the
+   scope (--screen and its inks, the channel colours); paper is always light. */
+.rpt { max-width: 186mm; margin: 0 auto; padding: var(--space-6) var(--space-4); color: var(--ink); font-family: var(--font-ui); font-size: var(--text-sm); line-height: 1.35; }
+.rpt h1 { margin: 0 0 var(--space-3); font-size: var(--text-lg); }
+.rpt h2 { margin: 0 0 var(--space-2); font-size: var(--text-md); }
+.rpt p { margin: var(--space-1) 0; }
+.rpt .rpt-bottom { margin: 0 0 var(--space-4); font-size: var(--text-md); }
+.rpt .rpt-gap { margin-top: var(--space-5); }
+.rpt table { border-collapse: collapse; width: 100%; font-size: var(--text-xs); }
+.rpt th, .rpt td { padding: 1px var(--space-2); border-bottom: 1px solid var(--line); text-align: center; vertical-align: bottom; }
+.rpt th:first-child, .rpt td:first-child { text-align: left; }
+.rpt .plus { color: var(--ok); font-weight: 600; } .rpt .minus { color: var(--bad); font-weight: 600; }
+.rpt .dim { color: var(--ink-2); } .rpt .out { color: var(--ink-3); }
+.rpt .datum { background: var(--hover); }
+.rpt .changed { outline: 1px dashed var(--warn); outline-offset: -2px; }
+.rpt .vetoed { color: var(--ink-3); text-decoration: line-through; }
+.rpt .rpt-person { margin: 0 0 var(--space-4); padding: var(--space-2) 0 var(--space-2) var(--space-4); border-left: 3px solid var(--warn); }
+.rpt .rpt-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-4); }
+.rpt .rpt-sens { max-width: 150mm; break-inside: avoid; }
+/* No word is ever broken: the options' names stand on end (bottom to top,
+   wrapping between words), and a table wider than its place scrolls in its
+   own box, never the page. */
+.rpt .rpt-scroll { overflow-x: auto; max-width: 100%; }
+.rpt table.rpt-overview td:first-child { min-width: 24mm; } .rpt table.rpt-overview td:not(:first-child) { white-space: nowrap; }
+.rpt table.rpt-overview th:has(> .rpt-vhead) { vertical-align: bottom; padding: var(--space-1) 1px; }
+.rpt .rpt-word { white-space: nowrap; }
+.rpt .rpt-vhead { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); max-height: 30mm; text-align: left; font-weight: 600; }
+.rpt .rpt-option.out h2 { color: var(--ink-2); }
+.rpt .rpt-option { margin-top: var(--space-5); padding-top: var(--space-2); border-top: 1px solid var(--line); break-inside: avoid; }
+.rpt-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-2); }
+.rpt ul.rpt-vetoes { margin: var(--space-1) 0; padding-left: var(--space-6); }
+.rpt .rpt-small { display: flex; flex-wrap: wrap; gap: 0 var(--space-4); margin-top: var(--space-1); } .rpt .rpt-small table { flex: 1 1 60mm; }
+.rpt .rpt-figs { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-top: var(--space-2); }
+.rpt figure { flex: 1 1 60mm; min-width: 0; margin: 0; } .rpt figcaption { color: var(--ink-2); font-size: var(--text-xs); }
+.rpt [data-cell], .rpt [data-weight], .rpt [data-tol] { cursor: pointer; }
+.rpt [data-cell]:hover, .rpt [data-weight]:hover, .rpt [data-tol]:hover { background: var(--hover); }
+.rpt .rpt-live { display: none; } .rpt.live .rpt-live { display: inline-flex; } .rpt.live div.rpt-live { display: flex; }
+.rpt-dialog label, .rpt-dialog strong { display: block; margin-bottom: var(--space-2); }
+.rpt-dialog textarea, .rpt-dialog input { width: 100%; box-sizing: border-box; margin: var(--space-1) 0; font: inherit; background: var(--field); color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
+.rpt-dialog .rpt-acts { margin-top: var(--space-3); }
+/* A plot, drawn like the scope: its screen and inks, the channel colours by role. */
+.rpt-plot { background: var(--screen); font-family: var(--font-mono); font-size: var(--text-2xs); }
+.rpt-plot .pl-frame { fill: none; stroke: var(--screen-line); }
+.rpt-plot .pl-grid { stroke: var(--screen-line); stroke-dasharray: 1 3; }
+.rpt-plot text { fill: var(--screen-label); }
+.rpt-plot .pl-key { fill: var(--screen-ink); }
+.rpt-plot .pl-s { fill: none; stroke-width: 1; }
+.rpt-plot .pl-option { stroke: var(--ch-2); stroke-width: 1.5; }
+.rpt-plot .pl-datum { stroke: var(--screen-ink); stroke-dasharray: 4 3; }
+.rpt-plot .pl-reference { stroke: var(--ch-1); stroke-dasharray: 1 2; }
+.rpt-plot .pl-other { stroke: var(--ch-4); }
+/* The weight sensitivity, on the page's surface. */
+.rpt-sensplot { font-family: var(--font-ui); font-size: var(--text-2xs); }
+.rpt-sensplot text { fill: var(--ink); } .rpt-sensplot text.dim { fill: var(--ink-2); }
+.rpt-sensplot .sp-frame { fill: none; stroke: var(--line); } .rpt-sensplot .sp-line { stroke: var(--line); }
+.rpt-sensplot .sp-holds { fill: var(--ok); } .rpt-sensplot .sp-depends { fill: var(--warn); }
+.rpt-sensplot .sp-band { fill: var(--surface-sunken); } .rpt-sensplot .sp-default { stroke: var(--ink); }
+.rpt-sensplot .sp-tie { fill: var(--ink-2); } .rpt-sensplot .sp-tie.reasonable { fill: var(--bad); }
+/* Paper is light (input 65: "if we want to store it as PDF, it would have to
+   be light"), whatever the theme; a plot prints on paper, not on a screen. */
+@media print {
+  :root, :root[data-theme] { color-scheme: light; --page-scheme: light; }
+  .rpt { padding: 0; } .rpt .rpt-live, .rpt-dialog { display: none !important; } .rpt .changed { outline: none; }
+  .rpt-plot { --screen: var(--field); --screen-ink: var(--ink); --screen-label: var(--ink-2); --screen-line: var(--line-strong); }
+}
+@page { size: A4; margin: 12mm 12mm 14mm; }

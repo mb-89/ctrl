@@ -14,7 +14,8 @@
 // inputs, the plan is recomputed from them and the project whenever a test
 // starts, and the model from the record whenever it is needed.
 
-import { controllerBlocks, upstreamSource, drain } from './autotune.js';
+import { controllerBlocks, upstreamSource, drain, autotuneSteps, resultName, tuneContext, runVariant, costScales, runCost, variantCost } from './autotune.js';
+import { analyzeLoop, openLoop, openLoopPoles, closedLoopSides, frequencyData, loopMargins, discretePlant } from './analysis.js';
 import { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } from './diagram.js';
 import { CONTROLLERS } from './controllers.js';
 import { referenceFn, gaussAt } from './signals.js';
@@ -26,9 +27,9 @@ import {
 import { cholesky, eig, solve, csolve } from './linalg.js';
 import { pathRealisation } from './linearize.js';
 import { createStepRunner } from './live.js';
-import { loopModel, linearizeBlock } from './project.js';
-import { analyzeLoop, discretePlant } from './analysis.js';
+import { linearizeBlock } from './project.js';
 import { physicalMaskKeys } from './physics.js';
+import { findExternal } from './hil.js';
 
 export class IdentifyError extends Error {
   constructor(code, message, hint = '') {
@@ -1238,10 +1239,10 @@ export function linearModel(model) {
 // boxes): In → gain K (or k′) → integrator → lags or a resonance → dead time
 // → noise → quantiser → Out. push: an added Sum at its input with a second
 // In for the test push. noise: false leaves out the noise and the quantiser.
-// at: { u0, y0 }, the point the model was measured about (it is incremental):
-// u0 is taken off its input and y0 added to its output, so in a loop it
-// rests at y0 with u0, as the plant did in Listen.
-export function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = null, at = null } = {}) {
+// op: { u0, y0 }, the place the twin rests at (u₀ holds y₀): Equations
+// after the input and before the noise take u to u − u₀ and the model's y to
+// y₀ + y, so the twin stands where the plant stood when the test began.
+export function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = null, op = null } = {}) {
   if (!model?.structure) throw new Error('twinSubsystem: no model was identified');
   const p = model.params, S = STRUCTURES[model.structure];
   const blocks = [], wires = [];
@@ -1254,8 +1255,8 @@ export function twinSubsystem(model, { push = false, noise = true, id = 'twin', 
     add({ id: 'sum', type: 'sum', params: { signs: '++' } });
     wires.push({ from: 'push', to: 'sum:1' });
   }
-  // Offsets as Equations (a number written out in full, so the model is exact).
-  if (at?.u0) add({ id: 'aboutU', type: 'fcn', name: 'about u₀', params: { inputs: 'u', eqs: `y = u - (${at.u0})`, outputs: 'y' } });
+  const num = (v) => String(Number(v.toPrecision(12)));
+  if (op && op.u0) add({ id: 'u0', type: 'fcn', name: 'u − u₀', params: { inputs: 'u', eqs: `du = u - ${num(op.u0)}`, outputs: 'du' } });
   const gainKey = GAIN(S);
   add({ id: 'gain', type: 'gain', name: S.integrating ? 'rate k′' : 'gain K', params: { K: p[gainKey] } });
   if (S.integrating) add({ id: 'int', type: 'integrator', name: 'integrator', params: { K: 1 } });
@@ -1267,137 +1268,13 @@ export function twinSubsystem(model, { push = false, noise = true, id = 'twin', 
   if (model.structure === 'resonance' || model.structure === 'intRes') add({ id: 'res', type: 'secondOrder', name: 'resonance f, ζ', params: { K: 1, wn: 2 * Math.PI * p.f, zeta: p.zeta } });
   // The dead time after the dynamics (the same model: they commute): the Dead
   // time block interpolates its input between integration steps, exact for
-  // a smooth input, half a step off for a held one (identification.md §17,
-  // test 11).
+  // a smooth input, half a step off for a held one (§17, test 11).
   if (p.theta > 0) add({ id: 'dead', type: 'delay', name: 'dead time θ', params: { L: p.theta, y0: 0 } });
-  if (at?.y0) add({ id: 'aboutY', type: 'fcn', name: 'about y₀', params: { inputs: 'u', eqs: `y = u + (${at.y0})`, outputs: 'y' } });
+  if (op && op.y0) add({ id: 'y0', type: 'fcn', name: 'y₀ + y', params: { inputs: 'dy', eqs: `y = dy + ${num(op.y0)}`, outputs: 'y' } });
   if (noise && model.noise?.sigma > 0) add({ id: 'noise', type: 'noise', name: 'noise σ', params: { std: model.noise.sigma, seed: 1 } });
   if (noise && model.noise?.q > 0) add({ id: 'quant', type: 'quantizer', name: 'steps q', params: { q: model.noise.q } });
   add({ id: 'y', type: 'outport', name: model.names?.y ?? 'y', params: { port: 1 } });
   return { id, type: 'subsystem', name: name ?? `identified ${S.label}`, params: {}, diagram: { blocks, wires } };
-}
-
-// The twin in the plant's place (§10): in a copy of the diagram, the
-// Controller block at path drives the twin subsystem and reads its output as
-// its measurement; the real plant stays, cut off from the loop (a simulated
-// one runs on beside it); an External plant (a live one) leaves the copy,
-// and what showed its measured output shows the twin's. push: a Source named
-// push into the twin's second input (the test push). noise: the twin's noise
-// and quantiser (false for Analysis). Returns the diagram.
-export function twinDiagram(diagram, path, model, { push = null, noise = true } = {}) {
-  const d = structuredClone(diagram);
-  const { level, block } = locate(d, path);
-  if (block?.type !== 'controller') throw new Error(`twinDiagram: no Controller block ${[].concat(path).join('/')}`);
-  const ids = new Set(level.blocks.map((b) => b.id));
-  const fresh = (base) => { let id = base; for (let k = 2; ids.has(id); k++) id = `${base}${k}`; ids.add(id); return id; };
-  const id = fresh('twin');
-  const rest = model.holds?.[0] ?? null;
-  const tw = twinSubsystem(model, { push: !!push, noise, id, name: 'identified model', at: rest ? { u0: rest.u, y0: rest.y } : null });
-  tw.x = (block.x ?? 0) + 160; tw.y = (block.y ?? 0) + 140;
-  const into = wireTo(level, block.id, 1);
-  const measured = into ? parseEnd(into.from) : null;
-  level.wires = level.wires.filter((w) => w !== into);
-  // An External plant leaves the copy: what it fed reads the twin where it
-  // was the measurement, nothing elsewhere.
-  const ext = level.blocks.filter((b) => b.type === 'external').map((b) => b.id);
-  if (ext.length) {
-    level.wires = level.wires.flatMap((w) => {
-      const f = parseEnd(w.from), t = parseEnd(w.to);
-      if (ext.includes(t.id)) return [];
-      if (!ext.includes(f.id)) return [w];
-      return measured && sameEnd(f, measured) ? [{ ...w, from: id }] : [];
-    });
-    level.blocks = level.blocks.filter((b) => !ext.includes(b.id));
-  }
-  // A Sink that showed the measurement shows the model's (a simulated plant
-  // runs on beside it, cut off; its other outputs read what it does open loop).
-  if (measured && !ext.includes(measured.id)) {
-    level.wires = level.wires.map((w) => (sameEnd(parseEnd(w.from), measured) && level.blocks.find((b) => b.id === parseEnd(w.to).id)?.type === 'sink' ? { ...w, from: id } : w));
-  }
-  level.blocks.push(tw);
-  level.wires.push({ from: block.id, to: id }, { from: id, to: `${block.id}:1` });
-  if (push) {
-    const sid = fresh('push');
-    level.blocks.push({ id: sid, type: 'source', name: 'push at the input (model only)', params: { signal: push }, x: tw.x - 120, y: tw.y + 60 });
-    level.wires.push({ from: sid, to: `${id}:1` });
-  }
-  return d;
-}
-
-// The test push (§10): at the twin's input, 20 % of the u the model needs to
-// move between the reference's levels (at least 1 % of u's range); where
-// the tester's d plays, with d's own shape and timing (a pulse is answered
-// on and off), scaled to that size; else a step at 60 % of the period.
-// → { amplitude, time, components }.
-export const PUSH = { share: 0.2, least: 0.01, at: 0.6 };
-export function testPush(project, path, model) {
-  const known = knownFor(project, path);
-  const S = STRUCTURES[model.structure], p = model.params;
-  const span = known.r?.span ?? 0;
-  const U = known.u.max - known.u.min;
-  const du = S.integrating ? 0 : Math.abs(span / p.K);
-  const amplitude = Math.max(PUSH.least * U, PUSH.share * du);
-  const period = known.r?.period ?? Math.max(...Object.values(project.system.signals).map((x) => x.period));
-  // The tester's d, where it plays timed components (steps, pulses, squares).
-  const d = known.others.map((o) => project.system.signals[o.name]).find((sg) => sg?.components?.some((c) => c.enabled !== false && finite(c.params?.amplitude) && c.params.amplitude !== 0 && finite(c.params?.time)));
-  if (d) {
-    const comps = d.components.filter((c) => c.enabled !== false && finite(c.params?.amplitude) && finite(c.params?.time));
-    const big = Math.max(...comps.map((c) => Math.abs(c.params.amplitude)));
-    return { amplitude, time: Math.min(...comps.map((c) => c.params.time)), components: comps.map((c) => ({ ...structuredClone(c), params: { ...c.params, amplitude: (c.params.amplitude / big) * amplitude } })) };
-  }
-  const time = PUSH.at * period;
-  return { amplitude, time, components: [{ type: 'step', params: { amplitude, time } }] };
-}
-
-// A project in which the Controller block at path drives the identified
-// model (§10): its plant is twinDiagram's, with the test push as a signal
-// named push; for Auto-tune ("on the model") and Analysis (noise: false).
-export function modelProject(project, path, model, { push = true, noise = true } = {}) {
-  const known = knownFor({ ...project, system: { ...project.system } }, path);
-  const signals = structuredClone(project.system.signals);
-  let name = null;
-  if (push) {
-    name = 'push';
-    for (let k = 2; signals[name]; k++) name = `push${k}`;
-    const tp = testPush(project, path, model);
-    const period = known.r?.period ?? 1;
-    signals[name] = { period, components: tp.components };
-  }
-  const diagram = normalizeDiagram(twinDiagram(project.system.plant.diagram, known.block.path, model, { push: name, noise }));
-  return { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram }, signals } };
-}
-
-// The loop the Controller at path closes round the identified model, for
-// Analysis (§12): the twin without its noise or push, linearised where the
-// run starts (the model at rest about where it was measured: it is linear),
-// labelled with the range it was identified over and its grade's warnings.
-// A controller at its limit there is not the model's concern: the model holds
-// about its range, not at a state. Returns loopModel's { plant, ctrl, Ts, … }.
-export function identifiedLoop(project, path, model) {
-  const lin = linearModel(model);
-  const m = loopModel(modelProject(project, path, model, { push: false, noise: false }), path, 'initial');
-  const own = m.warnings.filter((w) => !/is at its limit|the origin is not at rest/.test(w));
-  return { ...m, opLabel: lin.op.label, atLimit: false, identified: true, warnings: [...new Set([...lin.warnings, ...own])] };
-}
-
-// The key numbers across what the model is unsure of (§12): the loop for up
-// to `count` parameter samples and each place the model changes by; the
-// range of the gain and phase margins and of Ms over those that are stable.
-// Returns { gm: [lo, hi], pm: [lo, hi], ms: [lo, hi], n, unstable } or null.
-export function loopRanges(project, path, model, { count = 12 } = {}) {
-  const models = modelSamples(model, count).map((p) => ({ ...model, params: p }));
-  const S = STRUCTURES[model.structure], gk = GAIN(S);
-  for (const pl of model.where ?? []) if (pl.seen >= GRADE.seen && finite(pl.gain) && finite(pl.scale)) models.push({ ...model, params: { ...model.params, [gk]: pl.gain, [pl.scaleKey]: pl.scale } });
-  const out = { gm: [Infinity, -Infinity], pm: [Infinity, -Infinity], ms: [Infinity, -Infinity], n: 0, unstable: 0 };
-  const take = (k, v) => { if (finite(v)) { out[k][0] = Math.min(out[k][0], v); out[k][1] = Math.max(out[k][1], v); } };
-  for (const mm of models) {
-    let r;
-    try { const m = identifiedLoop(project, path, mm); r = analyzeLoop(m.plant, m.ctrl, m.Ts, { points: 200 }); } catch { continue; }
-    if (!r.stable) { out.unstable++; continue; }
-    out.n++;
-    take('gm', r.margins.gmUp); take('pm', r.margins.pm); take('ms', r.margins.ms);
-  }
-  return out.n || out.unstable ? out : null;
 }
 
 // ---- Compare with the diagram (§13, simulated plants only)
@@ -1532,20 +1409,6 @@ export function compareCurves(sys, Ts, { w = [], N = 0 } = {}) {
     x = P.A.map((row, i) => row.reduce((a, v, j) => a + v * x[j], 0) + P.B[i][0]);
   }
   return { mag, step };
-}
-
-// The model of the block's kept test in use (system.identify[key]), from its
-// record, for the command line and the MCP server (`--plant identified`);
-// throws an IdentifyError when none is kept.
-export function keptModel(project, path = null) {
-  const key = path ? [].concat(path).join('/') : controllerBlocks(project.system.plant.diagram)[0]?.key;
-  const e = project.system.identify?.[key];
-  const kept = e?.kept ?? [];
-  if (!kept.length) throw new IdentifyError('not-identified', 'identify the plant first: no test is kept for this block', 'node cli.mjs identify <project> --keep, or the Identify tab\'s Keep');
-  const k = kept[Math.min(kept.length - 1, Math.max(0, e.use ?? kept.length - 1))];
-  const model = drain(identifySteps(k.record, { plan: k.plan, structure: e.structure ?? null }));
-  if (!model.ok) throw new IdentifyError('no-model', `the kept test "${k.name}" gives no model: ${model.sentences[0]}`, 'identify again');
-  return { model, name: k.name, key };
 }
 
 // ---- Try on the plant (§11)
@@ -2115,4 +1978,311 @@ function discreteAt(d, Om) {
   // z⁻ᵐ
   const mr = Math.cos(-d.m * Om), mi = Math.sin(-d.m * Om);
   return [sr * mr - si * mi, sr * mi + si * mr];
+}
+
+// ---- Auto-tune and Analysis on the model (§10, §12)
+
+// The level holding the block at path, and the block.
+function levelOf(diagram, path) {
+  let level = diagram;
+  for (const id of path.slice(0, -1)) level = level.blocks.find((b) => b.id === id).diagram;
+  return { level, block: level.blocks.find((b) => b.id === path.at(-1)) };
+}
+const freeId = (level, base) => { let id = base; for (let i = 2; level.blocks.some((b) => b.id === id); i++) id = `${base}${i}`; return id; };
+
+// Where the twin rests (§10): u₀ and the y it held when the test began (the
+// first hold, Listen's), so a run that starts where the test started starts
+// in balance on the model too.
+export function twinOp(model) {
+  const h = model.holds?.[0];
+  return { u0: h?.u ?? 0, y0: h?.y ?? 0 };
+}
+
+// A copy of the diagram with the identified model in the plant's place
+// (§10): the twin subsystem (twinSubsystem, resting at twinOp) takes the
+// Controller's output and feeds its measurement input. The plant stays in
+// the copy, cut off: the wires from u into it go (u's Sinks stay), an
+// External plant goes, and every Sink that showed the plant goes, so the
+// scope's channels on them read nothing on the model; a Sink that showed the
+// measurement shows the twin's. push: the signal of a Source added for the
+// test push at the twin's input. Returns { diagram, twin (its id), cut: [the
+// Sinks that went], kept: [the Sinks that show the twin] }.
+export function twinDiagram(diagram, path, model, { push = null } = {}) {
+  if (!model?.structure) throw new IdentifyError('no-model', 'no model was identified', 'run a test in the Identify tab');
+  const d = structuredClone(diagram);
+  const { level, block } = levelOf(d, path);
+  if (!block) throw new IdentifyError('no-block', `there is no Controller block ${path.join('/')}`, 'choose one of the Controller blocks');
+  const into = wireTo(level, block.id, 1);
+  if (!into) throw new IdentifyError('unwired', 'wire the measurement to input 2', 'in the Plant tab');
+  const mEnd = parseEnd(into.from);
+  const id = freeId(level, 'twin');
+  const twin = twinSubsystem(model, { push: !!push, id, op: twinOp(model), name: 'identified model' });
+  const byId = (x) => level.blocks.find((b) => b.id === x);
+  const fromCtrl = (w) => { const e = parseEnd(w.from); return e.id === block.id; };
+  const cut = [], kept = [];
+  // External plants go, at any depth, with their wires.
+  const dropExternal = (dd) => {
+    const gone = new Set(dd.blocks.filter((b) => b.type === 'external').map((b) => b.id));
+    dd.blocks = dd.blocks.filter((b) => !gone.has(b.id));
+    dd.wires = dd.wires.filter((w) => !gone.has(parseEnd(w.from).id) && !gone.has(parseEnd(w.to).id));
+    for (const b of dd.blocks) if (b.type === 'subsystem') dropExternal(b.diagram);
+  };
+  // Sinks inside subsystems show the plant.
+  const dropSinks = (dd) => {
+    for (const b of dd.blocks) if (b.type === 'subsystem') {
+      const gone = new Set(b.diagram.blocks.filter((x) => x.type === 'sink').map((x) => { cut.push(x.params.name); return x.id; }));
+      b.diagram.blocks = b.diagram.blocks.filter((x) => !gone.has(x.id));
+      b.diagram.wires = b.diagram.wires.filter((w) => !gone.has(parseEnd(w.to).id));
+      dropSinks(b.diagram);
+    }
+  };
+  // At the Controller's level: a Sink stays if it shows a Source, the
+  // Controller or the measurement (moved to the twin's output).
+  const wires = [];
+  for (const w of level.wires) {
+    const to = byId(parseEnd(w.to).id), from = parseEnd(w.from), src = byId(from.id);
+    if (to?.id === block.id && parseEnd(w.to).port === 1) continue;
+    if (to?.type === 'sink') {
+      if (from.id === mEnd.id && from.port === mEnd.port) { wires.push({ from: id, to: w.to }); kept.push(to.params.name); continue; }
+      if (src?.type === 'source' || from.id === block.id) { wires.push(w); kept.push(to.params.name); continue; }
+      cut.push(to.params.name);
+      to.cut = true;
+      continue;
+    }
+    if (fromCtrl(w) && from.port === 0) continue;   // u into the plant: cut
+    wires.push(w);
+  }
+  level.blocks = level.blocks.filter((b) => !b.cut);
+  level.wires = wires;
+  dropSinks(level);
+  dropExternal(d);
+  level.blocks.push({ ...twin, x: block.x ?? 0, y: (block.y ?? 0) + 120 });
+  level.wires.push({ from: block.id, to: id }, { from: id, to: `${block.id}:1` });
+  if (push) {
+    const pid = freeId(level, 'push');
+    level.blocks.push({ id: pid, type: 'source', name: 'push at the input (model only)', params: { signal: push }, x: (block.x ?? 0) - 120, y: (block.y ?? 0) + 200 });
+    level.wires.push({ from: pid, to: `${id}:1` });
+  }
+  return { diagram: normalizeDiagram(d), twin: id, cut, kept };
+}
+
+// The test push (§10): the model has no path for the tester's d, and r alone
+// would tune a weak integral, so a step at the twin's input: 20 % of the u
+// the eased-in loop needed between the reference's levels, at least 1 % of
+// u's range; where the tester's d first steps and the way it pushes, else
+// in the middle of r's longest still stretch against r's step into it (else
+// at 60 % of the period); with no step to go by, the sign that leaves the
+// controller the larger share of its range.
+export const PUSH = { share: 0.2, least: 0.01, at: 0.6, grid: 1000 };
+// The middle of the longest stretch over which r stands still (wrapping
+// round the period), so a push there is answered alone, not mixed into a
+// step of r, and the step of r into it: { at, step }; null when r never
+// stands still or there is none.
+function stillestTime(sig, period) {
+  if (!sig) return null;
+  const f = referenceFn(sig), n = PUSH.grid, dt = period / n;
+  const v = Array.from({ length: n }, (_, k) => f((k + 0.5) * dt));
+  const tol = 1e-9 * Math.max(1, ...v.map(Math.abs));
+  const moves = [];
+  for (let k = 0; k < n; k++) if (Math.abs(v[(k + 1) % n] - v[k]) > tol) moves.push(k);
+  if (!moves.length || moves.length > n / 2) return null;
+  let best = null;
+  moves.forEach((k, i) => {
+    const next = moves[(i + 1) % moves.length] + (i + 1 === moves.length ? n : 0), len = next - k;
+    if (!best || len > best.len) best = { k, len };
+  });
+  const k0 = best.k + 1;
+  return { at: ((k0 + best.len / 2) * dt) % period, step: v[k0 % n] - v[best.k] };
+}
+export function modelPush(project, path, model) {
+  const signals = project.system.signals;
+  const period = Math.max(...Object.values(signals).map((s) => s.period));
+  const { block } = levelOf(project.system.plant.diagram, path);
+  const v = block.variants[block.variant ?? 0]?.params ?? {};
+  const lo = Number.isFinite(v.umin) ? v.umin : model.eased?.umin, hi = Number.isFinite(v.umax) ? v.umax : model.eased?.umax;
+  const range = Number.isFinite(lo) && Number.isFinite(hi) ? hi - lo : NaN;
+  const us = (model.holds ?? []).map((h) => h.u);
+  // Where the test held still at several levels, the u between them; for a
+  // plant that settles, at least r's span over its gain (a heater that
+  // cannot cool rests at 0 % wherever it was let go).
+  let moved = us.length > 1 ? Math.max(...us) - Math.min(...us) : 0;
+  const S = STRUCTURES[model.structure];
+  let span = NaN;
+  try { span = knownFor(project, path).r?.span; } catch { span = NaN; }
+  if (!S.integrating && Number.isFinite(span) && Math.abs(model.params.K) > 0) moved = Math.max(moved, span / Math.abs(model.params.K));
+  let size = PUSH.share * moved;
+  if (Number.isFinite(range)) size = Math.max(size, PUSH.least * range);
+  if (!(size > 0)) size = PUSH.least * Math.max(1, Math.abs(twinOp(model).u0));
+  const source = upstreamSource(project.system.plant.diagram, path, 0);
+  // Where d plays: when it first steps, and the way it pushes (the tester's
+  // own disturbance; it is taken to act at the plant's input).
+  let at = null, sign = 0;
+  for (const [name, sg] of Object.entries(signals)) {
+    if (name === source) continue;
+    const c = (sg.components ?? []).filter((x) => x.enabled !== false && finite(x.params?.amplitude) && x.params.amplitude !== 0).sort((x, y) => (x.params.time ?? 0) - (y.params.time ?? 0))[0];
+    if (c) { at = c.params.time ?? 0; sign = Math.sign(c.params.amplitude); break; }
+  }
+  const op = twinOp(model), gain = model.params[GAIN(S)];
+  const r = source && signals[source] ? referenceFn(signals[source]) : null;
+  if (at === null || !(at >= 0 && at < period)) {
+    // Else alone, in r's longest still stretch, and against r's last step
+    // there (a push the way r stepped reads as overshoot, which the cost
+    // charges apart, and tunes a bolder controller: on the arm Kp 1.6
+    // against 0.8, 1.5 × against 1.04 × of the best on the arm itself).
+    const still = stillestTime(signals[source], period);
+    at = still?.at ?? PUSH.at * period;
+    sign = still?.step && gain ? -Math.sign(still.step) * Math.sign(gain) : 0;
+  }
+  // No step to go by: the sign that leaves the controller the larger share
+  // of its range, at the u that holds r there.
+  if (!sign) {
+    let uh = us.length ? us.reduce((x, y) => x + y, 0) / us.length : op.u0;
+    if (!S.integrating && r && Math.abs(model.params.K) > 0) uh = op.u0 + (r(at) - op.y0) / model.params.K;
+    sign = Number.isFinite(range) && hi - uh > uh - lo ? -1 : 1;
+  }
+  return { size, at, sign, signal: { period, components: [{ type: 'step', params: { amplitude: sign * size, time: at } }] } };
+}
+
+// A copy of the project with the twin in the plant's place and the test
+// push among the signals: Auto-tune runs on it unchanged. Returns { project,
+// push, cut, kept }.
+export function twinProject(project, path, model) {
+  const key = [].concat(path).join('/');
+  const hit = controllerBlocks(project.system.plant?.diagram).find((c) => c.key === key);
+  if (!hit) throw new IdentifyError('no-block', `there is no Controller block ${key}`, 'choose one of the Controller blocks');
+  const push = modelPush(project, hit.path, model);
+  let name = 'push';
+  for (let i = 2; project.system.signals[name]; i++) name = `push ${i}`;
+  const t = twinDiagram(project.system.plant.diagram, hit.path, model, { push: name });
+  const p = { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram: t.diagram }, signals: { ...project.system.signals, [name]: push.signal } } };
+  return { project: p, path: hit.path, push: { ...push, name }, cut: t.cut, kept: t.kept };
+}
+
+// Auto-tune on the identified model (§10): the method runs unchanged on the
+// twin (twinProject), its result named "… (model)". diagram: true (a
+// simulated plant; ignored for a plant outside the page) also scores the start and the result on the diagram, so
+// the status gives both costs. Yields what autotuneSteps yields; returns its
+// result with on: 'model', push, cut and, with diagram, onDiagram: { before,
+// after } (the costs there).
+export function* modelTuneSteps(project, path, model, opts = {}) {
+  const twin = twinProject(project, path, model);
+  const { block } = levelOf(project.system.plant.diagram, twin.path);
+  const name = opts.name ?? resultName(block, opts.method ?? 'iterate', opts.rule, opts.simc, { model: true });
+  // The diagram as it is now (the page puts improvements into the project as they come).
+  // The hidden variation's copy where one is set (§13): the plant the test measured.
+  const ctx = opts.diagram && !findExternal(project.system.plant.diagram) ? tuneContext(variedProject(project, twin.path), twin.path) : null;
+  const res = yield* autotuneSteps(twin.project, twin.path, { ...opts, name });
+  const out = { ...res, on: 'model', push: twin.push, cut: twin.cut, kept: twin.kept };
+  if (ctx && res.ok && res.variant) {
+    const g = res.goal;
+    const startRun = runVariant(ctx, ctx.variant);
+    const scales = costScales(startRun, ctx.key, ctx.variant);
+    const before = runCost(startRun, ctx.key, g, { scales, variant: ctx.variant, others: ctx.others });
+    yield { partial: true, phase: 'diagram', seconds: ctx.sim.duration };
+    const after = variantCost(ctx, res.variant, g, scales);
+    yield { partial: true, phase: 'diagram', seconds: ctx.sim.duration };
+    out.onDiagram = { before, after };
+  }
+  return out;
+}
+export const modelTune = (project, path, model, opts) => drain(modelTuneSteps(project, path, model, opts));
+
+// The loop on the identified model for Analysis (§12): the model's
+// LinearModel (linearModel) in the middle of the range the test visited,
+// and the running variant's linear law there, as project.js loopModel returns a loop. A variant from the plant
+// computes its numbers from the diagram, not from the model (§19), and is
+// refused with a sentence.
+export function identifiedLoop(project, path, model) {
+  const key = [].concat(path).join('/');
+  const hit = controllerBlocks(project.system.plant?.diagram).find((c) => c.key === key);
+  if (!hit) throw new IdentifyError('no-block', `there is no Controller block ${key}`, 'choose one of the Controller blocks');
+  const block = hit.block, variant = block.variants[block.variant ?? 0], def = CONTROLLERS[variant.type], Ts = block.params.Ts;
+  if (def?.designed) throw new IdentifyError('designed', `${variant.name} is computed from the plant's diagram, which the identified model is not`, 'analyse a hand variant on the model (its Copy as numbers in the Controller tab), or the diagram');
+  if (!def?.linear) throw new IdentifyError('no-linear', `${def?.label ?? variant.type} has no linear model`, 'analyse another variant');
+  // The loop is read in the middle of the range the test visited (the u
+  // that holds it there through the gain; an integrator holds with u₀).
+  const lin = linearModel(model), rest = twinOp(model), S = STRUCTURES[model.structure];
+  const lo = model.where?.length ? model.where[0].from : model.band?.[0], hi = model.where?.length ? model.where.at(-1).to : model.band?.[1];
+  const y = Number.isFinite(lo) && Number.isFinite(hi) ? (lo + hi) / 2 : rest.y0;
+  const op = { y0: y, u0: S.integrating || !(Math.abs(model.params.K) > 0) ? rest.u0 : rest.u0 + (y - rest.y0) / model.params.K };
+  let ctrl;
+  try { ctrl = def.linear(variant.params, Ts, { y: [op.y0] }, null); } catch (err) { throw new IdentifyError('not-linear', `${variant.name}: ${err.message}`, err.hint ?? 'analyse another variant'); }
+  const loopTs = ctrl.Ts ?? Ts;
+  const plant = { ...lin, n: lin.A.length, m: 1, input: { label: lin.inputs[0].name }, op: { ...lin.op, x: new Float64Array(lin.A.length), u: op.u0, y: Float64Array.of(op.y0) }, kinks: [], idPath: hit.path, Ts: loopTs };
+  const warnings = [...lin.warnings];
+  if (ctrl.note) warnings.push(ctrl.note);
+  const { umin = -Infinity, umax = Infinity } = variant.params, tol = 1e-9 * Math.max(1, Math.abs(op.u0));
+  const atLimit = op.u0 >= umax - tol || op.u0 <= umin + tol;
+  if (atLimit) warnings.push(`${plant.input.label} = ${fmtNum(op.u0, 3)} is at its limit (${fmtNum(umin, 3)} to ${fmtNum(umax, 3)}) in the middle of the range identified: the controller saturates there, and the linear loop does not hold`);
+  return { plant, ctrl, Ts: loopTs, opLabel: lin.op.label, variantName: variant.name, type: variant.type, atLimit, warnings: [...new Set(warnings)], identified: true };
+}
+
+// The key numbers over what the model is unsure of (§12): the loop of
+// identifiedLoop for each of the model's parameter samples (the bands') and
+// each place the test sat at (Where), its margins without the root locus.
+// Returns { n, unstable (how many of them), gm, pm, ms, dm: [lo, hi] over
+// the stable ones } or null when the model has neither.
+export function loopRanges(project, path, model, { count = 50 } = {}) {
+  const loop = identifiedLoop(project, path, model);
+  const S = STRUCTURES[model.structure];
+  const sets = [...modelSamples(model, count)];
+  for (const pl of model.where ?? []) if (pl.seen >= GRADE.seen && Number.isFinite(pl.gain) && Number.isFinite(pl.scale)) sets.push({ ...model.params, [GAIN(S)]: pl.gain, [pl.scaleKey]: pl.scale });
+  if (!sets.length) return null;
+  const acc = { gm: [], pm: [], ms: [], dm: [] };
+  let unstable = 0;
+  for (const p of sets) {
+    const lin = linearModel({ ...model, params: p });
+    const plant = { ...loop.plant, A: lin.A, B: lin.B, C: lin.C, D: lin.D, delay: lin.delay };
+    try {
+      const L = openLoop(plant, loop.ctrl, loop.Ts);
+      if (closedLoopSides(L, 1).sides.some((s) => s !== 'in')) { unstable++; continue; }
+      const fd = frequencyData(L, { points: 200 });
+      const g = loopMargins(fd, loop.Ts, { L, poles: openLoopPoles(L) });
+      if (Number.isFinite(g.gmUp)) acc.gm.push(g.gmUp);
+      if (Number.isFinite(g.pm)) acc.pm.push(g.pm);
+      if (Number.isFinite(g.ms)) acc.ms.push(g.ms);
+      if (Number.isFinite(g.dm)) acc.dm.push(g.dm);
+    } catch { unstable++; }
+  }
+  const span = (v) => (v.length ? [Math.min(...v), Math.max(...v)] : null);
+  return { n: sets.length, unstable, gm: span(acc.gm), pm: span(acc.pm), ms: span(acc.ms), dm: span(acc.dm) };
+}
+
+// The model of the block's kept test in use (system.identify[key].use, else
+// the last kept), recomputed from its record (§9), or an IdentifyError that
+// says to identify first. For the command line's --plant identified.
+export function keptModel(project, path = null) {
+  const all = controllerBlocks(project.system.plant?.diagram);
+  const key = path ? [].concat(path).join('/') : all[0]?.key;
+  const s = project.system.identify?.[key] ?? {}, kept = s.kept ?? [];
+  if (!kept.length) throw new IdentifyError('no-model', 'identify the plant first: no test is kept for this block', 'node cli.mjs identify <project> --keep, or Keep in the Identify tab');
+  const i = Math.min(kept.length - 1, Math.max(0, s.use ?? kept.length - 1));
+  const model = drain(identifySteps(kept[i].record, { plan: kept[i].plan, structure: s.structure ?? null }));
+  if (!model.ok) throw new IdentifyError('no-model', `the kept test “${kept[i].name}” gives no model: ${model.sentences[0] ?? ''}`, 'identify the plant again');
+  return { model, name: kept[i].name, key };
+}
+
+// The Shake's measured points (§6.7) as the loop shows them (§12): at each
+// excited line of each place it shook at, the measured response over the
+// model's sampled one there (its G_d, else modelBode), so L·ratio is the
+// open loop with the plant as measured. Returns [{ w (rad/s), place, ratio:
+// { re, im }, bar (2σ of Ĝ over |Ĝ|) }], empty without the Shake.
+export function measuredPoints(model) {
+  if (!Array.isArray(model?.frf) || !model.structure) return [];
+  const Ts = model.Ts, out = [];
+  for (const F of model.frf) {
+    (F.G ?? []).forEach((g, i) => {
+      const w = 2 * Math.PI * F.f[i];
+      if (!(w > 0) || !(w < Math.PI / Ts)) return;
+      let mr, mi;
+      if (F.model?.[i]) [mr, mi] = F.model[i];
+      else { const b = modelBode(model, [w]), ph = (b.phase[0] * Math.PI) / 180; mr = b.mag[0] * Math.cos(ph); mi = b.mag[0] * Math.sin(ph); }
+      const den = mr * mr + mi * mi;
+      if (!(den > 0)) return;
+      const [gr, gi] = Array.isArray(g) ? g : [g.re, g.im];
+      const G = Math.hypot(gr, gi);
+      out.push({ w, place: F.place, ratio: { re: (gr * mr + gi * mi) / den, im: (gi * mr - gr * mi) / den }, bar: G > 0 ? (2 * (F.sd?.[i] ?? 0)) / G : 0 });
+    });
+  }
+  return out;
 }

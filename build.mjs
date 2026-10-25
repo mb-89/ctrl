@@ -17,7 +17,7 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 export const MODULES = [
   'core/poly.js', 'core/linalg.js', 'core/scale.js', 'core/speed.js', 'core/blocks.js', 'core/expr.js', 'core/formula.js', 'core/signals.js', 'core/metrics.js', 'core/goal.js', 'core/linearize.js', 'core/planner.js', 'core/design.js', 'core/spectrum.js', 'core/fit.js', 'core/experiment.js', 'core/controllers.js', 'core/structure.js', 'core/observers.js', 'core/hil.js', 'core/components.js', 'core/xml.js', 'core/urdf.js', 'core/rbd.js', 'core/puma560.js', 'core/mech.js', 'core/sheet.js', 'core/physics.js', 'core/mathblocks.js', 'core/robotblocks.js', 'core/vectors.js', 'core/diagram.js', 'core/sim.js', 'core/pumasystem.js', 'core/plants.js', 'core/views.js', 'core/project.js', 'core/tune.js', 'core/examples.js', 'core/systems.js', 'core/hilsim.js', 'core/analysis.js', 'core/autotune.js', 'core/ops.js',
   'core/ramp.js', 'core/live.js', 'core/identify.js', 'core/trace.js', 'core/zip.js', 'core/guide.js',
-  'ui/units.js', 'ui/palette.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/measure.js', 'ui/display.js', 'ui/plots.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/view3d.js', 'ui/robotscene.js', 'ui/joins.js', 'ui/plant.js', 'ui/ctldiagram.js', 'ui/controller.js', 'ui/autotune.js', 'ui/identify.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/speed.js', 'ui/limited.js', 'ui/bridge.js', 'ui/app.js',
+  'ui/units.js', 'ui/palette.js', 'ui/dial.js', 'ui/freqview.js', 'ui/xyview.js', 'ui/measure.js', 'ui/display.js', 'ui/plots.js', 'ui/plantsource.js', 'ui/analysis.js', 'ui/controls.js', 'ui/generator.js', 'ui/scene.js', 'ui/view3d.js', 'ui/robotscene.js', 'ui/joins.js', 'ui/plant.js', 'ui/ctldiagram.js', 'ui/controller.js', 'ui/autotune.js', 'ui/identify.js', 'ui/layout.js', 'ui/record.js', 'ui/live.js', 'ui/speed.js', 'ui/limited.js', 'ui/bridge.js', 'ui/app.js',
 ];
 
 // Live mode offers the external plant for download: the files of hil/ ride in
@@ -271,8 +271,16 @@ const SHELL = `<div id="lt-shell" class="app">
 const jsonScript = (project) => `<script type="application/json" id="loop-tuner-project">\n${JSON.stringify(project, null, 2).replace(/</g, '\\u003c')}\n</script>`;
 
 // fragment: the page body for hosts that supply their own document skeleton.
+// The one style sheet, as the page and the decision report carry it (input 65).
+const styleSheet = () => readFileSync(join(ROOT, 'src/ui/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\n\s*\n+/g, '\n');
+
+// The decision report's look (src/core/pugh.js, renderHtml's style): the
+// page's fonts and its style sheet, read from their files when the report is
+// made, never copied; the fonts' notice as the style's licence.
+export const reportStyle = () => ({ css: `${fontFaces()}\n${styleSheet()}`, license: FONT_LICENSE });
+
 export function buildHtml({ project = null, fragment = false } = {}) {
-  const css = readFileSync(join(ROOT, 'src/ui/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\n\s*\n+/g, '\n');
+  const css = styleSheet();
   const js = bundleScript().replace(/<\/script/gi, '<\\/script');
   const title = project?.title ? `${project.title} · Loop Tuner` : 'Loop Tuner';
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -286,7 +294,7 @@ export function buildHtml({ project = null, fragment = false } = {}) {
   return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(title)}</title>\n<meta name="description" content="${esc(AGENT_NOTE)}">\n${FONTS()}\n<style id="lt-style">${css}</style>\n${limitedCheck()}\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   mkdirSync(join(ROOT, 'dist'), { recursive: true });
   const standalone = buildHtml();
   writeFileSync(join(ROOT, 'dist/loop-tuner.html'), standalone);

@@ -10,9 +10,8 @@
 // meanwhile; as fast as possible, it computes in slices between frames, so
 // the page keeps drawing. See design/output/autotune.md.
 
-import { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, diagramCost, RULES, SIMC, COSTS, GOAL, tauCSource, tauCShort } from '../core/autotune.js';
-import { findExternal } from '../core/hil.js';
-import { variedProject } from '../core/identify.js';
+import { controllerBlocks, tuneContext, tunedValues, autotuneSteps, whyNot, resultName, placeVariant, RULES, SIMC, COSTS, GOAL, tauCSource, tauCShort } from '../core/autotune.js';
+import { twinProject, modelTuneSteps } from '../core/identify.js';
 import { CONTROLLERS } from '../core/controllers.js';
 import { num, parseSI } from './units.js';
 import { AS_FAST, formatSpeed } from '../core/speed.js';
@@ -49,7 +48,7 @@ export function createAutotuneTab(host, app, display) {
       <section class="gcol" aria-label="Controller to tune">
         <div class="ghead"><h3 class="label">Controller</h3></div>
         <div id="tu-blocks" class="ctblocks"></div>
-        <div class="seg seg-fill" id="tu-source" role="radiogroup" aria-label="Plant"></div>
+        <div id="tu-src"></div>
         <ul class="lcd list turows" id="tu-now"></ul>
         <p class="note" id="tu-target"></p>
       </section>
@@ -82,12 +81,20 @@ export function createAutotuneTab(host, app, display) {
   const root = () => (app.project.system.plant?.type === 'diagram' ? app.project.system.plant.diagram : null);
   const blocks = () => controllerBlocks(root());
   const current = () => { const all = blocks(); return all.find((c) => c.key === st.target) ?? all[0] ?? null; };
-  // The plant it tunes on (identification.md §10): the diagram, or the
-  // identified model in the plant's place ("on the model").
-  const onModel = () => !!current() && app.plantSource(current().path) === 'identified';
-  const tuneProject = () => (onModel() ? app.modelProject(current().path) : app.project);
   // The block's tuning context, or why there is none (an unwired input, …).
-  const context = () => { try { return { ctx: tuneContext(tuneProject(), current()?.path) }; } catch (err) { return { why: err.message }; } };
+  // On the identified model (ui/plantsource.js) the context is the twin's:
+  // the model in the plant's place, with the test push (identification.md §10).
+  const context = () => {
+    const c = current();
+    const src = c ? app.plantSource.state(c.key) : null;
+    try {
+      if (src?.on !== 'identified') return { ctx: tuneContext(app.project, c?.path) };
+      if (src.why || src.wait) return { why: src.why ?? src.note, src };
+      const twin = twinProject(app.project, c.path, src.use.model);
+      return { ctx: tuneContext(twin.project, twin.path), twin, src };
+    } catch (err) { return { why: err.message, src }; }
+  };
+  const onModel = () => { const c = current(); return !!c && app.plantSource.get(c.key) === 'identified'; };
   const unitY = () => { const c = current(); return c ? app.unitOf(inputName(c, 1)) : ''; };
   // The name of the signal on a block input, for its unit: the Source it
   // comes from, or a Sink that shows the same wire.
@@ -133,11 +140,9 @@ export function createAutotuneTab(host, app, display) {
     $('#tu-blocks').innerHTML = all.length > 1
       ? all.map((x) => `<button class="btn btn-block" data-path="${esc(x.key)}" aria-pressed="${x.key === c.key}" ${job ? 'disabled' : ''}>${esc(x.where)}</button>`).join('')
       : `<div class="heading">${esc(c.where)}</div>`;
-    // The plant: the diagram or the identified model; a plant outside the
-    // page has no diagram to tune on.
-    const live = !!findExternal(root()), model = onModel();
-    $('#tu-source').innerHTML = `<button class="btn btn-sm" role="radio" data-source="diagram" aria-checked="${!model}" ${live || job ? 'disabled' : ''} title="${live ? 'The plant runs outside the page: there is no diagram to tune on' : 'Tune on the plant as the diagram has it'}">Diagram</button><button class="btn btn-sm" role="radio" data-source="identified" aria-checked="${model}" ${job || live ? 'disabled' : ''} title="Tune on the model the Identify tab found, in the plant's place, its noise and a test push at its input included: “on the model”${app.identifiedLabel(c.path) ? ` (${esc(app.identifiedLabel(c.path))})` : ''}">Identified model</button>`;
     const { ctx, why: noCtx } = context();
+    $('#tu-src').innerHTML = app.plantSource.html(c.key, { disabled: !!job });
+    app.plantSource.bind($('#tu-src'), c.key);
     // A variant from the plant is tuned as its Copy as numbers twin, from the
     // numbers its design computes now (core/autotune.js, asTuned).
     const twin = ctx?.designed?.from ? ctx.variant : null;
@@ -147,7 +152,7 @@ export function createAutotuneTab(host, app, display) {
     $('#tu-now').innerHTML = `<li class="tuhead"><b>${esc(v.name)}</b><span class="hint">${esc(CONTROLLERS[v.type]?.label ?? v.type)} · running</span></li>`
       + (twin && !why ? `<li class="tunote">from the plant: tuned as a ${esc(CONTROLLERS[twin.type].label)}, from the numbers it computes now</li>` : '')
       + tunedValues(twin ?? v).map(([k, x]) => `<li class="turow"><span>${esc(k)}</span><span>${show(x)}</span></li>`).join('');
-    const into = job ? job.name : resultName(c.block, st.method, st.rule, st.simc, { onModel: model });
+    const into = job ? job.name : resultName(c.block, st.method, st.rule, st.simc, { model: onModel() });
     const target = $('#tu-target');
     if (job) { target.innerHTML = `Into <b>${esc(into)}</b>`; target.title = `${shown.before?.variant.name ?? v.name} stays as it was.`; }
     else if (why) { target.innerHTML = `<span class="text-bad">${esc(why)}</span>`; target.title = ''; }
@@ -181,7 +186,6 @@ export function createAutotuneTab(host, app, display) {
   function bind() {
     host.querySelectorAll('[data-path]').forEach((el) => { el.onclick = () => { if (job) return; st.target = el.dataset.path; shown = null; renderAll(); }; });
     host.querySelectorAll('[data-method]').forEach((el) => { el.onclick = () => { if (job) return; st.method = el.dataset.method; renderAll(); }; });
-    host.querySelectorAll('[data-source]').forEach((el) => { el.onclick = () => { if (job || el.disabled) return; app.setPlantSource(current().path, el.dataset.source); }; });
     host.querySelectorAll('[data-cost]').forEach((el) => { el.onclick = () => { if (job) return; st.goal.cost = el.dataset.cost; renderSetup(); }; });
     const rule = $('#tu-rule');
     if (rule) rule.onchange = () => { if (job) return; st.rule = rule.value; rule.blur(); renderSetup(); };
@@ -224,6 +228,10 @@ export function createAutotuneTab(host, app, display) {
   // step; the run takes no other.
   function place(variant, run, from = null) {
     if (!job.edit) { app.beginEdit(); job.edit = true; }
+    // On the model the tuner's run is not the screen's; on a plant outside
+    // the page the result is added but not run (Try on the plant hands it over).
+    if (job.model) from = null;
+    if (job.hil) run = false;
     app.tuneEdit((p) => placeVariant(p, job.path, variant, { run }), from);
     if (run) job.ran = true;
     shown.placed = structuredClone(variant);
@@ -236,16 +244,19 @@ export function createAutotuneTab(host, app, display) {
     if (!c || why) { app.toast(why ?? 'There is no Controller block to tune.'); return; }
     // The settings are copied: changing them during the run changes nothing.
     const goal = { ...st.goal };
-    const model = onModel();
-    const name = resultName(c.block, st.method, st.rule, st.simc, { onModel: model });
-    const gen = autotuneSteps(tuneProject(), c.path, { method: st.method, goal, rule: st.rule, simc: st.simc, amplitude: st.amplitude, maxIter: st.maxIter, feedforward: st.feedforward, name });
-    shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null, unit: unitY() };
+    const model = onModel(), hil = app.plantSource.hil();
+    const name = resultName(c.block, st.method, st.rule, st.simc, { model });
+    const opts = { method: st.method, goal, rule: st.rule, simc: st.simc, amplitude: st.amplitude, maxIter: st.maxIter, feedforward: st.feedforward, name };
+    // On the model, a simulated plant's result is scored on the diagram too.
+    const use = model ? app.plantSource.state(c.key).use : null;
+    const gen = model ? modelTuneSteps(app.project, c.path, use.model, { ...opts, diagram: !hil }) : autotuneSteps(app.project, c.path, opts);
+    shown = { method: st.method, rule: st.rule, goal, key: c.key, title: app.project.title, history: [], status: st.method === 'iterate' ? 'Scoring the running variant…' : 'Running the experiment…', before: null, best: null, res: null, placed: null, unit: unitY(), on: model ? app.plantSource.label(use) : null };
     // bests: the loop's run with each better set of gains, newest first; the
     // display fades them behind the run on screen. queue: steps computed
     // ahead, not yet taken. bestRun: the run of the best gains so far (it
     // stands for the screen's when that is the same simulation; app.tuneEdit).
     job = {
-      gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, ctx, mode: display.mode, startData: display.data, onModel: model, modelLabel: model ? app.identifiedLabel(c.path) : '',
+      gen, kind: st.method, name, path: c.path, plant: app.project.system.plant, ctx, mode: display.mode, startData: display.data, model, hil,
       timer: 0, lookTimer: 0, improveTimer: 0, improvedAt: 0, stepMs: 0, queue: [], playing: false,
       edit: false, ran: false, swept: false, showing: false, applied: Infinity, runs: 0, bests: [display.data], seenBest: null, bestRun: null,
     };
@@ -369,7 +380,7 @@ export function createAutotuneTab(host, app, display) {
     job.playing = true;
     app.playRun({ t: run.t, signals: run.signals }, job.bests.slice(0, 4));
     const sp = formatSpeed(app.speed());
-    const where = job.onModel ? ` on the model (${job.modelLabel})` : '';
+    const where = job.model ? ' on the model' : '';
     shown.status = job.runs <= 1 ? `Scoring the running variant${where}: its run sweeps at ${sp}.`
       : `Run ${job.runs}${where}${shown.iteration ? `, iteration ${shown.iteration}` : ''}, sweeping at ${sp}; the best so far fades behind it.`;
     afterSweep(swept);
@@ -413,7 +424,7 @@ export function createAutotuneTab(host, app, display) {
     if (res.method === 'iterate') {
       if (!res.ok) { end(`Could not run: ${res.why}.`); return; }
       const notes = res.notes?.length ? ` Note: ${res.notes.join('; ')}.` : '';
-      end((res.better ? 'Done: the cost stopped falling.' : 'Done: no better gains found; the running variant stays.') + notes);
+      end((res.better ? 'Done: the cost stopped falling.' : 'Done: no better gains found; the running variant stays.') + onModelText(res) + notes);
       return;
     }
     if (!res.run) { end(res.ok ? 'Done.' : `Could not run: ${res.why}.`); return; }
@@ -439,16 +450,27 @@ export function createAutotuneTab(host, app, display) {
     });
   }
 
+  // What a run on the model says (§10): how many runs, on which model, and on
+  // a simulated plant the costs on the model and on the diagram; on a plant
+  // outside the page, that the result waits to be tried.
+  function onModelText(res) {
+    if (!job?.model) return '';
+    const out = [` ${job.runs} runs on the model (${shown.on}).`];
+    if (res.onDiagram && res.after) out.push(`Cost on the model ${num(res.after.J, 3)} · on the diagram ${num(res.onDiagram.after.J, 3)} (it started at ${num(res.onDiagram.before.J, 3)} there).`);
+    if (job.hil && res.ok && res.better) out.push(`${res.variant.name} was added, not run: Try on the plant comes next; until then run it in the Controller tab while you watch the plant.`);
+    return out.join(' ');
+  }
+
   function apply(res) {
     shown.res = res;
     if (!res.ok) { end(`The experiment gave no result: ${res.why}.`); return; }
     const notes = res.notes?.length ? ` Note: ${res.notes.join('; ')}.` : '';
-    if (res.better) { place(res.variant, true); end(`Done.${notes}`); return; }
+    if (res.better) { place(res.variant, true); end(`Done.${onModelText(res)}${notes}`); return; }
     // Worse than the running variant (or unstable where the run starts,
     // whatever its run scores): kept to compare, not run.
     place(res.variant, false);
     const x = `cost ×${num(res.after.J / res.before.cost.J, 2)}`;
-    end(`${res.unstableAtStart ? `The result is not run (${x} against ${res.before.variant.name})` : `The result scores worse than ${res.before.variant.name} (${x})`}${res.worse ? `: ${res.worse}` : ''}. It was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${notes}`);
+    end(`${res.unstableAtStart ? `The result is not run (${x} against ${res.before.variant.name})` : `The result scores worse than ${res.before.variant.name} (${x})`}${res.worse ? `: ${res.worse}` : ''}. It was added as ${res.variant.name}, but ${res.before.variant.name} keeps running.${onModelText(res)}${notes}`);
   }
 
   // What the display shows of a step test, in words. Times on the display
@@ -485,19 +507,6 @@ export function createAutotuneTab(host, app, display) {
       if (j.ran) display.keep(j.startData);
     }
     if (!gone || display.mode === 'stop') app.setRunMode(mode ?? (j.mode === 'single' ? 'stop' : j.mode));
-    // Tuned on the model of a simulated plant: the result also runs on the
-    // diagram, and the status gives both costs (§10).
-    if (!gone && j.onModel && shown) {
-      shown.status = `${shown.status} ${j.runs} runs on the model (${j.modelLabel}).`;
-      const after = shown.placed ?? (shown.best?.variant && shown.best.cost.J < shown.before?.cost.J ? shown.best.variant : null);
-      if (after && shown.before && !findExternal(root())) {
-        try {
-          const plant = variedProject(app.project, j.path), was = diagramCost(plant, j.path, shown.before.variant, shown.goal), now = diagramCost(plant, j.path, after, shown.goal);
-          const onM = shown.res?.after ?? shown.best?.cost;
-          shown.status += ` On the model ${num(onM?.J ?? NaN, 3)} · on the diagram ${num(now.J, 3)} (it was ${num(was.J, 3)}).`;
-        } catch { /* the diagram cannot run it: the model's cost stands alone */ }
-      }
-    }
     if (gone) { shown = null; app.toast(status); }
     else if (j.ran) {
       const after = shown.res?.after ?? shown.best?.cost;
@@ -573,6 +582,8 @@ export function createAutotuneTab(host, app, display) {
         rows.push(row(k, after ? `${x === undefined ? '—' : show(x)} → ${show(y)}` : show(x), ''));
       }
     }
+    if (s.on) rows.push(row('Plant', 'identified model', '', '', s.on));
+    if (res?.onDiagram) rows.push(row('Diagram', `${num(res.onDiagram.before.J, 3)} → ${num(res.onDiagram.after.J, 3)}`, `×${num(res.onDiagram.after.J / res.onDiagram.before.J, 2)}`, res.onDiagram.after.J > res.onDiagram.before.J ? 'text-bad' : 'text-ok', 'The cost of the start and of the result on the diagram: the plant as built'));
     if (s.placed) rows.push(row('Into', s.placed.name, ''));
     $('#tu-result').innerHTML = rows.join('');
     $('#tu-status').textContent = s.status;
