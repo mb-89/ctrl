@@ -70,7 +70,8 @@ function startApp() {
   app.redo = () => { if (!redoStack.length) return; undoStack.push(JSON.stringify(app.project)); restore(redoStack.pop()); toast('Redone'); };
 
   let saveTimer = null;
-  // A page without a project inside opens the first system of the library.
+  // A page without a project inside opens the first system of the library,
+  // its flagship (the PUMA, input 39).
   // Autosaved work belongs to the project the page opened with: when that
   // changes (a new version of the page), the old work is not restored over it.
   const startText = embeddedText || JSON.stringify(applySystem(DEFAULT_PROJECT, SYSTEM_LIBRARY[0], SYSTEM_PARTS.filter((k) => SYSTEM_LIBRARY[0][k])));

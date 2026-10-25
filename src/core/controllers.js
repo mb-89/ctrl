@@ -44,7 +44,7 @@
 // computation (a plan; the tab folds it away), `tune: false` one auto-tune
 // leaves alone.
 
-import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLinDesign, speedPIDesign, poleOf } from './design.js';
+import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLinDesign, speedPIDesign, deadbeatDesign, poleOf } from './design.js';
 import { DesignError } from './linearize.js';
 import { planLaw } from './planner.js';
 
@@ -72,6 +72,8 @@ const WINDUP = [
 const SHARED = ['Kff', 'Kv', 'Ka', 'aw', 'Tt', 'umin', 'umax'];
 // The energy pump of the swing-up: hand gains, shared by its two types.
 const SWING = [num('kE', 'Energy gain kE', 1), num('kx', 'Centring kx', 0), num('kv', 'Centring kv', 0), num('l', 'Pole length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('thetaS', 'Catch below θs', 0.4, { unit: 'rad', min: 0 })];
+// A law that updates every k samples and holds u in between: a longer sample time, k·Ts.
+const EVERY = num('every', 'Update every', 1, { int: true, min: 1, tune: false, help: 'u is computed every k samples and held in between: a sample time of k·Ts' });
 // The weights of an LQR design.
 const WEIGHTS = [
   vec('Q', 'Weights Q', [1], { min: 0, per: 'measurement', help: 'what an error in each measurement costs, one per measurement; one value weighs them all' }),
@@ -221,18 +223,24 @@ export const CONTROLLERS = {
   },
   stateFeedback: {
     label: 'State feedback', summary: 'u = kr r − K · y',
-    params: [vec('K', 'Gains K', [1], { per: 'measurement' }), num('kr', 'Prefilter kr', 1), PREFILTER, ...LIMITS],
+    params: [vec('K', 'Gains K', [1], { per: 'measurement' }), num('kr', 'Prefilter kr', 1), PREFILTER, EVERY, ...LIMITS],
     make(p, Ts) {
       const pre = prefilter(p, Ts);
+      let k = 0, u = 0;
       return {
         step(x) {
-          let u = p.kr * pre(x[0]);
+          const rf = pre(x[0]);
+          if (k++ % (p.every ?? 1)) return u;
+          u = p.kr * rf;
           for (let i = 0; i < p.K.length; i++) u -= p.K[i] * (x[i + 1] ?? 0);
-          return clamp(u, p.umin, p.umax);
+          u = clamp(u, p.umin, p.umax);
+          return u;
         },
       };
     },
-    linear: (p) => staticLinear(p.kr, p.K, p.Tr),
+    // Updated every k samples, the law is linear at k·Ts (it reads y only
+    // then), so the loop is analysed there.
+    linear: (p, Ts) => (p.every > 1 ? { ...staticLinear(p.kr, p.K, p.Tr), Ts: p.every * Ts, note: `the law updates every ${p.every} samples: the loop is analysed at ${p.every} × Ts` } : staticLinear(p.kr, p.K, p.Tr)),
   },
   lqr: {
     // Discrete LQR at the origin of the plant the block sees, which must be an
@@ -250,6 +258,24 @@ export const CONTROLLERS = {
     },
     manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, umin: p.umin, umax: p.umax } }),
     linear: twinLinear('lqr'),
+  },
+  deadbeat: {
+    // State feedback with every pole of the loop at z = 0, at the sample time
+    // k·Ts (design.js, deadbeatDesign): from rest, a step of r is followed in
+    // n samples exactly, n the plant's states; every state measured.
+    label: 'Deadbeat', summary: 'u = kr r − K · y, every pole at z = 0: settles in n samples',
+    designed: true, version: 1, computes: ['K', 'kr'], twin: 'stateFeedback',
+    params: [{ ...EVERY, help: 'the deadbeat runs at k·Ts and settles in n of those samples (n states); longer asks less of u' }, num('track', 'r applies to', 1, { int: true, min: 0, help: 'the measurement (1, 2, …) that follows r; 0: none' }), PREFILTER, ...LIMITS],
+    design(p, ctx) {
+      const d = deadbeatDesign(ctx.linearize('origin'), { track: p.track, Ts: (p.every ?? 1) * ctx.Ts, umin: p.umin, umax: p.umax });
+      return { values: { K: d.K, kr: d.kr }, rows: d.rows, warnings: d.warnings };
+    },
+    make(p, Ts, values) {
+      if (!values) return OFF;
+      return CONTROLLERS.stateFeedback.make(CONTROLLERS.deadbeat.manual(p, values).params, Ts);
+    },
+    manual: (p, values) => ({ type: 'stateFeedback', params: { K: [...values.K], kr: values.kr, Tr: p.Tr, every: p.every, umin: p.umin, umax: p.umax } }),
+    linear: twinLinear('deadbeat'),
   },
   gainScheduled: {
     label: 'Gain-scheduled PI', summary: 'PI with Kp, Ki looked up from y',

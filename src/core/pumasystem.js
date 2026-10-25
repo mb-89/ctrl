@@ -251,7 +251,7 @@ export const PUMA_SYSTEM = {
     b_r: { period: 5, components: [{ type: 'sine', params: { amplitude: 0.15, frequency: 0.4, phase: 0, ease: 0.5 } }] },
   },
   scope: { channels: [
-    { source: 'ea', on: true, scale: 1, offset: 0, measure: true }, { source: 'eb', on: true, scale: 1, offset: 0 },
+    { source: 'ea', on: true, scale: 1, offset: 0 }, { source: 'eb', on: true, scale: 1, offset: 0 },
     { source: 'tau2', on: true, scale: 1, offset: 0 }, { source: 'tau3', on: true, scale: 1, offset: 0 },
   ] },
   ui: { run: 'run', tab: 'plant', setup: 0.42, view: 'Robot' },
