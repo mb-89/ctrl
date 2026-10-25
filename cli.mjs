@@ -12,6 +12,8 @@ import { SIGNALS, normalizeComponent, describeComponent } from './src/core/signa
 import { runTune, tunableParams } from './src/core/tune.js';
 import { EXAMPLES, DEFAULT_PROJECT } from './src/core/examples.js';
 import { autotune, tuneReport, placeVariant, controllerBlocks, tunedValues, METHODS as TUNE_METHODS, RULES, SIMC, COSTS, tauCSource } from './src/core/autotune.js';
+import { identify, withBar, BUDGETS } from './src/core/identify.js';
+import { STRUCTURES, paramInfo } from './src/core/fit.js';
 
 const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command> [options]
 
@@ -33,12 +35,19 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
                                         page's Auto-tune tab does; --save puts the result into the block as a
                                         variant of its own (running if it scores better); --ff also tunes
                                         the feedforward gains (Kff, Kv, Ka) that are 0
+  identify <project> [--block <id path>] [--band lo,hi] [--budget 120] [--vary 0.15 --seed 7] [--structure lag]
+           [--json] [--keep]
+                                        Identify's whole test on the simulated plant: the experiment
+                                        eases in (Listen, Nudge, Hold, Ease in, Check), then the model is fitted
+                                        and graded; prints what it found in sentences. --vary hides a seeded
+                                        variation of the plant (share of each physical parameter) and reveals it;
+                                        --keep stores the record (not the model) in the project
   trace <project> [--candidate <name>] [--every 10] [--json]
                                         time series t, r, y, u, ym, d as CSV
   html <project> [-o out.html]          a standalone page with the project inside, to share
   extract <page.html>                   print the project inside an exported page
 
-  --json prints machine-readable output for eval, try, tune and autotune.
+  --json prints machine-readable output for eval, try, tune, autotune and identify.
   --set takes controller parameters (Kp=2) or slot.param for a what-if on another
   slot of this candidate only (plant.tau=2, sensor.type=lag). Lists: num=[1,2].
 `;
@@ -50,7 +59,7 @@ function parseArgs(argv) {
     if (a === '-o') { opt.o = argv[++i]; continue; }
     if (a.startsWith('--')) {
       const key = a.slice(2);
-      if (['json', 'save', 'help', 'ff'].includes(key)) { opt[key] = true; continue; }
+      if (['json', 'save', 'help', 'ff', 'keep'].includes(key)) { opt[key] = true; continue; }
       const val = argv[++i];
       if (val === undefined) fail(`--${key} needs a value`);
       if (key === 'set') opt.set.push(val); else opt[key] = val;
@@ -302,6 +311,73 @@ switch (cmd) {
     for (const n of res.notes ?? []) console.log(`  note: ${n}`);
     if (!res.better) console.log(`  the result scores no better than the running variant${res.worse ? `: ${res.worse}` : ''}`);
     if (opt.save) console.log(res.better ? `saved: “${res.variant.name}” now runs in ${pos[1]}` : `saved: “${res.variant.name}” added to ${pos[1]}; “${res.before.variant.name}” keeps running`);
+    break;
+  }
+  case 'identify': {
+    const project = readProject(pos[1]);
+    const path = opt.block ? opt.block.split('/') : null;
+    if (path && !controllerBlocks(project.system.plant?.diagram).some((c) => c.key === opt.block)) fail(`--block ${opt.block}: no Controller block there; blocks: ${controllerBlocks(project.system.plant?.diagram).map((c) => c.key).join(', ') || 'none'}`);
+    const settings = {};
+    if (opt.band !== undefined) {
+      const b = String(opt.band).split(',').map(Number);
+      if (b.length !== 2 || !b.every(Number.isFinite) || !(b[0] < b[1])) fail('--band: low,high (for example -0.5,2)');
+      settings.band = b;
+    }
+    if (opt.budget !== undefined) {
+      settings.budget = Number(opt.budget);
+      if (!(settings.budget > 0)) fail(`--budget: seconds of plant time (the page offers ${BUDGETS.join(', ')})`);
+    }
+    if (opt.vary !== undefined) {
+      const share = Number(opt.vary), seed = opt.seed === undefined ? 1 : Number(opt.seed);
+      if (!(share > 0 && share < 1)) fail('--vary: the share each physical parameter may vary, above 0 and below 1 (0.15 is ±15 %)');
+      if (!Number.isInteger(seed)) fail('--seed: a whole number');
+      settings.vary = { share, seed };
+    } else if (opt.seed !== undefined) fail('--seed goes with --vary');
+    if (opt.structure !== undefined) {
+      if (!STRUCTURES[opt.structure]) fail(`--structure: one of ${Object.keys(STRUCTURES).join(', ')}`);
+      settings.structure = opt.structure;
+    }
+    let res;
+    try { res = identify(project, path, settings); } catch (e) { fail(e.code ? `${e.message}${e.hint ? ` (${e.hint})` : ''}` : e.message); }
+    const m = res.model;
+    if (opt.keep) {
+      const key = res.block.key;
+      const entry = (project.system.identify ??= {})[key] ??= { kept: [] };
+      for (const k of ['band', 'budget', 'vary', 'structure']) if (settings[k] !== undefined) entry[k] = settings[k];
+      entry.kept ??= [];
+      entry.kept.push({ name: `${res.plan.names.y} · test ${entry.kept.length + 1}`, plan: res.plan, record: res.record });
+      entry.use = entry.kept.length - 1;
+      writeProject(pos[1], normalizeProject(project));
+    }
+    if (opt.json) {
+      const { record, ...rest } = res;
+      console.log(JSON.stringify({ title: project.title, ...rest, samples: record.y.length, kept: !!opt.keep }, null, 2));
+      if (!res.ok) process.exitCode = 1;
+      break;
+    }
+    const n = res.plan.names;
+    const unitOf = (u) => (u ? ` ${u}` : '');
+    console.log(`${project.title}: ${res.block.where} (${res.block.key}), ${n.u} → ${n.y} · Ts ${fmt(res.plan.Ts * 1000)} ms`);
+    console.log(`  ${n.y} may move within ${fmt(res.plan.band[0])} … ${fmt(res.plan.band[1])}${unitOf(n.yUnit)}; the test may take ${fmt(res.plan.budget)} s`);
+    if (res.vary) console.log(`  a hidden variation of ±${fmt(100 * res.vary.share)} %, seed ${res.vary.seed}`);
+    console.log(`  test: ${fmt(res.time)} s of plant time; tries ${res.tries.join(' · ') || 'none'}`);
+    console.log(`  ${res.end.message}`);
+    if (!m.ok) { for (const t of m.sentences) console.log(`  ${t}`); process.exitCode = 1; break; }
+    console.log('');
+    for (const t of m.sentences) console.log(`  ${t}`);
+    console.log('');
+    const chain = m.chain.map((c) => (c.value === null ? c.label : `${c.label} ${withBar(c.value, c.sd)}${c.unit ? ` ${c.unit}` : ''}`)).join(' → ');
+    console.log(`  model: ${m.label} (${m.glyph}): In → ${chain} → Out`);
+    console.log(`  chosen: ${m.chosen}; grade ${m.grade}${m.why.length ? ` (${m.why.join('; ')})` : ''}`);
+    console.log('  candidates (fit on the Check, %):');
+    for (const c of m.candidates) console.log(`    ${c.structure === m.structure ? '▸' : ' '} ${c.label.padEnd(22)} ${Number.isFinite(c.fit) ? fmt(c.fit) : '–'}  ${c.grade}${c.why.length ? `  ${c.why.join('; ')}` : ''}`);
+    if (m.check) console.log(`  Check: ${fmt(m.check.fit)} % (the noise allows ${fmt(m.check.ceiling)} %; the kernel ${m.check.kernel === null ? '–' : fmt(m.check.kernel)} %)`);
+    const seen = m.where.filter((pl) => pl.seen >= 0.1);
+    if (seen.length) console.log(`  where: ${seen.map((pl) => `near ${fmt(pl.level)}${unitOf(n.yUnit)}: gain ${withBar(pl.gain, pl.gainSd)}, ${paramInfo(pl.scaleKey).label} ${withBar(pl.scale, pl.scaleSd)}`).join('; ')}${m.whereSpread.flagged ? ' (differs by place)' : ''}`);
+    if (m.eased) console.log(`  the gentlest controller that held: PI, Kp ${fmt(m.eased.Kp)}, Ki ${fmt(m.eased.Ki)}${m.eased.try ? ` (try ${m.eased.try})` : ' (the Hold\'s)'}`);
+    for (const w of m.warnings) console.log(`  note: ${w}`);
+    if (res.vary) console.log(`  the plant was: ${res.vary.factors.map((f) => `${f.block} ${f.param} ${f.factor >= 1 ? '+' : '−'}${fmt(Math.abs(100 * (f.factor - 1)))} %`).join(', ')}`);
+    if (opt.keep) console.log(`  kept in ${pos[1]} (the record; the model is computed from it)`);
     break;
   }
   case 'trace': {

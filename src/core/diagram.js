@@ -23,6 +23,10 @@ const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...ext
 
 // Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
 // are diagram blocks too: their transfer function becomes the block.
+// vary marks a physical parameter (a mass, a length, a gain, a time, a
+// friction, an area): Identify's hidden variation scales it (varyDiagram,
+// identify.js). Initial values, g, limits, noise and an integrator's K (the
+// kinematics: position is the integral of speed) are not varied.
 export const ELEMENTS = {
   source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: () => [0, 1], formula: 'r(t)' },
   sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: () => [1, 0], formula: 'y' },
@@ -34,12 +38,12 @@ export const ELEMENTS = {
   },
   inport: { label: 'In', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [0, 1], formula: 'u' },
   outport: { label: 'Out', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [1, 0], formula: 'y' },
-  gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
+  gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1, { vary: true })], ports: () => [1, 1], formula: 'K' },
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
   integrator: { label: 'Integrator', group: 'Dynamics', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K / s', tf: (p) => ({ num: [p.K], den: [1, 0] }) },
   // The dead time is T_d in labels and formulas (L is the motor's inductance);
   // the key stays L, so files are unaffected.
-  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before T_d', 0)], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
+  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0, vary: true }), num('y0', 'Output before T_d', 0)], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
   fcn: { label: 'Function', group: 'Math', params: [{ key: 'expr', label: 'y = f(u)', default: 'u^2', kind: 'expr' }], ports: () => [1, 1], formula: 'f(u)' },
   saturation: { label: 'Saturation', group: 'Nonlinear', params: [num('min', 'Min', -1), num('max', 'Max', 1)], ports: () => [1, 1], formula: 'clamp' },
   quantizer: { label: 'Quantizer', group: 'Sensors', params: [num('q', 'Step', 0.01, { min: 1e-12 })], ports: () => [1, 1], formula: 'q · round(u / q)' },
@@ -48,7 +52,7 @@ export const ELEMENTS = {
     // Point mass m on a massless pole of length l, hinged on a cart of mass M.
     // θ = 0 is upright, positive leaning towards +x. b is the cart's friction.
     label: 'Cart–pole', group: 'Physics', formula: 'F → x, θ, v, ω', outputs: ['x', 'θ', 'v', 'ω'], ports: () => [1, 4],
-    params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6 }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
+    params: [num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6, vary: true }), num('m', 'Bob m', 0.2, { unit: 'kg', min: 1e-6, vary: true }), num('l', 'Length l', 0.5, { unit: 'm', min: 1e-6, vary: true }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0, vary: true }), num('theta0', 'Start θ₀', 0.05, { unit: 'rad' })],
     ode: {
       n: 4,
       init: (p) => [0, 0, p.theta0, 0],
@@ -70,9 +74,9 @@ export const ELEMENTS = {
     label: 'Pendulum chain on cart', group: 'Physics', formula: 'F → x, θ…, v, ω…',
     outputs: (p) => ['x', ...links(p).map((i) => `θ${i + 1}`), 'v', ...links(p).map((i) => `ω${i + 1}`)],
     ports: (p) => [1, 2 * p.links + 2],
-    params: [num('links', 'Links', 3, { min: 1, int: true, max: 3 }), num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6 }),
-      ...[1, 2, 3].flatMap((i) => [num(`m${i}`, `Mass m${i}`, 0.1, { unit: 'kg', min: 1e-6 }), num(`l${i}`, `Rod l${i}`, 0.25, { unit: 'm', min: 1e-6 })]),
-      num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0 }),
+    params: [num('links', 'Links', 3, { min: 1, int: true, max: 3 }), num('M', 'Cart M', 1, { unit: 'kg', min: 1e-6, vary: true }),
+      ...[1, 2, 3].flatMap((i) => [num(`m${i}`, `Mass m${i}`, 0.1, { unit: 'kg', min: 1e-6, vary: true }), num(`l${i}`, `Rod l${i}`, 0.25, { unit: 'm', min: 1e-6, vary: true })]),
+      num('g', 'g', 9.81, { unit: 'm/s²' }), num('b', 'Friction b', 0.1, { unit: 'N·s/m', min: 0, vary: true }),
       ...[1, 2, 3].map((i) => num(`theta${i}0`, `Start θ${i}₀`, i === 1 ? 0.05 : 0, { unit: 'rad' }))],
     ode: {
       n: (p) => 2 * p.links + 2,
@@ -88,7 +92,7 @@ export const ELEMENTS = {
     // dynamics are fast when nearly empty and slow when full. It cannot run
     // dry below 0 or hold more than H: what comes in beyond that overflows.
     label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
-    params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
+    params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4, vary: true }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4, vary: true }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3, vary: true }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0, vary: true }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
     ode: {
       n: 1,
       init: (p) => [Math.min(p.H, p.h0)],
@@ -544,6 +548,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     },
     // Values of the Sources and Sinks after the last eval.
     probes: () => probeList.map(([name, k]) => [name, vals[k]]),
+    // Each Controller block's law, by its id path ("ctrl", "motor/ctrl"): a
+    // runner reaches a hidden law's machine here (Identify's experiment).
+    laws: Object.fromEntries(ctrlNodes.map(([key, k]) => [key, nodes[k].law])),
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) nd.hist.push(inOf(nd)); },
     // External plants (Live mode): y is written by the caller, u() reads what

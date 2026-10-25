@@ -254,7 +254,7 @@ export const substeps = (...a) => stepPlan(...a).m;
 // A time on the decimal grid of whole nanoseconds, where the instants of
 // sources and samples are given (r stepping at 1.5 s; k·Ts): what is read at
 // the end of a step sees the edge on its new side.
-const onGrid = (t) => Math.round(t * 1e9) / 1e9;
+export const onGrid = (t) => Math.round(t * 1e9) / 1e9;
 
 // The diagram as the whole system, before any controller: every Source plays
 // its signal, every Sink is recorded. Returns { t, signals: { name: values } }.

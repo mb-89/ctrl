@@ -38,6 +38,18 @@ node cli.mjs autotune p.json --ff                              # also tune the f
 
 It prints the running variant and the result side by side (cost, overshoot, gains) and, for the experiments, what they measured. `--save` puts the result into the block as a variant of its own, "<name> · auto-tuned" (or "· relay T–L", "· SIMC"), and makes it run only if it scores better; the original stays, so the person can flip between them in the Controller tab. `--block motor/ctrl` picks a block by its id path when there are several; `--json` gives the full report. When a method cannot run it says why (a swing-up has no r − y to tune; the relay and step tests need one measurement). The step test fits a plant that settles (K, τ, θ) or one that integrates (k′, τ2, θ: a motor's angle, a tank's level without outflow) and, for a gain-scheduled PI, every point of its table; its notes say how it ended, any ripple, and when the step was made smaller. A result that scores worse than the running variant says why (`worse` in `--json`). Compare methods: the optimiser knows the goal and usually wins on it; a rule gives a sound loop in one experiment.
 
+## Identify a plant (simulated)
+
+`identify` runs the Identify tab's whole test on the project's own plant, as a tester with no model would ([design/output/identification.md](design/output/identification.md)): the page eases in (Listen, growing pushes, a gentle loop asked to be quicker try by try, a Check it was not fitted to), then fits small models and grades them on the Check.
+
+```
+node cli.mjs identify p.json                          # the sentences, the chain with ±2σ, the candidates, the places
+node cli.mjs identify p.json --vary 0.15 --seed 7     # a hidden ±15 % variation of the plant, revealed at the end
+node cli.mjs identify p.json --band -0.5,2 --budget 300 --keep   # settings, and keep the record in the project
+```
+
+`--json` gives the whole model (the same numbers as the page's core); `--keep` stores the measured record and its plan, never the model, which is always recomputed from them. A grade ! or ✕ says why (it explains under 85 %, it behaves differently at different places, what is left has a pattern). A live plant is identified in the page, not here.
+
 ## Rules of thumb
 
 | Symptom | Usual move |

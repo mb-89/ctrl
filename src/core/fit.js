@@ -231,14 +231,22 @@ export function simulateSegment(d, seg) {
 }
 
 // The weighted residuals √w·(y − ŷ) of every segment, from k = 1, end to end.
-function residuals(d, segments, out) {
+// A sample without a measurement (y not a number: a lost cycle the plant held
+// u over) counts 0.
+export function residuals(d, segments, out) {
   let o = 0;
   for (const seg of segments) {
     const { y: yh } = simulateSegment(d, seg);
     const w = Math.sqrt(seg.weight ?? 1), y = seg.y;
-    for (let k = 1; k < y.length; k++) out[o++] = w * (y[k] - yh[k]);
+    for (let k = 1; k < y.length; k++) out[o++] = Number.isFinite(y[k]) ? w * (y[k] - yh[k]) : 0;
   }
   return out;
+}
+// The measured samples residuals() counts (from k = 1, y a number).
+export function observations(segments) {
+  let n = 0;
+  for (const seg of segments) for (let k = 1; k < seg.y.length; k++) if (Number.isFinite(seg.y[k])) n++;
+  return n;
 }
 
 // ---- Levenberg–Marquardt
@@ -463,8 +471,9 @@ export function* fitStructureSteps(segments, structure, starts, { Ts = segments[
   if (!starts?.length) throw new Error('fitStructure: no start');
   const kinds = S.params.map((k) => PARAMS[k].kind);
   const N = segments.reduce((s, seg) => s + Math.max(0, seg.y.length - 1), 0);
+  const nObs = observations(segments);
   const np = S.params.length;
-  if (N <= np) throw new Error(`fitStructure: ${N} samples cannot fit ${np} parameters`);
+  if (nObs <= np) throw new Error(`fitStructure: ${nObs} samples cannot fit ${np} parameters`);
   const longest = Math.max(...segments.map((seg) => seg.y.length));
   const lower = kinds.map((k) => (k === 'delay' ? 0 : -LOG_BOUND));
   const upper = kinds.map((k) => (k === 'delay' ? longest : LOG_BOUND));
@@ -485,7 +494,7 @@ export function* fitStructureSteps(segments, structure, starts, { Ts = segments[
   }
   const { res, toP, start } = best;
   const p = toP(res.p);
-  const dof = Math.max(1, N - np);
+  const dof = Math.max(1, nObs - np);
   const sigma2 = res.cost / dof;
   // In the fitted coordinates, then by dp/dq to the parameters.
   const dpdq = S.params.map((k, j) => (kinds[j] === 'delay' ? Ts : p[k]));
@@ -493,7 +502,7 @@ export function* fitStructureSteps(segments, structure, starts, { Ts = segments[
   const parts = segments.map((seg) => ({ length: Math.max(0, seg.y.length - 1), h: noiseTransfer(d, seg) }));
   const cq = parameterCov(res.J, res.A, parts, sigma2);
   const cov = cq && cq.map((row, i) => row.map((v, j) => v * dpdq[i] * dpdq[j]));
-  const out = { structure: S.name, p, cov, cost: res.cost, chi2dof: sigma2, bic: N * Math.log(Math.max(res.cost, 1e-300) / N) + np * Math.log(N), n: N, np, start, iterations: res.iterations, evaluations: res.evaluations, converged: res.converged, why: res.why };
+  const out = { structure: S.name, p, cov, cost: res.cost, chi2dof: sigma2, bic: nObs * Math.log(Math.max(res.cost, 1e-300) / nObs) + np * Math.log(nObs), n: nObs, np, start, iterations: res.iterations, evaluations: res.evaluations, converged: res.converged, why: res.why };
   const perm = S.order?.(p);
   if (perm) {
     out.p = Object.fromEntries(S.params.map((k, j) => [k, p[S.params[perm[j]]]]));
@@ -946,8 +955,9 @@ export function kernelGuess(kernel, Ts) {
 // ---- The multisine (§5.6)
 
 // A seeded uniform generator on [0, 1) (splitmix32): the multisine's phases
-// and its detection lines. No clock, no Math.random.
-function seeded(seed) {
+// and its detection lines, Identify's hidden variation. No clock, no
+// Math.random.
+export function seeded(seed) {
   let s = seed >>> 0;
   return () => {
     s = (s + 0x9e3779b9) | 0;
