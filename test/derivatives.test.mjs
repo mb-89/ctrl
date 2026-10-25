@@ -126,10 +126,12 @@ test('r and its derivatives repeat with the period; the ease is the first period
   // (k·T, (k+1)·T]: the sample at T is still the first period's.
   const once = referenceFn(ref([sine(q)], 100), ctx).derivative(1);
   assert.equal(v(T), once(T));
-  // The second period starts again at the sine's start time, on its steady phase.
+  // The second period runs on the steady phase throughout: before the sine's
+  // start time too (it does not stop and switch on again there).
   const w = 2 * Math.PI * q.frequency, ph = (q.phase * Math.PI) / 180;
-  assert.equal(v(T + 0.05), 0, 'before its start time');
+  close(v(T + 0.05), w * Math.cos(w * (0.05 - q.time - q.ease / 2) + ph), 1e-12, 'before its start time, on the steady phase');
   close(v(T + 0.3), w * Math.cos(w * (0.3 - q.time - q.ease / 2) + ph), 1e-12, 'the steady phase in the second period');
+  close(a(T + 0.05), -w * w * Math.sin(w * (0.05 - q.time - q.ease / 2) + ph), 1e-12, 'r̈ before its start time, on the steady phase');
   const ramp = referenceFn(ref([{ type: 'ramp', params: { amplitude: 1, time: 0, rise: 2 } }], T), ctx).derivative(1);
   assert.equal(ramp(T), 0, 'at T the ramp is over: the first period');
   assert.equal(ramp(T + 0.5), 0.5, 'then it starts again');

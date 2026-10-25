@@ -315,7 +315,8 @@ test('controllers: the variants of every system run; the good ones control, the 
     c.variant = c.variants.findIndex((v) => v.name === variant);
     assert.ok(c.variant >= 0, variant);
     const res = evaluateSystem(p);
-    const at = (sig, t) => res.signals[sig][Math.round((t / 5) * (res.signals[sig].length - 1))];
+    // At time t, whatever the system's record step and period (the tank's and the oven's are 10 s).
+    const at = (sig, t) => res.signals[sig][Math.round(t / res.t[1])];
     at.all = (sig) => res.signals[sig];
     at.designs = res.info.designs;
     return at;
@@ -326,12 +327,12 @@ test('controllers: the variants of every system run; the good ones control, the 
   const peak = (f) => Math.max(...Array.from({ length: 100 }, (_, i) => f('angle', 0.25 + i * 0.0125)));
   assert.ok(peak(pAgg) > 2.3 && peak(pd) < 2.05, `${peak(pAgg)} ${peak(pd)}`);
   assert.ok(Math.abs(pd('angle', 1.4) - 2) < 0.02);
-  // Tank: the scheduled PI holds every level (0.8 m until the drop at 4.5 s); the PI tuned for full rings
+  // Tank: the scheduled PI holds every level (0.8 m until the drop at 5 s); the PI tuned for full rings
   // when the level is low. Its computed u0 balances the outlet exactly, so
   // it rests at 0.15 m until the step to 0.45 m at 1.5 s, then overshoots
   // and swings back below 0.35 m.
   const sched = run('Conical tank', 'Gain-scheduled PI'), full = run('Conical tank', 'PI tuned for full');
-  for (const [t, r] of [[1.4, 0.15], [2.15, 0.45], [4.4, 0.8]]) assert.ok(Math.abs(sched('h', t) - r) < 0.03, `h(${t}) = ${sched('h', t)}`);
+  for (const [t, r] of [[1.4, 0.15], [2.15, 0.45], [4.9, 0.8], [9.9, 0.15]]) assert.ok(Math.abs(sched('h', t) - r) < 0.03, `h(${t}) = ${sched('h', t)}`);
   const after = (f) => Array.from({ length: 70 }, (_, i) => f('h', 1.5 + i * 0.01));
   const top = (f) => Math.max(...after(f)), dip = (f) => { const v = after(f); return Math.min(...v.slice(v.indexOf(Math.max(...v)))); };
   assert.ok(top(full) > 0.55 && dip(full) < 0.35, `full: peak ${top(full)}, then ${dip(full)}`);

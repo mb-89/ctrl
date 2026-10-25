@@ -128,6 +128,40 @@ test('a waveform that ends away from its start never steps between loops; one th
   assert.ok(Math.abs(s.state().runT - 10) < 1e-9);
 });
 
+test('the ramp-in: an eased circle eases once and its loops follow on, as the page plays it', () => {
+  // The PUMA's circle (0.4 Hz in 5 s, eased over 0.5 s): it ends a period
+  // where its steady phase starts the next, not where its first, eased
+  // period starts. Before, each loop played the first period again: the
+  // loop ended away from fn(0), a ramp of about 3 s went back to the start
+  // point and the circle eased in again, in every loop.
+  const sine = (phase) => ({ type: 'sine', params: { amplitude: 0.15, frequency: 0.4, phase, ease: 0.5 } });
+  const a = wave([sine(90), { type: 'dc', params: { level: -0.15 } }], 5), b = wave([sine(0)], 5);
+  const ramp = createRampIn({ refs: [{ name: 'a', fn: a, fs: 0.3 }, { name: 'b', fn: b, fs: 0.3 }], period: 5, rate: 0.1 });
+  ramp.start(0, { a: 0, b: 0 });
+  const dt = 0.01;
+  let lastA = ramp.value('a', 0), lastB = ramp.value('b', 0);
+  for (let k = 1; k <= 2000; k++) {
+    const t = k * dt;
+    ramp.advance(t);
+    assert.equal(ramp.state().phase, 'loop', `t ${t}: no ramp between loops`);
+    // It plays the waveform in the run's own time, as the page does.
+    const va = ramp.value('a', t), vb = ramp.value('b', t);
+    assert.ok(Math.abs(va - a(t)) < 1e-12 && Math.abs(vb - b(t)) < 1e-12, `t ${t}: ${va}, ${vb} against ${a(t)}, ${b(t)}`);
+    // No step anywhere: at most the circle's speed (0.38 m/s) a step.
+    assert.ok(Math.hypot(va - lastA, vb - lastB) <= 0.15 * 2 * Math.PI * 0.4 * dt * 1.001, `t ${t}: a step of ${Math.hypot(va - lastA, vb - lastB)}`);
+    lastA = va; lastB = vb;
+  }
+  assert.equal(ramp.state().loop, 3, 'four loops in 20 s, the first counted 0');
+  // A waveform that ends away from its start still ramps, and starts again
+  // from its first period after the ramp.
+  const saw = wave([{ type: 'ramp', params: { amplitude: 1, time: 0, rise: 2 } }], 2);
+  const s = createRampIn({ refs: [{ name: 'r', fn: saw, fs: 1 }], period: 2, rate: 0.5 });
+  s.start(0, { r: 0 });
+  let t = 0;
+  while (s.state().loop < 1 || s.state().phase !== 'loop') { t += dt; s.advance(t); }
+  assert.ok(Math.abs(s.value('r', t + 0.5) - 0.25) < 1e-9, 'the second loop plays the waveform from its start');
+});
+
 test('the ramp-in: several references each at its own rate; the loop waits for the last', () => {
   const a = wave([{ type: 'dc', params: { level: 1 } }], 5), b = wave([{ type: 'dc', params: { level: 10 } }], 5);
   const ramp = createRampIn({ refs: [{ name: 'a', fn: a, fs: 1 }, { name: 'b', fn: b, fs: 100 }], period: 5, rate: 0.1 });

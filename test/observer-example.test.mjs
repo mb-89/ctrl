@@ -71,9 +71,9 @@ test('observer example: the estimates track the true speed; the Kalman filter be
   assert.ok(kalman.worst < 0.3, `Kalman: |estimate − speed| up to ${kalman.worst}`);
   assert.ok(placed.worst < 2, `Luenberger: up to ${placed.worst}`);
   assert.ok(diff.worst > 6, `the difference jumps by a count (6.1 rad/s): up to ${diff.worst}`);
-  // The notes' numbers: error rms 3.1, 0.47, 0.058 rad/s; V σ 6.1, 0.96, 0.080 V.
+  // The notes' numbers: error rms 3.1, 0.46, 0.058 rad/s; V σ 6.1, 0.96, 0.080 V.
   const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.05 * b, `${what}: ${a}, not about ${b}`);
-  near(diff.err, 3.1, 'difference error'); near(placed.err, 0.47, 'Luenberger error'); near(kalman.err, 0.058, 'Kalman error');
+  near(diff.err, 3.1, 'difference error'); near(placed.err, 0.46, 'Luenberger error'); near(kalman.err, 0.058, 'Kalman error');
   near(diff.V, 6.1, 'difference V'); near(placed.V, 0.96, 'Luenberger V'); near(kalman.V, 0.080, 'Kalman V');
   assert.ok(diff.err / kalman.err > 20, `speed error: ${diff.err / kalman.err} times`);
   assert.ok(diff.V / kalman.V > 20, `u noise: ${diff.V / kalman.V} times`);

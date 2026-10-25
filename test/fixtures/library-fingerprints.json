@@ -32,7 +32,7 @@
   "Encoder errors and torque ripple": {
     "samples": 2001,
     "signals": "V,ctrl.r,ctrl.u,ctrl.y,i,r,speed,speed_m,tau_e,tau_f,tau_m,tau_r,v",
-    "hash": "8ec77f2f"
+    "hash": "6fc5646e"
   },
   "DC motor, speed from an encoder": {
     "samples": 5001,
@@ -50,9 +50,9 @@
     "hash": "41f167c"
   },
   "Conical tank, gain scheduling": {
-    "samples": 2001,
+    "samples": 4001,
     "signals": "ctrl.r,ctrl.u,ctrl.y,d,h,q,r",
-    "hash": "c8866911"
+    "hash": "4a1fcb39"
   },
   "Pendulum swing-up": {
     "samples": 2001,

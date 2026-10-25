@@ -27,11 +27,11 @@ The input repeats with its period, as a generator repeats its waveform; each rep
 
 A run is periodic after its start ([inputs 50–52](../input/2026-10-25-52-a-spike-only-at-the-start.md): a spike at t = 0 is accepted, at no other time). So:
 
-- **An eased Sine eases once**, in the run's first period; every later period runs on its steady phase (w·(t′ − ease/2) + phase, t′ the time since its start in the period). A sine with a whole number of cycles per period then joins up where it repeats, in value and slope; its first period is what it was.
+- **An eased Sine eases once**, from its start in the run's first period; every later period runs on its steady phase through the whole period (w·(t − start − ease/2) + phase, t the time in the period: before its start time too, so it does not stop and switch on again there). A sine with a whole number of cycles per period then joins up where it repeats, in value and slope, with or without a start time; its first period is what it was.
 - **The wrap must not be a step.** Under the Signal column a line in the warning colour says when the signal ends the period away from where it starts ("jumps where it repeats"), or, for a smooth signal, with another slope ("kinks where it repeats"). Steps inside a period are deliberate and stay; steps that return are quiet, and so is a sawtooth (a Ramp still rising at the period's end), which is built to drop there. The line follows the draft, as the preview does. `wrapJump(ref)` in `core/signals.js` measures it (value and slope across the wrap in the steady periods; noise left out); `wrapWarning(ref, name)` is the line.
 - **Later periods are the same, bit for bit**: their time in the period is taken on a picosecond grid, so a step lands on the same sample in every period after the first (the run's own time carries the rounding of its size).
 - A signal written in short (a parameter left out, as the library writes them) plays with the defaults, as the page plays it: `referenceFn` normalizes its components.
-- **The library's inputs all join up** ([decisions](decisions.md), inputs 50–52): an eased circle eases once, and an input that steps or ramps away comes back inside its period, so the line under the Signal column is quiet on every library system; a long run of each has no spike at a wrap and repeats after its start (`test/periodic.test.mjs`).
+- **The library's inputs all join up** ([decisions](decisions.md), inputs 50–52): an eased circle eases once, and an input that steps or ramps away comes back inside its period, so the line under the Signal column is quiet on every library system; a long run of each, every variant, has no spike at a wrap and repeats after its start, or converges to its periodic motion, or repeats in its statistics where the plant cannot do more (a light damper, an integral carried over, relay chatter, backlash hunting, angle-locked errors and noise), or has no periodic motion at all where nothing holds the plant ("Off" on a free shaft or rail, a pendulum lost); [decisions](decisions.md) says which and why (`test/periodic.test.mjs`). The PUMA is checked across one wrap and the HIL systems apart, their plant being outside the page.
 
 ## Primitives
 
@@ -41,7 +41,7 @@ A run is periodic after its start ([inputs 50–52](../input/2026-10-25-52-a-spi
 | Step | amplitude, time | amplitude from `time` on |
 | Ramp | amplitude, start, rise time | rises linearly by `amplitude` over the rise time, then holds |
 | Square | amplitude, start, high time, period, count | pulses of `high time` every `period` from `start`; count 0 repeats without end, count 1 is a single pulse (this replaces a separate Pulse key) |
-| Sine | amplitude, start, frequency, phase, ease | sine from `start`; with ease the phase rate rises from 0 over that time, in the run's first period only |
+| Sine | amplitude, start, frequency, phase, ease | sine from `start`; with ease the phase rate rises from 0 over that time, in the run's first period only (later periods run on the steady phase throughout) |
 | Chirp | amplitude, start, f₀, f₁, duration | sine sweeping linearly from f₀ to f₁ |
 | Noise | σ, seed | Gaussian, held per sample, reproducible from the seed |
 | Function | the formula y(t) | any formula in t: `0.3*sin(2*pi*4*t) + 0.5*step(t-0.6)` |

@@ -9,11 +9,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { referenceFn, normalizeReference, wrapJump, wrapWarning } from '../src/core/signals.js';
-import { SYSTEM_LIBRARY } from '../src/core/systems.js';
+import { SYSTEM_LIBRARY, applySystem } from '../src/core/systems.js';
 import { PUMA_SYSTEM } from '../src/core/pumasystem.js';
 import { normalizeDiagram } from '../src/core/diagram.js';
 import { simulateSystem } from '../src/core/sim.js';
-import { defaultSampleTime } from '../src/core/project.js';
+import { defaultSampleTime, normalizeProject, simOf } from '../src/core/project.js';
+import { DEFAULT_PROJECT } from '../src/core/examples.js';
 
 const ctx = { sampleTime: 1e-3 };
 const close = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg}: ${a} vs ${b} (tol ${tol})`);
@@ -76,6 +77,32 @@ test('from the second period on every period is the same, and the circle stays a
     eased = Math.max(eased, Math.abs(va(t) - va(t + 5)));
   }
   assert.ok(eased > 0.1, 'the first period eases, the later ones do not');
+});
+
+test('an eased sine with a start time: no step at its start in a later period, and it joins up where it repeats', () => {
+  // It eases in from its start in the first period; from the second on it
+  // runs on its steady phase through the whole period, so nothing switches
+  // on at its start time there (before, it was 0 until its start and then
+  // switched on at its steady phase: a step in value, ṙ and r̈ in every
+  // later period, and a step at every wrap).
+  const q = { amplitude: 1, time: 0.5, frequency: 0.4, phase: 0, ease: 0.5 }, T = 5;
+  const sig = normalizeReference({ period: T, components: [sine(q)] });
+  const r = referenceFn(sig, ctx), v = r.derivative(1), a = r.derivative(2);
+  const w = 2 * Math.PI * q.frequency;
+  for (const k of [1, 2, 3]) {
+    const e = 1e-9;
+    for (const t of [k * T, k * T + q.time]) {
+      close(r(t + e), r(t - e), 4 * w * e, `r across ${t} s`);
+      close(v(t + e), v(t - e), 4 * w * w * e, `ṙ across ${t} s`);
+      close(a(t + e), a(t - e), 4 * w ** 3 * e, `r̈ across ${t} s`);
+    }
+  }
+  const j = wrapJump(sig, ctx);
+  assert.ok(j.joins && Math.abs(j.value) < 1e-12 && Math.abs(j.slope) < 1e-12, `value ${j.value}, slope ${j.slope}`);
+  assert.equal(wrapWarning(sig, 'r', ctx), '');
+  // The first period still starts at rest, at its start time.
+  assert.equal(r(0.25), 0);
+  assert.equal(v(q.time), 0);
 });
 
 test('wrapJump: the jump where a signal repeats', () => {
@@ -189,54 +216,105 @@ test('the PUMA does not jump where its circle repeats', () => {
 
 // ---- The library over a long run (inputs 50–52) ----------------------------
 // Every library system but the HIL ones (their plant is outside the page) and
-// the PUMA (the test above, and puma.test.mjs): a run of four
-// periods of its first variant, one run per system, shared by the tests
-// below. Noise plays as shipped: it is seeded, so the run is the same every
-// time, and the two systems that have noise are held to its statistics.
+// the PUMA (the test above, and puma.test.mjs), every variant of it: a run of
+// four periods, one run per variant, shared by the tests below. Noise plays
+// as shipped: it is seeded, so the run is the same every time, and the
+// systems that have noise are held to its statistics.
 const LONG = 4;
 const longRuns = new Map();
-function longRun(name) {
-  if (!longRuns.has(name)) {
-    const sys = SYSTEM_LIBRARY.find((s) => s.name === name);
+// The block whose variants a system switches (a Controller, or the speed
+// encoder's Observer), and their names.
+const variantBlock = (d) => d.blocks.find((b) => b.variants?.length > 1);
+const variantsOf = (sys) => variantBlock(sys.plant.diagram)?.variants.map((v) => v.name) ?? [null];
+// A run of LONG periods of a system with one of its variants (null: as it
+// opens).
+function longRun(name, variant = null) {
+  const sys = SYSTEM_LIBRARY.find((s) => s.name === name);
+  const d = structuredClone(sys.plant.diagram), b = variantBlock(d);
+  if (b && variant !== null) b.variant = b.variants.findIndex((v) => v.name === variant);
+  const key = `${name}\u0000${b ? b.variant ?? 0 : ''}`;
+  if (!longRuns.has(key)) {
     const T = Math.max(...Object.values(sys.input.signals).map((s) => s.period));
     const dt = sys.sim?.sampleTime ?? defaultSampleTime(T);
-    const out = simulateSystem(normalizeDiagram(sys.plant.diagram), sys.input.signals, { duration: LONG * T, sampleTime: dt });
-    longRuns.set(name, { T, dt, N: Math.round(T / dt), s: out.signals });
+    const out = simulateSystem(normalizeDiagram(d), sys.input.signals, { duration: LONG * T, sampleTime: dt });
+    longRuns.set(key, { T, dt, N: Math.round(T / dt), s: out.signals });
   }
-  return longRuns.get(name);
+  return longRuns.get(key);
 }
 const LONG_RUN = SYSTEM_LIBRARY.filter((s) => s.name !== PUMA_SYSTEM.name && !JSON.stringify(s.plant).includes('"external"'));
 
-// How a system is held where period 4 is not period 3 sample for sample, and
-// why (the physics, not a jump):
+// How a variant is held where period 4 is not period 3 sample for sample,
+// and why (the physics, not a jump):
 //   settles     its run approaches its periodic motion by a factor a period
-//               (every output's difference at most 0.3 of the one before)
+//               (every output's difference between periods 3 and 4 at most a
+//               third of the one between periods 2 and 3)
 //   statistics  each output's mean and rms deviation in period 4 within a
 //               tenth of its rms deviation in period 3 (the largest measured:
 //               5 %, the encoder's ripple torque); for a free shaft's angle,
 //               which a speed loop does not hold, how far it turns instead
 //               of its mean
-// Every other system repeats: period 4 within 1e-4 of each output's span in
+//   free        no controller holds it, or one that loses the pendulum: the
+//               motion has no period to come back to (it drifts, runs away,
+//               or moves by its noise alone), so only that nothing steps at
+//               a wrap
+// Every other variant repeats: period 4 within 1e-4 of each output's span in
 // periods 3 and 4 (the largest measured: 1.5e-5, the triple pendulum's θ3).
+// Keyed by system, then variant ('*': every variant).
 const HELD = {
   // ζ 0.05 and no controller: a swing it carries into the next period shrinks
   // to e^(−c·T/2m) = 0.29 a period (its own test below).
-  'Mass–spring–damper': { how: 'settles' },
-  // The relay chatters in a rhythm of its own (13 to 14 ms) that does not fit
-  // the period's samples: a period repeats the one three before it.
-  'DC motor, sliding mode': { how: 'statistics' },
-  // The ripple and the encoder errors follow the shaft's angle, 102.65 turns a
-  // period, so they fall at another phase each period; and the torque noise
-  // (its own test below: without both, periods 2 to 4 agree to 1e-9).
-  'Encoder errors and torque ripple': { how: 'statistics' },
+  'Mass–spring–damper': { '*': 'settles' },
+  // The prefilter's slow mode carries a little into the next period (×0.07
+  // a period). Off: the load torque turns the free shaft on by the same
+  // angle every period.
+  'DC motor, position control': { 'PID with prefilter': 'settles', Off: 'free' },
+  // The relay chatters in a rhythm of its own (about 16 ms a cycle, 62.5 Hz)
+  // that does not fit the period's samples: a period repeats the one three
+  // before it.
+  'DC motor, sliding mode': { 'Relay (theory)': 'statistics' },
+  // A PID carries its integral into the next period: it fades with
+  // Kp/Ki = 4 s, ×0.28 to ×0.30 a period.
+  'Variable gain against anti-windup': { 'PID, clamping': 'settles', 'PID, back-calculation': 'settles', 'PID, no anti-windup': 'settles' },
+  // The torque noise; and the ripple and the encoder errors follow the
+  // shaft's angle, which r brings back to nearly the same angle each period
+  // (103 turns), not exactly (its own test below: without noise they agree
+  // within 3 % of the span, without the errors as well to 1e-9). Off:
+  // nothing drives the shaft but the torque noise, a random motion of a
+  // fraction of a rad/s.
+  'Encoder errors and torque ripple': { 'PI speed': 'statistics', Off: 'free' },
   // The encoder's noise, and its counts, which fall differently as the angle
   // turns on (about 27 rad a period); with an ideal encoder period 2 is
   // period 3 to 1e-8 (observer-example.test.mjs).
-  'DC motor, speed from an encoder': { how: 'statistics', turns: ['angle', 'encoder'] },
-  // On the load's encoder the PID hunts in the play, a limit cycle of about
-  // 31 Hz of its own (what the example shows).
-  'Gear backlash': { how: 'statistics' },
+  'DC motor, speed from an encoder': { '*': { how: 'statistics', turns: ['angle', 'encoder'] } },
+  // On the load's encoder the PID and the PD hunt in the play, a limit cycle
+  // of about 31 Hz of its own (what the example shows).
+  'Gear backlash': { PID: 'statistics', PD: 'statistics' },
+  // Tuned for full, the PI rings at the low level from the drop to the next
+  // cycle's first step, running the tank dry again and again; it rests in
+  // balance only at the very start. Its run settles cycle by cycle.
+  'Conical tank, gain scheduling': { 'PI tuned for full': 'settles' },
+  // Without the swing-up LQR loses the pole and the cart runs away; Off, the
+  // push sends the cart off along the endless rail, faster every period.
+  'Pendulum swing-up': { 'LQR only': 'free', Off: 'free' },
+  'Triple pendulum': { 'LQR only (cannot swing up)': 'free', Off: 'free' },
+  // Without anti-windup the integral carries a little over (×0.08 a period).
+  'Oven, badly tuned': { 'PID, badly tuned, no anti-windup': 'settles' },
+  // Off: the arm swings down to hang, a swing that takes a few periods to die
+  // out (×0.07 a period).
+  'DC motor with an unbalanced arm': { Off: 'settles' },
 };
+const heldOf = (sys, variant) => {
+  const h = HELD[sys.name]?.[variant] ?? HELD[sys.name]?.['*'] ?? 'repeats';
+  return typeof h === 'string' ? { how: h } : h;
+};
+
+test('the long-run holds name library systems and their variants', () => {
+  for (const [name, byVariant] of Object.entries(HELD)) {
+    const sys = LONG_RUN.find((s) => s.name === name);
+    assert.ok(sys, `${name} is a library system with a long run`);
+    for (const v of Object.keys(byVariant)) if (v !== '*') assert.ok(variantsOf(sys).includes(v), `${name}: ${v} is one of its variants`);
+  }
+});
 
 const maxDiff = (x, N, a, b) => { let m = 0; for (let k = 1; k <= N; k++) m = Math.max(m, Math.abs(x[a * N + k] - x[b * N + k])); return m; };
 const periodStats = (x, N, p) => {
@@ -246,9 +324,10 @@ const periodStats = (x, N, p) => {
   return { mean, sd: Math.sqrt(Math.max(0, s2 / N - mean * mean)), turn: x[(p + 1) * N] - x[p * N] };
 };
 
-for (const sys of LONG_RUN) {
-  test(`${sys.name}: no spike where its input repeats, and periodic after the start`, () => {
-    const { T, N, s } = longRun(sys.name), held = HELD[sys.name] ?? { how: 'repeats' };
+for (const sys of LONG_RUN) for (const variant of variantsOf(sys)) {
+  const held = heldOf(sys, variant);
+  test(`${sys.name}${variant ? `, ${variant}` : ''}: no spike where its input repeats, and ${held.how === 'free' ? 'no periodic motion to come back to' : 'periodic after the start'}`, () => {
+    const { T, N, s } = longRun(sys.name, variant);
     for (const [n, x] of Object.entries(s)) {
       let lo = Infinity, hi = -Infinity;
       for (const v of x) { if (v < lo) lo = v; if (v > hi) hi = v; }
@@ -273,8 +352,8 @@ for (const sys of LONG_RUN) {
         assert.ok(d <= 1e-4 * (b - a) + floor, `${n}: periods 3 and 4 differ by ${d} (span ${b - a})`);
       } else if (held.how === 'settles') {
         const d23 = maxDiff(x, N, 1, 2), d34 = maxDiff(x, N, 2, 3);
-        assert.ok(d34 <= 0.3 * d23 + floor, `${n}: periods 3 and 4 differ by ${d34}, 2 and 3 by ${d23}`);
-      } else {
+        assert.ok(d34 <= d23 / 3 + floor, `${n}: periods 3 and 4 differ by ${d34}, 2 and 3 by ${d23}`);
+      } else if (held.how === 'statistics') {
         const p3 = periodStats(x, N, 2), p4 = periodStats(x, N, 3), tol = 0.1 * p3.sd + floor;
         assert.ok(Math.abs(p4.sd - p3.sd) <= tol, `${n}: rms deviation ${p4.sd} in period 4, ${p3.sd} in period 3`);
         if (held.turns?.includes(n)) assert.ok(Math.abs(p4.turn - p3.turn) <= 0.1 * Math.abs(p3.turn), `${n} turns ${p4.turn} in period 4, ${p3.turn} in period 3`);
@@ -310,7 +389,12 @@ test('the encoder example runs up and back down: no jump where it repeats, its l
     Object.assign(d.blocks.find((b) => b.id === 'motor').params, mask);
     return simulateSystem(normalizeDiagram(d), sys.input.signals, { duration: 20, sampleTime: 0.0025 }).signals;
   };
-  const { N: P, s: full } = longRun(sys.name), quiet = run({ torqueNoise: 0, ripple: 0, encErrors: 0 });
+  const { N: P, s: full } = longRun(sys.name), quiet = run({ torqueNoise: 0, ripple: 0, encErrors: 0 }), noNoise = run({ torqueNoise: 0 });
+  // r covers a whole number of turns a period (103), so the shaft starts each
+  // period at nearly the same angle.
+  const { period: T, components } = sys.input.signals.r;
+  const area = components.reduce((a, c) => a + c.params.amplitude * (T - c.params.time - c.params.rise / 2), 0);
+  close(area / (2 * Math.PI), 103, 1e-9, 'turns of r a period');
   for (const n of ['speed', 'speed_m', 'V', 'i']) {
     // At each wrap: no step larger than the largest one inside a period (before: V jumped by 87 V, i by 49 A).
     let inner = 0;
@@ -320,30 +404,57 @@ test('the encoder example runs up and back down: no jump where it repeats, its l
     let diff = 0, span = 0;
     for (let k = 1; k <= P; k++) { diff = Math.max(diff, Math.abs(quiet[n][P + k] - quiet[n][2 * P + k]), Math.abs(quiet[n][2 * P + k] - quiet[n][3 * P + k])); span = Math.max(span, Math.abs(quiet[n][P + k])); }
     assert.ok(diff < 1e-9 * span, `${n}: periods 2 to 4 differ by ${diff}`);
+    // With them, but without noise, the angle-locked errors fall nearly
+    // alike in every period: within 3 % of the span (with 102.65 turns a
+    // period, as before, i differed by 40 % of its span, V by 24 %).
+    let d2 = 0, lo = Infinity, hi = -Infinity;
+    for (let k = 1; k <= P; k++) {
+      d2 = Math.max(d2, Math.abs(noNoise[n][P + k] - noNoise[n][2 * P + k]), Math.abs(noNoise[n][2 * P + k] - noNoise[n][3 * P + k]));
+      for (const v of [noNoise[n][P + k], noNoise[n][2 * P + k], noNoise[n][3 * P + k]]) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    }
+    assert.ok(d2 < 0.03 * (hi - lo), `${n}: with the errors, periods 2 to 4 differ by ${d2} of ${hi - lo}`);
   }
 });
 
-test('the conical tank drains back before the period ends: from the second period on every period is the same', () => {
+test('the conical tank drains back and rests at its start level before the cycle ends: every cycle is the first one', () => {
   const sys = SYSTEM_LIBRARY.find((s) => s.name === 'Conical tank, gain scheduling');
-  const { dt: Ts, N } = longRun(sys.name);
-  const run = (variant, periods) => {
-    const d = structuredClone(sys.plant.diagram);
-    d.blocks.find((b) => b.type === 'controller').variant = variant;
-    return simulateSystem(normalizeDiagram(d), sys.input.signals, { duration: 5 * periods, sampleTime: Ts }).signals;
-  };
+  const { T, dt: Ts, N } = longRun(sys.name);
+  // A cycle of 10 s: the test (its first 5 s as they were), then r drops back
+  // at 5 s and the tank drains for about 2 s. Its record step is pinned, so a
+  // long screen (a 50 s window would record at 25 ms, too coarse for the
+  // tank near empty: there its run cycled every two periods) runs as the
+  // short one does.
+  assert.equal(T, 10);
+  assert.equal(Ts, 0.0025);
+  const p = normalizeProject(applySystem(DEFAULT_PROJECT, sys, ['input', 'plant']));
+  p.scope.timebase = { scale: 5, position: 0 };
+  assert.deepEqual(simOf(p), { duration: 50, sampleTime: 0.0025 }, 'a 50 s screen records at the pinned step');
   const diff = (x, a, b) => { let m = 0; for (let i = 0; i <= N; i++) m = Math.max(m, Math.abs(x[b * N + i] - x[a * N + i])); return m; };
   // The gain-scheduled PI and the PI tuned for empty are back at the start
-  // level before the next period's first step, and every period repeats.
-  for (const [variant, tol] of [[0, 1e-5], [2, 1e-3]]) {
-    const s = variant === 0 ? longRun(sys.name).s : run(variant, 3);
-    for (const n of ['h', 'q']) assert.ok(diff(s[n], 1, 2) < tol, `variant ${variant}: ${n} differs by ${diff(s[n], 1, 2)} between periods 2 and 3`);
-    close(s.h[N + Math.round(1.5 / Ts) - 1], 0.15, 5e-4, `variant ${variant}: h before the second period's first step`);
+  // level, in exact balance, well before the cycle ends: each cycle starts
+  // where the run did, so period 1 is period 2.
+  for (const variant of ['Gain-scheduled PI', 'PI tuned for empty']) {
+    const s = longRun(sys.name, variant).s;
+    for (const k of [1, 2, 3]) {
+      close(s.h[k * N - Math.round(2.5 / Ts)], 0.15, 1e-4, `${variant}: h 2.5 s before the end of cycle ${k}`);
+      close(s.h[k * N], s.h[0], 1e-9, `${variant}: h at the end of cycle ${k}`);
+      close(s.q[k * N], s.q[0], 1e-9, `${variant}: q at the end of cycle ${k}`);
+    }
+    for (const n of ['h', 'q']) assert.ok(diff(s[n], 0, 1) < 1e-9 && diff(s[n], 1, 2) < 1e-9, `${variant}: ${n} differs by ${diff(s[n], 0, 1)} between periods 1 and 2`);
   }
+  // The drop: the pump stops, the outlet drains. The PI tuned for empty runs
+  // the tank dry for a moment, inside the cycle; the scheduled PI never does.
+  const dry = (x, a, b) => x.subarray(Math.round(a / Ts), Math.round(b / Ts)).some((v) => v <= 0);
+  assert.ok(dry(longRun(sys.name, 'PI tuned for empty').s.h, 5, 7) && !dry(longRun(sys.name).s.h, 0, 4 * T));
   // The PI tuned for full cannot hold the start level (it rests there only in
-  // exact balance): it rings there from the drop, and its run settles into a
-  // repeating one period by period, the high level calming it each time.
-  const full = run(1, 6);
-  assert.ok(diff(full.h, 4, 5) < 5e-3 && diff(full.h, 4, 5) < diff(full.h, 1, 2) / 20, `${diff(full.h, 1, 2)} → ${diff(full.h, 4, 5)}`);
+  // exact balance, at the very start): from the drop to the next cycle's
+  // first step it rings at the low level, running the tank dry again and
+  // again, and its run settles into a repeating one cycle by cycle (held by
+  // the long-run test above).
+  const full = longRun(sys.name, 'PI tuned for full').s;
+  let empties = 0;
+  for (let i = Math.round(5 / Ts); i < N + Math.round(1.5 / Ts); i++) if (full.h[i] <= 0 && full.h[i - 1] > 0) empties++;
+  assert.ok(empties >= 10, `it runs dry ${empties} times`);
   // Off cannot fill it: the tank runs dry at once, in every period.
-  assert.ok(run(3, 2).h.subarray(N).every((v) => v === 0));
+  assert.ok(longRun(sys.name, 'Off').s.h.subarray(N).every((v) => v === 0));
 });

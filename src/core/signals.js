@@ -8,9 +8,9 @@
 // { fn, warn }: warn is a sentence when the derivative is not the true one.
 // A component's function, and its derivatives', is called as f(t, n): t the
 // time in the period, n the period's index from the run's start (0 for the
-// first). Only an eased Sine reads n: it eases in the first period and runs
-// on its steady phase in every later one, so a long run is periodic after
-// its start.
+// first). Only an eased Sine reads n: it eases in from its start in the
+// first period and runs on its steady phase through every later one, so a
+// long run is periodic after its start.
 
 import { compileExpr } from './expr.js';
 
@@ -55,18 +55,19 @@ export const SIGNALS = {
       p('ease', 'Ease', 0, 's', { min: 0, help: 'the phase rate rises from 0 over this time, so speed and acceleration start at 0' })],
     // With ease the phase, not the amplitude, is eased, so a pair of sines
     // still draws its circle exactly. It eases once, in the run's first
-    // period (n = 0); every later period runs on the steady phase, so a sine
-    // with a whole number of cycles per period joins up where it repeats.
-    // Ease 0 keeps the plain expression.
+    // period (n = 0), from its start; every later period runs on the steady
+    // phase through the whole period, start time and all (it does not stop
+    // and switch on again), so a sine with a whole number of cycles per
+    // period joins up where it repeats. Ease 0 keeps the plain expression.
     fn: (q) => {
       if (!(q.ease > 0)) return (t) => (t >= q.time ? q.amplitude * Math.sin(2 * Math.PI * q.frequency * (t - q.time) + (q.phase * Math.PI) / 180) : 0);
       const w = 2 * Math.PI * q.frequency, ph = (q.phase * Math.PI) / 180;
-      return (t, n = 0) => (t >= q.time ? q.amplitude * Math.sin(easedPhase(t - q.time, w, q.ease, n > 0)[0] + ph) : 0);
+      return (t, n = 0) => (n > 0 || t >= q.time ? q.amplitude * Math.sin(easedPhase(t - q.time, w, q.ease, n > 0)[0] + ph) : 0);
     },
     d: (q, ctx, comp, k) => {
       const w = 2 * Math.PI * q.frequency, ph = (q.phase * Math.PI) / 180, A = q.amplitude;
       return { fn: (t, n = 0) => {
-        if (t < q.time) return 0;
+        if (t < q.time && !(q.ease > 0 && n > 0)) return 0;
         const [f, df, ddf] = q.ease > 0 ? easedPhase(t - q.time, w, q.ease, n > 0) : [w * (t - q.time), w, 0];
         return k === 1 ? A * Math.cos(f + ph) * df : A * (Math.cos(f + ph) * ddf - Math.sin(f + ph) * df * df);
       } };
@@ -144,8 +145,8 @@ function slope(pts, t) {
 
 // The eased phase at time u after the start, and its two derivatives: the
 // phase rate rises from 0 to w along a quintic smoothstep over Te seconds.
-// steady: the phase it settles on, w·(u − Te/2), from u = 0 (a period after
-// the first: the ease is over).
+// steady: the phase it settles on, w·(u − Te/2), for every u, before the
+// start time too (a period after the first: the ease is over).
 export function easedPhase(u, w, Te, steady = false) {
   if (steady || u >= Te) return [w * (u - Te / 2), w, 0];
   const s = u / Te;
@@ -219,6 +220,8 @@ export function componentFn(comp, ctx) {
 // ends on the last value of that period rather than the first of the next.
 // t is the run's time (0 at its start): the first period is the only one an
 // eased Sine eases in; from the second on every period is the same.
+// r.after(t) is the value just after t: where a period ends, the next one's
+// first.
 // r.derivative(k), k = 1 or 2, is the k-th time derivative of the same
 // signal, repeated the same way; it carries .warnings, a list of sentences.
 // The components are normalized here (a parameter left out takes its
@@ -240,7 +243,17 @@ export function referenceFn(ref, ctx) {
     for (const f of fns) s += f(tp, n);
     return s;
   };
-  const r = sum(on.map((c) => componentFn(c, ctx)));
+  const fns = on.map((c) => componentFn(c, ctx));
+  const r = sum(fns);
+  // r.after(t): the value just after t. That is r(t), but where a period
+  // ends (t = k·T, the period's last value) the next period's first.
+  r.after = (t) => {
+    const k = Number.isFinite(T) ? Math.round(t / T) : 0;
+    if (k < 1 || Math.abs(t - k * T) > 1e-9 * T) return r(t);
+    let s = 0;
+    for (const f of fns) s += f(0, k);
+    return s;
+  };
   r.derivative = (k) => {
     if (k !== 1 && k !== 2) throw new Error(`derivative: k must be 1 or 2, not ${k}`);
     const ds = on.map((c) => SIGNALS[c.type].d(c.params, ctx, c, k));

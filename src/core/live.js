@@ -79,8 +79,14 @@ export function createLiveRunner(diagram, signals) {
     for (const [name, ref] of Object.entries(sigs)) fns[name] = referenceFn(ref, { sampleTime: h ?? 0.01 });
   }
   // A Source's waveform in loop time; looked up when called, so an edit of
-  // the signal takes effect at once.
-  const wave = (name) => (tau) => (fns[name] ? fns[name](tau) : 0);
+  // the signal takes effect at once. after: its value just after τ, the next
+  // period's first where a period ends (the ramp-in asks whether a loop
+  // follows on).
+  const wave = (name) => {
+    const f = (tau) => (fns[name] ? fns[name](tau) : 0);
+    f.after = (tau) => (fns[name] ? fns[name].after(tau) : 0);
+    return f;
+  };
   // The runner's own copy, in normal form (a project restored by Undo has
   // its open limits as null), so the laws hold its parameter objects.
   function build(d) {
