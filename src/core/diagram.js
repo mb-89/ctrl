@@ -31,6 +31,10 @@ const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...ext
 
 // Elementary blocks. Plant models from blocks.js (first order, n lags, ...)
 // are diagram blocks too: their transfer function becomes the block.
+// vary marks a physical parameter (a mass, a length, a gain, a time, a
+// friction, an area): Identify's hidden variation scales it (varyDiagram,
+// identify.js). Initial values, g, limits, noise and an integrator's K (the
+// kinematics: position is the integral of speed) are not varied.
 export const ELEMENTS = {
   source: { label: 'Source', group: 'Signals', params: [{ key: 'signal', label: 'Signal', default: 'r', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: (p) => [0, 1 + (p.derivatives ?? 0)], formula: 'r(t)' },
   sink: { label: 'Sink', group: 'Signals', params: [{ key: 'name', label: 'Name', default: 'y1', kind: 'name' }, { key: 'unit', label: 'Unit', default: '1', kind: 'unit' }], ports: () => [1, 0], formula: 'y' },
@@ -42,7 +46,7 @@ export const ELEMENTS = {
   },
   inport: { label: 'In', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [0, 1], formula: 'u' },
   outport: { label: 'Out', group: 'Ports', params: [num('port', 'Port', 1, { min: 1, int: true })], ports: () => [1, 0], formula: 'y' },
-  gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1)], ports: () => [1, 1], formula: 'K' },
+  gain: { label: 'Gain', group: 'Math', params: [num('K', 'K', 1, { vary: true })], ports: () => [1, 1], formula: 'K' },
   sum: { label: 'Sum', group: 'Math', params: [{ key: 'signs', label: 'Signs', default: '+-', kind: 'signs' }], ports: (p) => [p.signs.length, 1], formula: 'Σ' },
   // The Integrator with a start value and limits (transparent-models.md
   // §1.3): rate K·u, but 0 where the state sits at a limit and K·u pushes
@@ -59,7 +63,7 @@ export const ELEMENTS = {
   // the key stays L, so files are unaffected. y0 empty (null): before T_d it
   // puts out its input at t = 0, as a pipe that was already flowing; nothing
   // plant-specific has to be typed in for that.
-  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0 }), num('y0', 'Output before T_d', 0, { nullable: 'its input at t = 0' })], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
+  delay: { label: 'Dead time', group: 'Dynamics', params: [num('L', 'Dead time T_d', 0.1, { unit: 's', min: 0, vary: true }), num('y0', 'Output before T_d', 0, { nullable: 'its input at t = 0' })], ports: () => [1, 1], formula: 'e^(−T_d·s)' },
   // Equations (the Function block, generalised; transparent-models.md §1.2):
   // named inputs, lines "name = formula" in the inputs, the names above, the
   // masks' parameters and t, and the outputs among those names. A file's
@@ -966,7 +970,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     // The model compile reads a copy: the store may keep it, and a diagram edited in place must not change it.
     const job = (opts.designs ?? defaultDesigns()).begin(diagram, () => compileDiagram(structuredClone(given), path, { mode: 'model' }), { guest: !opts.designs && defaultDesigns() !== SYNC_DESIGNS });
     for (const nd of ctrls) {
-      if (!nd.lib[nd.variant.type].designed) {
+      if (!nd.lib[nd.variant.type]?.designed) {
         nd.law = makeLaw(nd.variant, nd.Ts, nd.lib);
         if (nd.observer && nd.variant.type === 'difference') { const idx = differenceSees(nd); if (idx) job.see?.(nd.idPath, idx); }
         continue;
@@ -1127,6 +1131,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     },
     // Values of the Sources and Sinks after the last eval.
     probes: () => probeList.map(([name, k], j) => [name, probeSrc[j] >= 0 ? vals[probeSrc[j]] : 0]),
+    // Each Controller block's law, by its id path ("ctrl", "motor/ctrl"): a
+    // runner reaches a hidden law's machine here (Identify's experiment).
+    laws: Object.fromEntries(ctrlNodes.map(([key, k]) => [key, nodes[k].law])),
     // Called after each completed step: dead times remember their input.
     record() { for (const nd of delays) { nd.hist.push(inOf(nd)); if (nd.histL.length < nd.hist.length) nd.histL.push(inOf(nd)); } },
     // Called at the end of a step, before the samples there: what the step

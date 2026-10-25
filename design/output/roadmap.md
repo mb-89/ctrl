@@ -27,10 +27,11 @@ Reader: whoever picks the next piece of work.
 
 ## Next, in order
 
-1. **Auto-tune, more**: the goal saved in the project; a robustness check against plant variations; flipping through a block's variants; AMIGO and Cohen–Coon rules, phase-margin placement from the relay's measured point; simulations in a Worker; tuning a designed variant's own inputs (Q, R, Tcl) rather than its twin's numbers.
-2. **Controller, more**: variants built as diagrams (freeform), MIMO, more library entries (lead/lag, observer-based state feedback, MPC).
-3. **Analysis, more**: the gain marker on the locus, the gang of four, Nichols, disk margins, and the root locus in a Worker for loops with long dead times ([analysis.md](analysis.md), "Not built yet"); an Observer's own dynamics in the loop (observer types need `linear`, [designs.md](designs.md)).
-4. **The diagram lays itself out** ([diagram-layout.md](diagram-layout.md), designed, not built; the person's [input 11](../input/2026-10-25-11-diagram-auto-layout.md)). In its §12 steps:
+1. **Identify** (a tab between Controller and Auto-tune; designed in [identification.md](identification.md), research [../research/identification.md](../research/identification.md); being built on branch `feat/identify` in the steps of its §18): find the plant a Controller block sees by one eased-in experiment (Listen, Nudge, Hold, Ease in, Shake when needed, Check), fit small continuous-time models by replaying the closed loop, and let Auto-tune and Analysis use the model, so both work for HIL plants the page does not know (input 10). Its protocol step (hard output ranges and `applied`, §15) is built.
+2. **Auto-tune, more**: the goal saved in the project; a robustness check against plant variations; flipping through a block's variants; AMIGO and Cohen–Coon rules, phase-margin placement from the relay's measured point; simulations in a Worker; tuning a designed variant's own inputs (Q, R, Tcl) rather than its twin's numbers.
+3. **Controller, more**: variants built as diagrams (freeform), MIMO, more library entries (lead/lag, observer-based state feedback, MPC).
+4. **Analysis, more**: the gain marker on the locus, the gang of four, Nichols, disk margins, and the root locus in a Worker for loops with long dead times ([analysis.md](analysis.md), "Not built yet"); an Observer's own dynamics in the loop (observer types need `linear`, [designs.md](designs.md)).
+5. **The diagram lays itself out** ([diagram-layout.md](diagram-layout.md), designed, not built; the person's [input 11](../input/2026-10-25-11-diagram-auto-layout.md)). In its §12 steps:
    - vendor ELK (elkjs 0.12.0) with its manifest and licence notice;
    - the layout in `src/core/layout.js`: feedback found from the wires, the return path mirrored, ELK called synchronously, cached, re-measured on an idle machine;
    - the build's vendored section and the provenance and standalone tests;
@@ -42,7 +43,7 @@ Reader: whoever picks the next piece of work.
 
    Coordinate with feat/design-system and feat/designs, which touch `src/ui/plant.js`.
 
-5. **One Servo motor** ([servo.md](servo.md), built on `feat/servo` but for the PUMA's joints, §15; the person's [input 18](../input/2026-10-25-18-servo-motor-detail.md)). In its §11 steps (all built but the last, which is a swap once `feat/puma` and `feat/servo` are merged, servo.md §15.5):
+6. **One Servo motor** ([servo.md](servo.md), built on `feat/servo` but for the PUMA's joints, §15; the person's [input 18](../input/2026-10-25-18-servo-motor-detail.md)). In its §11 steps (all built but the last, which is a swap once `feat/puma` and `feat/servo` are merged, servo.md §15.5):
    - the minimal mask (numbers, toggles, a choice) and switches resolved at compile time;
    - built-in components stored by reference (`component`, `params`), opened read-only, Edit a copy into My blocks;
    - the DC motor examples, then the encoder example, on the component (free shaft);

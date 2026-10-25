@@ -17,6 +17,7 @@ import { DesignError, parseOp, operatingPoint, linearize } from './linearize.js'
 import { CONTROLLERS } from './controllers.js';
 import { inv, mul } from './linalg.js';
 import { parseSpeed, speedToJson } from './speed.js';
+import { STRUCTURES } from './fit.js';
 
 export const FORMAT = 'loop-tuner/2';
 export const PALETTE_SIZE = 8;
@@ -67,6 +68,8 @@ export function normalizeProject(p) {
     for (const name of Object.keys(signals)) if (!sources.includes(name) && (sources.length || name !== 'r')) delete signals[name];
   }
   if (!Object.keys(signals).length) signals.r = normalizeReference({ period: 1, components: [] });
+  const identify = normalizeIdentify(p.system?.identify);
+  if (identify) system.identify = identify;
   const goal = normalizeGoal(p.goal);
   const raw = Array.isArray(p.candidates) ? p.candidates : [];
   const candidates = raw.map((c, i) => {
@@ -91,6 +94,136 @@ export function normalizeProject(p) {
     ...(p.selected !== undefined ? { selected: String(p.selected) } : {}),
     ...(normalizeUi(p.ui) ? { ui: normalizeUi(p.ui) } : {}),
   };
+}
+
+// Identify's settings and kept tests (design/output/identification.md §9),
+// keyed by the Controller block's id path ("ctrl", "motor/ctrl"): the design
+// inputs (band, budget, hard, vary, seed, structure, use) and, only on Keep,
+// the measured records with the plans they ran. Nothing computed: the model
+// is recomputed from the record, so a key that is not a measurement or a
+// design input is refused with the sentence below.
+export const IDENTIFY_COMPUTED = 'Identify keeps the measurements; the model is computed from them. To keep numbers, use Copy as blocks.';
+const IDENTIFY_KEYS = ['band', 'budget', 'hard', 'vary', 'seed', 'structure', 'use', 'kept'];
+const KEPT_KEYS = ['name', 'plan', 'record'];
+const RECORD_KEYS = ['version', 'Ts', 'u', 'y', 'r', 'applied', 'gaps', 'log', 'end', 'ports'];
+const PLAN_KEYS = ['version', 'kind', 'Ts', 'u0', 'umin', 'umax', 'band', 'hard', 'budget', 'seed', 'names', 'test', 'check', 'others'];
+// The experiment's log keeps its own decisions (interpretation of §9): what
+// it measured and chose as it ran (Listen's noise, each rung, the first look
+// it steered by, each law and try), never a model of the record. Each kind
+// has its fields, and the objects inside them theirs; anything else, at any
+// depth, is refused with the sentence.
+const LOG_KEYS = {
+  stage: ['stage', 'i'],
+  listen: ['y0', 'mean', 'sigma', 'q', 'floor', 'slope', 'drift', 'drifts', 'n', 'i0', 'i1'],
+  rung: ['n', 'shape', 'a', 'T', 'dir', 'i0', 'i1', 'base', 'ic', 'nBase', 'slope', 'bound', 'backoff', 'runaway', 'w', 'up', 'down', 'max', 'size', 'p', 'plateau', 'ramp', 'complete', 'rings', 'visible', 'seen', 'floor', 'mean', 'sign', 'delay', 'within', 'left', 'at'],
+  nudge: ['why', 'rungs', 'i'],
+  look: ['cls', 'integrating', 'sign', 'K', 'kp', 'tau', 'theta', 'structure', 'p', 'swing', 'bic', 'guess', 'i'],
+  references: ['i', 'test', 'check', 'staircase'],
+  law: ['i', 'Kp', 'Ki', 'tauC', 'umin', 'umax', 'I', 'role'],
+  hold: ['Kp', 'Ki', 'Ti', 'tauC', 'theta', 'i', 'again', 'doubled'],
+  try: ['n', 'tauC', 'Kp', 'Ki', 'umin', 'umax', 'push', 'i0', 'iSwitch', 'iEnd', 'settled', 'tail', 'J', 'parts', 'overshoot', 'g', 'gRoom', 'gRing', 'accepted', 'mark', 'left', 'away'],
+  ladder: ['why', 'incumbent', 'tauC', 'i'],
+  supply: ['what', 'i', 'upto'],
+  pause: ['i0', 'i1', 'waited'],
+  check: ['i0', 'iStart', 'iEnd'],
+  end: ['code', 'message', 'i', 't', 'check'],
+  stop: ['i', 'code'],
+  note: ['i', 'text'],
+};
+const LOG_OBJECTS = {
+  'look.p': ['K', 'kp', 'tau', 'theta', 'f', 'zeta'], 'look.swing': ['count', 'f', 'peak'], 'look.bic': ['lag', 'intLag', 'resonance'],
+  'look.guess': ['K', 'kp', 'tau', 'theta'], 'try.parts': ['error', 'effort', 'overshoot', 'saturation'], 'end.check': ['i0', 'iStart'],
+};
+// A value inside a plan, a record's ports or a log entry: a number, a word,
+// true or false, null, or a list of those; objects only where named.
+function plainValue(v, where) {
+  if (v === null || typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return;
+  if (Array.isArray(v)) { for (const [j, x] of v.entries()) if (x !== null && typeof x === 'object') throw new Error(`${where}[${j}]: ${IDENTIFY_COMPUTED}`); return; }
+  throw new Error(`${where}: ${IDENTIFY_COMPUTED}`);
+}
+function checkLog(log, where) {
+  log.forEach((e, j) => {
+    const w = `${where}[${j}]`;
+    const keys = LOG_KEYS[e.kind];
+    if (!keys) throw new Error(`${w}.kind: ${IDENTIFY_COMPUTED}`);
+    for (const [k, v] of Object.entries(e)) {
+      if (k === 'kind') continue;
+      if (!keys.includes(k)) throw new Error(`${w}.${k}: ${IDENTIFY_COMPUTED}`);
+      const inner = LOG_OBJECTS[`${e.kind}.${k}`];
+      if (inner && v !== null && typeof v === 'object' && !Array.isArray(v)) { for (const [k2, v2] of Object.entries(v)) { if (!inner.includes(k2)) throw new Error(`${w}.${k}.${k2}: ${IDENTIFY_COMPUTED}`); plainValue(v2, `${w}.${k}.${k2}`); } } else plainValue(v, `${w}.${k}`);
+    }
+  });
+}
+// The plan's parts: the references, the names, the inputs held.
+function checkPlan(plan, where) {
+  for (const [k, v] of Object.entries(plan)) {
+    if (k === 'test') { onlyKeys(v, Array.isArray(v?.r) ? ['r'] : ['r0'], `${where}.test`); Object.entries(v).forEach(([k2, x]) => plainValue(x, `${where}.test.${k2}`)); } else if (k === 'check') { if (v !== null) { onlyKeys(v, ['r'], `${where}.check`); plainValue(v.r, `${where}.check.r`); } } else if (k === 'names') { onlyKeys(v, ['u', 'uUnit', 'y', 'yUnit'], `${where}.names`); Object.entries(v).forEach(([k2, x]) => plainValue(x, `${where}.names.${k2}`)); } else if (k === 'others') {
+      if (!Array.isArray(v)) throw new Error(`${where}.others: a list of the inputs held`);
+      v.forEach((o, j) => { onlyKeys(o, ['name', 'value', 'input'], `${where}.others[${j}]`); Object.entries(o).forEach(([k2, x]) => plainValue(x, `${where}.others[${j}].${k2}`)); });
+    } else plainValue(v, `${where}.${k}`);
+  }
+}
+function onlyKeys(o, keys, where) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error(`${where}: an object`);
+  for (const k of Object.keys(o)) if (!keys.includes(k)) throw new Error(`${where}.${k}: ${IDENTIFY_COMPUTED}`);
+}
+const pair = (v, where) => {
+  if (v === null || v === undefined) return null;
+  if (!Array.isArray(v) || v.length !== 2 || !v.every(Number.isFinite) || !(v[0] < v[1])) throw new Error(`${where}: [low, high], low below high`);
+  return [v[0], v[1]];
+};
+const numbers = (v, where) => {
+  if (!Array.isArray(v) || !v.every((x) => x === null || Number.isFinite(x))) throw new Error(`${where}: a list of numbers (null where nothing was measured)`);
+  return v.slice();
+};
+export function normalizeIdentify(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('system.identify: an object keyed by the Controller block (ctrl, motor/ctrl)');
+  const out = {};
+  for (const [key, e] of Object.entries(raw)) {
+    const where = `system.identify.${key}`;
+    if (!/^[^/:\s]+(\/[^/:\s]+)*$/.test(key)) throw new Error(`${where}: the Controller block's id path, such as ctrl or motor/ctrl`);
+    onlyKeys(e, IDENTIFY_KEYS, where);
+    const o = {};
+    if (e.band != null) o.band = pair(e.band, `${where}.band`);
+    if (e.hard != null) o.hard = pair(e.hard, `${where}.hard`);
+    if (e.budget != null) { if (!(Number.isFinite(e.budget) && e.budget > 0)) throw new Error(`${where}.budget: seconds of plant time, above 0`); o.budget = e.budget; }
+    if (e.vary != null) {
+      onlyKeys(e.vary, ['share', 'seed'], `${where}.vary`);
+      if (!(e.vary.share > 0 && e.vary.share < 1) || !Number.isInteger(e.vary.seed)) throw new Error(`${where}.vary: { share between 0 and 1, seed a whole number }`);
+      o.vary = { share: e.vary.share, seed: e.vary.seed };
+    } else if ('vary' in e) o.vary = null;
+    if (e.seed != null) { if (!Number.isInteger(e.seed)) throw new Error(`${where}.seed: a whole number`); o.seed = e.seed; }
+    if (e.structure != null) { if (!Object.hasOwn(STRUCTURES, e.structure)) throw new Error(`${where}.structure: one of ${Object.keys(STRUCTURES).join(', ')}`); o.structure = e.structure; }
+    const kept = e.kept ?? [];
+    if (!Array.isArray(kept)) throw new Error(`${where}.kept: a list of kept tests`);
+    o.kept = kept.map((k, i) => {
+      const w = `${where}.kept[${i}]`;
+      onlyKeys(k, KEPT_KEYS, w);
+      onlyKeys(k.plan, PLAN_KEYS, `${w}.plan`);
+      checkPlan(k.plan, `${w}.plan`);
+      onlyKeys(k.record, RECORD_KEYS, `${w}.record`);
+      const r = k.record;
+      if (!Number.isInteger(r.version) || !(r.Ts > 0)) throw new Error(`${w}.record: needs its version and Ts`);
+      const rec = { version: r.version, Ts: r.Ts, u: numbers(r.u, `${w}.record.u`), y: numbers(r.y, `${w}.record.y`), r: numbers(r.r, `${w}.record.r`), applied: numbers(r.applied ?? [], `${w}.record.applied`) };
+      if (rec.y.length !== rec.u.length || rec.r.length !== rec.u.length) throw new Error(`${w}.record: u, y and r have one value per sample`);
+      if (!Array.isArray(r.gaps ?? []) || !(r.gaps ?? []).every((g) => Array.isArray(g) && g.length === 2 && g.every(Number.isInteger))) throw new Error(`${w}.record.gaps: [[sample, cycles lost], …]`);
+      rec.gaps = (r.gaps ?? []).map((g) => g.slice());
+      if (!Array.isArray(r.log ?? []) || !(r.log ?? []).every((x) => x && typeof x === 'object' && typeof x.kind === 'string')) throw new Error(`${w}.record.log: the experiment's log`);
+      checkLog(r.log ?? [], `${w}.record.log`);
+      rec.log = structuredClone(r.log ?? []);
+      rec.end = r.end ?? null;
+      if (r.ports) {
+        onlyKeys(r.ports, ['u', 'y', 'units'], `${w}.record.ports`);
+        Object.entries(r.ports).forEach(([k2, x]) => plainValue(x, `${w}.record.ports.${k2}`));
+        rec.ports = structuredClone(r.ports);
+      }
+      return { name: String(k.name ?? `test ${i + 1}`), plan: structuredClone(k.plan), record: rec };
+    });
+    if (e.use != null) { if (!(Number.isInteger(e.use) && e.use >= 0 && e.use < o.kept.length)) throw new Error(`${where}.use: the index of a kept test`); o.use = e.use; }
+    out[key] = o;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 // How the page opens: the run control, the open tab, in the Plant tab the

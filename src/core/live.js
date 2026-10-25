@@ -11,12 +11,17 @@
 // sent back, at once, with the same seq (and, in control mode, r and e for
 // the plant's log). A plant that echoes the inputs it applied (y's applied)
 // has them recorded as signals of their own, applied.NAME.
+//
+// createStepRunner is the same loop on a simulated plant, one controller
+// sample at a time, with Sources a caller may play itself (Identify's
+// experiment plays r and holds the other inputs: identification.md §3).
 
 import { compileDiagram, normalizeDiagram, diagramNames, parseEnd } from './diagram.js';
 import { CONTROLLERS } from './controllers.js';
 import { OBSERVERS } from './observers.js';
 import { referenceFn } from './signals.js';
 import { createRampIn } from './ramp.js';
+import { stepPlan, onGrid } from './sim.js';
 import { HIL_PROTOCOL, WATCHDOG_CYCLES, rpcRequest, uMessage, startParams, parseMessage, checkDescription, pageWatchdog, createLinkStats, fullScales, blockMode } from './hil.js';
 
 // Cycles in a row in which an output of the plant is not a number before the
@@ -66,11 +71,33 @@ function copyParams(own, next) {
   });
 }
 
+// One RK4 step of a compiled diagram's continuous blocks from the state X,
+// as simulateSystem takes it (sim.js), for both runners.
+function rk4Of(el, X) {
+  const N = el.n;
+  const Xt = new Float64Array(N), k1 = new Float64Array(N), k2 = new Float64Array(N), k3 = new Float64Array(N), k4 = new Float64Array(N);
+  return (t, dt) => {
+    el.eval(t, X, 0, 0, k1);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k1[i];
+    el.eval(t + 0.5 * dt, Xt, 0, 0, k2);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
+    el.eval(t + 0.5 * dt, Xt, 0, 0, k3);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
+    el.eval(t + dt, Xt, 0, 0, k4, true);
+    for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+  };
+}
+
+// The scope's signals among a compiled diagram's probes: Sources and Sinks.
+// (Auto-tune's "ctrl.u" probes have a dot in their name and stay out, as on
+// the scope.)
+const scopeProbes = (el) => el.probes().flatMap(([n], i) => (n.includes('.') ? [] : [i]));
+
 // diagram: a normalised plant diagram with one External plant block.
 // signals: the project's named signals (the Sources play them).
 export function createLiveRunner(diagram, signals) {
   const fns = {};
-  let own, key, el, ext, keep, X, Xt, k1, k2, k3, k4, tPrev, h, links, ramp = null, started = false, log = [], period = Infinity;
+  let own, key, el, ext, keep, X, rk4, tPrev, h, links, ramp = null, started = false, log = [], period = Infinity;
   let sigs = {};
 
   function setSignals(next) {
@@ -90,9 +117,7 @@ export function createLiveRunner(diagram, signals) {
     // the ramp-in plays them.
     const sources = new Proxy({}, { get: (_, name) => (t) => (started && ramp ? ramp.value(name, t) : wave(name)(0)) });
     el = compileDiagram(own, 'plant', { standalone: true, sources });
-    // The scope's signals: Sources and Sinks. (Auto-tune's "ctrl.u" probes
-    // have a dot in their name and stay out, as on the scope.)
-    keep = el.probes().flatMap(([n], i) => (n.includes('.') ? [] : [i]));
+    keep = scopeProbes(el);
     if (el.externals.length !== 1) throw new Error(el.externals.length ? 'one External plant per system, for now' : 'this system has no External plant block: add one from the Live group in the Plant tab');
     ext = el.externals[0];
     links = el.links();
@@ -104,8 +129,8 @@ export function createLiveRunner(diagram, signals) {
     const m = Math.max(1, Math.ceil(dt / (el.bound > 0 ? Math.min(0.5 / el.bound, el.minTs) : Math.min(dt, el.minTs)) - 1e-9));
     h = dt / m;
     el.setStep(h);
-    X = new Float64Array(el.n); Xt = new Float64Array(el.n);
-    k1 = new Float64Array(el.n); k2 = new Float64Array(el.n); k3 = new Float64Array(el.n); k4 = new Float64Array(el.n);
+    X = new Float64Array(el.n);
+    rk4 = rk4Of(el, X);
     el.init(X, 0);
     tPrev = null;
     started = false;
@@ -151,18 +176,6 @@ export function createLiveRunner(diagram, signals) {
       }
     }
     return out;
-  }
-
-  function rk4(t, dt) {
-    const N = el.n;
-    el.eval(t, X, 0, 0, k1);
-    for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k1[i];
-    el.eval(t + 0.5 * dt, Xt, 0, 0, k2);
-    for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
-    el.eval(t + 0.5 * dt, Xt, 0, 0, k3);
-    for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
-    el.eval(t + dt, Xt, 0, 0, k4, true);
-    for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   }
 
   return {
@@ -231,6 +244,89 @@ export function createLiveRunner(diagram, signals) {
     },
     // Controllers start afresh, and the ramp-in with them.
     restart() { build(own); },
+  };
+}
+
+// A simulated plant's diagram run one controller sample at a time, as the
+// live runner runs a plant outside the page (identification.md §3): each
+// step() advances the continuous blocks over one sample Ts, exactly as
+// simulateSystem does (every sampled block's instant k·Ts on the grid), then
+// the Controller blocks sample. The first step() only samples at t = 0. With
+// the record step at the block's Ts, the values equal simulateSystem's, bit
+// for bit.
+//   diagram   a plant diagram without an External plant block
+//   signals   the project's named signals (the Sources play them)
+//   Ts        the time per step (the Controller block's sample time)
+//   sources   { name: t => value }: Sources the caller plays instead (the r
+//             Source from the experiment's reference(k), the others held)
+//   variants  { 'ctrl' | 'motor/ctrl': variant }: a block runs this variant,
+//             set after the diagram is normalised (a hidden law such as
+//             Identify's experiment, which no file holds)
+// Returns { step() → { k, t, values }, names(), probes(), law(key), k, t,
+// warnings }; law(key) is the law a Controller block runs (law.experiment for
+// Identify's).
+export function createStepRunner(diagram, signals, { Ts, sources = {}, variants = {} } = {}) {
+  if (!(Ts > 0)) throw new Error('createStepRunner: Ts must be positive');
+  const d = normalizeDiagram(structuredClone(diagram));
+  for (const [key, v] of Object.entries(variants)) {
+    let level = d, block = null;
+    for (const id of key.split('/')) { block = level?.blocks.find((b) => b.id === id); level = block?.diagram; }
+    if (block?.type !== 'controller') throw new Error(`createStepRunner: no Controller block ${key}`);
+    block.variants = [v];
+    block.variant = 0;
+  }
+  const fns = {};
+  for (const [name, ref] of Object.entries(signals ?? {})) fns[name] = referenceFn(ref, { sampleTime: Ts });
+  // Sources are looked up when called: a caller's own come first.
+  const played = new Proxy({}, { get: (_, name) => (t) => (sources[name] ? sources[name](t) : fns[name] ? fns[name](t) : 0) });
+  const el = compileDiagram(d, 'plant', { standalone: true, sources: played });
+  if (el.externals.length) throw new Error('this plant runs outside the page (External plant): it is stepped by its own cycles (createLiveRunner)');
+  const keep = scopeProbes(el);
+  const warnings = [...el.warnings];
+  const { m, split } = stepPlan(Ts, el.bound, el.sampleTimes, 1, warnings);
+  const h = Ts / m;
+  el.setStep(h);
+  const X = new Float64Array(el.n);
+  const rk4 = rk4Of(el, X);
+  el.init(X, 0);
+  const values = () => { const all = el.probes(); return keep.map((i) => all[i][1]); };
+  let k = -1;
+  return {
+    warnings,
+    get k() { return k; },
+    get t() { return Math.max(0, k) * Ts; },
+    names: () => { const all = el.probes(); return keep.map((i) => all[i][0]); },
+    probes: () => el.probes(),
+    law: (key) => el.laws[Array.isArray(key) ? key.join('/') : key] ?? null,
+    step() {
+      if (k < 0) {
+        el.eval(0, X, 0, 0, null);
+        el.sample(0, X, 0, 0);
+        el.record();
+        k = 0;
+        return { k, t: 0, values: values() };
+      }
+      const t0 = k * Ts;
+      for (let s = 0; s < m; s++) {
+        const ts = t0 + s * h, te = onGrid(t0 + (s + 1) * h);
+        let a = ts;
+        // A sample instant inside this step: integrate to it and sample there.
+        if (split) {
+          for (let tn = onGrid(el.nextSample()); tn < te - 1e-9; tn = onGrid(el.nextSample())) {
+            if (tn > a) { rk4(a, tn - a); a = tn; }
+            el.eval(tn, X, 0, 0, null);
+            el.sample(tn, X, 0, 0);
+          }
+        }
+        rk4(a, ts + h - a);
+        el.eval(te, X, 0, 0, null);
+        el.recordLeft();
+        el.sample(te, X, 0, 0);
+        el.record();
+      }
+      k++;
+      return { k, t: k * Ts, values: values() };
+    },
   };
 }
 

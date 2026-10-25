@@ -27,20 +27,20 @@ export const MECH_ELEMENTS = {
   world: { label: 'World', group: 'Mechanics', formula: 'g ↓', part: true, frames: () => ['W'], params: [num('g', 'g', 9.81, { unit: 'm/s²' })], ports: () => [0, 0] },
   rail: {
     label: 'Rail', group: 'Mechanics', formula: 'F − b·v', part: true, joint: true, frames: () => ['B', 'F'],
-    params: [coord('name', 'Coordinate', 'x'), coord('rate', 'Rate', 'v'), num('b', 'Friction b', 0, { unit: 'N·s/m', min: 0 }), num('incline', 'Incline α', 0, { unit: 'rad' }),
+    params: [coord('name', 'Coordinate', 'x'), coord('rate', 'Rate', 'v'), num('b', 'Friction b', 0, { unit: 'N·s/m', min: 0, vary: true }), num('incline', 'Incline α', 0, { unit: 'rad' }),
       num('x0', 'Start s₀', 0, { unit: 'm' }), num('v0', 'Start ṡ₀', 0, { unit: 'm/s' }), num('force', 'Force input (0/1)', 1, { int: true, min: 0, max: 1 })],
     ports: (p) => [p.force ? 1 : 0, 2], outputs: (p) => [p.name, p.rate], inputNames: (p) => (p.force ? ['F'] : []),
   },
   hinge: {
     label: 'Hinge', group: 'Mechanics', formula: 'θ from upright', part: true, joint: true, frames: () => ['B', 'F'],
-    params: [coord('name', 'Coordinate', 'θ'), coord('rate', 'Rate', 'ω'), num('c', 'Damping c', 0, { unit: 'N·m·s/rad', min: 0 }),
+    params: [coord('name', 'Coordinate', 'θ'), coord('rate', 'Rate', 'ω'), num('c', 'Damping c', 0, { unit: 'N·m·s/rad', min: 0, vary: true }),
       num('theta0', 'Start θ₀', 0, { unit: 'rad' }), num('omega0', 'Start ω₀', 0, { unit: 'rad/s' }), num('torque', 'Torque input (0/1)', 0, { int: true, min: 0, max: 1 })],
     ports: (p) => [p.torque ? 1 : 0, 2], outputs: (p) => [p.name, p.rate], inputNames: (p) => (p.torque ? ['τ'] : []),
   },
-  mass: { label: 'Mass', group: 'Mechanics', formula: 'm', part: true, frames: () => ['F'], params: [num('m', 'Mass m', 1, { unit: 'kg', min: 0 })], ports: () => [0, 0] },
+  mass: { label: 'Mass', group: 'Mechanics', formula: 'm', part: true, frames: () => ['F'], params: [num('m', 'Mass m', 1, { unit: 'kg', min: 0, vary: true })], ports: () => [0, 0] },
   rod: {
     label: 'Rod', group: 'Mechanics', formula: 'l, m at tip', part: true, frames: () => ['B', 'T'],
-    params: [num('l', 'Length l', 0.5, { unit: 'm', min: 0 }), num('m', 'Mass m', 0, { unit: 'kg', min: 0 }), { key: 'at', label: 'Mass at', default: 'tip', kind: 'choice', options: ['tip', 'uniform'] }],
+    params: [num('l', 'Length l', 0.5, { unit: 'm', min: 0, vary: true }), num('m', 'Mass m', 0, { unit: 'kg', min: 0, vary: true }), { key: 'at', label: 'Mass at', default: 'tip', kind: 'choice', options: ['tip', 'uniform'] }],
     ports: () => [0, 0],
   },
 };

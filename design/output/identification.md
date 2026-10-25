@@ -1,6 +1,6 @@
 # Identify: finding the plant by experiment
 
-Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; step 1 (the protocol and the plant, §15) built 2026-10-25, the rest not built.** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
+Reader: whoever builds the Identify tab, its experiment or its fits, or changes how Auto-tune and Analysis use an identified model. **Status: designed 2026-10-24; being built on branch `feat/identify` in the steps of §18 (done: 0, the record; 1, the protocol and the plant (§15), built 2026-10-25; 2, the numerics in `src/core/fit.js`; 3, the kernel, the multisine and the frequency response, also in `fit.js`; 4, the experiment: `src/core/identify.js` and `src/core/experiment.js`; 5, the runner and the whole test in Node: `createStepRunner`, the hidden `experiment` law, the model from the record, `identify()` and `node cli.mjs identify`, measured below in "Measured: the whole test in Node").** It is the synthesis of a design panel run on 2026-10-24: two proposals (E1, staged experiments then a model; E2, tuning on the plant by experiment), each prototyped in plain JS on the HIL arm's physics, and two judges (a tester's view and a safety view) who re-ran the prototypes. Research and sources: [../research/identification.md](../research/identification.md). Where the code and this plan differ later, the code and [decisions.md](decisions.md) win.
 
 The person's words ([input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md)):
 
@@ -108,7 +108,7 @@ A model taken at rest is not the plant the loop runs at. The ladder follows the 
 |---|---|
 | u's name and unit | The External port the block's output drives (`inputs[i].name`, `unit`); on a simulated plant, the block's output label and the unit of the Sink that shows it |
 | u's range | The variant's `umin`/`umax`, intersected with the External port's `min`/`max`. With neither, Identify refuses: "set u min and u max in the Controller tab: Identify needs to know how far V may go" |
-| u's start value u₀ | HIL: the port's `safe` value. Simulated: 0, clamped into the range |
+| u's start value u₀ | HIL: the port's `safe` value. Simulated: the running variant's start output `u0` (the integral at t = 0, which a person sets so the loop starts in balance), else 0; clamped into the range (built; the design said 0, and the library's tank drained to empty at 0) |
 | y's name and unit | The block's input 2 (`blockInputNames`), the Sink's or External port's unit |
 | y's hard range | **New, optional** (built): `outputs[].hard_min/hard_max` in `describe`, kept in the External block as `ymin`/`ymax`; the plant E-stops beyond it (§15). Simulated plants have none unless the tester types one |
 | The reference range | Min and max over one period of the Source that feeds r (`upstreamSource`) |
@@ -311,7 +311,7 @@ Notation:
   - a ≤ 0.5 · min(umax − u₀, u₀ − umin), unless u₀ sits at a limit.
 - If neither move is allowed, the Nudge ends.
 
-**Back-off.** If a rung uses 80 % of the room on its side, it ends at once: u = u₀, and the rung is marked.
+**Back-off.** If a rung uses 80 % of the room on its side, it ends at once: u = u₀, and the rung is marked. (After review: rest, averages and the sentences, §5.10.)
 
 **Runaway.** The page sends `stop` on HIL (on simulated plants the run ends) and says: "angle runs away when pushed and does not come back: it needs a stabilising controller before it can be identified." Holding u₀ does not stop an unstable plant; the plant's own stop is the authority.
 
@@ -366,7 +366,7 @@ The switches happen inside the one law, so nothing is rebuilt. Today, flipping a
 
 **Accepting.** A try is accepted when g ≥ 0.3 and J improves. The best accepted try becomes the incumbent.
 
-**Soft guard.** If y leaves the band, the incumbent takes over at once (bumpless), the try is ✕ with g = −0.1, and the ladder ends. The plant's clamp, watchdog and E-stop stay the hard authority.
+**Soft guard.** If y leaves the band, the incumbent takes over at once (bumpless), the try is ✕ with g = −0.1, and the ladder ends. The plant's clamp, watchdog and E-stop stay the hard authority. (After review: r ramps back, the effort cap and the tail, §5.10.)
 
 **The ladder stops on the first of:**
 - g < 0.3;
@@ -412,7 +412,7 @@ With the tester's d left on, the gentle loop left the band on the tank and came 
   - at most about 60 lines, log-spaced;
   - in each group of three consecutive odd candidates, one is left out at random (an odd detection line);
   - even lines are left out.
-- The crest factor is lowered by 20 fixed clip-and-restore iterations.
+- The crest factor is lowered by 20 fixed clip-and-restore iterations. Built: each clips at 1.4 × the rms, keeps the phases the spectrum then has and restores the lines (clipping at a share of the peak converged more slowly). Measured over 10 seeds: crest factor 1.7–1.9 at N 256 (18 lines), 1.8–2.0 at 512 (34 lines), 2.3–2.7 at 4096 (60 lines over 765 harmonics); random phases alone give 2.5–3.8 and Schroeder's 2.4–3.3 on such sparse lines. `multisineLines` chooses the lines (the candidates thinned by a ratio when there are more than 90), `multisine` makes one period, both from the seed.
 
 **Gaps.** A period with a `seq` gap or a guard event is dropped and repeated once. The DFT is never computed across a gap.
 
@@ -446,6 +446,45 @@ The Check is never used for fitting. It is graded in §7.
 - The Nudge may use at most 40 %. Time for the Check is always reserved. The Shake runs only if its estimated time fits.
 - If not one try fits, the test ends after the first look, graded ✕: "2 min is too short for this plant: the Nudge alone took 50 s. Allow 5 min."
 
+### 5.10 Built (step 4)
+
+`src/core/experiment.js` holds the state machine, `createExperiment(plan)`, and `src/core/identify.js` what feeds it (`knownFor`, `identifySettings`, `planExperiment`). Tests 1–5 (`test/experiment.test.mjs`, `test/ladder.test.mjs`) run it on hil_plant.py's arm ported with ±15 % draws, an encoder and noise (`test/fixtures/arm.mjs`), on a lag, an integrator, unstable and unwired plants, and on the library's oven, motor and tank through their own diagrams (`test/fixtures/plants.mjs`). Where the build made the sections above more precise ([decisions.md](decisions.md) has the measurements):
+
+- **Listen** reads its last half (a plant still settling from before would read as noise and drift); drift counts only 4 standard errors out of the noise; a noise-free simulation's floor is 1e-5 of the band.
+- **Nudge.**
+  - A rung's **reach** (how far y went from y₀, both ways) feeds the move rule and the next rung's bound; its **response**, read from where the rung started, decides visible, plateau, slope, ringing and p.
+  - **A rung waits for rest** after its planned rest (y still within 5 % of its peak over half a window), at most 8 × its length and never past the Nudge's 40 %. An unstable plant never rests: still growing at the end, beyond 1.5 × the push's reach, it runs away.
+  - **p is clamped to [1, 2] for a doublet and is 1 for a pulse**: a doublet's spectrum at most quadruples when T doubles, a pulse's at most doubles, for any linear plant and dead time. Unreadable (a dead time longer than the push), p takes that largest value.
+  - **Doubling a push that has not visibly moved y predicts × 3, from at least 5 floors** (friction lies at tiny amplitudes: the arm moved 2.9–3.5 × further at 0.48 → 0.96 V). A visible push keeps × 2, T keeps 2^p.
+  - A pulse's two sides are held to their own rooms; a doublet's to the smaller room.
+  - The response's sign is the direction of its first clear move.
+  - Nothing visible within the room: the test ends with "angle moves too little to read within half of 'may move within' (its noise is …): widen it".
+  - Measured over 50 arms (default band): reach +0.21 / −0.16 rad, a Nudge of at most 2.0 s with its waits, last push 0.48–1.92 V, no back-off, every rung within the bound predicted before it ran (worst 0.98 of it). E1's prototype: +0.18 / −0.14 rad, 3.4 s, 0.96–1.92 V.
+- **First look.** The 1 s rest comes first; then, still at u₀, a lag, an integrator with a lag and a resonance are fitted on one segment (the whole Nudge and the rest, drift taken out), LM in slices of 4 iterations a sample; the lowest BIC decides. "Rings": a resonance with ζ < 0.5, or two swings in the rest. A resonance counts for the Hold as a lag of its gain and 1/(ζωn) (it rings) or its slower time constant. Still moving away from y₀ after the rest: it runs away.
+  - On the arm with its friction the first look sees an overdamped second order (Coulomb stops a ±0.2 rad swing within half of it); without the friction it rings, K, f and ζ within 1 %.
+- **Hold.** τc is doubled only for a loop that swings about r(0); one that creeps toward it (an arm held 0.1 rad off by friction) keeps its gains and waits as long again, and if still closing in, inside the band, the ladder starts from there with a note.
+- **Ease in.** Each candidate is 0.7 × the last try's τc (after a try that was no better, the same τc would repeat it). After a soft guard the incumbent has up to 4 s to bring y back before the hard guard applies. J is `runCost`'s with the default goal (`tryCost`, equal to it on the same arrays); g is `tryMargin`.
+- **Fit pause**: at least 2 s and until `supply('fit', data)`, at most 30 s; Node supplies at once.
+- **The record** is plain data: `null` where y was not measured or nothing was echoed, `gaps` as `[i, len]` (len cycles lost before record sample i).
+- **Measured** (2 min budget, as first built): oven 7 tries in 83 s, motor 3 in 36 s, tank 5 in 56 s, arms 4–7 in 53–77 s; never out of the band, every ladder stopped by its rules.
+
+**After review** (2026-10-25: the experiment run on the arm, the oven, the motor, the tank, 50 tanks and 50 arms drawn within ±15 %, 240 random plants and unstable ones; [decisions.md](decisions.md)). Where the experiment now does more than §5.1–§5.9 say:
+
+- **Listen guards the band from its first sample** (three in a row outside): a plant that runs off at u₀ ends at once with "y drifts out of 'may move within' with u held at 0 (from … to … in 1.5 s): it needs a controller first"; one that starts outside, with the sentence of §5.1. Measured: an unstable plant with a small bias reached 220 in Listen's 3 s (a band of ±1.3), now 1.43.
+- **A rung rests before the next one starts.** Rest is declared only after a wait that covers the delay a response may have (twice the longest delay a visible rung showed; 1 s while none has been seen) and when the last window's spread is small, not only its halves' means (equal mid-swing). The next rung's level is the mean of the window it rested over. Measured: tanks within ±15 % that read the sign the wrong way round, 8 of 50 → 0 (and none emptied); random plants 5 of 240 → 1 (it ended before any loop ran); rungs beyond their predicted bound, 30 of 1173 (up to 48×) → 2 of the arms' (1.09×). The arm's Nudge now takes 5.4–6.9 s, the oven's 30–40 s (its pushes grow until the response truly levels off; first built, a level read mid-decay looked like a plateau).
+- **A rung's response is read through a moving mean over half its push**, against the noise of that mean and of the level, floor·√(1/m + 1/n): single samples hid clear responses. A longer push after one that did not visibly move y predicts dead/2 × 2^p (friction lies here too: from rest an arm's push of twice the length moved it 4.8×).
+- **The Nudge's sentences.** "is u wired?" only when nothing was seen with the push grown to its largest and as long as the time or T's limit allowed; stopped short by the room, "y moves too little to read within half of 'may move within' (its noise is …): widen it", or, when y starts within 20 floors of an edge, "angle starts 0.0018 rad from the edge of 'may move within' (its noise is …): widen it below −0.002 rad, so the pushes have room both ways". When y did move, but not yet clearly, and the next push could leave half the room: "h moved 0.0204 m at pushes up to 0.03 m³/s, and a larger push could take it beyond half of 'may move within' (0.181 m below where it rests): widen it below −0.0667 m, or narrow q's range in the Controller tab (the pushes start at 1 % of it)" (3 of 50 tanks within ±15 %, resting near empty, where it is most sensitive; as first built "h moves too little"). With nothing seen when the time ran out: "P has not moved T at all, at pushes up to 32 % for 2.6 s: is P wired to the plant? A longer test would push harder". The band left at the very first push: "y moves too far at the smallest push (0.04, 1 % of u's range, took it to 1.57): narrow u's range in the Controller tab, or widen 'may move within'". Measured: at noise 1 % of the room on random plants, 78 of 88 read "is u wired?" as first built, 0 now (they read the room).
+- **Runaway is read while it accelerates**: over three equal windows after the push, after the wait, beyond 1.5 × the push's peak; a band exit counts as a runaway only when accelerating. Measured (band to 1.33): unstable lags at τ 0.3 and 1 s stopped at 0.32 and 0.09, an inverted pendulum (ω 3) at 0.07, where all were stopped at the edge; at τ 0.05 s it still reaches the edge (1.44).
+- **A first look that settles slower than all the data it saw** is read as an integrator when that fits within 2 of BIC (a resonance at ζ 20 for an integrator drifting on a bias), and a time scale beyond ten times the whole test ends with "y does not come back after a push (its time scale reads … s): it needs a controller that holds it before it can be identified" (a double integrator; first built, "Allow 10 min").
+- **The Hold's wrong-way guard**: y moving away from r(0) the way it started, never having crossed it, by more than a quarter of the room on that side, ends the test at once (u₀ and `stop`): "the gentle controller pushed angle away from 0 rad (… at … s): the page stopped the plant; the pushes may have been read the wrong way round". A try started from rest has the same guard against where r asks. Measured: it caught every tank that had read its sign wrong, 5.7–7.9 s in, at 0.062–0.088 m instead of empty, and never tripped on 50 arms, 240 random plants, the oven, the motor or the tank.
+- **The effort eases in**: a try's push |u − u₀| is capped at twice the largest one proven before it (the Nudge's, the Hold's, each accepted try's); the cap is logged with its law, so the replay runs the same limits. Measured: the first try pushed 4–15 × the Nudge's (motor 30 %, oven 32 % of u's range), now 2 × (8 %, 16 %); the oven's later tries reach 81 % as its reference needs.
+- **A try is scored with its tail**: the candidate holds the reference's last value until y settles at it or stops moving (a gentle loop held off by friction creeps), at most 4 s; J sums over the test's length (a long tail adds its cost, it does not dilute the mean). A try is accepted only when J improves by 3 %, so ✓ and the incumbent agree. Measured: random plants ending out of the band under the incumbent, 23 of 240 → 3 (an integrator with a lag ended a try on its way back).
+- **After a soft guard** the incumbent takes over bumplessly at the reference the try had, which ramps back to r(0) over 2(τc + θ) (at most 2 s); the guard's grace ends early if y goes a twentieth of the band's span further out than where it left, and is over only after y has been back inside for 0.5 s. A test that then ends with y out of the band under the incumbent ends softly (below). Measured: the kick at the hand-over 37 % → 2 % of u's range; arms in a tight band (−0.15 … 1.65) ended 0.51–0.71 rad beyond it and spun over the top when released, now at most 0.27 rad and they come back.
+- **Stop is soft (§5.8)**: the excitation ends, the incumbent (or the loop that runs) brings y back to r(0) by the same ramp and holds it until settled, at most 4 s, and only then is `stop` asked for; before any loop ran, u₀ at once. Measured: arms stopped at 1.3 rad stay within −0.11 … 1.37 rad, where u₀ at once swung them to −0.45.
+- **The budget (§5.9)** reserves both of the Hold's windows and a try's settle, reference and tail; too short, the sentence names the shortest length that fits: "30 s is too short for this plant: the test so far took 11 s, and one try needs about 35 s more. Allow 1 min." (first built: "0.5 min … the Nudge alone took 6 s. Allow 5 min."; 60 s completes all 50 arms). No run ends "Done" without a try for a lack of time; never over the budget (worst 1.5 s under, 700 arm runs at 26–60 s).
+- **A lost measurement** (y not a number) is held over in every statistic (the rung's level and response, the rest test, a try's J and g).
+- **Measured after review** (2 min): oven 6 tries in 107 s (budget), motor 4 in 42 s, tank 5 in 69 s, five arms 5 tries in 74–80 s; 50 arms all done in 39–92 s, never out of the band.
+
 ## 6. The fits
 
 ### 6.1 Segments and the closed-loop replay
@@ -456,7 +495,7 @@ The Check is never used for fitting. It is graded in §7.
 - **Open loop** (Nudge, rests): u as applied. The plant's `applied` echo is used when it sends one; otherwise the page's clamped u.
 - **Closed loop** (Hold, tries, Shake, Check): the law, with its parameters, switching samples, the integral at the segment's start, the reference samples and the excitation s(k).
 
-**The replay of a candidate model over a segment** is incremental about the segment's start: ŷ = y_start + Δŷ, with the model at rest at the start.
+**The replay of a candidate model over a segment** is incremental about the segment's start: ŷ = y_start + Δŷ, with the model at rest at the start. y_start is the settled mean before the segment, not one noisy sample: under a gentle loop a noisy start is an offset the replay carries for seconds (built: one sample's noise moved K by 9σ).
 - Open-loop segments are driven by the applied u.
 - Closed-loop segments are driven by **the same law fed by ŷ**, with the same clamps.
 
@@ -484,11 +523,12 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
 
 ### 6.3 Fitting
 
-- **Method.** Levenberg–Marquardt on the replay residuals, with positive parameters in logs. K's sign is fixed by the first look.
+- **Method.** Levenberg–Marquardt on the replay residuals, with positive parameters in logs. K's sign is fixed by the first look. θ is fitted in samples and bounded below by 0 (logs cannot reach θ = 0, a common answer).
 - **Starts.** Two per structure:
   - from the first look;
   - from the kernel estimate (§6.8): its sum gives the gain, its first significant tap θ, its decay the time scale, and its oscillation f and ζ.
 - **Caps.** At most 60 iterations per start. Deterministic.
+- **Damping** (after review): Marquardt's μ·diag(JᵀJ) with μ₀ = 10⁻³, a number without units, so the uniform weight 1/floor² leaves the path unchanged (bit for bit at weights that are powers of two). First built, μ₀ was 10⁻³ · max diag(JᵀJ): at a noise-free simulation's floor the same lag took 29–36 iterations instead of 8–10, and the resonance ended in a local minimum from 8 of 25 random starts instead of 2.
 - **Cost.**
   - About 5 structures × 2 starts × 60 iterations × (p + 1) replays of up to 12 000 samples.
   - The research measured a two-lag-plus-delay fit at 1 934 simulations in 0.9 s.
@@ -497,16 +537,19 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
 ### 6.4 Choosing the structure
 
 - Every candidate is scored on the Check (§7).
-- The page takes the **fewest parameters within 1 point of the best Check fit**, with BIC on the fitting data as the tie-break.
+- The page takes the **fewest parameters within 1 point of the best Check fit**, with BIC on the fitting data as the tie-break. A BIC difference below 2 decides nothing; then the structure listed first in §6.2 wins (a resonance with ζ ≥ 1 is exactly two lags, and two lags read more easily).
 - A fit is marked ✕ ("not supported by the data") when it is unstable (other than the integrator), when ζ > 5, or when a time constant exceeds 10 × the test's length.
 - The tester may click another candidate. That choice is saved as `structure`.
 
 ### 6.5 Uncertainty
 
 - **Covariance:** σ̂²(JᵀJ)⁻¹, with σ̂² the residual variance per weighted sample. So the bars grow when the model misses.
+  - That holds on open-loop segments. On closed-loop segments the replay leaves the measurement noise filtered by the loop (S·v), so the covariance is (JᵀJ)⁻¹ (σv² (SᵀJ)ᵀ(SᵀJ)) (JᵀJ)⁻¹, with S the replayed loop's noise transfer at the fit (one extra replay per segment) and σv² scaled from σ̂². Built and measured: under a brisk PI the plain formula covered f in 31 of 40 seeds and overstated K's bar 1.6×; with S every parameter is covered in 36–40 of 40.
 - **In the sentences:** ±2σ, rounded to the digits that matter.
 - **The bands** come from 50 seeded parameter samples.
 - These bars understate the truth when the structure is wrong (Schoukens & Ljung 2019). So the where-spread and the distortion are shown beside them, never folded into them.
+- **Coloured noise** (after review). S·v assumes v white. The noise's own colour is read from Listen's last half less its drift, pure noise with no model involved: an AR(p), p ≤ 10 by AIC, by Burg's method (Yule–Walker shrinks a pole near the unit circle on 150 samples), and its impulse response is convolved into each segment's S. Skipped when Listen is quiet or shows an encoder's steps. Measured (a lag under a brisk PI, AR(1) at 0.95, σ 0.02, 80 seeds, the colour from 150 samples): K, τ, θ covered in 67, 75, 78 of 80, against 26, 32, 34 read as white; two lags, the resonance and an integrator with a lag 70–79 of 80 (20–46 as white); open loop 72–76 (22–34); white noise unchanged. The estimates are unbiased either way; only the bars were 3–7× too narrow. Coloured, the noise's level is its spread about the drift, not Listen's σ from differences (σ√(1 − ρ) for an AR(1)): it sets the noise ceiling and the noise sentence.
+- **A controller at its limit** (after review). The bars take the loop as linear; a law at its clamp passes no noise back, and when it leaves the clamp is set by the noise. When u sat at a limit anywhere in the closed-loop data, the model says so: "P was at its limit in 3 % of the loop's test: the ± bars may be too narrow". Measured: u clamped at a segment's start, K's spread 1.6× its bar; reading S at the first unclamped sample instead made it 3.3×.
 
 ### 6.6 Where and Size
 
@@ -532,9 +575,18 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
 
 **Used for:**
 - the Bode dots with ±2σ bars;
-- the share of excited lines where the model lies within 2σ;
+- the share of excited lines where the model lies within 2σ, against the model's discretised response G_d(e^{jωTs}) (the zero-order hold and the fractional dead time), not G(jω): at ωTs = 1.36 (line 111 of 512 at 10 ms) the two differ by 72–76 % (review, for step 8);
 - the distortion sentence;
 - the grade.
+
+**Built** (`frf`, `wholePeriods` in `fit.js`; tests 8 and 9):
+- Exact on a linear plant in closed loop: Ĝ equals the plant's discrete transfer function to 1e-8 at every excited line (lag, resonance, integrator with lag, each with a fractional dead time).
+- `sd` is the standard deviation of Ĝ as a complex number, √E|Ĝ − G|². Measured with noise under a brisk PI (40 seeds, 800 lines): the ±2σ bars hold the truth at 91.9 % of lines, as the F(2, 6) distribution of four periods predicts (92 %). Near crossover the mean squared error is 1.09 × sd² with the U–Y covariance term and 0.55 × the variance without it, so leaving it out would make those bars 1.4× too wide.
+- The spread between periods assumes the noise forgets within a period. Where the loop's noise spectrum is steep (the lowest lines, under integral action) the spread overstates the variance of the mean up to 3×; a lightly damped loop's ringing noise does the same near its resonance. The bars are then too wide there; pooled over the lines they were never too narrow in these measurements.
+- **The distortion share** is per line, as designed, with the noise removed in power (the detection line's |Ȳ|² less σ²_Ȳ), not in amplitude. The odd and the even detection lines each give a share against the response at their neighbouring excited lines; the share adds the two in power. Pooling all detection lines into one ratio instead would dilute a cubic's odd distortion by the empty even lines (7.8 % would read 3.8 %).
+- Measured with a cubic actuator v = u + a·u³ under the Shake (a lag under a PI): about u = 0 only odd distortion (a = 1: 7.8 %, even 0.000 %); half the push, a quarter of it (2.0 %), as a cubic must; a = 6: 33 %; held at r = 0.5, where the cubic also bends one way, odd 7.9 % and even 7.2 %; a linear plant 0.000 % with noise. In open loop, what the odd detection lines show is what lands on the excited lines: the spread of Ĝ·Ū over 30 phase realisations is 0.87 × the detection lines' level. In closed loop that spread is larger by |1 + GC|² (the loop feeds the distortion back), so the share is read from the detection lines, not from Ĝ's spread.
+- A period with a `seq` gap at or inside it, or a guard event, is dropped (`wholePeriods`); the Shake will play one more (step 8: no experiment plays a Shake yet; test 9 plays a fifth period itself). Measured: the four kept periods give Ĝ to 3e-6 (the period after the gap still carries a 1e-5 transient), the four taken across the gap 6 % off.
+- The grade's ✕ above 30 % comes with the Shake (step 8).
 
 ### 6.8 The kernel reference (one click deep)
 
@@ -547,6 +599,28 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
   - start values for §6.3;
   - a ceiling: when the chosen structure's Check fit is 5 or more points under the kernel's (replayed the same way), the model says "the shapes on offer miss something here", and the grade drops to !.
 
+**Built** (`tcKernel`, `tcKernelSteps`, `kernelStep`, `kernelGuess`, `tcInverse` in `fit.js`; `eigSym` in `linalg.js`; test 10):
+- **Decimation keeps y at its full rate.** A tap is the sum of the impulse response over D lags, and its regressor the mean of u over those lags; every regressor lies strictly in the past, so with white noise the estimate is consistent in closed loop (measured: a lag and an integrator under a PI, the steady gain within 3σ of the truth). Block-averaging y as well would add a lag-0 term that feedback biases. Measured on the research's example: 150 taps of 20 ms fit as well as 300 of 10 ms (below).
+- **An integrating plant is fitted as a rate**, not on Δy: y − y0 = r·Σ(u − u0) plus a TC part that holds the difference from the rate, r with a flat prior, integrated out of the likelihood. On Δy the noise is coloured (v[k] − v[k−1]) and the loop feeds it back: under a PI, k′ came out 3.45 for a true 3 on every seed; as a rate it is within 1.3σ. g is then y's own impulse response, the same for both kinds.
+- **The search.** λ = e^(−a/n), a on a grid of 9 decays (0.5 … 128 over the n taps), then golden section in log a to 1 %: about 22 evaluations, never above 40. Each evaluation is one symmetric eigendecomposition of E^½ Uᵀ ΦᵀΦ U E^½, where K = U E Uᵀ and K⁻¹ = U⁻ᵀ E⁻¹ U⁻¹ is the tridiagonal inverse; it gives −2 log L for every c in O(n), with σ² profiled exactly. "One Cholesky per evaluation" cannot search λ alone: c and σ² would need their own search at each λ. An eigendecomposition costs about four Choleskys (10 ms at 150 taps). The estimate and its covariance then take one Cholesky.
+- **Checked against the direct N×N formulas**: −2 log L, the posterior mean and covariance, and the rate with its variance agree to 1e-9; 1 % changes of c, λ or σ² all raise −2 log L.
+- **The research's example** (2e^(−0.1s)/((0.5s + 1)(0.1s + 1)), Ts 10 ms, a random binary ±1, 30 s, SNR 3): impulse-response fit 94.3–96.1 %, mean 95.1 % over 10 seeds; gain 1.93–2.05; σ within 6 %. SNR here is the ratio of standard deviations; with it, 300 taps undecimated give 94.4–95.3 %, the research's 95.6 %. As a ratio of variances (more noise) the fit is 91.4–94.2 %.
+- **Start values** (`kernelGuess`): the gain from the sum (k′ from the rate), θ where the step reaches 2 %, τ at 63 % less θ, f and ζ from an overshoot. Measured: two lags K 2.0, θ 0.14 (true 0.1), τ 0.55; a resonance f within 15 %, ζ within 30 %; an integrator k′ within 2 %.
+- The kernel is a generator (`tcKernelSteps`, a yield per evaluation) so the page can slice it.
+
+### 6.9 Built (step 5)
+
+`identifySteps(record, { plan })` in `src/core/identify.js` (test 12: the same record gives the same model, bit for bit). Where the build made §6 more precise ([decisions.md](decisions.md) has the measurements):
+
+- **Segments.** The Nudge and the rest after it are one open-loop segment (u as applied, drift taken out). The Hold, then each try from a settle that succeeded to the next one, are closed-loop segments up to the fit pause's start (the record's `supply`): the pause and the Check are never fitted. A try whose settle ran out (the oven cooling with its heater off takes longer than the 4 s) does not cut: its data stay in the segment before. A segment starts from the mean of y and u over the 0.5 s before it, and its law starts bumpless there (the integral that holds that rest, against r just before the segment); every later switch in the log is replayed bumpless on the model's own y. Fed the measured y, the replayed law gives back every u the experiment sent (to the 6 digits the record keeps). Lost cycles are put back with u held and no measurement.
+- **The Check is replayed from the last rest**: the Check reference's start if the incumbent settled y there, else the pause's end, else the last settled point fitted, and it is graded from the Check's start. Measured: the oven's pause (2 s) ends with T still at 13 °C, falling, and a replay "at rest" there scored 87 % where the model is 99.8 %.
+- **No Check** (a stopped test, a band exit before it) or a Check on which y did not move: the candidate with the lowest BIC on the fitting data (differences below 2 go to the simpler), graded on the fitting data and at best !, "no Check ran".
+- **Where** refits the chosen structure's gain and main time scale (τ, τ₁ or f) per third of the levels visited (y₀ and every level r held), θ, ζ and a second lag held at the main fit's, on all the fitting data at once: the model switches by where its own y is, and so that switching is physics its restoring part runs through the hold curve u*(y), continuous, with slope 1/K of the place it is in (ẋ = (A + bC)x + bK(u − u*(y)), b = B/K; an integrator holds anywhere with the same u). Cutting the record into step pieces and refitting each third alone, as first built, measured the path of each large step, not the place: on the arm it put the gain near 1.5 rad at 0.45 rad/V, where the arm's is 7. Places differ when gain or time scale differ by more than 25 % and beyond their 2σ bars, among the places the model spent a twentieth of its time in (a tenth as first built; after review the tries' tails add rest at the low place). The hold curve beside it is measured where y stood still at r (the mean u over 0.5 s). Measured below: the tank's three places within 3 % in gain and 2–12 % in time constant of its linearisation; the arm's low place within 4 %, its high place understated (§ Measured).
+- **Size**: the rungs at the Nudge's last length, gain = y at the end of the first half over the push; when the smallest push moves y less than 0.75 × as far per unit as the largest, the sentence about friction or a dead band.
+- **The bands** (the Check plot's 2σ) come from 50 parameter samples drawn with `gaussAt` in the fit's own coordinates (logs, θ in samples); a sample that cannot be discretised is left out.
+- **The kernel** is fitted on everything from Listen to the fit pause, covering 1.5 × (θ + 4τ) of the first look; its replay on the Check (an FIR with its rate, fed back through the same law) is the ceiling of §6.8.
+- **Noise**: "no noise" when Listen's σ and q are below half the floor the experiment allows (a simulation); an encoder's steps are Listen's q or, when y stood still in Listen (a motor at rest), the grid y moved on during the test above the grid the record is rounded to.
+
 ## 7. Validation and grades
 
 **Measures:**
@@ -555,7 +629,10 @@ Every structure also has a dead time θ ≥ 0, fitted as a continuous value: zer
 - **Pattern in what is left**:
   - the residuals' autocorrelation over lags 1–25 within ±2.58/√N;
   - their cross-correlation with past u over lags 0–25.
-  - In words: "what is left looks like noise", or "what is left has a pattern".
+  - "A pattern" is two or more lags outside the band, or one beyond 1.5 × it (white residuals show one in about 3 % of records). The autocorrelation removes no mean (Ljung), so an offset is a pattern; the cross-correlation uses u less its mean.
+  - **On the Check** (after review) each lag is read against what the replayed loop gives white noise, Σh_q h_{q+τ} / Σh² with h the loop's noise transfer: its residual is S·v, coloured even for the true model. Measured (a lag under its SIMC PI at τc = θ, 100 seeds): the true model read "a pattern" in 68 as built, 6 so; τ 20 % off in all 100. The noise's own colour is not taken out: from Listen's 150 samples it is too unsure for the Check's band (white noise then read "a pattern" in a third of seeds). When Listen heard coloured noise, the reason says so.
+  - The cross-correlation in closed loop is shown, never graded: under feedback lag 0 is always correlated (it flagged 13 % of true models at τc = θ).
+  - In words: "what is left looks like noise", "what is left has a pattern", or "what is left has a pattern, as the noise at rest has".
 
 **Grades** (thresholds are named constants in the code; they inform and never block):
 
@@ -583,6 +660,66 @@ The judges measured χ²/dof 0.25–0.32 on badly wrong models at 0.15–0.25 V,
 
 **The chain**, the candidates and the plots are as described in §4. Nothing on the main screen needs a word of control theory. ζ, χ², the kernel and the correlations sit in tooltips and in More.
 
+**Built (step 5, `modelSentences`):**
+- "Responds after …" only when the dead time is at least a tenth of a sample and stands beyond its 2σ bar (after review: a bar alone let "0.0028 ms" through at 10 ms; the review asked for half a sample, which would drop the design's own "2 ms" at 10 ms, so a tenth).
+- "Swings at about … Hz" only below ζ 0.7 (an overshoot of 5 % or more), at the frequency the swing is seen at, f·√(1 − ζ²); the design's example said f. "Settles in about …" is the model's 2 % settling time.
+- The where sentence names the lowest and the highest place the model spent a twentieth of its time in (a tenth as first built); the size sentence comes when the smallest push moved y less than 0.75 × as far per unit as the largest: "At ±0.48 V it moves less than at larger pushes (friction, or a dead band): this model is for pushes near ±0.96 V and more."
+- Noise: "This plant has no noise; real plants do." (a simulation), "Noise on angle: only its steps of 0.0015 rad (an encoder)." or "Noise on angle: 0.0011 rad, in steps of 0.0015 rad (an encoder)."
+- The grade's sentence gives whole points, one decimal from 99 % ("99.7 %", at most 99.9 %, rounded as the Check line and the candidates round it; first built it truncated, so 99.75 read 99.7 beside a Check of 99.8); without a Check, "explains … % of what it was fitted to; no Check ran"; ✕ adds "Auto-tune can tune on it, but Try on the plant will tell; a larger room or a longer test helps." Above six sentences the noise one is left out first.
+
+## Measured: the whole test in Node (step 5)
+
+`identify()` runs the experiment as the block's hidden law in a copy of the diagram (`createStepRunner`, the r Source playing `reference(k)`, d held at 0) and computes the model from the record as Keep stores it; `node cli.mjs identify` prints it. Wall time 4–9 s per run in Node, CLI start included; the fits take 1–4 s of it.
+
+**The command line on the library's oven and motor** (their own diagrams, which have no noise, so the residuals of any approximate model are a pattern and the grade is !):
+
+| | Plant time, tries | Model, Check fit | Parameters (±2σ) | The truth |
+|---|---|---|---|---|
+| Oven | 119 s, 7 (6 ✓, ! rang) | two lags, 99.8 % (kernel 99.7 %) | K 0.99917 ± 0.00011 °C/%, τ₁ 0.494 s, τ₂ 0.120 s, θ 0.135 s | K 1; lags 0.5, 0.1 and 0.05 s, 0.1 s to the sensor (τ₂ + θ = 0.255 s stand for 0.1 + 0.05 + 0.1) |
+| Motor, position | 36 s, 3 | integrator · lag, 99.9 % | k′ 1.4298 ± 0.0002 rad/(V·s), τ 0.0502 s, θ 0.0101 s | k′ = Kt/(R·b + Kt·Ke) = 1.4286; lags 0.0481 and 0.0119 s (τ + θ 0.0603 s for 0.0600 s) |
+
+The sentences, for the oven: "Responds after 135 ms. Settles in about 2.2 s. 1 % more gives 0.99917 ± 0.00011 °C more. This plant has no noise; real plants do. Explains 99.7 % of a test it was not fitted to; what is left has a pattern !". The gentlest controller that held: the oven's try 6 (Kp 1.68, Ki 1.42), the motor's try 1 (Kp 3.46, Ki 4.28).
+
+**The command line on five arm draws**: `test/fixtures/arm-project.mjs` builds the HIL arm as a simulated project (hil_plant.py's physics in blocks, 1 mrad of noise, a 4096-count encoder, the 2 ms round trip; it agrees with the ported arm within 5 mrad), and `--vary 0.15 --seed 1…5` hides a draw of each physical parameter. The truth is the arm's linearisation at a place, (k/R)/(mgl·cos θ), from the factors drawn.
+
+| Seed | Plant time, tries | Model, Check fit (kernel) | K, τ, θ | At rest: true K, f, ζ | Near 0.25 rad: found (true) | Near 1.2–1.3 rad: found (true) |
+|---|---|---|---|---|---|---|
+| 1 | 68 s, 6 | lag, 79.5 % (81.3 %) | 0.562 rad/V, 0.168 s, 0.157 s | 0.489, 0.93 Hz, 0.20 | 0.504 (0.504) | 0.83 (1.55) |
+| 2 | 63 s, 5 | lag, 83.0 % (83.4 %) | 0.487, 0.119 s, 0.147 s | 0.419, 1.09 Hz, 0.20 | 0.436 (0.433) | 0.98 (1.33) |
+| 3 | 63 s, 5 | lag, 82.7 % (83.1 %) | 0.450, 0.114 s, 0.149 s | 0.384, 1.11 Hz, 0.18 | 0.397 (0.396) | 0.94 (1.22) |
+| 4 | 71 s, 6 | lag, 80.3 % (83.0 %) | 0.619, 0.174 s, 0.147 s | 0.549, 0.94 Hz, 0.23 | 0.554 (0.566) | 0.94 (1.74) |
+| 5 | 77 s, 7 | lag, 77.3 % (63.8 %) | 0.590, 0.187 s, 0.148 s | 0.531, 0.90 Hz, 0.20 | 0.530 (0.548) | 0.70 (1.68) |
+
+- Every run ends done, inside the band, in 63–77 s of plant time; the noise ceiling is 99.6 %, so the 77–83 % is the arm's nonlinearity, not its noise (E2 measured 71–77 % for its resonance).
+- **The model chosen is a lag with an apparent dead time of about 0.15 s** on every draw: the Check cannot tell the lag, two lags and the resonance apart (within 1 point of each other), so the rule of §6.4 takes the simplest. The resonance fits the fitting data better (81–86 % against 76–81 %), with θ 7–17 ms, f 0.81–1.01 Hz and ζ 0.38–0.43 (against the arm's 0.20 at rest: its friction damps the swing). So the first sentence reads "Responds after 157 ms" for an arm that starts moving within 2 ms, slowly: the lag's dead time stands for the arm's slow start.
+- **Where**: near rest the arm's own gain within 0–4 %; near 1.2–1.3 rad 0.70–0.98 rad/V, where the arm's is 1.22–1.74 there and 5.4–7.8 at 1.5 rad: the right direction, understated by 25–60 %. The arm holds 1.5 rad still, so the high third is seen only while the arm passes through it; a closer look needs the Shake there (step 8). Four of five draws say "Behaves differently at different places"; on the fifth only the low place had a tenth of the model's time (the high one 9.5 %), so there was nothing to compare it with.
+- On two draws the kernel's step still rose at its end and the integrating structures were tried too (✕, the Check fit below 30 %).
+
+**Test 13's identify part** (the library's systems through their diagrams with a sensor's noise, as in test 5, and the ported arm):
+
+| Plant | Model, Check fit (ceiling) | Grade | Against the truth |
+|---|---|---|---|
+| Oven, σ 0.1 °C | two lags, 99.0 % (99.0 %) | ✓ | its step within 0.45 % of the three lags' and dead time's |
+| Motor, encoder | integrator · lag, 99.9 % | ! (a pattern: an encoder only) | k′ within 0.1 %, the step within 0.06 % over 1 s |
+| Conical tank, σ 1 mm | lag, 92.3 % (98.9 %) | ! (places, pattern) | per place K 2.24, 3.19, 3.82 m/(m³/s) and τ 0.223, 0.696, 1.51 s at 0.26, 0.48, 0.69 m, where the tank's linearisation has 2.29, 3.11, 3.76 and 0.199, 0.680, 1.54 |
+| Five arms (±15 %) | lag (4) or resonance (1), 79.6–83.4 % (99.6–99.7 %) | ! | near 0.25 rad within 4 %; near 1.2–1.3 rad 0.74–1.13 rad/V against 1.32–1.69 |
+
+**After review** (the numerics, the experiment and the sentences reworked, §5.10, §6.5, §7; the same commands):
+
+| | Plant time, tries | Model, Check fit (kernel) | Parameters | Notes |
+|---|---|---|---|---|
+| Oven (no noise) | 112 s, 6 ✓ | two lags, 98.9 % | K 0.9765 ± 0.0005 °C/%, τ₁ 0.480 s, τ₂ 0.122 s, θ 0.137 s | ! (a pattern: no noise); K 2 % low where it was 0.1 %: the capped first tries ramp the heater up, so the record has more of the oven rising than holding |
+| Motor | 49 s, 5 (3 ✓) | integrator · lag, 99.9 % | k′ 1.4295 ± 0.0013, τ 0.0500 s, θ 0.0102 s | the settling candidates ✕ (time constants beyond 10 × the test, ζ 600) |
+| Arm, seed 1 | 78 s, 5 | lag, 79.6 % (81.3) | K 0.557, τ 0.152 s, θ 0.167 s | near 1.25 rad 1.43 rad/V (true about 1.55) |
+| Arm, seed 2 | 62 s, 4 | resonance, 84.1 % (84.2) | K 0.490, f 0.98 Hz, ζ 0.37, θ 9 ms | near 1.25 rad 0.88 (1.33) |
+| Arm, seed 3 | 64 s, 4 | lag, 81.9 % (82.6) | K 0.446, τ 0.121 s, θ 0.147 s | near 1.25 rad 0.86 (1.22) |
+| Arm, seed 4 | 79 s, 5 | lag, 80.0 % (81.8) | K 0.612, τ 0.162 s, θ 0.154 s | near 1.25 rad 1.04 (1.74) |
+| Arm, seed 5 | 78 s, 5 | lag, 77.6 % (79.6) | K 0.591, τ 0.160 s, θ 0.173 s | near 1.25 rad 1.29 (1.68) |
+
+All five arms now say "Behaves differently at different places" (a place counts from 5 % of the model's time: the tries' tails at rest added time at the low place, and the high one held 7–9 %; its bars must still part the places); the high place is still understated (0.51–0.92 of the truth there), for the Shake (step 8). Test 13's arm part asserts it two-sided around the truth.
+
+**Fixed after review: the library's tank without noise.** With the rest wait of §5.10 ("After review") it is identified: 5 tries in 68 s, a lag, 92 % on the Check (!: places and a pattern), "near 0.26 m, 1 m³/s moves it 2.2 m; near 0.69 m, 3.6 m". As first built: `identify()` on its own diagram (no Noise block): Listen's floor is the smallest allowed, so the first push (0.03 m³/s for 40 ms) is already "visible"; the Nudge doubles a twice and stops at half the room below, with pushes of 40 ms against a pipe of 0.1 s, and a rung's wait for rest ends while the delayed response is still under way. The first look reads the tank as reverse-acting, the gentle loop fills it to its rim (1 m, inside the band, which reaches 1.02 m), and the model is ✕ with "The Check did not move h, so the model could not be checked". With 1 mm of sensor noise (test 13) the Nudge grows longer pushes and the tank is identified. The rest wait (§5.10) should cover the dead time it has seen; for the experiment's next pass.
+
 ## 9. Storage
 
 ```json
@@ -609,6 +746,7 @@ The judges measured χ²/dof 0.25–0.32 on badly wrong models at 0.15–0.25 V,
 - **Copy as blocks** puts the twin subsystem (§10) into My blocks (`library`). The toast says "these numbers no longer follow the plant", as Copy as numbers does.
 - **Add as variant** puts the eased-in PI into the block as "<name> · eased in": hand numbers the person chose to keep, like Auto-tune's results.
 - The project format stays version 2; `system.identify` is optional ([project-format.md](project-format.md), docs step).
+- **Built (step 5):** `normalizeIdentify` in `project.js` keeps `band`, `budget`, `hard`, `vary` ({ share, seed }), `seed`, `structure`, `use` and `kept` ([{ name, plan, record }]), checks each, and refuses any other key, there or in a kept test, its plan or its record, with the sentence. After review, at every depth: the plan's parts (`test`, `check`, `names`, `others`), the record's `ports`, and the log, whose entries keep the experiment's own decisions (Listen's noise, each rung, the first look it steered by, each law, try and stop), each kind with its own fields and the objects inside them theirs (interpretation of "nothing computed in the file": the log is what the experiment measured and chose as it ran, never a model of the record; `identifySteps` reads the look's sign, class and time scale from it to replay what ran). The record is kept as the run made it once compacted (u, r and applied to 6 significant digits, y to a tenth of Listen's floor), and Identify computes its model from that compact form too, so the model a run shows and the one its kept record gives are one.
 
 ## 10. Auto-tune on the model
 
@@ -687,7 +825,7 @@ The step is then "✕ did not behave as predicted".
 
 ## 12. Analysis
 
-- **The plant.** With the identified source, `app.loopModel(path, 'identified')` returns the model's `LinearModel` (§16): A, B, C, D of the chosen structure, its states labelled by the chain ("lag", "resonance.x1"), `delay: [θ]`, `sensors: [{ std: σ, q }]`, `op: { kind: 'identified', label: 'identified 14:02 over 0 … 1.5 rad' }`, and the grade's sentences in `warnings`. Discretisation, margins and plots are unchanged ([analysis.md](analysis.md)).
+- **The plant.** With the identified source, `app.loopModel(path, 'identified')` returns the model's `LinearModel` (§16): A, B, C, D of the chosen structure, its states labelled by the chain ("lag", "resonance.x1"), `delay: [θ]`, `sensors: [{ std: σ, q }]`, `op: { kind: 'identified', label: 'identified 14:02 over 0 … 1.5 rad' }` (built: the levels the test visited, the Where places' outer edges, not the band), and the grade's sentences in `warnings`. Discretisation, margins and plots are unchanged ([analysis.md](analysis.md)).
 - **Ranges.** Every key number is computed for the nominal model and, as a range, over the per-place fits and the band samples: "gain margin 3.1 (2.4 … 4.0 across what the model is unsure of)".
 - **Measured points.** When a Shake ran, the Bode plot shows the measured points with their bars.
 - **Notes** carry the grade and the where sentence.
@@ -709,6 +847,7 @@ The step is then "✕ did not behave as predicted".
 - After the run, the reveal lists the factors drawn ("the plant was: J +8 %, mgl −12 %, …"), as `hil_plant.py` prints the plant it drew.
 - The project stores only the share and the seed.
 - This makes the person's "identify the plant that we have modeled" a fair test.
+- **Built (step 5, `varyDiagram`):** flagged in the block definitions are a Gain's K, a dead time, every plant block's gains and time constants (first and second order, n lags, integrator with lag, inverse response), a transfer function's denominator term by term (the motor's 1/(L·s + R): L and R; its numerator is structure), and the physics models' masses, lengths, friction and the tank's radii, height and outlet. Since the physics models are masked subsystems (transparent-models.md), a masked model varies its mask's physical fields (`physicalMaskKeys`, as the HIL simulator does: every field but g and the start values), each drawn on its own and labelled by the model's name and the field ("tank, Outlet area a"); the Mechanics parts drawn directly flag a Mass's m, a Rod's l and m, a Rail's friction and a Hinge's damping. A mask that flags its own physical fields (`physical`: the Servo motor's R, L, K, b, Jm and the coupled gear's k and c) varies those, and a field folded under a toggle or choice that is off (the gear's stiffness on a free shaft) is left; a component's insides are its table's, set by its mask, and are not walked. The Servo motor's K is one field for Kt and Ke, so the motor's examples keep them one constant by construction ("Motor, Torque and back-EMF constant −7.4 %"). Not flagged: g, start values, an Integrator's K (angle = ∫ speed is kinematics, not a part), limits, noise, quantisers, Sources, Sinks, Controllers, Observers, ports. Two Gain blocks with one value in one subsystem are one constant and get one factor (a motor drawn from Gains, as the unbalanced arm's: its Kt and Ke equal in SI units, or the motor would make energy); every other parameter is drawn on its own, in the order the blocks are listed. The factors carry the block's name and the parameter, for the reveal, and (after review) a plain label: a gain by its block's name, a transfer function's coefficient by its power of s ("armature 1/(Ls + R), its s term +0.48 %"). **A known limit** (review): equal values are linked whether or not they are one constant, so unrelated equal gains (a damping c equal to a spring k) share a factor and structural gains (−1, a unit conversion) are varied as if physics; the arm fixture keeps its mgl in a subsystem of its own for that. An explicit link (a tag on the parameter) is the fix; it changes the library's data, so it waits for the overhaul's shared configuration.
 
 ## 14. The HIL plant's unknown variation
 
@@ -750,62 +889,126 @@ The step is then "✕ did not behave as predicted".
 ## 16. Core APIs
 
 ```js
-// src/core/identify.js (no DOM)
+// src/core/identify.js (no DOM; built in step 4 up to planExperiment)
+export class IdentifyError extends Error { constructor(code, message, hint) }  // code, message (the sentence), hint
+export function knownFor(project, path, { describe, link } = {}) // → Known: { block: { path, key, where }, live,
+                                                            //   u: { name, unit, min, max, u0, from, start }, y: { name, unit, hard, from },
+                                                            //   r: { lo, hi, span, source, period, samples, Ts } | null, Ts, others: [{ name, value, input? }] }
+                                                            //   link: { connected, estop } on a live plant; throws IdentifyError
+export function defaultBand(known, hard)                    // → { band, from: 'r' | 'plant' | null } (§2)
+export function identifySettings(project, path, opts)       // → { band, budget, hard: { value, from }, vary, structure, seed }
+export function settingsFor(known, stored)                  //   the same from a Known and system.identify[key]
+export function planExperiment(known, settings)             // → Plan (data): { version, kind, Ts, u0, umin, umax, band, hard,
+                                                            //   budget, seed, names, test: { r } | { r0 }, check: { r } | null, others }
+export const BUDGETS, BUDGET, BAND                          // 30 s … 10 min, 120 s; the band's widen, still, inset
+// src/core/experiment.js (no DOM; built in step 4): the state machine, apart so that controllers.js's hidden
+// 'experiment' type (step 5) can import it without a cycle through autotune.js
 export const IDENTIFY_VERSION = 1
-export class IdentifyError extends Error { constructor(code, message, hint) }
-export function knownFor(project, path, { describe } = {})  // → Known: { u: { name, unit, min, max, u0, from },
-                                                            //   y: { name, unit, hard, from }, r: { lo, hi, source }, Ts, live }
-export function identifySettings(project, path)             // → { band, budget, vary, structure } with defaults and their sources
-export function planExperiment(known, settings)             // → Plan (data): Ts, u0, U, band, hard, budget, test reference
-                                                            //   samples, check reference, seed, version
-export function planTry(known, model, steps, incumbent)     // → Plan of kind 'try' (§11)
+export const EXPERIMENT                                     // every threshold, named (Listen, Nudge, look, Hold, ease, pause, check)
 export function createExperiment(plan)                      // → Experiment, the causal state machine:
-//   step(k, y, applied?) → u              one controller sample
-//   reference(k) → r                      what the r Source plays at sample k
+//   step(k, y, applied?) → u              one controller sample (k: the plant's seq; a jump is a gap)
+//   reference(k) → r                      what the r Source plays at sample k (asked before step(k))
 //   needs → null | { kind: 'fit', upto }  a heavy job the runner must supply
 //   supply(kind, data)                    the fit and the Check's prediction, as data
-//   state → { stage, rung, try, push, room, status, chips, done, end }
-//   record() → Record                     u, y, r, applied, gaps, log
-export function* identifySteps(record, { structure } = {})  // yields progress; returns IdentifiedModel
-export function replay(record, model, segment)              // → Float64Array, the model's y for a segment
-export function modelSentences(model, known)                // → [string]
-export function linearModel(model)                          // → LinearModel { A, B, C, D, states, outputs, op, delay, sensors, warnings }
-export function twinSubsystem(model, { push })              // → a subsystem block of primitives (Copy as blocks uses it too)
+//   stop(), abort(reason)                 Stop (soft); an E-stop or a lost plant
+//   state → { stage, chips: [{ stage, label, mark }], rung, try, tries, push, pushMax, room, roomMax, marks,
+//             status, t, budget, done, end: { code, message, i, t }, stop }
+//   found → { listen, rungs, look, gentle, incumbent, test, check }   (computed, never stored)
+//   record() → Record                     { version, Ts, u, y, r, applied, gaps, log, end }, plain data
+export function gentleGains(look, tauC, Ts), gentleTauC(look, Ts)   // SIMC's robust branch (§5.3)
+export function piLaw(gains, I0, lo, hi, Ts), bumpless(gains, u, r, y) // the PI = controllers.js's pid (Kd 0, clamping)
+export function tryCost(r, y, u, { R, U, lo, hi })          // runCost with the default goal, on a try's arrays
+export function tryMargin(r, y, band, h)                    // → { g, gRoom, gRing } (§5.4)
+export function listenStats(y, Ts, { span })                // → { y0, sigma, q, floor, slope, drift, drifts } (§5.1)
+export function staircase(r0, band, share, hold), halved(r) // the references (§5.4, §5.7)
+// src/core/identify.js, built in step 5 (no DOM)
+export function* identifySteps(record, { plan, structure, upto, reuse } = {}) // yields progress (LM iterations, kernel
+                                                            //   evaluations); returns IdentifiedModel. plan: the plan the record
+                                                            //   ran (its names, band, limits; Keep stores it beside the record);
+                                                            //   upto: the last sample fitted (default the fit pause's start);
+                                                            //   reuse: a model of the same data whose fits it takes (identify())
+export function segmentsOf(record, plan, { upto })          // → { F, open, closed: [segment], check, holds: [{ y, u }], levels }
+export function replay(record, model, segment)              // → Float64Array, the model's y for a segment of segmentsOf
+export function compactRecord(record)                       // the record as Keep stores it: u, r to 6 digits, y to a tenth of its floor
+export function modelSentences(model, names)                // → [string]; names: the plan's names or a Known
+export function gradeOf({ fit, ceiling, white, distortion, spread, kernelGap, left, checked }) // → { mark, why } (§7); GRADE
+export function withBar(value, sd)                          // "0.53 ± 0.02": a number to the digits its ±2σ allows (§8)
+export function linearModel(model)                          // → LinearModel { A, B, C, D, states, inputs, outputs, op, delay,
+                                                            //   sensors, warnings } (continuous; Analysis discretises)
+export function twinSubsystem(model, { push, noise, id, name }) // → a subsystem block of the Plant library's own blocks: gain,
+                                                            //   dead time, first or second order, integrator, noise, quantiser
+export function varyDiagram(diagram, share, seed)           // → { diagram, factors: [{ path, block, param, value, factor }] }
+export function identify(project, path, settings)           // Node and CLI: the whole test on a simulated plant, synchronously:
+                                                            //   → { ok, block, plan, settings, vary, record, model, end, time, tries }
+// the later steps
+export function planTry(known, model, steps, incumbent)     // → Plan of kind 'try' (§11)
 export function twinDiagram(diagram, path, model, opts)     // → a diagram with the twin in the plant's place
-export function varyDiagram(diagram, share, seed)           // → { diagram, factors: [{ path, param, factor }] }
-export function identify(project, path, settings)           // Node and CLI: the whole test on a simulated plant, synchronously
 
-// IdentifiedModel = { version, structure, params, cov, chain: [{ kind, value, sd, unit, tip }],
-//   candidates: [{ structure, fit, chi2dof, grade, why }], noise: { sigma, q, drift }, check: { fit, ceiling,
-//   white, cross, grade, why }, where: [{ level, K, Ksd, scale, scaleSd, hold }], size: [{ a, gain }],
-//   frf?: [{ level, f, G, sd, noise, distortion }], kernel?: { g, sd, Ts }, eased: { Kp, Ki, tauC },
-//   sentences, grade, warnings, connection }
+// IdentifiedModel (built) = { version, ok, Ts, names, band, end, structure, label, glyph, params, sd, cov, chosen
+//   (why), chain: [{ kind, key, label, value, sd, unit, tip }], candidates: [{ structure, label, glyph, params, sd,
+//   fit (on the Check), fitted (on the fitting data), chi2dof, bic, unsupported, grade, why }], noise: { sigma, q,
+//   floor, drift, none, steps, coloured }, fit, check: { fit, ceiling, white, independent, grade, why, kernel, i0, i1, left,
+//   y, yhat, band, autocorrelation, crossCorrelation, limit } | null, where: [{ level, from, to, gain, gainSd,
+//   scale, scaleSd, scaleKey, samples, seen, hold, holdAt }], holds: [{ y, u }], whereSpread: { spread, flagged },
+//   size: [{ a, gain, complete }], sizeNote, kernel: { g, sd, Ts, decimate, integrating, rate, fit } | null,
+//   eased: { Kp, Ki, tauC, umin, umax, try }, grade, why, warnings, segments, sentences, connection }
+//   (frf, with the Shake, step 8). ok: false carries message, why and sentences only.
+// The Experiment's machine runs as a hidden controller law: controllers.js HIDDEN.experiment, made by makeLaw from
+//   { type: 'experiment', params: { plan } }; law.experiment is the machine, law.at(seq, applied) names the plant's
+//   sample before a live step. normalizeVariant refuses the type ("experiment is the page's own: …").
+// project.js: normalizeIdentify (system.identify; IDENTIFY_COMPUTED, the sentence that refuses computed keys).
 
-// src/core/fit.js (no DOM)
+// src/core/fit.js (no DOM; built in steps 2 and 3)
+// A segment: { y, yStart, uStart, u (open loop: as applied) | law (closed loop: () => (k, ŷ) => u), weight }
 export const STRUCTURES                                    // lag, lags, resonance, intLag, intRes:
-                                                           //   { params, tf(p), chain(p), start(firstLook | kernel) }
-export function discretise(structure, p, Ts)              // exact ZOH with a fractional input delay
-export function lm(residual, p0, { maxIter = 60 })         // Levenberg–Marquardt, deterministic
-export function fitStructure(segments, structure, starts)  // → { p, cov, cost, chi2dof }
-export function tcKernel(u, y, { n, decimate, integrating }) // → { g, sd, hyper }
-export function multisine({ N, lines, detect, peak, seed })  // → Float64Array (one period)
-export function frf(U, Y, { excited, detect })             // → { G, sd, noise, distortion }
+                                                           //   { name, label, glyph, integrating, params, tf(p), ss(p),
+                                                           //     chain(p, { sd, units }), start(guess), times(p) }
+export function discretise(structure, p, Ts)              // exact ZOH with a fractional input delay → { Phi, G0, G1, C, m, f }
+export function simulateSegment(d, segment)               // → { y, u }: the replay at rest about the segment's start
+export function* lmSteps(residual, p0, { maxIter = 60, lower, upper }) // Levenberg–Marquardt, deterministic, yields
+export const lm                                            //   per iteration; lm drains it
+export function* fitStructureSteps(segments, structure, starts, { Ts, maxIter, noise }) // → { p, cov, sd, cost,
+export const fitStructure                                  //   chi2dof, bic, n, np, start, iterations, converged }
+export function noiseTransfer(d, segment)                 // the replayed loop's noise transfer S (impulse response)
+export function parameterCov(J, A, parts, s2)             // σ̂²A⁻¹, or with S on closed-loop segments (§6.5)
+export function unsupported(structure, p, { length })     // the ✕ reason, or null (§6.4)
+export function chooseStructure(candidates)               // → { index, why } (§6.4); CHOICE holds the thresholds
+export function* tcKernelSteps(u, y, { n, decimate, cover, integrating, u0, y0, from, Ts }) // built in step 3: yields per
+export const tcKernel                                      //   evaluation; → { g, sd, cov, n, decimate, integrating, rate?,
+                                                           //   Ts, hyper: { c, lambda, sigma2, eta }, logLik, evaluations }
+export function tcInverse(n, lambda)                       // the TC kernel's tridiagonal inverse → { diag, off }
+export function kernelStep(kernel, count)                  // → { t, s, sd }: y's step response with its band
+export function kernelGuess(kernel, Ts)                    // → { K | kp, tau, theta, f?, zeta? }: start values (§6.3)
+export const KERNEL                                        // maxTaps 150, maxEvaluations 40, the grid of decays, tol
+export function multisineLines({ N, kmax, kmin, count, seed }) // → { excited, detect: { odd, even } }
+export function multisine({ N, lines, peak, seed, phases })   // → Float64Array (one period); MULTISINE: 20 passes, clip
+export function crestFactor(x)
+export function wholePeriods({ start, N, count, gaps, breaks }) // → { kept, dropped, starts }
+export function frf(U, Y, { excited, detect, Ts })         // U, Y: whole periods → { lines, f?, G, sd, U, Y, noise,
+                                                           //   distortion: { share, odd, even, level, near }, periods }
 export function fitPercent(y, yhat)
-export function whiteness(res, lags = 25)
-export function crossCorrelation(res, u, lags = 25)
+export function noiseCeiling(y, floor)
+export function whiteness(res, lags = 25, h = null)         // → { r, expected, band, outside, worst, white }; h: a closed
+                                                           //   loop's noise transfer, each lag read against Σh_q h_{q+τ}/Σh²
+export function noiseColour(v, pmax = 10)                   // a stretch of pure noise's AR colour (Burg, AIC) as 1/A(z)'s
+                                                           //   impulse response; [1] when white
+export function convolve(a, b)                              // a * b (b null: a): a loop's noise transfer with the noise's colour
+export function crossCorrelation(res, u, lags = 25)         // → { r, band, outside, worst, independent }
 
-// src/core/linalg.js gains cholesky(A) and cholSolve(L, b) (the kernel, LM).
-// src/core/live.js gains createStepRunner(diagram, signals, { Ts, sources }), shared with createLiveRunner:
-//   one controller sample at a time, Sources overridable; the worker runs the experiment law and
-//   posts { identify: state } and record chunks; the page posts { supply }.
-// src/core/controllers.js gains the hidden type 'experiment' ({ plan }); it is never in the library,
-//   and normalizeVariant refuses it in files ("experiment is the page's own").
+// src/core/linalg.js gains cholesky(A) and cholSolve(L, b) (the kernel, LM), and eigSym(A, { vectors, project })
+//   (symmetric eigenvalues by Householder and QL; the kernel's search).
+// src/core/live.js gains createStepRunner(diagram, signals, { Ts, sources, variants }) (built in step 5), sharing
+//   its RK4 step with createLiveRunner: one controller sample at a time, the same as simulateSystem bit for bit,
+//   Sources overridable, a variant set by key after normalising (the hidden law), law(key) to reach it. Step 7:
+//   the worker runs the experiment law and posts { identify: state } and record chunks; the page posts { supply }.
+// src/core/controllers.js gains the hidden type 'experiment' ({ plan }) (built in step 5: HIDDEN); it is never in the
+//   library, and normalizeVariant refuses it in files ("experiment is the page's own").
 // src/core/autotune.js: tuneContext(project, path, { plant: 'diagram' | 'identified', model }).
 // src/core/hil.js: outputs[].hard_min/hard_max, y.applied, the External block's ymin/ymax (built).
 ```
 
 **CLI and browser:**
-- `node cli.mjs identify <project> [--block ctrl] [--band lo,hi] [--budget 120] [--vary 0.15 --seed 7] [--json] [--keep]` runs the same core, gives the same numbers, and prints the sentences. `--keep` stores the record in the project.
+- `node cli.mjs identify <project> [--block ctrl] [--band lo,hi] [--budget 120] [--vary 0.15 --seed 7] [--json] [--keep]` runs the same core, gives the same numbers, and prints the sentences. `--keep` stores the record in the project. Built in step 5, with `--structure <name>` (the tester's choice of candidate); it prints the sentences, the chain with its bars, the candidates with their Check fits and marks, the Check against the noise ceiling and the kernel, the places, the gentlest controller that held, notes, and with `--vary` the factors drawn. `--keep` stores the plan and the record (named "angle · test n": no clock in the core), makes it the one in use, and stores the flags given as the settings.
 - `node cli.mjs autotune <project> --plant identified` tunes on the kept record in use.
 - In the page: `window.loopTuner.identify({ block, band, budget, vary, keep })` returns a Promise of the report, and `loopTuner.identified(block?)` returns the model in use. Both are documented in the page's Help (For agents) and in AGENTS.md.
 
@@ -819,7 +1022,7 @@ Fixtures live in `test/fixtures/`, are not shipped, and carry no plant numbers i
 1. **Determinism.** The same plan and the same y give the same u, bit for bit. Two runs of `identify()` give identical records and models. The multisine depends only on its seed.
 2. **Nudge safety.** Over 50 arms at ±15 % with the default band, no rung uses more than half the room on its side, there are no back-offs, and the arm never goes over the top. Each rung stays within the bound predicted before it ran.
 3. **Classification.**
-   - a lag settles; an integrator ramps; the arm rings;
+   - a lag settles; an integrator ramps; the arm rings (built: without its Coulomb friction; with it, the Nudge's ±0.2 rad swings stop within half a swing and the first look sees an overdamped second order, §5.10);
    - an unstable plant runs away and the experiment asks for `stop`;
    - an unwired plant gives "does not move";
    - drift is subtracted.
@@ -834,7 +1037,7 @@ Fixtures live in `test/fixtures/`, are not shipped, and carry no plant numbers i
    - The fit % equals MATLAB `compare`'s definition.
    - The whiteness band is ±2.58/√N.
    - A cubic nonlinearity under the Shake shows distortion at the detection lines; a linear plant shows none. The grade becomes ✕ above 30 % whatever χ² says.
-9. **Frequency response.** Exact at the excited lines on a linear plant in closed loop. A period with a `seq` gap is dropped and repeated.
+9. **Frequency response.** Exact at the excited lines on a linear plant in closed loop. A period with a `seq` gap is dropped (and repeated by the Shake, step 8).
 10. **Kernel.**
     - The tridiagonal inverse equals the inverse.
     - The research's example (2e^(−0.1s)/((0.5s + 1)(0.1s + 1)), 30 s, SNR 3) fits the impulse response to at least 94 %.
@@ -843,10 +1046,12 @@ Fixtures live in `test/fixtures/`, are not shipped, and carry no plant numbers i
     - `linearModel` matches each structure's transfer function.
     - The twin subsystem simulates the same as `replay`.
     - Copy as blocks contains primitives only.
+    - Built (step 5, `test/identify.test.mjs`): to 1e-9 at five frequencies; the twin in a loop under a staircase and under a PI agrees with the exact replay to RK4's accuracy (2e-6) without a dead time, and within 3.5 % with one: the diagram's Dead time block interpolates its input between integration steps, so a jump of a held input arrives up to half a step off (h = Ts = 10 ms here). Step 9 should run the twin with a finer step or let the Dead time hold a sampled input.
 12. **Storage.**
     - Keep round-trips through the project file with no computed fields; computed keys are refused with the sentence.
     - A kept record recomputes the same model bit for bit.
-13. **End to end, the acceptance test** (E2's harness): oven, motor, tank and five arms. Identify, then Auto-tune Iterate on the model, then score the result noise-free on the true plant.
+    - Built (step 5): the motor's record kept, through JSON and `normalizeProject`, gives the model `identify()` gave, the same JSON text; two runs give the same record and model; a computed key anywhere (beside the settings, in a kept test, in its record or plan) is refused with the sentence; the closed-loop replay fed the measured y gives back every u.
+13. **End to end, the acceptance test** (E2's harness): oven, motor, tank and five arms. Identify, then Auto-tune Iterate on the model, then score the result noise-free on the true plant. The identify part is built (step 5, `test/identify-e2e.test.mjs`; numbers in "Measured" above): each model against the true plant's step and, per place, its linearisation.
     - J ≤ 1.3 × the best possible on the oven, the motor and the arms. The tank is reported, with its where-spread flagged.
     - Every Try-on-the-plant step keeps g ≥ 0.3.
     - Arms within 2 min of plant time.
@@ -862,10 +1067,10 @@ Fixtures live in `test/fixtures/`, are not shipped, and carry no plant numbers i
     - Screening refuses a step that is unstable on a band sample.
     - The monitor falls back when the fixture's plant is swapped mid-run for another draw.
 17. **Teaching.**
-    - `varyDiagram` with a seed is reproducible and varies only flagged parameters.
+    - `varyDiagram` with a seed is reproducible and varies only flagged parameters. Built (step 5): and keeps the motor's Kt = Ke one constant; `identify()` on the varied motor finds k′ within 1 % of the drawn Kt/(R·b + Kt·Ke).
     - The Compare table equals `linearizeBlock` at each level.
 18. **The plant changed.** Check again against another arm draw says "the plant has changed".
-19. **CLI.** `node cli.mjs identify` prints the sentences; `--json` parses; it gives the same numbers as `identify()`.
+19. **CLI.** `node cli.mjs identify` prints the sentences; `--json` parses; it gives the same numbers as `identify()`. Built (step 5), with `--keep` storing the record that recomputes the same model.
 
 ## 18. Implementation steps
 

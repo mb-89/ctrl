@@ -28,6 +28,10 @@ const tau = (key, label, def, extra) => num(key, label, def, 0.001, 1000, 'log',
 const time = (key, label, def) => num(key, label, def, 0, 'duration', 'lin', { unit: 's' });
 const amp = (key, label, def) => num(key, label, def, -10, 10, 'lin');
 const vec = (key, label, def) => ({ key, label, default: def, kind: 'vector' });
+// A physical parameter of a plant block: Identify's hidden variation scales it
+// (varyDiagram, identify.js). A transfer function's denominator varies term by
+// term (the motor's 1/(L·s + R): L and R); its numerator is structure.
+const VARY = { vary: true };
 
 const lag = (t) => [t, 1];
 
@@ -112,7 +116,7 @@ const BLOCK_LIST = [
   },
   {
     type: 'tf', slots: ['controller', 'actuator', 'plant', 'sensor'], label: 'Transfer function', formula: 'num(s) / den(s) · e^(−T_d·s)',
-    params: [vec('num', 'num', [1]), vec('den', 'den', [1, 1]), num('delay', 'Dead time T_d', 0, 0.001, 100, 'log0', { unit: 's' })],
+    params: [vec('num', 'num', [1]), { ...vec('den', 'den', [1, 1]), vary: true }, num('delay', 'Dead time T_d', 0, 0.001, 100, 'log0', { unit: 's', vary: true })],
     tf: (p) => ({ num: p.num, den: p.den, delay: p.delay }),
     // Its face in the diagram: the transfer function with its coefficients.
     summary: (p) => `${polyText(p.num)} / ${polyText(p.den, true)}${p.delay > 0 ? ` · e^(−${Number(p.delay.toPrecision(3))}s)` : ''}`,
@@ -141,34 +145,34 @@ const BLOCK_LIST = [
   // Plants
   {
     type: 'firstOrder', slots: ['plant'], label: 'First order', formula: 'K / (τ s + 1)',
-    params: [gain('K', 'K', 1), tau('tau', 'τ', 1)], tf: (p) => ({ num: [p.K], den: lag(p.tau), delay: 0 }),
+    params: [gain('K', 'K', 1, VARY), tau('tau', 'τ', 1, VARY)], tf: (p) => ({ num: [p.K], den: lag(p.tau), delay: 0 }),
   },
   {
     type: 'fopdt', slots: ['plant'], label: 'First order + dead time', formula: 'K e^(−T_d·s) / (τ s + 1)',
-    params: [gain('K', 'K', 1), tau('tau', 'τ', 1), num('delay', 'Dead time T_d', 0.5, 0.001, 100, 'log0', { unit: 's' })],
+    params: [gain('K', 'K', 1, VARY), tau('tau', 'τ', 1, VARY), num('delay', 'Dead time T_d', 0.5, 0.001, 100, 'log0', { unit: 's', vary: true })],
     tf: (p) => ({ num: [p.K], den: lag(p.tau), delay: p.delay }),
   },
   {
     type: 'secondOrder', slots: ['plant'], label: 'Second order', formula: 'K ωn² / (s² + 2ζωn s + ωn²)',
-    params: [gain('K', 'K', 1), num('wn', 'ωn', 1, 0.01, 1000, 'log', { unit: 'rad/s' }), num('zeta', 'ζ', 0.3, 0.001, 10, 'log0')],
+    params: [gain('K', 'K', 1, VARY), num('wn', 'ωn', 1, 0.01, 1000, 'log', { unit: 'rad/s', vary: true }), num('zeta', 'ζ', 0.3, 0.001, 10, 'log0', VARY)],
     tf: (p) => ({ num: [p.K * p.wn * p.wn], den: [1, 2 * p.zeta * p.wn, p.wn * p.wn], delay: 0 }),
   },
   {
     type: 'lagChain', slots: ['plant'], label: 'n equal lags', formula: 'K / (τ s + 1)ⁿ',
-    params: [gain('K', 'K', 1), tau('tau', 'τ', 1), num('n', 'n', 3, 1, 8, 'lin', { int: true })],
+    params: [gain('K', 'K', 1, VARY), tau('tau', 'τ', 1, VARY), num('n', 'n', 3, 1, 8, 'lin', { int: true })],
     tf: (p) => ({ num: [p.K], den: polyPow(lag(p.tau), Math.round(p.n)), delay: 0 }),
   },
   {
     type: 'integratorLag', slots: ['plant'], label: 'Integrator + lag', formula: 'K / (s (τ s + 1))',
-    params: [gain('K', 'K', 1), tau('tau', 'τ', 0.5)], tf: (p) => ({ num: [p.K], den: [p.tau, 1, 0], delay: 0 }),
+    params: [gain('K', 'K', 1, VARY), tau('tau', 'τ', 0.5, VARY)], tf: (p) => ({ num: [p.K], den: [p.tau, 1, 0], delay: 0 }),
   },
   {
     type: 'doubleIntegrator', slots: ['plant'], label: 'Double integrator', formula: 'K / s²',
-    params: [gain('K', 'K', 1)], tf: (p) => ({ num: [p.K], den: [1, 0, 0], delay: 0 }),
+    params: [gain('K', 'K', 1, VARY)], tf: (p) => ({ num: [p.K], den: [1, 0, 0], delay: 0 }),
   },
   {
     type: 'inverseResponse', slots: ['plant'], label: 'Inverse response', formula: 'K (1 − Tz s) / ((τ₁ s + 1)(τ₂ s + 1))',
-    params: [gain('K', 'K', 1), tau('Tz', 'Tz', 0.5), tau('tau1', 'τ₁', 1), tau('tau2', 'τ₂', 2)],
+    params: [gain('K', 'K', 1, VARY), tau('Tz', 'Tz', 0.5, VARY), tau('tau1', 'τ₁', 1, VARY), tau('tau2', 'τ₂', 2, VARY)],
     tf: (p) => ({ num: [-p.K * p.Tz, p.K], den: polyMul(lag(p.tau1), lag(p.tau2)), delay: 0 }),
   },
 

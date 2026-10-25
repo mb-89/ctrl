@@ -48,6 +48,8 @@ import { lqrDesign, scheduledPIDesign, trajectoryDesign, feedforwardDesign, huLi
 import { DesignError } from './linearize.js';
 import { planLaw } from './planner.js';
 
+import { createExperiment } from './experiment.js';
+
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 const vec = (key, label, def, extra = {}) => ({ key, label, default: def, kind: 'vector', ...extra });
 const LIMITS = [num('umin', 'u min', -Infinity, { unit: 'u' }), num('umax', 'u max', Infinity, { unit: 'u' })];
@@ -649,6 +651,40 @@ function needsRate(p, ctx) {
 
 export const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
 
+// Laws the page runs itself and never offers: no library lists them and no
+// file holds one (normalizeVariant refuses them). Identify's experiment
+// (experiment.js, design/output/identification.md §5) runs as the law of the
+// block it identifies, in a copy of the diagram, so the same code runs in the
+// simulation, the live worker and Node; its params are the plan, data only.
+// The law counts its samples from 0 (a simulated block samples at k·Ts); a
+// live runner names the plant's sample number and the u the plant applied
+// with at(seq, applied) before a sample. law.experiment is the machine, for
+// its reference, its needs and its state.
+export const HIDDEN = {
+  experiment: {
+    label: 'Identify',
+    make(p, Ts) {
+      // The plan's time is the block's: a plan made at another Ts would run
+      // its samples at the wrong times (its Listen, rungs and references).
+      if (Ts !== undefined && p.plan?.Ts !== Ts) throw new Error(`experiment: the plan runs at Ts ${p.plan?.Ts} s, the block samples at ${Ts} s`);
+      const experiment = createExperiment(p.plan);
+      let k = 0, seq = null, applied;
+      return {
+        experiment,
+        at(s, a) { seq = s; applied = a; },
+        step(x) {
+          const kk = seq ?? k;
+          const a = seq === null ? undefined : applied;
+          seq = null; applied = undefined;
+          k = kk + 1;
+          return experiment.step(kk, x[1] ?? NaN, a);
+        },
+      };
+    },
+  },
+};
+export const HIDDEN_REFUSAL = 'is the page\'s own: Identify runs it for its test, and a file never holds one';
+
 function normalizeParam(spec, v, where) {
   if (spec.nullable && (v === null || v === '')) return null;
   v ??= spec.default;
@@ -679,6 +715,7 @@ function normalizeParam(spec, v, where) {
 // Observer block); both share this format. ctx: what the block gives the
 // variant ({ inputs }), when known, for checks that need it.
 export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS, ctx = undefined) {
+  if (lib === CONTROLLERS && Object.hasOwn(HIDDEN, v?.type ?? '')) throw new Error(`${where}: ${v.type} ${HIDDEN_REFUSAL}`);
   // A type may take an older form of itself (a file from before it was designed).
   if (lib[v?.type]?.migrate) v = lib[v.type].migrate(v);
   const def = lib[v?.type];
@@ -707,6 +744,7 @@ export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS, ctx = 
 const same = (a, b) => (Array.isArray(b) ? Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]) : a === b);
 export function makeLaw(variant, Ts, lib = CONTROLLERS, values = null) {
   if (typeof variant.law === 'function') return variant.law(Ts);
+  if (lib === CONTROLLERS && Object.hasOwn(HIDDEN, variant.type ?? '')) return HIDDEN[variant.type].make(variant.params, Ts);
   const { params } = normalizeVariant(variant, 'variant', lib);
   const keep = variant.params && Object.keys(params).every((k) => same(variant.params[k], params[k]));
   return lib[variant.type].make(keep ? variant.params : params, Ts, values);
