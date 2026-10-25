@@ -19,6 +19,7 @@ import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
 import { OBSERVERS } from './observers.js';
 import { SYNC_DESIGNS, defaultDesigns } from './design.js';
 import { EXTERNAL_BLOCK } from './hil.js';
+import { VECTOR_ELEMENTS, flattenVectors, vectorExtras, normalizeRobots, mimoContext, makeMimo } from './vectors.js';
 
 const num = (key, label, def, extra = {}) => ({ key, label, default: def, ...extra });
 
@@ -124,7 +125,7 @@ export const ELEMENTS = {
   controller: {
     label: 'Controller', group: 'Control', formula: 'u = C(r, y)',
     params: [num('inputs', 'Inputs (r, y…)', 2, { min: 1, int: true }), num('Ts', 'Sample time Ts', 0.01, { unit: 's', min: 1e-4 })],
-    ports: (p) => [p.inputs, 1],
+    ports: (p) => [p.inputs + (p.ff ? 1 : 0), 1],
   },
   // An observer: inputs u, y1, y2, …; outputs the estimated states, held
   // between samples. Built like a controller, with variants from observers.js.
@@ -138,6 +139,8 @@ export const ELEMENTS = {
   // plant every cycle, its inputs are sent back; offline the outputs hold 0.
   external: EXTERNAL_BLOCK,
   subsystem: { label: 'Subsystem', group: 'Structure', params: [], ports: null, formula: '' },
+  // Mux, Demux, Constant, the math and robot blocks (vectors.js).
+  ...VECTOR_ELEMENTS,
 };
 
 const VARIANT_LIBS = { controller: CONTROLLERS, observer: OBSERVERS };
@@ -278,7 +281,9 @@ export function normalizeDiagram(d, path = 'plant') {
     if (!b.id || typeof b.id !== 'string' || /[:/]/.test(b.id)) throw new Error(`${where}: needs an "id" without ":" or "/"`);
     if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
     ids.add(b.id);
-    const out = { id: b.id, type: b.type, params: normalizeParams(b.type, b.params, `${where}(${b.id})`), x: Number(b.x) || 0, y: Number(b.y) || 0 };
+    // Fields kept only when given (a vector Sink's names, an Integrator's x0, lanes: vectors.js).
+    const { base, extra } = vectorExtras(b.type, b.params, `${where}(${b.id})`);
+    const out = { id: b.id, type: b.type, params: { ...normalizeParams(b.type, base, `${where}(${b.id})`), ...extra }, x: Number(b.x) || 0, y: Number(b.y) || 0 };
     if (b.name) out.name = String(b.name);
     if (b.flip) out.flip = true;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`);
@@ -306,7 +311,8 @@ export function normalizeDiagram(d, path = 'plant') {
     if (taken.has(w.to)) throw new Error(`${path}: input ${w.to} has two wires`);
     taken.add(w.to);
   }
-  return { blocks, wires };
+  const robots = path === 'plant' ? normalizeRobots(d.robots) : undefined;
+  return robots ? { robots, blocks, wires } : { blocks, wires };
 }
 
 // A single plant model as a diagram: In -> block -> Out.
@@ -332,12 +338,12 @@ export function diagramNames(diagram) {
   const sources = new Set(), sinks = [], units = {};
   const walk = (d) => {
     for (const b of d.blocks) {
-      if (b.type === 'source') { sources.add(b.params.signal); units[b.params.signal] ??= b.params.unit ?? '1'; }
+      if (b.type === 'source' && !b.params.derivative) { sources.add(b.params.signal); units[b.params.signal] ??= b.params.unit ?? '1'; }
       if (b.type === 'sink') { sinks.push(b.params.name); units[b.params.name] = b.params.unit ?? '1'; }
       if (b.type === 'subsystem') walk(b.diagram);
     }
   };
-  walk(diagram);
+  walk(flattenVectors(diagram, { ports: blockPorts }));
   return { sources: [...sources], sinks, units };
 }
 
@@ -386,6 +392,8 @@ const NONE = [];
 // noise adds 0, and Sources read the operating point's values.
 // el.seen(idPath, at) then gives the Model a Controller or Observer sees.
 export function compileDiagram(diagram, path = 'plant', opts = {}) {
+  // Vector wires become scalar ones first (vectors.js; a diagram without vectors is itself).
+  diagram = flattenVectors(diagram, { ports: blockPorts });
   const model = opts.mode === 'model';
   const standalone = opts.standalone || model;
   const laws = opts.laws !== false && !model;
@@ -396,6 +404,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   const externals = [];
   let extNode = -1, outNode = -1;
   const ctrlNodes = [];  // [block id path, node] of every Controller block
+  // What vector blocks report while a run goes (a joint leaving its range): info.validity.
+  const validity = [];
+  const mctx = mimoContext(diagram.robots, { model, report: (text) => { if (!validity.includes(text) && validity.length < 50) validity.push(text); } });
 
   // Creates nodes for one level; returns, per block id, where its output
   // ports come from and where its input ports go. Each node has a name
@@ -413,10 +424,12 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         continue;
       }
       if (b.type === 'source') {
-        const fn = opts.sources?.[b.params.signal];
-        if (!fn && !model) warnings.push(`${path}: no signal "${b.params.signal}" for ${name}`);
-        const k = add({ kind: 'src', name, signal: b.params.signal, at: 0, ft: false, fn: fn ?? (() => 0) });
-        probeList.push([b.params.signal, k]);
+        // A derivative output (vectors.js) reads the signal's ṙ or r̈ (signals.js) and is no probe.
+        const d = b.params.derivative ?? 0, base = opts.sources?.[b.params.signal];
+        const fn = d ? base?.derivative?.(d) : base;
+        if (!fn && !model && !d) warnings.push(`${path}: no signal "${b.params.signal}" for ${name}`);
+        const k = add({ kind: 'src', name, signal: d ? null : b.params.signal, at: 0, ft: false, fn: fn ?? (() => 0) });
+        if (!d) probeList.push([b.params.signal, k]);
         outs[b.id] = [k]; ins[b.id] = [];
         continue;
       }
@@ -479,6 +492,14 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         // node per output reads what the block computed from its state.
         const k = add({ kind: 'ode', name, short: b.name ?? b.id, ft: false, ode: def.ode, rates: def.ode.make(b.params), p: b.params, inputs: new Array(nIn).fill(-1), outv: new Float64Array(nOut), bound: def.ode.bound(b.params) });
         outs[b.id] = outputNames(def, b.params).map((o, j) => add({ kind: 'tap', name: `${name}.${o}`, ft: false, parent: k, j, see: -1 }));
+        ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
+        continue;
+      }
+      if (b.type === 'mimo') {
+        // A vector block (vectors.js): its inputs straight through to its
+        // outputs, one tap node per output.
+        const k = add({ kind: 'mimo', name, ft: true, fn: makeMimo(b.params, mctx), inputs: new Array(nIn).fill(-1), uv: new Float64Array(nIn), outv: new Float64Array(nOut) });
+        outs[b.id] = Array.from({ length: nOut }, (_, j) => add({ kind: 'tap', name: `${name}.${j + 1}`, ft: true, inputs: [k], parent: k, j, see: -1 }));
         ins[b.id] = nodes[k].inputs.map((_, s) => [k, s]);
         continue;
       }
@@ -636,6 +657,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
         case 'quant': y = model ? inOf(nd) : nd.q * Math.round(inOf(nd) / nd.q); break;
         case 'noise': y = model ? inOf(nd) : inOf(nd) + nd.std * gaussAt(nd.seed, Math.floor(t / (h || 1) + 1e-9)); break;
         case 'ode': nd.ode.out(X, o + nd.off, nd.p, nd.outv); y = nd.outv[0]; break;
+        case 'mimo': for (let s = 0; s < nd.uv.length; s++) nd.uv[s] = inOf(nd, s); nd.fn(nd.uv, nd.outv, t); y = nd.outv.length ? nd.outv[0] : 0; break;
         // An observer's estimate looked through (model mode) reads the state it stands for.
         case 'tap': y = nd.see >= 0 ? X[o + nd.see] : nodes[nd.parent].outv[nd.j]; break;
         case 'ctrl': y = nd.u; break;
@@ -667,7 +689,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
   }
 
   const self = {
-    n, bound, warnings, minTs, sampleTimes, states, designs,
+    n, bound, warnings, minTs, sampleTimes, states, designs, validity,
     setStep(step) { h = step; },
     // Called at each completed step with the state there: a controller whose
     // sample is due reads its inputs and sets its held output; the outputs are
@@ -787,7 +809,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (i === cut) return NONE;
       const nd = nodes[i];
       if (nd.kind === 'src' || nd.kind === 'ext' || nd.kind === 'ctrl') return NONE;
-      if (nd.kind === 'tap') return nodes[nd.parent].kind === 'ode' ? [nd.parent] : see.has(i) ? [owner[see.get(i)]] : NONE;
+      if (nd.kind === 'tap') return nodes[nd.parent].kind === 'ode' || nodes[nd.parent].kind === 'mimo' ? [nd.parent] : see.has(i) ? [owner[see.get(i)]] : NONE;
       if (nd.kind === 'switch') return [nd.inputs[nd.pick]];
       return nd.inputs;
     };
