@@ -106,6 +106,30 @@ test('the law is Megretski\'s schedule: the gain of the largest ε whose ellipso
   }
 });
 
+test('Megretski\'s scheduling variable reproduces the published double integrator: from (−10, 0) to the local ellipsoid in about 10.25 s', () => {
+  // Grognard, Sepulchre and Bastin (Automatica 2002, sect. 5): ẋ1 = x2,
+  // ẋ2 = u, |u| ≤ 1, Q(ε) = diag(ε⁴, ε²), R = 1, so P(ε) = [[√3ε³, ε²], [ε², √3ε]]
+  // and u = −ε²x1 − √3ε x2; ε(x) the largest ε ≤ 1 with (xᵀP(ε)x)(bᵀP(ε)b) ≤ 1.
+  // They report 10.25 s to reach T(1) = {ε(x) = 1}; with their exact setup
+  // unknown, 10.52 s here (design/research/hu-lin.md).
+  const s3 = Math.sqrt(3);
+  const g = (x, e) => (s3 * e ** 3 * x[0] ** 2 + 2 * e * e * x[0] * x[1] + s3 * e * x[1] ** 2) * s3 * e;
+  const eps = (x) => { if (g(x, 1) <= 1) return 1; let lo = 1e-9, hi = 1; for (let i = 0; i < 60; i++) { const m = Math.sqrt(lo * hi); if (g(x, m) <= 1) lo = m; else hi = m; } return lo; };
+  const f = (x) => { const e = eps(x); return [x[1], -e * e * x[0] - s3 * e * x[1]]; };
+  let x = [-10, 0], t = 0, last = 0, umax = 0;
+  const dt = 0.002;
+  while (eps(x) < 1 && t < 30) {
+    const k1 = f(x), k2 = f([x[0] + dt / 2 * k1[0], x[1] + dt / 2 * k1[1]]), k3 = f([x[0] + dt / 2 * k2[0], x[1] + dt / 2 * k2[1]]), k4 = f([x[0] + dt * k3[0], x[1] + dt * k3[1]]);
+    x = [x[0] + dt / 6 * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]), x[1] + dt / 6 * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1])];
+    t += dt;
+    const e = eps(x);
+    assert.ok(e >= last - 1e-12, `ε falls at t = ${t}`);
+    last = e; umax = Math.max(umax, Math.abs(k1[1]));
+  }
+  assert.ok(Math.abs(t / 10.25 - 1) < 0.03, `reaches T(1) at ${t.toFixed(2)} s`);
+  assert.ok(umax < 1, 'u inside the limit');
+});
+
 test('the gain changes continuously with the error, and grows as it shrinks', () => {
   const v = statusOf(chain(2, huLin({ Q: [1, 0], low: 1e-4 }))).values;
   const gain = (x) => { const { j, lam } = huLinLevel(v, x, 1); return v.K[j * 2] + lam * ((v.K[(j + 1) * 2] ?? v.K[j * 2]) - v.K[j * 2]); };

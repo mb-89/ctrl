@@ -2,6 +2,10 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: Hu–Lin, the scheduling variable ([input 34](../input/2026-10-25-34-hu-lin-scheduling-variable.md))
+
+The person: "everything was in the paper except the calculation of one variable ... an important scheduling variable ... see if you can reproduce the paper." Interpretation (the paper's text is closed): the one quantity the scheme defines only implicitly is the scheduling variable ε(x), the level of the ellipsoid the state lies on. Derived in [hu-lin.md](../research/hu-lin.md): x lies in the ellipsoid of ε when xᵀS(ε)x ≤ ū² (S = P·K P⁻¹ Kᵀ); for nested ellipsoids this grows with ε, so ε(x) is the unique root (bisection), and it never falls along a trajectory, so u never reaches the limit. In the page it is explicit: S at 30 levels, interpolated. Checked against the only published figures for it we could read (Grognard, Sepulchre and Bastin's double integrator: 10.52 s against their 10.25 s, time-optimal 5.54 against 5.64 s; their exact setup is not visible), against the exact rule (3 %), and by its consequences (tests). The paper's PUMA 560 figures are not reproduced: their numbers are in the closed text.
+
 ## 2026-10-25 · v2.9: the Hu–Lin variable gain, built, measured and adopted as a designed variant
 
 No new words from the person; the work input 33 asked for (research: [../research/hu-lin.md](../research/hu-lin.md)).
