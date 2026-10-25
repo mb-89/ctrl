@@ -230,7 +230,7 @@ test('scheduledPI: pole cancellation from the tank at each level reproduces the 
   // PI for a closed loop of time constant Tcl has Kp = A(h) / Tcl and
   // Ki = a √(2g) / (2 √h Tcl); u0 = a √(2g h0) balances the outlet at the start.
   const p = project('Conical tank');
-  const tank = p.system.plant.diagram.blocks.find((b) => b.type === 'conicalTank').params;
+  const tank = p.system.plant.diagram.blocks.find((b) => b.id === 'tank').params;
   const A = (h) => Math.PI * (tank.r0 + ((tank.R - tank.r0) * Math.min(h, tank.H)) / tank.H) ** 2;
   const rel = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol * Math.abs(b), `${what}: ${a}, not ${b}`);
   // The top level is 0.95 m: at the brim, 1 m, the tank overflows (below).
@@ -254,7 +254,7 @@ test('scheduledPI: pole cancellation from the tank at each level reproduces the 
   // comes in beyond it overflows): a kink, so no PI is designed there.
   const brim = statusOf(project('Conical tank', [{ type: 'scheduledPI', params: { at: [0.5, 1], umin: 0, umax: 3 } }]));
   assert.equal(brim.error.code, 'kink');
-  assert.match(brim.error.message, /^pole cancellation needs slopes, and the plant has a kink at h = 1 m, q = 0\.443: the slope of the rate of tank\.h along tank\.h differs left and right/);
+  assert.match(brim.error.message, /^pole cancellation needs slopes, and the plant has a kink at h = 1 m, q = 0\.443: the slope of the rate of tank\/h along tank\/h differs left and right/);
   assert.deepEqual(st.rows[0].head, ['h (m)', 'q', 'K', 'τ (s)', 'Kp', 'Ki']);
   assert.deepEqual(st.rows[0].table.map((row) => row.slice(4)), at.map((_, i) => [Kp[i], Ki[i]]));
   assert.deepEqual(st.rows[1], { label: 'dead time θ', value: 0.1, note: 's, left out' });

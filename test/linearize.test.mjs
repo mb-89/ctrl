@@ -40,7 +40,7 @@ test('operating points: parsing and labels', () => {
 
 test('trim: the tank holds a level; a level beyond the pump is refused with a sentence', () => {
   const tank = modelOf(system('Conical'));
-  const { a, g } = system('Conical').blocks.find((b) => b.type === 'conicalTank').params;
+  const { a, g } = system('Conical').blocks.find((b) => b.id === 'tank').params;
   // Test 3: at y = 0.45 the level is 0.45 and the inflow balances the outlet, a √(2g h).
   const op = operatingPoint(tank, { y: [0.45] });
   close(op.x[0], 0.45, 1e-9, 'h');
@@ -154,7 +154,7 @@ test('kinks: a saturation at its limit, one narrower than the step and the empty
 
   // The tank at h = 0: √h has no slope there, and the pump cannot run backwards.
   const tank = linearize(modelOf(system('Conical')), 'origin');
-  assert.ok(tank.kinks.some((k) => /^the slope of the rate of tank\.h along tank\.h differs left and right/.test(k)), tank.kinks.join(' | '));
+  assert.ok(tank.kinks.some((k) => /^the slope of the rate of tank\/h along tank\/h differs left and right/.test(k)), tank.kinks.join(' | '));
   assert.ok(tank.kinks.some((k) => /along q differs left and right/.test(k)), tank.kinks.join(' | '));
   refusal(() => kalmanDesign(tank, { Q: [1], R: [1e-4], Ts: 0.02 }), 'kink', /^the Kalman filter needs slopes/);
 
@@ -162,7 +162,7 @@ test('kinks: a saturation at its limit, one narrower than the step and the empty
   // level's rate has its slope below the brim and none above (the library's
   // schedule tops out at 0.95 m for this; decisions.md).
   const tm = modelOf(system('Conical'));
-  assert.ok(linearize(tm, { y: [1] }).kinks.some((k) => /^the slope of the rate of tank\.h along tank\.h differs left and right/.test(k)));
+  assert.ok(linearize(tm, { y: [1] }).kinks.some((k) => /^the slope of the rate of tank\/h along tank\/h differs left and right/.test(k)));
   // Smooth plants have none: the carts hanging and upright, the tank at its
   // levels below the brim, the encoder with its resonance.
   for (const h of [0.1, 0.45, 0.95, 0.999]) assert.deepEqual(linearize(tm, { y: [h] }).kinks, [], `tank at ${h}`);
@@ -183,9 +183,9 @@ test('kinks: a saturation at its limit, one narrower than the step and the empty
 });
 
 test('trim starts from the levels: an empty tank trims at 0.1 m and its PI designs; levels of millimetres', () => {
-  const { a, g } = system('Conical').blocks.find((b) => b.type === 'conicalTank').params;
+  const { a, g } = system('Conical').blocks.find((b) => b.id === 'tank').params;
   const d = raw('Conical');
-  d.blocks.find((b) => b.type === 'conicalTank').params.h0 = 0;
+  d.blocks.find((b) => b.id === 'tank').params.h0 = 0;
   const empty = modelOf(normalizeDiagram(d));
   for (const h of [0.05, 0.1, 0.5, 1]) close(trim(empty, [h]).u, a * Math.sqrt(2 * g * h), 1e-9, `u at h = ${h} from empty`);
   assert.equal(operatingPoint(empty, 'initial').u, 0, 'an empty tank rests with the pump off');

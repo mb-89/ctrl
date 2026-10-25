@@ -4,21 +4,41 @@
 // System library's pictures to the model (they draw the state as it is).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diagramBlockDef } from '../src/core/diagram.js';
+import { diagramBlockDef, normalizeDiagram, compileDiagram } from '../src/core/diagram.js';
 import { SYSTEM_LIBRARY } from '../src/core/systems.js';
+import { conicalTank } from '../src/core/physics.js';
 
 const params = (type, over = {}) => ({ ...Object.fromEntries(diagramBlockDef(type).params.map((s) => [s.key, s.default])), ...over });
 
-// Integrates one physics block with RK4 at step h for T seconds under the
-// input u(t, X); calls watch(t, X) at every step.
+// An open model (a masked subsystem from physics.js) compiled as the plant
+// alone: In → model → Out (its first output). { el, f(t, X, u, dX), y(t, X) }.
+function compiled(sub) {
+  const el = compileDiagram(normalizeDiagram({
+    blocks: [{ id: 'in', type: 'inport', params: { port: 1 } }, { id: 'sub', name: 'model', ...sub }, { id: 'out', type: 'outport', params: { port: 1 } }],
+    wires: [{ from: 'in', to: 'sub' }, { from: 'sub', to: 'out' }],
+  }));
+  return { el, f: (t, x, uu, d) => el.eval(t, x, 0, uu, d), y: (t, x) => el.eval(t, x, 0, 0, null) };
+}
+
+// Integrates one physics model with RK4 at step h for T seconds under the
+// input u(t, X); calls watch(t, X) at every step. type: an old block type
+// (its ode), or an open model, a masked subsystem (compiled, its In driven by u).
 function run(type, p, { T, h = 1e-3, u = () => 0, X0, watch }) {
-  const { ode } = diagramBlockDef(type);
-  const n = typeof ode.n === 'function' ? ode.n(p) : ode.n;
-  const X = Float64Array.from(X0 ?? ode.init(p)), Xt = new Float64Array(n);
+  let n, init, f;
+  if (typeof type === 'string') {
+    const { ode } = diagramBlockDef(type);
+    n = typeof ode.n === 'function' ? ode.n(p) : ode.n;
+    init = ode.init(p);
+    // The rate function the compile uses: ode.make computes the constants once.
+    const rates = ode.make(p);
+    f = (t, x, d) => rates(x, 0, u(t, x), d);
+  } else {
+    const c = compiled(type);
+    n = c.el.n; init = new Float64Array(n); c.el.init(init, 0);
+    f = (t, x, d) => c.f(t, x, u(t, x), d);
+  }
+  const X = Float64Array.from(X0 ?? init), Xt = new Float64Array(n);
   const k = [1, 2, 3, 4].map(() => new Float64Array(n));
-  // The rate function the compile uses: ode.make computes the constants once.
-  const rates = ode.make(p);
-  const f = (t, x, d) => rates(x, 0, u(t, x), d);
   for (let i = 0, t = 0; i < Math.round(T / h); i++, t += h) {
     watch?.(t, X);
     f(t, X, k[0]);
@@ -119,18 +139,18 @@ test('a chain of one rod moves as the cart–pole with the same masses', () => {
 });
 
 test('the conical tank keeps its water: volume in equals volume stored, never below empty or above full', () => {
-  const p = params('conicalTank', { a: 0, h0: 0 }), q = 0.02;
+  const p = { ...conicalTank().params, a: 0, h0: 0 }, q = 0.02;
   const vol = (h) => { const r = p.r0 + ((p.R - p.r0) * h) / p.H; return (Math.PI * h * (p.r0 * p.r0 + p.r0 * r + r * r)) / 3; };
-  let X = run('conicalTank', p, { T: 2, u: () => q });
+  let X = run(conicalTank(p), p, { T: 2, u: () => q });
   assert.ok(Math.abs(vol(X[0]) - q * 2) < 1e-9, `${vol(X[0])} vs ${q * 2}`);
   // Filled far beyond its volume, it overflows at H; drained, it stops at 0.
   // The level it reports (its output) stays inside the tank.
-  const level = (pp, x) => { const y = [0]; diagramBlockDef('conicalTank').ode.out(x, 0, pp, y); return y[0]; };
-  X = run('conicalTank', p, { T: 60, h: 1e-2, u: () => 1 });
+  const level = (pp, x) => compiled(conicalTank(pp)).y(0, x);
+  X = run(conicalTank(p), p, { T: 60, h: 1e-2, u: () => 1 });
   assert.ok(X[0] < p.H + 1e-2, `state ${X[0]} ran past the overflow`);
   assert.equal(level(p, X), p.H);
-  const d = params('conicalTank', { h0: 0.5 });
-  X = run('conicalTank', d, { T: 60, h: 1e-3 });
+  const d = { ...conicalTank().params, h0: 0.5 };
+  X = run(conicalTank(d), d, { T: 60, h: 1e-3 });
   assert.ok(level(d, X) >= 0 && level(d, X) < 1e-3, `h = ${level(d, X)}`);
 });
 
@@ -219,11 +239,11 @@ test('a Dead time delays its input by exactly L: a held u, and a smooth one', as
 test('the conical tank drains when more is drawn off than pumped in, until it is empty', () => {
   // The tank takes the net flow q (pump less draw-off): a draw-off above the
   // pump's flow was dropped (max(0, q)).
-  const p = params('conicalTank', { a: 0, h0: 0.5 }), q = -0.01;
+  const p = { ...conicalTank().params, a: 0, h0: 0.5 }, q = -0.01;
   const vol = (h) => { const r = p.r0 + ((p.R - p.r0) * h) / p.H; return (Math.PI * h * (p.r0 * p.r0 + p.r0 * r + r * r)) / 3; };
-  let X = run('conicalTank', p, { T: 2, u: () => q });
+  let X = run(conicalTank(p), p, { T: 2, u: () => q });
   assert.ok(Math.abs(vol(0.5) - vol(X[0]) - 0.02) < 1e-9, `drained ${vol(0.5) - vol(X[0])} m³, not 0.02`);
-  X = run('conicalTank', p, { T: 60, h: 1e-2, u: () => q });
-  const y = [0]; diagramBlockDef('conicalTank').ode.out(X, 0, p, y);
-  assert.ok(y[0] >= 0 && y[0] < 1e-3, `empty, not below: h = ${y[0]}`);
+  X = run(conicalTank(p), p, { T: 60, h: 1e-2, u: () => q });
+  const y = compiled(conicalTank(p)).y(0, X);
+  assert.ok(y >= 0 && y < 1e-3, `empty, not below: h = ${y}`);
 });

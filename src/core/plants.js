@@ -11,7 +11,10 @@
 // Only inputs are stored here: physics, hand gains (PID, the energy pump),
 // and the weights, levels and limits of designed variants. Every gain,
 // table and start value those compute comes from the plant, in the page
-// (design/output/designs.md).
+// (design/output/designs.md). The physics models are subsystems built by
+// physics.js, so they can be opened.
+
+import { conicalTank } from './physics.js';
 
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
@@ -331,7 +334,7 @@ export const EXAMPLE_PLANTS = [
         // The pipe was already flowing: before 0.1 s it delivers what the pump gives at t = 0.
         { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: null }, x: 320, y: 96 },
         { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
-        { id: 'tank', type: 'conicalTank', name: 'tank', params: { r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }, x: 510, y: 90 },
+        { id: 'tank', name: 'tank', x: 510, y: 90, ...conicalTank({ r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }) },
         sink('h', 720, 106, 'm'),
         sink('q', 320, 20, 'm³/s'),
       ],

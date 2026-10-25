@@ -15,6 +15,7 @@ import { compileDiagram, normalizeDiagram, parseEnd, outputNames, diagramBlockDe
 import { simulateSystem, stepPlan } from './sim.js';
 import { referenceFn } from './signals.js';
 import { EXAMPLE_PLANTS } from './plants.js';
+import { physicalMaskKeys } from './physics.js';
 
 // ---- the core for the plant
 
@@ -78,7 +79,6 @@ function paramAt(diagram, at) {
 const PHYSICAL = {
   cartPole: ['M', 'm', 'l', 'b'],
   pendulumCart: (p) => ['M', 'b', ...Array.from({ length: p.links }, (_, i) => [`m${i + 1}`, `l${i + 1}`]).flat()],
-  conicalTank: ['r0', 'R', 'H', 'a'],
   firstOrder: ['K', 'tau'], fopdt: ['K', 'tau', 'delay'], secondOrder: ['K', 'wn', 'zeta'], lagChain: ['K', 'tau'], integratorLag: ['K', 'tau'],
   doubleIntegrator: ['K'], inverseResponse: ['K', 'Tz', 'tau1', 'tau2'],
   tf: (p) => [...p.num.map((v, i) => (v ? `num[${i}]` : null)), ...p.den.map((v, i) => (v ? `den[${i}]` : null))].filter(Boolean),
@@ -87,7 +87,12 @@ const PHYSICAL = {
 function typePhysics(diagram, prefix = '') {
   const out = [];
   for (const b of diagram.blocks) {
-    if (b.type === 'subsystem') { out.push(...typePhysics(b.diagram, `${prefix}${b.id}/`)); continue; }
+    if (b.type === 'subsystem') {
+      // A masked model (the tank, a cart): its mask's physical fields.
+      if (b.mask) for (const k of physicalMaskKeys(b.mask)) if (typeof b.params?.[k] === 'number') out.push({ name: `${prefix}${b.id}.${k}`, at: `${prefix}${b.id}.${k}`, unit: b.mask.find((f) => f.key === k).unit });
+      out.push(...typePhysics(b.diagram, `${prefix}${b.id}/`));
+      continue;
+    }
     const keys = typeof PHYSICAL[b.type] === 'function' ? PHYSICAL[b.type](b.params) : PHYSICAL[b.type] ?? [];
     for (const k of keys) {
       const at = `${prefix}${b.id}.${k}`;

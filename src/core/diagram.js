@@ -18,6 +18,7 @@ import { siUnit } from './scale.js';
 import { gaussAt } from './signals.js';
 import { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME_RE } from './formula.js';
 import { CONTROLLERS, normalizeVariant, makeLaw } from './controllers.js';
+import { isOldPhysics, expandPhysics } from './physics.js';
 import { OBSERVERS } from './observers.js';
 import { SYNC_DESIGNS, defaultDesigns } from './design.js';
 import { EXTERNAL_BLOCK } from './hil.js';
@@ -110,34 +111,6 @@ export const ELEMENTS = {
       out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
       make: (p) => chainRates(p),
       bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
-    },
-  },
-  conicalTank: {
-    // A tank that widens upwards (radius r0 at the bottom, R at height H),
-    // filled at the net flow q (negative: more is drawn off than pumped in)
-    // and draining through an outlet of area a (Torricelli). Its dynamics are
-    // fast when nearly empty and slow when full. It cannot run dry below 0 or
-    // hold more than H: what comes in beyond that overflows. A pump that
-    // cannot run backwards is the controller's limit (u min 0), not the tank's.
-    label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
-    params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
-    ode: {
-      n: 1,
-      states: () => [state('h', 'm')],
-      init: (p) => [Math.min(p.H, p.h0)],
-      out: (X, o, p, y) => { y[0] = Math.min(p.H, Math.max(0, X[o])); },
-      make(p) {
-        const { r0, H } = p, slope = (p.R - r0) / H, out = p.a * Math.sqrt(2 * p.g);
-        return (X, o, u, dX) => {
-          const h = Math.min(H, Math.max(0, X[o]));
-          const r = r0 + slope * h;
-          // u is the net flow in (a pump, less what is drawn off): a draw-off
-          // larger than the pump drains the tank, until it is empty.
-          const flow = u - out * Math.sqrt(h);
-          dX[o] = (h <= 0 && flow < 0) || (h >= H && flow > 0) ? 0 : flow / (Math.PI * r * r);
-        };
-      },
-      bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
     },
   },
   // A digital controller: inputs r, y1, y2, …; output u, held between samples.
@@ -385,6 +358,7 @@ function normalizeMask(b, where, outer, resolve) {
 // Is there anything to resolve: a mask, or a formula in a number field?
 function hasFormulas(d) {
   return d.blocks.some((b) => {
+    if (isOldPhysics(b.type)) return true;   // an old physics block, to be opened (normalizeDiagram)
     if (b.type === 'subsystem') return b.mask?.length > 0 || hasFormulas(b.diagram);
     const def = ELEMENTS[b.type] ?? (BLOCKS.plant[b.type] ? { params: BLOCKS.plant[b.type].params } : null);
     return !!def?.params?.some((p) => (!p.kind && isFormula(b.params?.[p.key])) || (p.kind === 'vector' && Array.isArray(b.params?.[p.key]) && b.params[p.key].some(isFormula)));
@@ -460,8 +434,10 @@ export function normalizeDiagram(d, path = 'plant', opts = {}) {
   const { scope = null, resolve = false } = opts;
   if (!d || !Array.isArray(d.blocks)) throw new Error(`${path}: a diagram needs "blocks" and "wires"`);
   const ids = new Set();
-  const blocks = d.blocks.map((b, i) => {
+  const blocks = d.blocks.map((given, i) => {
     const where = `${path}.blocks[${i}]`;
+    // An old physics block loads as its subsystem (physics.js).
+    const b = isOldPhysics(given.type) ? expandPhysics(given) : given;
     if (!b.id || typeof b.id !== 'string' || /[:/]/.test(b.id)) throw new Error(`${where}: needs an "id" without ":" or "/"`);
     if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
     ids.add(b.id);
@@ -473,7 +449,12 @@ export function normalizeDiagram(d, path = 'plant', opts = {}) {
     if (m?.mask) out.mask = m.mask;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`, { scope: m.scope, resolve });
     if (resolve && b.type === 'fcn' && scope) Object.defineProperty(out, 'consts', { value: scopeMap(scope) });
-    if (b.type === 'controller' || b.type === 'observer') {
+    if ((b.type === 'controller' || b.type === 'observer') && resolve && Array.isArray(b.variants) && b.variants.length) {
+      // Resolving (compileDiagram's copy of a normalised diagram): the
+      // variants stay as given, a law Auto-tune hands in included.
+      out.variants = b.variants;
+      out.variant = b.variant ?? 0;
+    } else if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
       const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
       out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib, { inputs: out.params.inputs }));
@@ -549,7 +530,8 @@ export function blockInputNames(diagram, idPath) {
     // A subsystem's output is named by its Out block ("speed" from Motor).
     if (src.type === 'subsystem') {
       const out = src.diagram.blocks.find((b) => b.type === 'outport' && b.params.port === f.port + 1);
-      return out?.name ? `${out.name} (${src.name ?? src.id})` : (src.name ?? src.id);
+      // A masked model (the tank, a cart) is named as a model block was: h, θ1.
+      return out?.name ? (src.mask ? out.name : `${out.name} (${src.name ?? src.id})`) : (src.name ?? src.id);
     }
     const outNames = outputNames(diagramBlockDef(src.type), src.params);
     // An Equations block with one output is named by its label, as before;

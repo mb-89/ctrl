@@ -6,6 +6,7 @@
 import { diagramBlockDef, blockPorts, parseEnd, normalizeDiagram, plantDiagram, diagramNames, compileDiagram, outputNames, maskValues, formulaIn } from '../core/diagram.js';
 import { isFormula } from '../core/formula.js';
 import { SYSTEM_LIBRARY } from '../core/systems.js';
+import { TEMPLATES } from '../core/physics.js';
 import { num, parseSI } from './units.js';
 import { createScene } from './scene.js';
 import { findExternal, interfaceOf, EXTERNAL_BLOCK } from '../core/hil.js';
@@ -19,7 +20,7 @@ const GROUPS = [
   ['Dynamics', ['integrator', 'delay', 'firstOrder', 'secondOrder', 'tf']],
   ['Models', ['fopdt', 'lagChain', 'integratorLag', 'doubleIntegrator', 'inverseResponse']],
   ['Sensors', ['quantizer', 'noise']],
-  ['Physics', ['cartPole', 'pendulumCart', 'conicalTank']],
+  ['Physics', ['cartPole', 'pendulumCart', 'tpl:conicalTank']],  // templates (tpl:) insert a masked model
   ['Live', ['external']],  // a plant outside the page (design/output/hil.md)
   ['Nonlinear', ['saturation']],
   ['Structure', ['subsystem', 'inport', 'outport']],
@@ -195,7 +196,10 @@ export function createPlantEditor(root, app) {
     };
     let html = '<h3 class="label">Library</h3>';
     for (const [g, types] of GROUPS) {
-      html += group(g, types.map((t) => { const def = diagramBlockDef(t); return item(`type:${t}`, esc(def.label), `${def.label}: ${def.formula}. Drag onto the canvas, or click to add.`, `<span class="btn-note">${esc(def.formula)}</span>`); }).join(''));
+      html += group(g, types.map((t) => {
+        const tpl = t.startsWith('tpl:') ? TEMPLATES[t.slice(4)] : null, def = tpl ?? diagramBlockDef(t);
+        return item(tpl ? t : `type:${t}`, esc(def.label), `${def.label}: ${def.formula}.${tpl ? ' A subsystem you can open; its parameters are on its mask.' : ''} Drag onto the canvas, or click to add.`, `<span class="btn-note">${esc(def.formula)}</span>`);
+      }).join(''));
     }
     html += group('My blocks', lib.length ? lib.map((e, i) => item(`lib:${i}`, esc(e.name), 'Your saved subsystem. Drag onto the canvas, or click to add.')).join('') : '<div class="hint">Select a subsystem and save it here.</div>');
     html += group('System library', SYSTEM_LIBRARY.map((e, i) => (e.plant ? `<button class="btn btn-sm btn-block" data-system="${i}" title="${esc(`${e.tags.map((t) => t.label).join(' · ')}\n${e.summary} Loads this system's plant; the header's System library loads the rest.`)}">${esc(e.name)}<span class="btn-note">plant</span></button>` : '')).join(''));
@@ -223,6 +227,11 @@ export function createPlantEditor(root, app) {
     let added = null;
     edit((d) => {
       if (data.startsWith('type:')) added = newBlock(d, data.slice(5), x, y);
+      else if (data.startsWith('tpl:')) {
+        const tpl = TEMPLATES[data.slice(4)];
+        if (!tpl) return false;
+        added = newBlock(d, 'subsystem', x, y, { ...tpl.make(), name: tpl.name });
+      }
       else if (data.startsWith('lib:')) {
         const e = (app.project.library ?? [])[Number(data.slice(4))];
         if (!e) return false;
@@ -236,7 +245,7 @@ export function createPlantEditor(root, app) {
   viewEl.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
   viewEl.addEventListener('drop', (e) => {
     const data = e.dataTransfer.getData('text/plain');
-    if (!data || !/^(type|lib):/.test(data)) return;
+    if (!data || !/^(type|lib|tpl):/.test(data)) return;
     e.preventDefault();
     const p = toWorld(e);
     addFrom(data, p.x, p.y);

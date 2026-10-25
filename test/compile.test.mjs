@@ -39,6 +39,6 @@ test('a state node with several inputs gets them all (uv)', () => {
     const out = simulateSystem(d, { a: step, b: dc(0.25) }, { duration: 2, sampleTime: 0.01 });
     assert.ok(Math.abs(out.signals.y.at(-1) - 1.5) < 1e-12);
     // A one-input physics block keeps reading u alone (no uv).
-    assert.equal(compileDiagram(normalizeDiagram({ blocks: [{ id: 'p', type: 'conicalTank' }], wires: [] }), 'plant', { standalone: true }).n, 1);
+    assert.equal(compileDiagram(normalizeDiagram({ blocks: [{ id: 'p', type: 'cartPole' }], wires: [] }), 'plant', { standalone: true }).n, 4);
   } finally { delete ELEMENTS.twoIn; }
 });

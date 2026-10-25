@@ -117,7 +117,7 @@ test('linearizeBlock: the plant a block sees at rest, at a level, and at a momen
   const climbing = linearizeBlock(p, 'ctrl', { t: 1.7 });
   const h = climbing.op.x[0], q = climbing.op.u, rr = tk.r0 + s * h, area = Math.PI * rr * rr;
   const slope = (-c / (2 * Math.sqrt(h))) / area - ((q - c * Math.sqrt(h)) * 2 * Math.PI * rr * s) / (area * area);
-  assert.ok(climbing.op.drift > 0.01 && climbing.warnings.some((w) => /t = 1\.70 s is not an equilibrium: tank\.h moves at/.test(w)), climbing.warnings.join(' / '));
+  assert.ok(climbing.op.drift > 0.01 && climbing.warnings.some((w) => /t = 1\.70 s is not an equilibrium: tank\/h moves at/.test(w)), climbing.warnings.join(' / '));
   close(climbing.A[0][0], slope, 1e-6 * Math.abs(slope), 'slope at h(t)');
   close(climbing.B[0][0], 1 / area, 1e-6 / area, 'B at h(t)');
   // Refusals, in sentences.
@@ -241,7 +241,7 @@ test('loopModel: refusals and notes: a law not linear there, no design yet, an O
   // neither side's and depends on the difference step (A from −2.8·10³ to
   // −2.8·10⁵ 1/s), so the loop is refused there, as a design refuses it (the
   // tab read "✓ stable, ×4840 good" from it).
-  refusal(() => loopModel(project('Conical tank'), 'ctrl', 'origin'), 'kink', /kink at origin .*tank\.h/);
+  refusal(() => loopModel(project('Conical tank'), 'ctrl', 'origin'), 'kink', /kink at origin .*tank\/h/);
   // At the start, no kink and u = 0 is no limit: no such note.
   const start = loopModel(project('Conical tank'), 'ctrl', 'initial');
   assert.equal(start.atLimit, false);

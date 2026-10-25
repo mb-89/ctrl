@@ -5100,6 +5100,66 @@ const PUMA560 = {
 
 return { PUMA560 };
 })();
+// ---- core/physics.js
+__mods['core/physics.js'] = (() => {
+
+const field = (key, label, unit, def, extra = {}) => ({ key, label, unit, default: def, ...extra });
+
+const TANK_MASK = [
+  field('r0', 'Bottom radius r0', 'm', 0.05, { min: 1e-4 }), field('R', 'Top radius R', 'm', 0.5, { min: 1e-4 }),
+  field('H', 'Height H', 'm', 1, { min: 1e-3 }), field('a', 'Outlet area a', 'm²', 0.1, { min: 0 }),
+  field('g', 'g', 'm/s²', 9.81), field('h0', 'Start level h₀', 'm', 0.25, { min: 0 }),
+];
+const CART_POLE_MASK = [
+  field('M', 'Cart M', 'kg', 1, { min: 1e-6 }), field('m', 'Bob m', 'kg', 0.2, { min: 1e-6 }), field('l', 'Length l', 'm', 0.5, { min: 1e-6 }),
+  field('g', 'g', 'm/s²', 9.81), field('b', 'Friction b', 'N·s/m', 0.1, { min: 0 }), field('theta0', 'Start θ₀', 'rad', 0.05),
+];
+const chainMask = (n) => [
+  field('M', 'Cart M', 'kg', 1, { min: 1e-6 }),
+  ...Array.from({ length: n }, (_, i) => [field(`m${i + 1}`, `Mass m${i + 1}`, 'kg', 0.1, { min: 1e-6 }), field(`l${i + 1}`, `Rod l${i + 1}`, 'm', 0.25, { min: 1e-6 })]).flat(),
+  field('g', 'g', 'm/s²', 9.81), field('b', 'Friction b', 'N·s/m', 0.1, { min: 0 }),
+  ...Array.from({ length: n }, (_, i) => field(`theta${i + 1}0`, `Start θ${i + 1}₀`, 'rad', i === 0 ? 0.05 : 0)),
+];
+
+const values = (mask, p = {}) => Object.fromEntries(mask.map((f) => [f.key, p[f.key] ?? f.default]));
+const masked = (mask, p, diagram) => ({ type: 'subsystem', mask: mask.map((f) => ({ ...f })), params: values(mask, p), diagram });
+const port = (id, type, name, n, x, y) => ({ id, type, name, params: { port: n }, x, y });
+
+function conicalTank(p = {}) {
+  return masked(TANK_MASK, p, {
+    blocks: [
+      port('q', 'inport', 'q', 1, 20, 66),
+      { id: 'net', type: 'sum', name: 'net inflow', params: { signs: '+-' }, x: 130, y: 63 },
+      { id: 'rate', type: 'fcn', name: 'level rate', params: { inputs: 'Q, h', eqs: 'r = r0 + (R - r0)*h/H\nA = pi*r^2\ndh = Q/A', outputs: 'dh' }, x: 210, y: 50 },
+      { id: 'level', type: 'integrator', name: 'h', params: { K: 1, x0: 'h0', min: 0, max: 'H', unit: 'm', angle: 0 }, x: 460, y: 56 },
+      { id: 'outlet', type: 'fcn', name: 'outlet (Torricelli)', params: { inputs: 'h', eqs: 'qout = a*sqrt(2*g*h)', outputs: 'qout' }, x: 250, y: 170, flip: true },
+      port('o_1', 'outport', 'h', 1, 660, 66),
+    ],
+    wires: [
+      { from: 'q', to: 'net' }, { from: 'net', to: 'rate' }, { from: 'level', to: 'rate:1' }, { from: 'rate', to: 'level' },
+      { from: 'level', to: 'o_1' }, { from: 'level', to: 'outlet' }, { from: 'outlet', to: 'net:1' },
+    ],
+  });
+}
+
+const TEMPLATES = {
+  conicalTank: { label: 'Conical tank', formula: 'q → h', name: 'tank', make: () => conicalTank() },
+};
+
+const OLD_TYPES = {
+  conicalTank: (p) => conicalTank(p),
+};
+const isOldPhysics = (type) => Object.hasOwn(OLD_TYPES, type);
+
+function expandPhysics(b) {
+  const sub = OLD_TYPES[b.type](b.params ?? {});
+  return { id: b.id, ...(b.name ? { name: b.name } : {}), x: b.x, y: b.y, ...(b.flip ? { flip: true } : {}), ...sub };
+}
+
+const physicalMaskKeys = (mask) => mask.filter((f) => f.key !== 'g' && !/^Start\b/.test(f.label)).map((f) => f.key);
+
+return { conicalTank, TEMPLATES, isOldPhysics, expandPhysics, physicalMaskKeys };
+})();
 // ---- core/diagram.js
 __mods['core/diagram.js'] = (() => {
 
@@ -5110,6 +5170,7 @@ const { siUnit } = __mods['core/scale.js'];
 const { gaussAt } = __mods['core/signals.js'];
 const { isFormula, parseFormula, formulaNames, compileFormula, isReserved, NAME_RE } = __mods['core/formula.js'];
 const { CONTROLLERS, normalizeVariant, makeLaw } = __mods['core/controllers.js'];
+const { isOldPhysics, expandPhysics } = __mods['core/physics.js'];
 const { OBSERVERS } = __mods['core/observers.js'];
 const { SYNC_DESIGNS, defaultDesigns } = __mods['core/design.js'];
 const { EXTERNAL_BLOCK } = __mods['core/hil.js'];
@@ -5180,26 +5241,6 @@ const ELEMENTS = {
       out: (X, o, p, y) => { for (let i = 0; i < 2 * p.links + 2; i++) y[i] = X[o + i]; },
       make: (p) => chainRates(p),
       bound: (p) => 4 * Math.sqrt((p.g / Math.min(...links(p).map((i) => p[`l${i + 1}`]))) * (1 + p.links)) + p.b / p.M,
-    },
-  },
-  conicalTank: {
-    label: 'Conical tank', group: 'Physics', formula: 'q → h', outputs: ['h'], ports: () => [1, 1],
-    params: [num('r0', 'Bottom radius r0', 0.05, { unit: 'm', min: 1e-4 }), num('R', 'Top radius R', 0.5, { unit: 'm', min: 1e-4 }), num('H', 'Height H', 1, { unit: 'm', min: 1e-3 }), num('a', 'Outlet area a', 0.1, { unit: 'm²', min: 0 }), num('g', 'g', 9.81, { unit: 'm/s²' }), num('h0', 'Start level h₀', 0.25, { unit: 'm', min: 0 })],
-    ode: {
-      n: 1,
-      states: () => [state('h', 'm')],
-      init: (p) => [Math.min(p.H, p.h0)],
-      out: (X, o, p, y) => { y[0] = Math.min(p.H, Math.max(0, X[o])); },
-      make(p) {
-        const { r0, H } = p, slope = (p.R - r0) / H, out = p.a * Math.sqrt(2 * p.g);
-        return (X, o, u, dX) => {
-          const h = Math.min(H, Math.max(0, X[o]));
-          const r = r0 + slope * h;
-          const flow = u - out * Math.sqrt(h);
-          dX[o] = (h <= 0 && flow < 0) || (h >= H && flow > 0) ? 0 : flow / (Math.PI * r * r);
-        };
-      },
-      bound: (p) => (p.a * Math.sqrt(2 * p.g)) / (Math.PI * p.r0 * p.r0 * 2 * Math.sqrt(0.01)),
     },
   },
   controller: {
@@ -5411,6 +5452,7 @@ function normalizeMask(b, where, outer, resolve) {
 
 function hasFormulas(d) {
   return d.blocks.some((b) => {
+    if (isOldPhysics(b.type)) return true;   
     if (b.type === 'subsystem') return b.mask?.length > 0 || hasFormulas(b.diagram);
     const def = ELEMENTS[b.type] ?? (BLOCKS.plant[b.type] ? { params: BLOCKS.plant[b.type].params } : null);
     return !!def?.params?.some((p) => (!p.kind && isFormula(b.params?.[p.key])) || (p.kind === 'vector' && Array.isArray(b.params?.[p.key]) && b.params[p.key].some(isFormula)));
@@ -5478,8 +5520,9 @@ function normalizeDiagram(d, path = 'plant', opts = {}) {
   const { scope = null, resolve = false } = opts;
   if (!d || !Array.isArray(d.blocks)) throw new Error(`${path}: a diagram needs "blocks" and "wires"`);
   const ids = new Set();
-  const blocks = d.blocks.map((b, i) => {
+  const blocks = d.blocks.map((given, i) => {
     const where = `${path}.blocks[${i}]`;
+    const b = isOldPhysics(given.type) ? expandPhysics(given) : given;
     if (!b.id || typeof b.id !== 'string' || /[:/]/.test(b.id)) throw new Error(`${where}: needs an "id" without ":" or "/"`);
     if (ids.has(b.id)) throw new Error(`${where}: duplicate id "${b.id}"`);
     ids.add(b.id);
@@ -5491,7 +5534,10 @@ function normalizeDiagram(d, path = 'plant', opts = {}) {
     if (m?.mask) out.mask = m.mask;
     if (b.type === 'subsystem') out.diagram = normalizeDiagram(b.diagram ?? { blocks: [], wires: [] }, `${path}/${b.id}`, { scope: m.scope, resolve });
     if (resolve && b.type === 'fcn' && scope) Object.defineProperty(out, 'consts', { value: scopeMap(scope) });
-    if (b.type === 'controller' || b.type === 'observer') {
+    if ((b.type === 'controller' || b.type === 'observer') && resolve && Array.isArray(b.variants) && b.variants.length) {
+      out.variants = b.variants;
+      out.variant = b.variant ?? 0;
+    } else if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
       const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
       out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib, { inputs: out.params.inputs }));
@@ -5558,7 +5604,7 @@ function blockInputNames(diagram, idPath) {
     if (src.type === 'source') return src.params.signal;
     if (src.type === 'subsystem') {
       const out = src.diagram.blocks.find((b) => b.type === 'outport' && b.params.port === f.port + 1);
-      return out?.name ? `${out.name} (${src.name ?? src.id})` : (src.name ?? src.id);
+      return out?.name ? (src.mask ? out.name : `${out.name} (${src.name ?? src.id})`) : (src.name ?? src.id);
     }
     const outNames = outputNames(diagramBlockDef(src.type), src.params);
     if (src.type === 'fcn') return outNames.length > 1 ? `${outNames[f.port]} (${src.name ?? src.id})` : (src.name ?? src.id);
@@ -6467,6 +6513,7 @@ return { simulate, stepPlan, substeps, simulateSystem };
 // ---- core/plants.js
 __mods['core/plants.js'] = (() => {
 
+const { conicalTank } = __mods['core/physics.js'];
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
 const channels = (...sources) => [0, 1, 2, 3].map((i) => {
@@ -6747,7 +6794,7 @@ const EXAMPLE_PLANTS = [
         ]),
         { id: 'pipe', type: 'delay', name: 'pipe', params: { L: 0.1, y0: null }, x: 320, y: 96 },
         { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 440, y: 104 },
-        { id: 'tank', type: 'conicalTank', name: 'tank', params: { r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }, x: 510, y: 90 },
+        { id: 'tank', name: 'tank', x: 510, y: 90, ...conicalTank({ r0: 0.05, R: 0.5, H: 1, a: 0.1, g: 9.81, h0: 0.15 }) },
         sink('h', 720, 106, 'm'),
         sink('q', 320, 20, 'm³/s'),
       ],
@@ -7900,6 +7947,7 @@ const { compileDiagram, normalizeDiagram, parseEnd, outputNames, diagramBlockDef
 const { simulateSystem, stepPlan } = __mods['core/sim.js'];
 const { referenceFn } = __mods['core/signals.js'];
 const { EXAMPLE_PLANTS } = __mods['core/plants.js'];
+const { physicalMaskKeys } = __mods['core/physics.js'];
 const CORE_FILE = 'loop-tuner-core.js';
 function simulatorCore(script) {
   const a = script.indexOf('\n// ---- core/'), b = script.indexOf('\n// ---- ui/');
@@ -7947,7 +7995,6 @@ function paramAt(diagram, at) {
 const PHYSICAL = {
   cartPole: ['M', 'm', 'l', 'b'],
   pendulumCart: (p) => ['M', 'b', ...Array.from({ length: p.links }, (_, i) => [`m${i + 1}`, `l${i + 1}`]).flat()],
-  conicalTank: ['r0', 'R', 'H', 'a'],
   firstOrder: ['K', 'tau'], fopdt: ['K', 'tau', 'delay'], secondOrder: ['K', 'wn', 'zeta'], lagChain: ['K', 'tau'], integratorLag: ['K', 'tau'],
   doubleIntegrator: ['K'], inverseResponse: ['K', 'Tz', 'tau1', 'tau2'],
   tf: (p) => [...p.num.map((v, i) => (v ? `num[${i}]` : null)), ...p.den.map((v, i) => (v ? `den[${i}]` : null))].filter(Boolean),
@@ -7956,7 +8003,11 @@ const PHYSICAL = {
 function typePhysics(diagram, prefix = '') {
   const out = [];
   for (const b of diagram.blocks) {
-    if (b.type === 'subsystem') { out.push(...typePhysics(b.diagram, `${prefix}${b.id}/`)); continue; }
+    if (b.type === 'subsystem') {
+      if (b.mask) for (const k of physicalMaskKeys(b.mask)) if (typeof b.params?.[k] === 'number') out.push({ name: `${prefix}${b.id}.${k}`, at: `${prefix}${b.id}.${k}`, unit: b.mask.find((f) => f.key === k).unit });
+      out.push(...typePhysics(b.diagram, `${prefix}${b.id}/`));
+      continue;
+    }
     const keys = typeof PHYSICAL[b.type] === 'function' ? PHYSICAL[b.type](b.params) : PHYSICAL[b.type] ?? [];
     for (const k of keys) {
       const at = `${prefix}${b.id}.${k}`;

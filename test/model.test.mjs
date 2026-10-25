@@ -8,6 +8,7 @@ import { EXAMPLE_PLANTS } from '../src/core/plants.js';
 import { CONTROLLERS } from '../src/core/controllers.js';
 import { simulateSystem } from '../src/core/sim.js';
 import { normalizeReference } from '../src/core/signals.js';
+import { conicalTank } from '../src/core/physics.js';
 
 // Seeded uniform numbers (mulberry32), so a failure can be reproduced.
 function rng(seed) {
@@ -72,6 +73,16 @@ const REFERENCE = {
 
 // A block's parameters as the diagram normalises them.
 const paramsOf = (type, params) => normalizeDiagram({ blocks: [{ id: 'b', type, params }], wires: [] }).blocks[0].params;
+// An open model's rates, compiled as the plant alone (In → model → Out), in
+// the reference's state order (its states mapped by name).
+function openRates(sub, names) {
+  const el = compileDiagram(normalizeDiagram({ blocks: [{ id: 'in', type: 'inport', params: { port: 1 } }, { id: 'm', name: 'model', ...sub }, { id: 'out', type: 'outport', params: { port: 1 } }],
+    wires: [{ from: 'in', to: 'm' }, { from: 'm', to: 'out' }] }));
+  const at = names.map((nm) => el.states.findIndex((s) => s.name === nm));
+  assert.ok(at.every((i) => i >= 0), `states ${el.states.map((s) => s.name)} for ${names}`);
+  const x = new Float64Array(el.n), d = new Float64Array(el.n);
+  return { states: el.states, f: (X, o, u, dX) => { at.forEach((i, j) => { x[i] = X[o + j]; }); el.eval(0, x, 0, u, d); at.forEach((i, j) => { dX[o + j] = d[i]; }); } };
+}
 
 test('physics: ode.make equals the equations on 1000 seeded states; states are labelled', () => {
   const cases = [
@@ -79,15 +90,17 @@ test('physics: ode.make equals the equations on 1000 seeded states; states are l
     ['pendulumCart', paramsOf('pendulumCart', { links: 1, M: 1.3, m1: 0.4, l1: 0.6, b: 0.2 })],
     ['pendulumCart', paramsOf('pendulumCart', { links: 2, M: 0.8, m1: 0.2, l1: 0.3, m2: 0.15, l2: 0.25 })],
     ['pendulumCart', paramsOf('pendulumCart', { links: 3, M: 1, m1: 0.1, l1: 0.25, m2: 0.1, l2: 0.25, m3: 0.1, l3: 0.25, b: 0.1 })],
-    ['conicalTank', paramsOf('conicalTank', { r0: 0.05, R: 0.5, H: 1, a: 0.1 })],
+    ['conicalTank', conicalTank({ r0: 0.05, R: 0.5, H: 1, a: 0.1 }).params, conicalTank({ r0: 0.05, R: 0.5, H: 1, a: 0.1 }), ['h']],
   ];
   const rand = rng(42);
-  for (const [type, p] of cases) {
-    const { ode } = ELEMENTS[type];
-    const n = typeof ode.n === 'function' ? ode.n(p) : ode.n;
-    const f = ode.make(p), o = 3;   // an offset, as inside a larger diagram
+  for (const [type, p, sub, names] of cases) {
+    // An old block's ode, or an open model compiled (the tank, from Equations and a limited Integrator).
+    const { ode } = sub ? {} : ELEMENTS[type];
+    const open = sub ? openRates(sub, names) : null;
+    const n = open ? names.length : typeof ode.n === 'function' ? ode.n(p) : ode.n;
+    const f = open ? open.f : ode.make(p), o = 3;   // an offset, as inside a larger diagram
     const X = new Float64Array(n + o), dX = new Float64Array(n + o), ref = new Float64Array(n);
-    const states = ode.states(p);
+    const states = open ? names.map((nm) => open.states.find((x) => x.name === nm)) : ode.states(p);
     assert.equal(states.length, n);
     for (let trial = 0; trial < 1000; trial++) {
       for (let i = 0; i < n; i++) X[o + i] = states[i].angle ? rand(-2 * Math.PI, 2 * Math.PI) : states[i].unit === 'm' ? rand(-1.2, 1.2) : rand(-8, 8);
@@ -101,7 +114,7 @@ test('physics: ode.make equals the equations on 1000 seeded states; states are l
   const label = (type, p) => ELEMENTS[type].ode.states(p).map((s) => `${s.name}${s.angle ? '∠' : ''}`).join(' ');
   assert.equal(label('cartPole', cases[0][1]), 'x v θ∠ ω');
   assert.equal(label('pendulumCart', cases[3][1]), 'x θ1∠ θ2∠ θ3∠ v ω1 ω2 ω3');
-  assert.equal(label('conicalTank', cases[4][1]), 'h');
+  assert.deepEqual(openRates(cases[4][2], ['h']).states.map((x) => [x.label, x.unit, x.angle]), [['model/h', 'm', false]]);
   assert.deepEqual(ELEMENTS.cartPole.ode.states(cases[0][1]).map((s) => s.unit), ['m', 'm/s', 'rad', 'rad/s']);
 });
 
@@ -175,7 +188,7 @@ test('model mode: the plant a block sees, reduced to what u moves and the measur
 
   // Tank: the pipe's dead time passes straight through and is reported.
   const tank = modelOf(system('Conical tank'));
-  assert.deepEqual(tank.states.map((s) => s.label), ['tank.h']);
+  assert.deepEqual(tank.states.map((s) => s.label), ['tank/h']);
   assert.deepEqual(tank.delay, [0.1]);
   assert.deepEqual(Array.from(tank.x0), [0.15]);
 

@@ -31,17 +31,20 @@ const openTank = (p = P) => ({
     { id: 'h', type: 'sink', params: { name: 'h', unit: 'm' } }],
   wires: [{ from: 'q', to: 'tank' }, { from: 'tank', to: 'h' }],
 });
+// An old file's conicalTank block: it loads as the open tank (physics.js).
 const blockTank = { blocks: [{ id: 'q', type: 'source', params: { signal: 'q' } }, { id: 'tank', type: 'conicalTank', name: 'tank', params: P }, { id: 'h', type: 'sink', params: { name: 'h' } }],
   wires: [{ from: 'q', to: 'tank' }, { from: 'tank', to: 'h' }] };
 
-test('the tank from Equations, Sum and a limited Integrator runs as the tank block: filling, overflowing, draining dry', () => {
+test('the tank from Equations, Sum and a limited Integrator runs as an old file\'s tank block loads: filling, overflowing, draining dry', () => {
   // Pump hard (overflow at H = 1 m), then draw off more than it pumps (dry at 0).
   const q = sig([{ type: 'dc', params: { level: 0.6 } }, { type: 'step', params: { amplitude: -1.4, time: 10 } }], 100);
   const sim = { duration: 30, sampleTime: 1e-3 };
   const a = simulateSystem(normalizeDiagram(openTank()), { q }, sim).signals.h, b = simulateSystem(normalizeDiagram(blockTank), { q }, sim).signals.h;
   let worst = 0;
   for (let i = 0; i < a.length; i++) worst = Math.max(worst, Math.abs(a[i] - b[i]));
-  assert.ok(worst < 1e-12, `h differs by ${worst} m`);
+  assert.equal(worst, 0, `h differs by ${worst} m`);
+  const loaded = normalizeDiagram(blockTank).blocks[1];
+  assert.deepEqual([loaded.id, loaded.name, loaded.type, loaded.params], ['tank', 'tank', 'subsystem', P], 'id, name and the old parameters on the mask');
   assert.equal(Math.max(...a), 1, 'it overflows at the brim');
   assert.equal(a.at(-1), 0, 'and stops when dry');
   assert.equal(a[0], 0.25, 'x0 from the mask');

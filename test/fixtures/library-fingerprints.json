@@ -27,7 +27,7 @@
   "Conical tank, gain scheduling": {
     "samples": 2001,
     "signals": "ctrl.r,ctrl.u,ctrl.y,d,h,q,r",
-    "hash": "a756d0b9"
+    "hash": "12c366e5"
   },
   "Pendulum swing-up": {
     "samples": 2001,

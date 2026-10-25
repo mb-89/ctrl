@@ -2,6 +2,13 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9: the tank opens ([transparent-models.md](transparent-models.md) step 4; [input 10](../input/2026-10-24-10-sliding-mode-and-triple-swingup.md))
+
+- **The conical tank is a masked subsystem** of Equations, a Sum and a limited Integrator (`core/physics.js`); the `conicalTank` block type is gone and old files open it on load, keeping id, name, place and ports.
+- **Its fingerprint changes, as planned**: it steps at the record's 2.5 ms instead of 1.25 ms (the old block's hand bound is gone), so h moves by up to 5.7·10⁻⁴ m against a fine run (2.8·10⁻⁴ before). Every other library run is bit for bit as before.
+- Interpretation: **a masked subsystem's outputs are named by their Out alone** (h, θ1), as the physics block's were; an unmasked subsystem keeps "speed (Motor)".
+- Interpretation: the HIL simulator varies a masked model's fields except g and the start values (labels "Start …").
+
 ## 2026-10-25 · v2.9: the library's buttons stacked ([input 32](../input/2026-10-25-32-library-buttons-stacked.md))
 
 The person: "the load, input, and plant buttons are currently horizontally next to each other. That takes up a lot of space and makes the text span over more lines ... Put them below each other ... you can make the text take more space." Load, Input and Plant now stand in one narrow column at the right of each card, aligned to its top; the name, tags, bottom line and Details take the rest of the width.
