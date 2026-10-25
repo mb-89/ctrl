@@ -244,7 +244,7 @@ The same plan (peak 15.48895 N in both; at sample 100 they differ by 5·10⁻⁸
 | Swing-up | 0.62 → 1.36 | 0.76 → 1.68 | 0.12 → 0.15 | 1.4 → 2.8 kB |
 | Tank | 0.30 → 1.08 | 0.47 → 1.56 | 0.17 → 0.16 | 1.3 → 2.7 kB |
 
-A wheel notch on the triple re-designs and re-simulates in about 35 ms today ([designs.md](designs.md), on feat/designs until it is merged); this adds about 1.4 ms. Most of it is formula resolution, building the mechanism and hashing a larger diagram. Caching parsed formulas by their text would recover part of it; not needed now.
+A wheel notch on the triple re-designs and re-simulates in about 35 ms today ([designs.md](designs.md), the design layer from `feat/designs`); this adds about 1.4 ms. Most of it is formula resolution, building the mechanism and hashing a larger diagram. Caching parsed formulas by their text would recover part of it; not needed now.
 
 ## 5. Agreement, measured
 

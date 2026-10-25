@@ -64,6 +64,16 @@ export function plantKey(diagram) {
   });
   return canonical(strip(diagram));
 }
+// What the Sinks are called, which the plant key leaves out: they name u and
+// the measurements in a model and in a design's rows ("F(t)", "peak F"), so
+// the model compile and the light designs are keyed with them; a renamed Sink
+// re-runs those (milliseconds), never a plan.
+function sinkNames(diagram) {
+  const out = [];
+  const walk = (d, at) => { for (const b of d.blocks) { if (b.type === 'sink') out.push([`${at}${b.id}`, b.params?.name ?? '']); if (b.type === 'subsystem') walk(b.diagram, `${at}${b.id}/`); } };
+  walk(diagram, '');
+  return canonical(out);
+}
 
 // ---- The store
 
@@ -211,12 +221,13 @@ export function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 
     // useDesigns): it reads what is cached and the plans being made, but
     // starts no job and drops none.
     begin(diagram, compileModel, { guest = false } = {}) {
-      let pk = null, el = null;
+      let pk = null, sk = null, el = null;
       const plant = () => (pk ??= plantKey(diagram));
+      const sinks = () => (sk ??= sinkNames(diagram));
       // The model-mode compile, shared by every design of this diagram.
       const compiled = () => {
         if (el) return el;
-        const key = hashKey(plant());
+        const key = hashKey(plant() + sinks());
         el = models.get(key) ?? compileModel();
         remember(models, key, el, 8);
         return el;
@@ -229,7 +240,9 @@ export function createDesignStore({ mode = 'sync', limit = 64, debounceMs = 150 
       return {
         resolve(block, variant, lib) {
           const def = lib[variant.type];
-          const key = hashKey(canonical([variant.type, def.version ?? 1, variant.params, block.Ts, plant(), block.idPath]));
+          // The names it labels its rows with (u, the measurements) are in the
+          // key; the plan's key (above) leaves them out.
+          const key = hashKey(canonical([variant.type, def.version ?? 1, variant.params, block.Ts, plant(), block.idPath, block.input, block.inputs, sinks()]));
           // A slot is a block's variant: what ran there last may run while its next design is computed.
           const slot = `${block.idPath}#${variant.name}#${variant.type}`;
           let entry = designs.get(key), cached = !!entry;

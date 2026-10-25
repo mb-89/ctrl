@@ -134,13 +134,20 @@ test('the design store: a design runs again only when what it depends on changes
 
   // None of these re-design.
   blk('cart').x += 60; run();
-  blk('F').params.name = 'force';
-  assert.match(run()[0].seen, /^force → /, 'a renamed Sink names u at once');
   p.system.signals.r.components.push({ type: 'step', params: { amplitude: 0.2, time: 1 } }); run();
   p.scope.timebase.scale *= 2; run();
   blk('ctrl').variants[1].params.Kp = 3; run();
   blk('c2').variant = 1; run();
-  assert.equal(runs(), 1, 'moving, renaming a Sink, the signal r, the timebase, another variant, another Controller');
+  assert.equal(runs(), 1, 'moving, the signal r, the timebase, another variant, another Controller');
+  // A renamed Sink names u in the design's rows: the light design runs again
+  // (a plan would not: the trajectory test).
+  blk('F').params.name = 'force';
+  const renamed = run()[0];
+  assert.match(renamed.seen, /^force → /, 'a renamed Sink names u at once');
+  assert.equal(runs(), 2, 'renaming the Sink of u');
+  assert.deepEqual(renamed.values, first.values, 'the same numbers');
+  blk('F').params.name = 'F'; run();
+  assert.equal(runs(), 2, 'back: from the cache');
 
   // These do.
   const rerun = (what, fn) => { const before = runs(); fn(); const [st] = run(); assert.equal(runs(), before + 1, what); assert.ok(!st.cached, what); return st; };
@@ -418,6 +425,15 @@ test('trajectory: Q, R and start re-run the gains, never the plan; T and the lim
   const back = st();
   assert.ok(back.cached && same(back.values.K, K));
   assert.deepEqual(counts(), [4, 1]);
+  // A renamed Sink of u: the rows say its new name ("force(t)", "peak
+  // force"); TV-LQR runs again, the plan is not made again.
+  const sinkF = p.system.plant.diagram.blocks.find((b) => b.type === 'sink' && b.params.name === 'F');
+  sinkF.params.name = 'force';
+  const renamed = st();
+  assert.deepEqual(counts(), [5, 1], 'the gains again, not the plan');
+  assert.equal(renamed.rows[2].label, 'force(t)');
+  assert.match(renamed.rows[0].value, /peak force [\d.]+/);
+  assert.ok(same(renamed.values.F, F));
 });
 
 test('trajectory: verified as it runs, from t = 0 through start; the force it may use each way', () => {

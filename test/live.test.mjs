@@ -569,7 +569,9 @@ test('hil_plant.py speaks the protocol: describe, the y/u cycle, its watchdog, R
   const notes = [], waiting = new Map();
   let id = 0, answer = true, closed = null;
   const call = (method, params) => new Promise((resolve) => { const i = ++id; waiting.set(i, resolve); ws.send(rpcRequest(i, method, params)); });
-  const until = (pred, ms = 2000) => new Promise((resolve, reject) => {
+  // It resolves as soon as pred holds: the long limit only matters on a busy
+  // machine (it hit 2 s at a load of 11 on four cores).
+  const until = (pred, ms = 10000) => new Promise((resolve, reject) => {
     const t0 = Date.now();
     const check = () => { const hit = pred(); if (hit) resolve(hit); else if (Date.now() - t0 > ms) reject(new Error('timed out')); else setTimeout(check, 5); };
     check();

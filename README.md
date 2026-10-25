@@ -50,8 +50,13 @@ node tools/view3d-shots.mjs         # the 3D view's own checks in headless Chrom
 | `src/core/sim.js` | The closed loop: a digital controller (sampled, zero-order hold) driving continuous actuator, plant and sensor models integrated with RK4; dead time, saturation and seeded measurement noise. |
 | `src/core/metrics.js` | Step-response and effort metrics (`node cli.mjs metrics` lists them). |
 | `src/core/goal.js` | Score and feasibility from the goal. |
-| `src/core/tune.js` | Auto-tune: a seeded scan, then Nelder–Mead on the penalised score. |
-| `src/core/project.js` | The project file: normalisation, evaluation, candidates. |
+| `src/core/tune.js` | The v1 tuner for projects with candidates: a seeded scan, then Nelder–Mead on the penalised score. |
+| `src/core/controllers.js`, `src/core/observers.js` | The Controller and Observer blocks' variants: hand laws (PID with feedforward and anti-windup, state feedback, gain-scheduled PI, swing-up, relay, sliding mode, super-twisting; Luenberger, finite differences) and the types designed from the plant; each law's linear model for the Analysis tab. |
+| `src/core/linearize.js`, `src/core/design.js`, `src/core/planner.js` | The design layer: the plant a block sees, trimmed and linearised at an operating point (kinks refused); LQR, the PI from the plant, the swing-up's catch, the Kalman filter; the triple pendulum's swing-up plan and TV-LQR; the design store, which caches in memory only. Nothing plant-specific is stored ([design/output/designs.md](design/output/designs.md)). |
+| `src/core/structure.js`, `src/ui/ctldiagram.js` | The picture of what the running variant does, for every controller type. |
+| `src/core/autotune.js` | The Auto-tune tab's methods: Iterate (Nelder–Mead on a simulated cost), relay feedback with its rules, the step response with SIMC (also integrating plants and per point of a gain schedule). |
+| `src/core/analysis.js` | The Analysis tab's numbers: the loop discretised at Ts, margins, Ms, poles, root locus, Bode, Nyquist, the linear step. |
+| `src/core/project.js` | The project file: normalisation, evaluation, candidates; the loop a Controller closes (`loopModel`), for the Analysis tab. |
 | `src/core/hil.js`, `src/core/live.js`, `src/core/ramp.js` | Live mode: the protocol, the External plant block, full scales, the ramp-in, watchdogs, the scope's keys through the plant, and the loop that steps the diagram against an external plant (in a Web Worker). |
 | `src/core/guide.js` | The page's guide for agents: `window.loopTuner.help()`, `.api`, and the Help dialog's For agents. |
 | `src/core/trace.js`, `src/ui/record.js` | Saving traces: the screen or the live record (a ring buffer of every live signal) as CSV, JSON or PNG, and back as references; where live and saved time lands on the screen. |

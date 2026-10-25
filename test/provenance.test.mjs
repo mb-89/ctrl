@@ -41,3 +41,10 @@ test('the built page carries no provenance (names, accounts, repositories, sessi
   assert.equal(/claude/i.exec(pages.standalone), null, 'the standalone page mentions the host');
   assert.ok(!/\/\/ ---- ui\//.test('') && pages.standalone.includes('\n// ---- ui/'), 'module markers stay (the live worker finds the core by them)');
 });
+
+test('dist holds the built pages and nothing else', async () => {
+  // An archive of the source once sat there, with its .git folder: logs with
+  // a name, an e-mail address and a session link, which no page check saw.
+  const { readdirSync } = await import('node:fs');
+  assert.deepEqual(readdirSync(new URL('../dist/', import.meta.url)).sort(), ['artifact.html', 'loop-tuner.html']);
+});

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { normalizeProject, evaluateCandidate, evaluateProject } from '../src/core/project.js';
 import { computeMetrics } from '../src/core/metrics.js';
 import { runTune } from '../src/core/tune.js';
-import { EXAMPLES } from '../src/core/examples.js';
+import { EXAMPLES } from '../src/core/examples-v1.js';
 import { buildHtml, bundleScript } from '../build.mjs';
 import { referenceFn, normalizeReference, parseWaveform } from '../src/core/signals.js';
 import { referenceTrace, autoTimebase, simOf, fitChannel } from '../src/core/project.js';
@@ -72,6 +72,16 @@ test('auto-tune finds a feasible PID for the third-order example and is reproduc
   assert.equal(a.best.evaluation.feasible, true);
   assert.ok(a.best.evaluation.score < evaluateCandidate(p, start).evaluation.score);
   assert.deepEqual(a.best.params, b.best.params);
+});
+
+test('the v1 example loops stay out of the page: their gains were computed offline from their plants', async () => {
+  const { buildHtml } = await import('../build.mjs');
+  const html = buildHtml();
+  for (const ex of EXAMPLES) {
+    assert.ok(!html.includes(ex.notes), `${ex.title}: its notes are in the page`);
+    // (Candidate names such as "SIMC PI" are words the page uses itself.)
+    assert.ok(!html.includes(`title: '${ex.title}'`), `${ex.title} is in the page`);
+  }
 });
 
 test('every example evaluates', () => {
