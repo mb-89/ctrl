@@ -2,6 +2,14 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: Identify, step 1: hard ranges and applied inputs in the protocol ([identification.md](identification.md) §15; [hil.md](hil.md))
+
+From the person's "the responsibility of … keeping the system safe is with the plant … we can have limits on the control effort, and … on the actual values" (input 10). Built:
+- **Each output may declare a hard range in `describe`**, `hard_min … hard_max`, and `hil_plant.py` E-stops beyond it with a sentence naming the output and the value ("angle 2.6 rad beyond 2.5"). Interpretation: the design said `outputs[].min/max`, but those are already each output's full scale (what the scope spans, v2.7), so the hard range has names of its own; it normally lies inside the full scale (the arm: full scale ±π, hard range ±2.5 rad). The External block keeps it as `ymin`/`ymax`, design inputs taken from `describe` like the full scales.
+- **The plant's ranges**: the arm's angle ±2.5 rad, speed ±60 rad/s, current ±10 A; the heater's T 0 … 110 °C. They replace its old monitoring (more than a full turn; over 110 °C). Interpretation: current ±10 A, not the design's example of ±7 A, since the library's PID peaks at 6.9 A on a plant varied by 15 % (60 seeds).
+- **Each `y` carries `applied`**, the inputs the plant applied at the end of that cycle (the last `u` that came in it, after the clamps and `--slew`; the previous one if none came), so it lags the page's u by one sample. Interpretation of "the inputs applied over the cycle just ended": the value in effect at its end, not a time average, so a clamp shows as applied ≠ sent. The live record keeps them as signals of their own, `applied.NAME` (with the input's unit; the dot keeps them off the screen's save, as probes are).
+- **The protocol keeps its name** (`loop-tuner-hil/1`): both additions are optional, a plant without them works with this page, and this plant with a page that ignores them (tested).
+
 ## 2026-10-25 · v2.8: progressive disclosure ([input 19](../input/2026-10-25-19-progressive-disclosure.md))
 
 The person: the System library's descriptions "are too long. Look at how long the DC motor thing is ... There should be a bottom line that you show in the library, and then the model can have a detailed description ... so we can click and see a detailed description of it ... In general, think about progressive disclosure ... On a user interface, in general, what you need to show is what's actionable and needed for a decision. The details you can hide behind the details button"; "the fact that the oven ... has an overshoot of 67 and 52 degrees, that doesn't matter ... to decide which model to show, I don't need to know the numeric values of stuff like this. This is similar in the other examples."

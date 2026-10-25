@@ -31,7 +31,7 @@ const DESC = {
 test('protocol messages: requests, u answers, and what the plant sends', () => {
   assert.deepEqual(JSON.parse(rpcRequest(3, 'describe')), { jsonrpc: '2.0', id: 3, method: 'describe' });
   assert.deepEqual(JSON.parse(uMessage(42, [1.23456789012, NaN])), { jsonrpc: '2.0', method: 'u', params: { seq: 42, u: [1.23456789, null] } });
-  assert.deepEqual(parseMessage('{"jsonrpc":"2.0","method":"y","params":{"seq":7,"t":0.07,"y":[1,"x",2]}}'), { kind: 'y', seq: 7, t: 0.07, y: [1, NaN, 2] });
+  assert.deepEqual(parseMessage('{"jsonrpc":"2.0","method":"y","params":{"seq":7,"t":0.07,"y":[1,"x",2]}}'), { kind: 'y', seq: 7, t: 0.07, y: [1, NaN, 2], applied: null });
   assert.equal(parseMessage('{"jsonrpc":"2.0","method":"y","params":{"t":0.07,"y":[1]}}').kind, 'invalid', 'a y needs its seq');
   assert.deepEqual(parseMessage('{"jsonrpc":"2.0","method":"estop","params":{"reason":"no u for 10 cycles","t":3.1}}'), { kind: 'estop', reason: 'no u for 10 cycles', t: 3.1 });
   assert.deepEqual(parseMessage('{"jsonrpc":"2.0","id":2,"result":{"rate_hz":100}}'), { kind: 'result', id: 2, result: { rate_hz: 100 } });

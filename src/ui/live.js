@@ -328,7 +328,7 @@ export function createLive(app, display, record, panelHost) {
     const was = !!ramp;
     ramp = m.ramp ?? null;
     if (was !== !!ramp) render(); else if (ramp) renderStats();
-    record.live.samples(m.names, m.t, m.values);
+    record.live.samples(m.names, m.t, m.values, m.units);
   }
 
   // ---- Keys

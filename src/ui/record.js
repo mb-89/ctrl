@@ -77,9 +77,11 @@ export function createRecord(app, display) {
   const live = {
     // A new run starts: the plant's clock restarts at 0.
     run() { runOffset = null; },
-    samples(names, ts, values) {
+    // units: of the columns the diagram does not name (applied.NAME, the
+    // inputs the plant applied).
+    samples(names, ts, values, units = {}) {
       const key = names.join('\n');
-      if (key !== recKey) { recKey = key; recNames = names; rec.setUnits(unitsOf(names)); }
+      if (key !== recKey) { recKey = key; recNames = names; rec.setUnits({ ...unitsOf(names), ...units }); }
       for (let i = 0; i < ts.length; i++) {
         const t = ts[i];
         if (runOffset === null || (lastPlantT !== null && t < lastPlantT)) {

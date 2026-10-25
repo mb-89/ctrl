@@ -40,8 +40,10 @@ Then, in Loop Tuner
 
 Safety, on both sides
   The plant clamps every input to its limits. If it hears nothing for 10
-  cycles, if the page goes away while running, if the arm turns more than a
-  full turn, if an output is not a number, if its own cycle fails, or if
+  cycles, if the page goes away while running, if an output leaves its hard
+  range (the arm: angle beyond 2.5 rad either way, speed beyond 60 rad/s,
+  current beyond 10 A; the heater: T above 110 °C), if an output is not a
+  number, if its own cycle fails, or if
   STOP is pressed (in its window, in its console, or the page's E-STOP), it
   applies its safe inputs (0 V) and stays stopped until Reset. Who pressed
   STOP resets it: a STOP pressed here only here, the page's E-STOP only on
@@ -80,9 +82,12 @@ The protocol, in a paragraph
   JSON-RPC 2.0 over a WebSocket, one message per text frame; the plant is the
   server and owns the clock. The page asks "describe" (name, rate_hz,
   watchdog_cycles, inputs [{name, unit, min, max, safe, kind}], outputs
-  [{name, unit, min, max}], running, estop), then "start" (params {log:
+  [{name, unit, min, max, hard_min, hard_max}], running, estop; min ... max
+  is a full scale, hard_min ... hard_max where the plant E-stops), then
+  "start" (params {log:
   [{name, unit}]}: what each answer also carries for the plant's log),
-  "stop", "reset" and "estop". Every cycle the plant sends y {seq, t, y: [...]}
+  "stop", "reset" and "estop". Every cycle the plant sends y {seq, t, y:
+  [...], applied: [...]} (applied: the inputs it applied, after its clamps)
   and the page answers at once with u {seq, u: [...], log: [...]}, values in
   the units "describe" gave (null for an output that is not a number). The
   plant also sends estop {reason, t}, running {running, by, reason}
@@ -95,8 +100,9 @@ The protocol, in a paragraph
 Real hardware in its place
   Keep the server, the cycle, the watchdog and the window of hil_plant.py and
   replace the Motor class with your device's I/O: its ports (name, unit, full
-  scale, safe value) are the description, advance(span, u) applies the inputs
-  for a span of time, outputs() reads the measurements, and safe(u) puts the
+  scale, safe value; for an output its hard range) are the description,
+  advance(span, u) applies the inputs for a span of time, outputs() reads
+  the measurements, and safe(u) puts the
   safe inputs on the device at once (hil_plant.py calls it on every E-stop,
   stop, failed cycle and shutdown: it must not fail). Give the device a
   watchdog of its own as well (its drive goes safe when nobody writes to it
