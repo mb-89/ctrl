@@ -482,7 +482,8 @@ function startApp() {
   const exportJson = () => JSON.stringify(withUi(), null, 2);
   function exportHtml() {
     const json = exportJson().replace(/</g, '\\u003c');
-    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n</script>\n<script id="lt-script">${$('lt-script').textContent}</script>\n</body>\n</html>\n`;
+    const vendor = $('lt-vendor-three');
+    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${esc(app.project.title)} · Loop Tuner</title>\n${$('lt-fonts')?.outerHTML ?? ''}\n<style id="lt-style">${$('lt-style').textContent}</style>\n</head>\n<body>\n${shellTemplate}\n<script type="application/json" id="loop-tuner-project">\n${json}\n</script>\n${vendor ? `<script id="lt-vendor-three">${vendor.textContent}</script>\n` : ''}<script id="lt-script">${$('lt-script').textContent}</script>\n</body>\n</html>\n`;
   }
   // Saving a file. Where the hosting page offers a save adapter (the hosted
   // build adds one; the viewer confirms each save), through it; in a plain
