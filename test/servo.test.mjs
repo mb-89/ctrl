@@ -141,3 +141,41 @@ test('the coupled gear rings at its two-mass resonance, its energy balances, and
   // The step bound sees the gear: a stiffer gear, more substeps.
   assert.ok(run({ ...P, k: 100 * k }, { Ts: 0.001, T: 0.05, JL }).info.substeps > run({ ...P, k }, { Ts: 0.001, T: 0.05, JL }).info.substeps);
 });
+
+// ---- The examples on the component, against main's (servo.md §12.4) ----------
+import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../src/core/systems.js';
+import { normalizeProject, evaluateSystem, autoTimebase } from '../src/core/project.js';
+import { legacyMotorDiagram, legacyEncoderDiagram } from './fixtures/legacy-motors.mjs';
+
+const runEntry = (entry, diagram, variant) => {
+  const e = { ...entry, plant: { ...entry.plant, diagram: { ...diagram, blocks: diagram.blocks.map((b) => (b.id === 'ctrl' ? { ...b, variant } : b)) } } };
+  const p = normalizeProject(applySystem(normalizeProject({}), e, SYSTEM_PARTS.filter((k) => e[k])));
+  p.scope.timebase = autoTimebase(p);
+  return evaluateSystem(p);
+};
+// The largest difference of any signal both runs have, relative to its peak.
+const worst = (a, b) => Math.max(...Object.keys(a.signals).filter((k) => k in b.signals).map((k) => {
+  let d = 0, m = 0;
+  for (let i = 0; i < a.t.length; i++) { d = Math.max(d, Math.abs(a.signals[k][i] - b.signals[k][i])); m = Math.max(m, Math.abs(a.signals[k][i])); }
+  return m ? d / m : d;
+}));
+
+test('the DC motor examples on the Servo motor run as main\'s, every variant, to 10⁻¹²', () => {
+  for (const name of ['DC motor, position control', 'Following a sine (XY)', 'DC motor, sliding mode']) {
+    const entry = SYSTEM_LIBRARY.find((e) => e.name === name), now = entry.plant.diagram;
+    const c = now.blocks.find((b) => b.id === 'ctrl');
+    const old = legacyMotorDiagram(c.variants, { inputs: c.params.inputs, Ts: c.params.Ts });
+    for (let v = 0; v < c.variants.length; v++) {
+      const a = runEntry(entry, old, v), b = runEntry(entry, now, v);
+      assert.equal(b.info.substeps, a.info.substeps, `${name} · ${c.variants[v].name}`);
+      assert.ok(worst(a, b) < 1e-12, `${name} · ${c.variants[v].name}: ${worst(a, b)}`);
+    }
+  }
+});
+
+test('the encoder example on the Servo motor runs as main\'s to 10⁻⁹ (the motor owns its friction)', () => {
+  const entry = SYSTEM_LIBRARY.find((e) => e.name === 'Encoder errors and torque ripple');
+  const a = runEntry(entry, legacyEncoderDiagram(), 0), b = runEntry(entry, entry.plant.diagram, 0);
+  assert.equal(b.info.substeps, a.info.substeps);
+  assert.ok(worst(a, b) < 1e-9, `${worst(a, b)}`);
+});

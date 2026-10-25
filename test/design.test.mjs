@@ -95,8 +95,8 @@ test('LQR from the plant reproduces the gains the library held, to 0.1 %; it ref
   // The motor measures its angle only.
   const motor = statusOf(project('DC motor', [lqr([1], 1)]));
   assert.equal(motor.error.code, 'states-not-measured');
-  assert.match(motor.error.message, /sees angle but not Motor\/armature 1\/\(Ls \+ R\) and Motor\/rotor 1\/\(Js \+ b\)\./);
-  assert.match(motor.error.hint, /^wire armature 1\/\(Ls \+ R\) and rotor 1\/\(Js \+ b\) to inputs, or add a Kalman Observer$/);
+  assert.match(motor.error.message, /sees rotor angle but not Motor\/armature 1\/\(L·s \+ R\) and Motor\/rotor 1\/Jm\./);
+  assert.match(motor.error.hint, /^wire armature 1\/\(L·s \+ R\) and rotor 1\/Jm to inputs, or add a Kalman Observer$/);
   // No weight on a mode that does not decay by itself: the cart's position
   // (an integrator, |z| = 1), or with Q = 0 the falling pole too. Q says so,
   // not the wiring.
@@ -276,7 +276,7 @@ test('scheduledPI: pole cancellation from the tank at each level reproduces the 
   assert.match(high.error.message, /^holding h = 0\.98 m needs q = 0\.438, above u max 0\.4$/);
   const motor = statusOf(project('DC motor', [{ type: 'scheduledPI', params: { at: [1] } }]));
   assert.equal(motor.error.code, 'integrating-plant');
-  assert.match(motor.error.message, /angle integrates V/);
+  assert.match(motor.error.message, /θ measured \(Motor\) integrates V/);
   assert.throws(() => normalizeVariant({ type: 'scheduledPI', params: { at: [0.5, 0.2] } }), /the At values must increase/);
   assert.throws(() => normalizeVariant({ type: 'scheduledPI', params: { Tcl: 0 } }), /Tcl: above 0/);
   // A closed loop faster than the pipe's dead time and half a sample allow

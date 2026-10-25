@@ -5,6 +5,8 @@
 
 import { EXAMPLE_PLANTS } from './plants.js';
 import { CONTROLLERS } from './controllers.js';
+import { normalizeDiagram, compileDiagram } from './diagram.js';
+import { isFormula } from './formula.js';
 
 export const SYSTEM_PARTS = ['input', 'plant', 'controller'];
 
@@ -64,10 +66,16 @@ const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (
 export function systemTags(e) {
   const blocks = [];
   let nonlinear = false;
-  const walk = (d) => {
+  // What a mask switched off is not compiled and says nothing about the
+  // system (the Servo motor's dead time, its saturations); a Switch the
+  // mask sets is a wire.
+  let off = [];
+  try { off = compileDiagram(normalizeDiagram(e.diagram), 'plant', { standalone: true, laws: false }).offNodes; } catch { /* tagged as written */ }
+  const walk = (d, pre = '') => {
     for (const b of d.blocks) {
+      if (off.includes(`${pre}${b.name ?? b.id}`) || (b.type === 'switch' && isFormula(b.params?.position))) continue;
       blocks.push(b);
-      if (b.diagram) walk(b.diagram);
+      if (b.diagram) walk(b.diagram, `${pre}${b.name ?? b.id}/`);
       // An Equations block that only feeds Sinks (an energy shown on the
       // scope, say) leaves the dynamics linear.
       const onlyDisplays = d.wires.filter((w) => w.from.split(':')[0] === b.id).every((w) => ['sink', 'terminator'].includes(d.blocks.find((x) => x.id === w.to.split(':')[0])?.type));

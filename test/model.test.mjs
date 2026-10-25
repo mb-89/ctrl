@@ -154,10 +154,10 @@ test('model mode: the plant a block sees, reduced to what u moves and the measur
   // feeds a Sink are dropped.
   const motor = system('DC motor');
   motor.blocks.push(block('drift', 'integrator', { K: 1 }), block('dsum', 'sink', { name: 'dsum' }), block('odo', 'integrator', { K: 1 }), block('turns', 'sink', { name: 'turns' }));
-  motor.wires.push(wire('d', 'drift'), wire('drift', 'dsum'), wire('motor', 'odo'), wire('odo', 'turns'));
+  motor.wires.push(wire('d', 'drift'), wire('drift', 'dsum'), wire('motor:3', 'odo'), wire('odo', 'turns'));
   const mm = modelOf(normalizeDiagram(motor));
-  assert.deepEqual(mm.states.map((s) => s.label), ['Motor/armature 1/(Ls + R)', 'Motor/rotor 1/(Js + b)', 'angle']);
-  assert.deepEqual(mm.outputs.map((o) => o.label), ['angle']);
+  assert.deepEqual(mm.states.map((s) => s.label), ['Motor/armature 1/(L·s + R)', 'Motor/rotor 1/Jm', 'Motor/rotor angle']);
+  assert.deepEqual(mm.outputs.map((o) => o.label), ['θ measured (Motor)']);
   const dx = new Float64Array(3), y = new Float64Array(1);
   mm.f([0, 0, 0], 1, dx);
   assert.deepEqual(Array.from(dx), [100, 0, 0], 'the armature 1/(Ls + R) with L = 10 mH, R = 1 Ω, C = 1');
@@ -281,7 +281,7 @@ test('model mode: observers, dead times on the way, saturation, input names, Dea
 
   // What feeds each input, as the Controller tab shows it.
   assert.deepEqual(blockInputNames(system('Pendulum swing-up'), 'ctrl'), ['r', 'x', 'θ', 'v', 'ω']);
-  assert.deepEqual(blockInputNames(system('DC motor'), ['ctrl']), ['r', 'angle']);
+  assert.deepEqual(blockInputNames(system('DC motor'), ['ctrl']), ['r', 'θ measured (Motor)']);
   assert.deepEqual(blockInputNames(d, 'o'), ['ctl', 'position']);
 
   // Dead time with an empty output before L: its input at t = 0 (a pipe already flowing).

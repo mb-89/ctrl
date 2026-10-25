@@ -571,7 +571,8 @@ export function normalizeDiagram(d, path = 'plant', opts = {}) {
     if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
       const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
-      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib, { inputs: out.params.inputs }));
+      // A variant made in code (Auto-tune's step test: a law of its own) is kept as it is.
+      out.variants = vs.map((v, j) => (typeof v.law === 'function' ? v : normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib, { inputs: out.params.inputs })));
       out.variant = Math.min(Math.max(0, Math.round(Number(b.variant) || 0)), out.variants.length - 1);
     }
     return out;
@@ -861,6 +862,9 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
     for (let q = probeList.length - 1; q >= 0; q--) if (off.has(probeList[q][1])) probeList.splice(q, 1);
     for (let q = ctrlNodes.length - 1; q >= 0; q--) if (off.has(ctrlNodes[q][1])) ctrlNodes.splice(q, 1);
   }
+  // The Sink that records node i, the outermost where several do (V beside
+  // a Servo motor's own v), as [name, node].
+  const outermostSink = (i) => probeList.filter(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === i).sort((a, b) => nodes[a[1]].name.split('/').length - nodes[b[1]].name.split('/').length)[0] ?? null;
   const offSinks = [...off].filter((i) => nodes[i].sink).map((i) => nodes[i].sink);
   // Auto-tune reads each Controller block's r (input 1), y (input 2) and u
   // under its id path: "ctrl.r", "motor/ctrl.u". A signal name never has a
@@ -944,7 +948,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       // What u is called: the Sink that records a Controller's output (for an
       // Observer, what feeds its u), else what the Controller tab calls it.
       const fed = nd.observer ? nd.inputs[0] : nd.i;
-      const sink = fed >= 0 ? probeList.find(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === fed) : null;
+      const sink = fed >= 0 ? outermostSink(fed) : null;
       const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: sink?.[0] ?? (nd.observer ? inputs[0] : 'u'), outputs: nd.outv.length };
       const status = job.resolve(block, nd.variant, nd.lib);
       nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
@@ -1234,6 +1238,8 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (nd.kind === 'src' || nd.kind === 'ext' || nd.kind === 'ctrl') return NONE;
       if (nd.kind === 'tap') return nodes[nd.parent].kind === 'ode' ? [nd.parent] : see.has(i) ? [owner[see.get(i)]] : NONE;
       if (nd.kind === 'switch') return [nd.inputs[nd.pick]];
+      // A Gain of 0 depends on nothing (a Servo motor's ripple, switched off).
+      if (nd.kind === 'gain' && nd.K === 0) return NONE;
       return nd.inputs;
     };
     // What a node's output reads at the same instant: a state block's output
@@ -1339,7 +1345,7 @@ export function compileDiagram(diagram, path = 'plant', opts = {}) {
       return lo[mk] === Infinity ? 0 : lo[mk];
     });
 
-    const sink = probeList.find(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === cut);
+    const sink = outermostSink(cut);
     const inputLabel = sink?.[0] ?? (blk.observer ? nodes[cut].name : 'u');
     if (!meas.some((mk) => mk >= 0 && fromCut[mk])) {
       const between = nodes.filter((nd) => nd.kind === 'ctrl' && !nd.observer && nd.i !== cut && nd.inputs.some((s) => s >= 0 && fromCut[s])).map((nd) => `'${nd.name}'`);

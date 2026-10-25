@@ -6,23 +6,23 @@
   },
   "DC motor, position control": {
     "samples": 2001,
-    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed",
-    "hash": "d884117d"
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
+    "hash": "692b3c5f"
   },
   "Following a sine (XY)": {
     "samples": 2001,
-    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed",
-    "hash": "dc05c98d"
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
+    "hash": "98d538f5"
   },
   "DC motor, sliding mode": {
     "samples": 20001,
-    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,e,i,r,speed",
-    "hash": "dc5b9021"
+    "signals": "V,angle,ctrl.r,ctrl.u,ctrl.y,d,e,i,r,speed,tau_e,tau_f,tau_m,tau_r,v",
+    "hash": "27ab4941"
   },
   "Encoder errors and torque ripple": {
     "samples": 2001,
-    "signals": "V,ctrl.r,ctrl.u,ctrl.y,r,speed,speed_m",
-    "hash": "bf121d90"
+    "signals": "V,ctrl.r,ctrl.u,ctrl.y,i,r,speed,speed_m,tau_e,tau_f,tau_m,tau_r,v",
+    "hash": "a356789d"
   },
   "Conical tank, gain scheduling": {
     "samples": 2001,

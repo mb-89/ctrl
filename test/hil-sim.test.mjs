@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
-import { simPlant, createSimPlant, simModels, drawSystem, varyDiagram, simulatorCore, rangesFrom, seededRandom, listModels, DEFAULT_MODEL } from '../src/core/hilsim.js';
+import { simPlant, createSimPlant, simModels, drawSystem, varyDiagram, simulatorCore, rangesFrom, seededRandom, listModels, DEFAULT_MODEL, effectsOf } from '../src/core/hilsim.js';
 import { simulateSystem } from '../src/core/sim.js';
 import { checkDescription } from '../src/core/hil.js';
 import { normalizeDiagram } from '../src/core/diagram.js';
@@ -29,7 +29,7 @@ test('every library system runs in the page bit for bit as before the simulator'
 function samePlant(entry, opts = {}) {
   const ctrl = entry.diagram.blocks.find((b) => b.type === 'controller');
   const rate = ctrl ? 1 / ctrl.params.Ts : 100;
-  const spec = simPlant({ model: entry.name, rate, vary: 0, detail: (entry.effects ?? []).map((f) => f.name), ...opts });
+  const spec = simPlant({ model: entry.name, rate, vary: 0, detail: effectsOf(entry).map((f) => f.name), ...opts });
   const plant = createSimPlant(spec);
   const signals = structuredClone(entry.signals);
   if (ctrl) for (const n of Object.keys(signals)) if (n !== 'r') signals[n] = { period: signals[n].period, components: [] };
@@ -101,19 +101,21 @@ test('the draws are seeded: the same seed the same plant, another seed another, 
 
 test('effects switch: at random from the seed, all, none, or by name; an unknown one is refused with the names', () => {
   const name = 'Encoder errors and torque ripple';
-  const names = simModels().find((e) => e.name === name).effects.map((f) => f.name);
-  assert.deepEqual(names, ['torque ripple', 'torque noise', 'shaft resonance', 'encoder errors']);
+  // The encoder's effects are its Servo motor's switches that are on.
+  const names = effectsOf(simModels().find((e) => e.name === name)).map((f) => f.name);
+  assert.deepEqual(names, ['Torque ripple and cogging', 'Torque noise', 'Encoder coupling resonance', 'Encoder angle errors', 'Speed from the angle']);
   const on = (detail, seed = 1) => drawSystem({ model: name, detail, seed }).effects.filter((f) => f.on).map((f) => f.name);
   assert.deepEqual(on('all'), names);
   assert.deepEqual(on('none'), []);
-  assert.deepEqual(on('shaft resonance, torque ripple'), ['torque ripple', 'shaft resonance']);
+  assert.deepEqual(on('Encoder coupling resonance, Torque ripple and cogging'), ['Torque ripple and cogging', 'Encoder coupling resonance']);
   assert.deepEqual(on('random', 9), on('random', 9), 'seeded');
   const draws = new Set(Array.from({ length: 12 }, (_, s) => on('random', s + 1).join('|')));
   assert.ok(draws.size > 4, 'random draws differ');
-  assert.throws(() => on('backlash'), /--detail: no effect "backlash" in Encoder errors and torque ripple; its effects: torque ripple, torque noise, shaft resonance, encoder errors/);
-  // Off is the block replaced by a Gain: 0 for what an effect adds, 1 for what it passes on.
+  assert.throws(() => on('backlash'), /--detail: no effect "backlash" in Encoder errors and torque ripple; its effects: Torque ripple and cogging, Torque noise, Encoder coupling resonance, Encoder angle errors, Speed from the angle/);
+  // Off is the switch on the mask at 0: the effect is not compiled.
   const d = drawSystem({ model: name, detail: 'none' }).diagram;
-  assert.deepEqual(['ripple', 'rough', 'shaft', 'enc'].map((id) => [d.blocks.find((b) => b.id === id).type, d.blocks.find((b) => b.id === id).params.K]), [['gain', 0], ['gain', 1], ['gain', 1], ['gain', 1]]);
+  const m = d.blocks.find((b) => b.id === 'motor').params;
+  assert.deepEqual(['ripple', 'torqueNoise', 'coupling', 'encErrors', 'speedFromAngle'].map((k) => m[k]), [0, 0, 0, 0, 0]);
   // The arm's Coulomb friction off: the plant runs on without it.
   const arm = drawSystem({ detail: 'none' }).diagram.blocks.find((b) => b.id === 'motor').diagram.blocks.find((b) => b.id === 'sgn');
   assert.deepEqual([arm.type, arm.params.K], ['gain', 0]);

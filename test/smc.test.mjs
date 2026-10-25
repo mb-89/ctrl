@@ -160,15 +160,15 @@ const LAMBDA = 10;
 
 // The system as a whole load gives it (Auto Scale's window: 0–5 s at the
 // entry's 0.25 ms record), with one variant running and Motor edited.
-function load(variant, { rotorDen, armDen, sampleTime, timebase } = {}) {
+function load(variant, { Jm, L, sampleTime, timebase } = {}) {
   const p = normalizeProject(applySystem(normalizeProject({}), ENTRY, SYSTEM_PARTS.filter((k) => ENTRY[k])));
   p.scope.timebase = timebase ?? autoTimebase(p);
   if (sampleTime) p.sim.sampleTime = sampleTime;
   const d = p.system.plant.diagram;
   d.blocks.find((b) => b.type === 'controller').variant = variant;
-  const motor = d.blocks.find((b) => b.id === 'motor').diagram;
-  if (rotorDen) motor.blocks.find((b) => b.id === 'rotor').params.den = rotorDen;
-  if (armDen) motor.blocks.find((b) => b.id === 'arm').params.den = armDen;
+  const motor = d.blocks.find((b) => b.id === 'motor').params;
+  if (Jm) motor.Jm = Jm;
+  if (L) motor.L = L;
   return normalizeProject(p);
 }
 const cache = new Map();
@@ -216,43 +216,17 @@ test('the sliding-mode system loads whole with its record step, its Measure chan
   assert.equal(systemTags({ diagram: { blocks: [{ id: 'c', type: 'controller', params: {}, variants: [{ type: 'superTwisting' }] }], wires: [] } }).find((t) => t.kind === 'controller').tone, 'red');
 });
 
-test('the motor built from transfer functions runs exactly as the first-order one did', () => {
-  // The Motor as it was: firstOrder K = 1/R, τ = L/R and K = 1/b, τ = J/b.
-  const asFirstOrder = (d) => {
-    const m = structuredClone(d);
-    const motor = m.blocks.find((b) => b.id === 'motor').diagram;
-    for (const b of motor.blocks) {
-      if (b.type !== 'tf') continue;
-      const [a1, a0] = b.params.den;
-      Object.assign(b, { type: 'firstOrder', params: { K: 1 / a0, tau: a1 / a0 } });
-    }
-    return m;
-  };
-  for (const name of ['DC motor, position control', 'Following a sine (XY)', 'DC motor, sliding mode']) {
-    const e = SYSTEM_LIBRARY.find((x) => x.name === name);
-    const p = normalizeProject(applySystem(normalizeProject({}), e, SYSTEM_PARTS.filter((k) => e[k])));
-    p.scope.timebase = autoTimebase(p);
-    const a = evaluateSystem(p);
-    p.system.plant.diagram = normalizeDiagram(asFirstOrder(p.system.plant.diagram));
-    const b = evaluateSystem(p);
-    for (const [sig, v] of Object.entries(a.signals)) {
-      let worst = 0;
-      for (let k = 0; k < v.length; k++) worst = Math.max(worst, Math.abs(v[k] - b.signals[sig][k]));
-      assert.ok(worst < 1e-9, `${name}: ${sig} differs by ${worst}`);
-    }
-  }
-  // Every physics value shows once, as a block parameter.
-  const motor = ENTRY.plant.diagram.blocks.find((b) => b.id === 'motor').diagram;
-  const byName = Object.fromEntries(motor.blocks.map((b) => [b.name ?? b.id, b]));
-  assert.deepEqual(byName['armature 1/(Ls + R)'].params.den, [0.01, 1]);
-  assert.deepEqual(byName['rotor 1/(Js + b)'].params.den, [0.02, 0.1]);
-  assert.equal(byName['Kt (= Ke)'].params.K, byName['Ke (= Kt)'].params.K);
-  assert.ok(motor.blocks.some((b) => b.type === 'sink' && b.params.name === 'i' && b.params.unit === 'A'), 'the current is a Sink inside Motor');
+test('the motor is the Servo motor: every physics value once, on its mask; the current a Sink inside', () => {
+  // (Its runs against the motor built from transfer functions: test/servo.test.mjs.)
+  const motor = ENTRY.plant.diagram.blocks.find((b) => b.id === 'motor');
+  assert.equal(motor.component, 'servo-motor@1');
+  assert.deepEqual(['R', 'L', 'K', 'b', 'Jm', 'G'].map((k) => motor.params[k]), [1, 0.01, 0.5, 0.1, 0.02, 1]);
+  assert.ok(motor.diagram.blocks.some((b) => b.type === 'sink' && b.params.name === 'i' && b.params.unit === 'A'), 'the current is a Sink inside Motor');
 });
 
 test('reaching: |s| < 0.5 rad/s within 60 ms of the step for every variant, within 160 ms with J×3', () => {
   for (const v of [RELAY, LAYER, TWIST]) {
-    const nominal = reaching(runOf(v)), heavy = reaching(runOf(v, { rotorDen: [0.06, 0.1] }));   // 43–48 ms; 90–95 ms
+    const nominal = reaching(runOf(v)), heavy = reaching(runOf(v, { Jm: 0.06 }));   // 43–48 ms; 90–95 ms
     assert.ok(nominal < 0.06, `${VARIANTS[v]}: ${nominal} s`);
     assert.ok(heavy < 0.16, `${VARIANTS[v]} J×3: ${heavy} s`);
   }
@@ -281,7 +255,7 @@ test('XY: the sliding line\'s slope reads λ in the window after reaching, at th
     return slope(run, from, 1.4);
   };
   const near = (a, pct) => Math.abs(a - LAMBDA) <= (pct / 100) * LAMBDA;
-  const J3 = { rotorDen: [0.06, 0.1] };
+  const J3 = { Jm: 0.06 };
   const relay = fit(RELAY), relay3 = fit(RELAY, J3);              // 9.89, 10.02
   assert.ok(near(relay.a, 3) && near(relay3.a, 3), `relay ${relay.a}, J×3 ${relay3.a}`);
   assert.ok(relay.sigma > 0.05 && relay.sigma < 0.4, `the relay's band σ ${relay.sigma} rad/s`);   // 0.177
@@ -325,9 +299,7 @@ test('chattering while holding: the relay slams ±12 V and heats the motor; the 
 // ∫V·i dt = ∫R·i² dt + ∫b·ω² dt + ∫d·ω dt + ½L·i² + ½J·ω², recorded at 0.1 ms;
 // V and d are held over each step (V by the controller's hold; d jumps on a record).
 test('physics: the motor\'s energy balances for every variant, the relay\'s too', () => {
-  const motor = ENTRY.plant.diagram.blocks.find((b) => b.id === 'motor').diagram;
-  const [L, Rm] = motor.blocks.find((b) => b.id === 'arm').params.den;
-  const [J, bf] = motor.blocks.find((b) => b.id === 'rotor').params.den;
+  const { L, R: Rm, Jm: J, b: bf } = ENTRY.plant.diagram.blocks.find((b) => b.id === 'motor').params;
   for (const v of [RELAY, LAYER, TWIST]) {
     const { t, signals: s } = runOf(v, { sampleTime: 0.0001 });
     const dt = t[1] - t[0], n = t.length - 1;
@@ -347,7 +319,7 @@ test('physics: the motor\'s energy balances for every variant, the relay\'s too'
 });
 
 test('physics: a ten times faster armature makes the relay chatter faster and burn more', () => {
-  const fast = runOf(RELAY, { armDen: [0.001, 1] });
+  const fast = runOf(RELAY, { L: 0.001 });
   const f = fundamental(fast).f;                       // 250 Hz (f_s/4)
   assert.ok(f >= 200, `chatter at ${f} Hz`);
   const loss = holdLoss(fast);                         // 35.7 W at the 0.25 ms record (34.6 exact; 0.1 ms samples read 34.75)

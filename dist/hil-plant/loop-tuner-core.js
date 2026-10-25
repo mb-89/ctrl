@@ -5746,7 +5746,7 @@ function normalizeDiagram(d, path = 'plant', opts = {}) {
     if (b.type === 'controller' || b.type === 'observer') {
       const lib = VARIANT_LIBS[b.type];
       const vs = Array.isArray(b.variants) && b.variants.length ? b.variants : [{ type: b.type === 'observer' ? 'difference' : 'pid' }];
-      out.variants = vs.map((v, j) => normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib, { inputs: out.params.inputs }));
+      out.variants = vs.map((v, j) => (typeof v.law === 'function' ? v : normalizeVariant(v, `${where}(${b.id}).variants[${j}]`, lib, { inputs: out.params.inputs })));
       out.variant = Math.min(Math.max(0, Math.round(Number(b.variant) || 0)), out.variants.length - 1);
     }
     return out;
@@ -5983,6 +5983,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     for (let q = probeList.length - 1; q >= 0; q--) if (off.has(probeList[q][1])) probeList.splice(q, 1);
     for (let q = ctrlNodes.length - 1; q >= 0; q--) if (off.has(ctrlNodes[q][1])) ctrlNodes.splice(q, 1);
   }
+  const outermostSink = (i) => probeList.filter(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === i).sort((a, b) => nodes[a[1]].name.split('/').length - nodes[b[1]].name.split('/').length)[0] ?? null;
   const offSinks = [...off].filter((i) => nodes[i].sink).map((i) => nodes[i].sink);
   for (const [key, k] of ctrlNodes) {
     const [r = -1, y = -1] = nodes[k].inputs;
@@ -6037,7 +6038,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (!nd.lib[nd.variant.type].designed) { nd.law = makeLaw(nd.variant, nd.Ts, nd.lib); continue; }
       const inputs = blockInputNames(diagram, nd.idPath);
       const fed = nd.observer ? nd.inputs[0] : nd.i;
-      const sink = fed >= 0 ? probeList.find(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === fed) : null;
+      const sink = fed >= 0 ? outermostSink(fed) : null;
       const block = { idPath: nd.idPath, name: nd.name, kind: nd.observer ? 'observer' : 'controller', Ts: nd.Ts, inputs, input: sink?.[0] ?? (nd.observer ? inputs[0] : 'u'), outputs: nd.outv.length };
       const status = job.resolve(block, nd.variant, nd.lib);
       nd.law = makeLaw(nd.variant, nd.Ts, nd.lib, status.values);
@@ -6256,6 +6257,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       if (nd.kind === 'src' || nd.kind === 'ext' || nd.kind === 'ctrl') return NONE;
       if (nd.kind === 'tap') return nodes[nd.parent].kind === 'ode' ? [nd.parent] : see.has(i) ? [owner[see.get(i)]] : NONE;
       if (nd.kind === 'switch') return [nd.inputs[nd.pick]];
+      if (nd.kind === 'gain' && nd.K === 0) return NONE;
       return nd.inputs;
     };
     const reads = (i) => (nodes[i].kind === 'ode' || nodes[i].kind === 'int' || (nodes[i].kind === 'ss' && nodes[i].ss.D === 0) ? NONE : deps(i));
@@ -6342,7 +6344,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
       return lo[mk] === Infinity ? 0 : lo[mk];
     });
 
-    const sink = probeList.find(([nm, k]) => !nm.includes('.') && nodes[k].kind === 'pass' && nodes[k].inputs[0] === cut);
+    const sink = outermostSink(cut);
     const inputLabel = sink?.[0] ?? (blk.observer ? nodes[cut].name : 'u');
     if (!meas.some((mk) => mk >= 0 && fromCut[mk])) {
       const between = nodes.filter((nd) => nd.kind === 'ctrl' && !nd.observer && nd.i !== cut && nd.inputs.some((s) => s >= 0 && fromCut[s])).map((nd) => `'${nd.name}'`);
@@ -6757,6 +6759,7 @@ return { simulate, stepPlan, substeps, simulateSystem };
 // ---- core/plants.js
 __mods['core/plants.js'] = (() => {
 
+const { componentUse } = __mods['core/components.js'];
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
 const channels = (...sources) => [0, 1, 2, 3].map((i) => {
@@ -6768,42 +6771,22 @@ const ctrl = (x, y, inputs, Ts, variants, variant = 0) => ({ id: 'ctrl', type: '
 const pulse = (amplitude, time, width) => ({ type: 'square', params: { amplitude, time, width, period: 5, count: 1 } });
 const PERIOD = 5;
 
+const DC_MOTOR = { drive: 'voltage', R: 1, L: 0.01, K: 0.5, b: 0.1, Jm: 0.02, G: 1, shaft: 'free' };
 const motorDiagram = (variants, { inputs = 2, Ts = 0.01 } = {}) => ({
       blocks: [
         src('r', 30, 112, 'rad'),
         src('d', 180, 230, 'N·m'),
         ctrl(130, 90, inputs, Ts, variants),
-        {
-          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
-          diagram: {
-            blocks: [
-              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
-              { id: 'load', type: 'inport', name: 'load torque', params: { port: 2 }, x: 330, y: 220 },
-              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'tf', name: 'armature 1/(Ls + R)', params: { num: [1], den: [0.01, 1], delay: 0 }, x: 190, y: 96 },
-              sink('i', 360, 20, 'A'),
-              { id: 'kt', type: 'gain', name: 'Kt (= Ke)', params: { K: 0.5 }, x: 370, y: 100 },
-              { id: 'tsum', type: 'sum', params: { signs: '+-' }, x: 460, y: 104 },
-              { id: 'rotor', type: 'tf', name: 'rotor 1/(Js + b)', params: { num: [1], den: [0.02, 0.1], delay: 0 }, x: 530, y: 96 },
-              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 720, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke (= Kt)', params: { K: 0.5 }, x: 370, y: 290, flip: true },
-            ],
-            wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'arm', to: 'i' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
-              { from: 'tsum', to: 'rotor' }, { from: 'rotor', to: 'w' }, { from: 'rotor', to: 'ke' }, { from: 'ke', to: 'sum:1' },
-            ],
-          },
-        },
-        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
+        componentUse('servo-motor@1', { id: 'motor', name: 'Motor', params: { ...DC_MOTOR }, x: 330, y: 90 }),
         sink('angle', 690, 106, 'rad'),
         sink('speed', 690, 30, 'rad/s'),
         sink('V', 330, 20, 'V'),
         ...(inputs >= 3 ? [{ id: 'esum', type: 'sum', params: { signs: '+-' }, x: 130, y: 300 }, sink('e', 200, 303, 'rad')] : []),
       ],
       wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor', to: 'int' }, { from: 'int', to: 'angle' },
-        { from: 'motor', to: 'speed' }, { from: 'int', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
-        ...(inputs >= 3 ? [{ from: 'motor', to: 'ctrl:2' }, { from: 'r', to: 'esum' }, { from: 'int', to: 'esum:1' }, { from: 'esum', to: 'e' }] : []),
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'd', to: 'motor:1' }, { from: 'motor:1', to: 'angle' },
+        { from: 'motor:3', to: 'speed' }, { from: 'motor:1', to: 'ctrl:1' }, { from: 'ctrl', to: 'V' },
+        ...(inputs >= 3 ? [{ from: 'motor:2', to: 'ctrl:2' }, { from: 'r', to: 'esum' }, { from: 'motor:1', to: 'esum:1' }, { from: 'esum', to: 'e' }] : []),
       ],
     });
 const motorViews = () => ([{
@@ -6856,6 +6839,15 @@ function cartView(name, rods, caption, box) {
 
 const Q_SINGLE = [10, 50, 1, 1];
 const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
+
+const ENCODER_MOTOR = {
+  drive: 'voltage', R: 1, L: 0.002, K: 0.1, b: 0.005, Jm: 0.001, G: 1, shaft: 'free',
+  ripple: 1, kr1: 6, Ar1: 0.05, pr1: 0, Ar2: 0, Ar3: 0,
+  torqueNoise: 1, sigma: 0.02, seed: 7,
+  coupling: 1, wc: 439.8, zc: 0.02,
+  encErrors: 1, ke1: 1, Ae1: 0.02, pe1: 0.5, ke2: 2, Ae2: 0.01, pe2: 1, Ae3: 0,
+  speedFromAngle: 1, Tf: 0.001,
+};
 
 const EXAMPLE_PLANTS = [
   {
@@ -6947,7 +6939,7 @@ const EXAMPLE_PLANTS = [
   {
     name: 'DC motor, sliding mode',
     summary: 'The motor under sliding-mode control, on its phase portrait. Compare the ideal relay, a boundary layer and super-twisting: a response the load cannot change, and what chattering costs.',
-    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: open Motor and triple J (rotor den [0.06, 0.1]): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (den [0.001, 1]): the relay chatters at 250 Hz and makes about five times the heat.',
+    notes: 'A sliding-mode controller holds the shaft: it drives s = λ·e + ė to zero (e = r − angle, λ = 10 1/s). On the line s = 0 the error decays as e^(−λt) whatever the load or the inertia, so the slope λ, not the mass, sets how the shaft settles. The scope opens in XY, e across, speed up: after each step the beam runs at full voltage towards the line speed = 10·e, then slides along it into the origin (the whole run\'s fit, a ≈ 7, includes these arcs).\n\nTo read λ, set Horizontal to 100 ms/div at 0.4 s, channel 1 to 0.1 rad/div and channel 2 to 1 rad/s/div: only the sliding is left (the run now ends at 1.4 s), the line rises one division per division across, a reads λ, σ how tightly it slides.\n\nRelay (theory), V = 12 V·sign(s): press Time, switch on channels 3 and 4. V slams between ±12 V at 62.5 Hz (Measure counts both turns: 126/s), the current ripples 11 A peak to peak, and its rms of 2.7 A is 7.3 W of heat (R·i², R = 1 Ω). Boundary layer (practice): a stiff PD inside |s| < 2 rad/s (Kp 60, Kd 6): no chatter, but over the whole run (Auto Scale) the load at 3.2 s leaves 33 mrad (the relay about 5). Super-twisting: a continuous voltage whose integral part rejects the load; a 36 Hz ripple from the armature remains. A PID\'s integral would reject the load too; super-twisting adds convergence in finite time.\n\nTry: select Motor and triple its rotor inertia Jm on its mask (0.06): the relay and the layer keep the slope, super-twisting first overshoots the line. Or make the armature ten times faster (L 1 mH): the relay chatters at 250 Hz and makes about five times the heat.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1, time: 0.25, width: 1.25, period: 2.5, count: 0 } }] },
       d: { period: PERIOD, components: [pulse(1, 3.2, 0.5)] },
@@ -6965,7 +6957,7 @@ const EXAMPLE_PLANTS = [
   {
     name: 'Encoder errors and torque ripple',
     summary: 'A motor speeding up with encoder errors, torque ripple and a shaft resonance, in the spectrogram. Change the colour scale, try FFT or a notch: tell errors that follow the speed from a resonance, and spot aliasing.',
-    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible shaft that resonates at 70 Hz. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing.\n\nUp there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB.\n\nTry FFT mode, and a notch filter on the channel.',
+    notes: 'A speed-controlled motor sweeps from 0 to 300 rad/s. Its encoder is off-centre (an error once per turn, 1×) and its tracks are not quite perpendicular (twice per turn, 2×); the inverter adds torque ripple six times per turn (6×), and the encoder sits behind a flexible coupling that resonates at 70 Hz. The motor is the Servo motor: each of these is a switch on its mask. The scope opens in Spectrogram mode on the measured speed: each error is a straight line from the origin, rising with speed; the resonance is a horizontal line, and each order flares up as it crosses it (6× at about 73 rad/s, 2× at about 220 rad/s). The 6× line passes the scope\'s Nyquist frequency (200 Hz) and folds back down: aliasing.\n\nUp there it is weaker than the noise at low frequencies, so the absolute levels leave it black. Switch the colour to Above noise (Run Control › Colour, or the key above the levels strip at the right edge): each colour is then dB above the noise at its own frequency, and the whole 6× line shows, up to the Nyquist frequency, its turn there and back down, with the 3×, 4× and 5× orders; drag the ceiling down to brighten the weak ones. In Absolute, zoom the frequency axis to 100–200 Hz (the levels follow what is shown), or drag the floor down to about −60 dB.\n\nTry FFT mode, and a notch filter on the channel. Or select Motor and switch its torque ripple off on its mask: the 6× line goes.',
     signals: {
       r: { period: PERIOD, components: [{ type: 'ramp', params: { amplitude: 300, time: 0.5, rise: 4 } }] },
     },
@@ -6978,40 +6970,15 @@ const EXAMPLE_PLANTS = [
           { name: 'PI speed', type: 'pid', params: { Kp: 0.5, Ki: 5, umin: -48, umax: 48 } },
           { name: 'Off', type: 'off', params: {} },
         ]),
-        {
-          id: 'motor', type: 'subsystem', name: 'Motor', params: {}, x: 330, y: 96,
-          diagram: {
-            blocks: [
-              { id: 'V', type: 'inport', name: 'V', params: { port: 1 }, x: 30, y: 112 },
-              { id: 'load', type: 'inport', name: 'ripple torque', params: { port: 2 }, x: 300, y: 220 },
-              { id: 'sum', type: 'sum', params: { signs: '+-' }, x: 120, y: 104 },
-              { id: 'arm', type: 'firstOrder', name: 'armature', params: { K: 1, tau: 0.002 }, x: 200, y: 96 },
-              { id: 'kt', type: 'gain', name: 'Kt', params: { K: 0.1 }, x: 360, y: 100 },
-              { id: 'tsum', type: 'sum', params: { signs: '++' }, x: 440, y: 104 },
-              { id: 'mech', type: 'firstOrder', name: 'inertia and friction', params: { K: 200, tau: 0.2 }, x: 510, y: 96 },
-              { id: 'w', type: 'outport', name: 'speed', params: { port: 1 }, x: 690, y: 112 },
-              { id: 'ke', type: 'gain', name: 'Ke', params: { K: 0.1 }, x: 360, y: 280, flip: true },
-            ],
-            wires: [
-              { from: 'V', to: 'sum' }, { from: 'sum', to: 'arm' }, { from: 'arm', to: 'kt' }, { from: 'kt', to: 'tsum' }, { from: 'load', to: 'tsum:1' },
-              { from: 'tsum', to: 'mech' }, { from: 'mech', to: 'w' }, { from: 'mech', to: 'ke' }, { from: 'ke', to: 'sum:1' },
-            ],
-          },
-        },
-        { id: 'int', type: 'integrator', name: 'angle', params: { K: 1 }, x: 500, y: 96 },
-        { id: 'ripple', type: 'fcn', name: 'torque ripple 6×', params: { expr: '0.05*sin(6*u)' }, x: 500, y: 230, flip: true },
-        { id: 'rough', type: 'noise', name: 'torque noise', params: { std: 0.02, seed: 7 }, x: 330, y: 230, flip: true },
-        { id: 'shaft', type: 'secondOrder', name: 'shaft resonance 70 Hz', params: { K: 1, wn: 439.8, zeta: 0.02 }, x: 650, y: 96 },
-        { id: 'enc', type: 'fcn', name: 'encoder 1× and 2× errors', params: { expr: 'u + 0.02*sin(u + 0.5) + 0.01*sin(2*u + 1)' }, x: 820, y: 96 },
-        { id: 'deriv', type: 'tf', name: 'speed from angle', params: { num: [1, 0], den: [0.001, 1], delay: 0 }, x: 990, y: 96 },
-        sink('speed_m', 1160, 106, 'rad/s'),
-        sink('speed', 650, 20, 'rad/s'),
+        { id: 'noload', type: 'gain', name: 'no load', params: { K: 0 }, x: 200, y: 220 },
+        componentUse('servo-motor@1', { id: 'motor', name: 'Motor', params: ENCODER_MOTOR, x: 330, y: 90 }),
+        sink('speed_m', 690, 106, 'rad/s'),
+        sink('speed', 690, 30, 'rad/s'),
         sink('V', 330, 20, 'V'),
       ],
       wires: [
-        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'ripple', to: 'rough' }, { from: 'rough', to: 'motor:1' }, { from: 'motor', to: 'int' },
-        { from: 'int', to: 'ripple' }, { from: 'int', to: 'shaft' }, { from: 'shaft', to: 'enc' }, { from: 'enc', to: 'deriv' }, { from: 'deriv', to: 'speed_m' }, { from: 'deriv', to: 'ctrl:1' },
-        { from: 'motor', to: 'speed' }, { from: 'ctrl', to: 'V' },
+        { from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'motor' }, { from: 'r', to: 'noload' }, { from: 'noload', to: 'motor:1' },
+        { from: 'motor:2', to: 'speed_m' }, { from: 'motor:2', to: 'ctrl:1' }, { from: 'motor:3', to: 'speed' }, { from: 'ctrl', to: 'V' },
       ],
     },
   },
@@ -7320,19 +7287,14 @@ const EXAMPLE_PLANTS = [
 
 
 const phys = (name, at, unit, same) => ({ name, at, unit, ...(same ? { same } : {}) });
-const MOTOR_PHYSICS = [
-  phys('R', 'motor/arm.den[1]', 'Ω'), phys('L', 'motor/arm.den[0]', 'H'), phys('Kt', 'motor/kt.K', 'N·m/A'), phys('Ke', 'motor/ke.K', 'V·s/rad', 'Kt'),
-  phys('J', 'motor/rotor.den[0]', 'kg·m²'), phys('b', 'motor/rotor.den[1]', 'N·m·s/rad'),
-];
+const MOTOR_PHYSICS = [phys('R', 'motor.R', 'Ω'), phys('L', 'motor.L', 'H'), phys('K', 'motor.K', 'N·m/A'), phys('J', 'motor.Jm', 'kg·m²'), phys('b', 'motor.b', 'N·m·s/rad')];
 const SIMULATOR = {
   'Mass–spring–damper': { physics: [phys('1/m', 'm.K', '1/kg'), phys('c', 'c.K', 'N·s/m'), phys('k', 'k.K', 'N/m')] },
   'DC motor, position control': { physics: MOTOR_PHYSICS },
   'Following a sine (XY)': { physics: MOTOR_PHYSICS },
   'DC motor, sliding mode': { physics: MOTOR_PHYSICS },
   'Encoder errors and torque ripple': {
-    physics: [phys('1/R', 'motor/arm.K', 'A/V'), phys('L/R', 'motor/arm.tau', 's'), phys('Kt', 'motor/kt.K', 'N·m/A'), phys('Ke', 'motor/ke.K', 'V·s/rad', 'Kt'),
-      phys('1/b', 'motor/mech.K', 'rad/(N·m·s)'), phys('J/b', 'motor/mech.tau', 's'), phys('ωn', 'shaft.wn', 'rad/s'), phys('ζ', 'shaft.zeta', '1')],
-    effects: [{ name: 'torque ripple', at: 'ripple', off: 'zero' }, { name: 'torque noise', at: 'rough', off: 'pass' }, { name: 'shaft resonance', at: 'shaft', off: 'pass' }, { name: 'encoder errors', at: 'enc', off: 'pass' }],
+    physics: [...MOTOR_PHYSICS, phys('ωc', 'motor.wc', 'rad/s'), phys('ζc', 'motor.zc', '1')],
   },
   'Conical tank, gain scheduling': {
     physics: [phys('r0', 'tank.r0', 'm'), phys('R', 'tank.R', 'm'), phys('H', 'tank.H', 'm'), phys('a', 'tank.a', 'm²'), phys('Td', 'pipe.L', 's')],
@@ -7362,7 +7324,7 @@ for (const e of EXAMPLE_PLANTS) Object.assign(e, SIMULATOR[e.name] ?? {});
 
 const EMPTY_PLANT = { blocks: [src('r', 60, 104, '1')], wires: [] };
 
-return { EXAMPLE_PLANTS, EMPTY_PLANT };
+return { DC_MOTOR, EXAMPLE_PLANTS, EMPTY_PLANT };
 })();
 // ---- core/views.js
 __mods['core/views.js'] = (() => {
@@ -8082,6 +8044,8 @@ __mods['core/systems.js'] = (() => {
 
 const { EXAMPLE_PLANTS } = __mods['core/plants.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
+const { normalizeDiagram, compileDiagram } = __mods['core/diagram.js'];
+const { isFormula } = __mods['core/formula.js'];
 const SYSTEM_PARTS = ['input', 'plant', 'controller'];
 
 function fromPlant(e) {
@@ -8115,10 +8079,13 @@ const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (
 function systemTags(e) {
   const blocks = [];
   let nonlinear = false;
-  const walk = (d) => {
+  let off = [];
+  try { off = compileDiagram(normalizeDiagram(e.diagram), 'plant', { standalone: true, laws: false }).offNodes; } catch {   }
+  const walk = (d, pre = '') => {
     for (const b of d.blocks) {
+      if (off.includes(`${pre}${b.name ?? b.id}`) || (b.type === 'switch' && isFormula(b.params?.position))) continue;
       blocks.push(b);
-      if (b.diagram) walk(b.diagram);
+      if (b.diagram) walk(b.diagram, `${pre}${b.name ?? b.id}/`);
       const onlyDisplays = d.wires.filter((w) => w.from.split(':')[0] === b.id).every((w) => ['sink', 'terminator'].includes(d.blocks.find((x) => x.id === w.to.split(':')[0])?.type));
       if (NONLINEAR.has(b.type) && !(b.type === 'fcn' && onlyDisplays)) nonlinear = true;
       if (b.type === 'integrator' && [b.params?.min, b.params?.max].some((v) => v !== null && v !== undefined && !/^\s*[-+]?inf\s*$/i.test(String(v)))) nonlinear = true;
@@ -8258,6 +8225,19 @@ function typePhysics(diagram, prefix = '') {
 }
 
 
+function effectsOf(entry) {
+  const out = [...(entry.effects ?? [])];
+  const walk = (d, prefix) => {
+    for (const b of d.blocks) {
+      if (b.type !== 'subsystem') continue;
+      for (const f of b.mask ?? []) if (f.kind === 'toggle' && (b.params?.[f.key] === 1 || b.params?.[f.key] === true)) out.push({ name: f.label, at: `${prefix}${b.id}`, toggle: f.key });
+      walk(b.diagram, `${prefix}${b.id}/`);
+    }
+  };
+  walk(entry.diagram, '');
+  return out;
+}
+
 function drawSystem(opts = {}) {
   const rand = seededRandom(opts.seed ?? 1);
   const models = simModels();
@@ -8270,7 +8250,7 @@ function drawSystem(opts = {}) {
     if (!entry) throw new Error(`no model "${name}"; --list gives the models: ${models.map((e) => e.name).join('; ')}`);
   }
   const diagram = structuredClone(entry.diagram);
-  const known = entry.effects ?? [];
+  const known = effectsOf(entry);
   const detail = opts.detail ?? 'random';
   let wanted = null;
   if (detail !== 'random' && detail !== 'all' && detail !== 'none') {
@@ -8279,7 +8259,8 @@ function drawSystem(opts = {}) {
   }
   const effects = known.map((f) => {
     const on = detail === 'random' ? rand() < 0.5 : detail === 'all' ? true : detail === 'none' ? false : wanted.includes(f.name);
-    if (!on) {
+    if (!on && f.toggle) blockAt(diagram, f.at).params[f.toggle] = 0;
+    else if (!on) {
       const b = blockAt(diagram, f.at);
       const keep = { id: b.id, x: b.x, y: b.y, ...(b.name ? { name: `${b.name} (off)` } : {}), ...(b.flip ? { flip: true } : {}) };
       for (const k of Object.keys(b)) delete b[k];
@@ -8311,7 +8292,7 @@ function drawSystem(opts = {}) {
 }
 
 function varyDiagram(entry, vary, seed) {
-  return drawSystem({ model: entry, vary, seed, detail: (entry.effects ?? []).map((f) => f.name) }).diagram;
+  return drawSystem({ model: entry, vary, seed, detail: effectsOf(entry).map((f) => f.name) }).diagram;
 }
 
 const DEFAULT_MODEL = 'DC motor with an unbalanced arm';
@@ -8328,6 +8309,10 @@ function flatten(diagram) {
       const w = out && wireTo(b.diagram, out.id, 0);
       return w ? srcOf(b.diagram, `${prefix}${b.id}/`, { d, prefix, sub: b, ctx }, w.from) : null;
     }
+    if (b.type === 'switch' && b.fixed) {
+      const w = wireTo(d, b.id, b.params.position - 1);
+      return w ? srcOf(d, prefix, ctx, w.from) : null;
+    }
     if (b.type === 'inport') {
       if (!ctx) return null;
       const w = wireTo(ctx.d, ctx.sub.id, b.params.port - 1);
@@ -8338,7 +8323,7 @@ function flatten(diagram) {
   const walk = (d, prefix, ctx) => {
     for (const b of d.blocks) {
       if (b.type === 'subsystem') { walk(b.diagram, `${prefix}${b.id}/`, { d, prefix, sub: b, ctx }); continue; }
-      if (b.type === 'inport' || b.type === 'outport') continue;
+      if (b.type === 'inport' || b.type === 'outport' || (b.type === 'switch' && b.fixed)) continue;
       const key = `${prefix}${b.id}`;
       leaves.set(key, b);
       const slots = [];
@@ -8399,12 +8384,13 @@ function simPlant(opts = {}) {
   const { entry } = draw;
   const own = normalizeDiagram(draw.diagram);
   const signals = structuredClone(entry.signals ?? {});
-  const flat = flatten(own);
+  const flat = flatten(normalizeDiagram(own, 'plant', { resolve: true }));
   const ctrls = own.blocks.filter((b) => b.type === 'controller');
   if (ctrls.length > 1) throw new Error(`${entry.name}: one Controller block, for now`);
   const ctrl = ctrls[0] ?? null;
   if (!ctrl && mode !== 'control') throw new Error(`${entry.name} has no controller of its own: run it in control mode`);
-  const sinks = [...flat.leaves].filter(([, b]) => b.type === 'sink').map(([key, b]) => ({ key, name: b.params.name, unit: b.params.unit ?? '1', src: flat.feeds.get(key)[0] ?? null }))
+  const offSinks = compileDiagram(own, 'plant', { standalone: true, laws: false }).off;
+  const sinks = [...flat.leaves].filter(([, b]) => b.type === 'sink' && !offSinks.includes(b.params.name)).map(([key, b]) => ({ key, name: b.params.name, unit: b.params.unit ?? '1', src: flat.feeds.get(key)[0] ?? null }))
     .sort((a, b) => a.key.split('/').length - b.key.split('/').length);
   const same = (a, b) => a && b && a.key === b.key && a.port === b.port;
   const sinkOf = (src) => sinks.find((s) => same(s.src, src));
@@ -8710,7 +8696,7 @@ function checkText(opts = {}) {
   return `${spec.draws.system}, nominal, after ${period} s of its own controller: ${spec.outputs.map((o) => `${o.name} ${g(last(o.name))} ${o.unit}`).join(', ')}`;
 }
 
-return { CORE_FILE, simulatorCore, simModels, seededRandom, drawSystem, varyDiagram, DEFAULT_MODEL, rangesFrom, simPlant, drawsText, createSimPlant, startSimPlant, listModels, checkText };
+return { CORE_FILE, simulatorCore, simModels, seededRandom, effectsOf, drawSystem, varyDiagram, DEFAULT_MODEL, rangesFrom, simPlant, drawsText, createSimPlant, startSimPlant, listModels, checkText };
 })();
 // ---- core/spectrum.js
 __mods['core/spectrum.js'] = (() => {

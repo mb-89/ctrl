@@ -602,8 +602,8 @@ test('the encoder example above the noise: the whole 6× line and its fold-back 
   // off (the noise alone), the resonance's rows aside (it is in the noise
   // alone, and is bridged as a line).
   const quiet = structuredClone(p);
-  const blocks = (o, out = []) => { if (o && typeof o === 'object') { if (o.type === 'fcn') out.push(o); for (const v of Object.values(o)) blocks(v, out); } return out; };
-  for (const b of blocks(quiet)) if (b.id === 'ripple') b.params.eqs = 'y = 0*u'; else if (b.id === 'enc') b.params.eqs = 'y = u';
+  // On the Servo motor's mask: the ripple and the encoder errors off.
+  Object.assign(quiet.system.plant.diagram.blocks.find((b) => b.id === 'motor').params, { ripple: 0, encErrors: 0 });
   const xq = evaluateSystem(quiet).signals.speed_m, sgQ = spectrogram(xq, dt, opts), alone = rowMedians(sgQ, dbScale(sgQ.amp, DB_FLOOR));
   assert.ok(alone[12] < -36, `the noise alone at 37.5 Hz: ${alone[12]} dB`);
   for (let b = 1; b < sg.bins - 1; b++) if (Math.abs(sg.f[b] - 70) > 8) near(est[b], alone[b], 6, `the noise at ${sg.f[b]} Hz`);

@@ -287,7 +287,7 @@ test('loopModel on main\'s systems: sliding mode linear only in its boundary lay
   const bl = loopModel(smc, 'ctrl', 'origin');
   const { lambda, K, phi } = blk(smc, 'ctrl').variants[blk(smc, 'ctrl').variant].params;
   assert.deepEqual(bl.ctrl.D[0], [K * lambda / phi, -K * lambda / phi, -K / phi]);
-  assert.deepEqual(bl.plant.outputs.map((o) => o.label), ['angle', 'speed (Motor)']);
+  assert.deepEqual(bl.plant.outputs.map((o) => o.label), ['θ measured (Motor)', 'ω measured (Motor)']);
   // A plant outside the page (Live mode): what u drives runs elsewhere, so
   // neither a design nor the Analysis tab has a model of it.
   const hil = project('HIL');
