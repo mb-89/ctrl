@@ -5,10 +5,12 @@
 // gains and the speed loops' ω and ζ. The axis gains, the trim and the
 // circle's place are computed in the page.
 //
-// Until subsystems have masks, the drives' numbers sit on the blocks that
-// use them (the motors' G and kt, and the controller's 1/(G·kt), G and
-// friction for its model), and the start pose on the Arm's Integrator and on
-// the Constant the circle's frame is placed from (robot.md §3, a mask later).
+// Each motor's drive numbers are on its mask (G, kt, imax, friction), its
+// blocks' fields formulas in them. Masks hold numbers, not lists, so the
+// controller's model of the six drives (1/(G·kt), G, the friction) and the
+// start pose (on the Arm's Integrator and the Constant the circle's frame is
+// placed from) are lists on the blocks that use them, until masks take
+// lists (robot.md §3).
 
 import { PUMA560 } from './puma560.js';
 
@@ -27,22 +29,30 @@ const KX = 10, KO = 10;   // the task law's gains (1/s): the error's time consta
 // (robot.md §4): τ_j = G·(kt·i − τ_f(G·q̇)), the current a Sink, the
 // friction's share at the joint a Sink. Its rotor turns with the joint:
 // G²·Jm is on the Arm's mass matrix.
+const MOTOR_MASK = [
+  { key: 'G', label: 'Gear ratio (motor turns per joint turn)', unit: '1' }, { key: 'kt', label: 'Torque constant', unit: 'N·m/A' },
+  { key: 'imax', label: 'Current limit', unit: 'A' }, { key: 'B', label: 'Viscous friction', unit: 'N·m·s/rad' },
+  { key: 'Tcp', label: 'Coulomb friction, forward', unit: 'N·m' }, { key: 'Tcn', label: 'Coulomb friction, reverse', unit: 'N·m' },
+  { key: 'ws', label: 'Friction smoothing ωs', unit: 'rad/s' },
+];
 function motor(j) {
   const n = j + 1;
   return {
     id: `m${n}`, type: 'subsystem', name: `Motor ${n}`, x: 200, y: 40 + 70 * j,
+    mask: MOTOR_MASK,
+    params: { G: D.G[j], kt: D.kt[j], imax: D.imax[j], B: D.B[j], Tcp: D.Tcp[j], Tcn: D.Tcn[j], ws: D.ws },
     diagram: {
       blocks: [
         inp('i', 1, 20, 40, 'i*'), inp('qd', 2, 20, 140, 'q̇'),
-        blk('lim', 'saturation', { min: -D.imax[j], max: D.imax[j] }, 120, 34, 'current limit'),
+        blk('lim', 'saturation', { min: '-imax', max: 'imax' }, 120, 34, 'current limit'),
         sink('cur', `i${n}`, 'A', 250, 90),
-        blk('kt', 'gain', { K: D.kt[j] }, 250, 34, 'kt'),
+        blk('kt', 'gain', { K: 'kt' }, 250, 34, 'kt'),
         blk('sum', 'sum', { signs: '+-' }, 380, 38),
-        blk('G', 'gain', { K: D.G[j] }, 470, 34, 'gear G'),
+        blk('G', 'gain', { K: 'G' }, 470, 34, 'gear G'),
         outp('tau', 1, 600, 40, 'τ'),
-        blk('wm', 'gain', { K: D.G[j] }, 120, 134, 'ω_m = G·q̇'),
-        blk('fr', 'friction', { B: D.B[j], Tcp: D.Tcp[j], Tcn: D.Tcn[j], ws: D.ws }, 250, 134, 'friction'),
-        blk('Gf', 'gain', { K: D.G[j] }, 380, 190, 'at the joint'),
+        blk('wm', 'gain', { K: 'G' }, 120, 134, 'ω_m = G·q̇'),
+        blk('fr', 'friction', { B: 'B', Tcp: 'Tcp', Tcn: 'Tcn', ws: 'ws' }, 250, 134, 'friction'),
+        blk('Gf', 'gain', { K: 'G' }, 380, 190, 'at the joint'),
         sink('tf', `tauF${n}`, 'N·m', 500, 196),
       ],
       wires: [w('i', 'lim'), w('lim', 'kt'), w('lim', 'cur'), w('kt', 'sum'), w('sum', 'G'), w('G', 'tau'),
@@ -234,7 +244,7 @@ const ctl = {
 
 export const PUMA_SYSTEM = {
   name: 'PUMA 560, a circle in space',
-  summary: 'A six-axis robot arm drawing a circle with its tool, controlled in the tool\'s coordinates on top of six joint speed loops. Watch the error and the shoulder and elbow torques; switch the model feedforward off: what a model of the arm buys.',
+  summary: 'A six-axis robot arm draws a circle with its tool, controlled in the tool\'s coordinates over six joint speed loops. Watch the error and the joint torques; switch the arm\'s model off: what a model buys.',
   notes: 'The PUMA 560, a six-axis arm, draws a horizontal circle of 0.15 m radius with its tool, one turn every 2.5 s after an eased start. Its reference is two signals in the circle\'s own frame, a_r and b_r (Input tab), placed where the tool starts by a Frame transform. The 3D view draws the arm from its robot description (URDF), the circle dashed and the tool\'s trail.\n\nThe controller works in the tool\'s coordinates: from the measured joint angles (their speed by a finite difference of the encoders), Axes → task gives the tool\'s pose, speed and Jacobian; the task law corrects the error (time constant 0.1 s); Task → axes turns the result through the damped inverse Jacobian into a speed and an acceleration target per joint; six PI speed loops (Axis servos, one Controller with six lanes, its gains computed from the arm at the start pose) follow them, with the torque the arm\'s model says the motion takes as feedforward. The motors are geared DC motors on current drives, with their friction.\n\nThe scope shows the error in the circle\'s frame (e_a, e_b, mm) and the torques at the shoulder and elbow (τ2, τ3, N·m): gravity and the arm\'s inertia are in them. Every joint torque is a signal (tau1 … tau6), and so are its shares the model computes: inertial (tauI), Coriolis and centrifugal (tauC), gravity (tauG) and the motors\' friction (tauF1 … tauF6); the motor currents are i1 … i6.\n\nTry: Controller tab, PI without the model: the error grows a hundredfold; P only: the trail leaves the circle in 3D. Make the circle faster (the sines\' frequency) or larger (their amplitude), and watch the torques and the Joint limits report.',
   signals: {
     a_r: { period: 5, components: [{ type: 'sine', params: { amplitude: 0.15, frequency: 0.4, phase: 90, ease: 0.5 } }, { type: 'dc', params: { level: -0.15 } }] },
@@ -246,7 +256,8 @@ export const PUMA_SYSTEM = {
   ] },
   ui: { run: 'run', tab: 'plant', setup: 0.42, view: 'Robot' },
   sim: { sampleTime: 0.001 },
-  tags: [{ label: 'MIMO', kind: 'feature' }, { label: '3D', kind: 'feature' }, { label: 'Feedforward', kind: 'feature' }],
+  vectors: true,   // vector wires: the HIL simulator does not offer it (hilsim.js)
+  tags: [{ label: 'MIMO', kind: 'plant' }, { label: '3D', kind: 'feature' }],
   diagram: {
     robots: { [R]: { urdf: PUMA560.urdf } },
     blocks: [

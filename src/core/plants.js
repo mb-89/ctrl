@@ -13,6 +13,8 @@
 // table and start value those compute comes from the plant, in the page
 // (design/output/designs.md).
 
+import { PUMA_SYSTEM } from './pumasystem.js';
+
 const src = (signal, x, y, unit) => ({ id: signal, type: 'source', params: { signal, unit }, x, y });
 const sink = (id, x, y, unit) => ({ id, type: 'sink', params: { name: id, unit }, x, y });
 // Scope channels 1–4: a signal name each (on), or { source, on, measure } for
@@ -561,6 +563,9 @@ export const EXAMPLE_PLANTS = [
       ],
     }],
   },
+  // The prime example (design/output/robot.md): a six-axis arm in 3D,
+  // controlled in its tool's coordinates (pumasystem.js).
+  PUMA_SYSTEM,
   // Live mode (design/output/hil.md): the plant is outside the page and a
   // black box (input 20): the page knows its interface only, the inputs and
   // outputs its describe lists (names, units, full scales, hard ranges,

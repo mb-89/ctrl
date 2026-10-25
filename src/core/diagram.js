@@ -424,7 +424,16 @@ function normalizeParams(type, params = {}, where, scope = null, resolve = false
     const out = normalizeBlock('plant', { type, params: numeric }).params;
     return resolve ? out : { ...out, ...kept };
   }
-  if (ELEMENTS[type].normalize) return ELEMENTS[type].normalize(params, where, scope);  // blocks that check their own (external, Equations)
+  if (ELEMENTS[type].normalize) {
+    // Blocks that check their own (external, Equations, the vector blocks):
+    // a number field's formula is put in as its value, and kept as written
+    // unless resolving.
+    if (!VECTOR_ELEMENTS[type]) return ELEMENTS[type].normalize(params, where, scope);
+    const numeric = { ...params }, kept = {};
+    for (const p of ELEMENTS[type].params) if (!p.kind && isFormula(params[p.key])) { numeric[p.key] = fieldNumber(params[p.key], p, scope, `${where}.${p.key}`); kept[p.key] = String(params[p.key]).trim(); }
+    const out = ELEMENTS[type].normalize(numeric, where, scope);
+    return resolve ? out : { ...out, ...kept };
+  }
   const out = {}, values = {};
   for (const p of ELEMENTS[type].params) {
     let v = params[p.key] ?? p.default;
@@ -589,7 +598,7 @@ const NONE = [];
 export function compileDiagram(diagram, path = 'plant', opts = {}) {
   // Masks and formulas are resolved to numbers first, outermost first; then
   // vector wires become scalar ones (vectors.js; a diagram without vectors is itself).
-  if (hasFormulas(diagram)) diagram = normalizeDiagram(diagram, path, { resolve: true });
+  if (!diagram.scalar && hasFormulas(diagram)) diagram = normalizeDiagram(diagram, path, { resolve: true });
   diagram = flattenVectors(diagram, { ports: blockPorts });
   const model = opts.mode === 'model';
   const standalone = opts.standalone || model;
