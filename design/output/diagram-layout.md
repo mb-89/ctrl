@@ -9,24 +9,23 @@ The person ([input 11](../input/2026-10-25-11-diagram-auto-layout.md)): "I feel 
 **The page draws the diagram; nobody places a block.** Open the Plant tab and the diagram is laid out left to right in columns:
 
 ```
-              d ▸ ──────────┐                 ▸ u (a tap)
-                            ▼                ▲
-  r ▸ ──► Σ ──► C ──┬──────► Σ ──► P ──┬──► ▸ y      the main line, straight
-          ▲         └────────────────┘ │
-          │                            │
-          └── noise ◄── sensor H ◄─────┘             the return path, mirrored, below
+                    ┌──► ▸ u              d ▸ ─┐
+                    │                          ▼
+  r ▸ ──► Σ ──► C ──●────────────────────────► Σ ──► P ──●──► ▸ y     the main line, straight
+          ▲                                              │
+          └─────────── noise ◄──── sensor H ◄────────────┘          the return path, mirrored, below
 ```
 
 - **The main line** runs straight from the first Source to its Sink.
-- **Above it**: what comes in from outside (a disturbance d, a second Source) and taps (a Sink recording a signal on the way).
+- **Above it**: what comes in from outside (a disturbance d, a second Source) and taps (a Sink recording a signal on the way). This is a preference: a tap that would cross wires there sits below.
 - **Below it**: the return path. Its blocks are drawn mirrored (input on the right) and the measurement runs right to left into the Sum from below.
 - **Every wire is right-angled.** No wire runs through a block or on top of another wire. A signal that branches is one trunk with a dot at each branch.
 - **Columns are 56 px apart**, so every wire has a straight stretch to drop a block on.
 
-**Adding a block is dropping it onto a wire.** Drag a Gain from the library over the wire from C to P. The wire lights up and a hint says "Insert into C → P". Let go: the Gain is wired in (C → Gain → P), and in 200 ms the blocks downstream glide one column to the right to make room. Clicking a library item instead inserts it into the selected wire (or after the selected block), so touch and keyboard work too.
+**Adding a block is dropping it onto a wire.** Drag a Gain from the library over the wire from the second Σ to P. The wire lights up and a hint says "Insert into Σ → P". Let go: the Gain is wired in (Σ → Gain → P), and in 200 ms the blocks downstream glide one column to the right to make room. Clicking a library item instead inserts it into the selected wire (or after the selected block), so touch and keyboard work too.
 
 **Other edits keep the same idea:**
-- **Del** removes a block and joins its neighbours ("joined C → P", with Undo). Shift+Del removes it without joining.
+- **Del** removes a block and joins its neighbours ("joined Σ → P", with Undo). Shift+Del removes it without joining.
 - **Wires are drawn by the page and cannot be dragged.** Drag from an output to an input to wire them, as today. Drag along a wire to an input to branch that signal.
 - **Dragging a block** onto another wire moves it there. Dragging it up or down in its column reorders it, where the layout leaves that choice open.
 - **Flip is gone.** A block on a feedback path is mirrored because of its wires.
@@ -64,7 +63,7 @@ Sizes are what the page would inline. "Provenance hits" is our provenance test's
 
 | Library | Licence | Size (min / gzip) | Synchronous in the page | Provenance hits | Notes |
 |---|---|---|---|---|---|
-| **elkjs 0.12.0** (the engine file) | EPL-2.0 or GPL-3.0+ | 1558 / 454 KiB | Yes, through its dispatcher (§2.3) | 0 (code and licence text); standalone 0 | Eclipse project since 2017; releases 2025-09, 2026-03, 2026-07 |
+| **elkjs 0.12.0** (the engine file) | EPL-2.0 or GPL-3.0+ | 1558 / 454 KiB | Yes, through its dispatcher (§2.4) | 0 (code and licence text); standalone 0 | Eclipse project since 2017; releases 2025-09, 2026-03, 2026-07 |
 | @kazant/flexgraph 1.3.0 | MIT | 41 / 16 KiB | Yes | 1 (its licence banner) | First published 2026-10-09, one author |
 | @dagrejs/dagre 3.1.3 | MIT | 47 / 16 KiB | Yes | 0 | No ports, no orthogonal routing |
 | obstacle-router 0.1.2 (libavoid in TypeScript) | LGPL-2.1 | 181 / 47 KiB | Yes | 0 | Router only; new (2026-03) |
@@ -122,7 +121,7 @@ Side-by-side sheets of the trial (today, ELK, ELK mirrored, FlexGraph, dagre + o
 
 It honours fixed port positions and sides (`portConstraints FIXED_POS`), gives junction points for branches, takes the order of the blocks as a preference (model order), is deterministic, and runs synchronously. Its costs:
 - **Size**: 1.6 MB, inside the person's 20 MB budget (input 14: "don't skimp on anything just because of size").
-- **Licence**: EPL-2.0, met by carrying the notice and the licence text and saying where the source is (§8.4).
+- **Licence**: EPL-2.0, met by carrying the notice and the licence text and saying where the source is (§9.3).
 
 **FlexGraph is the runner-up.** It is MIT, 41 KB, the fastest (2.5 ms median), honours ports and was the most stable when steered by old positions. It loses on three counts:
 - it was 16 days old with one author;
@@ -229,10 +228,10 @@ Within each band, file order decides. ELK takes this order as a preference (`con
 | **Order as a preference (0.1), this plan** | **31** | **0** | **6 of 6** | **14 of 22** | **55 of 57** |
 | The same without straightness | 27 | 0 | | | 44 of 57 |
 
-- **Forcing the order** sent a wire through a block in three levels: d → Σ through the tap F in the cart–pole and the triple, and int → Σ through the tap "angle" in sliding mode. ELK routes a Sum's top port badly when a block is forced above it in the same column.
+- **Forcing the order** sent a wire through a block in three levels: d → Σ through the tap F in the cart–pole and the triple, and int → Σ through the tap "angle" in sliding mode. With a block forced above a Sum in the same column, the route into the Sum's top port ran through that block.
 - **Straightness** costs 4 crossings and keeps the main line straight; the line is what the person reads first.
 
-Interpretation: taps that would cross wires above the line may sit below it (the motor's d and the textbook's u do).
+Interpretation: a block that belongs above the line but would cross wires there may sit below it (the motor's disturbance d and the textbook's tap u do).
 
 ### 3.4 Columns
 
@@ -335,7 +334,7 @@ One gesture is one undo step. The layout runs after the edit is committed and ne
 
 ### 5.3 Subsystems
 
-- **Each level is laid out on its own** when it is first shown, and cached (§9.3). In ports are pinned to the first column, Out ports to the last, in port order. The subsystem block's size on its parent depends only on its port count, as today.
+- **Each level is laid out on its own** when it is first shown, and cached (§10.4). In ports are pinned to the first column, Out ports to the last, in port order. The subsystem block's size on its parent depends only on its port count, as today.
 - **The picture inside is computed, so Ungroup is possible** (§4).
 - **2D views are unaffected**: they bind to Source and Sink names, which do not change.
 - **The Controller tab's small diagram is unaffected**: one fixed layout per controller type ([controller-proposal.md](controller-proposal.md)).
@@ -483,7 +482,7 @@ EPL-2.0 §3.1 asks, when the program is distributed in any form other than sourc
 - for a statement that its source code is available under the EPL, and how to obtain it;
 - that the program is under the EPL itself, or under a licence meeting §3.1(b).
 
-§3.3 forbids removing notices. Met by:
+EPL §3.3 forbids removing notices. Both are met by:
 - the notice comment above, at the head of the vendored section in every built page;
 - the full EPL text as a comment (14 KB; interpretation: the EPL asks only for the statement for compiled code, but carrying the text costs nothing and leaves no doubt);
 - a line in Help, under a new heading **About**: "Diagram layout: Eclipse Layout Kernel (elkjs 0.12.0), Copyright (c) Kiel University and others, under the Eclipse Public License 2.0; its source code is available at eclipse.dev/elk";
