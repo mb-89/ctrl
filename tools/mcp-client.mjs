@@ -60,8 +60,14 @@ export function startServer({ modern = true, initialize = true, onMessage = () =
 
 // The example session: load the DC motor, run, autotune, analyse.
 async function exampleSession(modern) {
-  const short = (v) => { const s = JSON.stringify(v); return s.length > 400 ? `${s.slice(0, 400)}…` : s; };
-  const show = (dir, msg) => console.log(`${dir} ${short(msg)}`);
+  // Shortened: the request's method and arguments (not its _meta), a tool's
+  // structured result, at most 600 characters a line.
+  const short = (v) => { const s = JSON.stringify(v); return s.length > 600 ? `${s.slice(0, 600)}…` : s; };
+  const show = (dir, m) => {
+    if (dir === '>') { const { _meta, ...p } = m.params ?? {}; console.log(`> ${m.method}${m.id !== undefined ? ` #${m.id}` : ''} ${short(p)}${_meta?.progressToken ? `  (progressToken ${_meta.progressToken})` : ''}`); }
+    else if (m.method) console.log(`< ${m.method} ${short(m.params)}`);
+    else console.log(`< #${m.id} ${short(m.error ?? m.result.structuredContent ?? m.result)}`);
+  };
   const s = startServer({ modern, onMessage: show });
   await s.ready;
   if (modern) await s.request('server/discover');

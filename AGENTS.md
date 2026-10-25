@@ -2,7 +2,7 @@
 
 Reader: an agent asked to tune a control loop with Loop Tuner.
 
-You work on a project file (`.json`, or an exported `.html` page with the project inside) through `node cli.mjs`. Everything you add with `--save` shows up as a candidate when a person opens the file, so leave the project better than you found it: good candidates with names that say what they are.
+You work on a project file (`.json`, or an exported `.html` page with the project inside) through `node cli.mjs`, or through the MCP server `mcp.mjs` (see **Through MCP** below), which has the same operations as tools. Everything you add with `--save` shows up as a candidate when a person opens the file, so leave the project better than you found it: good candidates with names that say what they are.
 
 ## The loop
 
@@ -53,11 +53,30 @@ It prints the running variant and the result side by side (cost, overshoot, gain
 ## Reference
 
 - `node cli.mjs help`: every command.
+- `node cli.mjs run <project> [--duration s] [--signals a,b] [--json]`: a v2 project run for its timebase, each Controller block's Auto-tune cost and step metrics; `node cli.mjs analyze <project> [--block <path>] [--at origin|initial|t=1.5|y=0.3] [--json]`: the Analysis tab's numbers there (margins, poles, the linear step), or why there is no linear loop.
 - `node cli.mjs blocks [slot]`: block types and their parameters with ranges; `node cli.mjs metrics`: what a goal can use.
 - `node cli.mjs design <project> [--block <path>] [--json]`: what each running designed variant (LQR, PI from the plant, PID + feedforward from the plant, a swing-up with an LQR catch, a planned swing-up, a Kalman filter) computed from the plant, its warnings, or why it was refused; `node cli.mjs new --system "Triple pendulum" -o p.json` writes a System library entry as a project.
 - **Designed variants hold inputs only** ([design/output/designs.md](design/output/designs.md)): tune them through their inputs (Q, R, the levels `at`, Tcl, T), never by writing K, kr, Kp, Ki, u0 or a model into them: a file that has those is refused. For numbers of your own, use a hand type (`stateFeedback`, `pid`, `gainScheduled`, `swingUp`, `luenberger`), as the page's Copy as numbers does.
 - Project file: [design/output/project-format.md](design/output/project-format.md).
 - In a browser: see **Through the browser** below.
+
+## Through MCP
+
+`mcp.mjs` serves the core as MCP tools over stdio (no dependencies). Register it: Claude Code `claude mcp add loop-tuner -- node /path/to/mcp.mjs`; Claude Desktop `{ "mcpServers": { "loop-tuner": { "command": "node", "args": ["/path/to/mcp.mjs"] } } }` in `claude_desktop_config.json`; any client: the command `node /path/to/mcp.mjs`.
+
+| Tool | Does |
+|---|---|
+| `list_systems`, `load_system` | The System library; load an entry, or a project file (`path`), into memory under a name (`as`). The one loaded last is the default `project` of every tool. |
+| `list_projects`, `get_project`, `set_project` | The projects in memory; one as JSON; replace one (normalised as the page loads a file). |
+| `list_blocks`, `get_block`, `set_params` | The diagram's blocks by id path; one block whole; change a variant's parameters (the running one, or `variant`), a block's own (`blockParams`), which variant runs (`select`), or an input signal (`signal` with `components`, `period`). An unknown name is refused, listing the names there are. |
+| `run` | Simulate for the timebase (or `duration`): each Controller block's Auto-tune cost J and overshoot, settling, rise time, IAE, effort; `signals` downsampled to `points` (≤ 2000). The same as `node cli.mjs run --json`. |
+| `autotune` | `method` iterate, relay or step, the goal (`cost`, `effort`, `overshoot`), `apply` to keep the result as a variant (default: report only). The same report as `node cli.mjs autotune --json`; progress while it runs; cancellable. |
+| `analyze` | The Analysis tab's numbers at `at` (`"origin"`, `"initial"`, `{ "y": [...] }`, `{ "t": s }`): stable, margins, poles, the linear step. The same as `node cli.mjs analyze --json`. |
+| `designs` | What the designed variants computed, as `node cli.mjs design --json`. |
+| `identify` | Not built yet: says so. |
+| `save_project`, `export_html` | Write `.json` (or `.html`), or the standalone page with the project inside. |
+
+A refusal is a tool error with the core's sentence (and its hint), the same sentence the command line prints. Example session and limits: [design/output/mcp.md](design/output/mcp.md).
 
 ## Through the browser
 

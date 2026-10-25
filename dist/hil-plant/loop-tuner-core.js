@@ -11012,6 +11012,7 @@ const GUIDE = {
     'loopTuner.getProject() returns the project (JSON); change it and give it back with setProject(p), or change one controller with setGains(block, params) and pick its variant with setVariant(block, name).',
     'loopTuner.run(), stop(), single() are the scope keys; each returns { ok, why }, why saying why a key was refused. loopTuner.record.screen("csv") reads every signal on the screen.',
     'The last message the page showed stays in #toast[data-last] and loopTuner.live.state().message (a toast is gone after 3 s).',
+    'Without a browser: the same core runs as an MCP server, mcp.mjs beside cli.mjs in the tool\'s source: register the command node /path/to/mcp.mjs with the agent\'s client (over stdio; AGENTS.md there says how). Its tools load systems and project files, run and measure, autotune, analyze, and save the project or this page with it inside.',
   ],
   api: [
     M('loopTuner.help(format?)', 'format: "text" for plain text', 'This guide: an object, or text.', 'loopTuner.help("text")'),

@@ -24,6 +24,19 @@ Projects are plain JSON, including how the display is set. Save, open, drop or p
 
 The design, its decisions and what comes next are in [design/output](design/output/README.md); the person's original words are in [design/input](design/input/README.md).
 
+## Use it from an agent (MCP)
+
+`mcp.mjs` is an MCP server (Model Context Protocol, over stdio, Node 18+, no dependencies) on the same core: an agent loads a system or a project file, runs it and reads the loop's numbers, auto-tunes, analyses, and saves the project or the page with it inside. Register it with your client:
+
+- **Claude Code**: `claude mcp add loop-tuner -- node /path/to/mcp.mjs`
+- **Claude Desktop** (`claude_desktop_config.json`):
+  ```json
+  { "mcpServers": { "loop-tuner": { "command": "node", "args": ["/path/to/mcp.mjs"] } } }
+  ```
+- **Any client**: the command `node /path/to/mcp.mjs`, stdio transport.
+
+Then ask for it in plain words ("load the DC motor, run it, auto-tune it and tell me the margins"). The tools, an example session and the limits are in [design/output/mcp.md](design/output/mcp.md); how to tune well is in [AGENTS.md](AGENTS.md).
+
 ## Build and test
 
 Node 18 or later, no dependencies. (The plant script needs Python 3.9+ and the websockets package, which `uv run` installs; the tests run its physics with `python3` if it is there, and the whole protocol against it when websockets can be had, from python3 or uv's cache, and skip that otherwise.)
@@ -66,5 +79,7 @@ node tools/view3d-shots.mjs         # the 3D view's own checks in headless Chrom
 | `src/ui/` | The page: display, controls, dial, signal generator, app wiring. |
 | `build.mjs` | Bundles core and UI into one HTML file. |
 | `cli.mjs` | The command line, for agents and scripts. |
+| `mcp.mjs`, `tools/mcp-client.mjs` | The MCP server ([design/output/mcp.md](design/output/mcp.md)), and a small client that speaks to it (the tests' and the example session's). |
+| `src/node/ops.mjs` | What `cli.mjs` and `mcp.mjs` both do with a project: files, the library, run and measure, analyse, the designs, Auto-tune's options. Node only. |
 
 The core has no DOM code, so the browser and Node compute identical results.
