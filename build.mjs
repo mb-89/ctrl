@@ -102,7 +102,7 @@ const HELP = `
 <p>Complete example systems, from a mass–spring–damper to a triple pendulum, each with its input, plant and controllers. Load a whole system, or only one part of it, for example the input of one system with the plant of another.</p>
 <h3>Files</h3>
 <p>The project is one JSON document, including how the display is set. Save it, open it, drop it on the page or paste it. <b>Export HTML</b> writes this page with the project inside, to send to someone.</p>
-<p>Shown in a limited environment, such as a file preview that runs the page in a sandbox, a warning below the header says what does not work there: download the file and open it in your browser.</p>
+<p>Shown in a limited environment, such as a file preview that runs the page in a sandbox, a warning below the header stays, says what does not work there, and what to do: download the file and open it in your browser.</p>
 <h3>For agents</h3>
 <pre>node cli.mjs help</pre>
 <p>In the browser, <code>window.loopTuner</code> offers <code>getProject()</code>, <code>setProject(p)</code>, <code>addComponent(c)</code>, <code>reference()</code>, <code>autoScale()</code>, <code>run()</code>, <code>stop()</code>, <code>single()</code> (with a live plant these start and stop it), <code>speed(x?)</code> (sets the speed: a factor, or -1 for as fast as possible; returns the setting, the factor in effect, the achieved speed, the simulation's speed and why it is held at 1×, if it is) and <code>autotune({ method, goal })</code>; <code>node cli.mjs autotune</code> tunes a Controller block from the command line.</p>
@@ -136,8 +136,7 @@ const SHELL = `<div id="lt-shell" class="app">
   </div>
   <div id="lt-limited" class="limited" role="alert">
     <span class="limited-icon" aria-hidden="true">⚠</span>
-    <div class="limited-text"><b>Warning: limited environment.</b> This page is running in a limited environment, such as a file preview: saving, the autosave and downloads may not work here, and it may run slower. For full function, <b>download this file and open it in your browser.</b> <span id="lt-limited-why"></span></div>
-    <button type="button" id="lt-limited-hide" class="limited-hide" hidden>Hide for now</button>
+    <div class="limited-text"><b>Warning: limited environment.</b> This page is running in a limited environment, such as a file preview, and its performance is degraded: saving and the autosave, downloads and Live (HIL) do not work here, and it may run slower. For full function, <b>download this file and open it in your browser.</b> <span id="lt-limited-why"></span></div>
   </div>
 </header>
 <main class="instrument">

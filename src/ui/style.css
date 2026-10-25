@@ -86,7 +86,6 @@ button, input, select { font: inherit; color: inherit; }
 .lt-full .limited { display: none; }
 .limited-icon { font-size: 22px; line-height: 1; font-weight: 600; }
 .limited-text { flex: 1 1 auto; min-width: 0; }
-.limited-hide { flex: none; background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
 .sep { width: 1px; height: 20px; background: var(--line-strong); }
 /* Speed (ui/speed.js): a factor in a header button's frame, its presets in a
    header popover, and the speed achieved beside it in the readout type. */

@@ -70,8 +70,8 @@ export function markLimited(w = window) {
   return v;
 }
 
-// At start: lists what was found in the warning, and wires "Hide for now"
-// (for this visit only: it shows again at the next load).
+// At start: lists what was found in the warning. It stays visible: there is
+// no hiding it.
 export function explainLimited(doc, v) {
   const box = doc.getElementById('lt-limited');
   doc.documentElement.classList.toggle('lt-limited', v.limited);
@@ -79,8 +79,6 @@ export function explainLimited(doc, v) {
   if (!box || !v.limited) return;
   const list = doc.getElementById('lt-limited-why');
   if (list) list.textContent = `Found here: ${v.reasons.map((r) => REASONS[r]).join('; ')}.`;
-  const hide = doc.getElementById('lt-limited-hide');
-  if (hide && hide.hidden) { hide.hidden = false; hide.addEventListener('click', () => { box.hidden = true; }); }
 }
 
 // The page's start: the verdict, shown, and a getter for it. A policy that

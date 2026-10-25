@@ -2,15 +2,23 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.8: one servo motor, its errors as detail ([input 18](../input/2026-10-25-18-servo-motor-detail.md))
+
+The person: "make them high detail toggles in our servo motor ... the servo motor can also run speed controlled ... we show them in the spectrogram thing, but we could also just increase the level of the servos of the robot, and then the same errors would show up in the robot too ... it would also be reuse. So think about that."
+- **Direction (being designed):** one reusable servo motor component, openable like every model, used by the DC motor examples (position), the encoder example (speed) and the PUMA's six joints (geared, current drive). Its non-idealities (the encoder's 1× and 2× angle errors, torque ripple, the shaft resonance, noise, and more the research finds) are high-detail switches of that one model; at their neutral values they vanish exactly (as SPICE's added parameters do), so the plain motor is the same model with them off.
+- **Interpretation:** the switches come first, built on the component's mask, and need none of the detail-levels machinery (which stays at the end of the backlog); when levels come, a level is a named set of these switches. Design: [servo.md](servo.md) (in progress).
+
 ## 2026-10-25 · v2.8: a warning in a limited environment ([input 16](../input/2026-10-25-16-limited-environment-banner.md))
 
 The person: the page will be put into SharePoint, whose HTML preview is a sandbox; "if you detect that you're running in a sandbox, there should be a warning label that's really impossible to miss right below the header ... running in a limited environment ... For optimal performance, please download and run directly in the browser". (Person: "a small thing ... not that important".)
+
+- **More precisely** ([input 17](../input/2026-10-25-17-limited-environment-details.md)): "in the SharePoint, scripts usually run ... if you referred to an external library, it wouldn't be able to be downloaded. And again, local storage wouldn't work ... it would be slower ... the [HIL] mode wouldn't work from there ... stuff that still works can still work, but we should always have this warning visible to understand that the overall performance is degraded." So: everything that works there keeps working; the warning stays visible the whole time (no dismissing it); it names what is lost there (saving and the autosave, downloads, Live/HIL, speed); the page carries nothing external, so nothing breaks for want of a library.
 
 Built ([instrument.md](instrument.md#a-limited-environment), research: [../research/limited-environment.md](../research/limited-environment.md)):
 - **What the research found.** In a document library, SharePoint and OneDrive serve `.html` as a download (Strict file handling, fixed), so the page opens in the browser at full function. SharePoint's HTML pages run it in a sandboxed iframe: inline script yes, CDN script no, no localStorage, a policy without connections, workers or frames. Google Drive shows the source. Teams follows SharePoint or OneDrive.
 - **The warning is in the page's HTML from the start**, right below the header (inside it, full width), in a warning colour defined once (`--warn`, both themes), with ⚠ and words. An inline check before the first paint hides it where the environment is full, so it never flashes. Where no script runs, it stays. Interpretation: it is hidden by a class on the document rather than removed, so Export HTML still carries it.
 - **The rule** (interpretation, from the research): limited by a sandbox (an opaque origin in a frame or served from a site), by no storage in a frame, by a readable frame sandbox without `allow-downloads`, or by workers that cannot run. Missing storage alone, in a window of its own, is a private window or a browser setting, not a preview, and shows no warning. An opaque origin of a file opened directly does not count. A frame that allows scripts, same origin and downloads is full: no warning. The hosted build (`window.__ltHost`) is never limited.
-- **The text** names saving, the autosave, downloads and the speed, lists what was found, and says "download this file and open it in your browser". "Hide for now" lasts until the next load (interpretation: not dismissable for good, as the warning must stay impossible to miss). The external web font cannot load in such a preview and falls back to system fonts. It is not named in the warning (interpretation: it changes nothing a tester needs).
+- **The text** says the performance is degraded, names what is lost (saving and the autosave, downloads, Live/HIL, possibly the speed), lists what was found, and says "download this file and open it in your browser". It stays visible the whole time: there is no hiding it (input 17). Everything that works there keeps working. The external web font cannot load in such a preview and falls back to system fonts. It is not named in the warning (interpretation: it changes nothing a tester needs).
 - The Help (?) has one line on it.
 
 ## 2026-10-25 · v2.8: the PUMA's torques are signals ([input 15](../input/2026-10-25-15-puma-torques.md))
@@ -47,7 +55,40 @@ The person answered the four questions of [detail-levels.md](detail-levels.md) �
 The person: "it's not necessary that we place things in arbitrary positions ... sorts everything from left to right. And draws the lines automatically ... drop new elements onto lines, and then they get connected"; today's lines "sometimes go in weird loops. And you can't drag the lines individually"; "if you can find an auto router, I would be fine with that ... there is an existing solution for something like this, and we don't have to reinvent it."
 
 - **Direction:** the Plant tab's diagram is laid out by the page, left to right, with wires routed automatically; blocks are not placed by hand. A block dropped onto a wire is inserted into it and wired.
-- **An existing layout and routing library**, not our own. It must work inside the one standalone page (inlined, no network), keep its licence notice, and pass the provenance test. Which one, and how feedback loops, subsystems and insertion behave, is researched and designed in [diagram-layout.md](diagram-layout.md) (in progress).
+- **An existing layout and routing library**, not our own. It must work inside the one standalone page (inlined, no network), keep its licence notice, and pass the provenance test. Researched and designed, not built: [diagram-layout.md](diagram-layout.md). The outcome:
+  - **ELK Layered, the Eclipse Layout Kernel (elkjs 0.12.0)**, vendored unmodified and called synchronously.
+    - Vendored is its engine file alone: 1.6 MB, EPL-2.0, sha256 pinned.
+    - Of 13 libraries surveyed and 6 approaches tried on the 11 diagram levels of the System library (120 wires), it was the only one with no wire through a block, none on top of another, and every wire on its port.
+    - Today's drawing has 32 wires through blocks and 1103 px of wire on wire.
+    - The page grows from 0.75 to 2.36 MB, well inside the 20 MB of [input 14](../input/2026-10-25-14-puma-notes-size.md).
+    - Runner-up FlexGraph (MIT, 41 KB): 16 days old, one author, 847 px of wire on wire in the triple pendulum.
+  - **We decide what is feedback, not ELK** (its own cycle breaking put the plant before r).
+    - A depth-first search from the Sources finds the back wires. The main line is the longest forward path to a Sink.
+    - The return path is the blocks walked back from a back wire with one wire in and one out, off the main line. They are drawn mirrored below the line.
+    - On all 11 levels this mirrors exactly the blocks the person flipped by hand (Ke, damping c, spring k, torque ripple, torque noise), so **Flip goes away**.
+    - Interpretation: where two Sinks compete, the longer path is the main line (the mass–spring–damper's line ends at its spring energy, x is a tap).
+  - **The picture's rules.**
+    - Measured with this plan's settings: 31 crossings in all against today's 43, 0 wires through blocks, 0 px wire on wire, 159 bends against 287, 55 of 57 main-line wires straight.
+    - Taps and outside inputs go above the line, the return path below, as preferences: forcing the order sent wires through blocks in 3 levels. Interpretation.
+    - A Sum takes input 1 from the left, fed-back inputs from below and others from above. Interpretation, after Simulink's round Sum.
+    - 56 px between columns gives every wire at least 30 px of straight line to drop on (120 of 120).
+  - **Editing.** These are interpretations:
+    - A block dropped onto a wire (or clicked into the selected wire) is wired in: input 1 takes the signal, output 1 the targets, signs unchanged, a Sink becomes a tap.
+    - **Del joins the neighbours** of a block that sits on one wire, and Shift+Del deletes without joining. Most tools make joining the variant, not the default. Ask the person.
+    - Wires are not dragged; a drag along a wire makes a branch.
+    - Dragging a block moves it onto another wire or reorders it in its column.
+    - Ungroup is added.
+    - Changes glide for 200 ms with the acted-on block held in place.
+  - **Nothing about the drawing is stored but the order of `blocks`.**
+    - `x`, `y` and `flip` are no longer written and are ignored when read; library systems lose them.
+    - Interpretation: no position hint is kept. Steering ELK by old positions raised crossings from 19 to 82 in the trial, and the picture must be the same on every machine and after Undo.
+    - An older page shows a new file's blocks stacked at the origin. Accepted.
+  - **Vendoring.**
+    - `vendor/elkjs-0.12.0/` with the licence text, our README, a manifest of sha256 hashes checked by the build and the tests, and `vendor/package.json` (CommonJS, or Node's `require` silently returns nothing in this ESM repository).
+    - It is inlined at the end of `lt-script`: out of the live worker, but in exported pages.
+    - It carries a notice comment and the EPL text, and Help gets an About line saying where the source is.
+    - The provenance test hashes each vendored section and applies its unchanged list to everything else. Vendored text gets the same list minus a per-library allow-list, which is empty for ELK.
+    - Interpretation: the full licence text is carried, though the EPL asks only for the statement for compiled code.
 
 ## 2026-10-24 · v2.7: time control, after review
 
