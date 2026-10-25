@@ -9,8 +9,8 @@
 //   node tools/benchmark-prototype.mjs [system name start …] [--iter 60] [--sweep 8] [--ms-max 3] [--no-backoff] [--json out.json]
 //
 // Prints, per system: the candidates and refusals, the scores, the Pugh
-// matrix (round 1 against the tuned PID, round 2 against round 1's winner)
-// and the time each phase took.
+// matrix (one round against the tuned PID), the suggestion, the plant
+// changes it scored (never applied), and the time each phase took.
 
 import { writeFileSync } from 'node:fs';
 import { SYSTEM_LIBRARY, SYSTEM_PARTS, applySystem } from '../src/core/systems.js';
@@ -272,7 +272,88 @@ function complexity(variant, m) {
 }
 let designValues = () => null;
 
+// ---- Plant changes: reported and scored, never applied ----------------------
+// Two kinds (input 48): an observer for a measurement the block lacks, so a
+// type refused for it can run; and a sensor in place of an observer, so the
+// loop reads the true signal the estimate stands for. Each gives a changed
+// copy of the diagram on which candidates are tuned and scored like any
+// other; their columns carry the change and PLANT_CHANGE more complexity.
+const PLANT_CHANGE = 5;
+
+// ẏ for a block that measures y alone: a Finite difference observer on y
+// (rate filter Tf), its rate on the Controller's new input 3.
+function addRateObserver(diagram, path, Tf) {
+  const d = structuredClone(diagram), lv = level(d, path), id = path.at(-1), b = lv.blocks.find((x) => x.id === id);
+  const yw = lv.wires.find((w) => { const t = parseEnd(w.to); return t.id === id && t.port === 1; });
+  if (!yw || b.params.inputs !== 2) return null;
+  b.params.inputs = 3;
+  lv.blocks.push({ id: 'bench_obs', type: 'observer', name: 'rate (benchmark)', params: { inputs: 2, outputs: 2, Ts: b.params.Ts }, x: 0, y: 0, variants: [{ name: 'Finite difference', type: 'difference', params: { Tf } }], variant: 0 });
+  lv.wires.push({ from: id, to: 'bench_obs' }, { from: yw.from, to: 'bench_obs:1' }, { from: 'bench_obs:1', to: `${id}:2` });
+  return { diagram: d, change: `a Finite difference observer (Tf ${fmt(Tf)} s) makes ẏ from y for input 3` };
+}
+
+// Measure it instead: each Controller input fed by an Observer's estimate
+// gets the true signal that estimate stands for. Here for the Finite
+// difference (estimate m + k is the rate of its measurement k): back from
+// that measurement through sensor blocks (noise, quantizer) to the
+// integrator that makes it; the integrator's input is the rate. (A Kalman
+// or placed Luenberger estimate stands for the states its design names,
+// values.stateIndex; a state that is a block's output, such as an
+// integrator or a first-order lag, is wired the same way: the design.)
+const SENSOR_BLOCKS = new Set(['noise', 'quantizer']);
+function sensorForObserver(diagram, path) {
+  const d = structuredClone(diagram), lv = level(d, path), id = path.at(-1), changes = [];
+  const into = (bid, port) => lv.wires.find((w) => { const t = parseEnd(w.to); return t.id === bid && t.port === port; });
+  for (const w of lv.wires) {
+    const t = parseEnd(w.to), f = parseEnd(w.from);
+    if (t.id !== id || t.port < 1) continue;
+    const obs = lv.blocks.find((x) => x.id === f.id && x.type === 'observer');
+    if (!obs) continue;
+    const variant = obs.variants[obs.variant ?? 0], mObs = obs.params.inputs - 1;
+    if (variant.type !== 'difference' || f.port < mObs) { changes.push({ skip: `${obs.name ?? obs.id}'s ${variant.name} estimate ${f.port + 1}: what it stands for is not traced in the prototype` }); continue; }
+    let src = into(obs.id, f.port - mObs + 1), hops = 0;
+    while (src && hops++ < 20) {
+      const b = lv.blocks.find((x) => x.id === parseEnd(src.from).id);
+      if (b?.type === 'integrator' && (b.params.K ?? 1) === 1) {
+        const rate = into(b.id, 0);
+        if (!rate) break;
+        w.from = rate.from;
+        changes.push({ change: `input ${t.port + 1} measures ${rate.from}'s output directly, the rate of ${b.name ?? b.id} that '${obs.name ?? obs.id}' (${variant.name}) estimated` });
+        break;
+      }
+      if (!b || !SENSOR_BLOCKS.has(b.type)) break;
+      src = into(b.id, 0);
+    }
+  }
+  const done = changes.filter((x) => x.change);
+  return done.length ? { diagram: d, change: done.map((x) => x.change).join('; ') } : null;
+}
+
 // ---- The benchmark ----------------------------------------------------------
+
+// One plant to tune and score on: the loaded diagram, or a changed copy.
+// scales: the goal's, fixed from the loaded run, the same for every plant.
+function plantOf(project, sc, change = null) {
+  const ctx = tuneContext(project, null);
+  const designStatus = (variant) => { try { return compileDiagram(withVariant(ctx.diagram, ctx.path, variant), 'plant', { standalone: true }).designs.find((x) => x.path === ctx.key); } catch (e) { return { error: e }; } };
+  const goalScore = (variant, diagram = null) => {
+    const run = diagram ? simulateSystem(withVariant(diagram, ctx.path, variant), ctx.signals, ctx.sim) : runVariant(ctx, variant);
+    return { run, cost: runCost(run, ctx.key, GOAL_USED, { scales: sc, variant, others: ctx.others }) };
+  };
+  // σ for each measurement: 0.5 % of its span in the loaded run, read by a
+  // Sink spliced onto each measurement wire.
+  const probed = structuredClone(ctx.diagram), plv = level(probed, ctx.path), sigmas = [];
+  for (const w of [...plv.wires]) { const t = parseEnd(w.to); if (t.id === ctx.path.at(-1) && t.port >= 1) { plv.blocks.push({ id: `bench_m${t.port}`, type: 'sink', params: { name: `bench_m${t.port}`, unit: '1' }, x: 0, y: 0 }); plv.wires.push({ from: w.from, to: `bench_m${t.port}` }); } }
+  const prun = simulateSystem(withVariant(probed, ctx.path, ctx.variant), ctx.signals, ctx.sim);
+  for (let k = 1; k < ctx.block.params.inputs; k++) sigmas[k - 1] = 0.005 * span(prun.signals[`bench_m${k}`] ?? []);
+  return {
+    project, ctx, change, designStatus, goalScore, m: ctx.block.params.inputs - 1,
+    noisy: withNoise(ctx.diagram, ctx.path, sigmas),
+    // The same seeds on every plant: blocks a change adds are appended, so
+    // the plant's own numbers get the same factors.
+    plants: Array.from({ length: SWEEP }, (_, i) => vary(ctx.diagram, 0.15, 101 + i)),
+  };
+}
 
 function benchmark(name) {
   const T = { load: 0, starts: 0, tune: 0, score: 0, sweep: 0 };
@@ -281,16 +362,13 @@ function benchmark(name) {
   const running = ctx.variant, rp = running.params;
   const run0 = runVariant(ctx, running), sc = costScales(run0, ctx.key, running), R = sc.e, U = sc.u;
   const ls = loopSignals(run0, ctx.key);
+  const P0 = plantOf(project, sc);
   const c = {
-    m: ctx.block.params.inputs - 1, umin: rp.umin, umax: rp.umax, Tr0: rp.Tr ?? 0, dir: 1,
+    m: P0.m, umin: rp.umin, umax: rp.umax, Tr0: rp.Tr ?? 0, dir: 1,
     rLo: Math.min(...ls.r), rHi: Math.max(...ls.r), rSpan: R, tuned: {}, refused: {},
   };
   c.rMid = (c.rLo + c.rHi) / 2;
-  // A designed variant's numbers, from a compile of the plant with it running.
-  const designStatus = (variant) => { try { return compileDiagram(withVariant(ctx.diagram, ctx.path, variant), 'plant', { standalone: true }).designs.find((s) => s.path === ctx.key); } catch (e) { return { error: e }; } };
-  c.design = (variant) => {
-    return designStatus(variant)?.values ?? null;
-  };
+  c.design = (variant) => P0.designStatus(variant)?.values ?? null;
   designValues = (variant) => c.design(variant);
   T.load = now() - t0;
   // What one run costs here (the running variant, five runs).
@@ -302,7 +380,6 @@ function benchmark(name) {
   let st = null;
   try { st = autotune(sisoProject(project, ctx), ctx.path, { method: 'step' }); } catch (e) { st = { ok: false, why: e.message }; }
   if (!st?.ok) { try { st = autotune(sisoProject(project, ctx), ctx.path, { method: 'relay' }); } catch (e) { st = { ok: false, why: e.message }; } }
-  const model = st?.model === 'fopdt' ? st.fit ?? st : st;
   const g = st?.gains ?? {};
   const tauC = g.tauC ?? (finite(g.tauI) ? g.tauI / 4 : null);
   c.tauGuess = Math.max(5 * ctx.Ts, tauC ?? ctx.sim.duration / 20);
@@ -318,10 +395,74 @@ function benchmark(name) {
     : { variant: v('pid', { Kp: 1, Tr: c.Tr0, umin: c.umin, umax: c.umax }), how: `Kp = 1 (no test: ${st?.why ?? '?'})` };
   T.starts = now() - t0;
 
-  const goalScore = (variant, sim = ctx.sim, diagram = null) => {
-    const run = diagram ? simulateSystem(withVariant(diagram, ctx.path, variant), ctx.signals, sim) : runVariant(ctx, variant);
-    return { run, cost: runCost(run, ctx.key, GOAL_USED, { scales: sc, variant, others: ctx.others }) };
+  // The gates a tuned variant must pass to fit (the same as the matrix's
+  // Fits row): finite runs on the nominal plant and on every varied one,
+  // stable at r's middle and where the run starts, Ms at most MS_MAX.
+  const gate = (P, variant) => {
+    if (P.goalScore(variant).cost.diverged) return 'diverges on the nominal plant';
+    const mg = margins(P.project, P.ctx, variant, c.rMid, P.m);
+    if (mg.stable === false) return `unstable at r's middle (${mg.note})`;
+    if (mg.startUnstable) return `unstable where the run starts (${mg.startUnstable})`;
+    if (mg.ms > MS_MAX) return `Ms ${fmt(mg.ms, 2)}`;
+    const bad = P.plants.filter((d) => { try { return P.goalScore(variant, d).cost.diverged; } catch { return true; } }).length;
+    return bad ? `diverges on ${bad} of ${SWEEP} varied plants` : '';
   };
+  // Geometric blend of two variants of one type: every number that is
+  // finite, non-zero and of one sign in both, s^(1−a)·t^a.
+  const blend = (sv, tv, a) => {
+    const Q = { ...tv.params };
+    for (const [k, x] of Object.entries(tv.params)) {
+      const y = sv.params[k];
+      const mix = (p0, p1) => (finite(p0) && finite(p1) && p0 * p1 > 0 ? Math.sign(p1) * Math.abs(p0) ** (1 - a) * Math.abs(p1) ** a : p1);
+      Q[k] = Array.isArray(x) ? x.map((xi, i) => mix(y?.[i], xi)) : mix(y, x);
+    }
+    return { ...tv, params: Q };
+  };
+
+  // One candidate from one start on one plant: its design checked, tuned,
+  // backed off until it passes the gates. → a row, or { refused }.
+  function tuneOne(P, type, s, h) {
+    const def = CONTROLLERS[type], t1 = now(), tune = h.tune ?? GENERIC.tune(type);
+    let variant = s.variant, evals = 0, start, how = s.how;
+    // A designed type that refuses on this plant: its design's sentence.
+    if (def.designed) {
+      const st2 = P.designStatus(variant);
+      if (!st2?.values) return { refused: st2?.error?.message ?? `its design is ${st2?.status ?? 'missing'}` };
+    }
+    try { start = P.goalScore(variant).cost.J; evals++; } catch (e) { return { refused: e.message }; }
+    if (tune === 'iterate') {
+      try {
+        const r = drain(iterate(placed(P.project, P.ctx, variant), P.ctx.path, GOAL_USED, { maxIter: MAX_ITER }));
+        if (r.best.cost.J < start) variant = r.best.variant;
+        evals += r.evals;
+      } catch (e) { how += ` (not iterated: ${e.message.slice(0, 60)})`; }
+    } else if (tune === 'knob') {
+      // Golden section on log(knob) over ×1/30 … ×30 of the start: the
+      // designed type stays designed, only its speed input moves.
+      const k0 = variant.params[h.knob], f = (x) => { const vv = normalizeVariant({ ...variant, params: { ...variant.params, [h.knob]: k0 * Math.exp(x) } }); evals++; try { return P.goalScore(vv).cost.J; } catch { return Infinity; } };
+      let a = -Math.log(30), b = Math.log(30), gr = (Math.sqrt(5) - 1) / 2, x1 = b - gr * (b - a), x2 = a + gr * (b - a), f1 = f(x1), f2 = f(x2);
+      for (let i = 0; i < 12; i++) { if (f1 < f2) { b = x2; x2 = x1; f2 = f1; x1 = b - gr * (b - a); f1 = f(x1); } else { a = x1; x1 = x2; f1 = f2; x2 = a + gr * (b - a); f2 = f(x2); } }
+      const x = f1 < f2 ? x1 : x2, best = Math.min(f1, f2);
+      if (best < start) variant = normalizeVariant({ ...variant, params: { ...variant.params, [h.knob]: k0 * Math.exp(x) } });
+      how += `; ${h.knob} searched → ${fmt(variant.params[h.knob])}`;
+    }
+    // A tuned variant that fails a gate backs off along the way it came:
+    // ¾, ½, ¼ of the way from the start, then the start itself. The cost
+    // Iterate minimises has no robustness term (the design adds one).
+    if (variant !== s.variant && BACKOFF) {
+      let why = gate(P, variant);
+      if (why) {
+        const tried = variant, first = why;
+        for (const a of [0.75, 0.5, 0.25, 0]) {
+          const cand = a ? blend(s.variant, tried, a) : s.variant;
+          why = gate(P, cand); evals++;
+          if (!why) { variant = cand; how += `; backed off to ${a * 100} % of the way (tuned: ${first})`; break; }
+        }
+        if (why) how += `; no point on the way fits (tuned: ${first})`;
+      }
+    }
+    return { type, name: s.name ?? def.label, how, variant, start, evals, tuneMs: now() - t1, P };
+  }
 
   // Types in registry order, each after the row it starts from.
   const order = [];
@@ -330,110 +471,65 @@ function benchmark(name) {
 
   const rows = [], refusals = [];
   // The running variant as loaded, scored as it is: what the person has now.
-  rows.push({ type: running.type, name: `As loaded: ${running.name}`, how: 'not tuned', variant: running, start: null, evals: 0, loaded: true });
-
-  // The gates a tuned variant must pass to fit (the same as the matrix's
-  // Fits row): finite runs on the nominal plant and on every varied one,
-  // stable at r's middle and where the run starts, Ms at most MS_MAX.
-  const plants = Array.from({ length: SWEEP }, (_, i) => vary(ctx.diagram, 0.15, 101 + i));
-  const gate = (variant) => {
-    if (goalScore(variant).cost.diverged) return 'diverges on the nominal plant';
-    const mg = margins(project, ctx, variant, c.rMid, c.m);
-    if (mg.stable === false) return `unstable at r's middle (${mg.note})`;
-    if (mg.startUnstable) return `unstable where the run starts (${mg.startUnstable})`;
-    if (mg.ms > MS_MAX) return `Ms ${fmt(mg.ms, 2)}`;
-    const bad = plants.filter((d) => { try { return goalScore(variant, ctx.sim, d).cost.diverged; } catch { return true; } }).length;
-    return bad ? `diverges on ${bad} of ${SWEEP} varied plants` : '';
-  };
-  // Geometric blend of two variants of one type: every number that is
-  // finite, non-zero and of one sign in both, s^(1−a)·t^a.
-  const blend = (sv, tv, a) => {
-    const P = { ...tv.params };
-    for (const [k, x] of Object.entries(tv.params)) {
-      const y = sv.params[k];
-      const mix = (p0, p1) => (finite(p0) && finite(p1) && p0 * p1 > 0 ? Math.sign(p1) * Math.abs(p0) ** (1 - a) * Math.abs(p1) ** a : p1);
-      P[k] = Array.isArray(x) ? x.map((xi, i) => mix(y?.[i], xi)) : mix(y, x);
-    }
-    return { ...tv, params: P };
-  };
+  rows.push({ type: running.type, name: `As loaded: ${running.name}`, how: 'not tuned', variant: running, start: null, evals: 0, loaded: true, P: P0 });
 
   t0 = now();
+  const needsRate = [];
   for (const type of order) {
     const def = CONTROLLERS[type], h = BENCH[type] ?? {};
     const why = h.applies?.(c) ?? '';
-    if (why) { refusals.push({ type, label: def.label, why }); c.refused[type] = why; continue; }
+    if (why) { refusals.push({ type, label: def.label, why }); c.refused[type] = why; if (h.applies === BENCH.slidingMode?.applies && !needLimits(c)) needsRate.push(type); continue; }
     let starts;
     try { starts = (h.start ?? ((cc) => GENERIC.start(cc, type)))(c); } catch (e) { refusals.push({ type, label: def.label, why: e.message }); c.refused[type] = e.message; continue; }
-    const tune = h.tune ?? GENERIC.tune(type);
     for (const s of starts) {
-      const t1 = now();
-      let variant = s.variant, evals = 0, start;
-      // A designed type that refuses on this plant: its design's sentence.
-      if (def.designed) {
-        const st2 = designStatus(variant);
-        if (!st2?.values) { const msg = st2?.error?.message ?? `its design is ${st2?.status ?? 'missing'}`; refusals.push({ type, label: def.label, why: msg }); c.refused[type] = msg; continue; }
-      }
-      try { start = goalScore(variant).cost.J; evals++; } catch (e) { refusals.push({ type, label: s.name ?? def.label, why: e.message }); c.refused[type] = e.message; continue; }
-      if (tune === 'iterate') {
-        try {
-          const r = drain(iterate(placed(project, ctx, variant), ctx.path, GOAL_USED, { maxIter: MAX_ITER }));
-          if (r.best.cost.J < start) variant = r.best.variant;
-          evals += r.evals;
-        } catch (e) { s.how += ` (not iterated: ${e.message.slice(0, 60)})`; }
-      } else if (tune === 'knob') {
-        // Golden section on log(knob) over ×1/30 … ×30 of the start: the
-        // designed type stays designed, only its speed input moves.
-        const k0 = variant.params[h.knob], f = (x) => { const vv = normalizeVariant({ ...variant, params: { ...variant.params, [h.knob]: k0 * Math.exp(x) } }); evals++; try { return goalScore(vv).cost.J; } catch { return Infinity; } };
-        let a = -Math.log(30), b = Math.log(30), gr = (Math.sqrt(5) - 1) / 2, x1 = b - gr * (b - a), x2 = a + gr * (b - a), f1 = f(x1), f2 = f(x2);
-        for (let i = 0; i < 12; i++) { if (f1 < f2) { b = x2; x2 = x1; f2 = f1; x1 = b - gr * (b - a); f1 = f(x1); } else { a = x1; x1 = x2; f1 = f2; x2 = a + gr * (b - a); f2 = f(x2); } }
-        const x = f1 < f2 ? x1 : x2, best = Math.min(f1, f2);
-        if (best < start) variant = normalizeVariant({ ...variant, params: { ...variant.params, [h.knob]: k0 * Math.exp(x) } });
-        s.how += `; ${h.knob} searched → ${fmt(variant.params[h.knob])}`;
-      }
-      // A tuned variant that fails a gate backs off along the way it came:
-      // ¾, ½, ¼ of the way from the start, then the start itself. The cost
-      // Iterate minimises has no robustness term (the design adds one).
-      if (variant !== s.variant && BACKOFF) {
-        let why = gate(variant);
-        if (why) {
-          const tried = variant, first = why;
-          for (const a of [0.75, 0.5, 0.25, 0]) {
-            const cand = a ? blend(s.variant, tried, a) : s.variant;
-            why = gate(cand); evals++;
-            if (!why) { variant = cand; s.how += `; backed off to ${a * 100} % of the way (tuned: ${first})`; break; }
-          }
-          if (why) s.how += `; no point on the way fits (tuned: ${first})`;
-        }
-      }
-      const row = { type, name: s.name ?? def.label, how: s.how, variant, start, evals, tuneMs: now() - t1 };
+      const row = tuneOne(P0, type, s, h);
+      if (row.refused) { refusals.push({ type, label: s.name ?? def.label, why: row.refused }); c.refused[type] = row.refused; continue; }
       rows.push(row);
-      if (!(type in c.tuned)) c.tuned[type] = variant;
+      if (!(type in c.tuned)) c.tuned[type] = row.variant;
     }
+  }
+
+  // Plant changes, never applied: candidates on a changed copy of the plant.
+  const changed = [];
+  if (needsRate.length && c.m === 1) {
+    const ch = addRateObserver(ctx.diagram, ctx.path, Math.max(ctx.Ts, c.tauGuess / 10));
+    if (ch) {
+      const P = plantOf(withDiagram(project, ch.diagram), sc, ch.change), c2 = { ...c, m: 2 };
+      for (const type of needsRate) for (const s of BENCH[type].start(c2)) {
+        const row = tuneOne(P, type, s, BENCH[type]);
+        if (!row.refused) rows.push({ ...row, name: `${row.name} ⚙ rate observer`, plantChange: ch.change });
+      }
+      changed.push(ch.change);
+    }
+  }
+  const sensor = sensorForObserver(ctx.diagram, ctx.path);
+  if (sensor) {
+    const P = plantOf(withDiagram(project, sensor.diagram), sc, sensor.change);
+    // The loaded controller as it is with the sensor (what the sensor alone
+    // does), and the PID tuned on the measured signal.
+    rows.push({ type: running.type, name: `As loaded ⚙ sensor`, how: 'not tuned', variant: running, start: null, evals: 0, P, plantChange: sensor.change });
+    const row = tuneOne(P, 'pid', { variant: c.pidStart.variant, how: c.pidStart.how }, BENCH.pid);
+    if (!row.refused) rows.push({ ...row, name: 'PID ⚙ sensor', plantChange: sensor.change });
+    changed.push(sensor.change);
   }
   T.tune = now() - t0;
 
-  // Score every row: the nominal run, the margins, noise, complexity.
+  // Score every row on its own plant: the nominal run, the margins, noise,
+  // complexity.
   t0 = now();
-  // σ for each measurement: 0.5 % of its span in the loaded run, read by a
-  // Sink spliced onto each measurement wire.
-  const probed = structuredClone(ctx.diagram), plv = level(probed, ctx.path), sigmas = [];
-  for (const w of [...plv.wires]) { const t = parseEnd(w.to); if (t.id === ctx.path.at(-1) && t.port >= 1) { plv.blocks.push({ id: `bench_m${t.port}`, type: 'sink', params: { name: `bench_m${t.port}`, unit: '1' }, x: 0, y: 0 }); plv.wires.push({ from: w.from, to: `bench_m${t.port}` }); } }
-  const prun = simulateSystem(withVariant(probed, ctx.path, running), ctx.signals, ctx.sim);
-  for (let k = 1; k <= c.m; k++) sigmas[k - 1] = 0.005 * span(prun.signals[`bench_m${k}`] ?? []);
-  const noisy = withNoise(ctx.diagram, ctx.path, sigmas);
   for (const row of rows) {
-    const { run, cost } = goalScore(row.variant);
+    const P = row.P, { run, cost } = P.goalScore(row.variant);
     row.J = cost.J; row.diverged = cost.diverged;
-    Object.assign(row, cost.diverged ? {} : runScores(run, ctx.key, ctx.others, R, U, row.variant));
-    row.margins = margins(project, ctx, row.variant, c.rMid, c.m);
+    Object.assign(row, cost.diverged ? {} : runScores(run, P.ctx.key, P.ctx.others, R, U, row.variant));
+    row.margins = margins(P.project, P.ctx, row.variant, c.rMid, P.m);
     row.ms = row.margins.ms ?? null;
     if (!cost.diverged) {
-      const nr = simulateSystem(withVariant(noisy, ctx.path, row.variant), ctx.signals, ctx.sim);
-      const a = loopSignals(nr, ctx.key).u, b = loopSignals(run, ctx.key).u;
+      const nr = simulateSystem(withVariant(P.noisy, P.ctx.path, row.variant), P.ctx.signals, P.ctx.sim);
+      const a = loopSignals(nr, P.ctx.key).u, b = loopSignals(run, P.ctx.key).u;
       let s2 = 0; for (let k = 0; k < a.length; k++) s2 += (a[k] - b[k]) ** 2;
       row.noise = Math.sqrt(s2 / a.length) / U;
     }
-    row.complex = complexity(row.variant, c.m);
+    row.complex = complexity(row.variant, P.m) + (row.plantChange ? PLANT_CHANGE : 0);
     row.effortTune = row.evals;
   }
   T.score = now() - t0;
@@ -443,9 +539,9 @@ function benchmark(name) {
   for (const row of rows) {
     if (row.diverged) continue;
     let worst = 0, bad = 0;
-    for (const d of plants) {
+    for (const d of row.P.plants) {
       let J;
-      try { J = goalScore(row.variant, ctx.sim, d).cost; } catch { J = { J: 200, diverged: true }; }
+      try { J = row.P.goalScore(row.variant, d).cost; } catch { J = { J: 200, diverged: true }; }
       if (J.diverged) bad++;
       worst = Math.max(worst, J.J);
     }
@@ -459,21 +555,22 @@ function benchmark(name) {
     row.fits = !row.diverged && !row.varyBad && row.margins.stable !== false && !row.margins.startUnstable && !fragile;
     row.whyNot = row.diverged ? 'diverges on the nominal plant' : row.varyBad ? `diverges on ${row.varyBad} of ${SWEEP} plants within ±15 %` : row.margins.stable === false ? `unstable at r's middle (${row.margins.note})` : row.margins.startUnstable ? `unstable where the run starts (${row.margins.startUnstable}); it rests there only because it starts in balance` : fragile ? `fragile: Ms ${fmt(row.ms, 2)} at r's middle (at most ${MS_MAX}), PM ${fmt(row.margins.pm, 2)}°` : '';
   }
-  return { name: project.title, ctx, rows, refusals, T, step: st?.ok ? `${st.method === 'relay' ? 'relay' : st.model}` : st?.why, R, U };
+  return { name: project.title, rows, refusals, changed, T, step: st?.ok ? `${st.method === 'relay' ? 'relay' : st.model}` : st?.why, R, U };
 }
 
 // ---- The Pugh matrix ---------------------------------------------------------
+// One round against the datum (input 48: "set a good datum and then the
+// others are either plus or minus one ... Don't make it too complicated"):
+// each criterion +1, 0 or −1, weighted and summed.
 
 function pugh(rows, datum) {
-  const marks = rows.map((row) => {
+  return rows.map((row) => {
     let total = 0, plus = 0, minus = 0;
     const m = CRITERIA.map((cr) => {
       const a = row[cr.key], b = datum[cr.key];
       if (row === datum) return 'D';
-      if (a === null || a === undefined || b === null || b === undefined || !finite(a) || !finite(b)) {
-        // Ms without a linear model: not judged (the sweep judges robustness).
-        return '?';
-      }
+      // A missing number (Ms of a law with no linear model) counts as S.
+      if (a === null || a === undefined || b === null || b === undefined || !finite(a) || !finite(b)) return '?';
       const d = cr.dir === 'low' ? b - a : a - b, thr = Math.max(cr.abs, cr.tol * Math.abs(b));
       const s = d > thr ? 1 : d < -thr ? -1 : 0;
       total += cr.w * s; if (s > 0) plus++; if (s < 0) minus++;
@@ -481,7 +578,6 @@ function pugh(rows, datum) {
     });
     return { row, m, total: row === datum ? 0 : total, plus, minus };
   });
-  return marks;
 }
 
 // ---- Output ---------------------------------------------------------------
@@ -493,21 +589,22 @@ for (const name of SYSTEMS) {
   const b = benchmark(name);
   const total = now() - t0;
   results.push(b);
-  const fitting = b.rows.filter((r) => r.fits);
-  // The datum: the tuned PID; if it does not fit, the running variant; if
-  // that does not fit either, the fitting row with the lowest J.
-  const pid = b.rows.find((r) => r.type === 'pid' && !r.loaded), loaded = b.rows.find((r) => r.loaded);
-  const datum = pid?.fits ? pid : loaded?.fits ? loaded : [...fitting].sort((a, c) => a.J - c.J)[0] ?? b.rows[0];
-  const p1 = pugh(b.rows, datum);
-  const ranked1 = p1.filter((x) => x.row.fits).sort((a, c) => c.total - a.total || a.row.J - c.row.J);
-  const win1 = ranked1[0]?.row ?? datum;
-  const p2 = pugh(b.rows, win1);
-  const ranked2 = p2.filter((x) => x.row.fits).sort((a, c) => c.total - a.total || a.row.J - c.row.J);
+  // The datum: the tuned PID (input 48); if it does not fit, the running
+  // variant; if neither fits, the tuned PID all the same.
+  const pid = b.rows.find((r) => r.type === 'pid' && !r.loaded && !r.plantChange), loaded = b.rows.find((r) => r.loaded);
+  const datum = pid?.fits ? pid : loaded?.fits ? loaded : pid ?? b.rows[0];
+  const marks = pugh(b.rows, datum);
+  const ranked = marks.filter((x) => x.row.fits).sort((a, c) => c.total - a.total || a.row.J - c.row.J);
+  // The suggestion: the best fitting candidate that needs no plant change
+  // (it can be added as a variant); a plant change that ranks above it is
+  // named beside it.
+  const best = ranked.find((x) => !x.row.plantChange), above = best ? ranked.slice(0, ranked.indexOf(best)) : [];
 
   out.push(`\n## ${b.name}\n`);
   out.push(`Step test for the starts: ${b.step}. Total ${(total / 1000).toFixed(1)} s: load ${fmt(b.T.load / 1000)} s, starts ${fmt(b.T.starts / 1000)} s, tuning ${fmt(b.T.tune / 1000)} s, scoring ${fmt(b.T.score / 1000)} s, sweep (${SWEEP} plants) ${fmt(b.T.sweep / 1000)} s. One run ${fmt(b.T.run, 2)} ms, so about ${Math.round(total / b.T.run)} runs' worth.\n`);
   out.push('Refused:\n');
   for (const r of b.refusals) out.push(`- ${r.label} (\`${r.type}\`): ${r.why}`);
+  if (b.changed.length) { out.push('\nPlant changes scored (⚙, never applied; complexity +5):\n'); for (const ch of b.changed) out.push(`- ${ch}`); }
   out.push('\nCandidates (J: the goal\'s cost, IAE + effort + overshoot + saturation; start → tuned):\n');
   out.push('| Candidate | Tuned how | J start → tuned | Runs | ms | Fits |');
   out.push('|---|---|---|---|---|---|');
@@ -516,17 +613,16 @@ for (const name of SYSTEMS) {
   out.push(`| Candidate | ${CRITERIA.map((c) => c.label).join(' | ')} | PM ° | Delay margin |`);
   out.push(`|---|${CRITERIA.map(() => '---').join('|')}|---|---|`);
   for (const r of b.rows) out.push(`| ${r.name} | ${CRITERIA.map((c) => (c.key === 'over' ? `${fmt(r[c.key], 2)} %` : c.key === 'ms' && r[c.key] === null ? (r.margins.none ? 'no linear model' : r.margins.stable === false ? 'unstable' : '—') : fmt(r[c.key], 2))).join(' | ')} | ${fmt(r.margins.pm, 2)} | ${r.margins.dm !== undefined ? `${fmt(r.margins.dm * 1000, 2)} ms` : '—'} |`);
-  for (const [round, marks, dat, ranked] of [[1, p1, datum, ranked1], [2, p2, win1, ranked2]]) {
-    out.push(`\nPugh matrix, round ${round}: datum **${dat.name}**${round === 2 ? ' (round 1\'s winner)' : ''}; weights ${CRITERIA.map((c) => c.w).join(', ')}.\n`);
-    out.push(`| Criterion (weight) | ${marks.map((x) => x.row.name.replace('As loaded: ', 'Loaded: ')).join(' | ')} |`);
-    out.push(`|---|${marks.map(() => ':-:').join('|')}|`);
-    CRITERIA.forEach((cr, i) => out.push(`| ${cr.label} (${cr.w}) | ${marks.map((x) => x.m[i]).join(' | ')} |`));
-    out.push(`| **+ / −** | ${marks.map((x) => (x.row === dat ? 'datum' : `${x.plus} / ${x.minus}`)).join(' | ')} |`);
-    out.push(`| **Weighted** | ${marks.map((x) => (x.row === dat ? '0' : String(x.total))).join(' | ')} |`);
-    out.push(`| **Fits** | ${marks.map((x) => (x.row.fits ? 'yes' : 'no')).join(' | ')} |`);
-    out.push(`\nRanking (fitting only): ${ranked.map((x, i) => `${i + 1}. ${x.row.name} (${x.total >= 0 ? '+' : ''}${x.total})`).join('; ')}.`);
-  }
+  out.push(`\nPugh matrix: datum **${datum.name}**${datum.fits ? '' : ' (does not fit, but no fitting PID or loaded variant to take its place)'}; weights ${CRITERIA.map((c) => c.w).join(', ')}.\n`);
+  out.push(`| Criterion (weight) | ${marks.map((x) => x.row.name.replace('As loaded', 'Loaded')).join(' | ')} |`);
+  out.push(`|---|${marks.map(() => ':-:').join('|')}|`);
+  CRITERIA.forEach((cr, i) => out.push(`| ${cr.label} (${cr.w}) | ${marks.map((x) => x.m[i]).join(' | ')} |`));
+  out.push(`| **+ / −** | ${marks.map((x) => (x.row === datum ? 'datum' : `${x.plus} / ${x.minus}`)).join(' | ')} |`);
+  out.push(`| **Weighted** | ${marks.map((x) => (x.row === datum ? '0' : String(x.total))).join(' | ')} |`);
+  out.push(`| **Fits** | ${marks.map((x) => (x.row.fits ? 'yes' : 'no')).join(' | ')} |`);
+  out.push(`\nRanking (fitting only): ${ranked.map((x, i) => `${i + 1}. ${x.row.name} (${x.total >= 0 ? '+' : ''}${x.total})`).join('; ')}.`);
+  out.push(`\nSuggestion: ${!best ? 'none fits' : best.row.loaded ? `keep **${best.row.name.replace('As loaded: ', '')}**, the running variant: nothing beats it` : `**${best.row.name}** (${best.total >= 0 ? '+' : ''}${best.total}), added as a variant, not switched on`}${above.length ? `; ranked above it with a plant change: ${above.map((x) => `${x.row.name} (${x.total >= 0 ? '+' : ''}${x.total}; ${x.row.plantChange})`).join('; ')}` : ''}.`);
 }
 const text = `# Benchmark prototype: results\n\nGoal: ${JSON.stringify(GOAL_USED)}; Iterate up to ${MAX_ITER} iterations; sweep ${SWEEP} plants within ±15 %. Node ${process.version}.\n${out.join('\n')}\n`;
 console.log(text);
-if (JSON_OUT) writeFileSync(JSON_OUT, JSON.stringify(results.map((b) => ({ name: b.name, T: b.T, refusals: b.refusals, rows: b.rows.map(({ variant, margins: mg, ...r }) => ({ ...r, variant, margins: mg })) })), null, 1));
+if (JSON_OUT) writeFileSync(JSON_OUT, JSON.stringify(results.map((b) => ({ name: b.name, T: b.T, refusals: b.refusals, changed: b.changed, rows: b.rows.map(({ P, ...r }) => r) })), null, 1));

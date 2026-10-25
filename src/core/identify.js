@@ -1193,6 +1193,22 @@ export function twinSubsystem(model, { push = false, noise = true, id = 'twin', 
 // Sinks, Controllers, Observers, limits, Ts, noise, quantisers, ports and an
 // integrator's K are not varied. Returns { diagram (a copy), factors: [{ path,
 // block, param, value, factor }] }.
+// A mask's physical fields: those it flags (a component's: the Servo motor's
+// R, L, K, b, Jm and its gear's stiffness), else every field but g and the
+// start values (the physics models', physicalMaskKeys); a field folded under
+// a toggle or a choice that is off is not in the model, and is left.
+function maskPhysics(mask, params) {
+  const on = (under) => {
+    if (under === undefined) return true;
+    const [k, opt] = under.split(':'), f = mask.find((g) => g.key === k);
+    const v = params[k] ?? f?.default;
+    return opt === undefined ? v === true || v === 'on' || Number(v) === 1 : v === opt;
+  };
+  const flagged = mask.some((f) => f.physical);
+  const keys = new Set(flagged ? mask.filter((f) => f.physical).map((f) => f.key) : physicalMaskKeys(mask));
+  return mask.filter((f) => keys.has(f.key) && !f.kind && on(f.under));
+}
+
 export function varyDiagram(diagram, share, seed) {
   if (!(share >= 0 && share < 1)) throw new Error('varyDiagram: the share lies in [0, 1)');
   if (!Number.isInteger(seed)) throw new Error('varyDiagram: the seed is a whole number');
@@ -1207,19 +1223,22 @@ export function varyDiagram(diagram, share, seed) {
     };
     for (const b of level.blocks) {
       if (b.type === 'subsystem') {
-        // A masked model (the tank, a cart): its mask's physical fields, each
-        // drawn on its own; the blocks inside refer to them by name.
+        // A masked model (the tank, a cart, the Servo motor): its mask's
+        // physical fields, each drawn on its own; the blocks inside refer to
+        // them by name (a component's insides come from its table).
         if (b.mask) {
           const name = b.name ?? b.id;
-          for (const key of physicalMaskKeys(b.mask)) {
-            const x = b.params?.[key];
+          b.params ??= {};
+          for (const field of maskPhysics(b.mask, b.params)) {
+            const x = Number(b.params[field.key] ?? field.default);
             if (!finite(x) || x === 0) continue;
             const f = 1 + share * (2 * rnd() - 1);
-            b.params[key] = x * f;
-            factors.push({ path: [...path, b.id].join('/'), block: name, param: key, label: `${name}, ${b.mask.find((m) => m.key === key).label}`, value: x, factor: f });
+            b.params[field.key] = x * f;
+            factors.push({ path: [...path, b.id].join('/'), block: name, param: field.key, label: `${name}, ${field.label}`, value: x, factor: f });
           }
         }
-        walk(b.diagram, [...path, b.id]);
+        // A component's insides are its table's, set by its mask alone.
+        if (!b.component) walk(b.diagram, [...path, b.id]);
         continue;
       }
       let def;

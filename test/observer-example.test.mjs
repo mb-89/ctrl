@@ -54,9 +54,9 @@ test('observer example: it loads and runs whole, at its own record step, on ever
   assert.equal(diff.design, undefined, 'the difference is a hand observer');
   for (const r of [placed, kalman]) {
     assert.equal(r.design.status, 'ok', r.design.error?.message);
-    assert.equal(r.design.seen, 'V → encoder 1024 counts/turn · 3 states (armature 1/(Ls + R), rotor 1/(Js + b), angle)');
+    assert.equal(r.design.seen, 'V → encoder 1024 counts/turn · 3 states (armature 1/(L·s + R), rotor 1/Jm, rotor angle)');
     // x̂2 is the rotor's speed, which the PI is wired to.
-    assert.deepEqual(r.design.rows[0].value, ['armature 1/(Ls + R)', 'rotor 1/(Js + b)', 'angle']);
+    assert.deepEqual(r.design.rows[0].value, ['armature 1/(L·s + R)', 'rotor 1/Jm', 'rotor angle']);
   }
   // R from the encoder's blocks: σ² + q²/12.
   const R = kalman.design.rows.find((row) => row.label === 'R');

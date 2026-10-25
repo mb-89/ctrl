@@ -203,7 +203,7 @@ test('deadbeat refuses, in sentences, what it cannot do', () => {
   ctrlOf(p).variants = [normalizeVariant({ name: 'DB', type: 'deadbeat' })];
   const st = compileDiagram(p.system.plant.diagram, 'plant', { standalone: true, designs: createDesignStore() }).designs[0];
   assert.equal(st.error.code, 'states-not-measured');
-  assert.match(st.error.message, /^deadbeat state feedback needs every state measured\. This block sees angle but not Motor\/armature 1\/\(Ls \+ R\) and Motor\/rotor 1\/\(Js \+ b\)\.$/);
+  assert.match(st.error.message, /^deadbeat state feedback needs every state measured\. This block sees rotor angle but not Motor\/armature 1\/\(L·s \+ R\) and Motor\/rotor 1\/Jm\.$/);
   // One lag, nothing refused: K = Ad/Bd puts its one pole at 0.
   const one = { blocks: [{ id: 'r', type: 'source', params: { signal: 'r' }, x: 0, y: 0 }, { id: 'ctrl', type: 'controller', params: { inputs: 2, Ts: 0.1 }, variants: [normalizeVariant({ type: 'deadbeat' })], variant: 0, x: 100, y: 0 }, lag('a', 200)], wires: [{ from: 'r', to: 'ctrl' }, { from: 'ctrl', to: 'a' }, { from: 'a', to: 'ctrl:1' }] };
   const ok = compileDiagram(one, 'plant', { standalone: true, designs: createDesignStore() }).designs[0];

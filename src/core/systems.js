@@ -5,6 +5,8 @@
 
 import { EXAMPLE_PLANTS } from './plants.js';
 import { CONTROLLERS } from './controllers.js';
+import { normalizeDiagram, compileDiagram } from './diagram.js';
+import { isFormula } from './formula.js';
 
 export const SYSTEM_PARTS = ['input', 'plant', 'controller'];
 
@@ -52,14 +54,16 @@ const TONE = {
   // LQR sits beside Disturbance (slate) on both pendulums, so it took State
   // feedback's orange, and State feedback, on no card with a disturbance
   // now that the library's gains are computed, took slate.
-  PID: 'aqua', 'State feedback': 'slate', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green',
+  PID: 'aqua', 'State feedback': 'blue', 'Gain scheduling': 'yellow', 'Lyapunov swing-up': 'magenta', LQR: 'orange', 'Trajectory planning': 'green',
   // A class of its own (the person, input 38): laws that switch their
   // structure or gain with the state (a relay, sliding mode, super-twisting,
   // Hu–Lin's variable gain). Seven of the eight tones are taken by controller
   // tags: this one is set.
   'Variable structure': 'red',
   // Deadbeat takes State feedback's slate, the one controller tone on no
-  // card now that Hu–Lin is Variable structure.
+  // card now that Hu–Lin is Variable structure. State feedback, back on a
+  // card with Gear backlash's Dual loop (beside Nonlinear's red and PID's
+  // aqua), takes blue, the one tone no controller tag has.
   Deadbeat: 'slate',
   // The observers sit together on one card, beside PID (aqua) and
   // Disturbance (slate): Luenberger took blue, the Kalman filter green.
@@ -74,10 +78,16 @@ const toneOf = (label) => TONE[label] ?? TAG_TONES[[...label].reduce((h, c) => (
 export function systemTags(e) {
   const blocks = [];
   let nonlinear = false;
-  const walk = (d) => {
+  // What a mask switched off is not compiled and says nothing about the
+  // system (the Servo motor's dead time, its saturations); a Switch the
+  // mask sets is a wire.
+  let off = [];
+  try { off = compileDiagram(normalizeDiagram(e.diagram), 'plant', { standalone: true, laws: false }).offNodes; } catch { /* tagged as written */ }
+  const walk = (d, pre = '') => {
     for (const b of d.blocks) {
+      if (off.includes(`${pre}${b.name ?? b.id}`) || (b.type === 'switch' && isFormula(b.params?.position))) continue;
       blocks.push(b);
-      if (b.diagram) walk(b.diagram);
+      if (b.diagram) walk(b.diagram, `${pre}${b.name ?? b.id}/`);
       // An Equations block that only feeds Sinks (an energy shown on the
       // scope, say) leaves the dynamics linear.
       const onlyDisplays = d.wires.filter((w) => w.from.split(':')[0] === b.id).every((w) => ['sink', 'terminator'].includes(d.blocks.find((x) => x.id === w.to.split(':')[0])?.type));

@@ -346,9 +346,12 @@ test('a test ended early is graded ✕ with its reason and names no controller; 
   const w = res.model.where;
   assert.equal(linearModel(res.model).op.label, `identified over ${fmtNum(w[0].from, 3)} … ${fmtNum(w.at(-1).to, 3)} rad`);
   assert.ok(w[0].from > res.model.band[0] && w.at(-1).to < res.model.band[1], 'inside the band');
-  // The reveal names a gain by its block and a coefficient by its power of s.
-  const labels = varyDiagram(libraryProject('DC motor, position').system.plant.diagram, 0.15, 7).factors.map((f) => f.label);
-  assert.ok(labels.includes('armature 1/(Ls + R), its s term') && labels.includes('armature 1/(Ls + R), its constant term') && labels.includes('Kt (= Ke)'), labels.join(' | '));
+  // The reveal names a gain by its block, a coefficient by its power of s,
+  // and a component's field by the component and the field.
+  const labels = varyDiagram(libraryProject('DC motor with an unbalanced arm').system.plant.diagram, 0.15, 7).factors.map((f) => f.label);
+  assert.ok(labels.includes('armature 1/(Ls + R), its s term') && labels.includes('armature 1/(Ls + R), its constant term') && labels.includes('K (= Ke)'), labels.join(' | '));
+  const servo = varyDiagram(libraryProject('DC motor, position').system.plant.diagram, 0.15, 7).factors.map((f) => f.label);
+  assert.ok(servo.includes('Motor, Armature resistance') && servo.includes('Motor, Torque and back-EMF constant'), servo.join(' | '));
 });
 
 // ---- 17. Teaching: Hide a variation
@@ -360,10 +363,17 @@ test('17. varyDiagram with a seed is reproducible and varies only the flagged ph
   assert.deepEqual(a, b, 'reproducible');
   assert.notDeepEqual(a.factors.map((f) => f.factor), c.factors.map((f) => f.factor));
   assert.deepEqual(d, libraryProject('DC motor, position').system.plant.diagram, 'the project is not touched');
-  // Only flagged parameters change, each within ±15 %.
+  // Only flagged parameters change, each within ±15 %: a block's by its
+  // definition, a mask's by its own flag; a component's insides not at all.
   const walk = (x, y, path = []) => x.blocks.forEach((bx, i) => {
     const by = y.blocks[i];
-    if (bx.type === 'subsystem') return walk(bx.diagram, by.diagram, [...path, bx.id]);
+    if (bx.type === 'subsystem') {
+      for (const [key, v] of Object.entries(bx.params ?? {})) {
+        if (JSON.stringify(v) !== JSON.stringify(by.params[key])) assert.ok(bx.mask?.find((f) => f.key === key)?.physical, `${[...path, bx.id].join('/')}.${key} changed without a flag`);
+      }
+      if (bx.component) return assert.deepEqual(bx.diagram, by.diagram, 'a component\'s insides are its table\'s');
+      return walk(bx.diagram, by.diagram, [...path, bx.id]);
+    }
     const def = diagramBlockDef(bx.type);
     for (const [key, v] of Object.entries(bx.params ?? {})) {
       const spec = def.params?.find((q) => q.key === key);
@@ -373,13 +383,18 @@ test('17. varyDiagram with a seed is reproducible and varies only the flagged ph
   });
   walk(d, a.diagram);
   assert.ok(a.factors.length > 0 && a.factors.every((f) => f.factor >= 0.85 && f.factor <= 1.15));
-  const kinds = new Set(a.factors.map((f) => `${f.path.split('/').at(-1)}.${f.param}`));
+  // The Servo motor's flagged fields, on with the free shaft: not its gear
+  // ratio, its toggles, its seeds or the coupled gear's stiffness.
+  assert.deepEqual(a.factors.map((f) => `${f.path}.${f.param}`), ['motor.R', 'motor.L', 'motor.K', 'motor.b', 'motor.Jm']);
+  // The motor's Kt and Ke are one constant: one field (the Servo motor), or
+  // two Gain blocks of one value, equal before and equal after.
+  const arm = varyDiagram(libraryProject('DC motor with an unbalanced arm').system.plant.diagram, 0.15, 7);
+  const inner = arm.diagram.blocks.find((x) => x.id === 'motor').diagram.blocks;
+  assert.equal(inner.find((x) => x.id === 'kt').params.K, inner.find((x) => x.id === 'ke').params.K);
+  assert.notEqual(inner.find((x) => x.id === 'kt').params.K, 0.1);
+  const kinds = new Set(arm.factors.map((f) => `${f.path.split('/').at(-1)}.${f.param}`));
   for (const k of ['arm.den[0]', 'arm.den[1]', 'rotor.den[0]', 'rotor.den[1]', 'kt.K', 'ke.K']) assert.ok(kinds.has(k), k);
-  assert.ok(!kinds.has('int.K'), 'an integrator (angle = ∫ speed) is kinematics, not varied');
-  // The motor's Kt and Ke are one constant: equal before, equal after.
-  const motor = a.diagram.blocks.find((x) => x.id === 'motor').diagram.blocks;
-  assert.equal(motor.find((x) => x.id === 'kt').params.K, motor.find((x) => x.id === 'ke').params.K);
-  assert.notEqual(motor.find((x) => x.id === 'kt').params.K, 0.5);
+  assert.ok(![...kinds].some((k) => /^int\w*\.K$/.test(k)), 'an integrator (angle = ∫ speed) is kinematics, not varied');
   // Sources, Sinks, Controllers, noise and quantisers have nothing flagged.
   for (const t of ['source', 'sink', 'controller', 'observer', 'noise', 'quantizer', 'saturation', 'switch', 'integrator', 'external']) {
     assert.ok(!(ELEMENTS[t].params ?? []).some((q) => q.vary), t);
@@ -387,10 +402,10 @@ test('17. varyDiagram with a seed is reproducible and varies only the flagged ph
   // identify() runs the varied copy and reveals the factors drawn.
   const res = identify(libraryProject('DC motor, position'), null, { vary: { share: 0.15, seed: 7 } });
   assert.deepEqual(res.vary.factors, a.factors);
-  // The motor's rate k′ = Kt / (R b + Kt Ke) follows the draw.
-  const f = Object.fromEntries(a.factors.map((x) => [`${x.path.split('/').at(-1)}.${x.param}`, x.factor]));
-  const kt = 0.5 * f['kt.K'], R = 1 * f['arm.den[1]'], bb = 0.1 * f['rotor.den[1]'];
-  const kp = kt / (R * bb + kt * kt);
+  // The motor's rate k′ = K / (R b + K²) follows the draw.
+  const f = Object.fromEntries(a.factors.map((x) => [x.param, x.factor]));
+  const K = 0.5 * f.K, R = 1 * f.R, bb = 0.1 * f.b;
+  const kp = K / (R * bb + K * K);
   assert.ok(Math.abs(res.model.params.kp - kp) < 0.01 * kp, `k′ ${res.model.params.kp} against ${kp}`);
 });
 

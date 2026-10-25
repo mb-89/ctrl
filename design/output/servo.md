@@ -1,6 +1,6 @@
 # One Servo motor, its errors as switches
 
-Reader: the agent who builds the Servo motor component, rebuilds the motor examples or the PUMA's motors on it, builds the backlash example, or adds an effect to it. The person's words are in [input 18](../input/2026-10-25-18-servo-motor-detail.md) and their answers in [input 23](../input/2026-10-25-23-servo-answers-backlash.md); the research, with sources, is in [../research/servo.md](../research/servo.md). This is the plan, not yet built. Where the code and this page differ later, the code and [decisions.md](decisions.md) win.
+Reader: the agent who builds the Servo motor component, rebuilds the motor examples or the PUMA's motors on it, builds the backlash example, or adds an effect to it. The person's words are in [input 18](../input/2026-10-25-18-servo-motor-detail.md) and their answers in [input 23](../input/2026-10-25-23-servo-answers-backlash.md); the research, with sources, is in [../research/servo.md](../research/servo.md). **Built** (2026-10-25, branch `feat/servo`; [§15](#15-built-measured-deviations)): steps 1–4 and 6, with the docs; step 7, the PUMA's joints, is the orchestrator's swap ([§15.5](#155-the-pumas-joints-step-7-how-they-switch)). The rest of this page is the plan it was built from; where the code and this page differ, the code, §15 and [decisions.md](decisions.md) win.
 
 The person, later ([input 24](../input/2026-10-25-24-backlash-fix-gear-stiffness.md)): "The backlash example should also offer the industrial fix ... make it a bit slower, because 50 Hertz running at our [HIL] with 100 Hertz is ... critical. And ... make it configurable."
 
@@ -481,3 +481,85 @@ None open with the person now. The person asked (input 24) that questions go thr
 
 For the coordinator to weigh (interpretations, not blocking):
 - At the robot's 20 Hz default, axis loops tuned as if rigid lose 1 mrad of path accuracy (§7.3). That is acceptable if the design layer designs the axis loops on the elastic plant; otherwise raise the default.
+
+## 15. Built, measured, deviations
+
+Built on `feat/servo` (2026-10-25), from main after the model foundations (masks, formulas, the eigenvalue step bound). `npm test`, `npm run test:slow` and `node build.mjs` were green at every commit.
+
+### 15.1 What is built
+
+- **Mask kinds** (`core/diagram.js`): a mask field may be `kind: 'toggle'` (0 or 1) or `kind: 'choice'` with `options` (its 1-based index in formulas), and `under` a toggle (`"coulomb"`) or a choice's option (`"shaft:coupled"`). A Switch's `position` and a Noise block's `seed` take formulas (`maskable` fields; the result must be a whole number); every other integer field still refuses one.
+- **Compile-time switches**: a Switch whose position is a formula is a wire once the mask is resolved; what reaches only its other inputs is not compiled (no state, no step bound, not evaluated), and Sinks fed only from there are off: not recorded, listed in `el.off` and a run's `info.off`. The canvas draws what is not compiled faint (`el.offNodes`).
+- **Ports from the mask**: an In or Out block may carry `when` (a formula; 0 removes the port). The Servo motor's In 3 has `when: "shaft - 1"`.
+- **Components** (`core/components.js`): `servo-motor@1`, the mask of §3 and §4 (three fixed slots for ripple orders and error orders, for want of mask lists) and the diagram of §1, 72 blocks. A use is `{ type: 'subsystem', component, params }`; `normalizeDiagram` puts the mask and insides in; `JSON.stringify` writes the reference and the values that differ from the defaults (`toJSON`); `prefix` renames a use's Sinks. The Plant tab lists it under **Components**, shows toggles as keys carrying their labels and choices as lists, folds the fields under them, opens the insides read-only (an edit inside says so) and offers **Edit a copy**.
+- **The examples**: the three DC motor systems (`motorDiagram`, `DC_MOTOR`) and main's observer example *DC motor, speed from an encoder* (merged in after it was built on main's motor), the encoder example (`ENCODER_MOTOR`) and the new **Gear backlash**, with summary and notes per the progressive-disclosure rule ([system-library.md](system-library.md)).
+- **The HIL simulator** (`core/hilsim.js`): a system's effects are the toggles that are on in its masks (`effectsOf`), named by their labels, off by setting the toggle to 0; it reads through a Switch a mask set; Sinks that are off are no outputs; outputs the input reaches without a state between are named (`spec.direct`). The encoder's effects are now *Torque ripple and cogging, Torque noise, Encoder coupling resonance, Encoder angle errors, Speed from the angle* (they were *torque ripple, torque noise, shaft resonance, encoder errors*); its varied physics are R, L, K, b, J, ωc, ζc (they were 1/R, L/R, Kt, Ke, 1/b, J/b, ωn, ζ), so its draws for a seed differ from main's.
+- **Tests**: `test/switches.test.mjs` (§12.1), `test/servo.test.mjs` (§12.2–12.5), the legacy builders in `test/fixtures/legacy-motors.mjs`.
+
+### 15.2 Measured
+
+| Example · variants | Largest difference from main, relative to the signal's peak | Substeps (main) |
+|---|---|---|
+| DC motor, position control · all four | 1.6·10⁻¹⁶ … 3.6·10⁻¹⁵ | 1 (1) |
+| Following a sine · all four | 1.0·10⁻¹⁵ … 2.6·10⁻¹⁴ | 1 (1) |
+| DC motor, sliding mode · all three | 2.0·10⁻¹⁶ … 4.9·10⁻¹⁵ | 1 (1) |
+| Encoder errors and torque ripple · PI speed, Off | 8.5·10⁻¹², 2.5·10⁻¹⁴ | 5 (5) |
+| DC motor, speed from an encoder (main's observer example, merged in later) · all three | 2.0·10⁻¹⁶ … 8.0·10⁻¹⁵; its Luenberger and Kalman designs the same | 1 (1) |
+
+- Tests hold the motors to 10⁻¹² and the encoder to 10⁻⁹ (§7.1's reason: the motor owns its friction).
+- **Fingerprints** (`test/fixtures/library-fingerprints.json`): only these four change (the rounding above, and the motor's Sinks i, τe, τm, τf, τr, v join the signals), and Gear backlash is new; every other system is bit for bit.
+- **The design layer** designs the motor examples as before: the Analysis tab's numbers at rest for every variant of the four systems (stable, gain margins, phase margin, crossover, Ms, Mt, ζmin, the slowest pole, the plant's order; the PID + feedforward's computed Kv 1.7 and plant inverse [0, 0.7, 0.042]) are identical to six digits before and after.
+- **Each switch at its neutral value** is the switch off, bit for bit: Coulomb Tc± 0, ripple amplitudes 0, torque noise σ 0, supply limit Vmax inf, encoder errors 0, delay T_d 0, current loop τc 0, backlash β 0. The effects' signatures, the free shaft's energy balance, the gear's resonance (to 1 %) and energy, and backlash never pulling are tested.
+- **Gear backlash** (holds: the last half second of each step; 0.5 ms record, 1 substep):
+
+| Case | e p-p in a hold (mrad) | largest \|e\| (mrad) | τ sign changes per s |
+|---|---|---|---|
+| PID, load encoder | 20.58 | 10.45 | 62 |
+| PD, load encoder | 20.34 | 10.17 | 62 |
+| PID, motor encoder | 0.00 | 0.63 | 0 |
+| PD, motor encoder | 0.00 | 4.66 | 0 |
+| Dual loop, load encoder | 0.12 | 0.13 | 0 |
+| Dual loop, β at a quarter | about a quarter of PID's p-p (tested) | | |
+
+  The prototype's numbers (§7.4), to the digits shown.
+- **Runs** take longer: the motor examples 8–13 ms against main's 4–14 ms per 5 s run in Node (more nodes: the mask's zero gains and sums, five more Sinks recorded); the encoder 61 against 43 ms.
+- **Checked in Chromium** (headless, 1440 × 900): the encoder example opens on its spectrogram as before; selecting Motor shows its mask (Drive, R … G, Output shaft, the toggles); switching Coulomb on unfolds Tcp, Tcn, ωs and the face reads "voltage drive, free shaft · Coulomb friction"; opening Motor shows its insides with what is off faint, read-only; Gear backlash hunts on the scope (δ, τ and i rattle at about 31 Hz after each step) and the Dual loop holds; no console errors.
+
+### 15.3 Deviations from this plan, and interpretations
+
+- **Sink names**: τf and τr are `tau_f` and `tau_r` (a signal name has at most 12 characters, and a prefixed `m2_tau_friction` would not fit). Interpretation.
+- **Per-instance names**: a use's `prefix` (`m2_` makes `m2_i`), not the path ("Motor 2/i", §5): a name with `/` cannot be read in a view's text or a formula. Interpretation.
+- **v**, the drive's voltage, is a Sink in both drives: for a current drive R·i + K·ωm (§2.3), for a voltage drive the voltage applied (u after the supply limit). A Sink fed only from the current branch could not be told apart, structurally, from the encoder's output, which the same rule would have switched off; a drive Switch in front of v makes it exact. Interpretation.
+- **τr** (ripple and noise) reads 0 when both are off, rather than off: its zero Gain stays compiled (it feeds the torque sum). A Gain of 0 depends on nothing in a model (`model.f` and the structural reduction), so the rotor's angle no longer joins a speed model through it.
+- **The mask panel**: a number field is named by its key (what formulas read), its label, unit and range below; a toggle is a key carrying its label ("Coulomb friction: on"); fields under an off toggle or another option are folded away (hidden), not greyed. Interpretation (the labels did not fit the panel's label column).
+- **Edit a copy** makes the use the project's own masked subsystem, inline; the project's `components` map (My blocks used by reference) is not built (§13 left making components in the page for later). The library's `My blocks` group keeps saving subsystems whole.
+- **Faint, not labelled**: what is not compiled is drawn faint; a separate "off" label is not drawn.
+- **No stand-in lag** for the coupled shaft's step: the eigenvalue step bound (main) sees the gear (the coupled shaft's tests check that a stiffer gear takes more substeps).
+- **Fixed order slots**: three for ripple (`kr1, Ar1, pr1` …) and three for encoder errors (`ke1, Ae1, pe1` …), until mask lists exist.
+- **The controller's input names**: a Controller reading a Servo motor names the input by its Out block, "θ measured", where it read "angle" (the old Integrator's name); a design names u after the outermost Sink on it (V, not the motor's v).
+- **State feedback's tag is blue** (it was slate, which main gave Deadbeat while State feedback was on no card): the Dual loop puts it back on a card, and blue is the one tone no controller tag has.
+- **DC motor, deadbeat** (main's, merged in later) keeps the Transfer function motor (`motorBlock`): its controller measures the current, which the Servo motor has as a Sink, not an Out.
+- **The library's tags** ignore what a mask switched off and the Switches a mask sets (the Servo motor's Dead time, Saturation and Switch blocks would otherwise tag every motor Nonlinear with a Dead time).
+- **The HIL simulator's sample-for-sample test** leaves out the outputs the input reaches without a state between (Gear backlash's i, τe, τm, v on an ideal current drive): the plant reports them with the input of the cycle that ended, the page records them after the new one, so no record of the page is that value.
+- **Gear backlash**: the error Sink is `e_L` (a view's text reads `e` as Euler's number); the scope opens on δ, τ, e_L, i (so XY is δ across, τ up); a Sink `omega_m` records the motor's speed (the HIL simulator needs a Sink on each measurement), and `i_ref` the controller's i*. At rest the teeth are in the play, so the linearised loop for PID and PD sees no gear (the Analysis tab draws no margins for them); the Dual loop's reads the motor's speed and analyses (phase margin 88°).
+- **The guard on stored gains** allows the Dual loop (state feedback holding a PD's hand gains) beside `pid`, `off`, `slidingMode`, `superTwisting`.
+- **A variant made in code** (Auto-tune's step test) keeps its law through the mask's resolution; the model compile reads the diagram as given (an Equations block in a mask kept its names only so).
+
+### 15.4 Left
+
+- Step 7, the PUMA's joints (§15.5), when `feat/puma` and this branch are both merged.
+- *DC motor with an unbalanced arm* (the HIL simulator's default plant, with Coulomb friction and gravity) and *Variable gain against anti-windup* (a torque-driven axis) keep their own motor blocks: neither was in this plan; both could be Servo motors (a voltage drive with Coulomb on and the arm's gravity outside; a current drive with the current loop as the torque drive's lag).
+- Detail levels as named switch sets (§6), when [detail-levels.md](detail-levels.md) is built.
+- The project's `components` map and making components in the page; mask lists; a "set from fr, ζ" helper; the cascade dual loop (§13).
+
+### 15.5 The PUMA's joints (step 7): how they switch
+
+`feat/puma` builds *Motor drives* from six masked subsystems `m1 … m6` (`motor(j)` in `src/core/pumasystem.js`): In i*, In q̇; a current limit, kt, Coulomb and viscous friction from the block `friction` on G·q̇, τ = G·(kt·i − τf); its rotor's G²·Jm on the Arm's mass matrix (`armature: PUMA560.armature`). To use the Servo motor instead (§7.3):
+
+1. **Each motor** becomes `componentUse('servo-motor@1', { id: 'm' + n, name: 'Motor ' + n, prefix: 'm' + n + '_', params })` with `drive: 'current'`, `shaft: 'coupled'`, `R`, `K` (= kt), `b` (= B), `Jm`, `G` (with its sign), `imax` from `PUMA560.drive`, `coulomb: 1` with `Tcp`, `Tcn`, `ws`, and `k`, `c` for 20 Hz with ζ 0.1 at the start pose: with J_L = M(q0)_jj of the arm **without** the armature and Jr = G²·Jm, k = ωr²/(1/Jr + 1/J_L) and c = 2ζ·ωr/(1/Jr + 1/J_L), ωr = 2π·20 (§3; typed once as inputs, the formula in a comment). Every other switch off, its fields at the realistic sizes of §7.3 (ripple 1 % of K·imax at 6×, errors 20″ and 10″, the counts of §7.3, the current loop at 400 Hz, torque noise 0.002 N·m, backlash 3′).
+2. **Its ports**: In 1 i* (from `di:j`), In 2 the joint angle q_j, In 3 q̇_j (from a demux of the Arm's q, Out 1, and of q̇, Out 2); Out 1 τ_j into the mux. *Motor drives* gains an input q (the Arm's Out 1, wired `arm` → `drives:2`).
+3. **The Arm's plant mass matrix loses the armature**: `massMatrix` and `torqueSplit` in the Arm take `armature` 0 (the rotors are inside the motors now); the controller's `inverseDynamics` keeps `PUMA560.armature` (§2.2).
+4. **Signals**: the currents become `m1_i … m6_i` (the scope's channel 4 `i2` becomes `m2_i`), the friction `m1_tau_f …` at the motor shaft (×G at the joint, where `tauF1 …` were); τe, τm, δ per motor too. The joint torque `tau` is the gears' torque on the links, which no longer includes the rotors' acceleration torque (§7.3: about 4.9 N·m rms on joint 2).
+5. **Measured, then**: robot.md's numbers again; with the axis loops designed on the plant that runs, the path should come closer to the rigid model than §7.3's 2.82 mrad. A try-this for the notes: "open Motor drives, select Motor 1: switch Backlash on (3′) and watch τ1 knock at each reversal; set β to 15′".
+6. **The HIL simulator** then lists the six motors' Coulomb toggles as the PUMA's effects (`effectsOf`, "Coulomb friction" six times; a name per motor needs the use's name in the effect's name, a one-line change in `effectsOf` if wanted).
+

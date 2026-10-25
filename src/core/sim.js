@@ -361,7 +361,7 @@ export function simulateSystem(diagram, signals, sim, opts = {}) {
     return again;
   }
   const ms = (globalThis.performance?.now() ?? Date.now()) - t0;
-  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, bound, stiffness: { start: el.stiff, end }, ms, validity: el.validity } };
+  const res = { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings, designs: el.designs, bound, stiffness: { start: el.stiff, end }, ms, validity: el.validity, ...(el.off?.length ? { off: el.off } : {}) } };
   if (until !== undefined) res.snapshot = unstable ? null : el.snapshot(K * Ts, X);
   return res;
 }

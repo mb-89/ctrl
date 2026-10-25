@@ -76,7 +76,7 @@ test('operating points: origin, initial state and their warnings', () => {
   // The encoder example's origin is not at rest: the encoder's error is not 0 at angle 0.
   const enc = operatingPoint(modelOf(system('Encoder')), 'origin');
   assert.ok(!enc.rest);
-  assert.match(enc.warnings[0], /^the origin is not at rest: speed from angle moves at/);
+  assert.match(enc.warnings[0], /^the origin is not at rest: Motor\/speed from angle moves at/);
   // A saturation outside its limits there is named; a level beyond it has no equilibrium.
   const d = normalizeDiagram({
     blocks: [{ id: 'r', type: 'source', params: { signal: 'r' } }, { id: 'c', type: 'controller', params: { inputs: 2 }, variants: [{ type: 'pid' }] },
@@ -108,9 +108,9 @@ test('linearize and the first-order fit: exact on a lag; mean residence time on 
   // τ = C A⁻² B / K = 0.21 / 3.5 (from G(s) = Kt / ((Ls + R)(Js + b) + Kt Ke)
   // = 0.5 / ((0.01 s + 1)(0.02 s + 0.1) + 0.25)).
   const motor = system('DC motor');
-  motor.wires = motor.wires.map((w) => (w.to === 'ctrl:1' ? wire('motor', 'ctrl:1') : w));
+  motor.wires = motor.wires.map((w) => (w.to === 'ctrl:1' ? wire('motor:3', 'ctrl:1') : w));
   const speed = linearize(modelOf(normalizeDiagram(motor)));
-  assert.deepEqual(speed.states.map((s) => s.label), ['Motor/armature 1/(Ls + R)', 'Motor/rotor 1/(Js + b)']);
+  assert.deepEqual(speed.states.map((s) => s.label), ['Motor/armature 1/(L·s + R)', 'Motor/rotor 1/Jm']);
   const sf = firstOrderFit(speed);
   close(sf.K, 5 / 3.5, 1e-9, 'K');
   close(sf.tau, 0.21 / 3.5, 1e-9, 'τ');
@@ -119,7 +119,7 @@ test('linearize and the first-order fit: exact on a lag; mean residence time on 
   assert.equal(firstOrderFit(linearize(modelOf(system('Conical')), { y: [0.45] })).theta, 0.1);
 
   // The motor's angle integrates: no static gain, so no pole cancellation.
-  refusal(() => firstOrderFit(linearize(modelOf(system('DC motor')))), 'integrating-plant', /angle integrates V/);
+  refusal(() => firstOrderFit(linearize(modelOf(system('DC motor')))), 'integrating-plant', /θ measured integrates V/);
 
   // The cart–pole at the origin: C is the identity (states and measurements are x, θ, v, ω), D = 0.
   const cp = linearize(modelOf(system('Pendulum swing-up')));
@@ -214,13 +214,12 @@ test('a stiff plant (the encoder: a 70 Hz shaft and a 1 ms filter beside a slow 
   f.forEach((v, i) => assert.ok(Math.abs(v) < 1e-7, `${enc.states[i].label} moves at ${v}`));
   // The ripple torque, 0.05 sin(6θ), pushes the rotor away from θ = 0: the
   // path from V to the speed is unstable there, and pole cancellation says so.
-  refusal(() => firstOrderFit(linearize(enc, 'origin')), 'unstable-plant', /^the path from V to speed from angle is unstable: a pole at 11\.4 rad\/s$/);
+  refusal(() => firstOrderFit(linearize(enc, 'origin')), 'unstable-plant', /^the path from V to ω measured is unstable: a pole at 11\.4 rad\/s$/);
   // Without it the angle's integrator is cancelled by the derivative after
   // it (a pole and a zero at s = 0): the speed has a static gain,
   // 20/3 V⁻¹·rad/s through the motor times the encoder's slope there.
   const d = raw('Encoder');
-  d.blocks = d.blocks.filter((b) => b.id !== 'ripple' && b.id !== 'rough');
-  d.wires = d.wires.filter((w) => !/^(ripple|rough)/.test(w.from) && !/^(ripple|rough)/.test(w.to));
+  Object.assign(d.blocks.find((b) => b.id === 'motor').params, { ripple: 0, torqueNoise: 0 });
   const smooth = modelOf(normalizeDiagram(d));
   const lin = linearize(smooth, 'origin');
   const slope = lin.C[0][4] / 1000 / 439.8 ** 2;
@@ -229,5 +228,5 @@ test('a stiff plant (the encoder: a 70 Hz shaft and a 1 ms filter beside a slow 
   assert.ok(fit.tau > 0.05 && fit.tau < 0.1, `τ ${fit.tau}`);
   assert.ok(Math.abs(slope - 1.0284) < 1e-3, `the encoder's slope ${slope}`);
   // The motor's angle alone still integrates.
-  refusal(() => firstOrderFit(linearize(modelOf(system('DC motor')))), 'integrating-plant', /angle integrates V/);
+  refusal(() => firstOrderFit(linearize(modelOf(system('DC motor')))), 'integrating-plant', /θ measured integrates V/);
 });

@@ -570,6 +570,8 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .pf { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: var(--space-1) var(--space-4); }
 .pf > .hint { grid-column: 2; }
 .pf > .hint:empty { display: none; }
+.pf-under { padding-left: var(--space-4); }
+.pf-toggle > .btn { grid-column: 1 / -1; justify-self: start; }
 .pf > .field { width: 100%; }
 .pf > .btn { justify-self: start; }
 .pbtns { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-3) 0; }
@@ -585,6 +587,7 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .pdiag .t-inport .body, .pdiag .t-outport .body { fill: var(--surface-2); }
 .pdiag .blk.sel .body { stroke: var(--accent-ink); stroke-width: 2.6; }
 .pdiag .blk.err .body { stroke: var(--bad); stroke-width: 2.4; }
+.pdiag .blk.off { opacity: var(--disabled); }
 .pdiag text { fill: var(--ink); font-family: var(--font-ui); pointer-events: none; }
 .pdiag .bt { font-size: var(--text-md); font-weight: 600; }
 .pdiag .bt.sig { fill: var(--ink-on-lit); font-family: var(--font-mono); }

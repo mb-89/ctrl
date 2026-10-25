@@ -19,7 +19,7 @@ Reader: whoever builds or changes the benchmark ([../output/benchmark.md](../out
 **What this means for the benchmark.**
 - The marks come from measured numbers, so "better" needs a tolerance: within it, S. Without one, a 0.1 % difference would be a +.
 - The datum matters: a weak datum makes everything +. A badly tuned running variant (the oven's, J 1.28) is a weak datum; a PID tuned by the same procedure as the others is a strong one.
-- The second round (the winner as datum) is Pugh's iteration in its simplest mechanical form; the hybrids of step 5 (combine two concepts) are left to the person.
+- Iterating (step 6) and the hybrids (step 5) are left to the person: the benchmark makes one matrix against one datum, the tuned PID (the person, input 48: "set a good datum and then the others are either plus or minus one … Don't make it too complicated"). Running it again after a change is the iteration.
 - Hard requirements are not criteria: a concept that fails one is out, not "−". In controls: a loop that diverges, or is unstable where it runs.
 
 ## 2. How control benchmarks judge controllers
