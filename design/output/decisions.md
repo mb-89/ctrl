@@ -2,6 +2,17 @@
 
 Reader: anyone who wants to know why something is the way it is. Newest first. "Interpretation" marks a choice we made where the person's words left it open; ask the person before reversing one silently.
 
+## 2026-10-25 · v2.9, Identify: the tab (§18 step 6)
+
+Built on branch `feat/identify-tab` from [identification.md](identification.md) §4 (no new words from the person; [§4.1](identification.md#41-built-step-6) has the details):
+
+- **`identifyRun`, one generator for the page and Node.** Interpretation of "the same code in simulation, the live worker and Node": the page does not reimplement `identify()`; it steps the same generator at the header's Speed, and fits at the pause before the next sample (in slices, while plant time stands), so a run in the page and `identify()` give the same record and model, the same JSON text.
+- **The Check's prediction is replayed as the fits replay** (`predictCheck`, from the last rest fitted, under the logged laws). Interpretation of §5.7 "the model … replayed with the incumbent's law": the incumbent alone, from where the plant is at the Check's start, missed the oven's measured Check by 3 °C (rms 1.6 °C); as built the prediction is the final Check replay to 1e-8 (rms 0.09 °C against the measurement).
+- **y and u go onto channels 3 and 4 only when no channel shows either** (§4: "if no channel shows the block's y or u"); the change is part of the run's undo step, and Keep is a step of its own.
+- **Add as variant does not run the variant**: interpretation, as Auto-tune's results that score worse are added; the eased-in PI is the gentlest that held, not a better one.
+- **The model shown** is the last test (memory only) until the plant's blocks change (a variant's edit does not drop it, so Add as variant keeps it), else the kept test in use.
+- **The tab says a live plant comes next** (step 7) rather than starting.
+
 ## 2026-10-25 · Identify, review fixes: the model, the file and the command line (after steps 0–5)
 
 The design review's conformance findings and the experiment review's sentence findings, fixed (no new words from the person):

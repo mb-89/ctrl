@@ -264,12 +264,19 @@ export function createRecord(app, display) {
     $('rc-back')?.addEventListener('click', () => step(-1));
     $('rc-fwd')?.addEventListener('click', () => step(1));
   }
-  function addReference(text, name) {
-    const tr = parseTrace(text);
+  function addReference(text, name) { return addTrace(parseTrace(text), name); }
+  // A trace { t, signals } as a reference; at: a time of it to bring onto the
+  // screen (the step that shows it); quiet: no toast (Identify's own).
+  function addTrace(tr, name, { at = null, quiet = false } = {}) {
     if (tr.t.length < 1) throw new Error('no samples');
     const r = { name, ...tr, t0: tr.t[0], t1: tr.t[tr.t.length - 1], step: 0, shift: null };
     refs.push(r);
+    if (at !== null) {
+      const [w0, w1] = windowOf(), W = Math.max(w1 - w0, 1e-9);
+      r.step = Math.floor((at + refShift(r.t0, r.t1, w0, W) - w0) / W + 1e-9);
+    }
     placeRefs();
+    if (quiet) return Object.keys(tr.signals);
     const all = Object.keys(tr.signals), shown = all.filter((nm) => app.project.scope.channels.some((c) => c.on && c.source === nm));
     const where = r.part[1] < r.part[0] ? '' : `, ${partText(r)}${r.range[0] < r.range[1] ? ' (◀ ▶ move through it)' : ''}`;
     app.toast(shown.length ? `Reference “${name}”: ${listed(shown)} dashed on the scope${where}${shown.length < all.length ? `; ${listed(all.filter((x) => !shown.includes(x)))} not on a channel` : ''}`
@@ -303,6 +310,20 @@ export function createRecord(app, display) {
       screenshot: async () => { const blob = await screenshot(); return new Promise((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsDataURL(blob); }); },
       reference: (text, name = 'reference') => addReference(text, name),
       clearReferences: () => { refs.length = 0; display.setRefs([]); renderRefs(); },
+      // Identify's references (ui/identify.js): added without a toast, and
+      // removed by name when a new test replaces them.
+      trace: (tr, name, opts) => addTrace(tr, name, { quiet: true, ...opts }),
+      removeReferences: (match) => { for (let i = refs.length - 1; i >= 0; i--) if (match(refs[i].name)) refs.splice(i, 1); placeRefs(); },
+      // Brings time `at` of the reference `name` onto the screen.
+      showReference: (name, at) => {
+        const r = refs.find((x) => x.name === name);
+        if (!r) return false;
+        const [w0, w1] = windowOf(), W = Math.max(w1 - w0, 1e-9);
+        const step = Math.floor((at + refShift(r.t0, r.t1, w0, W) - w0) / W + 1e-9);
+        for (const x of refs) x.step = step;
+        placeRefs();
+        return true;
+      },
       state: () => ({ recorded: rec.span(), seconds, signals: [...rec.names], references: refs.map((r) => ({ name: r.name, shown: r.part })) }),
     },
   };

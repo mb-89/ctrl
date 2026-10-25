@@ -1267,19 +1267,24 @@ export function varyDiagram(diagram, share, seed) {
   return { diagram: d, factors };
 }
 
-// ---- The whole test in Node (§16)
+// ---- The whole test on a simulated plant (§16)
 
-// The whole test on a simulated plant, synchronously, for Node, the command
-// line and the tests: the experiment runs as the hidden law of the block in a
-// copy of the diagram (createStepRunner), the r Source plays its reference,
-// every other Source is held; the fit is supplied at once at the pause, and
-// the model is computed from the record as Keep stores it. settings: { band,
-// budget, vary: { share, seed } | null, structure, seed }, over the stored
-// ones (system.identify[key]). Returns { ok, block, plan, settings, vary,
-// record, model, end, time, tries }.
-export function identify(project, path = null, settings = {}) {
+// The whole test on a simulated plant, as a generator, for the page and for
+// Node: the experiment runs as the hidden law of the block in a copy of the
+// diagram (createStepRunner), the r Source plays its reference, every other
+// Source is held; at the fit pause the record so far is fitted (as Keep
+// stores it) and supplied before the next sample, so the record does not
+// depend on how long the fit takes; then the model from the record. It
+// yields { kind: 'sample', k, t, values } once per controller sample (plant
+// time passes; values in the order of run.names) and { kind: 'fit', stage:
+// 'pause' | 'model' } while it fits (no plant time passes), and returns what
+// identify() returns. run.exp is the experiment (its state for the page),
+// run.stop() asks for its soft Stop. settings: { band, budget, vary: {
+// share, seed } | null, structure, seed }, over the stored ones
+// (system.identify[key]).
+export function identifyRun(project, path = null, settings = {}) {
   const known = knownFor(project, path);
-  if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: it is identified in the page while connected, which comes with the Identify tab (not built yet)', 'identify() simulates the plant; a live plant runs in the page');
+  if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: it is identified in the page while connected', 'identify() simulates the plant; a live plant runs in the page');
   const stored = project.system.identify?.[known.block.key] ?? {};
   const given = Object.fromEntries(Object.entries(settings ?? {}).filter(([, v]) => v !== undefined));
   const merged = { ...stored, ...given };
@@ -1301,22 +1306,144 @@ export function identify(project, path = null, settings = {}) {
   exp = runner.law(known.block.key).experiment;
   const most = Math.ceil((plan.budget + EXPERIMENT.pause.wait + 10) / Ts);
   let pre = null;
-  for (let k = 0; k <= most && !exp.state.done; k++) {
-    runner.step();
-    if (exp.needs) {
-      // The fit pause: fitted at once on the data so far, as Keep stores it.
-      const upto = exp.needs.upto;
-      pre = drain(identifySteps(compactRecord(exp.record()), { plan, upto }));
-      exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+  function* steps() {
+    for (let k = 0; k <= most && !exp.state.done; k++) {
+      const v = runner.step();
+      yield { kind: 'sample', k: v.k, t: v.t, values: v.values };
+      if (exp.needs) {
+        // The fit pause: fitted at once on the data so far, as Keep stores it.
+        const upto = exp.needs.upto;
+        pre = yield* tagged(identifySteps(compactRecord(exp.record()), { plan, upto }), 'pause');
+        exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+      }
+    }
+    if (!exp.state.done) exp.stop();
+    const record = compactRecord(exp.record());
+    const model = yield* tagged(identifySteps(record, { plan, structure: s.structure, reuse: pre }), 'model');
+    const end = exp.state.end;
+    return {
+      ok: !!model.ok, block: known.block, plan, settings: { band: s.band.value, budget: s.budget.value, structure: s.structure },
+      vary: vary ? { share: vary.share, seed: vary.seed, factors } : null,
+      record, model, end: { code: end.code, message: end.message }, time: record.y.length * Ts, tries: exp.state.tries,
+    };
+  }
+  // pre: the model fitted at the pause (the page draws the Check's prediction from it).
+  return { known, plan, settings: s, vary, factors, runner, exp, names: runner.names(), steps: steps(), stop: () => exp.stop(), get pre() { return pre; } };
+}
+
+function* tagged(gen, stage) {
+  for (;;) { const s = gen.next(); if (s.done) return s.value; yield { kind: 'fit', stage }; }
+}
+
+// The whole test on a simulated plant, synchronously, for Node, the command
+// line and the tests (identifyRun to its end). Returns { ok, block, plan,
+// settings, vary, record, model, end, time, tries }.
+export function identify(project, path = null, settings = {}) {
+  return drain(identifyRun(project, path, settings).steps);
+}
+
+// ---- What the page draws from a model (§4, §5.7)
+
+// The model's 50 parameter samples (§6.5), for the bands.
+export function modelSamples(model, count = 50) {
+  if (!model?.structure) return [];
+  return parameterSamples(model.structure, model.params, model.cov, model.Ts, count);
+}
+
+// The Check's prediction, drawn before it runs (§5.7), replayed as the
+// fits replay the record (§6.1): from the last rest the model was fitted
+// from (the start of its last closed-loop segment), under the laws the log
+// names, fed the model's own y, through the record so far and on into the
+// Check's reference r (samples at Ts from the record index `at` where it
+// starts). record: the record so far. Returns { y, lo, hi } from `at` on:
+// the prediction and its 2σ band from the parameter samples.
+export function predictCheck(model, record, { at, r }) {
+  const Ts = model.Ts, N = r.length;
+  const w = Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9));
+  const a = Math.min(at, model.segments?.closed?.at(-1)?.[0] ?? at);
+  // Ahead, y is a placeholder (only the law runs there, on the model's y).
+  const ahead = { ...record, y: [...record.y.slice(0, at), ...new Array(N).fill(0)], u: [...record.u.slice(0, at), ...new Array(N).fill(0)], r: [...record.r.slice(0, at), ...r], applied: [] };
+  const g = readLog(record);
+  const seg = closedSegment(ahead, g.laws, a, at + N, w, 'check');
+  const fs = fitSegment(ahead, seg, g.listen, Ts);
+  const run = (p) => {
+    try { return simulateSegment(discretise(model.structure, p, Ts), fs).y.subarray(at - a); } catch { return null; }
+  };
+  const y = run(model.params);
+  return { y, ...spreadOf(modelSamples(model).map(run).filter(Boolean), y) };
+}
+
+// The 2σ band of a set of curves about the nominal one: their standard
+// deviation at each point, twice, either side.
+function spreadOf(curves, y) {
+  const lo = new Float64Array(y.length), hi = new Float64Array(y.length);
+  for (let k = 0; k < y.length; k++) {
+    let ss = 0, n = 0;
+    for (const c of curves) if (finite(c[k])) { ss += (c[k] - y[k]) ** 2; n++; }
+    const b = n ? 2 * Math.sqrt(ss / n) : 0;
+    lo[k] = y[k] - b; hi[k] = y[k] + b;
+  }
+  return { lo, hi };
+}
+
+// The model's step response to one unit of u, from rest, over `seconds`,
+// with its 2σ band (the Step plot).
+export function modelStep(model, seconds) {
+  const Ts = model.Ts, N = Math.max(2, Math.ceil(seconds / Ts) + 1);
+  const run = (p) => { try { return simulateSegment(discretise(model.structure, p, Ts), { u: new Float64Array(N).fill(1), yStart: 0, uStart: 0, n: N }).y; } catch { return null; } };
+  const y = run(model.params);
+  const t = Float64Array.from({ length: N }, (_, k) => k * Ts);
+  return { t, y, ...spreadOf(modelSamples(model).map(run).filter(Boolean), y) };
+}
+
+// The model's frequency response at angular frequencies w (rad/s), as the
+// sampled loop sees it (the discretised model, zero-order hold and dead time
+// included: §6.7), with the magnitude's 2σ band. Returns { w, mag, phase
+// (degrees, unwrapped), lo, hi }.
+export function modelBode(model, w) {
+  const Ts = model.Ts;
+  const resp = (p) => {
+    let d;
+    try { d = discretise(model.structure, p, Ts); } catch { return null; }
+    return w.map((om) => discreteAt(d, om * Ts));
+  };
+  const g = resp(model.params);
+  const mag = g.map((z) => Math.hypot(z[0], z[1]));
+  const phase = [];
+  let last = 0;
+  g.forEach((z, i) => { let ph = (Math.atan2(z[1], z[0]) * 180) / Math.PI; if (i) while (ph - last > 180) ph -= 360; if (i) while (ph - last < -180) ph += 360; phase.push(ph); last = ph; });
+  const curves = modelSamples(model).map(resp).filter(Boolean).map((c) => c.map((z) => Math.hypot(z[0], z[1])));
+  const { lo, hi } = spreadOf(curves, Float64Array.from(mag));
+  return { w, mag, phase, lo, hi };
+}
+
+// G_d(e^{jΩ}) of a discretised model (fit.js discretise: x⁺ = Φx + G0·Δu[k−m]
+// + G1·Δu[k−m−1], y = Cx): C (zI − Φ)⁻¹ (G0 + G1 z⁻¹) z⁻ᵐ, as [re, im].
+function discreteAt(d, Om) {
+  const n = d.n, zr = Math.cos(Om), zi = Math.sin(Om);
+  // (zI − Φ) as a complex matrix, solved for (G0 + G1/z) by Gaussian elimination.
+  const ar = d.Phi.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v)), ai = d.Phi.map((row, i) => row.map((_, j) => (i === j ? zi : 0)));
+  const iz = [Math.cos(-Om), Math.sin(-Om)];
+  const br = d.G0.map((g0, i) => g0 + d.G1[i] * iz[0]), bi = d.G1.map((g1) => g1 * iz[1]);
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.hypot(ar[r][c], ai[r][c]) > Math.hypot(ar[piv][c], ai[piv][c])) piv = r;
+    [ar[c], ar[piv]] = [ar[piv], ar[c]]; [ai[c], ai[piv]] = [ai[piv], ai[c]]; [br[c], br[piv]] = [br[piv], br[c]]; [bi[c], bi[piv]] = [bi[piv], bi[c]];
+    const pr = ar[c][c], pi = ai[c][c], den = pr * pr + pi * pi;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const fr = (ar[r][c] * pr + ai[r][c] * pi) / den, fi = (ai[r][c] * pr - ar[r][c] * pi) / den;
+      for (let j = c; j < n; j++) { const xr = ar[c][j], xi = ai[c][j]; ar[r][j] -= fr * xr - fi * xi; ai[r][j] -= fr * xi + fi * xr; }
+      const xr = br[c], xi = bi[c]; br[r] -= fr * xr - fi * xi; bi[r] -= fr * xi + fi * xr;
     }
   }
-  if (!exp.state.done) exp.stop();
-  const record = compactRecord(exp.record());
-  const model = drain(identifySteps(record, { plan, structure: s.structure, reuse: pre }));
-  const end = exp.state.end;
-  return {
-    ok: !!model.ok, block: known.block, plan, settings: { band: s.band.value, budget: s.budget.value, structure: s.structure },
-    vary: vary ? { share: vary.share, seed: vary.seed, factors } : null,
-    record, model, end: { code: end.code, message: end.message }, time: record.y.length * Ts, tries: exp.state.tries,
-  };
+  let sr = 0, si = 0;
+  for (let c = 0; c < n; c++) {
+    const pr = ar[c][c], pi = ai[c][c], den = pr * pr + pi * pi;
+    const xr = (br[c] * pr + bi[c] * pi) / den, xi = (bi[c] * pr - br[c] * pi) / den;
+    sr += d.C[c] * xr; si += d.C[c] * xi;
+  }
+  // z⁻ᵐ
+  const mr = Math.cos(-d.m * Om), mi = Math.sin(-d.m * Om);
+  return [sr * mr - si * mi, sr * mi + si * mr];
 }

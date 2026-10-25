@@ -731,6 +731,37 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
 .tustatus { flex: 0 0 auto; min-height: 18px; }
 .tuplot { display: block; width: 100%; height: 118px; flex: 0 0 auto; border-radius: var(--radius-sm); background: var(--screen); }
 
+/* Identify tab: what we know | experiment | model | check (ui/identify.js) */
+.ident { display: grid; grid-template-columns: minmax(200px, 260px) minmax(220px, 280px) minmax(240px, 1fr) minmax(260px, 1fr); gap: var(--space-7); align-items: stretch; height: 100%; min-height: 0; }
+.ident > .gcol { min-height: 0; overflow: auto; }
+.ident .seg { align-self: flex-start; flex-wrap: wrap; }
+.idknown { display: flex; flex-direction: column; gap: var(--space-3); }
+.idrow { font-size: var(--text-sm); line-height: 1.35; overflow-wrap: anywhere; }
+.idpf { display: flex; flex-direction: column; gap: var(--space-1); }
+.idpair { display: flex; align-items: center; gap: var(--space-2); color: var(--ink-3); }
+.idpair .field { width: 0; flex: 1 1 60px; text-align: right; }
+.idchips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.idchips:empty { display: none; }
+.idchip { pointer-events: none; }
+.idmeters { display: flex; flex-direction: column; gap: var(--space-2); }
+.idmeter { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); }
+.idbar { position: relative; display: block; height: var(--space-4); border-radius: var(--radius-sm); background: var(--lcd); overflow: hidden; }
+.idfill { position: absolute; left: 0; top: 0; bottom: 0; }
+.idfill-push { background: var(--ch-4); }
+.idfill-room { background: var(--ch-3); }
+.idmax { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--screen-ink); }
+.idmark { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--screen-label); }
+.idrange { margin-top: var(--space-1); }
+.idstart { width: 3px; margin-left: -1px; background: var(--ch-4); }
+.idstrip { display: block; width: 100%; height: 64px; flex: 0 0 auto; border-radius: var(--radius-sm); background: var(--screen); cursor: pointer; }
+.idsent { margin: 0; padding-left: var(--space-6); font-size: var(--text-base); line-height: 1.4; }
+.idsent li + li { margin-top: var(--space-1); }
+.idchain { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-xs); color: var(--ink-3); }
+.idchain .chip { color: var(--ink); }
+.idcands .item { display: flex; justify-content: space-between; gap: var(--space-4); }
+.idkeys { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.idplot { display: block; width: 100%; height: 220px; flex: 0 0 auto; border-radius: var(--radius-sm); background: var(--screen); }
+
 /* Analysis tab: key numbers at the left, four plots in the scope's style */
 .an { display: grid; grid-template-columns: minmax(230px, 290px) 1fr; gap: var(--space-6); height: 100%; min-height: 0; }
 .an-side { overflow: auto; min-height: 0; }
@@ -789,6 +820,8 @@ button.tag[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--surface-2), 0 0 0 
   .ctl > .gcol { overflow: visible; }
   .tune { grid-template-columns: minmax(0, 1fr); height: auto; }
   .tune > .tuprogress { order: -1; }
+  .ident { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .ident > .idexp { order: -1; }
   .an { grid-template-columns: 1fr; }
   .an-grid { grid-template-columns: 1fr; }
 }

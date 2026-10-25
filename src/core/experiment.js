@@ -414,7 +414,7 @@ export function createExperiment(plan) {
   const st = {
     stage: 'listen', rung: 0, try: 0, push: 0, pushMax: 0, room: 0, roomMax: 0, status: '', tries: [],
     marks: { push: [null, null], room: [E.nudge.room, E.nudge.backoff] },
-    t: 0, budget: P.budget, done: false, end: null, stop: false,
+    t: 0, budget: P.budget, done: false, end: null, stop: false, checkAt: null,
   };
   const now = () => (k - k0) * Ts;
   const left = () => P.budget - now();
@@ -1089,6 +1089,9 @@ export function createExperiment(plan) {
     if (s === 'left') return endBand(`${names.y} left 'may move within' before the Check: the page stopped the plant`);
     const iS = i, kS = k, N = check.length;
     rFn = (kk) => check[Math.min(N - 1, kk - kS)];
+    // Where the Check's reference starts (record index): the page draws the
+    // model's prediction from here (§5.7).
+    st.checkAt = iS;
     while (k - kS < N) {
       if (!holds()) return endBand(`${names.y} left 'may move within' during the Check: the page stopped the plant`, { check: { i0, iStart: iS } });
       const u = law.step(r, y);

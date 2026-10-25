@@ -5257,7 +5257,7 @@ function createExperiment(plan) {
   const st = {
     stage: 'listen', rung: 0, try: 0, push: 0, pushMax: 0, room: 0, roomMax: 0, status: '', tries: [],
     marks: { push: [null, null], room: [E.nudge.room, E.nudge.backoff] },
-    t: 0, budget: P.budget, done: false, end: null, stop: false,
+    t: 0, budget: P.budget, done: false, end: null, stop: false, checkAt: null,
   };
   const now = () => (k - k0) * Ts;
   const left = () => P.budget - now();
@@ -5790,6 +5790,7 @@ function createExperiment(plan) {
     if (s === 'left') return endBand(`${names.y} left 'may move within' before the Check: the page stopped the plant`);
     const iS = i, kS = k, N = check.length;
     rFn = (kk) => check[Math.min(N - 1, kk - kS)];
+    st.checkAt = iS;
     while (k - kS < N) {
       if (!holds()) return endBand(`${names.y} left 'may move within' during the Check: the page stopped the plant`, { check: { i0, iStart: iS } });
       const u = law.step(r, y);
@@ -12928,7 +12929,7 @@ function normalizeIdentify(raw) {
 }
 
 const UI_RUN = ['run', 'stop', 'single'];
-const UI_TABS = ['input', 'plant', 'controller', 'tune', 'analysis'];
+const UI_TABS = ['input', 'plant', 'controller', 'identify', 'tune', 'analysis'];
 function normalizeUi(ui) {
   if (!ui || typeof ui !== 'object') return null;
   const out = {};
@@ -17798,9 +17799,9 @@ function varyDiagram(diagram, share, seed) {
 }
 
 
-function identify(project, path = null, settings = {}) {
+function identifyRun(project, path = null, settings = {}) {
   const known = knownFor(project, path);
-  if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: it is identified in the page while connected, which comes with the Identify tab (not built yet)', 'identify() simulates the plant; a live plant runs in the page');
+  if (known.live) throw new IdentifyError('live', 'this plant runs outside the page: it is identified in the page while connected', 'identify() simulates the plant; a live plant runs in the page');
   const stored = project.system.identify?.[known.block.key] ?? {};
   const given = Object.fromEntries(Object.entries(settings ?? {}).filter(([, v]) => v !== undefined));
   const merged = { ...stored, ...given };
@@ -17822,26 +17823,122 @@ function identify(project, path = null, settings = {}) {
   exp = runner.law(known.block.key).experiment;
   const most = Math.ceil((plan.budget + EXPERIMENT.pause.wait + 10) / Ts);
   let pre = null;
-  for (let k = 0; k <= most && !exp.state.done; k++) {
-    runner.step();
-    if (exp.needs) {
-      const upto = exp.needs.upto;
-      pre = drain(identifySteps(compactRecord(exp.record()), { plan, upto }));
-      exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+  function* steps() {
+    for (let k = 0; k <= most && !exp.state.done; k++) {
+      const v = runner.step();
+      yield { kind: 'sample', k: v.k, t: v.t, values: v.values };
+      if (exp.needs) {
+        const upto = exp.needs.upto;
+        pre = yield* tagged(identifySteps(compactRecord(exp.record()), { plan, upto }), 'pause');
+        exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+      }
     }
+    if (!exp.state.done) exp.stop();
+    const record = compactRecord(exp.record());
+    const model = yield* tagged(identifySteps(record, { plan, structure: s.structure, reuse: pre }), 'model');
+    const end = exp.state.end;
+    return {
+      ok: !!model.ok, block: known.block, plan, settings: { band: s.band.value, budget: s.budget.value, structure: s.structure },
+      vary: vary ? { share: vary.share, seed: vary.seed, factors } : null,
+      record, model, end: { code: end.code, message: end.message }, time: record.y.length * Ts, tries: exp.state.tries,
+    };
   }
-  if (!exp.state.done) exp.stop();
-  const record = compactRecord(exp.record());
-  const model = drain(identifySteps(record, { plan, structure: s.structure, reuse: pre }));
-  const end = exp.state.end;
-  return {
-    ok: !!model.ok, block: known.block, plan, settings: { band: s.band.value, budget: s.budget.value, structure: s.structure },
-    vary: vary ? { share: vary.share, seed: vary.seed, factors } : null,
-    record, model, end: { code: end.code, message: end.message }, time: record.y.length * Ts, tries: exp.state.tries,
-  };
+  return { known, plan, settings: s, vary, factors, runner, exp, names: runner.names(), steps: steps(), stop: () => exp.stop(), get pre() { return pre; } };
 }
 
-return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, identifySteps, linearModel, twinSubsystem, varyDiagram, identify };
+function* tagged(gen, stage) {
+  for (;;) { const s = gen.next(); if (s.done) return s.value; yield { kind: 'fit', stage }; }
+}
+
+function identify(project, path = null, settings = {}) {
+  return drain(identifyRun(project, path, settings).steps);
+}
+
+
+function modelSamples(model, count = 50) {
+  if (!model?.structure) return [];
+  return parameterSamples(model.structure, model.params, model.cov, model.Ts, count);
+}
+
+function predictCheck(model, record, { at, r }) {
+  const Ts = model.Ts, N = r.length;
+  const w = Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9));
+  const a = Math.min(at, model.segments?.closed?.at(-1)?.[0] ?? at);
+  const ahead = { ...record, y: [...record.y.slice(0, at), ...new Array(N).fill(0)], u: [...record.u.slice(0, at), ...new Array(N).fill(0)], r: [...record.r.slice(0, at), ...r], applied: [] };
+  const g = readLog(record);
+  const seg = closedSegment(ahead, g.laws, a, at + N, w, 'check');
+  const fs = fitSegment(ahead, seg, g.listen, Ts);
+  const run = (p) => {
+    try { return simulateSegment(discretise(model.structure, p, Ts), fs).y.subarray(at - a); } catch { return null; }
+  };
+  const y = run(model.params);
+  return { y, ...spreadOf(modelSamples(model).map(run).filter(Boolean), y) };
+}
+
+function spreadOf(curves, y) {
+  const lo = new Float64Array(y.length), hi = new Float64Array(y.length);
+  for (let k = 0; k < y.length; k++) {
+    let ss = 0, n = 0;
+    for (const c of curves) if (finite(c[k])) { ss += (c[k] - y[k]) ** 2; n++; }
+    const b = n ? 2 * Math.sqrt(ss / n) : 0;
+    lo[k] = y[k] - b; hi[k] = y[k] + b;
+  }
+  return { lo, hi };
+}
+
+function modelStep(model, seconds) {
+  const Ts = model.Ts, N = Math.max(2, Math.ceil(seconds / Ts) + 1);
+  const run = (p) => { try { return simulateSegment(discretise(model.structure, p, Ts), { u: new Float64Array(N).fill(1), yStart: 0, uStart: 0, n: N }).y; } catch { return null; } };
+  const y = run(model.params);
+  const t = Float64Array.from({ length: N }, (_, k) => k * Ts);
+  return { t, y, ...spreadOf(modelSamples(model).map(run).filter(Boolean), y) };
+}
+
+function modelBode(model, w) {
+  const Ts = model.Ts;
+  const resp = (p) => {
+    let d;
+    try { d = discretise(model.structure, p, Ts); } catch { return null; }
+    return w.map((om) => discreteAt(d, om * Ts));
+  };
+  const g = resp(model.params);
+  const mag = g.map((z) => Math.hypot(z[0], z[1]));
+  const phase = [];
+  let last = 0;
+  g.forEach((z, i) => { let ph = (Math.atan2(z[1], z[0]) * 180) / Math.PI; if (i) while (ph - last > 180) ph -= 360; if (i) while (ph - last < -180) ph += 360; phase.push(ph); last = ph; });
+  const curves = modelSamples(model).map(resp).filter(Boolean).map((c) => c.map((z) => Math.hypot(z[0], z[1])));
+  const { lo, hi } = spreadOf(curves, Float64Array.from(mag));
+  return { w, mag, phase, lo, hi };
+}
+
+function discreteAt(d, Om) {
+  const n = d.n, zr = Math.cos(Om), zi = Math.sin(Om);
+  const ar = d.Phi.map((row, i) => row.map((v, j) => (i === j ? zr : 0) - v)), ai = d.Phi.map((row, i) => row.map((_, j) => (i === j ? zi : 0)));
+  const iz = [Math.cos(-Om), Math.sin(-Om)];
+  const br = d.G0.map((g0, i) => g0 + d.G1[i] * iz[0]), bi = d.G1.map((g1) => g1 * iz[1]);
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.hypot(ar[r][c], ai[r][c]) > Math.hypot(ar[piv][c], ai[piv][c])) piv = r;
+    [ar[c], ar[piv]] = [ar[piv], ar[c]]; [ai[c], ai[piv]] = [ai[piv], ai[c]]; [br[c], br[piv]] = [br[piv], br[c]]; [bi[c], bi[piv]] = [bi[piv], bi[c]];
+    const pr = ar[c][c], pi = ai[c][c], den = pr * pr + pi * pi;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const fr = (ar[r][c] * pr + ai[r][c] * pi) / den, fi = (ai[r][c] * pr - ar[r][c] * pi) / den;
+      for (let j = c; j < n; j++) { const xr = ar[c][j], xi = ai[c][j]; ar[r][j] -= fr * xr - fi * xi; ai[r][j] -= fr * xi + fi * xr; }
+      const xr = br[c], xi = bi[c]; br[r] -= fr * xr - fi * xi; bi[r] -= fr * xi + fi * xr;
+    }
+  }
+  let sr = 0, si = 0;
+  for (let c = 0; c < n; c++) {
+    const pr = ar[c][c], pi = ai[c][c], den = pr * pr + pi * pi;
+    const xr = (br[c] * pr + bi[c] * pi) / den, xi = (bi[c] * pr - br[c] * pi) / den;
+    sr += d.C[c] * xr; si += d.C[c] * xi;
+  }
+  const mr = Math.cos(-d.m * Om), mi = Math.sin(-d.m * Om);
+  return [sr * mr - si * mi, sr * mi + si * mr];
+}
+
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, identify, modelSamples, predictCheck, modelStep, modelBode };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {
@@ -18077,6 +18174,8 @@ const GUIDE = {
     M('loopTuner.single()', '', 'Single: one sweep, then stop. Pressed while running, the sweep under way finishes, then it stops (live: then the plant stops).', 'loopTuner.single()', '{ ok, why, run, live }'),
     M('loopTuner.speed(x?)', 'x: a factor, or -1 for as fast as possible', 'How fast simulated time runs; held at 1 while a plant is connected.', 'loopTuner.speed(10)', '{ speed, effective, achieved, simulation, locked }'),
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
+    M('loopTuner.identify(opts?)', 'opts: { block (id path, default the first), band: [lo, hi], budget: seconds of plant time (30, 60, 120, 300, 600), vary: { share, seed } (a hidden variation of a simulated plant), keep }', 'Identifies the plant a Controller block drives, as the Identify tab\'s Start does: one experiment that eases in (Listen, Nudge, Hold, Ease in, Check) on a copy of the diagram at the header\'s Speed (speed(-1) for as fast as possible), then the model from its record. band, budget and vary are stored as the block\'s settings (one undo step); keep stores the record with the project.', 'await loopTuner.identify({ keep: true })', 'a promise of { ok, sentences, grade, why, structure, params, sd, chain, check: { fit, ceiling, kernel }, eased, candidates, where, warnings, end, time, tries, kept }'),
+    M('loopTuner.identified(block?)', 'block: a Controller block\'s id path', 'The model in use for the block: the last test run in the page, else its kept test in use; null while none (or while it is computed from a kept record).', 'loopTuner.identified("ctrl")?.sentences', 'the same report as identify(), or null'),
     M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
     M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter, a Luenberger observer\'s placed poles) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
     M('loopTuner.info()', '', 'What the screen\'s last run reported: validity reports (a model used outside where it holds), warnings (a stiff plant and the step it needs, a run made again because the plant grew stiffer, a signal that diverged, an input not connected), the integration step h, steps, the step bound (the blocks\' own and the Jacobian\'s largest eigenvalue at the start), the Jacobian\'s at the start and the end, and the run\'s ms. The status line under the screen shows the first report or warning.', 'loopTuner.info()', '{ validity, warnings, h, substeps, steps, bound, stiffness: { start, end }, ms } or null'),
