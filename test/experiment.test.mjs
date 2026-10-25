@@ -566,6 +566,14 @@ test('the sentences say what is true: noise against the room, an edge too near, 
   // r(0) at the band's edge.
   const edge = end(armPlan({ band: [-0.005, 2] }), createArm(drawArm(1), { Ts, seed: 1 }));
   assert.match(edge.message, /^angle starts 0\.00\d+ rad from the edge of 'may move within' \(its noise is .+\): widen it below -0\.005 rad, so the pushes have room both ways$/);
+  // A near-empty tank (drawn within ±15 %) moved 0.02 m at the smallest push:
+  // not "moves too little" (as first built) but the room, both ways to give it.
+  const base = libraryProject('Conical tank');
+  const tank = structuredClone(base);
+  tank.system.plant.diagram = varyDiagram(tank.system.plant.diagram, 0.15, 2).diagram;
+  const tk = knownFor(base);
+  const tankEnd = end(planExperiment(tk, identifySettings(base, null, { known: tk })), diagramPlant(tank, 'ctrl', { hold: { d: 0 }, noise: 0.001 }));
+  assert.match(tankEnd.message, /^h moved 0\.0\d+ m at pushes up to 0\.03 m³\/s, and a larger push could take it beyond half of 'may move within' \(.+ below where it rests\): widen it below -0\.0667 m, or narrow q's range in the Controller tab \(the pushes start at 1 % of it\)$/);
   // A gain of 1000: not a runaway.
   const far = end(plainPlan(), transferPlant(lag(1000, 0.5, 0), Ts, { noise: 0.001 }));
   assert.match(far.message, /^y moves too far at the smallest push \(0\.04, 1 % of u's range, took it to .+\): narrow u's range in the Controller tab, or widen 'may move within'$/);

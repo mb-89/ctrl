@@ -5917,6 +5917,11 @@ function createExperiment(plan) {
         const side = roomUp < roomDown ? `above ${yU(hi)}` : `below ${yU(lo)}`;
         return finish('room', `${names.y} starts ${yU(rMin)} from the edge of 'may move within' (its noise is ${yU(floor)}): widen it ${side}, so the pushes have room both ways`);
       }
+      const moved = rungs.filter((Q) => Q.seen).reduce((m, Q) => Math.max(m, Q.max), 0);
+      if (moved > 0 && why === 'room') {
+        const side = roomUp < roomDown ? 'above' : 'below';
+        return finish('room', `${names.y} moved ${yU(moved)} at pushes up to ${uU(R.a)}, and a larger push could take it beyond half of 'may move within' (${yU(rMin)} ${side} where it rests): widen it ${side === 'above' ? `above ${yU(hi)}` : `below ${yU(lo)}`}, or narrow ${names.u}'s range in the Controller tab (the pushes start at ${pct(E.nudge.a0)} of it)`);
+      }
       return finish('room', `${names.y} moves too little to read within half of 'may move within' (its noise is ${yU(floor)}): widen it`);
     }
     return null;
