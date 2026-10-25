@@ -90,6 +90,14 @@ The person, after the prototype ranked Hu–Lin first on "DC motor, deadbeat" wi
 - **"Measure it instead" by matching**: the sensor for an observer is the block output whose run matches the measured signal's rate within 5 %, so it works on the Servo motor main now has (the structure trace of the first prototype found no integrator there).
 - **Results**: sliding-mode motor, the boundary-layer sliding mode (+10, robust); oven, the PID, sensitive (the PI from the plant ties it, the feedforward ties if complexity's weight drops to 0.75); tank, keep the loaded schedule (robust); deadbeat motor, state feedback (+16, robust), Hu–Lin, LQR, the planned swing-up and the relay fail the main job.
 
+## 2026-10-25 · v2.9, Identify: the Shake tells a peak from lags
+
+From the orchestrating session's finding (arms 2 and 3 came out as two lags under the Shake, where forcing the resonance tuned ×1.13–1.14 instead of ×1.39–1.48) and [input 56](../input/2026-10-25-56-dead-time-vs-resonance-another-check.md)'s spirit ("there should be another check"); [§5.12](identification.md#512-built-step-8-the-shake) has the numbers:
+
+- **The cause was the design, not the choice**: the random-odd multisine had left out the line at the arm's peak and its period was too short for another nearby, so no point could rise. The lines nearest the pause's peak or corners are now always excited, and a peak sets the period (lines a fifth of its frequency apart).
+- **The points vote between close candidates**: within 3 points on the Check, the shape that follows the points' magnitude (gain and time scale refitted per place, so the arm's angle-dependent gain does not count) wins at 0.6 of the other's miss. Interpretation: magnitude only, since the friction blurs the phase; a clear margin, since an unclear call keeps the simpler shape.
+- Arm seed 1 stays two lags (0.16 against 0.18): reported, not forced.
+
 ## 2026-10-25 · v2.9, Identify: the docs sweep (§18 step 12)
 
 Built on branch `feat/identify-tab`; no new words from the person.

@@ -1044,9 +1044,11 @@ const oddNear = (x) => 2 * Math.round((x - 1) / 2) + 1;
 // harmonic at least r times the last, r chosen so they fit), then one in each
 // group of three consecutive candidates left out at random (seeded): those,
 // the odd harmonics between candidates and every even harmonic up to the
-// highest excited one are the detection lines. Returns { excited, detect:
-// { odd, even } }, harmonic numbers ascending.
-export function multisineLines({ N, kmax, kmin = 1, count = 60, seed = 1 } = {}) {
+// highest excited one are the detection lines. keep: odd harmonics that are
+// always candidates and never left out (where a shape fitted so far puts its
+// corner or peak). Returns { excited, detect: { odd, even } }, harmonic
+// numbers ascending.
+export function multisineLines({ N, kmax, kmin = 1, count = 60, seed = 1, keep = [] } = {}) {
   if (!(N >= 4) || N & (N - 1)) throw new Error('multisineLines: N must be a power of two ≥ 4');
   const top = Math.min(Math.floor(kmax), N / 2 - 1);
   const first = Math.max(1, Math.ceil(kmin) % 2 ? Math.ceil(kmin) : Math.ceil(kmin) + 1);   // the smallest odd harmonic ≥ kmin
@@ -1067,10 +1069,14 @@ export function multisineLines({ N, kmax, kmin = 1, count = 60, seed = 1 } = {})
     for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; if (quasiLog(Math.exp(mid)).length > target) lo = mid; else hi = mid; }
     cand = quasiLog(Math.exp(hi));
   }
+  const kept = new Set(keep.filter((k) => k % 2 === 1 && k >= first && k <= top));
+  if (kept.size) cand = [...new Set([...cand, ...kept])].sort((a, b) => a - b);
   const rnd = seeded(seed), excited = [];
   for (let i = 0; i < cand.length; i += 3) {
     const group = cand.slice(i, i + 3);
-    const out = group.length === 3 ? Math.floor(rnd() * 3) : -1;
+    let out = group.length === 3 ? Math.floor(rnd() * 3) : -1;
+    // A kept line stays: the next one in the group goes instead, if any may.
+    for (let t = 0; out >= 0 && kept.has(group[out]) && t < 3; t++) out = t === 2 ? -1 : (out + 1) % 3;
     group.forEach((k, j) => { if (j !== out) excited.push(k); });
   }
   const on = new Set(excited), last = excited[excited.length - 1];
