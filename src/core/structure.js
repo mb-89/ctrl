@@ -355,7 +355,75 @@ function generic(v, def) {
   return s.done();
 }
 
-const LAYOUTS = { pid, gainScheduled, stateFeedback, swingUp, relay, off, kalman: (p, o) => estimator(p, o, 'kalman'), luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
+// The sliding variable s = λ·e + ė from r (prefiltered), y and ẏ, on the row
+// y0; returns the x where s leaves its sum. Shared by both sliding-mode laws.
+function slidingSurface(s, p, inputs, y0) {
+  s.port({ x: 4, y: y0, text: 'r', anchor: 'start' });
+  s.wire([[12, y0], [16, y0]]);
+  s.block({ x: 39, y: y0, w: 46, h: 16, lines: [kv('Tr', p.Tr > 0 ? secs(p.Tr) : '0')], faint: !(p.Tr > 0), tip: 'Prefilter (Vorfilter) on r; its own derivative ṙf = (r − rf)/Tr goes into ė, so the law never differentiates; 0 is off' });
+  s.wire([[62, y0], [77, y0]]);
+  s.sum({ x: 82, y: y0, r: 5, signs: { w: '+', s: '−' } });
+  const y = short(inputs[1] ?? 'y'), dy = short(inputs[2] ?? 'ẏ');
+  // A port's name is about 6.6 px a character; its line starts just after it.
+  const after = (t) => Math.ceil(4 + [...t].length * 6.6 + 3);
+  s.port({ x: 4, y: y0 + 26, text: y, anchor: 'start', tip: `Measurement y: ${inputs[1] ?? 'not connected'}` });
+  s.line([[after(y), y0 + 26], [82, y0 + 26]]);
+  s.wire([[82, y0 + 26], [82, y0 + 5]]);
+  s.wire([[87, y0], [96, y0]]);
+  s.block({ x: 112, y: y0, w: 32, h: 16, lines: [kv('λ', fmt(p.lambda))], faint: !p.lambda, tip: `Surface slope λ ${fmt(p.lambda)} 1/s: on the line s = 0 the error decays as e^(−λt), whatever the inertia` });
+  s.wire([[128, y0], [137, y0]]);
+  s.sum({ x: 142, y: y0, r: 5, signs: { w: '+', s: '−' } });
+  s.port({ x: 4, y: y0 + 46, text: dy, anchor: 'start', tip: `The rate ẏ, input 3: ${inputs[2] ?? 'not connected'} (ė = ṙf − ẏ)` });
+  s.line([[after(dy), y0 + 46], [142, y0 + 46]]);
+  s.wire([[142, y0 + 46], [142, y0 + 5]]);
+  s.note({ x: 148, y: y0 - 6, text: 's', anchor: 'start' });
+  return 147;
+}
+
+function slidingMode(p, { inputs }) {
+  const s = sheet('Sliding mode', DIAGRAM_WIDTH, 112);
+  const y0 = 22, x = slidingSurface(s, p, inputs, y0), relayLaw = !(p.phi > 0);
+  s.wire([[x, y0], [154, y0]]);
+  if (relayLaw) s.relay({ x: 172, y: y0, w: 34, h: 22, tip: 'sign(s): +1 above the line, −1 below; it switches every sample it crosses' });
+  else s.block({ x: 174, y: y0, w: 40, h: 26, lines: [[['sat', 'k']], kv('φ', fmt(p.phi))], tip: `Boundary layer: s/φ inside |s| < φ ${fmt(p.phi)}, ±1 outside` });
+  if (relayLaw) s.note({ x: 172, y: 6, text: 'sign', anchor: 'middle' });
+  s.wire([[relayLaw ? 189 : 194, y0], [200, y0]]);
+  s.block({ x: 218, y: y0, w: 36, h: p.u0 ? 26 : 16, lines: [kv('K', fmt(p.K)), ...(p.u0 ? [kv('+', fmt(p.u0))] : [])], tip: `Switching gain K ${fmt(p.K)}${p.u0 ? `, plus the bias u0 ${fmt(p.u0)}` : ''}` });
+  s.wire([[236, y0], [240, y0]]);
+  const lim = limitsText(p.umin, p.umax);
+  s.sat({ x: 250, y: y0, w: 18, h: 16, faint: !lim, tip: lim ? `Actuator limits: u stays within ${lim}` : 'No actuator limits' });
+  s.note({ x: 250, y: y0 + 18, text: lim ?? 'no limit', anchor: 'middle', faint: !lim });
+  s.wire([[259, y0], [262, y0]], { arrow: false });
+  s.port({ x: 263, y: y0, text: 'u', anchor: 'start' });
+  s.note({ x: 4, y: 88, text: `s = λ·e + ė; on s = 0, e decays with 1/λ ${p.lambda > 0 ? secs(1 / p.lambda) : '∞'}`, anchor: 'start' });
+  s.note({ x: 4, y: 100, text: relayLaw ? 'φ 0: the ideal relay; it chatters' : `inside |s| < φ a PD: Kp ${fmt((p.K * p.lambda) / p.phi)}, Kd ${fmt(p.K / p.phi)}`, anchor: 'start', cls: relayLaw ? 'warn' : '' });
+  return s.done();
+}
+
+function superTwisting(p, { inputs, Ts }) {
+  const s = sheet('Super-twisting', DIAGRAM_WIDTH, 112);
+  const y0 = 22, x = slidingSurface(s, p, inputs, y0);
+  s.dot({ x: 154, y: y0 });
+  s.line([[x, y0], [154, y0]]);
+  s.wire([[154, y0], [159, y0]]);
+  s.block({ x: 193, y: y0, w: 68, h: 16, lines: [[['√|s| ', ''], ...kv('k1', fmt(p.k1))]], faint: !p.k1, tip: `The proportional part k1·√|s|·sign(s), k1 ${fmt(p.k1)}: continuous, steepest near s = 0` });
+  s.wire([[227, y0], [233, y0]]);
+  s.wire([[154, y0], [154, 66], [159, 66]]);
+  s.block({ x: 193, y: 66, w: 68, h: p.u0 ? 26 : 16, lines: [[['∫ sgn ', ''], ...kv('k2', fmt(p.k2))], ...(p.u0 ? [kv('v0', fmt(p.u0))] : [])], faint: !p.k2, tip: `The integral part v: it rises at k2 ${fmt(p.k2)} by the sign of s (every Ts ${secs(Ts)}), clamped to the limits; it starts at u0 ${fmt(p.u0)} and rejects a constant load` });
+  s.wire([[227, 66], [238, 66], [238, y0 + 5]]);
+  s.sum({ x: 238, y: y0, r: 5, signs: { w: '+', s: '+' } });
+  s.note({ x: 242, y: 50, text: 'v', anchor: 'start' });
+  s.wire([[243, y0], [246, y0]], { arrow: false });
+  const lim = limitsText(p.umin, p.umax);
+  s.sat({ x: 255, y: y0, w: 16, h: 16, faint: !lim, tip: lim ? `Actuator limits: u and v stay within ${lim} (v's clamp is the anti-windup)` : 'No actuator limits' });
+  s.note({ x: 255, y: 7, text: lim ?? 'no limit', anchor: 'middle', faint: !lim });
+  s.port({ x: 264, y: y0, text: 'u', anchor: 'start' });
+  s.note({ x: 4, y: 88, text: `s = λ·e + ė; on s = 0, e decays with 1/λ ${p.lambda > 0 ? secs(1 / p.lambda) : '∞'}`, anchor: 'start' });
+  s.note({ x: 4, y: 100, text: 'continuous u; v rejects a constant load', anchor: 'start' });
+  return s.done();
+}
+
+const LAYOUTS = { pid, gainScheduled, stateFeedback, swingUp, relay, slidingMode, superTwisting, off, kalman: (p, o) => estimator(p, o, 'kalman'), luenberger: (p, o) => estimator(p, o, 'luenberger'), difference };
 
 // def: the type's library entry, for the generic picture of a type without its own.
 export function describeVariant(variant, { inputs = [], Ts = 0.01, def = null } = {}) {

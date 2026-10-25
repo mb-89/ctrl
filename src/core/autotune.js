@@ -294,6 +294,10 @@ const UNTUNABLE = {
 //   pid            Kp, Ki, Kd, and the reference feedforward Kff, Kv, Ka
 //   gainScheduled  the Kp table and the Ki table, each scaled as a whole; Kff, Kv, Ka
 //   stateFeedback  each gain in K, and the prefilter kr
+//   slidingMode    λ, and φ when it is above 0 (a relay stays a relay). K is
+//                  left alone: it is the actuator's swing, and turning it
+//                  down only moves u off the limit while the relay still slams
+//   superTwisting  λ, k1 and k2
 // start: values for feedforward gains that are 0, when the person asked to
 // tune those too (feedforwardStart); they are then turned like the others,
 // from there. base is the variant at x = 0.
@@ -329,6 +333,15 @@ export function tuningSpace(variant, { start = null, part = 'all' } = {}) {
       if (on(p.kr)) q.kr = p.kr * f(x[idx.length]);
       return q;
     };
+  } else if (variant.type === 'slidingMode' || variant.type === 'superTwisting') {
+    // λ, and a boundary layer's width; a relay (φ = 0) stays a relay. The
+    // switching gain K stays: the cost counts the time u sits at a limit, and
+    // a K just under the limit would zero that count while the relay still
+    // slams. The cost has no chattering term (no V/s), so it does not judge
+    // chattering.
+    const keys = fb ? (variant.type === 'slidingMode' ? ['lambda', 'phi'] : ['lambda', 'k1', 'k2']).filter((k) => on(p[k])) : [];
+    names = keys.map((k) => (k === 'lambda' ? 'λ' : k === 'phi' ? 'φ' : k));
+    apply = (x) => { const q = { ...p }; keys.forEach((k, i) => { q[k] = p[k] * f(x[i]); }); return q; };
   } else throw new Error(UNTUNABLE[variant.type] ?? `a ${variant.type} variant cannot be tuned`);
   if (!names.length) throw new Error('every gain of this variant is 0; give the gains it should use a start value, then tune');
   return { names, started, base: started.length ? { ...variant, params: p } : variant, apply: (x) => ({ ...variant, params: apply(x) }) };
@@ -413,6 +426,8 @@ export function tunedValues(variant) {
   if (variant.type === 'pid') return [...['Kp', 'Ki', 'Kd'].map((k) => [k, p[k]]), ...ff];
   if (variant.type === 'gainScheduled') return [['Kp', p.Kp], ['Ki', p.Ki], ...ff];
   if (variant.type === 'stateFeedback') return [['K', p.K], ['kr', p.kr]];
+  if (variant.type === 'slidingMode') return [['λ', p.lambda], ['φ', p.phi]];
+  if (variant.type === 'superTwisting') return [['λ', p.lambda], ['k1', p.k1], ['k2', p.k2]];
   return [];
 }
 

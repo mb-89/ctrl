@@ -219,6 +219,43 @@ function gaussian(seed) {
   };
 }
 
+// How simulateSystem steps through one record step T, so every sample instant
+// k·Ts of every Controller and Observer is met exactly (with a 2.5 ms record
+// and Ts = 1 ms: at 0, 1, 2 … ms, not 0, 1.667, 2.5 …). Two ways, the cheaper
+// one is taken:
+//   grid   m equal steps, with m a multiple of T/g, g the greatest common
+//          divisor of T and every Ts (in whole nanoseconds), so every k·Ts
+//          lies on the grid; m is the smallest such multiple at or above
+//          T/hmax, the stability bound of the continuous blocks
+//   split  m = T/hmax steps (rounded up), and a step that a sample instant
+//          falls inside is cut there: integrate to the instant, sample,
+//          integrate on. It costs about one extra step per sample
+// The grid is taken when it costs no more steps than splitting would (each
+// Ts adds at most ceil(T/Ts) cuts per record step). T = 2.5 ms, Ts = 1 ms:
+// grid, m = 5. Ts = 1.1 ms (g = 0.1 ms, a grid of 25): split, 2 or 3 steps
+// plus the cuts. Returns { m, split }.
+const ns = (x) => Math.round(x * 1e9);
+const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a; };
+export function stepPlan(T, bound, sampleTimes = [], K = 1, warnings = []) {
+  const hmax = bound > 0 ? 0.5 / bound : T;
+  let need = Math.max(1, Math.ceil(T / hmax - 1e-9));
+  if (K * need > MAX_STEPS) { need = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
+  if (!sampleTimes.length) return { m: need, split: false };
+  let g = ns(T);
+  for (const Ts of sampleTimes) g = gcd(g, ns(Ts));
+  const base = g > 0 ? ns(T) / g : Infinity;
+  const grid = base * Math.ceil(need / base - 1e-9);
+  const cuts = sampleTimes.reduce((n, Ts) => n + Math.ceil(T / Ts - 1e-9), 0);
+  return grid <= need + cuts && K * grid <= MAX_STEPS ? { m: grid, split: false } : { m: need, split: true };
+}
+// The integration steps per record step (stepPlan's m).
+export const substeps = (...a) => stepPlan(...a).m;
+
+// A time on the decimal grid of whole nanoseconds, where the instants of
+// sources and samples are given (r stepping at 1.5 s; k·Ts): what is read at
+// the end of a step sees the edge on its new side.
+const onGrid = (t) => Math.round(t * 1e9) / 1e9;
+
 // The diagram as the whole system, before any controller: every Source plays
 // its signal, every Sink is recorded. Returns { t, signals: { name: values } }.
 export function simulateSystem(diagram, signals, sim) {
@@ -227,21 +264,29 @@ export function simulateSystem(diagram, signals, sim) {
   const sources = Object.fromEntries(Object.entries(signals).map(([name, ref]) => [name, referenceFn(ref, { sampleTime: Ts })]));
   const el = compileDiagram(diagram, 'plant', { sources, standalone: true });
   const warnings = [...el.warnings];
-  // Steps no longer than a controller's sample time, so it samples on time.
-  const hmax = Math.min(el.bound > 0 ? 0.5 / el.bound : Ts, el.minTs);
-  let m = Math.max(1, Math.ceil(Ts / hmax - 1e-9));
-  if (K * m > MAX_STEPS) { m = Math.max(1, Math.floor(MAX_STEPS / K)); warnings.push('stiff system: integration step limited for speed'); }
+  const { m, split } = stepPlan(Ts, el.bound, el.sampleTimes, K, warnings);
   const h = Ts / m, N = el.n;
   el.setStep(h);
   const X = new Float64Array(N), Xt = new Float64Array(N);
   el.init(X, 0);
   const k1 = new Float64Array(N), k2 = new Float64Array(N), k3 = new Float64Array(N), k4 = new Float64Array(N);
+  // One RK4 step of length dt from ts.
+  const rk4 = (ts, dt) => {
+    el.eval(ts, X, 0, 0, k1);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k1[i];
+    el.eval(ts + 0.5 * dt, Xt, 0, 0, k2);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * dt * k2[i];
+    el.eval(ts + 0.5 * dt, Xt, 0, 0, k3);
+    for (let i = 0; i < N; i++) Xt[i] = X[i] + dt * k3[i];
+    el.eval(ts + dt, Xt, 0, 0, k4);
+    for (let i = 0; i < N; i++) X[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+  };
   const t = new Float64Array(K + 1);
   const out = {};
   el.eval(0, X, 0, 0, null);
   el.sample(0, X, 0, 0);
   el.record();
-  let unstable = false;
+  let unstable = false, steps = 0;
   for (let k = 0; k <= K; k++) {
     t[k] = k * Ts;
     for (const [name, v] of el.probes()) {
@@ -251,19 +296,22 @@ export function simulateSystem(diagram, signals, sim) {
     if (unstable) { for (let j = k; j <= K; j++) t[j] = j * Ts; warnings.push('a signal diverged; the rest is not drawn'); break; }
     if (k === K) break;
     for (let s = 0; s < m; s++) {
-      const ts = t[k] + s * h;
-      el.eval(ts, X, 0, 0, k1);
-      for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k1[i];
-      el.eval(ts + 0.5 * h, Xt, 0, 0, k2);
-      for (let i = 0; i < N; i++) Xt[i] = X[i] + 0.5 * h * k2[i];
-      el.eval(ts + 0.5 * h, Xt, 0, 0, k3);
-      for (let i = 0; i < N; i++) Xt[i] = X[i] + h * k3[i];
-      el.eval(ts + h, Xt, 0, 0, k4);
-      for (let i = 0; i < N; i++) X[i] += (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
-      el.eval(ts + h, X, 0, 0, null);
-      el.sample(ts + h, X, 0, 0);
+      const ts = t[k] + s * h, te = onGrid(t[k] + (s + 1) * h);
+      let a = ts;
+      // A sample instant inside this step: integrate to it and sample there.
+      if (split) {
+        for (let tn = onGrid(el.nextSample()); tn < te - 1e-9; tn = onGrid(el.nextSample())) {
+          if (tn > a) { rk4(a, tn - a); a = tn; steps++; }
+          el.eval(tn, X, 0, 0, null);
+          el.sample(tn, X, 0, 0);
+        }
+      }
+      rk4(a, ts + h - a);
+      steps++;
+      el.eval(te, X, 0, 0, null);
+      el.sample(te, X, 0, 0);
       el.record();
     }
   }
-  return { t, signals: out, info: { h, substeps: m, unstable, warnings } };
+  return { t, signals: out, info: { h, substeps: m, split, steps, unstable, warnings } };
 }

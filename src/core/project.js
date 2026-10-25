@@ -2,6 +2,8 @@
 // reference and every slot but the controller), how the display is set, the
 // goal, and the candidates. Each candidate holds its own controller and may
 // override any other slot. design/output/project-format.md describes it.
+// For a diagram, sim.sampleTime is the scope's record step (absent: the
+// window / 2000); Controller blocks sample at their own Ts.
 
 import { SLOTS, normalizeBlock } from './blocks.js';
 import { normalizeReference, migrateReferenceBlock, referenceFn, sampleSignal } from './signals.js';
@@ -189,6 +191,8 @@ export function normalizeScope(scope = {}, period, loop = false) {
     ch.on = !!ch.on;
     const f = normalizeFilter(c.filter, `scope.channels[${i}].filter`);
     if (f) ch.filter = f;
+    // A Measure line under the screen (mean, rms, …); absent is off.
+    if (c.measure === true) ch.measure = true;
     return ch;
   });
   const view = normalizeScopeView(scope.view);

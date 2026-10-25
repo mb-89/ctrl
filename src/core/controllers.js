@@ -263,7 +263,87 @@ export const CONTROLLERS = {
     },
     linear() { throw new Error('a relay switches between two outputs: it has no linear model'); },
   },
+  slidingMode: {
+    // First-order sliding mode, model-free (Utkin 1977; Slotine & Li ch. 7),
+    // for a plant whose output rises with u. Inputs r, y, ẏ. The sliding
+    // variable s = λ·e + ė (e = r − y, in y's unit per second) is driven to
+    // zero; on s = 0 the error decays as e^(−λt), whatever the inertia or a
+    // load entering with u, while K dominates them. φ = 0 is the ideal relay
+    // u = u0 + K·sign(s); φ > 0 is a boundary layer, u = u0 + K·sat(s/φ):
+    // inside it a PD with Kp = K·λ/φ and Kd = K/φ, outside the relay.
+    // ė = ṙf − ẏ, with ṙf the prefilter's own derivative (r − rf)/Tr, 0 without
+    // a prefilter (derivative on the measurement): the law never differentiates.
+    label: 'Sliding mode', summary: 'u = u0 + K·sign(s) or K·sat(s/φ), s = λe + ė',
+    params: [
+      num('lambda', 'Surface slope λ', 10, { unit: '1/s', min: 0, help: 'on the line s = 0 the error decays as e^(−λt): λ sets its time constant 1/λ' }),
+      num('K', 'Switching gain K', 1, { unit: 'u', help: 'negative for a plant whose y falls when u rises' }),
+      num('phi', 'Boundary layer φ', 0, { unit: 'y/s', min: 0, help: '0 is the ideal relay; above 0, proportional inside |s| < φ' }),
+      PREFILTER, num('u0', 'Bias u0', 0, { unit: 'u' }), ...LIMITS,
+    ],
+    check: needsRate,
+    make(p, Ts) {
+      const surf = surface(p, Ts);
+      return {
+        step(x) {
+          const s = surf(x);
+          const sw = p.phi > 0 ? clamp(s / p.phi, -1, 1) : Math.sign(s);
+          return clamp(p.u0 + p.K * sw, p.umin, p.umax);
+        },
+      };
+    },
+    // Inside the layer and the limits, with the prefilter left out (ṙf = 0):
+    // no state, u = (K·λ/φ)·(r − y) − (K/φ)·ẏ.
+    linear(p, Ts, at) {
+      if (!(p.phi > 0)) throw new Error('an ideal sliding mode switches: it has no linear model; give it a boundary layer φ > 0');
+      const m = Math.max(2, at?.y?.length ?? 2);
+      return staticLinear((p.K * p.lambda) / p.phi, [(p.K * p.lambda) / p.phi, p.K / p.phi, ...new Array(m - 2).fill(0)]);
+    },
+  },
+  superTwisting: {
+    // Super-twisting (Levant 1993), a second-order sliding mode on the same s:
+    // u = k1·√|s|·sign(s) + v, with v the integral part, v += Ts·k2·sign(s)
+    // (explicit Euler). u is continuous, and v rejects a slowly varying load.
+    // Both u and v are clamped to the limits (v's clamp is the anti-windup).
+    // The sign is flipped from Levant's form because raising u lowers s here.
+    label: 'Super-twisting', summary: 'u = k1·√|s|·sign(s) + v, v̇ = k2·sign(s)',
+    params: [
+      num('lambda', 'Surface slope λ', 10, { unit: '1/s', min: 0, help: 'on the line s = 0 the error decays as e^(−λt): λ sets its time constant 1/λ' }),
+      num('k1', 'Gain k1', 1, { unit: 'u per √(y/s)', help: 'negative for a plant whose y falls when u rises' }),
+      num('k2', 'Gain k2', 10, { unit: 'u/s', help: 'the rate of the integral part v; negative for a plant whose y falls when u rises' }),
+      PREFILTER, START, ...LIMITS,
+    ],
+    check: needsRate,
+    make(p, Ts) {
+      const surf = surface(p, Ts);
+      let v = clamp(p.u0, p.umin, p.umax);
+      return {
+        step(x) {
+          const s = surf(x), sg = Math.sign(s);
+          const u = clamp(p.k1 * Math.sqrt(Math.abs(s)) * sg + v, p.umin, p.umax);
+          v = clamp(v + Ts * p.k2 * sg, p.umin, p.umax);
+          return u;
+        },
+      };
+    },
+    linear() { throw new Error('super-twisting has no linear model: √|s| has infinite slope at s = 0'); },
+  },
 };
+
+// The sliding variable s = λ·e + ė of both sliding-mode laws, from the inputs
+// [r, y, ẏ]: e = rf − y and ė = ṙf − ẏ, with rf the prefiltered reference and
+// ṙf = (r − rf)/Tr its exact derivative (the filter's own state; 0 when Tr = 0).
+function surface(p, Ts) {
+  const pre = prefilter(p, Ts);
+  return (x) => {
+    const r = x[0], rf = pre(r);
+    const rdot = p.Tr > 0 ? (r - rf) / p.Tr : 0;
+    return p.lambda * (rf - (x[1] ?? 0)) + rdot - (x[2] ?? 0);
+  };
+}
+// A sliding-mode law reads ẏ on input 3; it never differentiates y itself.
+function needsRate(p, ctx) {
+  return ctx?.inputs !== undefined && ctx.inputs < 3 ? 'sliding mode needs ẏ on input 3: set the Controller block\'s Inputs to 3 in the Plant tab and wire the measured rate there (a Finite difference observer makes it from y)' : '';
+}
 
 export const CONTROLLER_TYPES = Object.keys(CONTROLLERS);
 
@@ -287,14 +367,15 @@ function normalizeParam(spec, v, where) {
 // One variant: { name, type, params }. Unknown types and bad values fail with
 // the valid choices named.
 // lib: the library the variant comes from (CONTROLLERS, or OBSERVERS for an
-// Observer block); both share this format.
-export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS) {
+// Observer block); both share this format. ctx: what the block gives the
+// variant ({ inputs }), when known, for checks that need it.
+export function normalizeVariant(v, where = 'variant', lib = CONTROLLERS, ctx = undefined) {
   const def = lib[v?.type];
   if (!def) throw new Error(`${where}.type: one of ${Object.keys(lib).join(', ')}`);
   const params = {};
   for (const spec of def.params) params[spec.key] = normalizeParam(spec, v.params?.[spec.key], where);
   if (params.umin > params.umax) [params.umin, params.umax] = [params.umax, params.umin];
-  const bad = def.check?.(params);
+  const bad = def.check?.(params, ctx);
   if (bad) throw new Error(`${where}: ${bad}`);
   return { name: String(v.name ?? def.label).slice(0, 40), type: v.type, params };
 }

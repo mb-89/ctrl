@@ -41,7 +41,7 @@ export function createControls(root, app) {
     <section class="group">
       <h3 class="glabel">Vertical</h3>
       <div class="row chkeys" id="ch-keys"></div>
-      <div class="srcrow"><span>Source</span><select id="ch-src" class="field"></select><button class="key small axbtn" id="ch-right" title="Show this channel's values on a second axis at the right of the screen">R axis</button></div>
+      <div class="srcrow"><span>Source</span><select id="ch-src" class="field"></select><button class="key small axbtn" id="ch-right" title="Show this channel's values on a second axis at the right of the screen">R axis</button><button class="key small axbtn" id="ch-meas" title="Measure: a line under the screen with this channel's mean, rms, ac rms, peak to peak, total variation per second and reversals per second, over what the screen shows">Measure</button></div>
       <div class="srcrow filtrow"><span>Filter</span><select id="ch-filt" class="field" title="A display filter: changes what the scope shows and analyses, not the system">
           <option value="">none</option><option value="lowpass">Low-pass</option><option value="highpass">High-pass</option><option value="bandpass">Band-pass</option><option value="notch">Notch</option></select>
         <span class="filtparams" id="filt-params"></span></div>
@@ -176,6 +176,11 @@ export function createControls(root, app) {
     clearTimeout(fparams.wheelTimer);
     fparams.wheelTimer = setTimeout(() => app.endEdit(), 400);
   }, { passive: false });
+  // A Measure line under the screen for the selected channel.
+  $('#ch-meas').addEventListener('click', () => setScope((sc) => {
+    const c = sc.channels[app.channel];
+    if (c.measure) delete c.measure; else c.measure = true;
+  }));
   $('#ch-right').addEventListener('click', () => setScope((sc) => {
     const view = { ...(sc.view ?? {}) };
     if (view.right === app.channel) delete view.right; else view.right = app.channel;
@@ -277,6 +282,8 @@ export function createControls(root, app) {
       fparams.dataset.sig = fsig;
     }
     $('#ch-right').classList.toggle('lit-view', sc.view?.right === app.channel);
+    $('#ch-meas').classList.toggle('lit-view', !!ch().measure);
+    $('#ch-meas').setAttribute('aria-pressed', String(!!ch().measure));
     knobs.vScale.lab.textContent = `Scale · ${app.channel + 1}`;
     knobs.vPos.lab.textContent = `Position · ${app.channel + 1}`;
     renderLevels();
