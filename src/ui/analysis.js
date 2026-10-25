@@ -16,6 +16,7 @@
 // the scope's time moves).
 
 import { analyzeLoop, stepInfo, stepResponse, sPlanePoint, respondAt, phaseAt } from '../core/analysis.js';
+import { loopRanges } from '../core/identify.js';
 import { createPlot, extent } from './plots.js';
 import { palette as C } from './palette.js';
 import { num } from './units.js';
@@ -56,8 +57,9 @@ export function createAnalysisTab(host, app) {
       <section class="gcol an-side" aria-label="Key numbers">
         <div class="ghead"><h3 class="label">Analysis</h3></div>
         <div id="an-blocks" class="ctblocks"></div>
+        <div class="seg seg-fill" id="an-source" role="radiogroup" aria-label="Plant"></div>
         <div class="seg seg-fill" role="group" aria-label="Lane" id="an-lanes" hidden></div>
-        <div class="seg seg-fill" role="group" aria-label="Operating point">${OPS.map((o) => `<button class="btn btn-sm" data-op="${o.key}" title="${esc(o.title)}">${o.label}</button>`).join('')}</div>
+        <div class="seg seg-fill" role="group" aria-label="Operating point" id="an-ops">${OPS.map((o) => `<button class="btn btn-sm" data-op="${o.key}" title="${esc(o.title)}">${o.label}</button>`).join('')}</div>
         <div id="an-verdict" class="note"></div>
         <table class="kw" id="an-kw"></table>
         <div id="an-notes" class="note"></div>
@@ -145,12 +147,15 @@ export function createAnalysisTab(host, app) {
     const n = c.block.params?.lanes > 1 ? c.block.params.lanes : 0;
     lane = Math.min(Math.max(1, lane), n || 1);
     const path = n ? [...c.path.slice(0, -1), `${c.path.at(-1)}[${lane}]`] : c.path;
-    // A plant outside the page is a black box (input 20): no diagram to analyse.
-    if (findExternal(app.project.system.plant?.diagram)) return { c, all, error: 'The plant runs outside the page and is a black box: the page knows only its interface (Plant tab, Interface). Analysis needs an identified model of it, which Identify will give (not built yet).' };
+    // A plant outside the page is a black box (input 20): its identified model
+    // stands in (identification.md §12); without one, the reason.
+    const identified = app.plantSource?.(c.path) === 'identified';
+    const model = identified ? app.identifiedModel(c.path) : null;
+    if (identified && !model) return { c, all, identified, error: `${findExternal(app.project.system.plant?.diagram) ? 'The plant runs outside the page and is a black box: the page knows only its interface. ' : ''}Identify the plant first (Identify tab): Analysis draws the identified model.` };
     if (!app.loopModel) return { c, all, error: 'The analysis needs the plant a block sees, linearised at an operating point.' };
-    const spec = opSpec(), from = op === 't' ? app.scopeTimeFrom?.() : null;
+    const spec = identified ? 'identified' : opSpec(), from = op === 't' && !identified ? app.scopeTimeFrom?.() : null;
     // A plan that settles (or is cancelled) changes the law: the design generation is in the key.
-    const key = JSON.stringify([app.project.system, path, spec, app.designs?.generation ?? 0]);
+    const key = JSON.stringify([app.project.system, path, spec, app.designs?.generation ?? 0, model ? app.identifiedLabel(c.path) : '']);
     if (key === lastKey && last) { if (last.res) last.from = from; return last; }
     lastKey = key;
     try {
@@ -160,10 +165,12 @@ export function createAnalysisTab(host, app) {
       const st = res.stable ? stepInfo(m.plant, m.ctrl, m.Ts, { clPoles: res.clPoles }) : null;
       // The peak of u in the step, from its first samples (kicks come early).
       if (st) st.uPeak = Math.max(...stepResponse(m.plant, m.ctrl, m.Ts, Math.min(4000, Math.ceil(st.T / m.Ts))).u.map(Math.abs));
-      last = { c, all, m, res, st, spec, from, lanes: n };
+      // The key numbers across what the model is unsure of (§12).
+      const ranges = identified ? loopRanges(app.project, c.path, model) : null;
+      last = { c, all, m, res, st, spec, from, lanes: n, identified, ranges };
     } catch (err) {
       // The reason, and what to do instead (a DesignError's hint).
-      last = { c, all, lanes: n, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
+      last = { c, all, lanes: n, identified, error: err.hint ? `${err.message}. ${err.hint[0].toUpperCase()}${err.hint.slice(1)}.` : err.message };
     }
     return last;
   }
@@ -178,6 +185,12 @@ export function createAnalysisTab(host, app) {
     $('#an-lanes').innerHTML = v.lanes ? Array.from({ length: v.lanes }, (_, k) => `<button class="btn btn-sm" data-lane="${k + 1}" aria-pressed="${k + 1 === lane}" title="${esc(`${v.c.block.name ?? v.c.block.id} · lane ${k + 1}: the loop cut at its output`)}">${k + 1}</button>`).join('') : '';
     $('#an-lanes').querySelectorAll('[data-lane]').forEach((el) => el.addEventListener('click', () => { lane = Number(el.dataset.lane); render(); }));
     host.querySelectorAll('[data-op]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.op === op)));
+    // The plant: the diagram or the identified model (one linear model about
+    // its range: the operating point does not apply).
+    const live = !!findExternal(app.project.system.plant?.diagram);
+    $('#an-source').innerHTML = v.c ? `<button class="btn btn-sm" role="radio" data-source="diagram" aria-checked="${!v.identified}" ${live ? 'disabled' : ''} title="${live ? 'The plant runs outside the page: there is no diagram to analyse' : 'The plant as the diagram has it, linearised where you choose'}">Diagram</button><button class="btn btn-sm" role="radio" data-source="identified" aria-checked="${!!v.identified}" ${live ? 'disabled' : ''} title="The model the Identify tab found${app.identifiedLabel?.(v.c.path) ? ` (${esc(app.identifiedLabel(v.c.path))})` : ''}">Identified model</button>` : '';
+    $('#an-source').querySelectorAll('[data-source]').forEach((el) => el.addEventListener('click', () => { if (!el.disabled) app.setPlantSource(v.c.path, el.dataset.source); }));
+    $('#an-ops').hidden = !!v.identified;
     if (!v.res) {
       $('#an-verdict').innerHTML = '';
       $('#an-kw').innerHTML = '';
@@ -202,22 +215,25 @@ export function createAnalysisTab(host, app) {
           ? `<span class="grade text-warn" title="${plural(res.onCircle.closed, 'closed-loop pole')} on the unit circle (a free integrator or an undamped mode): it neither dies away nor grows">${caveat ? 'as linearised: marginal' : '! marginal'}</span>`
           : `<span class="grade text-bad" title="${plural(res.Z, 'closed-loop pole')} outside the unit circle">${caveat ? 'as linearised: unstable' : '✕ unstable'}</span>`);
     const rows = [];
+    // A range across what the model is unsure of: its bars and its places (§12).
+    const across = (r, f) => (r && Number.isFinite(r[0]) && Number.isFinite(r[1]) ? ` <span class="muted" title="Across what the model is unsure of: its 2σ bars and the places it changes by">(${f(r[0])} … ${f(r[1])})</span>` : '');
     const row = (k, val, extra = '', title = '') => rows.push(`<tr title="${esc(title)}"><th>${k}</th><td>${val}</td><td>${extra}</td></tr>`);
     const factor = (k) => `×${num(k, 3)}`;
     // With no pole outside, the gain interval is a margin; an unstable loop
     // shows instead the gains at which it would be stable.
     if (res.Z === 0) {
       const up = Number.isFinite(g.gmUp) ? `${factor(g.gmUp)} (${num(20 * Math.log10(g.gmUp), 3)} dB)` : '∞';
-      row('Gain margin', g.gmDown > 0 ? `${factor(g.gmDown)} … ${up}` : up, ok && Number.isFinite(g.gmUp) ? grade(gradeGm(g.gmUp)) : '', 'The loop gain may change by these factors before a closed-loop pole crosses the unit circle');
+      row('Gain margin', (g.gmDown > 0 ? `${factor(g.gmDown)} … ${up}` : up) + across(v.ranges?.gm, factor), ok && Number.isFinite(g.gmUp) ? grade(gradeGm(g.gmUp)) : '', 'The loop gain may change by these factors before a closed-loop pole crosses the unit circle');
     } else {
       const sg = g.stableGains;
       row('Stable for', sg ? `gain ${sg.lo > 0 ? factor(sg.lo) : '×0'} … ${Number.isFinite(sg.hi) ? factor(sg.hi) : '∞'}` : 'no gain', '', 'The loop is unstable as tuned; with its gain scaled by these factors every closed-loop pole would be inside the unit circle');
     }
     // An unstable loop has no margin: the same number is only where the phase is.
-    if (res.Z === 0) row('Phase margin', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° at ${num(g.wc, 3)} rad/s` : '—', ok && Number.isFinite(g.pm) ? grade(gradePm(g.pm)) : '', 'At the crossover |L| = 1, the phase left before −180°');
+    if (res.Z === 0) row('Phase margin', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° at ${num(g.wc, 3)} rad/s${across(v.ranges?.pm, (x) => `${num(x, 3)}°`)}` : '—', ok && Number.isFinite(g.pm) ? grade(gradePm(g.pm)) : '', 'At the crossover |L| = 1, the phase left before −180°');
     else row('Phase at |L| = 1', Number.isFinite(g.pm) ? `${num(g.pm, 3)}° from −180° at ${num(g.wc, 3)} rad/s` : '—', '', 'At the crossover |L| = 1, how far the phase is from −180°; an unstable loop has no margin to read from it');
     row('Delay margin', res.Z === 0 && Number.isFinite(g.dm) ? `${num(g.dm * 1000, 3)} ms (${num(g.dmSamples, 3)} Ts)` : '—', '', res.Z === 0 ? 'The extra dead time the loop tolerates' : 'An unstable loop has no dead time to spare');
-    row('Ms = max |S|', `${num(g.ms, 3)} at ${num(g.wMs, 3)} rad/s`, ok ? grade(gradeMs(g.ms)) : '', 'Peak sensitivity; 1/Ms is the closest approach to −1');
+    row('Ms = max |S|', `${num(g.ms, 3)} at ${num(g.wMs, 3)} rad/s${across(v.ranges?.ms, (x) => num(x, 3))}`, ok ? grade(gradeMs(g.ms)) : '', 'Peak sensitivity; 1/Ms is the closest approach to −1');
+    if (v.ranges?.unstable) row('Unsure of', `${v.ranges.unstable} of ${v.ranges.unstable + v.ranges.n} unstable`, '', 'Of the models drawn within the identified model\'s bars and its places, this many make the loop unstable');
     row('Mt = max |T|', `${num(g.mt, 3)}`, '', 'Peak complementary sensitivity');
     if (res.slowest) {
       const s = res.slowest.s, at = `s = ${num(s.re, 3)} ${s.im >= 0 ? '+' : '−'} ${num(Math.abs(s.im), 3)}j`;
@@ -293,6 +309,22 @@ export function createAnalysisTab(host, app) {
     p.text(fr.x0, fr.y0, ` × open loop  ● closed loop  · gain ×0.01…×100${hidden ? `  · ${hidden} faster off the plot` : ''}`, { base: 'bottom', dy: -4, dx: 4 });
   }
 
+  function measuredL(v, res) {
+    if (!v.identified) return [];
+    const model = app.identifiedModel?.(v.c.path);
+    const out = [];
+    for (const x of model?.frf ?? []) {
+      x.f.forEach((f, j) => {
+        const w = 2 * Math.PI * f, gd = x.model?.[j];
+        if (!gd || w < res.fd.w[0] || w > res.fd.w.at(-1)) return;
+        const Lw = respondAt(res.L, w), gm = Math.hypot(gd[0], gd[1]);
+        if (!(gm > 0)) return;
+        const c = Math.hypot(Lw.re, Lw.im) / gm;
+        out.push({ w, m: Math.hypot(...x.G[j]) * c, sd: x.sd[j] * c });
+      });
+    }
+    return out;
+  }
   function drawBode(v) {
     const { res, m } = v, fd = res.fd, g = res.margins;
     // A crossing at an end of the band (z = 1 at ω = 0, z = −1 at π/Ts) is
@@ -317,6 +349,12 @@ export function createAnalysisTab(host, app) {
         const y = 20 * Math.log10(c.mag) / 2, py = plots.mag.Y(y), top = P.t + (c.at === 'dc' ? 24 : 8);
         const dy = py < top ? top - py : py > P.b - 8 ? P.b - 8 - py : 0;
         plots.mag.text(at(c.w), y, label, { color: C_U(), dx: c.at === 'nyquist' ? -5 : 5, dy, align: c.at === 'nyquist' ? 'right' : 'left' });
+      }
+      // The Shake's measured points (identification.md §12): L̂ = Ĝ · C, C read
+      // as L over the model's G_d at each line; bars ±2σ.
+      for (const q of measuredL(v, res)) {
+        plots.mag.line([q.w, q.w], [20 * Math.log10(Math.max(q.m - 2 * q.sd, q.m * 1e-3)), 20 * Math.log10(q.m + 2 * q.sd)], { color: C_CL(), width: 1 });
+        plots.mag.mark(q.w, 20 * Math.log10(q.m), { shape: 'dot', color: C_CL(), size: 4 });
       }
       if (cursorW) plots.mag.line([cursorW, cursorW], [a.y0, a.y1], { color: C().ink, width: 1, alpha: C().alpha.guide });
     });

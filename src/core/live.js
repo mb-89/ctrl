@@ -772,10 +772,10 @@ export function createLiveLoop(post, env = globalThis) {
       identNext = { key, plan, source, hold, applied, posted: 0, asked: false };
       try { await start(); return {}; } catch (err) { identNext = null; ident = null; return { error: err.message }; }
     },
-    supply({ data }) {
+    supply({ kind = 'fit', data }) {
       const exp = runner?.experiment;
-      if (!ident || !exp?.needs) return { error: 'nothing waits for a fit' };
-      exp.supply('fit', data ?? {});
+      if (!ident || exp?.needs?.kind !== kind) return { error: `nothing waits for ${kind}` };
+      exp.supply(kind, data ?? {});
       return {};
     },
     identifyStop() {

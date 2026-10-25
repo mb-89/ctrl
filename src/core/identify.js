@@ -18,13 +18,15 @@ import { controllerBlocks, upstreamSource, drain } from './autotune.js';
 import { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } from './diagram.js';
 import { CONTROLLERS } from './controllers.js';
 import { referenceFn, gaussAt } from './signals.js';
-import { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText } from './experiment.js';
+import { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText, discriminationSignal, excitationOf } from './experiment.js';
 import {
-  STRUCTURES, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
-  fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded,
+  STRUCTURES, CHOICE, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
+  fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded, frf,
 } from './fit.js';
 import { cholesky } from './linalg.js';
 import { createStepRunner } from './live.js';
+import { loopModel } from './project.js';
+import { analyzeLoop } from './analysis.js';
 import { physicalMaskKeys } from './physics.js';
 
 export class IdentifyError extends Error {
@@ -366,7 +368,8 @@ function readLog(record) {
   const all = (kind) => log.filter((e) => e.kind === kind);
   return {
     listen: one('listen'), rungs: all('rung'), look: one('look'), laws: all('law'), tries: all('try'), ladder: one('ladder'),
-    supply: one('supply'), pause: one('pause'), check: one('check'), end: one('end'), notes: all('note'),
+    // The fitting data end at the last fit pause (after the Shake, when it ran).
+    supply: all('supply').filter((e) => (e.what ?? 'fit') === 'fit').at(-1) ?? null, pause: one('pause'), check: one('check'), discriminate: one('discriminate'), shakes: all('shake'), end: one('end'), notes: all('note'),
   };
 }
 
@@ -386,13 +389,17 @@ function restBefore(record, a, w) {
 
 // A closed-loop segment [a, b): the rest before it, the law running before
 // it, and every switch inside it.
-function closedSegment(record, laws, a, b, w, role) {
+// excites: the log's entries of what was added to the law's output (a Shake
+// place, the test that tells two shapes apart), with the limits u was held to.
+function closedSegment(record, laws, a, b, w, role, { excites = [], limits = null } = {}) {
   const rest = restBefore(record, a, w);
   let before = null;
   for (const e of laws) if (e.i < a) before = e;
+  const ex = excites.filter((e) => e && e.iStart < b && e.iEnd > a);
   return {
     kind: 'closed', role, i0: a, i1: b, yStart: rest.y, uStart: rest.u, rPrev: nan(record.r[Math.max(0, a - 1)]),
     before: before ? lawOf(before) : null, switches: laws.filter((e) => e.i >= a && e.i < b).map(lawOf),
+    ...(ex.length ? { excites: ex, limits } : {}),
   };
 }
 
@@ -417,13 +424,15 @@ export function segmentsOf(record, plan, { upto = null } = {}) {
   const iL = L.i1 - 1;
   const hold = g.laws.find((e) => e.role === 'hold') ?? null;
   const iHold = hold ? hold.i : F;
+  const exOpts = { excites: [...g.shakes, g.discriminate].filter(Boolean), limits: [plan.umin, plan.umax] };
   const o0 = g.rungs[0].i0, o1 = Math.min(iHold, F);
   if (o1 - o0 > 2) out.open = { kind: 'open', role: 'nudge', i0: o0, i1: o1, yStart: L.y0 + L.slope * (o0 - iL), uStart: plan.u0, slope: L.slope, iL, level: L.y0 };
   if (hold && iHold < F) {
-    const cuts = [iHold, ...g.tries.filter((T) => T.settled && T.iSwitch > iHold && T.iSwitch < F).map((T) => T.iSwitch)];
+    // Each try from its settle, and each Shake place from where its tones start.
+    const cuts = [iHold, ...g.tries.filter((T) => T.settled && T.iSwitch > iHold && T.iSwitch < F).map((T) => T.iSwitch), ...g.shakes.filter((e) => e.iStart > iHold && e.iStart < F).map((e) => e.iStart)].sort((x, y) => x - y);
     cuts.forEach((a, j) => {
       const b = j + 1 < cuts.length ? cuts[j + 1] : F;
-      if (b - a > 2) out.closed.push(closedSegment(record, g.laws, a, b, w, j === 0 ? 'hold' : 'try'));
+      if (b - a > 2) out.closed.push(closedSegment(record, g.laws, a, b, w, j === 0 ? 'hold' : g.shakes.some((e) => e.iStart === a) ? 'shake' : 'try', exOpts));
     });
   }
   const band = plan.band, span = band[1] - band[0];
@@ -443,7 +452,7 @@ export function segmentsOf(record, plan, { upto = null } = {}) {
   if (ck && ck.i1 - ck.i0 > 2) {
     const start = [ck.iStart, ck.i0].find((a) => finite(a) && a < ck.i1 - 2 && settledAt(a)) ?? out.closed.at(-1)?.i0 ?? ck.i0;
     const rest = settledAt(start);
-    const c = closedSegment(record, g.laws, start, ck.i1, w, 'check');
+    const c = closedSegment(record, g.laws, start, ck.i1, w, 'check', exOpts);
     out.check = { ...c, ...(rest ? { yStart: rest.y, uStart: rest.u } : {}), from: start >= ck.i0 ? start : ck.i0, left: ck.left };
   }
   // Where's hold curve (§6.6): where y stood still under the loop (its range
@@ -505,6 +514,11 @@ function fitSegment(record, seg, L, Ts) {
   const hold = ys.map((y) => !finite(y));
   const r = Float64Array.from(rs);
   const before = seg.before;
+  // What was added to the law's output (the Shake's tones, the test that
+  // tells two shapes apart), rebuilt from the log, as the experiment played it.
+  const exs = (seg.excites ?? []).map((e) => excitationOf(e, Ts)).filter(Boolean);
+  const [uLo, uHi] = seg.limits ?? [-Infinity, Infinity];
+  const added = (i) => { let v = 0; for (const x of exs) { const j = i - x.from; if (j >= 0 && j < x.values.length) v += x.values[j]; } return v; };
   out.law = () => {
     let law = before ? piLaw(before, bumpless(before, seg.uStart, seg.rPrev, seg.yStart), before.umin, before.umax, Ts) : null;
     let uLast = seg.uStart;
@@ -512,7 +526,8 @@ function fitSegment(record, seg, L, Ts) {
       if (hold[k]) return uLast;
       const e = at.get(k);
       if (e) law = piLaw(e, bumpless(e, uLast, r[k], yh), e.umin, e.umax, Ts);
-      const u = law ? law.step(r[k], yh) : uLast;
+      let u = law ? law.step(r[k], yh) : uLast;
+      if (exs.length && law && idx[k] >= 0) u = Math.min(uHi, Math.max(uLo, u + added(idx[k])));
       uLast = u;
       return u;
     };
@@ -783,7 +798,9 @@ export function modelSentences(model, names = {}) {
     const at = (v) => withU(fmtNum(v, 2), n.yUnit);
     out.push(`Behaves differently at different places: near ${at(a.level)}, ${one}${S.integrating ? ' for 1 s' : ''} moves it ${at(a.gain)}; near ${at(b.level)}, ${at(b.gain)}. The model is a compromise between them.`);
   }
-  if (model.sizeNote) out.push(model.sizeNote);
+  // The Shake's measure goes before the Nudge's hint of friction (§8: at most six).
+  if (finite(model.distortion) && model.distortion >= GRADE.distortion[0]) out.push(`About ${Math.round(model.distortion)} % of the response at this size is not linear.`);
+  else if (model.sizeNote) out.push(model.sizeNote);
   const noise = model.noise;
   const noiseLine = !noise ? null : noise.none ? 'This plant has no noise; real plants do.'
     : noise.steps && !(noise.sigma > 0.5 * noise.q / Math.sqrt(12)) ? `Noise on ${n.y}: only its steps of ${withU(fmtNum(noise.q, 2), n.yUnit)} (an encoder).`
@@ -833,6 +850,46 @@ function easedFrom(g, plan) {
   const src = T ?? holdLaw;
   if (!src) return null;
   return { Kp: src.Kp, Ki: src.Ki, tauC: src.tauC, umin: plan.umin, umax: plan.umax, try: inc || null };
+}
+
+// The onset test (input 56, decisions.md v2.9): after each visible push of
+// the Nudge (each starts at rest; a try's step may not: the oven still
+// cooling read an onset of 40 ms through its 0.1 s pipe), the time y has gone a tenth of the way to its peak response in
+// the push's direction and stays beyond its noise (four floors) for two
+// samples. The earliest over the pushes, { t, i (the rung) }, or null. A
+// tenth, not the first sample out of the noise: a shape's dead time also
+// stands for a slow start (the oven's three lags and its 0.1 s pipe read as
+// 0.137 s), which moves y far less than a tenth by then; a dead time that
+// is wrong (the arm's 0.15 s for a start within 30 ms) has let y go half
+// its way.
+export const ONSET = { share: 0.1, floors: 4, hold: 2, peakFloors: 20 };
+function onsetOf(record, rungs, floor, Ts) {
+  let best = null;
+  // d: the response from where the push started, in its direction; the onset
+  // where it has gone a tenth of the way to its peak, beyond the noise.
+  const read = (d, at) => {
+    const peak = Math.max(...d.filter(finite));
+    if (!(peak > ONSET.peakFloors * floor)) return;
+    const bar = Math.max(ONSET.floors * floor, ONSET.share * peak);
+    for (let k = 0; k + ONSET.hold <= d.length; k++) {
+      if (d.slice(k, k + ONSET.hold).every((v) => v > bar)) { const t = k * Ts; if (!best || t < best.t) best = { t, at }; return; }
+    }
+  };
+  for (const R of rungs) {
+    if (!R.visible || !Number.isInteger(R.i0) || !Number.isInteger(R.T)) continue;
+    const dir = (R.dir ?? 1) * (R.sign ?? 1);
+    const end = Math.min(record.y.length, R.i0 + 1 + R.T + 1);
+    const d = [];
+    for (let i = R.i0; i < end; i++) { const y = nan(record.y[i]); d.push(finite(y) ? dir * (y - (R.base + (R.slope ?? 0) * (i - (R.ic ?? R.i0)))) : NaN); }
+    read(d, `rung ${R.n}`);
+  }
+  return best;
+}
+// A shape refuted by the onset: its dead time longer than the onset by more
+// than a sample (the zero-order hold's own).
+function refutedByOnset(theta, onset, Ts, names) {
+  if (!onset || !(theta > onset.t + Ts)) return null;
+  return `moves before its dead time: after a push ${names.y} had gone a tenth of its way in ${timeText(Math.max(onset.t, Ts))}, before this shape's ${timeText(theta)}`;
 }
 
 // A short fingerprint of the fitting data, so a fit made during the pause
@@ -980,11 +1037,14 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
   };
   let kernelFit = null;
   if (kernel && ckSeg) { try { kernelFit = scoreCheck(kernelReplay(kernel, ckSeg)).fit; } catch { kernelFit = null; } }
+  // The onset (input 56): after each push, how soon y moved. A shape whose
+  // dead time is longer did not see the plant start.
+  const onset = onsetOf(record, g.rungs, floorY, Ts);
   const candidates = [];
   for (const name of tried) {
     const f = fits[name];
     if (!f) continue;
-    const why = unsupported(name, f.p, { length });
+    const why = unsupported(name, f.p, { length }) ?? refutedByOnset(f.p.theta ?? 0, onset, Ts, names);
     let check = null;
     // The Check's residual is the noise as the loop shapes it (S·v), coloured
     // even for the true model: the pattern test reads each lag against what
@@ -1027,6 +1087,27 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
     pick = { index: tied[0], why: ckSeg ? 'the lowest BIC (the Check gave no fit)' : 'the lowest BIC (no Check ran)' };
   }
   let index = pick.index, chosenWhy = pick.why;
+  // The test that told two shapes apart (input 56): of those it was made
+  // for, the one that predicted it.
+  let discrimination = null;
+  const D = g.discriminate;
+  if (D && !D.left && D.iEnd > D.iStart + 2) {
+    const fitsD = tellApart(record, plan, D.candidates.map((name) => candidates.find((c) => c.structure === name && !c.unsupported)).filter(Boolean).map((c) => ({ structure: c.structure, params: c.p })));
+    const names2 = Object.keys(fitsD);
+    if (names2.length >= 2) {
+      const win = names2.reduce((a, b) => (fitsD[b] > fitsD[a] ? b : a));
+      const other = names2.filter((x) => x !== win).reduce((a, b) => (fitsD[b] > fitsD[a] ? b : a));
+      const test = D.shape === 'burst' ? `a burst at ${fmtNum(D.f, 2)} Hz` : `a ${D.shape}`;
+      // A clear win: its miss (100 − fit, in the same units) at most `clear` of the other's.
+      // and itself a fair prediction (a nonlinear plant may defeat both).
+      const clear = fitsD[win] >= GRADE.fair && 100 - fitsD[win] <= DISCRIMINATE.clear * (100 - fitsD[other]);
+      discrimination = { shape: D.shape, f: D.f, fits: fitsD, chosen: clear ? win : null };
+      if (clear) {
+        index = candidates.findIndex((c) => c.structure === win);
+        chosenWhy = `the one that predicted the test that tells it from ${STRUCTURES[other].label} (${test}): ${pctText(fitsD[win])} % against ${pctText(fitsD[other])} %`;
+      } else chosenWhy += `; the test that tells ${STRUCTURES[win].label} from ${STRUCTURES[other].label} (${test}) did not either (${pctText(fitsD[win])} % against ${pctText(fitsD[other])} %)`;
+    }
+  }
   if (structure && candidates.some((c) => c.structure === structure)) { index = candidates.findIndex((c) => c.structure === structure); chosenWhy = 'your choice'; }
   const chosen = candidates[index];
   const S = STRUCTURES[chosen.structure];
@@ -1080,7 +1161,11 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
   // whatever its fit: the model saw the pushes only.
   const check = chosen.check;
   const kernelGap = check && kernelFit !== null ? kernelFit - check.fit : 0;
-  let grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
+  // The Shake (§6.7): the frequency response at each place it ran, its
+  // distortion, and how much of it the model holds within 2σ.
+  const shakes = shakeResponses(record, g.shakes, chosen, Ts);
+  const distortion = shakes.length ? Math.max(...shakes.map((x) => x.distortion.share)) : null;
+  let grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, distortion, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
   const early = { budget: 'the test ended after the first look', slow: 'the test ended after the first look', away: 'the gentle controller pushed the wrong way', hold: 'the gentle controller did not hold' }[g.end?.code];
   if (early) grade = { mark: '✕', why: [early] };
   if (chosen.unsupported) grade = { mark: '✕', why: [chosen.unsupported, ...grade.why.filter((w) => w !== chosen.unsupported)] };
@@ -1113,7 +1198,7 @@ export function* identifySteps(record, { plan, structure = null, upto = null, re
     fit: chosen.fitted, check: checkOut,
     where, holds: seg.holds.map((h) => ({ y: h.y, u: h.u })), whereSpread: { spread, flagged }, size, sizeNote,
     kernel: kernel ? { g: Array.from(kernel.g), sd: Array.from(kernel.sd), Ts: kernel.Ts, decimate: kernel.decimate, integrating: kernel.integrating, rate: kernel.rate ? { value: kernel.rate.value, sd: kernel.rate.sd } : null, fit: kernelFit } : null,
-    eased: easedFrom(g, plan),
+    eased: easedFrom(g, plan), discrimination, frf: shakes, distortion,
     grade: grade.mark, why: grade.why, warnings,
     segments: { open: seg.open ? [seg.open.i0, seg.open.i1] : null, closed: seg.closed.map((c) => [c.i0, c.i1]), check: seg.check ? [seg.check.from, seg.check.i1] : null, fitted: seg.F },
   };
@@ -1149,10 +1234,13 @@ export function linearModel(model) {
 }
 
 // The twin as a subsystem of the Plant library's own blocks (§10; no black
-// boxes): In → gain K (or k′) → dead time → lags or a resonance → integrator
+// boxes): In → gain K (or k′) → integrator → lags or a resonance → dead time
 // → noise → quantiser → Out. push: an added Sum at its input with a second
 // In for the test push. noise: false leaves out the noise and the quantiser.
-export function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = null } = {}) {
+// at: { u0, y0 }, the point the model was measured about (it is incremental):
+// u0 is taken off its input and y0 added to its output, so in a loop it
+// rests at y0 with u0, as the plant did in Listen.
+export function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = null, at = null } = {}) {
   if (!model?.structure) throw new Error('twinSubsystem: no model was identified');
   const p = model.params, S = STRUCTURES[model.structure];
   const blocks = [], wires = [];
@@ -1165,9 +1253,10 @@ export function twinSubsystem(model, { push = false, noise = true, id = 'twin', 
     add({ id: 'sum', type: 'sum', params: { signs: '++' } });
     wires.push({ from: 'push', to: 'sum:1' });
   }
+  // Offsets as Equations (a number written out in full, so the model is exact).
+  if (at?.u0) add({ id: 'aboutU', type: 'fcn', name: 'about u₀', params: { inputs: 'u', eqs: `y = u - (${at.u0})`, outputs: 'y' } });
   const gainKey = GAIN(S);
   add({ id: 'gain', type: 'gain', name: S.integrating ? 'rate k′' : 'gain K', params: { K: p[gainKey] } });
-  if (p.theta > 0) add({ id: 'dead', type: 'delay', name: 'dead time θ', params: { L: p.theta, y0: 0 } });
   if (S.integrating) add({ id: 'int', type: 'integrator', name: 'integrator', params: { K: 1 } });
   if (model.structure === 'lag' || model.structure === 'intLag') add({ id: 'lag', type: 'firstOrder', name: 'lag τ', params: { K: 1, tau: p.tau } });
   if (model.structure === 'lags') {
@@ -1175,10 +1264,153 @@ export function twinSubsystem(model, { push = false, noise = true, id = 'twin', 
     add({ id: 'lag2', type: 'firstOrder', name: 'lag τ₂', params: { K: 1, tau: p.tau2 } });
   }
   if (model.structure === 'resonance' || model.structure === 'intRes') add({ id: 'res', type: 'secondOrder', name: 'resonance f, ζ', params: { K: 1, wn: 2 * Math.PI * p.f, zeta: p.zeta } });
+  // The dead time after the dynamics (the same model: they commute): the Dead
+  // time block interpolates its input between integration steps, exact for
+  // a smooth input, half a step off for a held one (identification.md §17,
+  // test 11).
+  if (p.theta > 0) add({ id: 'dead', type: 'delay', name: 'dead time θ', params: { L: p.theta, y0: 0 } });
+  if (at?.y0) add({ id: 'aboutY', type: 'fcn', name: 'about y₀', params: { inputs: 'u', eqs: `y = u + (${at.y0})`, outputs: 'y' } });
   if (noise && model.noise?.sigma > 0) add({ id: 'noise', type: 'noise', name: 'noise σ', params: { std: model.noise.sigma, seed: 1 } });
   if (noise && model.noise?.q > 0) add({ id: 'quant', type: 'quantizer', name: 'steps q', params: { q: model.noise.q } });
   add({ id: 'y', type: 'outport', name: model.names?.y ?? 'y', params: { port: 1 } });
   return { id, type: 'subsystem', name: name ?? `identified ${S.label}`, params: {}, diagram: { blocks, wires } };
+}
+
+// The twin in the plant's place (§10): in a copy of the diagram, the
+// Controller block at path drives the twin subsystem and reads its output as
+// its measurement; the real plant stays, cut off from the loop (a simulated
+// one runs on beside it); an External plant (a live one) leaves the copy,
+// and what showed its measured output shows the twin's. push: a Source named
+// push into the twin's second input (the test push). noise: the twin's noise
+// and quantiser (false for Analysis). Returns the diagram.
+export function twinDiagram(diagram, path, model, { push = null, noise = true } = {}) {
+  const d = structuredClone(diagram);
+  const { level, block } = locate(d, path);
+  if (block?.type !== 'controller') throw new Error(`twinDiagram: no Controller block ${[].concat(path).join('/')}`);
+  const ids = new Set(level.blocks.map((b) => b.id));
+  const fresh = (base) => { let id = base; for (let k = 2; ids.has(id); k++) id = `${base}${k}`; ids.add(id); return id; };
+  const id = fresh('twin');
+  const rest = model.holds?.[0] ?? null;
+  const tw = twinSubsystem(model, { push: !!push, noise, id, name: 'identified model', at: rest ? { u0: rest.u, y0: rest.y } : null });
+  tw.x = (block.x ?? 0) + 160; tw.y = (block.y ?? 0) + 140;
+  const into = wireTo(level, block.id, 1);
+  const measured = into ? parseEnd(into.from) : null;
+  level.wires = level.wires.filter((w) => w !== into);
+  // An External plant leaves the copy: what it fed reads the twin where it
+  // was the measurement, nothing elsewhere.
+  const ext = level.blocks.filter((b) => b.type === 'external').map((b) => b.id);
+  if (ext.length) {
+    level.wires = level.wires.flatMap((w) => {
+      const f = parseEnd(w.from), t = parseEnd(w.to);
+      if (ext.includes(t.id)) return [];
+      if (!ext.includes(f.id)) return [w];
+      return measured && sameEnd(f, measured) ? [{ ...w, from: id }] : [];
+    });
+    level.blocks = level.blocks.filter((b) => !ext.includes(b.id));
+  }
+  // A Sink that showed the measurement shows the model's (a simulated plant
+  // runs on beside it, cut off; its other outputs read what it does open loop).
+  if (measured && !ext.includes(measured.id)) {
+    level.wires = level.wires.map((w) => (sameEnd(parseEnd(w.from), measured) && level.blocks.find((b) => b.id === parseEnd(w.to).id)?.type === 'sink' ? { ...w, from: id } : w));
+  }
+  level.blocks.push(tw);
+  level.wires.push({ from: block.id, to: id }, { from: id, to: `${block.id}:1` });
+  if (push) {
+    const sid = fresh('push');
+    level.blocks.push({ id: sid, type: 'source', name: 'push at the input (model only)', params: { signal: push }, x: tw.x - 120, y: tw.y + 60 });
+    level.wires.push({ from: sid, to: `${id}:1` });
+  }
+  return d;
+}
+
+// The test push (§10): at the twin's input, 20 % of the u the model needs to
+// move between the reference's levels (at least 1 % of u's range); where
+// the tester's d plays, with d's own shape and timing (a pulse is answered
+// on and off), scaled to that size; else a step at 60 % of the period.
+// → { amplitude, time, components }.
+export const PUSH = { share: 0.2, least: 0.01, at: 0.6 };
+export function testPush(project, path, model) {
+  const known = knownFor(project, path);
+  const S = STRUCTURES[model.structure], p = model.params;
+  const span = known.r?.span ?? 0;
+  const U = known.u.max - known.u.min;
+  const du = S.integrating ? 0 : Math.abs(span / p.K);
+  const amplitude = Math.max(PUSH.least * U, PUSH.share * du);
+  const period = known.r?.period ?? Math.max(...Object.values(project.system.signals).map((x) => x.period));
+  // The tester's d, where it plays timed components (steps, pulses, squares).
+  const d = known.others.map((o) => project.system.signals[o.name]).find((sg) => sg?.components?.some((c) => c.enabled !== false && finite(c.params?.amplitude) && c.params.amplitude !== 0 && finite(c.params?.time)));
+  if (d) {
+    const comps = d.components.filter((c) => c.enabled !== false && finite(c.params?.amplitude) && finite(c.params?.time));
+    const big = Math.max(...comps.map((c) => Math.abs(c.params.amplitude)));
+    return { amplitude, time: Math.min(...comps.map((c) => c.params.time)), components: comps.map((c) => ({ ...structuredClone(c), params: { ...c.params, amplitude: (c.params.amplitude / big) * amplitude } })) };
+  }
+  const time = PUSH.at * period;
+  return { amplitude, time, components: [{ type: 'step', params: { amplitude, time } }] };
+}
+
+// A project in which the Controller block at path drives the identified
+// model (§10): its plant is twinDiagram's, with the test push as a signal
+// named push; for Auto-tune ("on the model") and Analysis (noise: false).
+export function modelProject(project, path, model, { push = true, noise = true } = {}) {
+  const known = knownFor({ ...project, system: { ...project.system } }, path);
+  const signals = structuredClone(project.system.signals);
+  let name = null;
+  if (push) {
+    name = 'push';
+    for (let k = 2; signals[name]; k++) name = `push${k}`;
+    const tp = testPush(project, path, model);
+    const period = known.r?.period ?? 1;
+    signals[name] = { period, components: tp.components };
+  }
+  const diagram = normalizeDiagram(twinDiagram(project.system.plant.diagram, known.block.path, model, { push: name, noise }));
+  return { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram }, signals } };
+}
+
+// The loop the Controller at path closes round the identified model, for
+// Analysis (§12): the twin without its noise or push, linearised where the
+// run starts (the model at rest about where it was measured: it is linear),
+// labelled with the range it was identified over and its grade's warnings.
+// A controller at its limit there is not the model's concern: the model holds
+// about its range, not at a state. Returns loopModel's { plant, ctrl, Ts, … }.
+export function identifiedLoop(project, path, model) {
+  const lin = linearModel(model);
+  const m = loopModel(modelProject(project, path, model, { push: false, noise: false }), path, 'initial');
+  const own = m.warnings.filter((w) => !/is at its limit|the origin is not at rest/.test(w));
+  return { ...m, opLabel: lin.op.label, atLimit: false, identified: true, warnings: [...new Set([...lin.warnings, ...own])] };
+}
+
+// The key numbers across what the model is unsure of (§12): the loop for up
+// to `count` parameter samples and each place the model changes by; the
+// range of the gain and phase margins and of Ms over those that are stable.
+// Returns { gm: [lo, hi], pm: [lo, hi], ms: [lo, hi], n, unstable } or null.
+export function loopRanges(project, path, model, { count = 12 } = {}) {
+  const models = modelSamples(model, count).map((p) => ({ ...model, params: p }));
+  const S = STRUCTURES[model.structure], gk = GAIN(S);
+  for (const pl of model.where ?? []) if (pl.seen >= GRADE.seen && finite(pl.gain) && finite(pl.scale)) models.push({ ...model, params: { ...model.params, [gk]: pl.gain, [pl.scaleKey]: pl.scale } });
+  const out = { gm: [Infinity, -Infinity], pm: [Infinity, -Infinity], ms: [Infinity, -Infinity], n: 0, unstable: 0 };
+  const take = (k, v) => { if (finite(v)) { out[k][0] = Math.min(out[k][0], v); out[k][1] = Math.max(out[k][1], v); } };
+  for (const mm of models) {
+    let r;
+    try { const m = identifiedLoop(project, path, mm); r = analyzeLoop(m.plant, m.ctrl, m.Ts, { points: 200 }); } catch { continue; }
+    if (!r.stable) { out.unstable++; continue; }
+    out.n++;
+    take('gm', r.margins.gmUp); take('pm', r.margins.pm); take('ms', r.margins.ms);
+  }
+  return out.n || out.unstable ? out : null;
+}
+
+// The model of the block's kept test in use (system.identify[key]), from its
+// record, for the command line and the MCP server (`--plant identified`);
+// throws an IdentifyError when none is kept.
+export function keptModel(project, path = null) {
+  const key = path ? [].concat(path).join('/') : controllerBlocks(project.system.plant.diagram)[0]?.key;
+  const e = project.system.identify?.[key];
+  const kept = e?.kept ?? [];
+  if (!kept.length) throw new IdentifyError('not-identified', 'identify the plant first: no test is kept for this block', 'node cli.mjs identify <project> --keep, or the Identify tab\'s Keep');
+  const k = kept[Math.min(kept.length - 1, Math.max(0, e.use ?? kept.length - 1))];
+  const model = drain(identifySteps(k.record, { plan: k.plan, structure: e.structure ?? null }));
+  if (!model.ok) throw new IdentifyError('no-model', `the kept test "${k.name}" gives no model: ${model.sentences[0]}`, 'identify again');
+  return { model, name: k.name, key };
 }
 
 // ---- Hide a variation (§13)
@@ -1312,11 +1544,14 @@ export function identifyRun(project, path = null, settings = {}, { plan: ready =
     for (let k = 0; k <= most && !exp.state.done; k++) {
       const v = runner.step();
       yield { kind: 'sample', k: v.k, t: v.t, values: v.values };
-      if (exp.needs) {
+      if (exp.needs?.kind === 'fit') {
         // The fit pause: fitted at once on the data so far, as Keep stores it.
         const upto = exp.needs.upto;
         pre = yield* tagged(identifySteps(compactRecord(exp.record()), { plan, upto }), 'pause');
-        exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+        exp.supply('fit', fitSupply(pre, exp));
+      } else if (exp.needs?.kind === 'discriminate') {
+        // After the Check: do two shapes still tie? Then a test that tells them apart.
+        exp.supply('discriminate', yield* tagged(discriminateSteps(exp.record(), plan, pre), 'discriminate'));
       }
     }
     if (!exp.state.done) exp.stop();
@@ -1337,6 +1572,26 @@ export function identifyRun(project, path = null, settings = {}, { plan: ready =
   return { known, plan, settings: s, vary, factors, runner, exp, names: runner.names(), steps: steps(), stop: () => exp.stop(), get pre() { return pre; } };
 }
 
+// What the page supplies at a fit pause: the model's shape and numbers, and,
+// at the first pause, whether the Shake should look closer (§5.6: when the
+// ladder's model is unsure, ! or ✕ for any reason but that no Check ran yet).
+export function shakeWanted(model) {
+  return !model?.ok || model.why.some((w) => w !== 'no Check ran');
+}
+export function fitSupply(model, exp = null) {
+  const first = !exp || !exp.record().log.some((e) => e.kind === 'shake' || (e.kind === 'note' && /the Shake/.test(e.text)));
+  return { ...(model?.ok ? { structure: model.structure, params: model.params } : {}), shake: first && shakeWanted(model) };
+}
+
+// What the page answers the experiment after the Check (input 56): the
+// model so far (the pause's fits, the Check graded) and, if two shapes tie,
+// the test that tells them apart. For the page and the live loop too.
+export function* discriminateSteps(record, plan, pre) {
+  const rec = compactRecord(record);
+  const so = yield* identifySteps(rec, { plan, reuse: pre });
+  return designDiscrimination(so, rec, plan) ?? {};
+}
+
 function* tagged(gen, stage) {
   for (;;) { const s = gen.next(); if (s.done) return s.value; yield { kind: 'fit', stage }; }
 }
@@ -1346,6 +1601,131 @@ function* tagged(gen, stage) {
 // settings, vary, record, model, end, time, tries }.
 export function identify(project, path = null, settings = {}) {
   return drain(identifyRun(project, path, settings).steps);
+}
+
+// The Shake's frequency response at each place (§6.7, fit.js frf): its
+// measured periods (those without a lost cycle, the ramp's left out), u as
+// the plant applied it; Ĝ with its 2σ at the excited lines, the distortion,
+// the model's sampled response G_d there (the zero-order hold and the
+// fractional dead time: §6.7) and the share of lines it holds within 2σ.
+function shakeResponses(record, shakes, model, Ts) {
+  const out = [];
+  const ramp = EXPERIMENT.shake.ramp.length;
+  let d = null;
+  try { d = discretise(model.structure, model.p ?? model.params, Ts); } catch { d = null; }
+  for (const e of shakes) {
+    if (e.left) continue;
+    const ex = excitationOf(e, Ts);
+    const lost = (a, b) => (record.gaps ?? []).some(([i]) => i >= a && i < b);
+    const keep = e.starts.slice(ramp).filter((a, j) => e.amps[ramp + j] === e.amps.at(-1) && !lost(a, a + e.N) && a + e.N <= record.y.length);
+    if (keep.length < 2) continue;
+    const col = (src, a) => Array.from({ length: e.N }, (_, j) => { const v = nan(src[a + j]); return finite(v) ? v : 0; });
+    const U = keep.map((a) => col(record.applied?.some((v) => v !== null) ? record.applied.map((v, i) => (v === null ? record.u[i] : v)) : record.u, a));
+    const Y = keep.map((a) => col(record.y, a));
+    let F;
+    try { F = frf(U, Y, { excited: ex.lines.excited, detect: ex.lines.detect, Ts }); } catch { continue; }
+    const Gd = d ? F.f.map((f) => discreteAt(d, 2 * Math.PI * f * Ts)) : null;
+    const inside = Gd ? F.G.filter((g, j) => Math.hypot(g.re - Gd[j][0], g.im - Gd[j][1]) <= 2 * F.sd[j]).length / F.G.length : null;
+    out.push({
+      place: e.place, periods: keep.length, f: F.f, G: F.G.map((g) => [g.re, g.im]), sd: F.sd, model: Gd,
+      distortion: { share: F.distortion.share, odd: F.distortion.odd, even: F.distortion.even }, within: inside,
+    });
+  }
+  return out;
+}
+
+// ---- Telling two shapes apart (input 56)
+
+// When two shapes still tie on the Check (within CHOICE.within points), the
+// page designs a test input on which their predictions differ most against
+// the noise (model discrimination: Box and Hill 1967; T-optimality,
+// Atkinson and Fedorov 1975): a pulse, a step, or a burst at either shape's
+// own frequency, added to the incumbent's output while it holds y where the
+// Check ended, its size half the largest push the loop used, smaller where a
+// shape predicts it would use more than half the room. separation: the
+// predictions' difference, in noise floors over the test, below which they
+// predict the same (and the simpler stays), the floor at least a thousandth
+// of the band (a simulation without noise would tell anything apart).
+// clear: the shape that predicted the test must miss it by at most this
+// share of the other's miss (rms), and fit it at least GRADE.fair, or the
+// simpler stays.
+export const DISCRIMINATE = { separation: 20, floor: 1e-3, room: 0.5, push: 1, longest: 10, clear: 0.9 };
+
+// model: the model so far (the Check included); record: the record so far;
+// plan: the plan. Returns { shape, a, n, f, candidates, separation } to play,
+// or { why } (a note) or null when no two shapes tie.
+export function designDiscrimination(model, record, plan) {
+  if (!model?.ok || !model.check) return null;
+  const pool = model.candidates.filter((c) => !c.unsupported && finite(c.fit));
+  if (pool.length < 2) return null;
+  const best = Math.max(...pool.map((c) => c.fit));
+  const tied = pool.filter((c) => c.fit >= best - CHOICE.within);
+  if (tied.length < 2) return null;
+  const A = tied.find((c) => c.structure === model.structure) ?? tied[0];
+  const B = tied.filter((c) => c !== A).reduce((a, b) => (b.fit > a.fit ? b : a));
+  const g = readLog(record), Ts = record.Ts, n0 = record.y.length;
+  const law = g.laws.at(-1);
+  if (!law || !g.listen) return null;
+  const w = Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9));
+  const rest = restBefore(record, n0, w), level = nan(record.r[n0 - 1]);
+  const floor = Math.max(model.noise?.floor ?? g.listen.floor, DISCRIMINATE.floor * (plan.band[1] - plan.band[0]));
+  let push = 0;
+  for (let j = law.i ?? 0; j < n0; j++) { const u = nan(record.u[j]); if (finite(u)) push = Math.max(push, Math.abs(u - rest.u)); }
+  const U = plan.umax - plan.umin;
+  const a0 = Math.max(0.01 * U, DISCRIMINATE.push * push);
+  const scale = (c) => { const p = c.params; return p.f ? 1 / (2 * Math.PI * p.f) : Math.max(...STRUCTURES[c.structure].times(p)); };
+  const freq = (c) => (c.params.f ? c.params.f * Math.sqrt(Math.max(0.05, 1 - (c.params.zeta ?? 0) ** 2)) : 1 / (2 * Math.PI * scale(c)));
+  const slow = Math.max(scale(A), scale(B), A.params.theta ?? 0, B.params.theta ?? 0, Ts);
+  const longest = Math.min(DISCRIMINATE.longest, plan.budget / 10);
+  const steps = (x) => Math.max(2, Math.min(Math.round(longest / Ts), Math.round(x / Ts)));
+  const shapes = [
+    { shape: 'pulse', n: steps(Math.max(2 * Ts, slow / 2)) },
+    { shape: 'step', n: steps(4 * slow) },
+    ...[A, B].map((c) => { const f = Math.min(freq(c), 0.4 / Ts); return { shape: 'burst', f, n: steps(4 / f) }; }),
+  ];
+  const [lo, hi] = plan.band, room = Math.min(hi - level, level - lo);
+  const predict = (c, d) => {
+    const sig = discriminationSignal(d, Ts), N = d.n + Math.ceil(EXPERIMENT.discriminate.rest * d.n);
+    return simulateSegment(discretise(c.structure, c.params, Ts), {
+      n: N, yStart: rest.y, uStart: rest.u,
+      law: () => { const pi = piLaw(law, bumpless(law, rest.u, level, rest.y), law.umin, law.umax, Ts); return (k, yh) => Math.min(plan.umax, Math.max(plan.umin, pi.step(level, yh) + (sig[k] ?? 0))); },
+    }).y;
+  };
+  let pickD = null;
+  for (const sh of shapes) {
+    let d = { ...sh, a: a0 };
+    let yA = predict(A, d), yB = predict(B, d);
+    const used = Math.max(...[...yA, ...yB].map((v) => Math.abs(v - level)));
+    if (!(room > 0)) continue;
+    if (used > DISCRIMINATE.room * room) { d = { ...d, a: (a0 * DISCRIMINATE.room * room) / used }; yA = predict(A, d); yB = predict(B, d); }
+    let e = 0;
+    for (let k = 0; k < yA.length; k++) e += (yA[k] - yB[k]) ** 2;
+    const sep = Math.sqrt(e) / floor;
+    if (!pickD || sep > pickD.separation) pickD = { ...d, separation: sep };
+  }
+  if (!pickD || !(pickD.separation >= DISCRIMINATE.separation)) {
+    return { why: `${A.label} and ${B.label} predict the same within the noise on any test the room allows: the simpler is kept` };
+  }
+  const { shape, a, n, f = null, separation } = pickD;
+  return { shape, a, n, f, candidates: [A.structure, B.structure], separation };
+}
+
+// How well each model ({ structure, params }) predicts the record's test
+// that tells shapes apart (its log entry): replayed from the settled start,
+// under the logged law, its test input added as played. → { structure: fit % }.
+export function tellApart(record, plan, models) {
+  const g = readLog(record), D = g.discriminate, Ts = record.Ts;
+  if (!D || !g.listen) return {};
+  const seg = closedSegment(record, g.laws, D.iStart, D.iEnd, Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9)), 'discriminate', { excites: [D], limits: [plan.umin, plan.umax] });
+  const fs = fitSegment(record, seg, g.listen, Ts);
+  const out = {};
+  for (const m of models) {
+    const yh = simulateSegment(discretise(m.structure, m.params, Ts), fs).y;
+    const y = [], h = [];
+    for (let k = 0; k < yh.length; k++) if (finite(fs.y[k])) { y.push(fs.y[k]); h.push(yh[k]); }
+    out[m.structure] = fitPercent(y, h);
+  }
+  return out;
 }
 
 // ---- Check again (§14)

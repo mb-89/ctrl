@@ -12,7 +12,8 @@ import { drawnValues, refitSwitched } from './xyview.js';
 import { createControllerTab } from './controller.js';
 import { createAutotuneTab } from './autotune.js';
 import { createIdentifyTab } from './identify.js';
-import { loopOverlays, autotune, placeVariant, tuneReport, withVariant } from '../core/autotune.js';
+import { identifiedLoop, modelProject } from '../core/identify.js';
+import { loopOverlays, autotune, placeVariant, tuneReport, withVariant, resultName, controllerBlocks } from '../core/autotune.js';
 import { createAnalysisTab } from './analysis.js';
 import { SIGNALS, normalizeComponent, referenceFn, sampleSignal } from '../core/signals.js';
 import { DEFAULT_PROJECT } from '../core/examples.js';
@@ -280,7 +281,25 @@ function startApp() {
   // The loop a Controller closes, cut at its output, linearised at an
   // operating point ('origin', 'initial', { y }, { t }): for the Analysis
   // tab, with the page's designs (a plan is never made twice).
-  app.loopModel = (path, op) => loopModel(app.project, path, op, { designs });
+  // The plant Auto-tune and Analysis use for a Controller block (§10): the
+  // diagram, or the identified model (always on a plant outside the page;
+  // on a simulated one when the person chose it).
+  const keyOf = (path) => [].concat(path).join('/').replace(/\[\d+\]$/, '');
+  const controllerBlocksOf = () => (app.project.system.plant?.type === 'diagram' ? controllerBlocks(app.project.system.plant.diagram) : []);
+  app.plantSource = (path) => (findExternal(app.project.system.plant?.diagram) ? 'identified' : app.project.system.identify?.[keyOf(path)]?.source ?? 'diagram');
+  app.setPlantSource = (path, src) => identifyTab.setSource(keyOf(path), src);
+  // The identified model in use for the block, or null (none yet, or still
+  // computed from a kept record: then the tab re-renders when it is).
+  app.identifiedModel = (path) => identifyTab?.modelFor(keyOf(path)) ?? null;
+  app.identifiedLabel = (path) => identifyTab?.labelFor(keyOf(path)) ?? '';
+  const noModel = () => new Error(findExternal(app.project.system.plant?.diagram) ? 'the plant runs outside the page and is a black box: Auto-tune and Analysis use its identified model; identify the plant first (Identify tab)' : 'identify the plant first (Identify tab)');
+  app.modelProject = (path, opts) => { const m = app.identifiedModel(path); if (!m) throw noModel(); return modelProject(app.project, [].concat(path), m, opts); };
+  app.loopModel = (path, op) => {
+    if (app.plantSource(path) !== 'identified') return loopModel(app.project, path, op, { designs });
+    const m = app.identifiedModel(path);
+    if (!m) throw noModel();
+    return identifiedLoop(app.project, [].concat(path), m);
+  };
   // What a scope channel can show: only names the diagram gives (its Sources
   // and Sinks, r always), each with its unit.
   app.signalNames = () => channelNames(app.project);
@@ -983,9 +1002,17 @@ function startApp() {
     autotune: (opts = {}) => {
       tuneTab.stop();
       let res;
-      try { res = autotune(app.project, opts.block ? String(opts.block).split('/') : null, opts); } catch (err) { return { ok: false, why: err.message }; }
+      // On the identified model when the block's plant source says so (always
+      // for a plant outside the page): identification.md §10.
+      const path = opts.block ? String(opts.block).split('/') : [controllerBlocksOf()[0]?.key ?? 'ctrl'];
+      const onModel = app.plantSource(path) === 'identified';
+      try {
+        const p = onModel ? app.modelProject(path) : app.project;
+        const block = controllerBlocksOf().find((c) => c.key === path.join('/'))?.block;
+        res = autotune(p, path, onModel && block ? { ...opts, name: resultName(block, opts.method ?? 'iterate', opts.rule, opts.simc, { onModel: true }) } : opts);
+      } catch (err) { return { ok: false, why: err.message }; }
       if (res.ok && opts.apply !== false) { app.beginEdit(); placeVariant(app.project, res.path, res.variant, { run: res.better }); app.endEdit(); changed(); }
-      return tuneReport(res);
+      return { ...tuneReport(res), plant: onModel ? `the identified model (${app.identifiedLabel(path)})` : 'the diagram' };
     },
   };
 

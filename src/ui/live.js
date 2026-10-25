@@ -651,7 +651,7 @@ export function createLive(app, display, record, panelHost) {
         pending = 'run'; render();
         return ask({ type: 'identify', ...msg }, 8000);
       },
-      supply: (data) => host?.post({ type: 'supply', data }),
+      supply: (kind, data) => host?.post({ type: 'supply', kind, data }),
       stop: () => host?.post({ type: 'identifyStop' }),
     },
     // Why the speed is held at 1×: connected, the plant owns the clock.

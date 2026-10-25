@@ -210,17 +210,17 @@ test('11. the twin subsystem simulates the same as replay, open and closed loop;
         const want = simulateSegment(discretise(name, params, Ts), seg).y;
         let worst = 0, scale = 0;
         for (let j = 0; j < N; j++) { worst = Math.max(worst, Math.abs(got[j] - want[j])); scale = Math.max(scale, Math.abs(want[j])); }
-        // Without a dead time the twin is the replay to RK4's accuracy. With one,
-        // the diagram's Dead time block interpolates its input between
-        // integration steps (here one step is Ts): on a held input that moves
-        // each jump by up to half a step, 1–3 % of the response here.
-        assert.ok(worst <= (theta ? 3.5e-2 : 2e-6) * scale, `${name} θ ${theta} ${closed ? 'closed' : 'open'}: ${worst} of ${scale}`);
+        // The twin is the replay to RK4's accuracy, with a dead time too: it
+        // sits after the dynamics, where its input is smooth (before them, on
+        // the held u, the Dead time block's interpolation moved each jump by
+        // up to half a step: 1–3 % of the response).
+        assert.ok(worst <= 2e-6 * scale, `${name} θ ${theta} ${closed ? 'closed' : 'open'}: ${worst} of ${scale}`);
       }
     }
   }
   // With the noise the plant showed and the test push (§10).
   const t2 = twinSubsystem(modelOf('lag', MODELS.lag, { sigma: 0.01, q: 0.002 }), { push: true });
-  assert.deepEqual(t2.diagram.blocks.map((b) => b.type), ['inport', 'inport', 'sum', 'gain', 'delay', 'firstOrder', 'noise', 'quantizer', 'outport']);
+  assert.deepEqual(t2.diagram.blocks.map((b) => b.type), ['inport', 'inport', 'sum', 'gain', 'firstOrder', 'delay', 'noise', 'quantizer', 'outport']);
   assert.ok(normalizeDiagram(t2.diagram));
 });
 
@@ -291,7 +291,7 @@ test('12. every log entry the experiment writes is one the file keeps: soft guar
   runs.push([tight, runExperiment(tight, createArm(drawArm(6), { Ts, seed: 6 })).record]);
   const plan = planExperiment(known, {});
   const exp = createExperiment(plan), arm = createArm(drawArm(1), { Ts, seed: 1 });
-  for (let k = 0; k < 9000 && !exp.state.done; k++) { const u = exp.step(k, k === 400 ? NaN : arm.output()); if (exp.needs) exp.supply('fit', {}); arm.advance(u); if (k === 4000) exp.stop(); }
+  for (let k = 0; k < 9000 && !exp.state.done; k++) { const u = exp.step(k, k === 400 ? NaN : arm.output()); if (exp.needs) exp.supply(exp.needs.kind, {}); arm.advance(u); if (k === 4000) exp.stop(); }
   runs.push([plan, exp.record()]);
   const pp = planExperiment(plain, {});
   for (const plant of [transferPlant(unstable(1, 0.3), Ts, { noise: 0.001 }), transferPlant(unstable(1, 0.3), Ts, { noise: 0.001, bias: 0.01 }), transferPlant(lag(2, 0.5, 0.05), Ts, { noise: 0.001, drift: 0.02 })]) runs.push([pp, runExperiment(pp, plant).record]);

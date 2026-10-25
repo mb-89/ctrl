@@ -4963,7 +4963,7 @@ return { STRUCTURES, paramInfo, discretise, discretiseSS, simulateSegment, resid
 // ---- core/experiment.js
 __mods['core/experiment.js'] = (() => {
 
-const { STRUCTURES, fitStructureSteps } = __mods['core/fit.js'];
+const { STRUCTURES, fitStructureSteps, multisine, multisineLines } = __mods['core/fit.js'];
 const IDENTIFY_VERSION = 1;
 
 const EXPERIMENT = {
@@ -5032,7 +5032,9 @@ const EXPERIMENT = {
     recover: 2,                
   },
   pause: { seconds: 2, wait: 30 },
+  shake: { minN: 256, maxN: 8192, fmax: 0.4, band: 10, lines: 60, push: 0.5, ramp: [0.25, 0.5, 1], measured: 4, room: 0.5, repeat: 1 },
   check: { stair: 0.125 },
+  discriminate: { rest: 0.5 },
   goal: { effort: 0.05, overshoot: 10, overshootWeight: 2, saturation: 0.2 },
 };
 
@@ -5781,6 +5783,64 @@ function createExperiment(plan) {
     return null;
   }
 
+  function shakeDesign() {
+    const Sh = E.shake, tc = inc?.tauC ?? gentle?.tauC ?? 1, th = gentle?.theta ?? look?.theta ?? 0;
+    let N = Sh.minN;
+    while (N * Ts < 2 * 4 * (tc + th) && N < Sh.maxN) N *= 2;
+    const fTop = Math.min(Sh.fmax / Ts, Sh.band / (2 * Math.PI * (tc + th)));
+    const kmax = Math.max(3, Math.floor(fTop * N * Ts));
+    const lines = multisineLines({ N, kmax, count: Sh.lines, seed: P.seed });
+    const base = multisine({ N, lines: lines.excited, peak: 1, seed: P.seed });
+    const peak = Math.max(E.nudge.a0 * U, Sh.push * proven);
+    const periods = Sh.ramp.length + Sh.measured;
+    return { N, kmax, lines, base, peak, periods };
+  }
+  function* shake() {
+    const Sh = E.shake, d = shakeDesign();
+    let a = Infinity, b = -Infinity;
+    for (const v of test) { a = Math.min(a, v); b = Math.max(b, v); }
+    const places = b - a > 1e-12 ? [a, b] : [a];
+    const need = places.length * (E.ease.settleMax + (d.periods + Sh.repeat) * d.N * Ts) + E.pause.seconds + E.ease.settleMax + check.length * Ts;
+    if (need > left()) {
+      const fits = LENGTHS.find((x) => x >= now() + need);
+      log({ kind: 'note', i, text: `a closer look (the Shake) needs about ${Math.round(need)} s more${fits ? `: allow ${budgetText(fits)}` : ''}` });
+      return 'skipped';
+    }
+    enter('shake');
+    for (const place of places) {
+      const status = (p) => `Shake at ${yU(place)}: tones on ${names.u}, period ${p + 1} of ${d.periods}`;
+      const i0 = i;
+      const s0 = yield* settle(place, E.ease.settleMax, status(-1).replace(/, period.*/, ''));
+      if (s0 === 'left') return endBand(`${names.y} left 'may move within' before the Shake: the page stopped the plant`);
+      const room = Math.min(hi - place, place - lo);
+      const iS = i, starts = [], amps = [];
+      let amp = 0, used = 0, out = false, extra = 0;
+      for (let p = 0; p < d.periods + extra; p++) {
+        const want = d.peak * Sh.ramp[Math.min(p, Sh.ramp.length - 1)];
+        if (p === 0 || used <= Sh.room) amp = Math.max(amp, want);
+        used = 0;
+        const pStart = i, gapsBefore = rec.gaps.length;
+        starts.push(pStart); amps.push(amp);
+        for (let j = 0; j < d.N; j++) {
+          if (!inBand(y)) { out = true; recovering = { k, beyond: beyond(y), inside: 0 }; break; }
+          used = Math.max(used, Math.abs(y - place) / Math.max(room, 1e-300));
+          const u = Math.min(P.umax, Math.max(P.umin, law.step(r, y) + amp * d.base[j]));
+          meters(u);
+          st.room = roomUsed(y);
+          st.status = status(p);
+          yield u;
+        }
+        if (out) break;
+        if (rec.gaps.length > gapsBefore && extra < Sh.repeat && p >= Sh.ramp.length) extra++;
+      }
+      log({ kind: 'shake', i0, iStart: iS, iEnd: i, place, N: d.N, kmax: d.kmax, seed: P.seed, starts, amps, left: out });
+      if (out) {
+        return 'left';
+      }
+    }
+    return null;
+  }
+
 
   function* runCheck() {
     enter('check');
@@ -5818,6 +5878,42 @@ function createExperiment(plan) {
     yield* runCheck();
     if (st.done || stopping) return null;
     return finish('done', 'Checked again: the plant is stopped');
+  }
+
+  function* discriminate() {
+    const at = r0, i0 = i;
+    const s0 = yield* settle(at, E.ease.settleMax, `Holding ${names.y} at ${yU(at)} while the page compares the shapes`);
+    if (s0 === 'left') return endBand(`${names.y} left 'may move within' after the Check: the page stopped the plant`);
+    needs = { kind: 'discriminate', upto: i, at };
+    supplied = null;
+    const kMax = k + Math.ceil(E.pause.wait / Ts - 1e-9);
+    for (;;) {
+      if (!holds()) return endBand(`${names.y} left 'may move within' while the controller held it: the page stopped the plant`);
+      if (supplied) break;
+      if (k >= kMax) { needs = null; log({ kind: 'note', i, text: 'the page did not answer in time whether a test should tell two shapes apart' }); return null; }
+      const u = law.step(r, y);
+      meters(u);
+      st.status = `Holding ${names.y} at ${yU(at)} while the page compares the shapes`;
+      yield u;
+    }
+    const d = supplied;
+    if (!d?.shape) { if (d?.why) log({ kind: 'note', i, text: d.why }); return null; }
+    const sig = discriminationSignal(d, Ts), n = sig.length, tail = Math.ceil(E.discriminate.rest * n);
+    if ((n + tail) * Ts > left()) { log({ kind: 'note', i, text: `a test that tells ${d.candidates?.join(' and ') ?? 'two shapes'} apart needs about ${Math.ceil((n + tail) * Ts)} s more: allow a longer test` }); return null; }
+    const status = `Telling two shapes apart: ${d.shape === 'burst' ? `a burst at ${fmtNum(d.f, 2)} Hz` : `a ${d.shape}`} on ${names.u}`;
+    const iS = i;
+    let out = false;
+    for (let j = 0; j < n + tail; j++) {
+      if (!holds()) { out = true; break; }
+      const u = Math.min(P.umax, Math.max(P.umin, law.step(r, y) + (j < n ? sig[j] : 0)));
+      meters(u);
+      st.room = roomUsed(y);
+      st.status = status;
+      yield u;
+    }
+    log({ kind: 'discriminate', i0, iStart: iS, iEnd: i, shape: d.shape, a: d.a, n: d.n, f: d.f ?? null, at, left: out, candidates: d.candidates ?? [] });
+    if (out) return endBand(`${names.y} left 'may move within' during the test that tells two shapes apart: the page stopped the plant`);
+    return null;
   }
 
 
@@ -5867,8 +5963,19 @@ function createExperiment(plan) {
     if (st.done || stopping) return null;
     yield* pause();
     if (st.done || stopping) return null;
-    chips.shake = '–';
+    if (supplied?.shake) {
+      const sh = yield* shake();
+      if (st.done || stopping) return null;
+      if (sh === 'skipped') chips.shake = '–';
+      else {
+        if (sh === 'left') log({ kind: 'note', i, text: `${names.y} reached the edge of 'may move within' during the Shake: the tones stopped` });
+        yield* pause();
+        if (st.done || stopping) return null;
+      }
+    } else chips.shake = '–';
     yield* runCheck();
+    if (st.done || stopping) return null;
+    yield* discriminate();
     if (st.done || stopping) return null;
     return finish('done', `Done: the plant is stopped; ${inc?.n ? `the gentlest controller that held, eased in, is try ${inc.n}` : 'the gentle controller held, and no try was quicker'}`);
   }
@@ -5964,6 +6071,27 @@ function createExperiment(plan) {
   };
 }
 
+function excitationOf(e, Ts) {
+  if (e.kind === 'discriminate') return { from: e.iStart, values: discriminationSignal(e, Ts) };
+  if (e.kind !== 'shake') return null;
+  const lines = multisineLines({ N: e.N, kmax: e.kmax, count: EXPERIMENT.shake.lines, seed: e.seed });
+  const base = multisine({ N: e.N, lines: lines.excited, peak: 1, seed: e.seed });
+  const values = new Float64Array(Math.max(0, e.iEnd - e.iStart));
+  e.starts.forEach((s, p) => { for (let j = 0; j < e.N; j++) { const at = s - e.iStart + j; if (at >= 0 && at < values.length) values[at] = e.amps[p] * base[j]; } });
+  return { from: e.iStart, values, lines };
+}
+
+function discriminationSignal({ shape, a, n, f }, Ts) {
+  const out = new Float64Array(n);
+  for (let j = 0; j < n; j++) {
+    if (shape === 'burst') {
+      const t = j * Ts, T = 1 / f, ramp = Math.min(1, t / T, (n * Ts - t) / T);
+      out[j] = a * ramp * Math.sin(2 * Math.PI * f * t);
+    } else out[j] = a;
+  }
+  return out;
+}
+
 const orNull = (v) => (Number.isFinite(v) ? v + 0 : null);
 
 function cleanEntry(e) {
@@ -5980,7 +6108,7 @@ function checkPlan(p) {
   if (!p.test || !(Array.isArray(p.test.r) ? p.test.r.length >= 2 : Number.isFinite(p.test.r0))) throw new Error('experiment: plan.test needs r (samples) or r0 (a staircase)');
 }
 
-return { IDENTIFY_VERSION, EXPERIMENT, STAGES, STAGE_LABELS, fmtNum, LENGTHS, budgetText, gentleGains, gentleTauC, piLaw, bumpless, tryCost, tryMargin, listenStats, staircase, halved, createExperiment };
+return { IDENTIFY_VERSION, EXPERIMENT, STAGES, STAGE_LABELS, fmtNum, LENGTHS, budgetText, gentleGains, gentleTauC, piLaw, bumpless, tryCost, tryMargin, listenStats, staircase, halved, createExperiment, excitationOf, discriminationSignal };
 })();
 // ---- core/controllers.js
 __mods['core/controllers.js'] = (() => {
@@ -10985,7 +11113,7 @@ function compileDiagram(diagram, path = 'plant', opts = {}) {
     const toMeas = walk(meas, deps);
     const kept = stateNodes.filter((nd) => nd.i !== cut && fromCut[nd.i] && toMeas[nd.i]);
     const outside = nodes.find((nd, i) => nd.kind === 'xplant' && (fromCut[i] || nd.i === cut || nodes.some((tp, j) => tp.kind === 'tap' && tp.parent === i && toMeas[j])));
-    if (outside) throw modelError('external-plant', `the plant runs outside the page (External plant '${outside.name}'): the page has no model of it to design with or analyse`, 'identify it first (the Identify tab is designed, not built yet), or set the gains by hand and tune it live');
+    if (outside) throw modelError('external-plant', `the plant runs outside the page (External plant '${outside.name}'): the page has no model of it to design with or analyse`, 'set the gains by hand and tune it live, or identify it (Identify tab) and tune it on the model in Auto-tune; designs from an identified model come later');
     const sliceOf = (starts) => { const used = walk(starts, reads); return Int32Array.from(order.filter((i) => used[i] && i !== cut)); };
     const sliceF = sliceOf(kept.flatMap((nd) => nd.inputs));
     const slice = sliceOf([...meas, ...kept.flatMap((nd) => nd.inputs)]);
@@ -11887,7 +12015,7 @@ const Q_TRIPLE = [10, 100, 100, 100, 1, 1, 1, 1];
 const HIL_SYSTEM = {
   name: 'HIL: an external plant',
   summary: 'A plant outside the page, connected live (hardware in the loop); the page knows only its interface. Download and run the plant, connect, then identify and tune it: working with a plant you cannot see.',
-  notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning (Identify, to come). The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Reference mode is a switch, not another system: Plant tab, Live settings, Mode, "Plant": while it is stopped the plant runs its own controller with its own limits, the page sends r straight to it and records what comes back, its own effort V included (the page\'s controllers and Auto-tune are out of the loop); "Page" puts the Controller back. A plant that cannot switch says so: start it with --mode reference instead, and the page follows what it describes. Help (?), Live and For agents, has all of it.',
+  notes: 'The plant runs outside this page, in real time, and the page knows only its interface: the inputs and outputs it describes when it connects (names, units, full scales, hard ranges), shown in the Plant tab under Interface. What is inside is a black box to be identified before tuning: the Identify tab runs an experiment on it that eases in, and Auto-tune and Analysis then work on the model it finds. The downloadable example plant happens to simulate a DC motor swinging an arm (its physics varied by up to 15 %), which this page does not know. Step by step: 1. Plant tab, Download the plant (zip); unzip it and run runme.sh (Linux, macOS) or double-click runme.cmd (Windows), which install what it needs; a window with a red STOP opens and says where the plant listens. 2. Plant tab, Connect: the External block takes the plant\'s ports, nothing moves, the scope says CONNECTED. 3. Run: r ramps to its first value (at most 10 % of full scale per second), then the loop runs; each channel spans its full scale. The controller is a first guess (a P on the first output), to change in the Controller tab while it runs. 4. Identify tab, Start: the test eases in and the plant stops at its end; Keep stores it; then Auto-tune tunes on the model. Stop stops the plant, Single runs one sweep; E-STOP (header, key E) or STOP in the plant window stops it until Reset (a STOP pressed at the plant is reset there), and so does an output beyond its hard range. Save, Live record keeps the last minutes. Reference mode is a switch, not another system: Plant tab, Live settings, Mode, "Plant": while it is stopped the plant runs its own controller with its own limits, the page sends r straight to it and records what comes back, its own effort V included (the page\'s controllers and Auto-tune are out of the loop); "Page" puts the Controller back. A plant that cannot switch says so: start it with --mode reference instead, and the page follows what it describes. Help (?), Live and For agents, has all of it.',
   signals: {
     r: { period: PERIOD, components: [{ type: 'square', params: { amplitude: 1.5, time: 0.5, width: 2.5, period: 5, count: 0 } }] },
   },
@@ -12832,7 +12960,7 @@ function normalizeProject(p) {
 }
 
 const IDENTIFY_COMPUTED = 'Identify keeps the measurements; the model is computed from them. To keep numbers, use Copy as blocks.';
-const IDENTIFY_KEYS = ['band', 'budget', 'hard', 'vary', 'seed', 'structure', 'use', 'kept'];
+const IDENTIFY_KEYS = ['band', 'budget', 'hard', 'vary', 'seed', 'structure', 'use', 'kept', 'source'];
 const KEPT_KEYS = ['name', 'plan', 'record'];
 const RECORD_KEYS = ['version', 'Ts', 'u', 'y', 'r', 'applied', 'gaps', 'log', 'end', 'ports'];
 const PLAN_KEYS = ['version', 'kind', 'Ts', 'u0', 'umin', 'umax', 'band', 'hard', 'budget', 'seed', 'names', 'test', 'check', 'others'];
@@ -12850,6 +12978,8 @@ const LOG_KEYS = {
   supply: ['what', 'i', 'upto'],
   pause: ['i0', 'i1', 'waited'],
   check: ['i0', 'iStart', 'iEnd'],
+  discriminate: ['i0', 'iStart', 'iEnd', 'shape', 'a', 'n', 'f', 'at', 'left', 'candidates'],
+  shake: ['i0', 'iStart', 'iEnd', 'place', 'N', 'kmax', 'seed', 'starts', 'amps', 'left'],
   end: ['code', 'message', 'i', 't', 'check'],
   stop: ['i', 'code'],
   note: ['i', 'text'],
@@ -12915,6 +13045,7 @@ function normalizeIdentify(raw) {
       o.vary = { share: e.vary.share, seed: e.vary.seed };
     } else if ('vary' in e) o.vary = null;
     if (e.seed != null) { if (!Number.isInteger(e.seed)) throw new Error(`${where}.seed: a whole number`); o.seed = e.seed; }
+    if (e.source != null) { if (!['diagram', 'identified'].includes(e.source)) throw new Error(`${where}.source: "diagram" or "identified"`); o.source = e.source; }
     if (e.structure != null) { if (!Object.hasOwn(STRUCTURES, e.structure)) throw new Error(`${where}.structure: one of ${Object.keys(STRUCTURES).join(', ')}`); o.structure = e.structure; }
     const kept = e.kept ?? [];
     if (!Array.isArray(kept)) throw new Error(`${where}.kept: a list of kept tests`);
@@ -14780,7 +14911,7 @@ function tuneContext(project, path) {
   if (plant?.type !== 'diagram') throw new Error('the plant is not a block diagram yet');
   const ext = externalBlock(plant.diagram);
   if (ext && blockMode(EXTERNAL_BLOCK.normalize(ext.params)) !== 'control') throw new Error(`the plant runs its own controller (External plant ${ext.name ?? ext.id}, reference mode): the page's controllers and Auto-tune are not in the loop`);
-  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, and Auto-tune needs an identified model of it (Identify, not built yet). Until then, tune it live in the Controller tab`);
+  if (ext) throw new Error(`the plant runs outside the page (External plant ${ext.name ?? ext.id}) and is a black box: the page knows only its interface, so Auto-tune tunes on its identified model: identify the plant first (Identify tab)`);
   const all = controllerBlocks(plant.diagram);
   const key = path ? [].concat(path).join('/') : null;
   const hit = (key && all.find((c) => c.key === key)) || all[0];
@@ -14911,6 +15042,12 @@ function runCost(run, key, goal = {}, how = {}) {
   const parts = { error: err, effort, overshoot: OVERSHOOT_WEIGHT * over, saturation: g.saturation * sat / n };
   const J = parts.error + parts.effort + parts.overshoot + parts.saturation;
   return { J: Number.isFinite(J) ? Math.min(J, DIVERGED) : 2 * DIVERGED, diverged: false, parts, overshoot: worst, saturated: sat / n };
+}
+
+function diagramCost(project, path, variant, goal = {}) {
+  const ctx = tuneContext(project, path), g = { ...GOAL, ...goal };
+  const scales = costScales(runVariant(ctx, ctx.variant), ctx.key, ctx.variant);
+  return variantCost(ctx, normalizeVariant(variant), g, scales);
 }
 
 function variantCost(ctx, variant, goal, scales) {
@@ -15860,13 +15997,13 @@ function tuneReport(res) {
 
 
 function baseName(name) {
-  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?)( \d+)?)+$/, '');
+  return String(name).replace(/( · (auto-tuned|relay [^·]+?|SIMC( smooth)?|eased in)( \(model\))?( \d+)?)+$/, '');
 }
 
-function resultName(block, method, rule = 'tl', simc = 'tight') {
+function resultName(block, method, rule = 'tl', simc = 'tight', { onModel = false } = {}) {
   const running = block.variants[block.variant ?? 0];
   const base = baseName(running.name);
-  const suffix = method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`;
+  const suffix = (method === 'iterate' ? ' · auto-tuned' : method === 'relay' ? ` · relay ${RULES[rule ?? 'tl']?.short ?? rule}` : ` · SIMC${SIMC[simc ?? 'tight']?.short ?? ''}`) + (onModel ? ' (model)' : '');
   const named = (s) => `${base.slice(0, Math.max(0, 40 - s.length))}${s}`;
   const plain = named(suffix);
   if (running.name === plain || (running.name.startsWith(plain) && /^ \d+$/.test(running.name.slice(plain.length)))) return running.name;
@@ -15905,7 +16042,7 @@ function fmtN(v) {
   return String(Number(v.toPrecision(3)));
 }
 
-return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, variantCost, tuningSpace, feedforwardStart, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, ripplePeriod, settledLevel, settledSlope, fitFopdt, fitIntegrating, stepExperimentSteps, stepExperiment, SIMC, tauCSource, tauCShort, simcGains, simcIntegrating, stepTuneSteps, stepTune, METHODS, autotuneSteps, unstableAtStart, autotune, measurement, whyWorse, tuneReport, baseName, resultName, placeVariant, derivativeFilter, pidVariant };
+return { drain, controllerBlocks, withVariant, upstreamSource, tuneContext, runVariant, loopSignals, loopOverlays, COSTS, GOAL, costScales, runCost, diagramCost, variantCost, tuningSpace, feedforwardStart, tunedValues, iterate, runIterate, RULES, pidFromUltimate, whyNot, relayExperimentSteps, relayExperiment, relayTuneSteps, relayTune, ripplePeriod, settledLevel, settledSlope, fitFopdt, fitIntegrating, stepExperimentSteps, stepExperiment, SIMC, tauCSource, tauCShort, simcGains, simcIntegrating, stepTuneSteps, stepTune, METHODS, autotuneSteps, unstableAtStart, autotune, measurement, whyWorse, tuneReport, baseName, resultName, placeVariant, derivativeFilter, pidVariant };
 })();
 // ---- core/ops.js
 __mods['core/ops.js'] = (() => {
@@ -16791,10 +16928,10 @@ function createLiveLoop(post, env = globalThis) {
       identNext = { key, plan, source, hold, applied, posted: 0, asked: false };
       try { await start(); return {}; } catch (err) { identNext = null; ident = null; return { error: err.message }; }
     },
-    supply({ data }) {
+    supply({ kind = 'fit', data }) {
       const exp = runner?.experiment;
-      if (!ident || !exp?.needs) return { error: 'nothing waits for a fit' };
-      exp.supply('fit', data ?? {});
+      if (!ident || exp?.needs?.kind !== kind) return { error: `nothing waits for ${kind}` };
+      exp.supply(kind, data ?? {});
       return {};
     },
     identifyStop() {
@@ -16873,13 +17010,15 @@ const { controllerBlocks, upstreamSource, drain } = __mods['core/autotune.js'];
 const { parseEnd, ELEMENTS, diagramBlockDef, compileDiagram, normalizeDiagram } = __mods['core/diagram.js'];
 const { CONTROLLERS } = __mods['core/controllers.js'];
 const { referenceFn, gaussAt } = __mods['core/signals.js'];
-const { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText } = __mods['core/experiment.js'];
+const { IDENTIFY_VERSION, EXPERIMENT, LENGTHS, halved, piLaw, bumpless, fmtNum, budgetText, discriminationSignal, excitationOf } = __mods['core/experiment.js'];
 const {
-  STRUCTURES, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
-  fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded,
+  STRUCTURES, CHOICE, discretise, discretiseSS, LOG_BOUND, simulateSegment, fitStructureSteps, lmSteps, observations, noiseTransfer, parameterCov, chooseStructure, unsupported, convolve, noiseColour,
+  fitPercent, noiseCeiling, whiteness, crossCorrelation, tcKernelSteps, kernelStep, kernelGuess, seeded, frf,
 } = __mods['core/fit.js'];
 const { cholesky } = __mods['core/linalg.js'];
 const { createStepRunner } = __mods['core/live.js'];
+const { loopModel } = __mods['core/project.js'];
+const { analyzeLoop } = __mods['core/analysis.js'];
 const { physicalMaskKeys } = __mods['core/physics.js'];
 class IdentifyError extends Error {
   constructor(code, message, hint = '') {
@@ -17145,7 +17284,7 @@ function readLog(record) {
   const all = (kind) => log.filter((e) => e.kind === kind);
   return {
     listen: one('listen'), rungs: all('rung'), look: one('look'), laws: all('law'), tries: all('try'), ladder: one('ladder'),
-    supply: one('supply'), pause: one('pause'), check: one('check'), end: one('end'), notes: all('note'),
+    supply: all('supply').filter((e) => (e.what ?? 'fit') === 'fit').at(-1) ?? null, pause: one('pause'), check: one('check'), discriminate: one('discriminate'), shakes: all('shake'), end: one('end'), notes: all('note'),
   };
 }
 
@@ -17161,13 +17300,15 @@ function restBefore(record, a, w) {
   return { y: nan(record.y[a]), u: nan(record.u[Math.max(0, a - 1)]), n: 0 };
 }
 
-function closedSegment(record, laws, a, b, w, role) {
+function closedSegment(record, laws, a, b, w, role, { excites = [], limits = null } = {}) {
   const rest = restBefore(record, a, w);
   let before = null;
   for (const e of laws) if (e.i < a) before = e;
+  const ex = excites.filter((e) => e && e.iStart < b && e.iEnd > a);
   return {
     kind: 'closed', role, i0: a, i1: b, yStart: rest.y, uStart: rest.u, rPrev: nan(record.r[Math.max(0, a - 1)]),
     before: before ? lawOf(before) : null, switches: laws.filter((e) => e.i >= a && e.i < b).map(lawOf),
+    ...(ex.length ? { excites: ex, limits } : {}),
   };
 }
 
@@ -17184,13 +17325,14 @@ function segmentsOf(record, plan, { upto = null } = {}) {
   const iL = L.i1 - 1;
   const hold = g.laws.find((e) => e.role === 'hold') ?? null;
   const iHold = hold ? hold.i : F;
+  const exOpts = { excites: [...g.shakes, g.discriminate].filter(Boolean), limits: [plan.umin, plan.umax] };
   const o0 = g.rungs[0].i0, o1 = Math.min(iHold, F);
   if (o1 - o0 > 2) out.open = { kind: 'open', role: 'nudge', i0: o0, i1: o1, yStart: L.y0 + L.slope * (o0 - iL), uStart: plan.u0, slope: L.slope, iL, level: L.y0 };
   if (hold && iHold < F) {
-    const cuts = [iHold, ...g.tries.filter((T) => T.settled && T.iSwitch > iHold && T.iSwitch < F).map((T) => T.iSwitch)];
+    const cuts = [iHold, ...g.tries.filter((T) => T.settled && T.iSwitch > iHold && T.iSwitch < F).map((T) => T.iSwitch), ...g.shakes.filter((e) => e.iStart > iHold && e.iStart < F).map((e) => e.iStart)].sort((x, y) => x - y);
     cuts.forEach((a, j) => {
       const b = j + 1 < cuts.length ? cuts[j + 1] : F;
-      if (b - a > 2) out.closed.push(closedSegment(record, g.laws, a, b, w, j === 0 ? 'hold' : 'try'));
+      if (b - a > 2) out.closed.push(closedSegment(record, g.laws, a, b, w, j === 0 ? 'hold' : g.shakes.some((e) => e.iStart === a) ? 'shake' : 'try', exOpts));
     });
   }
   const band = plan.band, span = band[1] - band[0];
@@ -17205,7 +17347,7 @@ function segmentsOf(record, plan, { upto = null } = {}) {
   if (ck && ck.i1 - ck.i0 > 2) {
     const start = [ck.iStart, ck.i0].find((a) => finite(a) && a < ck.i1 - 2 && settledAt(a)) ?? out.closed.at(-1)?.i0 ?? ck.i0;
     const rest = settledAt(start);
-    const c = closedSegment(record, g.laws, start, ck.i1, w, 'check');
+    const c = closedSegment(record, g.laws, start, ck.i1, w, 'check', exOpts);
     out.check = { ...c, ...(rest ? { yStart: rest.y, uStart: rest.u } : {}), from: start >= ck.i0 ? start : ck.i0, left: ck.left };
   }
   out.holds.push({ y: L.y0, u: plan.u0, at: L.i1, n: L.i1 - L.i0 });
@@ -17257,6 +17399,9 @@ function fitSegment(record, seg, L, Ts) {
   const hold = ys.map((y) => !finite(y));
   const r = Float64Array.from(rs);
   const before = seg.before;
+  const exs = (seg.excites ?? []).map((e) => excitationOf(e, Ts)).filter(Boolean);
+  const [uLo, uHi] = seg.limits ?? [-Infinity, Infinity];
+  const added = (i) => { let v = 0; for (const x of exs) { const j = i - x.from; if (j >= 0 && j < x.values.length) v += x.values[j]; } return v; };
   out.law = () => {
     let law = before ? piLaw(before, bumpless(before, seg.uStart, seg.rPrev, seg.yStart), before.umin, before.umax, Ts) : null;
     let uLast = seg.uStart;
@@ -17264,7 +17409,8 @@ function fitSegment(record, seg, L, Ts) {
       if (hold[k]) return uLast;
       const e = at.get(k);
       if (e) law = piLaw(e, bumpless(e, uLast, r[k], yh), e.umin, e.umax, Ts);
-      const u = law ? law.step(r[k], yh) : uLast;
+      let u = law ? law.step(r[k], yh) : uLast;
+      if (exs.length && law && idx[k] >= 0) u = Math.min(uHi, Math.max(uLo, u + added(idx[k])));
       uLast = u;
       return u;
     };
@@ -17478,7 +17624,8 @@ function modelSentences(model, names = {}) {
     const at = (v) => withU(fmtNum(v, 2), n.yUnit);
     out.push(`Behaves differently at different places: near ${at(a.level)}, ${one}${S.integrating ? ' for 1 s' : ''} moves it ${at(a.gain)}; near ${at(b.level)}, ${at(b.gain)}. The model is a compromise between them.`);
   }
-  if (model.sizeNote) out.push(model.sizeNote);
+  if (finite(model.distortion) && model.distortion >= GRADE.distortion[0]) out.push(`About ${Math.round(model.distortion)} % of the response at this size is not linear.`);
+  else if (model.sizeNote) out.push(model.sizeNote);
   const noise = model.noise;
   const noiseLine = !noise ? null : noise.none ? 'This plant has no noise; real plants do.'
     : noise.steps && !(noise.sigma > 0.5 * noise.q / Math.sqrt(12)) ? `Noise on ${n.y}: only its steps of ${withU(fmtNum(noise.q, 2), n.yUnit)} (an encoder).`
@@ -17521,6 +17668,32 @@ function easedFrom(g, plan) {
   const src = T ?? holdLaw;
   if (!src) return null;
   return { Kp: src.Kp, Ki: src.Ki, tauC: src.tauC, umin: plan.umin, umax: plan.umax, try: inc || null };
+}
+
+const ONSET = { share: 0.1, floors: 4, hold: 2, peakFloors: 20 };
+function onsetOf(record, rungs, floor, Ts) {
+  let best = null;
+  const read = (d, at) => {
+    const peak = Math.max(...d.filter(finite));
+    if (!(peak > ONSET.peakFloors * floor)) return;
+    const bar = Math.max(ONSET.floors * floor, ONSET.share * peak);
+    for (let k = 0; k + ONSET.hold <= d.length; k++) {
+      if (d.slice(k, k + ONSET.hold).every((v) => v > bar)) { const t = k * Ts; if (!best || t < best.t) best = { t, at }; return; }
+    }
+  };
+  for (const R of rungs) {
+    if (!R.visible || !Number.isInteger(R.i0) || !Number.isInteger(R.T)) continue;
+    const dir = (R.dir ?? 1) * (R.sign ?? 1);
+    const end = Math.min(record.y.length, R.i0 + 1 + R.T + 1);
+    const d = [];
+    for (let i = R.i0; i < end; i++) { const y = nan(record.y[i]); d.push(finite(y) ? dir * (y - (R.base + (R.slope ?? 0) * (i - (R.ic ?? R.i0)))) : NaN); }
+    read(d, `rung ${R.n}`);
+  }
+  return best;
+}
+function refutedByOnset(theta, onset, Ts, names) {
+  if (!onset || !(theta > onset.t + Ts)) return null;
+  return `moves before its dead time: after a push ${names.y} had gone a tenth of its way in ${timeText(Math.max(onset.t, Ts))}, before this shape's ${timeText(theta)}`;
 }
 
 function fingerprint(record, seg) {
@@ -17640,11 +17813,12 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
   };
   let kernelFit = null;
   if (kernel && ckSeg) { try { kernelFit = scoreCheck(kernelReplay(kernel, ckSeg)).fit; } catch { kernelFit = null; } }
+  const onset = onsetOf(record, g.rungs, floorY, Ts);
   const candidates = [];
   for (const name of tried) {
     const f = fits[name];
     if (!f) continue;
-    const why = unsupported(name, f.p, { length });
+    const why = unsupported(name, f.p, { length }) ?? refutedByOnset(f.p.theta ?? 0, onset, Ts, names);
     let check = null;
     if (ckSeg) { const dd = discretise(name, f.p, Ts); check = scoreCheck(simulateSegment(dd, ckSeg).y, noiseTransfer(dd, ckSeg)); }
     const fitAll = (() => {
@@ -17676,6 +17850,23 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
     pick = { index: tied[0], why: ckSeg ? 'the lowest BIC (the Check gave no fit)' : 'the lowest BIC (no Check ran)' };
   }
   let index = pick.index, chosenWhy = pick.why;
+  let discrimination = null;
+  const D = g.discriminate;
+  if (D && !D.left && D.iEnd > D.iStart + 2) {
+    const fitsD = tellApart(record, plan, D.candidates.map((name) => candidates.find((c) => c.structure === name && !c.unsupported)).filter(Boolean).map((c) => ({ structure: c.structure, params: c.p })));
+    const names2 = Object.keys(fitsD);
+    if (names2.length >= 2) {
+      const win = names2.reduce((a, b) => (fitsD[b] > fitsD[a] ? b : a));
+      const other = names2.filter((x) => x !== win).reduce((a, b) => (fitsD[b] > fitsD[a] ? b : a));
+      const test = D.shape === 'burst' ? `a burst at ${fmtNum(D.f, 2)} Hz` : `a ${D.shape}`;
+      const clear = fitsD[win] >= GRADE.fair && 100 - fitsD[win] <= DISCRIMINATE.clear * (100 - fitsD[other]);
+      discrimination = { shape: D.shape, f: D.f, fits: fitsD, chosen: clear ? win : null };
+      if (clear) {
+        index = candidates.findIndex((c) => c.structure === win);
+        chosenWhy = `the one that predicted the test that tells it from ${STRUCTURES[other].label} (${test}): ${pctText(fitsD[win])} % against ${pctText(fitsD[other])} %`;
+      } else chosenWhy += `; the test that tells ${STRUCTURES[win].label} from ${STRUCTURES[other].label} (${test}) did not either (${pctText(fitsD[win])} % against ${pctText(fitsD[other])} %)`;
+    }
+  }
   if (structure && candidates.some((c) => c.structure === structure)) { index = candidates.findIndex((c) => c.structure === structure); chosenWhy = 'your choice'; }
   const chosen = candidates[index];
   const S = STRUCTURES[chosen.structure];
@@ -17719,7 +17910,9 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
 
   const check = chosen.check;
   const kernelGap = check && kernelFit !== null ? kernelFit - check.fit : 0;
-  let grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
+  const shakes = shakeResponses(record, g.shakes, chosen, Ts);
+  const distortion = shakes.length ? Math.max(...shakes.map((x) => x.distortion.share)) : null;
+  let grade = gradeOf({ fit: check ? check.fit : chosen.fitted, ceiling: ceiling ?? -Infinity, white: check ? check.white : true, coloured: !!colour, distortion, spread: flagged ? spread : 0, kernelGap, left: !!seg.check?.left, checked: !!check });
   const early = { budget: 'the test ended after the first look', slow: 'the test ended after the first look', away: 'the gentle controller pushed the wrong way', hold: 'the gentle controller did not hold' }[g.end?.code];
   if (early) grade = { mark: '✕', why: [early] };
   if (chosen.unsupported) grade = { mark: '✕', why: [chosen.unsupported, ...grade.why.filter((w) => w !== chosen.unsupported)] };
@@ -17751,7 +17944,7 @@ function* identifySteps(record, { plan, structure = null, upto = null, reuse = n
     fit: chosen.fitted, check: checkOut,
     where, holds: seg.holds.map((h) => ({ y: h.y, u: h.u })), whereSpread: { spread, flagged }, size, sizeNote,
     kernel: kernel ? { g: Array.from(kernel.g), sd: Array.from(kernel.sd), Ts: kernel.Ts, decimate: kernel.decimate, integrating: kernel.integrating, rate: kernel.rate ? { value: kernel.rate.value, sd: kernel.rate.sd } : null, fit: kernelFit } : null,
-    eased: easedFrom(g, plan),
+    eased: easedFrom(g, plan), discrimination, frf: shakes, distortion,
     grade: grade.mark, why: grade.why, warnings,
     segments: { open: seg.open ? [seg.open.i0, seg.open.i1] : null, closed: seg.closed.map((c) => [c.i0, c.i1]), check: seg.check ? [seg.check.from, seg.check.i1] : null, fitted: seg.F },
   };
@@ -17780,7 +17973,7 @@ function linearModel(model) {
   };
 }
 
-function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = null } = {}) {
+function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = null, at = null } = {}) {
   if (!model?.structure) throw new Error('twinSubsystem: no model was identified');
   const p = model.params, S = STRUCTURES[model.structure];
   const blocks = [], wires = [];
@@ -17793,9 +17986,9 @@ function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = 
     add({ id: 'sum', type: 'sum', params: { signs: '++' } });
     wires.push({ from: 'push', to: 'sum:1' });
   }
+  if (at?.u0) add({ id: 'aboutU', type: 'fcn', name: 'about u₀', params: { inputs: 'u', eqs: `y = u - (${at.u0})`, outputs: 'y' } });
   const gainKey = GAIN(S);
   add({ id: 'gain', type: 'gain', name: S.integrating ? 'rate k′' : 'gain K', params: { K: p[gainKey] } });
-  if (p.theta > 0) add({ id: 'dead', type: 'delay', name: 'dead time θ', params: { L: p.theta, y0: 0 } });
   if (S.integrating) add({ id: 'int', type: 'integrator', name: 'integrator', params: { K: 1 } });
   if (model.structure === 'lag' || model.structure === 'intLag') add({ id: 'lag', type: 'firstOrder', name: 'lag τ', params: { K: 1, tau: p.tau } });
   if (model.structure === 'lags') {
@@ -17803,10 +17996,116 @@ function twinSubsystem(model, { push = false, noise = true, id = 'twin', name = 
     add({ id: 'lag2', type: 'firstOrder', name: 'lag τ₂', params: { K: 1, tau: p.tau2 } });
   }
   if (model.structure === 'resonance' || model.structure === 'intRes') add({ id: 'res', type: 'secondOrder', name: 'resonance f, ζ', params: { K: 1, wn: 2 * Math.PI * p.f, zeta: p.zeta } });
+  if (p.theta > 0) add({ id: 'dead', type: 'delay', name: 'dead time θ', params: { L: p.theta, y0: 0 } });
+  if (at?.y0) add({ id: 'aboutY', type: 'fcn', name: 'about y₀', params: { inputs: 'u', eqs: `y = u + (${at.y0})`, outputs: 'y' } });
   if (noise && model.noise?.sigma > 0) add({ id: 'noise', type: 'noise', name: 'noise σ', params: { std: model.noise.sigma, seed: 1 } });
   if (noise && model.noise?.q > 0) add({ id: 'quant', type: 'quantizer', name: 'steps q', params: { q: model.noise.q } });
   add({ id: 'y', type: 'outport', name: model.names?.y ?? 'y', params: { port: 1 } });
   return { id, type: 'subsystem', name: name ?? `identified ${S.label}`, params: {}, diagram: { blocks, wires } };
+}
+
+function twinDiagram(diagram, path, model, { push = null, noise = true } = {}) {
+  const d = structuredClone(diagram);
+  const { level, block } = locate(d, path);
+  if (block?.type !== 'controller') throw new Error(`twinDiagram: no Controller block ${[].concat(path).join('/')}`);
+  const ids = new Set(level.blocks.map((b) => b.id));
+  const fresh = (base) => { let id = base; for (let k = 2; ids.has(id); k++) id = `${base}${k}`; ids.add(id); return id; };
+  const id = fresh('twin');
+  const rest = model.holds?.[0] ?? null;
+  const tw = twinSubsystem(model, { push: !!push, noise, id, name: 'identified model', at: rest ? { u0: rest.u, y0: rest.y } : null });
+  tw.x = (block.x ?? 0) + 160; tw.y = (block.y ?? 0) + 140;
+  const into = wireTo(level, block.id, 1);
+  const measured = into ? parseEnd(into.from) : null;
+  level.wires = level.wires.filter((w) => w !== into);
+  const ext = level.blocks.filter((b) => b.type === 'external').map((b) => b.id);
+  if (ext.length) {
+    level.wires = level.wires.flatMap((w) => {
+      const f = parseEnd(w.from), t = parseEnd(w.to);
+      if (ext.includes(t.id)) return [];
+      if (!ext.includes(f.id)) return [w];
+      return measured && sameEnd(f, measured) ? [{ ...w, from: id }] : [];
+    });
+    level.blocks = level.blocks.filter((b) => !ext.includes(b.id));
+  }
+  if (measured && !ext.includes(measured.id)) {
+    level.wires = level.wires.map((w) => (sameEnd(parseEnd(w.from), measured) && level.blocks.find((b) => b.id === parseEnd(w.to).id)?.type === 'sink' ? { ...w, from: id } : w));
+  }
+  level.blocks.push(tw);
+  level.wires.push({ from: block.id, to: id }, { from: id, to: `${block.id}:1` });
+  if (push) {
+    const sid = fresh('push');
+    level.blocks.push({ id: sid, type: 'source', name: 'push at the input (model only)', params: { signal: push }, x: tw.x - 120, y: tw.y + 60 });
+    level.wires.push({ from: sid, to: `${id}:1` });
+  }
+  return d;
+}
+
+const PUSH = { share: 0.2, least: 0.01, at: 0.6 };
+function testPush(project, path, model) {
+  const known = knownFor(project, path);
+  const S = STRUCTURES[model.structure], p = model.params;
+  const span = known.r?.span ?? 0;
+  const U = known.u.max - known.u.min;
+  const du = S.integrating ? 0 : Math.abs(span / p.K);
+  const amplitude = Math.max(PUSH.least * U, PUSH.share * du);
+  const period = known.r?.period ?? Math.max(...Object.values(project.system.signals).map((x) => x.period));
+  const d = known.others.map((o) => project.system.signals[o.name]).find((sg) => sg?.components?.some((c) => c.enabled !== false && finite(c.params?.amplitude) && c.params.amplitude !== 0 && finite(c.params?.time)));
+  if (d) {
+    const comps = d.components.filter((c) => c.enabled !== false && finite(c.params?.amplitude) && finite(c.params?.time));
+    const big = Math.max(...comps.map((c) => Math.abs(c.params.amplitude)));
+    return { amplitude, time: Math.min(...comps.map((c) => c.params.time)), components: comps.map((c) => ({ ...structuredClone(c), params: { ...c.params, amplitude: (c.params.amplitude / big) * amplitude } })) };
+  }
+  const time = PUSH.at * period;
+  return { amplitude, time, components: [{ type: 'step', params: { amplitude, time } }] };
+}
+
+function modelProject(project, path, model, { push = true, noise = true } = {}) {
+  const known = knownFor({ ...project, system: { ...project.system } }, path);
+  const signals = structuredClone(project.system.signals);
+  let name = null;
+  if (push) {
+    name = 'push';
+    for (let k = 2; signals[name]; k++) name = `push${k}`;
+    const tp = testPush(project, path, model);
+    const period = known.r?.period ?? 1;
+    signals[name] = { period, components: tp.components };
+  }
+  const diagram = normalizeDiagram(twinDiagram(project.system.plant.diagram, known.block.path, model, { push: name, noise }));
+  return { ...project, system: { ...project.system, plant: { ...project.system.plant, diagram }, signals } };
+}
+
+function identifiedLoop(project, path, model) {
+  const lin = linearModel(model);
+  const m = loopModel(modelProject(project, path, model, { push: false, noise: false }), path, 'initial');
+  const own = m.warnings.filter((w) => !/is at its limit|the origin is not at rest/.test(w));
+  return { ...m, opLabel: lin.op.label, atLimit: false, identified: true, warnings: [...new Set([...lin.warnings, ...own])] };
+}
+
+function loopRanges(project, path, model, { count = 12 } = {}) {
+  const models = modelSamples(model, count).map((p) => ({ ...model, params: p }));
+  const S = STRUCTURES[model.structure], gk = GAIN(S);
+  for (const pl of model.where ?? []) if (pl.seen >= GRADE.seen && finite(pl.gain) && finite(pl.scale)) models.push({ ...model, params: { ...model.params, [gk]: pl.gain, [pl.scaleKey]: pl.scale } });
+  const out = { gm: [Infinity, -Infinity], pm: [Infinity, -Infinity], ms: [Infinity, -Infinity], n: 0, unstable: 0 };
+  const take = (k, v) => { if (finite(v)) { out[k][0] = Math.min(out[k][0], v); out[k][1] = Math.max(out[k][1], v); } };
+  for (const mm of models) {
+    let r;
+    try { const m = identifiedLoop(project, path, mm); r = analyzeLoop(m.plant, m.ctrl, m.Ts, { points: 200 }); } catch { continue; }
+    if (!r.stable) { out.unstable++; continue; }
+    out.n++;
+    take('gm', r.margins.gmUp); take('pm', r.margins.pm); take('ms', r.margins.ms);
+  }
+  return out.n || out.unstable ? out : null;
+}
+
+function keptModel(project, path = null) {
+  const key = path ? [].concat(path).join('/') : controllerBlocks(project.system.plant.diagram)[0]?.key;
+  const e = project.system.identify?.[key];
+  const kept = e?.kept ?? [];
+  if (!kept.length) throw new IdentifyError('not-identified', 'identify the plant first: no test is kept for this block', 'node cli.mjs identify <project> --keep, or the Identify tab\'s Keep');
+  const k = kept[Math.min(kept.length - 1, Math.max(0, e.use ?? kept.length - 1))];
+  const model = drain(identifySteps(k.record, { plan: k.plan, structure: e.structure ?? null }));
+  if (!model.ok) throw new IdentifyError('no-model', `the kept test "${k.name}" gives no model: ${model.sentences[0]}`, 'identify again');
+  return { model, name: k.name, key };
 }
 
 
@@ -17901,10 +18200,12 @@ function identifyRun(project, path = null, settings = {}, { plan: ready = null, 
     for (let k = 0; k <= most && !exp.state.done; k++) {
       const v = runner.step();
       yield { kind: 'sample', k: v.k, t: v.t, values: v.values };
-      if (exp.needs) {
+      if (exp.needs?.kind === 'fit') {
         const upto = exp.needs.upto;
         pre = yield* tagged(identifySteps(compactRecord(exp.record()), { plan, upto }), 'pause');
-        exp.supply('fit', pre.ok ? { structure: pre.structure, params: pre.params } : {});
+        exp.supply('fit', fitSupply(pre, exp));
+      } else if (exp.needs?.kind === 'discriminate') {
+        exp.supply('discriminate', yield* tagged(discriminateSteps(exp.record(), plan, pre), 'discriminate'));
       }
     }
     if (!exp.state.done) exp.stop();
@@ -17924,12 +18225,126 @@ function identifyRun(project, path = null, settings = {}, { plan: ready = null, 
   return { known, plan, settings: s, vary, factors, runner, exp, names: runner.names(), steps: steps(), stop: () => exp.stop(), get pre() { return pre; } };
 }
 
+function shakeWanted(model) {
+  return !model?.ok || model.why.some((w) => w !== 'no Check ran');
+}
+function fitSupply(model, exp = null) {
+  const first = !exp || !exp.record().log.some((e) => e.kind === 'shake' || (e.kind === 'note' && /the Shake/.test(e.text)));
+  return { ...(model?.ok ? { structure: model.structure, params: model.params } : {}), shake: first && shakeWanted(model) };
+}
+
+function* discriminateSteps(record, plan, pre) {
+  const rec = compactRecord(record);
+  const so = yield* identifySteps(rec, { plan, reuse: pre });
+  return designDiscrimination(so, rec, plan) ?? {};
+}
+
 function* tagged(gen, stage) {
   for (;;) { const s = gen.next(); if (s.done) return s.value; yield { kind: 'fit', stage }; }
 }
 
 function identify(project, path = null, settings = {}) {
   return drain(identifyRun(project, path, settings).steps);
+}
+
+function shakeResponses(record, shakes, model, Ts) {
+  const out = [];
+  const ramp = EXPERIMENT.shake.ramp.length;
+  let d = null;
+  try { d = discretise(model.structure, model.p ?? model.params, Ts); } catch { d = null; }
+  for (const e of shakes) {
+    if (e.left) continue;
+    const ex = excitationOf(e, Ts);
+    const lost = (a, b) => (record.gaps ?? []).some(([i]) => i >= a && i < b);
+    const keep = e.starts.slice(ramp).filter((a, j) => e.amps[ramp + j] === e.amps.at(-1) && !lost(a, a + e.N) && a + e.N <= record.y.length);
+    if (keep.length < 2) continue;
+    const col = (src, a) => Array.from({ length: e.N }, (_, j) => { const v = nan(src[a + j]); return finite(v) ? v : 0; });
+    const U = keep.map((a) => col(record.applied?.some((v) => v !== null) ? record.applied.map((v, i) => (v === null ? record.u[i] : v)) : record.u, a));
+    const Y = keep.map((a) => col(record.y, a));
+    let F;
+    try { F = frf(U, Y, { excited: ex.lines.excited, detect: ex.lines.detect, Ts }); } catch { continue; }
+    const Gd = d ? F.f.map((f) => discreteAt(d, 2 * Math.PI * f * Ts)) : null;
+    const inside = Gd ? F.G.filter((g, j) => Math.hypot(g.re - Gd[j][0], g.im - Gd[j][1]) <= 2 * F.sd[j]).length / F.G.length : null;
+    out.push({
+      place: e.place, periods: keep.length, f: F.f, G: F.G.map((g) => [g.re, g.im]), sd: F.sd, model: Gd,
+      distortion: { share: F.distortion.share, odd: F.distortion.odd, even: F.distortion.even }, within: inside,
+    });
+  }
+  return out;
+}
+
+
+const DISCRIMINATE = { separation: 20, floor: 1e-3, room: 0.5, push: 1, longest: 10, clear: 0.9 };
+
+function designDiscrimination(model, record, plan) {
+  if (!model?.ok || !model.check) return null;
+  const pool = model.candidates.filter((c) => !c.unsupported && finite(c.fit));
+  if (pool.length < 2) return null;
+  const best = Math.max(...pool.map((c) => c.fit));
+  const tied = pool.filter((c) => c.fit >= best - CHOICE.within);
+  if (tied.length < 2) return null;
+  const A = tied.find((c) => c.structure === model.structure) ?? tied[0];
+  const B = tied.filter((c) => c !== A).reduce((a, b) => (b.fit > a.fit ? b : a));
+  const g = readLog(record), Ts = record.Ts, n0 = record.y.length;
+  const law = g.laws.at(-1);
+  if (!law || !g.listen) return null;
+  const w = Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9));
+  const rest = restBefore(record, n0, w), level = nan(record.r[n0 - 1]);
+  const floor = Math.max(model.noise?.floor ?? g.listen.floor, DISCRIMINATE.floor * (plan.band[1] - plan.band[0]));
+  let push = 0;
+  for (let j = law.i ?? 0; j < n0; j++) { const u = nan(record.u[j]); if (finite(u)) push = Math.max(push, Math.abs(u - rest.u)); }
+  const U = plan.umax - plan.umin;
+  const a0 = Math.max(0.01 * U, DISCRIMINATE.push * push);
+  const scale = (c) => { const p = c.params; return p.f ? 1 / (2 * Math.PI * p.f) : Math.max(...STRUCTURES[c.structure].times(p)); };
+  const freq = (c) => (c.params.f ? c.params.f * Math.sqrt(Math.max(0.05, 1 - (c.params.zeta ?? 0) ** 2)) : 1 / (2 * Math.PI * scale(c)));
+  const slow = Math.max(scale(A), scale(B), A.params.theta ?? 0, B.params.theta ?? 0, Ts);
+  const longest = Math.min(DISCRIMINATE.longest, plan.budget / 10);
+  const steps = (x) => Math.max(2, Math.min(Math.round(longest / Ts), Math.round(x / Ts)));
+  const shapes = [
+    { shape: 'pulse', n: steps(Math.max(2 * Ts, slow / 2)) },
+    { shape: 'step', n: steps(4 * slow) },
+    ...[A, B].map((c) => { const f = Math.min(freq(c), 0.4 / Ts); return { shape: 'burst', f, n: steps(4 / f) }; }),
+  ];
+  const [lo, hi] = plan.band, room = Math.min(hi - level, level - lo);
+  const predict = (c, d) => {
+    const sig = discriminationSignal(d, Ts), N = d.n + Math.ceil(EXPERIMENT.discriminate.rest * d.n);
+    return simulateSegment(discretise(c.structure, c.params, Ts), {
+      n: N, yStart: rest.y, uStart: rest.u,
+      law: () => { const pi = piLaw(law, bumpless(law, rest.u, level, rest.y), law.umin, law.umax, Ts); return (k, yh) => Math.min(plan.umax, Math.max(plan.umin, pi.step(level, yh) + (sig[k] ?? 0))); },
+    }).y;
+  };
+  let pickD = null;
+  for (const sh of shapes) {
+    let d = { ...sh, a: a0 };
+    let yA = predict(A, d), yB = predict(B, d);
+    const used = Math.max(...[...yA, ...yB].map((v) => Math.abs(v - level)));
+    if (!(room > 0)) continue;
+    if (used > DISCRIMINATE.room * room) { d = { ...d, a: (a0 * DISCRIMINATE.room * room) / used }; yA = predict(A, d); yB = predict(B, d); }
+    let e = 0;
+    for (let k = 0; k < yA.length; k++) e += (yA[k] - yB[k]) ** 2;
+    const sep = Math.sqrt(e) / floor;
+    if (!pickD || sep > pickD.separation) pickD = { ...d, separation: sep };
+  }
+  if (!pickD || !(pickD.separation >= DISCRIMINATE.separation)) {
+    return { why: `${A.label} and ${B.label} predict the same within the noise on any test the room allows: the simpler is kept` };
+  }
+  const { shape, a, n, f = null, separation } = pickD;
+  return { shape, a, n, f, candidates: [A.structure, B.structure], separation };
+}
+
+function tellApart(record, plan, models) {
+  const g = readLog(record), D = g.discriminate, Ts = record.Ts;
+  if (!D || !g.listen) return {};
+  const seg = closedSegment(record, g.laws, D.iStart, D.iEnd, Math.max(1, Math.ceil(EXPERIMENT.hold.settle / Ts - 1e-9)), 'discriminate', { excites: [D], limits: [plan.umin, plan.umax] });
+  const fs = fitSegment(record, seg, g.listen, Ts);
+  const out = {};
+  for (const m of models) {
+    const yh = simulateSegment(discretise(m.structure, m.params, Ts), fs).y;
+    const y = [], h = [];
+    for (let k = 0; k < yh.length; k++) if (finite(fs.y[k])) { y.push(fs.y[k]); h.push(yh[k]); }
+    out[m.structure] = fitPercent(y, h);
+  }
+  return out;
 }
 
 
@@ -18048,7 +18463,7 @@ function discreteAt(d, Om) {
   return [sr * mr - si * mi, sr * mi + si * mr];
 }
 
-return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, identifySteps, linearModel, twinSubsystem, varyDiagram, identifyRun, identify, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
+return { IdentifyError, BUDGETS, BUDGET, BAND, knownFor, defaultBand, identifySettings, settingsFor, planExperiment, compactRecord, segmentsOf, replay, GRADE, gradeOf, withBar, modelSentences, ONSET, identifySteps, linearModel, twinSubsystem, twinDiagram, PUSH, testPush, modelProject, identifiedLoop, loopRanges, keptModel, varyDiagram, identifyRun, shakeWanted, fitSupply, discriminateSteps, identify, DISCRIMINATE, designDiscrimination, tellApart, RECHECK, planRecheck, recheckFit, modelSamples, predictCheck, modelStep, modelBode };
 })();
 // ---- core/trace.js
 __mods['core/trace.js'] = (() => {
@@ -18286,7 +18701,7 @@ const GUIDE = {
     M('loopTuner.selectCandidate(name)', 'name: a candidate', 'Older projects with candidates: runs one.', 'loopTuner.selectCandidate("PID")'),
     M('loopTuner.identify(opts?)', 'opts: { block (id path, default the first), band: [lo, hi], budget: seconds of plant time (30, 60, 120, 300, 600), vary: { share, seed } (a hidden variation of a simulated plant), keep }', 'Identifies the plant a Controller block drives, as the Identify tab\'s Start does: one experiment that eases in (Listen, Nudge, Hold, Ease in, Check) on a copy of the diagram at the header\'s Speed (speed(-1) for as fast as possible), then the model from its record. band, budget and vary are stored as the block\'s settings (one undo step); keep stores the record with the project.', 'await loopTuner.identify({ keep: true })', 'a promise of { ok, sentences, grade, why, structure, params, sd, chain, check: { fit, ceiling, kernel }, eased, candidates, where, warnings, end, time, tries, kept }'),
     M('loopTuner.identified(block?)', 'block: a Controller block\'s id path', 'The model in use for the block: the last test run in the page, else its kept test in use; null while none (or while it is computed from a kept record).', 'loopTuner.identified("ctrl")?.sentences', 'the same report as identify(), or null'),
-    M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation; refused for an External plant: the page knows only its interface and needs an identified model first (Identify, to come).', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, ... }'),
+    M('loopTuner.autotune(opts)', 'opts: { block, method: "iterate" | "relay" | "step", goal, rule, simc, apply }', 'Auto-tunes a Controller block by simulation: on its diagram, or, when the block\'s plant is the identified model (always for an External plant; Identify tab, Use for Auto-tune and Analysis), on that model in the plant\'s place (results named "· auto-tuned (model)"). Without a model an External plant is refused: identify it first.', 'loopTuner.autotune({ method: "step" })', 'a report: { ok, why, before, after, plant, ... }'),
     M('loopTuner.designs()', '', 'What each running variant computed from the plant (LQR, PI from the plant, a PID\'s feedforward, the swing-ups, a Kalman filter, a Luenberger observer\'s placed poles) holds: its status (ok, warn, pending, error), the computed rows, warnings, and why a design was refused (error: { code, message, hint }; the block then puts out u = 0).', 'loopTuner.designs()', '[{ status, values, rows, warnings, error, ... }]'),
     M('loopTuner.info()', '', 'What the screen\'s last run reported: validity reports (a model used outside where it holds), warnings (a stiff plant and the step it needs, a run made again because the plant grew stiffer, a signal that diverged, an input not connected), the integration step h, steps, the step bound (the blocks\' own and the Jacobian\'s largest eigenvalue at the start), the Jacobian\'s at the start and the end, and the run\'s ms. The status line under the screen shows the first report or warning.', 'loopTuner.info()', '{ validity, warnings, h, substeps, steps, bound, stiffness: { start, end }, ms } or null'),
     M('loopTuner.whenDesigned()', '', 'Resolves once no design is being computed in the background (a plan for the planned swing-up takes seconds; meanwhile the block runs u = 0 or its previous plan) and the display shows the run that uses it. Await it before judging a run.', 'await loopTuner.whenDesigned()', 'a promise of designs()'),
@@ -18319,7 +18734,7 @@ const GUIDE = {
     'Save ▾ under the screen: #rc-save.',
   ],
   live: {
-    what: 'A system with an External plant block runs against a plant outside the page, in real time. HIL: an external plant is made for it: the controller against one External plant block, a black box. The page knows only the interface the plant describes when it connects (its inputs and outputs: names, units, full scales, hard ranges, kinds; the Plant tab shows it under Interface, and live.state() has it); the External block takes those ports, and the Sinks and channels follow the outputs. Tuning needs the plant identified first (Identify, to come): Auto-tune and Analysis say so. The downloadable example plant happens to simulate a DC motor swinging an arm, standing in for real hardware; the page is not told. Replace it with your device behind the same protocol, in any language.',
+    what: 'A system with an External plant block runs against a plant outside the page, in real time. HIL: an external plant is made for it: the controller against one External plant block, a black box. The page knows only the interface the plant describes when it connects (its inputs and outputs: names, units, full scales, hard ranges, kinds; the Plant tab shows it under Interface, and live.state() has it); the External block takes those ports, and the Sinks and channels follow the outputs. Tuning needs the plant identified first (the Identify tab runs its experiment on the live plant): Auto-tune and Analysis then use the identified model. The downloadable example plant happens to simulate a DC motor swinging an arm, standing in for real hardware; the page is not told. Replace it with your device behind the same protocol, in any language.',
     setup: [
       'Load the system: loopTuner.loadSystem("HIL: an external plant") (or "HIL with an agent", the same with an agent on the page through the MCP server). It opens stopped and OFFLINE: nothing runs until the plant is connected and Run is pressed.',
       'Get the plant: loopTuner.live.downloadPlant() saves hil-plant.zip (Plant tab: Download the plant (zip)). loopTuner.live.plantFiles() has its files as text.',

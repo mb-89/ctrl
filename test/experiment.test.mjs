@@ -168,7 +168,7 @@ test('1. Determinism: the same plan and the same y give the same u, bit for bit;
   for (let k = 0; k < y.length; k++) {
     const u = exp.step(k, y[k]);
     assert.ok(Object.is(u + 0, a.record.u[k]), `sample ${k}: ${u} against ${a.record.u[k]}`);
-    if (exp.needs) exp.supply('fit', {});
+    if (exp.needs) exp.supply(exp.needs.kind, {});
   }
   assert.equal(exp.state.end.code, 'done');
   // The plan is data: through JSON it gives the same experiment.
@@ -405,6 +405,8 @@ test('the experiment says what it is doing: stages, chips, meters, status, needs
     seen.add(s.status.split(/[:,]/)[0]);
     assert.ok(s.push >= 0 && s.push <= 1 && s.pushMax >= s.push);
     assert.equal(exp.record().r[k], r, 'reference(k) is what the sample used');
+    // After the Check the page says whether two shapes still tie (input 56): here not.
+    if (exp.needs?.kind === 'discriminate') exp.supply('discriminate', {});
     if (exp.needs) {
       assert.equal(exp.needs.kind, 'fit');
       // On HIL the page fits while the loop holds; here the supply comes 3 s late.
@@ -541,7 +543,7 @@ test('a try that leaves the band hands over without a kick, r ramping back; a te
   let k = 0, lo = Infinity, hiA = -Infinity;
   for (; k < 20000; k++) {
     const uu = exp.step(k, arm2.output());
-    if (exp.needs) exp.supply('fit', {});
+    if (exp.needs) exp.supply(exp.needs.kind, {});
     arm2.advance(uu);
     if (exp.state.stage === 'ease' && exp.state.try >= 2 && exp.reference(k) > 1.4 && arm2.truth() > 1.3) break;
   }

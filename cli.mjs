@@ -14,8 +14,9 @@ import { runTune, tunableParams } from './src/core/tune.js';
 import { DEFAULT_PROJECT } from './src/core/examples.js';
 import { EXAMPLES } from './src/core/examples-v1.js';
 import { SYSTEM_LIBRARY } from './src/core/systems.js';
-import { autotune, tuneReport, placeVariant, tunedValues, controllerBlocks, RULES, SIMC, tauCSource } from './src/core/autotune.js';
-import { identify, withBar, BUDGETS, GRADE } from './src/core/identify.js';
+import { autotune, tuneReport, placeVariant, tunedValues, controllerBlocks, resultName, diagramCost, RULES, SIMC, tauCSource } from './src/core/autotune.js';
+import { identify, withBar, keptModel, modelProject, BUDGETS, GRADE } from './src/core/identify.js';
+import { findExternal } from './src/core/hil.js';
 import { STRUCTURES, paramInfo } from './src/core/fit.js';
 
 const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command> [options]
@@ -37,10 +38,13 @@ const HELP = `Loop Tuner: tune SISO feedback loops. Usage: node cli.mjs <command
                                         auto-tune a candidate's gains; --save adds the result
   autotune <project> [--block <id path>] [--method iterate|relay|step] [--rule tl|zn|calm] [--simc tight|smooth]
            [--cost IAE|ITAE|ISE] [--effort 0.05] [--overshoot 10] [--iterations 60] [--ff] [--amplitude 10] [--save]
+           [--plant identified]
                                         improve a Controller block's running variant by simulation, as the
                                         page's Auto-tune tab does; --save puts the result into the block as a
                                         variant of its own (running if it scores better); --ff also tunes
-                                        the feedforward gains (Kff, Kv, Ka) that are 0
+                                        the feedforward gains (Kff, Kv, Ka) that are 0; --plant identified
+                                        tunes on the model of the kept test in use (identify --keep), the
+                                        only way for a plant outside the page
   identify <project> [--block <id path>] [--band lo,hi] [--budget 120] [--vary 0.15 --seed 7] [--structure lag]
            [--json] [--keep]
                                         Identify's whole test on the simulated plant: the experiment
@@ -320,8 +324,17 @@ switch (cmd) {
     const project = readProject(pos[1]);
     const { path, opts } = must(() => autotuneOptions(project, opt));
     const method = opts.method;
+    if (opt.plant !== undefined && !['identified', 'diagram'].includes(opt.plant)) fail('--plant: identified or diagram');
+    // On the identified model (identification.md §10): the twin in the plant's place.
+    let onModel = null;
+    if (opt.plant === 'identified') {
+      const km = must(() => keptModel(project, path));
+      const block = controllerBlocks(project.system.plant.diagram).find((c) => c.key === km.key).block;
+      onModel = { ...km, project: must(() => modelProject(project, km.key.split('/'), km.model)) };
+      opts.name = resultName(block, method, opts.rule, opts.simc, { onModel: true });
+    }
     let res;
-    try { res = autotune(project, path, opts); } catch (e) { fail(e.message); }
+    try { res = autotune(onModel?.project ?? project, path, opts); } catch (e) { fail(e.message); }
     if (res.ok && opt.save) { placeVariant(project, res.path, res.variant, { run: res.better }); writeProject(pos[1], project); }
     const rep = tuneReport(res);
     if (opt.json) { console.log(JSON.stringify(rep, null, 2)); if (!res.ok) process.exitCode = 1; break; }
@@ -346,6 +359,14 @@ switch (cmd) {
       } else console.log(`  step at r0 = ${fmt(res.r0)}: ${model(res)}; ${simc}, τc ${fmt(res.gains.tauC)} s = ${tauCSource(res.gains, res.simc)}`);
     }
     for (const n of res.notes ?? []) console.log(`  note: ${n}`);
+    if (onModel) {
+      console.log(`  on the model: ${onModel.name} (${onModel.model.label}, ${onModel.model.grade} explains ${Math.round(onModel.model.check?.fit ?? onModel.model.fit)} %)`);
+      // On a simulated plant the result also runs on the diagram (§10).
+      if (!findExternal(project.system.plant.diagram)) {
+        const was = diagramCost(project, path, res.before.variant, opts.goal), now = diagramCost(project, path, res.variant, opts.goal);
+        console.log(`  on the diagram: cost ${fmt(was.J)} → ${fmt(now.J)} (×${fmt(now.J / was.J)})`);
+      }
+    }
     if (!res.better) console.log(`  ${res.unstableAtStart ? 'the result is not run' : 'the result scores no better than the running variant'}${res.worse ? `: ${res.worse}` : ''}`);
     if (opt.save) console.log(res.better ? `saved: “${res.variant.name}” now runs in ${pos[1]}` : `saved: “${res.variant.name}” added to ${pos[1]}; “${res.before.variant.name}” keeps running`);
     break;

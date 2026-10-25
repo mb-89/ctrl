@@ -10,7 +10,7 @@
 // try a sweep of its own. Nothing but the record is kept, on Keep; the model
 // is computed from it whenever it is needed.
 
-import { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord } from '../core/identify.js';
+import { knownFor, identifySettings, identifyRun, identifySteps, predictCheck, modelStep, modelBode, twinSubsystem, withBar, BUDGETS, GRADE, IdentifyError, planExperiment, planRecheck, recheckFit, compactRecord, discriminateSteps, fitSupply, shakeWanted } from '../core/identify.js';
 import { controllerBlocks, placeVariant, baseName } from '../core/autotune.js';
 import { normalizeVariant } from '../core/controllers.js';
 import { AS_FAST, formatSpeed } from '../core/speed.js';
@@ -24,7 +24,7 @@ const RENDER = 100;     // ms between two renders of the progress while it runs
 const MAX_SWEEP = 4000; // samples a sweep keeps, at most
 const PLOTS = {
   check: { label: 'Check', about: 'The Check: what was measured (a test the model was not fitted to) against the model\'s prediction and its 2σ band, with the reference.' },
-  bode: { label: 'Bode', about: 'How much of a swing at each frequency the model passes, as the sampled loop sees it, with its 2σ band; the kernel\'s estimate dotted ("what the data say without choosing a shape").' },
+  bode: { label: 'Bode', about: 'How much of a swing at each frequency the model passes, as the sampled loop sees it, with its 2σ band; when the Shake ran, the measured points with their ±2σ bars, one colour per place.' },
   step: { label: 'Step', about: 'The model\'s response to one unit more of u, from rest, with its 2σ band; the kernel\'s dotted.' },
   where: { label: 'Where', about: 'The gain at each place the test sat, with its 2σ bar: where it differs, one linear model is a compromise. Faint: a place the test spent little time in.' },
   size: { label: 'Size', about: 'The apparent gain of each push of the Nudge against its size: a gain that grows with the push is friction or a dead band.' },
@@ -139,7 +139,7 @@ export function createIdentifyTab(host, app, display, record) {
     try {
       for (;;) {
         const s = w.gen.next();
-        if (s.done) { remember(w.mk, s.value); computing = null; renderAll(); return; }
+        if (s.done) { remember(w.mk, s.value); computing = null; renderAll(); if (app.tab !== 'identify') app.changedView(); return; }
         if (performance.now() - t0 > SLICE) break;
       }
     } catch (err) { computing = null; app.toast(`Could not compute the model: ${err.message}`); return; }
@@ -287,6 +287,8 @@ export function createIdentifyTab(host, app, display, record) {
       out.push(`<p class="note">The gentlest controller that held: PI, Kp ${esc(num(model.eased.Kp, 3))}, Ki ${esc(num(model.eased.Ki, 3))}${model.eased.try ? ` (try ${model.eased.try})` : ' (the Hold\'s)'} <button class="btn btn-sm" id="id-variant" title="Adds it to the block as a variant of its own, “… · eased in”: hand numbers you choose to keep">Add as variant</button></p>`);
     }
     const keys = [];
+    // Simulated plants: the person chooses; a live plant always uses the model (§10).
+    if (model.ok && !app.live?.owns()) keys.push(`<button class="btn btn-sm" id="id-use" aria-pressed="${s.source === 'identified'}" title="Auto-tune and Analysis use this model instead of the diagram (the plant's place taken by it, its noise and a test push included). Press again for the diagram.">Use for Auto-tune and Analysis</button>`);
     if (src.kind === 'fresh') keys.push('<button class="btn btn-sm" id="id-keep" title="Stores the measured record with the project (one undo step); the model is computed from it whenever it is needed">Keep</button>');
     if (model.ok && model.check) keys.push('<button class="btn btn-sm" id="id-recheck" title="Runs Listen, then the controller that held and the Check alone (about 10–20 s), and compares the plant with the model: still fits, or the plant has changed">Check again</button>');
     if (model.ok) keys.push('<button class="btn btn-sm" id="id-copy" title="Puts the model as a subsystem of the Plant library\'s own blocks into My blocks: these numbers no longer follow the plant">Copy as blocks</button>');
@@ -308,6 +310,7 @@ export function createIdentifyTab(host, app, display, record) {
     $('#id-keep')?.addEventListener('click', () => keep(c, src));
     $('#id-copy')?.addEventListener('click', () => copyBlocks(model, src));
     $('#id-recheck')?.addEventListener('click', () => start('recheck'));
+    $('#id-use')?.addEventListener('click', () => setSetting(c.key, 'source', s.source === 'identified' ? null : 'identified'));
     $('#id-variant')?.addEventListener('click', () => addVariant(c, model));
     return model;
   }
@@ -390,10 +393,22 @@ export function createIdentifyTab(host, app, display, record) {
       const b = modelBode(model, w);
       const dB = (x) => 20 * Math.log10(Math.max(x, 1e-12));
       const mag = b.mag.map(dB), lo = Array.from(b.lo, (x) => dB(x)), hi = Array.from(b.hi, (x) => dB(x));
-      const [y0, y1] = extent([...mag, ...hi].filter((v) => v > -200));
+      // The Shake's measured points (§6.7), each place in its own colour, with ±2σ bars.
+      const pts = (model.frf ?? []).flatMap((x, p) => x.f.map((f, j) => ({ w: 2 * Math.PI * f, m: Math.hypot(...x.G[j]), sd: x.sd[j], p })));
+      const inRange = pts.filter((q) => q.w >= w[0] && q.w <= w.at(-1));
+      const [y0, y1] = extent([...mag, ...hi, ...inRange.map((q) => dB(q.m))].filter((v) => v > -200));
       plot.frame({ x0: w[0], x1: w.at(-1), y0: Math.max(y0, y1 - 80), y1, xlog: true, xlabel: 'rad/s', ylabel: '|G| dB' });
-      plot.clip(() => { band(w, lo, hi, cols[0]); plot.line(w, mag, { color: cols[0], width: 1.6 }); });
-      note.textContent = `|G|, as the loop sampled at ${fmtTime(model.Ts)} sees it, with its 2σ band; phase ${num(b.phase[Math.floor(w.length / 2)], 3)}° at ${num(w[Math.floor(w.length / 2)], 3)} rad/s (hover the plot keys for more)`;
+      plot.clip(() => {
+        band(w, lo, hi, cols[0]);
+        plot.line(w, mag, { color: cols[0], width: 1.6 });
+        for (const q of inRange) {
+          const color = cols[1 + (q.p % 3)];
+          plot.line([q.w, q.w], [dB(Math.max(q.m - 2 * q.sd, q.m * 1e-3)), dB(q.m + 2 * q.sd)], { color, width: 1 });
+          plot.mark(q.w, dB(q.m), { shape: 'dot', color, size: 4 });
+        }
+      });
+      const shook = (model.frf ?? []).map((x) => `at ${num(x.place, 3)}: ${Math.round(100 * (x.within ?? 0))} % of the lines within 2σ, ${num(x.distortion.share, 2)} % not linear`).join('; ');
+      note.textContent = `|G|, as the loop sampled at ${fmtTime(model.Ts)} sees it, with its 2σ band${shook ? `; dots: the Shake ${shook}` : ''}; phase ${num(b.phase[Math.floor(w.length / 2)], 3)}° at ${num(w[Math.floor(w.length / 2)], 3)} rad/s`;
     } else if (st.plot === 'where') {
       const pl = model.where ?? [];
       if (!pl.length) { plot.frame({ x0: 0, x1: 1, y0: 0, y1: 1 }); plot.note('one place only'); return; }
@@ -495,11 +510,15 @@ export function createIdentifyTab(host, app, display, record) {
   }
   function onLive(j, m) {
     j.state = m.state;
-    if (m.needs) {
+    if (m.needs?.kind === 'fit') {
       // The fit pause: fitted in slices on the record so far, then supplied.
       j.fitting = true;
       const gen = identifySteps(compactRecord(m.record), { plan: j.plan, upto: m.needs.upto });
-      work(j, gen, (pre) => { j.pre = pre; j.fitting = false; app.live.identify.supply(pre.ok ? { structure: pre.structure, params: pre.params } : {}); });
+      work(j, gen, (pre) => { j.pre = pre; j.fitting = false; app.live.identify.supply('fit', { ...fitSupply(pre), shake: !m.record.log.some((e) => e.kind === 'shake') && shakeWanted(pre) }); });
+    } else if (m.needs?.kind === 'discriminate') {
+      // After the Check: do two shapes still tie? Then the test that tells them apart (input 56).
+      j.fitting = true;
+      work(j, discriminateSteps(m.record, j.plan, j.pre), (d) => { j.fitting = false; app.live.identify.supply('discriminate', d); });
     }
     if (m.check && j.pre && !j.checkDrawn) { j.checkDrawn = true; drawPrediction(j, m.record, m.state.checkAt, m.check); }
     if (m.done) {
@@ -742,7 +761,20 @@ export function createIdentifyTab(host, app, display, record) {
     return model ? report(model) : null;
   }
 
+  // For Auto-tune and Analysis (§10, §12): the model in use for a block, a
+  // label for their status lines, and the plant source setting.
+  function modelFor(key) { const { model } = modelOf(key); return model?.ok ? model : null; }
+  function labelFor(key) {
+    const src = source(key), m = modelFor(key);
+    if (!src || !m) return '';
+    const conn = src.kind === 'fresh' ? fresh.get(key)?.connection : connections.get(recordHash(src.record));
+    const earlier = app.live?.owns() && (conn === undefined || conn === null || conn !== app.live.identify.connection());
+    return `identified ${src.name.split(' · ').pop()}, ${m.grade} explains ${fitText(m.check?.fit ?? m.fit)} %${earlier ? '; measured on an earlier connection: the plant may have changed' : ''}`;
+  }
+
   return {
+    modelFor, labelFor,
+    setSource: (key, src) => setSetting(key, 'source', src === 'identified' ? 'identified' : null),
     render() { if (!host.hidden) renderAll(); },
     shown: renderAll,
     tag,

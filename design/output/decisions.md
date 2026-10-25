@@ -47,6 +47,34 @@ The person, after the prototype ranked Hu–Lin first on "DC motor, deadbeat" wi
 - **"Measure it instead" by matching**: the sensor for an observer is the block output whose run matches the measured signal's rate within 5 %, so it works on the Servo motor main now has (the structure trace of the first prototype found no integrator there).
 - **Results**: sliding-mode motor, the boundary-layer sliding mode (+10, robust); oven, the PID, sensitive (the PI from the plant ties it, the feedforward ties if complexity's weight drops to 0.75); tank, keep the loaded schedule (robust); deadbeat motor, state feedback (+16, robust), Hu–Lin, LQR, the planned swing-up and the relay fail the main job.
 
+## 2026-10-25 · v2.9, Identify: Auto-tune and Analysis on the model (§18 step 9)
+
+Built on branch `feat/identify-tab` from [identification.md](identification.md) §10 and §12 (no new words from the person; [§10.1](identification.md#101-built-step-9) has the numbers):
+
+- **The plant source is a design input per block** (`system.identify[key].source`), shared by Auto-tune and Analysis as §10 says; on a live plant always the model.
+- **The twin rests where the plant was measured** (u₀ off, y₀ on: interpretation, the model is incremental) and **its dead time comes after the dynamics** (the order commutes; the Dead time block is exact on a smooth input): the twin then agrees with the exact replay to 3e-7, where it was 1–3 % off. No library block changed (fingerprints untouched).
+- **The test push takes the tester's d's shape** where d plays (interpretation of "where the tester's d steps": a pulse is answered on and off), else a step at 60 % of the period.
+- **Analysis on the model** drops "u at its limit" (the model holds about its range, not at a state) and hides the operating point; ranges over 12 parameter samples and the places.
+- **Test 13 holds the oven and the motor to 1.3 × the best; the tank and the arms are reported** (× 1.95 and × 1.8–2.3). Interpretation: one linear model tunes a PI that overshoots where the arm's gain is 3–4 × the place it was measured at; robust tuning over the places is §19's, and Try on the plant (step 10) screens on the places. A defect found, not fixed here: a Constant block wired beside the tank's masked subsystem made its vector widths fail ("'tank/level rate': input 1 takes 1 element but 'tank/net inflow' gives 2"); the twin uses Equations blocks for its offsets instead.
+
+## 2026-10-25 · v2.9, Identify: the Shake (§18 step 8)
+
+Built on branch `feat/identify-tab` from [identification.md](identification.md) §5.6 and §6.7 (no new words from the person; [§5.12](identification.md#512-built-step-8-the-shake) has the numbers):
+
+- **"Only when the model is unsure"**: the model at the first pause, ! or ✕ for any reason but "no Check ran" (which every pause model has). Interpretation.
+- **The peak is half the largest push proven** (interpretation of "half the largest |u − u_hold| the incumbent used on its accepted try": the push the tries were capped by).
+- **After a band exit the incumbent has the soft guard's grace**; the test goes on to the second pause and the Check (§5.6 says "the Shake ends", not the test).
+- **The model's Bode line is the sampled response G_d** and the measured points are compared with it, as the review of steps 0–5 asked.
+- **On the arm the Shake changes the choice**: with its data at 1.5 rad, two equal lags with θ ≈ 50 ms (inside the onset the pushes showed, so not refuted) tie the resonance, and the test that tells them apart, played at rest in the friction's regime, keeps the lags. Reported as measured; the arm is not linear, and both shapes are compromises there.
+
+## 2026-10-25 · v2.9, Identify: the onset test and the discriminating test (input 56)
+
+Built on branch `feat/identify-tab` from the entry below ([identification.md](identification.md#610-built-input-56-a-dead-time-and-a-resonance-told-apart) §6.10 has the numbers):
+
+- **The onset is where y has gone a tenth of its way and stays beyond four floors.** Interpretation of "the time y first leaves its noise band": the first sample out of the noise would refute every oven shape on a noise-free simulation (their dead time stands for the oven's slow start, which moves y far less than a tenth by then); a tenth refutes the arm's 0.15 s at once. A shape is refuted when its dead time exceeds the onset by more than a sample.
+- **The discriminating test runs at r(0)**, after the Check, where the tries and most of the fitting data are (first built where the Check ended, 1.125 rad on the arm, its least known place), and **keeps a shape only on a clear win**: its miss at most 0.9 of the other's and its fit at least 60 % (interpretation, measured: on the arm in its friction regime a resonance's burst is predicted by neither, and a plain "better" picked the lag back). It is skipped, with a note, when the shapes predict the same within 20 floors (the floor at least a thousandth of the band) or the time left is too short.
+- **No new chip**: the test plays under the Check's chip with its own status line ("Telling two shapes apart: a burst at 0.52 Hz on u").
+
 ## 2026-10-25 · v2.9, Identify: on a live plant (§18 step 7)
 
 Built on branch `feat/identify-tab` from [identification.md](identification.md) §3, §5.5, §5.8, §14 (no new words from the person; [§5.11](identification.md#511-built-step-7-on-a-live-plant) and [§14.1](identification.md#141-built-step-7-the-connection-and-check-again) have the details):

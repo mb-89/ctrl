@@ -29,7 +29,7 @@
 // itself beyond its output ranges). This machine only eases in, backs off,
 // and asks for the plant's `stop` when a test must end: state.stop.
 
-import { STRUCTURES, fitStructureSteps } from './fit.js';
+import { STRUCTURES, fitStructureSteps, multisine, multisineLines } from './fit.js';
 
 export const IDENTIFY_VERSION = 1;
 
@@ -101,7 +101,20 @@ export const EXPERIMENT = {
     recover: 2,                // after a soft guard r ramps back to r(0) over 2(τc + θ) of the incumbent, at most this (s)
   },
   pause: { seconds: 2, wait: 30 },
+  // The Shake (§5.6): only when the page finds the model unsure at the
+  // pause; at the low and the high end of the test reference; a random-odd
+  // multisine of N samples (a power of two, N·Ts ≥ 2 × the incumbent's
+  // settling time 4(τc + θ), at least minN, at most maxN), lines from f₀ up
+  // to min(fmax/Ts, 10/(2π(τc + θ))), about `lines` of them; its peak half
+  // the largest push proven; three transient periods at ¼, ½ and 1 × that,
+  // each raised only while the one before used at most `room` of the room
+  // there; then `measured` periods; a period with a gap is played once more.
+  shake: { minN: 256, maxN: 8192, fmax: 0.4, band: 10, lines: 60, push: 0.5, ramp: [0.25, 0.5, 1], measured: 4, room: 0.5, repeat: 1 },
   check: { stair: 0.125 },
+  // The test that tells two shapes apart (input 56), after the Check: the
+  // page designs it (identify.js designDiscrimination) and the experiment
+  // plays it on the incumbent's output, then a rest of rest × its length.
+  discriminate: { rest: 0.5 },
   // Auto-tune's default goal (autotune.js GOAL, runCost): IAE, effort 0.05,
   // overshoot beyond 10 % at 2 per 100 %, saturation 0.2.
   goal: { effort: 0.05, overshoot: 10, overshootWeight: 2, saturation: 0.2 },
@@ -1079,6 +1092,71 @@ export function createExperiment(plan) {
     return null;
   }
 
+  // ---- Shake (§5.6): the multisine on the incumbent's output, at the low
+  // and the high end of the test reference.
+  function shakeDesign() {
+    const Sh = E.shake, tc = inc?.tauC ?? gentle?.tauC ?? 1, th = gentle?.theta ?? look?.theta ?? 0;
+    let N = Sh.minN;
+    while (N * Ts < 2 * 4 * (tc + th) && N < Sh.maxN) N *= 2;
+    const fTop = Math.min(Sh.fmax / Ts, Sh.band / (2 * Math.PI * (tc + th)));
+    const kmax = Math.max(3, Math.floor(fTop * N * Ts));
+    const lines = multisineLines({ N, kmax, count: Sh.lines, seed: P.seed });
+    const base = multisine({ N, lines: lines.excited, peak: 1, seed: P.seed });
+    const peak = Math.max(E.nudge.a0 * U, Sh.push * proven);
+    const periods = Sh.ramp.length + Sh.measured;
+    return { N, kmax, lines, base, peak, periods };
+  }
+  function* shake() {
+    const Sh = E.shake, d = shakeDesign();
+    let a = Infinity, b = -Infinity;
+    for (const v of test) { a = Math.min(a, v); b = Math.max(b, v); }
+    const places = b - a > 1e-12 ? [a, b] : [a];
+    const need = places.length * (E.ease.settleMax + (d.periods + Sh.repeat) * d.N * Ts) + E.pause.seconds + E.ease.settleMax + check.length * Ts;
+    if (need > left()) {
+      const fits = LENGTHS.find((x) => x >= now() + need);
+      log({ kind: 'note', i, text: `a closer look (the Shake) needs about ${Math.round(need)} s more${fits ? `: allow ${budgetText(fits)}` : ''}` });
+      return 'skipped';
+    }
+    enter('shake');
+    for (const place of places) {
+      const status = (p) => `Shake at ${yU(place)}: tones on ${names.u}, period ${p + 1} of ${d.periods}`;
+      const i0 = i;
+      const s0 = yield* settle(place, E.ease.settleMax, status(-1).replace(/, period.*/, ''));
+      if (s0 === 'left') return endBand(`${names.y} left 'may move within' before the Shake: the page stopped the plant`);
+      const room = Math.min(hi - place, place - lo);
+      const iS = i, starts = [], amps = [];
+      let amp = 0, used = 0, out = false, extra = 0;
+      for (let p = 0; p < d.periods + extra; p++) {
+        // Raised only while the period before used at most half the room here.
+        const want = d.peak * Sh.ramp[Math.min(p, Sh.ramp.length - 1)];
+        if (p === 0 || used <= Sh.room) amp = Math.max(amp, want);
+        used = 0;
+        const pStart = i, gapsBefore = rec.gaps.length;
+        starts.push(pStart); amps.push(amp);
+        for (let j = 0; j < d.N; j++) {
+          // A band exit stops the tones at once; the incumbent brings y back,
+          // with the soft guard's grace (§5.4).
+          if (!inBand(y)) { out = true; recovering = { k, beyond: beyond(y), inside: 0 }; break; }
+          used = Math.max(used, Math.abs(y - place) / Math.max(room, 1e-300));
+          const u = Math.min(P.umax, Math.max(P.umin, law.step(r, y) + amp * d.base[j]));
+          meters(u);
+          st.room = roomUsed(y);
+          st.status = status(p);
+          yield u;
+        }
+        if (out) break;
+        // A period the plant lost cycles in is played once more.
+        if (rec.gaps.length > gapsBefore && extra < Sh.repeat && p >= Sh.ramp.length) extra++;
+      }
+      log({ kind: 'shake', i0, iStart: iS, iEnd: i, place, N: d.N, kmax: d.kmax, seed: P.seed, starts, amps, left: out });
+      if (out) {
+        // The excitation stops at once; the incumbent holds; the Shake ends.
+        return 'left';
+      }
+    }
+    return null;
+  }
+
   // ---- Check: the halved reference under the incumbent.
 
   function* runCheck() {
@@ -1122,6 +1200,47 @@ export function createExperiment(plan) {
     yield* runCheck();
     if (st.done || stopping) return null;
     return finish('done', 'Checked again: the plant is stopped');
+  }
+
+  // ---- Telling two shapes apart (input 56): after the Check, the page
+  // looks at the candidates; when two still tie it designs a test input
+  // (discriminationSignal), which is added to the incumbent's output while it
+  // holds y where the Check ended, then a rest. needs { kind: 'discriminate' }.
+  function* discriminate() {
+    // At r(0), where the tries started and most of the fitting data sit.
+    const at = r0, i0 = i;
+    const s0 = yield* settle(at, E.ease.settleMax, `Holding ${names.y} at ${yU(at)} while the page compares the shapes`);
+    if (s0 === 'left') return endBand(`${names.y} left 'may move within' after the Check: the page stopped the plant`);
+    needs = { kind: 'discriminate', upto: i, at };
+    supplied = null;
+    const kMax = k + Math.ceil(E.pause.wait / Ts - 1e-9);
+    for (;;) {
+      if (!holds()) return endBand(`${names.y} left 'may move within' while the controller held it: the page stopped the plant`);
+      if (supplied) break;
+      if (k >= kMax) { needs = null; log({ kind: 'note', i, text: 'the page did not answer in time whether a test should tell two shapes apart' }); return null; }
+      const u = law.step(r, y);
+      meters(u);
+      st.status = `Holding ${names.y} at ${yU(at)} while the page compares the shapes`;
+      yield u;
+    }
+    const d = supplied;
+    if (!d?.shape) { if (d?.why) log({ kind: 'note', i, text: d.why }); return null; }
+    const sig = discriminationSignal(d, Ts), n = sig.length, tail = Math.ceil(E.discriminate.rest * n);
+    if ((n + tail) * Ts > left()) { log({ kind: 'note', i, text: `a test that tells ${d.candidates?.join(' and ') ?? 'two shapes'} apart needs about ${Math.ceil((n + tail) * Ts)} s more: allow a longer test` }); return null; }
+    const status = `Telling two shapes apart: ${d.shape === 'burst' ? `a burst at ${fmtNum(d.f, 2)} Hz` : `a ${d.shape}`} on ${names.u}`;
+    const iS = i;
+    let out = false;
+    for (let j = 0; j < n + tail; j++) {
+      if (!holds()) { out = true; break; }
+      const u = Math.min(P.umax, Math.max(P.umin, law.step(r, y) + (j < n ? sig[j] : 0)));
+      meters(u);
+      st.room = roomUsed(y);
+      st.status = status;
+      yield u;
+    }
+    log({ kind: 'discriminate', i0, iStart: iS, iEnd: i, shape: d.shape, a: d.a, n: d.n, f: d.f ?? null, at, left: out, candidates: d.candidates ?? [] });
+    if (out) return endBand(`${names.y} left 'may move within' during the test that tells two shapes apart: the page stopped the plant`);
+    return null;
   }
 
   // ---- The whole test
@@ -1180,8 +1299,20 @@ export function createExperiment(plan) {
     if (st.done || stopping) return null;
     yield* pause();
     if (st.done || stopping) return null;
-    chips.shake = '–';
+    // The Shake, when the page finds the model unsure (§5.6), then a second pause.
+    if (supplied?.shake) {
+      const sh = yield* shake();
+      if (st.done || stopping) return null;
+      if (sh === 'skipped') chips.shake = '–';
+      else {
+        if (sh === 'left') log({ kind: 'note', i, text: `${names.y} reached the edge of 'may move within' during the Shake: the tones stopped` });
+        yield* pause();
+        if (st.done || stopping) return null;
+      }
+    } else chips.shake = '–';
     yield* runCheck();
+    if (st.done || stopping) return null;
+    yield* discriminate();
     if (st.done || stopping) return null;
     return finish('done', `Done: the plant is stopped; ${inc?.n ? `the gentlest controller that held, eased in, is try ${inc.n}` : 'the gentle controller held, and no try was quicker'}`);
   }
@@ -1290,6 +1421,35 @@ export function createExperiment(plan) {
       };
     },
   };
+}
+
+// What the experiment added to the incumbent's output, from its log entry
+// (a Shake place, or the test that tells two shapes apart), for the replay:
+// { from (the record index of its first sample), values }.
+export function excitationOf(e, Ts) {
+  if (e.kind === 'discriminate') return { from: e.iStart, values: discriminationSignal(e, Ts) };
+  if (e.kind !== 'shake') return null;
+  const lines = multisineLines({ N: e.N, kmax: e.kmax, count: EXPERIMENT.shake.lines, seed: e.seed });
+  const base = multisine({ N: e.N, lines: lines.excited, peak: 1, seed: e.seed });
+  const values = new Float64Array(Math.max(0, e.iEnd - e.iStart));
+  e.starts.forEach((s, p) => { for (let j = 0; j < e.N; j++) { const at = s - e.iStart + j; if (at >= 0 && at < values.length) values[at] = e.amps[p] * base[j]; } });
+  return { from: e.iStart, values, lines };
+}
+
+// The test input that tells two shapes apart (input 56), from its design:
+// a pulse of a for n samples; a step of a for n samples; a burst, a sine of
+// amplitude a at f Hz over n samples, faded in and out over a period each
+// end so it starts and ends without a kick. The experiment adds it to the
+// incumbent's output; the replay rebuilds it from the log.
+export function discriminationSignal({ shape, a, n, f }, Ts) {
+  const out = new Float64Array(n);
+  for (let j = 0; j < n; j++) {
+    if (shape === 'burst') {
+      const t = j * Ts, T = 1 / f, ramp = Math.min(1, t / T, (n * Ts - t) / T);
+      out[j] = a * ramp * Math.sin(2 * Math.PI * f * t);
+    } else out[j] = a;
+  }
+  return out;
 }
 
 const orNull = (v) => (Number.isFinite(v) ? v + 0 : null);
