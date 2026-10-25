@@ -46,7 +46,7 @@ export function createControllerTab(host, app) {
       <section class="gcol" aria-label="Parameters">
         <div class="ghead"><h3 class="glabel" id="ct-ptitle">Parameters</h3></div>
         <div id="ct-params" class="pform ctparams"></div>
-        <p class="phelp" id="ct-about"></p>
+        <details class="more" id="ct-aboutbox"><summary>About this type</summary><p class="phelp" id="ct-about"></p></details>
       </section>
       <section class="gcol" aria-label="Controller library">
         <div class="ghead"><h3 class="glabel">Library</h3></div>
@@ -146,6 +146,7 @@ export function createControllerTab(host, app) {
       ? def.params.map((p) => p.kind === 'choice' ? choice(`p:${p.key}`, p, v.params[p.key]) : p.table ? `<div class="pf"><span class="pfl">${esc(p.label)}</span><span class="pfh ctable">${v.params[p.key].length} values, from the project's JSON</span></div>` : field(`p:${p.key}`, p.label, show(v.params[p.key]), [p.kind === 'vector' ? 'comma-separated' : '', p.unit === 'u' ? 'units of u' : p.unit ?? '', /^umin|umax$/.test(p.key) ? 'empty: no limit' : ''].filter(Boolean).join(' · '), p.kind ?? 'number', p.help ?? '')).join('')
       : '<p class="phelp">No parameters.</p>';
     $('#ct-about').textContent = ABOUT[v.type] ?? '';
+    $('#ct-aboutbox').hidden = !ABOUT[v.type];
     // Planned trajectories are made offline, not added by hand.
     $('#ct-lib').innerHTML = Object.keys(lib).filter((t) => t !== 'trajectory').map((t) => `<button class="ctlibitem" data-add="${t}" title="${esc(ABOUT[t] ?? '')}"><b>${esc(lib[t].label)}</b><span>${esc(lib[t].summary)}</span></button>`).join('');
     bind(c);

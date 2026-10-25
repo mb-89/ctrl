@@ -8,7 +8,7 @@ The person's raw words are in [../input](../input/README.md). This folder is wha
 |---|---|
 | [product.md](product.md) | What Loop Tuner is for, and the principles every change is held to |
 | [instrument.md](instrument.md) | The oscilloscope: display, channels, horizontal, run control, Auto; Speed (how fast simulated time runs) in the header |
-| [tabs.md](tabs.md) | The setup tabs below the display, their order, and what each one owns |
+| [tabs.md](tabs.md) | The setup tabs below the display, their order, and what each one owns; progressive disclosure (what decides stays visible, the rest behind Details) |
 | [signal-generator.md](signal-generator.md) | Tab 1, the signal generator |
 | [plant-editor.md](plant-editor.md) | Tab 2, the plant as a block diagram |
 | [diagram-layout.md](diagram-layout.md) | The Plant diagram lays itself out (designed, not built). ELK (elkjs 0.12.0, EPL-2.0) is vendored and called synchronously. It lays the diagram out left to right: the main line straight, taps and outside inputs above, the return path mirrored below. Feedback is found from the wires, so Flip goes. Wires are routed right-angled, never through a block or on top of each other. A block dropped onto a wire is wired in; Del joins the neighbours. Only the order of `blocks` is stored (x, y, flip go). Also: the vendoring, the licence notice, and how the provenance test treats third-party text. Measured on the 11 library levels: 31 crossings against 43 today, 0 wires through blocks against 32 |
